@@ -920,55 +920,21 @@ body.reading .shell {
 }
 
 /* ================= ohbox multi-select ============================
-   The selection bar and the picked-row marker. Both live here rather than in
-   @ohmail/ui: the Ohbox is the only list with a multi-select, and a shared
-   primitive built for one caller encodes a guess about the second.
-   Accent-soft + an accent rail, the same language the demo ribbon and the
-   selected row already speak — no new colour enters the system. */
-/* It sits ABOVE the scroller now (ListPane's `header` slot), aligned with the
-   doorbell's 26px gutter, so a selection made forty rows down is still legible. Wraps,
-   because "12 selected · Mark read ⇧U · Clear esc" does not fit one line at 390px. */
-.pick-bar {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin: 12px 26px 0;
-  padding: 7px 12px;
-  border-radius:calc(var(--r-ctl) * 10 / 8);
-  font-size:calc(12px + var(--type-up));
-  color: var(--ink2);
-  background: var(--accent-soft);
-}
-@media (max-width: 900px) {
-  .pick-bar {
-    margin: 10px 14px 0;
-  }
-}
-.pick-bar button kbd {
-  margin-left: 3px;
-}
-.pick-bar span {
-  font-weight: 600;
-  color: var(--accent-ink);
-}
-.pick-bar button {
-  font-size:calc(11.5px + var(--type-up));
-  font-weight: 600;
-  color: var(--accent-ink);
-  border-radius:var(--r-pill);
-  padding: 2px 9px;
-}
-.pick-bar button.quiet {
-  color: var(--ink3);
-  font-weight: 550;
-}
-.pick-bar button:hover {
-  background: oklch(1 0 0 / 0.5);
-}
-[data-theme="dark"] .pick-bar button:hover {
-  background: oklch(1 0 0 / 0.08);
-}
+   THE PICKED-ROW MARKER, and that is all this block is now.
+
+   It used to carry a selection STRIP as well — an accent-soft wash in the list head holding
+   the count, the verbs and a Clear, wrapping to three lines and overflowing its own box in
+   German. That strip was a third control shape beside the Screener's capsules and the
+   message's pill, for verbs the message pill already has. It is retired: a selection's verbs
+   ARE the message pill, mounted in the list column's foot (`ListPane`'s `foot` slot), so
+   there is nothing left here to style, and its two orphaned strings retired with it.
+
+   The row treatment is untouched, and deliberately so: the pick has always been the ROW —
+   accent-soft plus a 2px inset accent rail, the same language the demo ribbon and the
+   selected row already speak, and distinct from the cursor's raised row, so a picked row
+   under the cursor reads as both at once. No new colour enters the system, and the count
+   capsule in the foot wears this exact pair so the capsule and the rows it speaks for are
+   visibly one object. */
 .view-ohbox .row.picked {
   background: var(--accent-soft);
   box-shadow: inset 2px 0 0 var(--accent);
@@ -977,7 +943,7 @@ body.reading .shell {
 /* ============ ohbox away notice: one quiet line ========================================
    The away responder is the only thing this product does that sends mail on its own, and
    this is its tell on the pane its owner actually reads (shell/AwayNotice.tsx). Ambient,
-   not an alert: muted ink, the pick-bar's gutter, no background strip — legible when
+   not an alert: muted ink, the doorbell's own 26px gutter, no background strip — legible when
    looked for, silent otherwise. The one affordance leads to the pane that controls it. */
 .ohx-notice {
   display: flex;
@@ -5936,7 +5902,6 @@ body.dnd-active * { cursor: grabbing !important; }
      own — 10.5px between the boxes, and there were 9. A tap 21px under the ghost's centre
      landed on a chip. Row-gap only: the column gap, every width and the wrap are untouched. */
   .scn-head{row-gap:11px}
-  .pick-bar button{min-height:44px}
   .ohx-notice button{min-height:44px}
   .draft-open{min-height:44px}
 }

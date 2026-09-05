@@ -6,7 +6,7 @@
  * doorbell, and the reading column. j/k moves, ↵ opens the reader,
  * t opens the tag picker, x picks, u toggles unread.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { useRowBadgeCopy } from "../shell/row-copy";
 import { isOwnSent, isResurfaced, presentsUnread } from "@ohmail/client-engine";
@@ -34,7 +34,9 @@ import { BootSkeleton } from "../shell/BootSkeleton";
 import { useLoadingGrace } from "../shell/loading-grace";
 import { useMailState } from "../shell/MailStateProvider";
 import type { OlderMail } from "../shell/older-mail";
-import { MessagePane, MOVE_TARGETS, type BulkAction, type MessageAction, type MoveTarget } from "../shell/MessagePane";
+import { Key, MessagePane, MOVE_TARGETS, type BulkAction, type MessageAction, type MoveTarget } from "../shell/MessagePane";
+import { MoreMenu, type MoreMenuItem } from "../shell/MoreMenu";
+import { useBarDensity } from "../shell/bar-density";
 import { useDragToFile, type DragSource, type RailDropTarget } from "../shell/drag-file";
 import type { ScreeningDest } from "../shell/sender-screening";
 import "../shell/action-bar.css";
@@ -48,18 +50,34 @@ import "../shell/action-bar.css";
  * Sharing a bar is right; sharing commit semantics would be the design error.
  */
 export interface BulkVerbs {
-  run: (action: BulkAction, ids: string[]) => void;
+  /**
+   * Run a verb over the ids. `false` means it was REFUSED at the press and nothing was
+   * dispatched — a reader's Move, Screening or Delete — so the caller keeps the selection
+   * rather than clearing it. A set thrown away by a press that did nothing is a set the
+   * person has to rebuild before they can try the verb that would have worked.
+   */
+  run: (action: BulkAction, ids: string[]) => boolean;
   tag: (ids: string[], anchor: HTMLElement | null) => void;
   screenPreview: (
     ids: string[],
     dest: ScreeningDest,
   ) => { senders: number; messages: number; rules: number };
-  screen: (ids: string[], dest: ScreeningDest) => void;
+  /** Commit the screening. `false` for the refusal, exactly as `run` — see there. */
+  screen: (ids: string[], dest: ScreeningDest) => boolean;
 }
 
-/** Which sub-row the bulk bar is showing; `null` is the resting bar. Mirrors `BarPanel`. */
+/**
+ * Which sub-row the selection pill is showing; `null` is the resting bar. Mirrors `BarPanel`.
+ *
+ * `"more"` IS GONE from this union, and that is the shape of the change rather than a detail
+ * of it — the message pill made the same move for the same reason. A disclosure and a question
+ * are different things: Move, Screening and Delete each ask WHERE, WHICH or WHETHER, and a row
+ * that replaces the bar with the possible answers and a Cancel is the right ceremony for a
+ * question. "More" asked nothing; it swapped the row for a different row in the same place with
+ * no visible connection to the press. That is a menu, and it is `MoreMenu` now.
+ */
 type PickPanel =
-  | { kind: "move" | "more" | "screen" }
+  | { kind: "move" | "screen" | "delete" }
   | { kind: "confirm"; dest: MoveTarget };
 
 /**
@@ -737,8 +755,13 @@ export function OhboxView({
       // re-surfaces them the same way — see `promoted`. Only the direction, never the toggle:
       // `read` has nothing to promote and `move`/the horizons take the rows out of this list.
       if (action === "unread") promote(pickedIds);
-      bulk.run(action, pickedIds);
-      clearPicked();
+      /* A REFUSAL KEEPS THE SELECTION. Clearing afterwards is right for a verb that HAPPENED —
+         the rows have been dealt with, and a set that survived would invite a second
+         application of it. A reader's Move, Screening or Delete does not happen: `run` answers
+         `false` at the press, nothing was dispatched, and throwing the set away would make the
+         person rebuild it before trying a verb that works. */
+      if (bulk.run(action, pickedIds)) clearPicked();
+      else setPickPanel(null);
     },
     [bulk, pickedIds, clearPicked, promote],
   );
@@ -1398,6 +1421,56 @@ export function OhboxView({
     },
     label: t("keyPrev"),
   };
+
+  /**
+   * ⇧↓ / ⇧↑ — MOVE THE CURSOR AND DRAG THE SELECTION WITH IT.
+   *
+   * The keyboard twin of a shift-click, and it was simply missing: `x` picked one row at the
+   * cursor and ⇧-click built a range, so a range could be built with a mouse and not with the
+   * keys — on a product whose whole list is keyboard-first.
+   *
+   * ADDITIVE, NEVER SUBTRACTIVE, which is the one real decision here. Shrink-on-reverse (⇧↑
+   * un-picking what a preceding ⇧↓ picked) is what a text field does, and it needs a second
+   * piece of state beside the set — a live range with a direction — because the set alone
+   * cannot say which of its members came from THIS gesture. Worse, it would remove rows the
+   * person picked by other means: ⌘-click four rows, then ⇧↓ ⇧↑, and two of them are gone. So
+   * the range only ever adds, exactly as ⇧-click does, and the way to remove is the way you
+   * added — `x` or ⌘-click on the row, or Escape for all of it.
+   *
+   * WITH NO ANCHOR THE CURSOR'S OWN ROW BECOMES ONE, so the first ⇧↓ picks the row you are on
+   * and the row you land on — the pair the gesture visibly spans. Anything else would leave the
+   * origin row unpicked and the selection would not match the movement.
+   *
+   * KEY REPEAT IS ALLOWED here, unlike `⌫`: a held ⇧↓ walking a range down the list is the
+   * gesture, and each repeat adds one row to a set that is not yet acted on. A held `⌫` would
+   * walk a pile into Trash one window at a time, which is why item 10 guards that one.
+   */
+  const extendPick = useCallback((dir: 1 | -1) => {
+    if (order.length === 0) return;
+    if (anchor.current === null && selectedId) anchor.current = selectedId;
+    const next = at < 0 ? order[dir === 1 ? 0 : order.length - 1] : order[at + dir];
+    if (!next) return;
+    selectByUser(next);
+    pickRangeTo(next);
+    // `order`/`at` are rebuilt each render and must be read AS RENDERED, the same reason
+    // `togglePick` and `pickRangeTo` state above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [order, at, selectedId, selectByUser, pickRangeTo]);
+
+  /**
+   * DELETE THE SELECTION — one press, one window, one toast, one Undo for the whole set.
+   *
+   * It goes through `BulkAction`'s `delete` arm, which hands the ids to the SAME
+   * `delete-undo.ts` window a single ⌫ opens. Nothing is dispatched here and nothing is
+   * dispatched by the shell's arm either: the window holds the ids and sends one
+   * `message_delete` per id only when it closes, so Undo inside it cancels a delete that never
+   * happened. That is the only undo this wire can honour — there is no un-delete on it.
+   *
+   * The pick clears on the press, like every verb that ran: the rows leave every pile at once
+   * (`hideMessages` over the held ids), so a set that survived would be pointing at rows that
+   * are not on screen.
+   */
+  const deletePicked = useCallback(() => runBulk("delete"), [runBulk]);
   const keys: KeyBinding[] = [
     {
       chord: "j",
@@ -1455,6 +1528,157 @@ export function OhboxView({
       // the sheet it opened rendered a `<span/>`.
       run: () => selected && open(selected),
     },
+    /* ══ THE SELECTION LAYER ══════════════════════════════════════════════════════════════
+     *
+     * WHILE A SELECTION EXISTS, THE VERB LETTERS ACT ON IT. That is the whole rule, and it
+     * follows from one the product already has: every verb wears its keycap, and a keycap on
+     * the selection pill must do what the pill does. The pill offers Later, Park, Resurface,
+     * Tag, Screening, Move, Read, Unread and Delete, so those letters mean the selection while
+     * there is one and mean the cursor's message when there is not.
+     *
+     * DECLARED FIRST, because declaration order IS precedence inside a layer (`ordered()` walks
+     * a layer's bindings in order and the first ENABLED match runs). `t` and `u` have cursor
+     * twins a few rows below; these outrank them exactly while `picked.size > 0` and stand down
+     * to them otherwise. `a e b s m d ⌫ ⌦` have no view-level twin — their cursor versions are
+     * the SHELL's, and the `view` scope outranks the shell, which is the same precedence that
+     * lets the Screener own `c`.
+     *
+     * EVERY ONE OF THEM IS `disabled`, NOT ABSENT, WITHOUT A SELECTION. A disabled binding still
+     * appears in the `?` sheet, which is the rule that keeps a shortcut learnable: one that
+     * vanished from the documentation whenever the list was empty is one nobody discovers.
+     *
+     * THE COST, STATED. Somebody who used `x` and then a letter expecting the cursor's message
+     * now acts on the pick instead. That is Gmail's model, the sheet says so in words while the
+     * selection is up, and it is a real behaviour change rather than a strictly additive one.
+     */
+    {
+      chord: "shift+ArrowDown",
+      group: "message",
+      label: t("keyExtendDown"),
+      disabled: order.length === 0,
+      run: () => extendPick(1),
+    },
+    {
+      chord: "shift+j",
+      group: "message",
+      label: t("keyExtendDown"),
+      disabled: order.length === 0,
+      run: () => extendPick(1),
+    },
+    {
+      chord: "shift+ArrowUp",
+      group: "message",
+      label: t("keyExtendUp"),
+      disabled: order.length === 0,
+      run: () => extendPick(-1),
+    },
+    {
+      chord: "shift+k",
+      group: "message",
+      label: t("keyExtendUp"),
+      disabled: order.length === 0,
+      run: () => extendPick(-1),
+    },
+    /* ── AND THESE TEN ARE DECLARED ONLY WHILE A SELECTION EXISTS ──────────────────────
+     *
+     * Not `disabled`, ABSENT — the one place this view departs from "declare it and disable
+     * it", and the reason is the `?` sheet rather than the dispatcher.
+     *
+     * `groupedBindings` dedups BY CHORD and keeps one row per key ("what will this key do
+     * HERE?"), preferring an enabled declaration over a disabled one. Every chord below has a
+     * twin for the cursor's message — `t` and `u` in this view, `a e b s m d ⌫ ⌦` in the shell
+     * — and the view's layer is walked FIRST. So a disabled selection binding sitting ahead of
+     * a disabled message binding won the row and the sheet taught "Park the selection" to
+     * somebody with nothing selected. Measured: with no pick and no cursor, `a` read "Queue
+     * the selection for the Reply Run".
+     *
+     * Absent when there is nothing to act on, the sheet is exactly right in both states and
+     * the shared dedup rule is untouched. Nothing becomes undiscoverable, which is what
+     * "declare it and disable it" exists to protect: the CHORD is listed either way, by the
+     * twin, and only the label changes with the state.
+     *
+     * THE FOUR EXTEND CHORDS ABOVE ARE NOT IN HERE, deliberately. They have no twin, and they
+     * are how a selection STARTS — ⇧↓ with nothing picked picks the cursor's row and the next
+     * one. A key that creates the state cannot be gated on the state.
+     */
+    ...(picked.size > 0
+      ? ([
+    {
+      chord: "a",
+      group: "message",
+      label: t("keySelLater"),
+      run: () => runBulk("later"),
+    },
+    {
+      chord: "e",
+      group: "message",
+      label: t("keySelPark"),
+      run: () => runBulk("aside"),
+    },
+    {
+      chord: "b",
+      group: "message",
+      label: t("keySelResurface"),
+      run: () => runBulk("resurface"),
+    },
+    {
+      /* THE PICKER NEEDS AN ANCHOR, and from a key there is no pressed element to give it. The
+         pill's own Tag button is the honest one to point at: it is where the mouse path opens
+         the same picker, so the popover appears in one place however it was asked for. */
+      chord: "t",
+      group: "message",
+      label: t("keySelTag"),
+      run: () =>
+        bulk.tag(
+          pickedIds,
+          document.querySelector<HTMLElement>(".view-ohbox .list-foot .abar-tag .abar-b"),
+        ),
+    },
+    {
+      chord: "s",
+      group: "message",
+      label: t("keySelScreen"),
+      run: () => setPickPanel({ kind: "screen" }),
+    },
+    {
+      chord: "m",
+      group: "message",
+      label: t("keySelMove"),
+      run: () => setPickPanel({ kind: "move" }),
+    },
+    {
+      chord: "u",
+      group: "message",
+      label: t("keySelUnread"),
+      run: () => runBulk("unread"),
+    },
+    {
+      /* `d` ASKS; `⌫`/`⌦` DO NOT — item 10's own distinction, one verb wider. `d` is the letter
+         printed on the pill's own Delete item, an aimed press over a set somebody built, and
+         the ask is the last place the count is stated before the rows go. */
+      chord: "d",
+      group: "message",
+      label: t("keySelDeleteAsk"),
+      run: () => setPickPanel({ kind: "delete" }),
+    },
+    {
+      chord: "Backspace",
+      group: "message",
+      label: t("keySelDelete"),
+      /* A HELD KEY IS ONE PRESS — item 10's guard, and it matters more over a set: Backspace
+         auto-repeats, and a finger resting on it would open window after window. */
+      when: (e: KeyboardEvent) => !e.repeat,
+      run: deletePicked,
+    },
+    {
+      chord: "Delete",
+      group: "message",
+      label: t("keySelDelete"),
+      when: (e: KeyboardEvent) => !e.repeat,
+      run: deletePicked,
+    },
+        ] satisfies KeyBinding[])
+      : []),
     {
       chord: "t",
       group: "message",
@@ -1601,13 +1825,18 @@ export function OhboxView({
    * rather than doing both.
    */
   const onRangeClickCapture = useCallback((e: ReactMouseEvent<HTMLElement>) => {
-    if (!e.shiftKey) return;
+    /* ⌘/Ctrl TOGGLES ONE ROW AND NEVER MOVES THE CURSOR — the standard single-pick every list
+       on both platforms has, and until now the only modifier-less way to pick was the keyboard
+       (`x` at the cursor), so a mouse user could build a RANGE and could not build a scattered
+       set. ⇧ still extends. Both are additive; neither opens the message. */
+    const pick = e.shiftKey ? pickRangeTo : e.metaKey || e.ctrlKey ? togglePick : null;
+    if (!pick) return;
     const id = (e.target as HTMLElement).closest<HTMLElement>(".row[data-id]")?.dataset.id;
     if (!id) return;
     e.preventDefault();
     e.stopPropagation();
-    pickRangeTo(id);
-  }, [pickRangeTo]);
+    pick(id);
+  }, [pickRangeTo, togglePick]);
 
   /**
    * OWN-SENT ROWS NAME THE RECIPIENT — "Me → Nora Lindt", never the writer's own identity.
@@ -2046,34 +2275,6 @@ export function OhboxView({
               onPress={onDoorbell}
             />
             )}
-            {/* THE SELECTION AFFORDANCE, ABOVE THE SCROLLER.
-                It used to be the scroller's first child, so the count and the bulk action
-                scrolled off the moment you picked something forty rows down — the state was
-                unknowable exactly when it mattered most. `ListPane`'s `header` slot is
-                documented for a bulk bar; this is the bulk bar.
-
-                Still a plain bar in this view rather than a `@ohmail/ui` primitive: nothing
-                else in the product has a multi-select, and a component invented for one
-                caller is a guess about the second one.
-
-                `role="status"` so the count is ANNOUNCED as it changes, not merely present. */}
-            {picked.size > 0 ? (
-              <div className="pick-bar" role="status">
-                <span>{t("picked", { count: picked.size })}</span>
-                <BulkBar
-                  ids={pickedIds}
-                  panel={pickPanel}
-                  onPanel={setPickPanel}
-                  onRun={runBulk}
-                  onMarkSeen={markPicked}
-                  bulk={bulk}
-                  onDone={clearPicked}
-                />
-                <button type="button" className="quiet" onClick={clearPicked}>
-                  {t("pickedClear")} <Kbd>esc</Kbd>
-                </button>
-              </div>
-            ) : null}
           </>
         }
         /* The strip used to spell the whole keymap out ("j k move · ↵ read · t tag …") and,
@@ -2081,6 +2282,35 @@ export function OhboxView({
            with the reading column. One affordance now — the key that opens the generated
            sheet. The bindings themselves are unchanged, declared in `keys` above. */
         hints={<ShortcutHint />}
+        /* THE SELECTION'S VERBS, AT THE FOOT — and they TAKE the hints strip's place rather
+           than standing beside it (`ListPane`'s `foot`).
+
+           It used to be a wash in the HEADER slot above, which was itself a fix for a worse
+           bug: as the scroller's first child, the count scrolled off the moment you picked
+           something forty rows down. The header answered that and cost 105–142px of the list,
+           above the rows it was talking about, in a control shape nothing else in the product
+           uses. The foot answers it too — the strip is outside the scroller either way — and
+           it is where this product puts the verbs for the thing you are looking at.
+
+           The count is IN the pill now, so there is no separate `role="status"` wrapper here:
+           the capsule carries it (see `rowGroups`), which is also what makes pressing it the
+           way out. */
+        foot={
+          picked.size > 0 ? (
+            <SelectionPill
+              ids={pickedIds}
+              count={pickedIds.length}
+              panel={pickPanel}
+              onPanel={setPickPanel}
+              onRun={runBulk}
+              onMarkSeen={markPicked}
+              onDelete={deletePicked}
+              bulk={bulk}
+              onDone={clearPicked}
+              onClear={clearPicked}
+            />
+          ) : null
+        }
       >
         {/* TWO listboxes, not one: "New" and "Earlier" are separated by a group label, and
             an option's listbox has to be its actual container. Each is labelled, because an
@@ -2317,73 +2547,133 @@ export function OhboxView({
 }
 
 /**
- * ═══ THE SELECTION'S ACTION BAR ════════════════════════════════════════════════════════
+ * ═══ THE SELECTION'S ACTION BAR — WHICH IS THE MESSAGE'S ACTION BAR ════════════════════
  *
- * The requirement: a selection must offer more than mark unseen, mark read and Escape — it
- * needs the sender's screening and its tags too.
+ * The requirement was that a selection must offer more than mark read, mark unread and
+ * Escape. It was answered once with a STRIP: an accent-soft wash in the list head, the count
+ * on the left, a Clear on a line of its own, the verbs between them, and a "More" that swapped
+ * the row for another row. That answer is retired, and the reason is worth keeping because it
+ * is not a matter of taste.
  *
- * ── IT IS THE MESSAGE BAR'S GROUPING, NOT A SECOND VOCABULARY ─────────────────────────
+ * ── WHY A THIRD SHAPE WAS THE DEFECT ──────────────────────────────────────────────────
  *
- * The message action bar established what these verbs are and how they group, and the classes
- * below are that bar's own (`action-bar.css`): one segmented control for the three horizons, two filing
- * verbs adjacent because they answer the same question at two scopes, the read state apart
- * from the verbs, and a More panel that REPLACES the row rather than growing it. A second
- * grouping invented for bulk would mean the same five verbs sit in two different orders
- * depending on how many messages you have selected, which is the kind of thing a user
- * experiences as the app changing its mind.
+ * The product had three control shapes for one job. The Screener's `.scn-bulk` capsules act on
+ * a whole PILE ("Apply all", "Mark all spam"). The message pill (`.msg-actions > .abar`) acts
+ * on the message in front of you. The strip acted on a SELECTION — with the message pill's own
+ * verbs, its own classes, and none of its behaviour: its own two container rungs at 456px and
+ * 601px derived from label widths in one reference font, in English only, so the row overflowed
+ * its box in German by 20px at 390 and by 23px at 1440 with the More chevron cut off at the
+ * wash's edge. It wrapped to three lines, 142px tall on a phone, above the rows it spoke about.
  *
- * Two deliberate divergences, both forced:
+ * So the selection's verbs ARE the message pill now: the same element, the same float and
+ * `--lift-3`, the same grouping, the same `bar-density` measurement, the same `MoreMenu`. Not a
+ * pill-like thing — `.msg-actions > .abar`, so every rule in `action-bar.css` applies with no
+ * selector and no branch, and the two mounts cannot drift because there is nothing to drift.
  *
- *   · **No Reply.** There is no such act over eleven messages. The leading slot the accent
- *     verb occupies is taken by Tag, which is the instant, reversible verb here.
- *   · **Read and Unread are two buttons, not a switch.** `role="switch"` reports a current
- *     state, and a selection has a mixed one; a toggle over it would mark six read and five
- *     unread in a gesture that reads as one decision.
+ * ── WHERE IT STANDS, AND WHY NOT WHERE THE STRIP STOOD ────────────────────────────────
  *
- * ── AND SCREENING GETS A CEREMONY THE OTHERS DO NOT ───────────────────────────────────
+ * In the FOOT of the list column (`ListPane`'s `foot` slot), taking the key-hint strip's place
+ * while a selection exists. The verbs on the thing you are looking at stand at its foot
+ * everywhere else in this product — the reading column, the reader sheet, the Reads card — and
+ * on a phone the foot is where the thumb is. On a 1440 split its bottom edge and the reading
+ * column's pill's sit on one line, because both are 12px off their panel's floor.
  *
- * Everything else here is a mail operation on the messages you picked. Screening is a
- * decision about SENDERS: for a sender still waiting at the gate it promotes a rule that
- * governs all their future mail, and it moves every message that sender has in the mirror,
- * not only the ones in the selection. So it is two steps — pick a destination, then a row
- * that states the senders, the messages and the rules before anything is dispatched.
+ * Not sticky inside the scroller, which was the other candidate and was measured: a pill stuck
+ * there lands at y 787–798, and the toast band is y 790–828 — so a refusal toast raised BY the
+ * pill's own verb covered its Read/Unread pair. Below the scroller there is no overlap.
+ *
+ * ── THE TWO DELIBERATE DIVERGENCES FROM A MESSAGE'S BAR ───────────────────────────────
+ *
+ *   · **No Reply, Reply all or Forward.** There is no such act over eleven messages, and a
+ *     pick of ONE is still a pick — switching to the single-message vocabulary at count 1
+ *     would be the app changing its mind about what you selected. The cursor's message keeps
+ *     those verbs in the reading column, where they mean something.
+ *   · **The leading slot holds the COUNT**, where a message holds Reply, and pressing it clears
+ *     the selection. See `rowGroups`.
+ *
+ * ── AND SCREENING STILL GETS A CEREMONY THE OTHERS DO NOT ─────────────────────────────
+ *
+ * Everything else here is a mail operation on the messages you picked. Screening is a decision
+ * about SENDERS: for a sender still waiting at the gate it promotes a rule that governs all
+ * their future mail, and it moves every message that sender has in the mirror, not only the
+ * ones in the selection. So it is two steps — pick a destination, then a row that states the
+ * senders, the messages and the rules before anything is dispatched.
  *
  * **There is no undo, and that is why the confirm row exists.** `POST /screener/:id` has no
- * inverse, so an Undo affordance would either do nothing or move the mail back
- * while the rule it created stood — a control that lies about what it reversed. Stating the
- * counts before committing is the honest version of the same protection.
+ * inverse, so an Undo affordance would either do nothing or move the mail back while the rule
+ * it created stood — a control that lies about what it reversed. Stating the counts before
+ * committing is the honest version of the same protection.
+ *
+ * DELETE IS THE OPPOSITE CASE and gets the opposite ceremony: it is reversible for as long as
+ * the toast is up, because `delete-undo.ts` holds the request rather than sending it. So the
+ * ask is cheap (the count, the note, two buttons) and the Undo is real.
  */
-function BulkBar({
+function SelectionPill({
   ids,
+  count,
   panel,
   onPanel,
   onRun,
   onMarkSeen,
+  onDelete,
   bulk,
   onDone,
+  onClear,
 }: {
   ids: string[];
+  /** The number of MESSAGES picked — `ids.length`, passed so the caller owns the sentence. */
+  count: number;
   panel: PickPanel | null;
   onPanel: (next: PickPanel | null) => void;
   onRun: (action: BulkAction) => void;
   /** Mark-read keeps its own path: ⇧U's handler, so the bar and the key are one call. */
   onMarkSeen: () => void;
+  /** The delete press — the window's, never a mutation. Asked for before it is called. */
+  onDelete: () => void;
   bulk: BulkVerbs;
   onDone: () => void;
+  onClear: () => void;
 }) {
   const t = useTranslations("ohbox");
   const tr = useTranslations("screening");
+  const density = useBarDensity();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const moreRef = useRef<HTMLButtonElement>(null);
+  const deleteCancelRef = useRef<HTMLButtonElement>(null);
+  const deleteNoteId = useId();
+
+  const closeMenu = useCallback(() => {
+    setMenuOpen(false);
+    moreRef.current?.focus();
+  }, []);
+
+  /* THE ASK'S SAFE ANSWER TAKES FOCUS, exactly as the message strip's does: the menu item
+     that opened this unmounts with the menu, so without the move a keyboard user's focus
+     falls to the document and the destructive question is never reliably announced. */
+  useEffect(() => {
+    if (panel?.kind === "delete") deleteCancelRef.current?.focus();
+  }, [panel?.kind]);
+
+  /* A SELECTION THAT EMPTIES TAKES ITS MENU WITH IT. The pill unmounts at zero, but the menu
+     is also open across a panel cycle, and a menu left open over a bar that has changed shape
+     is a menu pointing at buttons that moved. */
+  useEffect(() => {
+    if (panel !== null) setMenuOpen(false);
+  }, [panel]);
 
   const defer = (
     <>
       <button type="button" className="abar-b" onClick={() => onRun("later")}>
         {t("actionLater")}
+        <Key chord="a" />
       </button>
       <button type="button" className="abar-b" onClick={() => onRun("aside")}>
         {t("actionSetAside")}
+        <Key chord="e" />
       </button>
       <button type="button" className="abar-b" onClick={() => onRun("resurface")}>
         {t("actionResurface")}
+        <Key chord="b" />
       </button>
     </>
   );
@@ -2392,47 +2682,56 @@ function BulkBar({
     <>
       <button type="button" className="abar-b" onClick={() => onPanel({ kind: "screen" })}>
         {tr("action")}
+        <Key chord="s" />
       </button>
       <button type="button" className="abar-b" onClick={() => onPanel({ kind: "move" })}>
         {t("actionMove")}
+        <Key chord="m" />
       </button>
     </>
   );
 
-  const tagButton = (anchorClass: string) => (
+  /* Tag DISPATCHES THROUGH A POPOVER, so it needs the element that was pressed as its anchor —
+     which is why it is a function of its own class rather than a shared element: the measure
+     row's copy must not become the anchor (React binds a ref to the LAST claimant, and the
+     copy mounts after the visible row). Anchoring on `currentTarget` avoids the ref entirely. */
+  const tagButton = (
     <button
       type="button"
-      className={anchorClass}
+      className="abar-b abar-solo"
       onClick={(e) => {
         bulk.tag(ids, (e.currentTarget as HTMLElement | null) ?? null);
         onDone();
       }}
     >
       {t("tagChip")}
+      <Key chord="t" />
     </button>
   );
 
   if (panel?.kind === "move" || panel?.kind === "screen") {
     const screening = panel.kind === "screen";
     return (
-      <div className="abar">
-        <div className="abar-panel">
-          <span className="abar-lab">{screening ? tr("bulkTo") : t("moveLabel")}</span>
-          {MOVE_TARGETS.map((v) => (
-            <button
-              key={v}
-              type="button"
-              className="abar-b abar-solo"
-              onClick={() =>
-                screening ? onPanel({ kind: "confirm", dest: v }) : onRun(`move:${v}`)
-              }
-            >
-              → {PLACE_LABEL[v] ?? v}
+      <div className="msg-actions">
+        <div className="abar">
+          <div className="abar-panel">
+            <span className="abar-lab">{screening ? tr("bulkTo") : t("moveLabel")}</span>
+            {MOVE_TARGETS.map((v) => (
+              <button
+                key={v}
+                type="button"
+                className="abar-b abar-solo"
+                onClick={() =>
+                  screening ? onPanel({ kind: "confirm", dest: v }) : onRun(`move:${v}`)
+                }
+              >
+                → {PLACE_LABEL[v] ?? v}
+              </button>
+            ))}
+            <button type="button" className="abar-b" onClick={() => onPanel(null)}>
+              {t("moveCancel")}
             </button>
-          ))}
-          <button type="button" className="abar-b" onClick={() => onPanel(null)}>
-            {t("moveCancel")}
-          </button>
+          </div>
         </div>
       </div>
     );
@@ -2449,91 +2748,243 @@ function BulkBar({
     const plan = bulk.screenPreview(ids, panel.dest);
     const place = PLACE_LABEL[panel.dest] ?? panel.dest;
     return (
-      <div className="abar">
-        <div className="abar-panel">
-          <span className="abar-lab">
-            {plan.senders === 0
-              ? /* Nothing to confirm, said as itself. "0 senders → Ohbox. 0 messages move."
-                   is a confirmation of nothing, and a user reading it would reasonably press
-                   the button to find out what it meant. */
-                tr("bulkConfirmNothing", { place })
-              : plan.rules > 0
-                ? tr("bulkConfirmRules", {
-                    place,
-                    senders: plan.senders,
-                    count: plan.messages,
-                    rules: plan.rules,
-                  })
-                : tr("bulkConfirm", { place, senders: plan.senders, count: plan.messages })}
-          </span>
-          <button
-            type="button"
-            className="abar-b abar-solo primary"
-            disabled={plan.senders === 0}
-            onClick={() => {
-              bulk.screen(ids, panel.dest);
-              onDone();
-            }}
-          >
-            {tr("bulkCommit")}
-          </button>
-          <button type="button" className="abar-b" onClick={() => onPanel({ kind: "screen" })}>
-            {t("moveCancel")}
-          </button>
+      <div className="msg-actions">
+        <div className="abar">
+          <div className="abar-panel">
+            <span className="abar-lab">
+              {plan.senders === 0
+                ? /* Nothing to confirm, said as itself. "0 senders → Ohbox. 0 messages move."
+                     is a confirmation of nothing, and a user reading it would reasonably press
+                     the button to find out what it meant. */
+                  tr("bulkConfirmNothing", { place })
+                : plan.rules > 0
+                  ? tr("bulkConfirmRules", {
+                      place,
+                      senders: plan.senders,
+                      count: plan.messages,
+                      rules: plan.rules,
+                    })
+                  : tr("bulkConfirm", { place, senders: plan.senders, count: plan.messages })}
+            </span>
+            <button
+              type="button"
+              className="abar-b abar-solo primary"
+              disabled={plan.senders === 0}
+              onClick={() => {
+                /* A REFUSED SCREENING KEEPS THE SELECTION — `onBulkScreen` answers a reader at
+                   the press and returns false, and `onDone` here would throw away a set the
+                   person still has a use for. The panel closes either way: the question has
+                   been answered, one way or the other. */
+                if (bulk.screen(ids, panel.dest)) onDone();
+                else onPanel(null);
+              }}
+            >
+              {tr("bulkCommit")}
+            </button>
+            <button type="button" className="abar-b" onClick={() => onPanel({ kind: "screen" })}>
+              {t("moveCancel")}
+            </button>
+          </div>
         </div>
       </div>
     );
   }
 
-  if (panel?.kind === "more") {
+  if (panel?.kind === "delete") {
+    /**
+     * THE ASK, AND IT IS THE MESSAGE STRIP'S ASK — same panel, same `alertdialog`, same note,
+     * same pair of answers. What differs is one number: the sentence counts the selection.
+     *
+     * WHY THERE IS AN ASK HERE AT ALL when `⌫`/`⌦` have none: item 10's own distinction, one
+     * verb wider. A key held down over a list is a gesture that can run away, so the keys open
+     * the window directly and the toast's Undo is the protection; a BUTTON labelled Delete,
+     * and the `d` that names it, are aimed presses over a set somebody built — cheap to ask,
+     * and the ask is the last place the count is stated before the rows go.
+     *
+     * `deleteNote` is reused WORD FOR WORD from the single-message ceremony (a parity test on
+     * the mobile side pins it): what happens to the mail does not change with the count.
+     */
     return (
-      <div className="abar">
-        <div className="abar-panel">
-          <span className="abar-lab">{t("actionMore")}</span>
-          <span className="abar-pg abar-p-defer">{defer}</span>
-          <span className="abar-pg abar-p-file">{file}</span>
-          <button type="button" className="abar-b" onClick={() => onPanel(null)}>
-            {t("moveCancel")}
-          </button>
+      <div className="msg-actions">
+        <div className="abar">
+          <div
+            className="abar-panel abar-delete"
+            role="alertdialog"
+            aria-label={t("bulkDeleteAsk", { count })}
+            aria-describedby={deleteNoteId}
+          >
+            <span className="abar-lab">{t("bulkDeleteAsk", { count })}</span>
+            <span className="abar-note" id={deleteNoteId}>{t("deleteNote")}</span>
+            <button
+              type="button"
+              className="abar-b abar-solo abar-danger"
+              onClick={() => {
+                onPanel(null);
+                onDelete();
+              }}
+            >
+              {t("actionDelete")}
+              <Key chord="Backspace" />
+            </button>
+            <button
+              type="button"
+              className="abar-b"
+              ref={deleteCancelRef}
+              onClick={() => onPanel(null)}
+            >
+              {t("moveCancel")}
+            </button>
+          </div>
         </div>
       </div>
     );
   }
 
-  return (
-    <div className="abar">
-      <div className="abar-row">
-        <div className="abar-g">{tagButton("abar-b abar-solo")}</div>
+  /**
+   * WHAT IS BEHIND "MORE" — the same verbs, in the same order they stand in the row, plus the
+   * one that has no row position at all.
+   *
+   * `group` is what keeps "a verb is in the row or in the menu, never both": the admission
+   * rules at the foot of `action-bar.css` switch each group off HERE at exactly the width they
+   * switch it on THERE. One set of numbers, read from both sides — and for this pill they are
+   * not numbers at all but the measurement, which is the point of retiring the old strip.
+   */
+  const menuItems: MoreMenuItem[] = [
+    { id: "later", group: "defer", label: t("actionLater"), run: () => { closeMenu(); onRun("later"); } },
+    { id: "aside", group: "defer", label: t("actionSetAside"), run: () => { closeMenu(); onRun("aside"); } },
+    { id: "resurface", group: "defer", label: t("actionResurface"), run: () => { closeMenu(); onRun("resurface"); } },
+    {
+      id: "tag",
+      group: "tag",
+      label: t("actionTag"),
+      icon: <Icon name="tag" size={13} />,
+      /* Anchored on More, like Screening: the picker opens where the press was rather than
+         under a menu that has just closed. */
+      run: () => { const at = moreRef.current; setMenuOpen(false); bulk.tag(ids, at); onDone(); },
+    },
+    { id: "screen", group: "file", label: tr("action"), run: () => { setMenuOpen(false); onPanel({ kind: "screen" }); } },
+    { id: "move", group: "file", label: t("actionMove"), run: () => { closeMenu(); onPanel({ kind: "move" }); } },
+    /**
+     * DELETE — last, menu-only, and carrying NO `group`, like Draft reply on a message: it has
+     * no row position, so no admission rule can surface it as a row button. A destructive verb
+     * over a set does not belong where a stray click can land. It opens the ASK; the ask is the
+     * only thing that presses the window.
+     */
+    {
+      id: "delete",
+      label: t("actionDelete"),
+      icon: <Icon name="trash" size={13} />,
+      run: () => { closeMenu(); onPanel({ kind: "delete" }); },
+    },
+  ];
 
-        <div className="abar-g abar-seg abar-defer" role="group" aria-label={t("groupDefer")}>
-          {defer}
-        </div>
+  /* ONE row, rendered twice — visibly, and as the density measurement's hidden copy. A
+     FUNCTION rather than a shared element so the copy can drop what must not be duplicated:
+     `moreRef` stays on the VISIBLE More button only. */
+  const rowGroups = (measure: boolean) => (
+    <>
+      {/* THE COUNT IS THE LEADING CAPSULE, AND IT IS THE WAY OUT.
+          One control, not two: a separate "Clear" verb would be a second exit for one act, and
+          "Auswahl aufheben" beside a count is 110px of German for something the count itself
+          can say. It stands where Reply stands on a message — the leading slot — and wears the
+          picked rows' own accent pair, so the capsule and the rows are visibly one object.
 
-        <div className="abar-g abar-seg abar-file" role="group" aria-label={t("groupFile")}>
-          {file}
-        </div>
+          `role="status"` on the number so a change in the count is ANNOUNCED and not merely
+          present, which is what the retired strip's own `role="status"` did for the whole bar.
+          The `aria-label` carries the count AND what pressing it does, so the button's name is
+          never just "×" — including in compact, where the word is what folds. */}
+      <div className="abar-g">
+        <button
+          type="button"
+          className="abar-b abar-solo abar-count"
+          aria-label={t("pickedAria", { count })}
+          onClick={onClear}
+        >
+          <span aria-hidden="true">×</span>
+          <span role="status">{count}</span>
+          <span className="abar-count-word">{t("pickedWord")}</span>
+          <Kbd>esc</Kbd>
+        </button>
+      </div>
 
-        <div className="abar-g abar-read-g">
-          <span className="abar-g abar-seg" role="group" aria-label={t("groupRead")}>
-            <button type="button" className="abar-b" onClick={onMarkSeen}>
-              {t("pickedMarkSeen")} <Kbd>⇧U</Kbd>
-            </button>
-            <button type="button" className="abar-b" onClick={() => onRun("unread")}>
-              {t("pickedMarkUnseen")}
-            </button>
-          </span>
-          <button
-            type="button"
-            className="abar-b abar-solo abar-more"
-            aria-haspopup="true"
-            aria-expanded={false}
-            aria-label={t("actionMore")}
-            title={t("actionMore")}
-            onClick={() => onPanel({ kind: "more" })}
-          >
-            <Icon name="chev" size={12} className="abar-chev" />
+      <div className="abar-g abar-seg abar-defer" role="group" aria-label={t("groupDefer")}>
+        {defer}
+      </div>
+
+      {/* Between the horizons and filing, mirroring the message pill: a reader who has seen Tag
+          there on a wide bar looks for it there on a narrow one. */}
+      <div className="abar-g abar-tag">{tagButton}</div>
+
+      <div className="abar-g abar-seg abar-file" role="group" aria-label={t("groupFile")}>
+        {file}
+      </div>
+
+      <div className="abar-g abar-read-g">
+        {/*
+         * TWO DIRECTIONS, NEVER A TOGGLE — `BulkAction`'s own rule, and the reason is the set:
+         * `role="switch"` reports a current state and a selection has a MIXED one, so a toggle
+         * over it would mark six read and five unread in a gesture that reads as one decision.
+         *
+         * The dots are the message pill's, and they mean the same thing here: the dot previews
+         * what the press LEAVES BEHIND — hollow on Read (no dot on the row afterwards), filled
+         * on Unread (a dot). The same mark the list row uses for unread, so "there is a dot"
+         * says one thing everywhere.
+         *
+         * NEITHER LABEL FOLDS. These carry no `.abar-read-lab`, deliberately: the compact floor
+         * drops one word, and dropping these two would leave a pair of bare dots, which say
+         * nothing about direction. "Read" and "Unread" are already the shortest labels on the
+         * row — it is the COUNT's word that folds here (`bar-density.ts`).
+         */}
+        <span className="abar-g abar-seg" role="group" aria-label={t("groupRead")}>
+          <button type="button" className="abar-b" onClick={onMarkSeen}>
+            <span className="abar-dot abar-dot-off" aria-hidden="true" />
+            {t("actionRead")}
+            <Key chord="shift+u" />
           </button>
-        </div>
+          <button type="button" className="abar-b" onClick={() => onRun("unread")}>
+            <span className="abar-dot" aria-hidden="true" />
+            {t("pickedMarkUnseen")}
+            <Key chord="u" />
+          </button>
+        </span>
+
+        <button
+          ref={measure ? undefined : moreRef}
+          type="button"
+          className="abar-b abar-solo abar-more"
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          aria-label={t("actionMore")}
+          title={t("actionMore")}
+          onClick={() => setMenuOpen((open) => !open)}
+        >
+          <Icon name="chev" size={12} className="abar-chev" />
+        </button>
+      </div>
+    </>
+  );
+
+  /* `.msg-actions` IS THE CONTAINER THE MEASUREMENT RESOLVES AGAINST, and wearing it is the
+     whole of how this bar became the message pill: every rule in `action-bar.css` that dresses
+     a pill, folds a group or compacts the floor is written `.msg-actions …`, and none of them
+     needed a second selector for this mount. */
+  return (
+    <div className="msg-actions">
+      <div className="abar" data-admit={density.admit ?? undefined}>
+        <div className="abar-row">{rowGroups(false)}</div>
+        {density.armed ? (
+          <div className="abar-row abar-measure" ref={density.measureRef}>
+            {rowGroups(true)}
+          </div>
+        ) : null}
+        {menuOpen ? (
+          <MoreMenu
+            items={menuItems}
+            ariaLabel={t("actionMore")}
+            anchor={moreRef.current}
+            onClose={closeMenu}
+          />
+        ) : null}
       </div>
     </div>
   );

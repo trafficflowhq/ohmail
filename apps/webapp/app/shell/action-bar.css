@@ -64,20 +64,27 @@
  * left of the measure), and so the primary verb sits where the text it answers begins. Dropping the
  * centring is the half of the first report that stands, and it is kept.
  *
- * `margin-left: auto` on the read group STAYS, and is not dead: the selection bar (`.pick-bar >
- * .abar`, `flex: 1 1 100%`) and the reply-editor stand-down (`.msg:has(.reply) .msg-actions >
- * .abar`, `width: 100%`) are both full-width rows where it still does the separating.
+ * `margin-left: auto` on the read group STAYS, and is not dead: the reply-editor stand-down
+ * (`.msg:has(.reply) .msg-actions > .abar`, `width: 100%`) and every mount that keeps the bare
+ * `.abar`'s own `width: 100%` — the Screener's strip, and the wrapped Resurface/Move panel below
+ * — are full-width rows where it still does the separating. The selection strip that used to be
+ * named beside them (`.pick-bar > .abar`, `flex: 1 1 100%`) is retired: a selection's verbs wear
+ * this pill now and hug like it.
  *
  * `.msg-actions` stays the container named `abar` and the pill stays `container-type: normal`:
- * nothing queries the pill itself, and the selection bar's own rungs bind to `.abar` in THAT
- * surface (`.pick-bar`, below), where the bar is its own container. `.abar` keeps
+ * nothing queries the pill itself. (It used to add "and the selection bar's own rungs bind to
+ * `.abar` in THAT surface (`.pick-bar`, below)" — there are no such rungs any more; the selection
+ * wears this pill and folds by measurement like every other mount of it.) `.abar` keeps
  * `position: relative`, so `.mmenu` anchors to the pill's right edge — which with a pill that
  * hugs is the More button's own right edge, the end of the row, where the button that opens it
  * stands.
  *
- * Held by `scripts/fit-render.mjs` ("the pill hugs its verbs"), at every width in the sweep, in
- * both locales and on both faces: no empty run between two visible controls is wider than the
- * row's own gap, and the pill's border box is its row's content plus its padding. */
+ * Held by `scripts/fit-render.mjs`, at every width in the sweep, in both locales and on both
+ * faces: no empty run between two visible controls is wider than the row's own gap, and the
+ * pill's border box is its row's content plus its padding. TWO subjects now, not one — "the pill
+ * hugs its verbs" over the message's mount, and the selection's pill at the foot of the list
+ * (`markSelectionPill`), which the sweep could not look at while those verbs lived in a strip of
+ * their own. */
 .msg-actions {
   container: abar / inline-size;
 }
@@ -127,41 +134,48 @@
   border-radius:calc(var(--r-overlay) * 22 / 20);
 }
 
-/* ── THE SAME BAR OVER A SELECTION ─────────────────────────────────────────────────── 
+/* ── THE SAME BAR OVER A SELECTION — AND IT IS LITERALLY THE SAME BAR ──────────────────
  *
- * `.pick-bar` (app.css, not ours to edit) is `display:flex;flex-wrap:wrap` with a count
- * before the bar and Clear after it. Giving the bar its own full-width line is the same
- * move `.msg-actions > .abar` makes above and for the same reason: the selection bar's own
- * two rungs at the foot of this file are a CONTAINER query, so the bar must be the thing
- * that owns the width, not one flex item competing with two labels for it.
+ * What stood here described the retired selection strip: an accent-soft wash in the list
+ * HEAD, with a count before the bar, a Clear after it, and four overrides narrowing that
+ * strip's bare `button`/`span` rules back off a bar with fifteen controls. It is gone. A
+ * selection's verbs are `.msg-actions > .abar` in the list column's FOOT — the same element,
+ * the same float, the same `--lift-3`, the same grouping, the same folding, the same menu —
+ * so every rule above and below applies to it with no selector of its own and no branch.
  *
- * The three overrides below are `.pick-bar`'s own button and span rules reaching into the
- * bar — it styles `button` and `span` bare, which is correct for the two controls it was
- * written for and wrong for a bar with fifteen. Narrowed rather than reversed: the accent
- * treatment on Clear and on the count is untouched.
+ * Three shapes for one job was the defect: the Screener's capsule strip, the message's pill
+ * and that wash. There are two now, and the second acts on a whole pile, not on a selection.
  *
- * ── AND THIS PATH IS DELIBERATELY UNTOUCHED BY THE PILL ABOVE ──────────────────────────
- *
- * State of play, because it is easy to read the block above as global: a selection bar's
- * `.abar` is still `width:100%`, still `container-type:inline-size`, and still the container
- * its OWN density queries resolve against — `@container abar` binds to the nearest ancestor
- * container named `abar`, which for a bar inside `.pick-bar` is the bar itself. The pill
- * treatment lives entirely under `.msg-actions >`. That is right rather than an oversight:
- * `.pick-bar` is already a strip of its own with a count and a Clear beside the verbs, and a
- * capsule floating inside a strip would be a second surface over the first. */
-.pick-bar > .abar {
-  flex: 1 1 100%;
-  min-width: 0;
+ * WHAT THE SELECTION PILL ADDS is one control the message pill has no use for — the count,
+ * which is also the way out of the selection. It stands in the leading slot where Reply
+ * stands, wearing the picked ROWS' own colour so the capsule and the rows it speaks for are
+ * plainly the same object: accent-soft on accent-ink, 600. No new token enters the system;
+ * both are the pair `.view-ohbox .row.picked` already uses. */
+/* `.abar-b.abar-count` AND NOT `.abar-count`, deliberately: the capsule also wears
+   `.abar-solo`, whose `background: var(--panel)` is declared LOWER in this file at the same
+   specificity — so a single-class rule here loses the cascade and the capsule renders white
+   at rest and white on hover, which is the one thing it must not do. Two classes puts it
+   above both, wherever either block moves to. */
+.abar-b.abar-count {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-weight: 600;
+  gap: 6px;
 }
-.pick-bar .abar-b {
-  padding: 6px 8px;
-  font-weight: 550;
-  color: var(--ink);
+/* It is a BUTTON, so it answers a hover — and it answers it the way every other capsule in
+   this row does, by LIFTING rather than by changing colour: `.abar-solo:hover` would repaint
+   it `--panel` and the one accent object in the row would go white under the pointer. Same
+   lift, same 1px hop, its own colour kept. No scheme branch and no filter: both faces get
+   this from the tokens, which is what the one-UI census is for. */
+.abar-b.abar-count:hover {
+  background: var(--accent-soft);
+  box-shadow: var(--lift-2);
+  transform: translateY(-1px);
 }
-.pick-bar .abar-b.primary { color: var(--on-accent); }
-.pick-bar .abar-lab {
-  font-weight: 550;
-  color: var(--ink3);
+.abar-count kbd {
+  border-color: var(--accent-ink);
+  color: var(--accent-ink);
+  opacity: .6;
 }
 
 .abar {
@@ -519,8 +533,10 @@
  * present and the compact floor fits; (3) the pill's box equals its container's content box —
  * it fills the row it is given; (4) `data-admit` never names a group absent from the row.
  *
- * THE SELECTION BAR IS UNTOUCHED: `.pick-bar` keeps its own two rungs below — its verbs are a
- * different label set, its geometry has no pill, and its rows were not part of the report. */
+ * AND THE SELECTION BAR IS ONE OF THESE BARS NOW: the retired selection strip had two
+ * container rungs of its own below, in one reference font and in English only. A selection's
+ * verbs wear this pill in the list column's foot, so they are measured by the same hook and
+ * admitted by the same rules — one mechanism, and the same four claims hold over it. */
 
 /* THE FLOOR: every group hidden in the row until admitted. The menu twins are `.mm-item`
    (display:flex) by default, so an unadmitted group is behind More with no further rule. */
@@ -545,6 +561,14 @@
 }
 .abar-measure .abar-g { display: flex !important; }
 .abar-measure .abar-read-lab { display: inline !important; }
+/* AND THE COUNT CAPSULE'S WORD, for exactly the reason above — this one was measured the hard
+   way. The compact rule is written `.abar-row .abar-count .abar-count-word`, and the measure
+   row IS an `.abar-row`, so folding the word hid it in the COPY as well: the next measurement
+   read a base 69px narrower (331 against 356 of room), decided compact was unnecessary, put the
+   word back, overflowed again, and folded again. The pill oscillated, and `fit-render` caught it
+   mid-cycle as a German row 33px past its box at 1440 and 90px past it on ohmarchy at 390.
+   A fold must never zero the width that decides the fold. */
+.abar-measure .abar-count-word { display: inline !important; }
 
 /* ADMISSION — one pair per group: the row half on, the menu half off. Nothing else in this
    file touches these two selectors. */
@@ -563,18 +587,40 @@
    to the button's name. */
 .msg-actions .abar[data-admit~="compact"] .abar-row .abar-read .abar-read-lab { display: none; }
 
-/* ── THE SELECTION BAR KEEPS ITS OWN GEOMETRY AND ITS OWN NUMBERS ───────────────────────
- * 456 and 601 are the selection row's measured widths (Reply 68.2 + defer 221.7 + read/More
- * 153.3 + gaps; + file 139.5) with no pill padding, because `.pick-bar > .abar` carries none
- * and is its own query container. A selection's verbs are `BulkAction`, a different label set
- * from a message's, so these two rungs stay exactly as they were. */
-@container abar (min-width: 456px) {
-  .pick-bar .abar-defer { display: flex; }
-  .abar-panel .abar-p-defer { display: none; }
+/* ── THE COMPACT FLOOR'S SECOND WORD ────────────────────────────────────────────────────
+ * The selection pill's floor carries the count capsule's word beside the read switch's, and
+ * the floor gives up the widest ONE of them (`bar-density.ts`). The capsule keeps its × and
+ * its number — "× 7 esc" — because the number is the fact the control exists to state, and
+ * the word it drops survives in the button's `aria-label`.
+ *
+ * WHAT USED TO STAND HERE: two `@container abar` rungs, at 456px and 601px, folding the
+ * retired selection strip's Later/Park/Resurface and Screening/Move by container width in one
+ * reference font. They were the last static widths in this file, they were English-only
+ * (their own comment said so), and they are exactly what `bar-density.ts`'s header calls the
+ * mechanism that disagreed with the measurement. The pill measures instead. */
+.msg-actions .abar[data-admit~="compact"] .abar-row .abar-count .abar-count-word {
+  display: none;
 }
-@container abar (min-width: 601px) {
-  .pick-bar .abar-file { display: flex; }
-  .abar-panel .abar-p-file { display: none; }
+
+/* ── NO KEYCAPS WHERE THERE IS NO KEYBOARD ──────────────────────────────────────────────
+   A hint for a key the device does not have is worse than no hint: it costs row width the
+   fold then has to pay for, and it teaches a gesture that cannot be made. `touch-keys.css`
+   already hides the top bar's ⌘K, the reader's hint and the decision capsules' caps; the
+   pills were the gap — `⇧U` and `esc` on the selection, `r` and `⇧f` on a message and on a
+   Reads card, all of them drawn on phones today.
+
+   TWO ARMS, AND THE SECOND ONE IS A MEASUREMENT. `pointer: coarse` is the device question —
+   what the machine HAS — and it is the reason the rule exists. The width arm is a room
+   question, and `fit-render` is what put it here: a 390px-wide DESKTOP window is a fine
+   pointer, so the caps draw, and the German selection row then runs 9px past its box on paper
+   and 15px on ohmarchy with the compact floor already spent. A keycap is "for the second read,
+   never the first" (the block above), so on a row that cannot hold its verbs the hint is the
+   thing that gives — before a verb, and before anything is pushed out of sight.
+
+   The measure row lives in the same media state as the visible row, so the admission follows
+   the width the caps' absence frees rather than fighting it. */
+@media (pointer: coarse), (max-width: 640px) {
+  .abar kbd { display: none; }
 }
 
 /* ── THE 44px TOUCH TARGET ON PHONES ────────────────────────────────────────────────────────

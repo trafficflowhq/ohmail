@@ -52,6 +52,20 @@
 .list-hints{padding:10px 30px 14px;font-size:calc(11px + var(--type-up));color:var(--ink3);display:flex;gap:12px;align-items:center;flex:none;
   flex-wrap:nowrap;overflow:hidden;white-space:nowrap}
 .list-hints > *{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+/* THE FOOT — the hints strip's place, holding verbs instead of a teaching line.
+   `flex:none` for the strip's reason: the scroller above owns every spare pixel, and a foot
+   that could grow would take rows away from it as its contents wrapped.
+   12px of bottom padding, which is the reading column's pill's own resting offset — so on a
+   split view the list's pill and the message's pill sit on one line.
+   NOT sticky and NOT positioned: see `ListPane`'s `foot` for the toast-band measurement that
+   settled it. `overflow` is deliberately absent — the pill inside folds its own contents
+   (`bar-density.ts`) and must be free to open a menu upward out of this box. */
+.list-foot{flex:none;padding:6px 16px 12px}
+/* The home indicator's strip, on the one surface that sits against the bottom of the glass.
+   `env()` is 0 in every browser window and on the desktop, so nothing moves there. */
+@media (max-width:640px){
+  .list-foot{padding-bottom:calc(12px + env(safe-area-inset-bottom, 0px))}
+}
 .tail-row{padding:14px 30px 20px;font-size:calc(12px + var(--type-up));color:var(--ink3)}
 /* empty state */
 .empty{padding:52px 20px;text-align:center;color:var(--ink2);font-size:calc(13px + var(--type-up))}

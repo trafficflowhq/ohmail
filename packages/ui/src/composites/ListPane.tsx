@@ -14,6 +14,20 @@ export interface ListPaneProps {
   children: ReactNode;
   /** Keyboard hints strip pinned under the scroller. */
   hints?: ReactNode;
+  /**
+   * THE FOOT OF THE COLUMN — verbs that act on what is IN the list, under the scroller.
+   *
+   * It TAKES THE HINTS STRIP'S PLACE rather than standing beside it, and that is the slot's
+   * whole contract: both are one line under the scroller, and stacking them would push the
+   * rows up twice and put a teaching line under a control that is the thing being taught.
+   * A pane with nothing in `foot` is the pane it always was, to the pixel.
+   *
+   * IN FLOW, NEVER STICKY, and the reason is measured rather than aesthetic: a bar stuck
+   * inside the scroller lands in the toast's band (`.toast` sits 72px up), so a toast raised
+   * BY the bar's own verb covers the bar. Below the scroller there is no such overlap. A
+   * caller that wants a floating capsule here mounts one — the slot is a box, not a look.
+   */
+  foot?: ReactNode;
   /** Centered standalone column (Tag view). */
   solo?: boolean;
   /**
@@ -52,6 +66,7 @@ export function ListPane({
   header,
   children,
   hints,
+  foot,
   solo,
   onSeen,
   scrollerRef,
@@ -82,7 +97,13 @@ export function ListPane({
       <div className="scroller" ref={ref}>
         {children}
       </div>
-      {hints ? <div className="list-hints">{hints}</div> : null}
+      {/* The foot outranks the hints strip — see `foot`. One line under the scroller, and it
+          is this one when a caller has given it. */}
+      {foot ? (
+        <div className="list-foot">{foot}</div>
+      ) : hints ? (
+        <div className="list-hints">{hints}</div>
+      ) : null}
     </div>
   );
 }

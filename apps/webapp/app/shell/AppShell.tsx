@@ -4897,9 +4897,40 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * and says ONE sentence at the end. A per-message toast over a selection of forty is not
    * feedback, it is a denial of service on your own screen.
    */
+  /**
+   * THE SELECTION'S VERBS — and whether the selection SURVIVES the press.
+   *
+   * It returns a boolean now, and the boolean is the refusal. Every verb here used to end the
+   * selection unconditionally, because every verb here used to happen; a reader's Move does
+   * not, and a set cleared by a press that did nothing leaves the person to rebuild it before
+   * they can try the verb that would have worked. `true` ⇒ dispatched, clear the pick;
+   * `false` ⇒ refused at the press, keep it. The Ohbox reads exactly that.
+   *
+   * ── A READER IS REFUSED HERE, BEFORE THE WIRE, AND ONCE ─────────────────────────────────
+   *
+   * `move:*` used to dispatch one `move` per message with no role check at all: the rows left
+   * the list, the server refused each of them, and they came back — a rollback per message,
+   * after the fact, for a decision the client could have answered instantly. The rule already
+   * existed one module over (`readerMoveRefusal`, which `screener-state.ts#refuseMove` and the
+   * delete window both ask), so this asks it too: ONE toast, nothing dispatched, the pick kept.
+   *
+   * WHICH VERBS. Filing verbs only — `move:*` here, `screen` in `onBulkScreen`, `delete`
+   * through the window's own `refusal`. Read, Unread, Tag and the three horizons are NOT folder
+   * moves and are not refused: a reader "reads, searches, marks read and sends"
+   * (`screener.moveBarWhy`), and refusing those would withhold presses that work.
+   */
   const onBulkAction = useCallback(
-    (action: BulkAction, ids: string[]) => {
-      if (ids.length === 0) return;
+    (action: BulkAction, ids: string[]): boolean => {
+      if (ids.length === 0) return false;
+      if (action === "delete") {
+        /* ONE WINDOW, ONE TOAST, ONE UNDO FOR THE SET — `delete-undo.ts` keyed by press. The
+           reader refusal is the window's own (`refusal`, resolved at the press), so this arm
+           does not repeat it: two spellings of one verdict is the drift that helper exists to
+           end. The ASK — the confirm strip for `d` and the menu item, nothing for ⌫/⌦ — has
+           already happened in the view; the window is still the only dispatch site. */
+        deleting.remove(ids);
+        return true;
+      }
       if (action === "read" || action === "unread") {
         // The batch mutation, unchanged: one request, one transaction, one intent.
         markSeen(ids, action === "unread");
@@ -4908,7 +4939,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
             count: ids.length,
           }),
         );
-        return;
+        return true;
       }
       if (action === "later" || action === "aside" || action === "resurface") {
         const state = action === "later" ? "reply_later" : action === "aside" ? "set_aside" : "bubbled_up";
@@ -4929,7 +4960,16 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
                 count: ids.length,
               }),
         );
-        return;
+        return true;
+      }
+      // A READER MOVES NOTHING, and hears so before anything leaves. See the header.
+      const refused = readerMoveRefusal(roleRef.current, {
+        named: (name) => t("screener.readerMoveRefused", { name }),
+        unknown: () => t("screener.readerMoveRefusedUnknown"),
+      });
+      if (refused !== null) {
+        toast(refused);
+        return false;
       }
       // `move:<view>` — the destination travels with the action, exactly as it does for one
       // message. A message already in the destination is not re-moved: the count in
@@ -4944,8 +4984,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
         moved++;
       }
       toast(t("ohbox.toastBulkMoved", { count: moved, place: PLACE_LABEL[view] ?? view }));
+      return true;
     },
-    [engine, reader, markSeen, toast, t, now],
+    [engine, reader, markSeen, toast, t, now, deleting],
   );
 
   /**
@@ -5001,12 +5042,25 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
   );
 
   const onBulkScreen = useCallback(
-    (ids: string[], dest: ScreeningDest) => {
+    (ids: string[], dest: ScreeningDest): boolean => {
+      /* SCREENING A SET IS FILING IT, so it answers a reader the way every other filing verb
+         does — at the press, once, with nothing dispatched and the selection kept. The
+         sentence is `readerMoveRefusal`'s, the same one the Move arm, the delete window and
+         the Screener's own bar use. The confirm row is BEHIND this: a reader never reaches a
+         ceremony whose commit cannot happen. */
+      const refused = readerMoveRefusal(roleRef.current, {
+        named: (name) => t("screener.readerMoveRefused", { name }),
+        unknown: () => t("screener.readerMoveRefusedUnknown"),
+      });
+      if (refused !== null) {
+        toast(refused);
+        return false;
+      }
       const plan = planBulkScreening(ids, dest);
       const place = PLACE_LABEL[dest] ?? dest;
       if (plan.mutations.length === 0) {
         toast(t("screening.toastBulkNothing", { place }));
-        return;
+        return true;
       }
       for (const m of plan.mutations) void engine.mutate(m);
       // Two sentences because there are two outcomes, and the second one is permanent. The
@@ -5026,6 +5080,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
               count: plan.messages,
             }),
       );
+      return true;
     },
     [engine, planBulkScreening, toast, t],
   );

@@ -39,14 +39,26 @@
  *  · IN THE ROW OR BEHIND MORE, NEVER BOTH. The `data-admit` CSS (foot of `action-bar.css`)
  *    switches each group's row form and its `mm-*` menu row in the same rule pair — the only
  *    rules that touch either half.
- *  · THE FLOOR YIELDS ITS WORDS ONCE. When even the floor does not fit, the read switch's label
- *    is dropped (`compact` in `data-admit`) and the floor is re-measured without it; the dot
- *    and the keycap stay, and the verb moves to the button's name. Nothing below the compact
- *    floor can fold — the measurement reports that state rather than hiding a control.
+ *  · THE FLOOR YIELDS ITS WORDS ONCE. When even the floor does not fit, ONE label in the floor
+ *    is dropped (`compact` in `data-admit`) and the floor is re-measured without it; the glyph
+ *    and the keycap beside it stay, and the verb moves to the button's name. Nothing below the
+ *    compact floor can fold — the measurement reports that state rather than hiding a control.
  *
- * The SELECTION bar (`.pick-bar`) is deliberately untouched: its verbs are a different label
- * set with its own geometry and its own two container rungs, and this hook arms only under
- * `.msg-actions`.
+ * ── THE SELECTION BAR IS THIS BAR NOW ───────────────────────────────────────────────────────
+ *
+ * This used to end "the SELECTION bar (`.pick-bar`) is deliberately untouched: its verbs are a
+ * different label set with its own geometry and its own two container rungs". That strip is
+ * retired. A selection's verbs wear the message pill — the same element under the same
+ * `.msg-actions`, in the list column's foot — so they fold through this hook, with the same
+ * `data-admit` tokens and the same CSS. Nothing here branches on which of the two is mounted,
+ * and that is the point: two folding mechanisms for one row is how the two came apart before.
+ *
+ * The one generalisation the second mount needed is in the compact floor. A message's floor
+ * gives up the READ SWITCH's words; a selection's floor gives up the COUNT capsule's word
+ * ("× 7 selected" → "× 7"). Both are `abar-*-lab`-shaped spans inside a base button, so the
+ * floor drops THE WIDEST ONE PRESENT rather than a named one. Widest and not both: the floor
+ * yields its words once, and a row that still overflows after one concession is a column that
+ * is too narrow — which the measurement reports rather than papers over.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -60,8 +72,18 @@ export const FALLBACK_GAP_PX = 6;
 /** The density groups, in ROW ORDER — which is the admission order and the fold order. */
 export const BAR_GROUP_ORDER = ["rall", "fwd", "defer", "tag", "file"] as const;
 export type BarGroup = (typeof BAR_GROUP_ORDER)[number];
-/** The `data-admit` token for the floor's one concession — the read switch without its words. */
+/** The `data-admit` token for the floor's one concession — a base button without its words. */
 export const COMPACT = "compact";
+
+/**
+ * THE WORDS THE FLOOR MAY GIVE UP, each as the label span and the button that closes a gap
+ * when it goes. Exported so the stylesheet pin and the two bars' tests read one list rather
+ * than three copies of it; the ORDER is immaterial, because the widest is taken, not the first.
+ */
+export const COMPACT_LABELS: ReadonlyArray<{ label: string; button: string }> = [
+  { label: ".abar-read .abar-read-lab", button: ".abar-read" },
+  { label: ".abar-count .abar-count-word", button: ".abar-count" },
+];
 
 export interface MeasuredGroup {
   name: BarGroup;
@@ -135,7 +157,7 @@ export function useBarDensity(): {
     const row = rowRef.current;
     if (!row) return;
     const container = row.closest(".msg-actions");
-    if (!container) return; // a selection bar or a bare mount: rungs only
+    if (!container) return; // a bare mount with no pill around it: nothing to measure against
     const rect = container.getBoundingClientRect();
     if (rect.width <= 0) return; // not laid out; keep the fallback
     const style = getComputedStyle(container);
@@ -168,19 +190,32 @@ export function useBarDensity(): {
       else groups.push({ name, width: w });
     }
     if (base === 0) return;
-    /* THE COMPACT FLOOR — the read switch's words are the one thing the floor can give up.
-       Measured off the copy's own label span (same font, same size) plus the gap the button
-       closes when the span goes; the button's `gap` is read, not assumed, for the reason the
-       paddings are. */
+    /* THE COMPACT FLOOR — one word out of the floor, and it is the WIDEST of the words the
+       floor is carrying. Measured off the copy's own label span (same font, same size) plus
+       the gap its button closes when the span goes; each button's `gap` is read, not assumed,
+       for the reason the paddings are.
+
+       TWO CANDIDATES, ONE CONCESSION. A message pill carries the read switch's label; a
+       selection pill carries that AND the count capsule's word. Taking the widest saves the
+       most pixels for one lost word, and taking only one keeps "the floor yields its words
+       once" literally true — see the header. A pill with neither (there is no such mount
+       today) simply reports no `compact`, which is the honest answer rather than a token that
+       hides nothing. */
     const tokens: string[] = [];
     let floor = base;
     if (base > avail) {
-      const lab = row.querySelector<HTMLElement>(".abar-read .abar-read-lab");
-      const readBtn = lab?.closest<HTMLElement>(".abar-read") ?? null;
-      const labW = lab ? lab.getBoundingClientRect().width : 0;
-      const inner = readBtn ? parseFloat(getComputedStyle(readBtn).columnGap) || 0 : 0;
-      if (labW > 0) {
-        floor = base - labW - inner;
+      let widest = 0;
+      for (const sel of COMPACT_LABELS) {
+        const lab = row.querySelector<HTMLElement>(sel.label);
+        if (!lab) continue;
+        const btn = lab.closest<HTMLElement>(sel.button);
+        const labW = lab.getBoundingClientRect().width;
+        if (labW <= 0) continue;
+        const inner = btn ? parseFloat(getComputedStyle(btn).columnGap) || 0 : 0;
+        widest = Math.max(widest, labW + inner);
+      }
+      if (widest > 0) {
+        floor = base - widest;
         tokens.push(COMPACT);
       }
     }

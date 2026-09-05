@@ -498,6 +498,43 @@ held it; a claim written by this same deployment moments earlier, which did not 
 holding it; and a request to stop that could still be honoured after you had taken it back with
 "Organize here", clearing the newer press. Where the mailbox cannot be read, or something is still
 holding it, the request stays pending and is tried again rather than reported done.
+### Selecting messages uses the same bar as reading one
+
+Picking several messages in the Ohbox used to raise a strip of its own above the list: its own
+colour, its own shape, its own idea of which verbs fit. It was a third kind of control for verbs
+that already exist elsewhere, it pushed the mail down by up to 142 pixels on a phone, and in
+German its own last button was cut off at the edge of the strip.
+
+A selection now uses the message action bar — the same rounded bar, the same grouping, the same
+More menu — standing at the foot of the list where the reading column's bar stands at the foot of
+a message. On a wide window the two sit on one line. The verbs are the ones a single message
+offers, minus the ones that mean nothing over a set: there is no Reply over eleven messages.
+
+The count is the bar's first button: "× 7 selected", in the same colour as the selected rows, and
+pressing it clears the selection. Where the bar runs out of room it drops that button's word and
+keeps the number, exactly as the message bar drops the read control's words — measured in the font
+your system is really drawing, so it behaves the same in German and on either face.
+
+Selecting is easier to do and easier to undo. Cmd-click (Ctrl-click) picks a single row without
+moving the cursor. Shift with the arrow keys, or Shift-J and Shift-K, extends the selection from
+where it started; extending only ever adds, so walking back over a row never quietly unpicks it.
+Escape clears; clicking elsewhere does not.
+
+While a selection is up, the verb keys act on it — a parks the selection, m moves it, and so on —
+and the shortcut sheet says so in those words. With nothing selected the same keys mean what they
+always did, on the message under the cursor.
+
+Delete works over a selection too, through the same undo window a single delete uses: the whole
+set goes in one press, the toast carries one Undo for all of it, and nothing is sent until the
+toast goes. The menu item and d ask first and state how many; Backspace and Delete go straight to
+the undo window.
+
+On a mailbox another ohmail install is organizing, Move, Screening and Delete are refused when you
+press them rather than after the mail has moved and come back, in the sentence the rest of the app
+uses — and the selection stays, so you do not have to build it again.
+
+Keyboard hints no longer draw on touch screens, or in windows too narrow to hold both the hint and
+the verb it belongs to.
 
 ### Text is a step larger on phones
 

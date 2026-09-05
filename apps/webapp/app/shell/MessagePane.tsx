@@ -136,6 +136,13 @@ export const MOVE_TARGETS: MoveTarget[] = ["ohbox", "reads", "receipts", "screen
  *     one message has a read state to flip; a selection has a MIXED one, and "toggle eleven
  *     messages" would mark six read and five unread in a gesture that reads as one decision.
  *
+ *   · `delete` — the set filed to the provider's native \Trash, one `message_delete` per id,
+ *     through the SAME delayed-commit window a single delete opens (`delete-undo.ts`). It is
+ *     a member of this union and not a separate callback precisely because it IS the same
+ *     verb over more rows: one window, one toast, one Undo for the whole press. The ask —
+ *     the confirm strip, or nothing at all for ⌫/⌦ — belongs to the surface, exactly as it
+ *     does for one message; the only dispatch site stays the window.
+ *
  * Screening is NOT in this union. It is a decision about senders with a consent ceremony of
  * its own (a confirm row stating what will persist), so it travels as its own callback —
  * folding it in here would be the design error the ruling names by name.
@@ -146,6 +153,7 @@ export type BulkAction =
   | "resurface"
   | "read"
   | "unread"
+  | "delete"
   | `move:${MoveTarget}`;
 
 /**
@@ -200,8 +208,13 @@ function useBarPanel(messageId: string): [BarPanel | null, (next: BarPanel | nul
  *
  * This replaces `kbdHint="s"` — one hand-typed hint on one of eight buttons, which read as a
  * stray `s` in the label row.
+ *
+ * EXPORTED because the selection pill is this pill, mounted over a set in the list column's
+ * foot, and its verbs carry their keys under the same law. Importing it is what keeps the two
+ * mounts from growing two notions of a keycap; the phone rule that hides them is one CSS rule
+ * over `.abar kbd`, so it covers both by construction.
  */
-function Key({ chord }: { chord: string }) {
+export function Key({ chord }: { chord: string }) {
   const binding = useBinding(chord);
   const mod = useModGlyph();
   if (!binding) return null;
