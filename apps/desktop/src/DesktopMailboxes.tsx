@@ -572,8 +572,21 @@ export function DesktopMailboxes(
   const [reach, setReach] = useState<Record<string, MailboxReach>>({});
   useEffect(() => {
     let live = true;
+    /* THE SEQUENCE GUARD. Two reads are in flight whenever one takes longer than the interval —
+       an engine mid-reconnect is exactly when it will — and promises settle in whatever order
+       they finish, not the order they started. Without this a slow read that started first can
+       land second and overwrite a newer answer, so the row flips back to "reachable" during an
+       outage (or back to unreachable after it ended) and stays wrong until the next tick. Only a
+       strictly newer response is allowed to write. */
+    let issued = 0;
+    let shown = 0;
     const read = (): void => {
-      void readMailboxReachVia(bridgeFetch).then((r) => { if (live) setReach(r); });
+      const seq = ++issued;
+      void readMailboxReachVia(bridgeFetch).then((r) => {
+        if (!live || seq <= shown) return;
+        shown = seq;
+        setReach(r);
+      });
     };
     read();
     const id = setInterval(read, 15_000);

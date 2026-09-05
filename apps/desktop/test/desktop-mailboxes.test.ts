@@ -83,7 +83,7 @@ vi.mock("../../webapp/app/shell/MailStateProvider", () => ({
 }));
 
 /** What the bridge answered, per request. Set by the cases that press "Sync now". */
-let bridgeReply: () => Response = () => new Response(null, { status: 202 });
+let bridgeReply: () => Response | Promise<Response> = () => new Response(null, { status: 202 });
 /** Every request the pane put down the pipe, in order. */
 let bridged: { url: string; method: string }[] = [];
 
@@ -101,8 +101,17 @@ let bridged: { url: string; method: string }[] = [];
  * below, which asserts the read HAPPENS. Without that, deleting the poll would make every case
  * here go green for a reason none of them is about.
  */
+/**
+ * ...FILTERED BY METHOD AND EXACT PATH, because the URL alone is not the request.
+ *
+ * This filtered on the URL only, which quietly widened the exemption past what it was for: the
+ * pane's standing poll is one specific request — a GET to that path — and a filter that drops
+ * every method drops a POST, a DELETE or a PATCH to the same URL too. An action that emitted one
+ * of those would have been invisible to every exact-count assertion in this file, which is the
+ * one thing they exist to catch.
+ */
 const pressed = (): { url: string; method: string }[] =>
-  bridged.filter((c) => c.url !== "/local/mailboxes/connections");
+  bridged.filter((c) => !(c.method === "GET" && c.url === "/local/mailboxes/connections"));
 
 /** Shell commands the pane sent, in order. Today that is the sign-out and nothing else. */
 let shellCommands: string[] = [];
@@ -374,6 +383,69 @@ describe("the desktop mailbox pane and a mail server it cannot reach", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  /**
+   * AN OLDER ANSWER MUST NOT OVERWRITE A NEWER ONE.
+   *
+   * Two reads are in flight whenever one takes longer than the interval, and an engine mid-
+   * reconnect is exactly when one will. Promises settle in the order they FINISH, not the order
+   * they started, so a slow first read can land second and put a stale answer on screen — the row
+   * flipping back to "reachable" during an outage, and staying wrong until the next tick.
+   */
+  it("ignores a poll response that is older than one already shown", async () => {
+    const reach = (unreachable: boolean): Response => new Response(JSON.stringify({
+      items: [{
+        mailboxId: "mbx-1",
+        reachable: !unreachable,
+        unreachableSince: unreachable ? new Date(Date.now() - 20 * 60_000).toISOString() : null,
+      }],
+    }), { status: 200, headers: { "content-type": "application/json" } });
+
+    /* EVERY READ PARKS, and the test releases them OUT OF ORDER — which is the only thing that
+       has to be true for this defect to happen in the field. */
+    const parked: Array<(r: Response) => void> = [];
+    bridgeReply = () => new Promise<Response>((resolve) => { parked.push(resolve); });
+
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const el = await render("local");
+      expect(parked, "the mount read did not happen").toHaveLength(1);
+      await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+      expect(parked, "the interval never issued a second read").toHaveLength(2);
+
+      // THE NEWER ONE LANDS FIRST and says the server is unreachable…
+      await act(async () => { parked[1]!(reach(true)); });
+      expect(el.textContent ?? "").toContain("Can't reach the mail server");
+
+      // …and the OLDER one lands after it, saying everything is fine. It must be ignored.
+      await act(async () => { parked[0]!(reach(false)); });
+      expect(
+        el.textContent ?? "",
+        "a response that started earlier overwrote a newer one — the row lies until the next tick",
+      ).toContain("Can't reach the mail server");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /**
+   * THE FILTER EXEMPTS THE POLL, NOT THE URL.
+   *
+   * `pressed()` drops the pane's standing read so the exact-count assertions elsewhere stay
+   * exact. It filtered on the URL alone, which is wider than the thing being exempted: the poll
+   * is one specific request, a GET, and an action that sent a POST or a DELETE to the same path
+   * would have been invisible to every assertion in this file.
+   */
+  it("does not hide a NON-GET request to the connections path", () => {
+    bridged = [
+      { url: "/local/mailboxes/connections", method: "GET" },
+      { url: "/local/mailboxes/connections", method: "POST" },
+    ];
+    expect(
+      pressed(),
+      "a write to the poll's URL was filtered away with the poll",
+    ).toEqual([{ url: "/local/mailboxes/connections", method: "POST" }]);
   });
 
   /**

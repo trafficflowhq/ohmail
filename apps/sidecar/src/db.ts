@@ -548,29 +548,40 @@ function processStartTicks(pid: number): number | null {
 }
 
 /**
- * HOW FAR TWO READINGS OF THIS MACHINE'S BOOT INSTANT MAY DIFFER AND STILL BE THE SAME BOOT.
- *
- * `os.uptime()` is integer seconds and `Date.now()` moves with every clock adjustment — an NTP
- * step, a timezone-less RTC correction after a suspend, a VM resuming. Ten minutes is far wider
- * than any of those and far narrower than the thing being detected, which is a machine that went
- * down and came back. The direction of the error is what matters: too WIDE means a genuine reboot
- * occasionally goes unnoticed and the lock behaves exactly as it does today, while too NARROW
- * means a clock step takes a lock away from a live engine.
- */
-const SAME_BOOT_TOLERANCE_MS = 10 * 60_000;
-
-/**
  * Does `rec` describe THE PROCESS that is currently running as `rec.pid`?
  *
  * Answers `true` whenever it cannot tell, which is the whole design: `false` takes a lock away
  * from a running engine, so it is returned only on evidence.
  */
 function lockStillOurs(rec: LockRecord, nowBoot: { bootId?: string; bootAtMs: number }): boolean {
-  // A DIFFERENT BOOT: whatever holds this pid now, it is not the process that wrote this file.
-  if (rec.bootId !== undefined && nowBoot.bootId !== undefined) {
-    if (rec.bootId !== nowBoot.bootId) return false;
-  } else if (rec.bootAtMs !== undefined) {
-    if (Math.abs(rec.bootAtMs - nowBoot.bootAtMs) > SAME_BOOT_TOLERANCE_MS) return false;
+  /* ── A DIFFERENT BOOT ID IS EVIDENCE. A DIFFERENT WALL CLOCK IS NOT. ──────────────────────
+   *
+   * `bootId` is a fresh UUID per boot, read from the kernel: if it differs, the machine has
+   * rebooted and whatever holds this pid now is not the process that wrote the file. That is a
+   * fact, and acting on it is safe.
+   *
+   * `bootAtMs` is `Date.now() - os.uptime()`, and this function used to release the lock when it
+   * had moved by more than ten minutes. That was WRONG, and it was wrong in the one direction
+   * that corrupts: the value moves with every clock adjustment — an NTP step after a long
+   * suspend, a machine whose RTC battery is dead, a VM resuming, a user correcting the date — and
+   * on a host with no `/proc` (macOS, Windows) that arithmetic was the ONLY test being applied.
+   * A clock correction while an engine was live therefore let the next launch unlink a live
+   * lock and open a second PGlite instance on the same directory, which is exactly the
+   * corruption the lock exists to prevent.
+   *
+   * The comment above this function already stated the rule — "answers true whenever it cannot
+   * tell" — and this branch was the one place that broke it. A clock that moved is not a machine
+   * that rebooted. With only `bootAtMs` to go on, the answer is I CANNOT TELL, and the launcher
+   * refuses rather than unlinks.
+   *
+   * The cost is stated rather than hidden: on a host without `/proc`, a genuine reboot that
+   * hands the old pid to an unrelated live process still leaves a lock that must be removed by
+   * hand. That is the pre-existing behaviour, it is the safe direction, and `DataDirLockedError`
+   * already tells the person which file to delete. `bootAtMs` is kept in the record because it
+   * is a useful thing to read when diagnosing one — it is simply not evidence to act on.
+   */
+  if (rec.bootId !== undefined && nowBoot.bootId !== undefined && rec.bootId !== nowBoot.bootId) {
+    return false;
   }
   // SAME BOOT (or we could not tell): the pid can still have been recycled within it.
   if (rec.startTicks === undefined) return true;

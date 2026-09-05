@@ -103,8 +103,17 @@ vi.mock("../src/bridge-fetch.js", () => ({
  * The read itself is asserted in `desktop-mailboxes.test.ts`, so this exemption cannot hide its
  * removal.
  */
+/**
+ * ...FILTERED BY METHOD AND EXACT PATH, because the URL alone is not the request.
+ *
+ * This filtered on the URL only, which quietly widened the exemption past what it was for: the
+ * pane's standing poll is one specific request — a GET to that path — and a filter that drops
+ * every method drops a POST, a DELETE or a PATCH to the same URL too. An action that emitted one
+ * of those would have been invisible to every exact-count assertion in this file, which is the
+ * one thing they exist to catch.
+ */
 const pressed = (): { url: string; method: string; body?: string }[] =>
-  bridged.filter((c) => c.url !== "/local/mailboxes/connections");
+  bridged.filter((c) => !(c.method === "GET" && c.url === "/local/mailboxes/connections"));
 
 interface Host {
   __TAURI_INTERNALS__?: {

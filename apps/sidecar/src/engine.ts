@@ -861,6 +861,33 @@ export const DEFAULT_POLL_INTERVAL_MS = 15_000;
 const ONE_SHOT_DIAL: AdapterDialContext = { onConnectionError: () => { /* see above */ } };
 
 /**
+ * THE DRAIN WAS GATED ON A CONNECTION THAT NO LONGER EXISTS — a coded refusal, not a fault.
+ *
+ * The organizer lease is read ONCE per drain, on ONE connection. If that connection is replaced
+ * mid-drain — the socket died and a re-dial opened another — every later step of that drain would
+ * be running against a connection whose lease it never read. On a mailbox that changed hands
+ * during the outage that is two organizers writing, which is the invariant this whole door rests
+ * on.
+ *
+ * So the drain carries the GENERATION it gated under and refuses the moment that stops being the
+ * current one. It is not an error in the mailbox, the credential or the server: nothing is wrong
+ * except that this pass is stale, and the very next drain re-reads the lease on the new connection
+ * and continues normally. It carries a `code` so a caller can tell it apart from a real fault
+ * without matching on a message.
+ */
+export class ConnectionReplacedError extends Error {
+  readonly code = "ECONNGEN";
+  constructor(readonly gatedGeneration: number, readonly currentGeneration: number) {
+    super(
+      `this pass read the organizer lease on connection generation ${gatedGeneration}, and the ` +
+      `mailbox is now on generation ${currentGeneration}; it is abandoned rather than continued ` +
+      "on a connection it never gated",
+    );
+    this.name = "ConnectionReplacedError";
+  }
+}
+
+/**
  * HOW LONG THE ORGANIZER LEASE MAY GO ON BEING UNREADABLE BEFORE THE CONNECTION IS CALLED DEAD.
  *
  * `LeaseUnavailableError` is exempt from every failure counter BY CLASS, and that exemption is
@@ -892,6 +919,56 @@ export const LOCAL_CONNECTION_DEAD_AFTER_MS = 120_000;
  * where the same shape would be a re-attach storm across every account on a shard.
  */
 export const LOCAL_CONNECTION_DEAD_AFTER_CYCLES = 8;
+
+/**
+ * DID THIS FAILURE COME FROM THE CONNECTION, OR FROM THE WORK?
+ *
+ * The bound counts CONNECTION-class failures and nothing else, and getting that set right is what
+ * makes it work for both roles instead of one.
+ *
+ * ── WHY `LeaseUnavailableError` ALONE WAS WRONG ───────────────────────────────────────────
+ *
+ * An ORGANIZER's drain reads `ohmail/_meta` before anything else, so a dead socket surfaces as
+ * `LeaseUnavailableError` and the old test for that class caught it. A READER's does not: its
+ * gate takes the append-less peek, which never throws by design ("I could not look" and "nobody
+ * holds it" must not be reachable from one another), and the failure then arrives from the drain
+ * itself as an ordinary adapter error. So a reader whose socket died silently advanced NEITHER
+ * arm of the bound — its mirror froze until the process was restarted, with the pane still
+ * reporting the mailbox reachable. That is the same wedge this lane exists to close, on the role
+ * nobody tested.
+ *
+ * ── AND WHY IT IS STILL NOT "ANY FAILURE" ─────────────────────────────────────────────────
+ *
+ * A store fault, a classifier fault or an ordinary defect says nothing about the socket, and
+ * counting it would re-dial a healthy connection every time an unrelated pass threw — churning
+ * logins on a provider that caps them, on the strength of a bug somewhere else entirely.
+ *
+ * {@link ConnectionReplacedError} is excluded for a sharper reason than tidiness: it is OUR OWN
+ * refusal, raised because a re-dial has already happened. Counting it would let one re-dial arm
+ * the bound toward the next one.
+ *
+ * The `cause` chain is walked because both wrappers carry the driver's error underneath — the
+ * lease wraps it deliberately (`{ cause: err }`) so the class survives.
+ */
+export function isConnectionFailure(err: unknown): boolean {
+  if (err instanceof ConnectionReplacedError) return false;
+  for (let e: unknown = err, hops = 0; e !== null && e !== undefined && hops < 8; hops++) {
+    if (e instanceof LeaseUnavailableError || e instanceof ImapConnectionClosedError) return true;
+    const code = (e as { code?: unknown }).code;
+    /* imapflow's own vocabulary for a socket that is gone, plus the adapter's `EIMAPCLOSED` and
+       the node-level resets. Matched as a closed set of literals rather than by message text:
+       a server's own words must never be able to steer this. */
+    if (typeof code === "string" && CONNECTION_ERROR_CODES.has(code)) return true;
+    e = (e as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
+/** The closed set {@link isConnectionFailure} matches. Literals only — never a message. */
+const CONNECTION_ERROR_CODES = new Set([
+  "NoConnection", "EIMAPCLOSED", "ECONNRESET", "ECONNREFUSED", "EPIPE",
+  "ETIMEDOUT", "ETIMEOUT", "ESOCKET", "EHOSTUNREACH", "ENETUNREACH", "ENOTFOUND",
+]);
 
 /**
  * THE BUDGET FOR THE HISTORICAL-NAME REPAIR, per drain. See `backfillStoredNames` below.
@@ -2434,6 +2511,22 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       // does not reset the clock the person is watching.
       let connectionDeadSince: Date | null = null;
       /**
+       * WHEN THIS MAILBOX FIRST STOPPED BEING SERVED — the clock a PERSON is shown.
+       *
+       * Split from {@link connectionDeadSince} deliberately, and the difference is the whole of
+       * what a re-dial may and may not claim. "The socket is open again" is a fact about the
+       * SOCKET; "this mailbox is being organized again" is a fact about the LEASE, and a re-dial
+       * whose gate could not read `ohmail/_meta` has established the first and not the second.
+       * Folding them into one field made a re-dial that reached a live server and an unreadable
+       * lease clear the outage, log `mailbox_reconnected`, and report the mailbox healthy while
+       * nothing was being filed — and it threw away the true age of the outage on the way.
+       *
+       * So the socket field drives the RE-DIAL (clearing it is what stops a re-dial per poll over
+       * a server that is answering) and this one drives the SETTINGS ROW and only ever clears when
+       * a cycle has actually been served.
+       */
+      let outageSince: Date | null = null;
+      /**
        * WHICH OBSERVATION MARKED IT DEAD. Two producers, and they are worth telling apart in a
        * log because only one of them is fast: the adapter's own `close`/`error` event (seconds),
        * and the duration bound over failing cycles (the arm that works for a connection whose
@@ -2442,16 +2535,50 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       let connectionDeadBy: "event" | "bound" | null = null;
 
       /**
+       * WHICH CONNECTION THIS MAILBOX IS ON — a counter, bumped by every dial.
+       *
+       * The identity a pass needs is not "the adapter object" (a binding can be swapped under an
+       * `await`) and not "is it open" (it can be open and be the WRONG one). It is WHICH dial,
+       * and that is what this counts. Two things are keyed on it:
+       *
+       *  · a death report names the generation it came from, so a late `error` from a connection
+       *    that has already been replaced cannot mark its healthy replacement dead;
+       *  · a drain names the generation it read the lease under, and refuses to keep running if
+       *    that stops being current — see {@link ConnectionReplacedError}.
+       */
+      let generation = 0;
+
+      /**
+       * REFUSE TO CONTINUE A PASS WHOSE CONNECTION HAS BEEN REPLACED.
+       *
+       * Called before every step that WRITES to the mailbox on the strength of a lease read:
+       * `ensureFolders`, the cycles that move mail, and the scheduled-send pass. Reading is not
+       * gated by it — a mirror growing over a fresh connection harms nobody.
+       */
+      const assertSameConnection = (gen: number): void => {
+        if (gen !== generation) throw new ConnectionReplacedError(gen, generation);
+      };
+
+      /**
        * BUILD ONE DIAL. Called once at attach and again for every re-dial, because an
        * `ImapAdapter` that has been closed is not the thing to re-open — the worker's re-attach
        * builds a fresh one for the same reason, and a fresh instance is the only shape in which
        * "the factory was called a second time" is observable from outside.
+       *
+       * The callback closes over BOTH the generation and the adapter INSTANCE it belongs to. The
+       * instance is what gets closed (never the mutable binding, which a re-dial may already have
+       * moved on) and the generation is what decides whether this death is still news.
        */
       const dialAdapter = (): MailboxAdapter => {
-        const ctx: AdapterDialContext = { onConnectionError: (err) => noteConnectionDead(err) };
-        return config.adapterFactory
+        const gen = ++generation;
+        let self: MailboxAdapter | null = null;
+        const ctx: AdapterDialContext = {
+          onConnectionError: (err) => noteConnectionDead(err, gen, self),
+        };
+        self = config.adapterFactory
           ? config.adapterFactory(imapConfig, ctx)
           : new ImapAdapter(imapConfig, { onConnectionError: ctx.onConnectionError });
+        return self;
       };
 
       /**
@@ -2471,13 +2598,33 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * running over the adapter it is about to replace; the poll tick owns the re-dial, on the
        * serial queue, where a drain cannot be halfway through a batch.
        */
-      const noteConnectionDead = (err: unknown): void => {
+      const noteConnectionDead = (err: unknown, gen: number, who: MailboxAdapter | null): void => {
         if (stopped) return;
+        /* ── A DEATH FROM A CONNECTION WE HAVE ALREADY REPLACED IS NOT NEWS ──────────────────
+         *
+         * The real adapter's `error` listener is UNCONDITIONAL — only its `close` listener is
+         * guarded by `closing`/`established` (`imap.ts`, `guardAsyncErrors`) — so a connection we
+         * deliberately closed during a re-dial can still emit `error` afterwards, from a socket
+         * whose replacement is already up and gated. Without this check that late report marks
+         * the HEALTHY connection dead, and the next drain re-dials a connection that never
+         * failed. Keyed on the generation rather than on `who === adapter`, because the binding
+         * is exactly the thing that moves. */
+        if (gen !== generation) {
+          log("mailbox_connection_stale_report", {
+            err, mailboxId: mb.id,
+            detectedBy: "event",
+            reason: "a connection this install has already replaced reported its own death; the " +
+              "live connection is a later one and is untouched. Nothing is wrong — a socket we " +
+              "closed on purpose is entitled to say so afterwards",
+          });
+          return;
+        }
         const ended = err instanceof ImapConnectionClosedError;
         if (connectionDeadSince === null) {
           connectionDeadSince = now();
           connectionDeadBy = "event";
         }
+        outageSince ??= connectionDeadSince;
         log("mailbox_connection_unavailable", {
           err, mailboxId: mb.id,
           detectedBy: "event",
@@ -2491,9 +2638,16 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         // CLOSED ON THE QUEUE, never inline: a cycle may be mid-batch over this very adapter, and
         // closing it under one is how a drain re-reads mail it already had. `detach()` and the
         // re-dial take the same queue, so whichever runs first, the other sees a settled state.
-        void serialize(async () => {
-          try { await adapter.close(); } catch { /* the connection is already broken */ }
-        }).catch(() => { /* `serialize` never rejects for the caller's sake; belt and braces */ });
+        /* THE INSTANCE, NEVER THE BINDING. This used to read `await adapter.close()`, which is
+           late-bound: by the time the queue reached it a re-dial could have installed a new
+           adapter, and the close then retired the healthy replacement. Closing the object that
+           reported its own death is correct whatever has happened since. */
+        const dying = who;
+        if (dying !== null) {
+          void serialize(async () => {
+            try { await dying.close(); } catch { /* the connection is already broken */ }
+          }).catch(() => { /* `serialize` never rejects for the caller's sake; belt and braces */ });
+        }
       };
 
       /**
@@ -2517,12 +2671,21 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * completed re-dial clears that one.
        */
       const noteCycleServed = (): void => {
+        /* A STOPPED DRAIN NEITHER COUNTS NOR CLEARS. `drainPass` returns 0 at `stopped` without
+           touching the socket, so treating that as "the connection served a cycle" let a
+           `detach()` racing a sync erase a death the bound had correctly concluded. Nothing about
+           a runtime that has been told to stop is evidence about its connection. */
+        if (stopped) return;
         leaseUnavailableSince = null;
         leaseUnavailableCycles = 0;
         if (connectionDeadBy === "bound") {
           connectionDeadSince = null;
           connectionDeadBy = null;
         }
+        /* THE PERSON'S CLOCK CLEARS HERE AND NOWHERE ELSE — a cycle was actually served. A
+           re-dial that reached a live server does not clear it (the socket is not the mailbox);
+           see {@link outageSince}. */
+        outageSince = null;
       };
 
       /**
@@ -2536,7 +2699,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * defect.
        */
       const noteCycleFailed = (err: unknown): void => {
-        if (!(err instanceof LeaseUnavailableError)) return;
+        if (stopped) return;                       // see `noteCycleServed`
+        if (!isConnectionFailure(err)) return;
         leaseUnavailableSince ??= Date.now();
         leaseUnavailableCycles += 1;
         const unavailableMs = Date.now() - leaseUnavailableSince;
@@ -2545,13 +2709,17 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         if (!due || connectionDeadSince !== null) return;
         connectionDeadSince = now();
         connectionDeadBy = "bound";
+        outageSince ??= connectionDeadSince;
         log("mailbox_connection_unavailable", {
           err, mailboxId: mb.id,
           detectedBy: "bound",
           // WHICH lease operation failed, from the error and not from this call site — `op` is a
           // compile-time literal off a closed union, so it costs nothing and turns "the lease
           // could not be read" from one sentence into the four different faults it covers.
-          op: err.op,
+          // Only a lease failure has one; a reader's plain adapter error reaches here too now,
+          // and answers `null` — the census refuses a spread, and rightly: a detail object whose
+          // KEYS depend on a value is a line whose shape cannot be read off the call site.
+          op: err instanceof LeaseUnavailableError ? err.op : null,
           reason: "the organizer lease has been unreadable for every cycle past the bound, and " +
             "no connection event said so — so the connection is treated as dead on the evidence " +
             "of the cycles themselves; the next drain re-dials and re-reads the lease before it " +
@@ -3776,7 +3944,15 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * by a READER as well as by an organizer; `organizer.organizing` is what separates them, both
        * for the passes below and for the `role` every cycle runs under.
        */
-      const drain = async (maxCycles: number): Promise<number> => {
+      /**
+       * @param gen  the connection generation the caller read the organizer lease under. Every
+       *   step below that WRITES to the mailbox re-checks it, and the drain abandons itself with
+       *   {@link ConnectionReplacedError} rather than continuing over a connection it never gated.
+       * @param conn the adapter instance that generation belongs to. Passed as a VALUE and spread
+       *   over `syncDeps` for each cycle, so that even inside one cycle a re-dial cannot move the
+       *   mail: the pipeline writes to the connection whose lease this pass read, or it fails.
+       */
+      const drain = async (maxCycles: number, gen: number, conn: MailboxAdapter): Promise<number> => {
         // ── THE MARKER-SURFACING PREFLIGHT, AT THE TOP OF THE ONE DRAIN BOTH DOORS SHARE ──────
         //
         // Routing no longer depends on this — `importDecisionOpenNow` below evaluates the question
@@ -3794,6 +3970,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         // never arms the hold (`engine.ts`, `index.ts` — both skip `armHoldFromFolder` for a
         // reader)"* — and while the whole drain was gated that was true by accident. It is true on
         // purpose now.
+        /* THE CONNECTION CHECK SITS ABOVE THE ROLE CHECK, on its own line, and both of those
+           facts matter. Above, because a pass whose connection has been replaced is stale
+           whatever role it holds — a reader cycling over a dead socket is the wedge too. On its
+           own line, because `reader-drain.test.ts` reads THIS FILE and requires the role gate to
+           be literally `if (organizer.organizing) await …`: a source census cannot see through a
+           brace, and folding the two together would silently retire a guard that exists to keep
+           an organizer-only mailbox write off a reader's drain. */
+        assertSameConnection(gen);
         if (organizer.organizing) await profileSync.armHoldFromFolder();
         // BEFORE the cycles, not after: a resurface is a local database fact and does not depend on
         // the mailbox being reachable, so it must survive a cycle that throws on a dead connection.
@@ -3817,6 +4001,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         // a reader launch, and an ungated pass here would claim and SEND it, from an install the
         // mailbox's organizer knows nothing about, at a time nobody re-chose. The gate makes the
         // close's failure cost a delay rather than a delivery.
+        assertSameConnection(gen);
         if (organizer.organizing) await sendScheduled();
         // The away responder, directly after the appointment clock and gated the same way. AFTER
         // the cycles would be wrong for the reason the placement note above gives about
@@ -3853,6 +4038,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         // cycle as 0 ms.
         const cycleMs: number[] = [];
         while (!stopped && cycles < maxCycles) {
+          /* THE REFUSAL, AT EVERY CYCLE EDGE. A drain runs for up to a hundred cycles and each
+             one moves mail, so the question "is this still the connection I gated?" has to be
+             asked repeatedly rather than once at the top. Between two edges the pipeline writes
+             to `conn` — the instance, spread below — so a swap cannot redirect a cycle that is
+             already running either. */
+          assertSameConnection(gen);
           const cycleStart = Date.now();
           // ── THE MODEL IS RESOLVED ONCE PER CYCLE AND NEVER HELD ───────────────────────────
           //
@@ -3873,7 +4064,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // backlog alone declared itself quiet with a move still pending, and a caller trusting
           // `syncUntilQuiet()` then stopped with the delete unfinished until the next poll.
           const { hasBacklog, owesFiling } = await runSyncCycle({
-            ...syncDeps, ...screening, classifier: ai.classifierForCycle(),
+            ...syncDeps,
+            /* THE GATED CONNECTION, spread over `syncDeps`'s live getter on purpose. The getter is
+               what lets a re-dialled mailbox use its new connection; this is what stops a drain
+               that is ALREADY RUNNING from being handed one. Both are needed and they are not in
+               tension: the getter serves the next pass, this serves the current one. */
+            adapter: conn,
+            ...screening, classifier: ai.classifierForCycle(),
             // Mail 0083. THE ROLE THE GATE ANSWERED FOR THIS DRAIN, spread after `syncDeps` so it
             // wins: a demoted install keeps draining, and every cycle it runs from here is a READER
             // cycle — the mirror grows, `\Seen` is pushed, and nothing is moved, filed or created.
@@ -4025,6 +4222,15 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // over a dead connection and throw `LeaseUnavailableError` out of a public method whose
           // honest answer is "this install organizes nothing". `stop()` reaches the same state.
           if (stopped) return 0;
+          /* ── WHICH CONNECTION THIS PASS IS ABOUT, CAPTURED BEFORE THE GATE READS IT ─────────
+           *
+           * The lease is read once per drain, on one connection, and everything after it is done
+           * on the strength of that read. Both facts are therefore captured here, together, and
+           * carried through the whole pass: the GENERATION so each mailbox write can re-check
+           * that it is still current, and the INSTANCE so the cycles write to the connection the
+           * gate actually asked, rather than to whatever the binding holds by then. */
+          const gen = generation;
+          const conn = adapter;
           /* -- THE GATE ANSWERS A ROLE. IT USED TO ANSWER ADMISSION, AND THAT WAS THE BUG ------
            *
            * This line was `if (!(await mayOrganize())) return 0;`, which made a stood-down install
@@ -4079,7 +4285,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            */
           if (organizing && !foldersEnsured) {
             try {
-              await adapter.ensureFolders();
+              /* THE MAILBOX WRITE THIS WHOLE ORDERING PROTECTS — creating somebody else's
+                 `ohmail/*` tree. Refused outright if the connection has moved since the gate. */
+              assertSameConnection(gen);
+              await conn.ensureFolders();
               foldersEnsured = true;
             } catch (err) {
               log("ensure_folders_failed", {
@@ -4150,7 +4359,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           let cycleError: unknown = null;
           let cycles = 0;
           try {
-            cycles = await drain(maxCycles);
+            cycles = await drain(maxCycles, gen, conn);
           } catch (err) {
             cycleError = err;
           }
@@ -4349,8 +4558,19 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * in `schedule()`. Leaving the call in here would give a re-dialled mailbox TWO timers —
        * two overlapping drains, and an append to `ohmail/_meta` per timer per interval.
        */
-      const dialAndGate = async (): Promise<void> => {
+      const dialAndGate = async (): Promise<{ leaseRead: boolean }> => {
         await adapter.connect();
+        /* AFTER `connect()`, because that is the call that establishes the connection this pass
+           is about. Captured once and carried, exactly as `drainPass` does. */
+        /* STOPPED WHILE WE DIALLED. `connect()` is the longest await in this sequence and
+           `detach()` can complete inside it, so the gate below — which APPENDS a claim to the
+           user's mailbox — must not be reached by a runtime that has been told it is finished. */
+        if (stopped) {
+          await adapter.close().catch(() => { /* already going away */ });
+          return { leaseRead: false };
+        }
+        const gen = generation;
+        const conn = adapter;
         // ── EVERYTHING BELOW RUNS ON AN AUTHENTICATED SOCKET, SO IT IS WRAPPED ──────────────
         //
         // `connect()` LOGS IN and then LISTs, and `apps/sidecar/src/main.ts` answers a rejected
@@ -4423,7 +4643,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             };
             // NO `schedule()` HERE — the CALLER arms the timer. That is what lets a re-dial
             // run this identical sequence without arming a second one for the same mailbox.
-            return;
+            //
+            // `leaseRead: false` — THE SOCKET IS UP AND THE MAILBOX IS NOT BEING ORGANIZED, and
+            // the caller must be able to tell those apart. A re-dial that reported success here
+            // cleared the outage, logged `mailbox_reconnected` and told the person their mailbox
+            // was healthy while nothing was being filed.
+            return { leaseRead: false };
           }
           /* -- `!permitted` IS "NOT THE ORGANIZER", NOT "STOP" — THE LAUNCH HALF  --
            *
@@ -4451,7 +4676,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             // THE MAILBOX WAS REMOVED — the only `false` that still means "do nothing".
             // `mayOrganize` has already cleared the timer and closed the login on that arm; there
             // is no mirror to grow and nothing to schedule.
-            return;
+            //
+            // `leaseRead: true` — the lease WAS read; it said this mailbox is gone. That is an
+            // answer, not an outage, and a caller must not treat it as one.
+            return { leaseRead: true };
           }
           // Before the first cycle of an ORGANIZER, always: the pipeline routes into `ohmail/*`
           // and a move to a folder the server does not have fails. The hosted sync worker does the
@@ -4490,8 +4718,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               log("special_folder_discovery_failed", { err });
             }
           }
-          await serialize(() => drain(100));
+          await serialize(() => drain(100, gen, conn));
           // (the poll timer is armed by the caller — see the header)
+          return { leaseRead: true };
         } catch (err) {
           // The ORIGINAL error, rethrown — `main.ts` decides what a failed launch means, and it
           // must not be told the connection failed to close when what failed was the drain.
@@ -4536,6 +4765,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * time the app tried again would report a two-hour outage as fifteen seconds old.
        */
       let redialling = false;
+      /**
+       * THE IN-FLIGHT RE-DIAL, for `detach()` to wait on — and for nothing else to wait behind.
+       *
+       * Resolved whenever no re-dial is running, so awaiting it is free in the ordinary case.
+       */
+      let redialInFlight: Promise<void> = Promise.resolve();
       const redialIfDead = async (): Promise<void> => {
         if (stopped || connectionDeadSince === null || redialling) return;
         /* THE SAME PRECONDITION `start()` KEEPS, and for the same reason: an empty password is a
@@ -4543,35 +4778,95 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            some providers. A mailbox with no usable credential is not unreachable, it is waiting
            for a person, and dialling it repeatedly would turn that into a locked account. */
         if (login.state !== "ready" || !login.pass) return;
+        /* ── THE RE-DIAL JOINS `tail`, SO `detach()` WAITS FOR IT ────────────────────────────
+         *
+         * It cannot QUEUE behind `tail` — `dialAndGate` takes the queue twice and a queued
+         * re-dial would wait for itself, which is the deadlock this lane already met once. But
+         * `detach()` awaits `tail` and then closes the adapter, so a re-dial outside it could
+         * resume AFTERWARDS: install a fresh connection, renew the organizer claim and create
+         * folders for a mailbox that has just been removed, or leave an authenticated login with
+         * no handle anywhere that can close it.
+         *
+         * AND IT IS NOT PUT INTO `tail`. That was the first attempt and it deadlocks for the
+         * reason the paragraph above names, one step further out: `serialize` CHAINS onto `tail`,
+         * so folding the re-dial into it makes every later queued step wait for the re-dial —
+         * including `dialAndGate`'s own gate, which the re-dial is waiting for. Measured: the
+         * first connection came up, drained and served; the re-dial connected and then hung for
+         * ever on its own gate. Two different failures reached from the same wrong instinct, that
+         * one promise chain can express both "run in order" and "wait for this".
+         *
+         * So the wait gets its OWN handle. `detach()` awaits the queue AND this, and this chains
+         * onto nothing — a re-dial can therefore be waited FOR without being waited BEHIND. */
         redialling = true;
-        const deadSince = connectionDeadSince;
+        let settle: () => void = () => {};
+        redialInFlight = new Promise<void>((resolve) => { settle = resolve; });
+        const deadSince = outageSince ?? connectionDeadSince;
         const detectedBy = connectionDeadBy;
         try {
-          try { await adapter.close(); } catch { /* the connection is already broken */ }
+          const old = adapter;
+          try { await old.close(); } catch { /* the connection is already broken */ }
+          /* RE-CHECKED AFTER EVERY AWAIT, not once at the top. `detach()` can complete inside any
+             of these suspensions — a mailbox removal, a password re-attach, the engine shutting
+             down — and each check below is a point at which this stops rather than installing a
+             connection for a runtime that has been told it is finished. */
+          if (stopped) return;
           adapter = dialAdapter();
-          await dialAndGate();
+          const outcome = await dialAndGate();
+          if (stopped) {
+            /* Removed while we dialled. The connection we just opened has no owner, and leaving
+               it would be the leak `start()`'s own catch exists to prevent — on a provider that
+               caps concurrent logins, in somebody else's mail app. */
+            await adapter.close().catch(() => { /* already going away */ });
+            return;
+          }
+          /* ── THE SOCKET IS UP. THAT IS NOT THE SAME AS THE MAILBOX BEING SERVED ────────────
+           *
+           * `connectionDeadSince` clears either way, and it has to: it is what makes the next
+           * poll re-dial, and re-dialling every fifteen seconds over a server that is answering
+           * would churn logins on a provider that counts them.
+           *
+           * `outageSince` clears only when a cycle is actually SERVED, which is
+           * `noteCycleServed`'s job and not this one. So a re-dial that reached a live server and
+           * an unreadable `ohmail/_meta` leaves the Settings row saying "unreachable since" the
+           * ORIGINAL instant — the outage is not over, and neither the person's clock nor the
+           * word "reconnected" may pretend it is. */
           connectionDeadSince = null;
           connectionDeadBy = null;
-          leaseUnavailableSince = null;
-          leaseUnavailableCycles = 0;
-          log("mailbox_reconnected", {
+          if (outcome.leaseRead) {
+            leaseUnavailableSince = null;
+            leaseUnavailableCycles = 0;
+            log("mailbox_reconnected", {
+              mailboxId: mb.id,
+              detectedBy: detectedBy ?? "bound",
+              totalMs: deadSince ? Date.now() - deadSince.getTime() : 0,
+              reason: "the mail server connection was re-opened and the organizer lease was read " +
+                "again BEFORE anything was moved, so a claim that arrived during the outage is " +
+                "honoured on the first cycle back rather than a cycle later",
+            });
+            return;
+          }
+          /* THE STREAK IS DELIBERATELY NOT CLEARED. The lease is still unreadable, so the cycles
+             that follow are a CONTINUATION of the same outage rather than the start of a new
+             one — clearing it would buy the wedge another full bound before anybody looked
+             again. */
+          log("mailbox_reconnect_lease_unavailable", {
             mailboxId: mb.id,
-            detectedBy: detectedBy ?? "bound",
-            totalMs: Date.now() - deadSince.getTime(),
-            reason: "the mail server connection was re-opened and the organizer lease was read " +
-              "again BEFORE anything was moved, so a claim that arrived during the outage is " +
-              "honoured on the first cycle back rather than a cycle later",
+            totalMs: deadSince ? Date.now() - deadSince.getTime() : 0,
+            reason: "the connection was re-opened and the organizer lease still could not be " +
+              "read, so this install organizes nothing yet and the mailbox is still reported " +
+              "unreachable. The socket is not the mailbox",
           });
         } catch (err) {
           log("mailbox_reconnect_failed", {
             err, mailboxId: mb.id,
-            totalMs: Date.now() - deadSince.getTime(),
+            totalMs: deadSince ? Date.now() - deadSince.getTime() : 0,
             reason: "the connection could not be re-opened; this install organizes nothing and " +
               "serves the mirror it already has, and the next poll tries again. The clock the " +
               "settings row reports is unchanged — it measures the outage, not the attempts",
           });
         } finally {
           redialling = false;
+          settle();
         }
       };
 
@@ -4607,7 +4902,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            observed a death that no re-dial has undone" — not a probe, and deliberately not one:
            asking the socket here would put an IMAP round trip on a settings render. */
         get connection() {
-          return { reachable: connectionDeadSince === null, unreachableSince: connectionDeadSince };
+          /* `outageSince` AND NOT `connectionDeadSince` — see the field. The socket one clears the
+             moment a dial succeeds, which is what stops a re-dial per poll; this one clears only
+             when a cycle has actually been served. The row must follow the mailbox, not the
+             socket, or a re-dial onto a live server with an unreadable lease reports a mailbox
+             that is being organized when nothing is being filed. */
+          return { reachable: outageSince === null, unreachableSince: outageSince };
         },
         serialize,
         syncUntilQuiet,
@@ -4623,7 +4923,31 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // away. Deliberately BEFORE `connect()`: an empty password is a login attempt the
           // server will refuse, and a refused login on some providers counts toward a lockout.
           if (login.state !== "ready" || !login.pass) return;
-          await dialAndGate();
+          try {
+            await dialAndGate();
+          } catch (err) {
+            /* ── A LAUNCH THAT COULD NOT DIAL IS AN OUTAGE, NOT A DEAD MAILBOX ───────────────
+             *
+             * `connect()` can reject without the adapter ever emitting anything: a refused TCP
+             * connection, a TLS failure, a server that never answers the greeting. Nothing had
+             * observed a connection to lose, so no detector fired — and `start()` threw before
+             * arming the poll, so there was no timer either. The result was a mailbox reported
+             * REACHABLE for ever with no path that could ever heal it, which is the same
+             * failure-looks-healthy shape this lane exists to close, reached from the one
+             * direction nothing was watching.
+             *
+             * So the death is recorded and the timer IS armed. `main.ts` still learns the launch
+             * failed — the error is rethrown — but the mailbox now has a poll that will re-dial
+             * it, and Settings says it is unreachable until one succeeds.
+             *
+             * `null` for the adapter, because `dialAndGate`'s own catch has ALREADY closed it —
+             * that is the whole of what `connection-release.e2e.test.ts` holds, and queueing a
+             * second close here made a failed launch close its login twice. Recording the death
+             * and releasing the socket are two jobs; this call site only needs the first. */
+            noteConnectionDead(err, generation, null);
+            schedule();
+            throw err;
+          }
           // ARMED HERE and not inside the sequence above. `schedule()` returns at `stopped`,
           // which is the mailbox-was-removed arm's exit and the one path that must not poll.
           schedule();
@@ -4648,6 +4972,18 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             await tail;
           } catch {
             /* already logged at source */
+          }
+          /* AND THE RE-DIAL, WHICH IS NOT IN THE QUEUE — see {@link redialInFlight}. Without this
+             a re-dial suspended in `connect()` resumes AFTER the teardown has closed the adapter
+             and dropped the runtime, and then installs a fresh authenticated connection for a
+             mailbox that no longer exists: an organizer claim renewed after the removal route
+             released it, folders created in somebody's mailbox on the way out, and a login with
+             no handle anywhere that can close it. `stopped` is already true here, so the re-dial's
+             own re-checks turn this wait into an early exit rather than a full second dial. */
+          try {
+            await redialInFlight;
+          } catch {
+            /* the re-dial reports its own failures */
           }
           try {
             await adapter.close();
