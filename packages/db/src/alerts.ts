@@ -3663,6 +3663,22 @@ export interface HeartbeatInput {
    * only route by which `ai_provider_down` can see that mail is being filed rules-only.
    */
   aiCircuitOpenSince: Date | null;
+  /**
+   * When the beating process last saw the AI provider ANSWER, or null/absent if it never has.
+   *
+   * THE FIELD THAT MAKES `aiCircuitOpenSince: null` READABLE. That null is two states in one
+   * value — the provider is fine, or this process has not asked it yet — and a worker that has
+   * just replaced another during an outage is always in the second. Without this, the writer had
+   * to guess, and the guess it made (trusting a null from the instance the row already named)
+   * merely postponed the damage by one beat: the takeover write installs the new instance id, so
+   * the very next beat looked like the same process reporting recovery and cleared an outage
+   * nobody had observed to end.
+   *
+   * OPTIONAL, AND ABSENT MEANS NO EVIDENCE — the safe direction. A caller that knows nothing
+   * about the provider (the reconcile beat) leaves an inherited outage standing rather than
+   * resolving it on silence.
+   */
+  aiProviderOkAt?: Date | null;
   lastCycleAt: Date | null;
   startedAt: Date;
 }
@@ -3748,18 +3764,24 @@ export async function writeHeartbeat(db: Tx, input: HeartbeatInput, now: Date = 
         // continuous outage, which is the failure `degraded_since` was added to fix, arriving
         // through the column beside it.
         //
-        // Three cases, and the third is the one that matters. Both stamps present: keep the
-        // EARLIER, so a handover mid-outage keeps the outage's true age. Only the incoming one:
-        // take it. Incoming NULL: a closed circuit is proof of recovery only from the process
-        // that reported it open — from a REPLACEMENT it is the absence of evidence, so the row's
-        // stamp stands until the instance that owns it says otherwise.
+        // Both stamps present: keep the EARLIER, so a handover mid-outage keeps the outage's
+        // true age. Only the incoming one: take it. Incoming NULL: clear ONLY on evidence that
+        // this process has had an answer from the provider — `aiProviderOkAt`, stamped by the
+        // breaker's own close, which is the single event meaning the provider responded.
+        //
+        // THE FIRST VERSION OF THIS CLEARED ON A NULL FROM THE INSTANCE THE ROW ALREADY NAMED,
+        // and that was wrong in a way worth keeping on the record, because it looked exactly
+        // right: the takeover beat preserved the stamp, and then INSTALLED the new instance id,
+        // so the next beat from that same new process satisfied the condition and cleared an
+        // outage nobody had observed to end. It postponed the defect by one beat. A guess about
+        // WHO is beating cannot answer a question about WHAT the provider did.
         aiCircuitOpenSince: sql`case
           when ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz is not null
            and ${workerHeartbeats.aiCircuitOpenSince} is not null
             then least(${workerHeartbeats.aiCircuitOpenSince}, ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz)
           when ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz is not null
             then ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz
-          when ${workerHeartbeats.instanceId} = ${input.instanceId} then null
+          when ${input.aiProviderOkAt ? input.aiProviderOkAt.toISOString() : null}::timestamptz is not null then null
           else ${workerHeartbeats.aiCircuitOpenSince} end`,
         lastCycleAt: input.lastCycleAt,
         startedAt: input.startedAt,
@@ -3827,15 +3849,17 @@ export async function refreshHeartbeat(
         when ${input.degraded} is not true then null
         when ${workerHeartbeats.degradedSince} is null then ${now.toISOString()}::timestamptz
         else ${workerHeartbeats.degradedSince} end`,
-      // The refresh is pinned to ONE instance by its `where`, so a null here is that process
-      // reporting its own circuit closed — real recovery, and it clears. What it must still not
-      // do is move the stamp FORWARD: the rule measures from the first trip of the run, so a
-      // later trip within the same run keeps the earlier stamp.
+      // The same four cases as the claiming write, and it has to be here too: a leader draining
+      // one long first sync refreshes for minutes without reaching that path. Being pinned to one
+      // instance is NOT enough to read a null as recovery — the instance a takeover installed is
+      // pinned too, and it may never have called the provider. Only `aiProviderOkAt` clears.
       aiCircuitOpenSince: sql`case
-        when ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz is null then null
-        when ${workerHeartbeats.aiCircuitOpenSince} is null
-          then ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz
-        else least(${workerHeartbeats.aiCircuitOpenSince}, ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz) end`,
+        when ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz is not null
+         and ${workerHeartbeats.aiCircuitOpenSince} is not null
+          then least(${workerHeartbeats.aiCircuitOpenSince}, ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz)
+        when ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz is not null then ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz
+        when ${input.aiProviderOkAt ? input.aiProviderOkAt.toISOString() : null}::timestamptz is not null then null
+        else ${workerHeartbeats.aiCircuitOpenSince} end`,
       lastCycleAt: input.lastCycleAt,
       beatAt: now,
     })

@@ -92,6 +92,19 @@ export interface ClassifierCircuitState {
    * being filed rules-only.
    */
   firstOpenedAt: Date | null;
+  /**
+   * When this process last saw the provider ANSWER, or `null` if it never has.
+   *
+   * `firstOpenedAt` being null is two different states wearing one value: the provider is fine,
+   * or this process has not asked it yet. A worker that has just replaced another cannot tell
+   * them apart, and the database it beats into could not either — so a deploy in the middle of an
+   * outage read as a recovery and restarted the clock on the alert for it.
+   *
+   * This is the missing half: set by {@link close}, which is called on every success and is the
+   * one event meaning the provider responded. A replacement worker publishes `null` here until
+   * its first successful call, and the heartbeat writer keeps the inherited outage until then.
+   */
+  lastSuccessAt: Date | null;
   /** The cooldown the NEXT trip will use. */
   cooldownMs: number;
 }
@@ -143,6 +156,7 @@ export function makeClassifierCircuit(
   let opens = 0;
   let retryAt: number | null = null;
   let firstOpenedAt: Date | null = null;
+  let lastSuccessAt: Date | null = null;
   let cooldownMs = baseCooldown;
   /** mailboxId → the attempt this process charged and has not seen delivered or refunded. */
   const openCharges = new Map<string, OpenCharge>();
@@ -184,8 +198,11 @@ export function makeClassifierCircuit(
     }
     consecutiveFaults = 0;
     retryAt = null;
-    // The provider answered — the run of trips is over and the next open starts a new age.
+    // The provider answered — the run of trips is over and the next open starts a new age. The
+    // stamp below records that this process has had an answer AT ALL, which is what tells a
+    // reader that its closed circuit is health rather than inexperience.
     firstOpenedAt = null;
+    lastSuccessAt = new Date();
     cooldownMs = baseCooldown;
   }
 
@@ -333,7 +350,7 @@ export function makeClassifierCircuit(
     state(): ClassifierCircuitState {
       return {
         open: retryAt !== null && now() < retryAt,
-        consecutiveFaults, opens, retryAt, cooldownMs, firstOpenedAt,
+        consecutiveFaults, opens, retryAt, cooldownMs, firstOpenedAt, lastSuccessAt,
       };
     },
   };

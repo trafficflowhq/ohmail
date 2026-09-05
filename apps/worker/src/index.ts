@@ -5538,6 +5538,7 @@ export async function startWorkerWithLock(
     function counters(): {
       mailboxes: number; expected: number; accounts: number; quarantined: number;
       degraded: boolean; lastCycleAt: Date | null; aiCircuitOpenSince: Date | null;
+      aiProviderOkAt: Date | null;
     } {
       const connected = runtimes.size;
       return {
@@ -5571,6 +5572,11 @@ export async function startWorkerWithLock(
         // opens whose latest is always minutes old. `firstOpenedAt` is cleared by the first
         // success, so a closed circuit publishes null and the rule stops firing on its own.
         aiCircuitOpenSince: classifierCircuit?.state().firstOpenedAt ?? null,
+        // The other half of the sentence above. A closed circuit means "no outage" only if this
+        // process has actually had an answer; before its first success it means "no attempt", and
+        // a worker replacing another mid-outage is in exactly that state. Publishing it lets the
+        // row keep an inherited outage instead of reading a new process's silence as recovery.
+        aiProviderOkAt: classifierCircuit?.state().lastSuccessAt ?? null,
       };
     }
 

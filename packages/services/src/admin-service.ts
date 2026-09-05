@@ -27,6 +27,7 @@ import {
   SCOPED_ALERT_KINDS,
   alertDriverStatuses,
   platformSignalWindow,
+  SIGNAL_BUCKET_MS,
   listFailedBillingEvents,
   listStuckSends,
   DEFAULT_ALERT_THRESHOLDS,
@@ -1897,7 +1898,18 @@ export async function adminPlatformSignals(
     // board, which reads as a healthy measurement of a quiet deployment. It is the absence of
     // one. Dropping the row returns the panel to its "not measured" branch, which is the honest
     // rendering and the same one an unconfigured deployment gets.
-    .filter((r) => r.completeBuckets > 0)
+    // AND A PARTIAL WINDOW IS NOT THE FIFTEEN MINUTES THIS PANEL NAMES. The line beside these
+    // figures reads "in the last 15m", and with one poll missed it was the sum of ten. The rule
+    // that pages on the same window refuses it outright — so an operator could read an apparently
+    // measured rate off the board for a project the pager considers unmeasured, and the two
+    // surfaces disagreeing about what is known is worse than either answer alone.
+    //
+    // The same expectation as the rule, computed the same way, so the two cannot drift: every
+    // bucket of the window, complete. Short of that the row is dropped and the panel falls back
+    // to "not measured", which is what it already says before the first poll lands.
+    .filter((r) => r.completeBuckets >= Math.round(
+      DEFAULT_ALERT_THRESHOLDS.api5xxWindowMs / SIGNAL_BUCKET_MS,
+    ))
     .map((r) => ({
     provider: r.provider,
     project: r.project,
