@@ -9,7 +9,7 @@ import {
 import {
   parseRequestEnvelope, isMalformedRequest, formatRequest, formatAck, canonicalRequest,
   requestEnvelopesIn, acksIn, verifyRequestEnvelope, decodeRequestPayload,
-  REQUEST_PROTOCOL, MetaFolderTruncatedError,
+  REQUEST_PROTOCOL, MetaFolderTruncatedError, META_RECORDS_MAX_PER_FETCH,
   type RequestReaderIo, type RequestOrganizerIo, type RawMetaMessage,
   type RequestEnvelope, type RequestRecord, type AckRecord, type OrganizerKind,
   type RequestRefusalReason,
@@ -991,8 +991,46 @@ export async function driveOutstandingRequests(
     (r) => r.decidedAt.getTime() >= now.getTime() - REQUEST_STALE_AFTER_MS,
   );
 
+  /* ── THIS INSTALL MAY NOT ITSELF FILL THE FOLDER IT LATER REFUSES TO READ ─────────────────
+   *
+   * Every queued decision was appended in one pass, with nothing between the queue's length and
+   * the folder's ceiling. A reader that has been deciding while the organizer was offline comes
+   * back with hundreds of rows, and one cycle appends all of them — so the folder crosses the
+   * ceiling by THIS INSTALL'S OWN RECORDS, with no attacker, no foreign writer and nothing
+   * misconfigured.
+   *
+   * What makes that permanent rather than untidy is the order of the recovery: requests are only
+   * removed after a bounded read SUCCEEDS, and the bounded read refuses a folder past the ceiling.
+   * The compactor that clears old acknowledgements runs ahead of the read and is the way out, but
+   * it only ever removes ACKS — it cannot remove the requests, because the pass that settles them
+   * is the one that just refused. Filling the folder this way is therefore a state that does not
+   * heal on its own, which is exactly what the claim set's overflow arm exists to avoid.
+   *
+   * So the appends are bounded by the headroom actually measured on this cycle: `records` is the
+   * folder as it was read a moment ago, and this install writes at most enough to reach the
+   * ceiling and no further. Rows beyond that stay `pending` — the next cycle appends them, after
+   * the sweep has made room — and the shortfall is LOUD rather than inferred from a counter, so
+   * an operator sees a folder under pressure instead of a drain that quietly does less each pass.
+   *
+   * The ceiling is the same constant the read enforces. A bound that guessed a different number
+   * would be a second opinion about when this folder is full. */
+  const headroom = Math.max(0, META_RECORDS_MAX_PER_FETCH - records.length);
+  const appendable = stillQueued.slice(0, headroom);
+  if (appendable.length < stillQueued.length) {
+    log("meta_request_append_deferred", {
+      mailboxId: rt.mailboxId, accountId: rt.accountId,
+      queued: stillQueued.length, appending: appendable.length,
+      records: records.length, ceiling: META_RECORDS_MAX_PER_FETCH,
+      reason: appendable.length === 0
+        ? "ohmail/_meta is at the ceiling, so appending would make it unreadable and nothing here "
+          + "could then clear it; these decisions stay queued until the ack sweep makes room"
+        : "ohmail/_meta is close to the ceiling; the rest of this queue is appended on later "
+          + "cycles so the folder never crosses it by this install's own records",
+    });
+  }
+
   let sentCount = 0;
-  for (const req of stillQueued) {
+  for (const req of appendable) {
     // Only `screener.decide` has an appender today. A row of an unrecognised kind is left
     // `pending` rather than appended malformed — it is THIS install's own insert, so an
     // unrecognised kind here is a build mismatch to investigate, not evidence to act on.
