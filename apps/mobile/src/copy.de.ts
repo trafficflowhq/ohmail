@@ -298,8 +298,15 @@ export const DE: Deck = {
     `${subject}. ${open ? "Zuklappen" : "Ganz lesen"}.`,
   decideAria: (done: string, suggested: boolean) => `${done}${suggested ? ", vorgeschlagen" : ""}`,
   decideReadAria: (done: string) => `${done}, und als gelesen markieren`,
+  /*
+   * "Alle 1 angenommene Nachricht wird gezeigt" is not German — "alle" cannot govern one thing.
+   * The singular gets its own phrasing rather than a branch inside the plural's frame, which is
+   * what a count sentence needs whenever the quantifier itself is number-bearing.
+   */
   ohboxTail: (shown: number) =>
-    `Alle ${shown === 1 ? "1 angenommene Nachricht wird" : `${shown} angenommenen Nachrichten werden`} gezeigt.`,
+    shown === 1
+      ? "Die eine angenommene Nachricht wird gezeigt."
+      : `Alle ${shown} angenommenen Nachrichten werden gezeigt.`,
   ohboxEmptyTitle: "Hier ist noch nichts.",
   ohboxEmptyHint: "Post von Absendern, zu denen du Ja gesagt hast, landet hier, sobald sie synchronisiert wird.",
   /*
@@ -325,9 +332,12 @@ export const DE: Deck = {
   receipts: "Belege",
   waterline: "Bis hierher gesehen",
   readsTail: (shown: number) =>
-    `Alle ${shown === 1 ? "1 Ausgabe wird" : `${shown} Ausgaben werden`} gezeigt. Vorbeiscrollen markiert einen Beitrag als gesehen.`,
+    (shown === 1
+      ? "Die eine Ausgabe wird gezeigt."
+      : `Alle ${shown} Ausgaben werden gezeigt.`)
+    + " Vorbeiscrollen markiert einen Beitrag als gesehen.",
   receiptsTail: (shown: number) =>
-    `Alle ${shown === 1 ? "1 Beleg wird" : `${shown} Belege werden`} gezeigt.`,
+    shown === 1 ? "Der eine Beleg wird gezeigt." : `Alle ${shown} Belege werden gezeigt.`,
   readsEmptyTitle: "Noch keine Ausgaben.",
   readsEmptyHint: "Newsletter und lange Texte, die du hier ablegst, kommen an, sobald sie synchronisiert werden.",
   receiptsEmptyTitle: "Noch keine Belege.",
@@ -627,7 +637,17 @@ export const DE: Deck = {
   toastResurfaceCleared: "Taucht nicht wieder auf",
   toastResurfaceNow: "Wieder ganz oben",
   toastResurfaceDone: "Erledigt — unter „Älter“ abgelegt",
-  toastMoved: (place: string) => `Nach ${place} verschoben.`,
+  /*
+   * CASE-NEUTRAL, and this one diverges from the web client's German ON PURPOSE.
+   *
+   * "Nach Belege verschoben." is wrong — "nach" wants a case the place name cannot carry, and the
+   * places have gender and number ("die Belege", "die Ohbox"). The web catalogue says the same
+   * thing (`ohbox.toastMoved`), and matching it was the argument for leaving this alone. That
+   * argument does not survive review: a matching translation on another surface is evidence of a
+   * SHARED DEFECT, not evidence that the sentence is correct. The colon takes no case, so this
+   * reads for every destination. The web client's twin is filed to be fixed the same way.
+   */
+  toastMoved: (place: string) => `Verschoben: ${place}.`,
 
   replyTo: (name: string) => `Antwort an ${name}`,
   replyToAll: (names: string) => `Antwort an ${names}`,

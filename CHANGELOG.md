@@ -619,17 +619,18 @@ untranslated half of an app usually accumulates.
 
 Two things are not translated yet, and both are named here rather than left to be found.
 
-The Piles screen still describes its three piles in English — the headings are translated, the
-sentence under each is not.
+The Piles screen is still English: both the three pile names and the sentence under each. The
+names are translated everywhere else they appear — the More menu shows them in German — which is
+what made this easy to miss.
 
 And one date format is still English everywhere it appears: the short weekday-and-time label, which
 reads "Fri 09:00" or "12 Sep, 18:00" in both languages. It is used in more places than a single
 screen, so the full list is: the toast confirming when a message will resurface; the "Sends …" line
 on the Scheduled screen; the "as of" note on mail that has not caught up; the three send-later
-presets (so "Heute Abend (Sat 18:00)"); the day and hour rows inside the send-later picker; and the
+presets (so "Heute Abend (Sat 18:00)"); the hour rows inside the send-later picker; and the
 confirmation after a message is scheduled. Every other date on your mail — the row stamps, the day
-headings in Belege, the Screener's stamps, and the day rows in the resurface picker — is in the
-language the app is in.
+headings in Belege, the Screener's stamps, and the day rows in both the send-later and resurface
+pickers — is in the language the app is in.
 
 ## [0.14.0] — 2026-09-03
 
