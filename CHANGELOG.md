@@ -612,10 +612,27 @@ language the app is in, so a message listed under "Thursday" or "2 Aug" in Engli
 the same rule.
 
 Where the phone says the same thing as the web client, it says it in the same words, and the two
-are held to that by a test rather than by care. Two more tests stand behind the translation: one
-that fails if the German deck loses a key, a number or an interpolation the English one has, and
-one that fails if any sentence is added to a screen instead of to the deck — which is how the
-untranslated half of an app usually accumulates.
+are held to that by a test rather than by care.
+
+Two more tests stand behind the translation, and it is worth being exact about what they do and do
+not cover, because "everything is translated" is the kind of claim that quietly stops being true.
+One compares the two decks: it fails if the German one loses a key, drops a number or an
+interpolation, collapses a plural or a two-way choice, or simply repeats the English sentence. The
+other reads the app's own source and fails if a sentence is written into a screen instead of into
+the deck — including text between tags, text returned from a callback, a one-word label, and a
+sentence joined onto a value. It also fails on a translated string read once when a file is first
+loaded, which freezes it in whatever language happened to be active at the time.
+
+What that second test cannot see is a string that reaches the screen through a variable filled in
+somewhere else; for those, the rule that a sentence belongs in the deck is what applies. Text that
+is not the app's own — an error message from the phone or from your server — is shown as it
+arrived, on purpose: a translated paraphrase of it is worse for anyone trying to search for it or
+send it on.
+
+Failures the app raises itself are translated too. They used to travel as English sentences and
+end up inside an otherwise German refusal; they now travel as codes and become words at the moment
+they are shown, so a refusal already on screen follows a language change instead of staying in the
+language it was raised in.
 
 Two things are not translated yet, and both are named here rather than left to be found.
 
