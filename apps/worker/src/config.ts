@@ -2,7 +2,7 @@ import { hostname } from "node:os";
 import {
   keyProviderFromEnvOptional, kekFingerprint, kekFingerprintFromEnv, kekEnvIdentity,
   makeAnthropicClient, assertAnthropicKey, makeHaikuClassifier, makeSonnetDrafter, makeOpusProposer,
-  callCeilingMs, msDeviceEnv, organizerEnvironment,
+  callCeilingMs, msDeviceEnv, organizerEnvironment, resolveCloudInstallId,
   type KeyProvider, type ClassifierPort, type DraftPort, type WorkflowPort,
   type KekEnvIdentity, type Logger, type AnthropicCallReport,
 } from "@trafficflow/core";
@@ -555,7 +555,8 @@ export interface WorkerConfig {
    * cannot wait out a ten-minute window.
    */
   organizer?: {
-    installId?: string;
+    /** ALWAYS SET by `loadConfig`, through `resolveCloudInstallId` — see the note at the read. */
+    installId: string;
     displayName?: string;
     staleAfterMs?: number;
     /**
@@ -948,7 +949,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     buildVersion,
     buildError: buildIdentityErrorOf(environment, buildVersion, buildVersionSource),
     organizer: {
-      ...(env.TF_ORGANIZER_INSTALL_ID ? { installId: env.TF_ORGANIZER_INSTALL_ID } : {}),
+      /* THROUGH THE ONE FUNCTION, and always set rather than spread in when present.
+         This read the override with a TRUTHY test while `resolveCloudInstallId` rejects one that
+         is only whitespace — so `TF_ORGANIZER_INSTALL_ID=" "` made the worker claim mailboxes as
+         `" "` while the API tier and both repair commands identified as `ohmail-cloud:<env>`.
+         Two identities in one fleet is the failure the id was added to prevent: live-twin
+         detection compares the wrong one, the release refuses, and the claim removal — which
+         matches on the id — finds nothing to remove.
+         Setting it unconditionally also retires three `?? cloudInstallId(...)` fallbacks that
+         each re-derived the identity at their own call site. */
+      installId: resolveCloudInstallId(env),
       // ── HOW THIS DEPLOYMENT NAMES ITSELF IN SOMEBODY'S MAILBOX ────────────────────────────
       //
       // `organizer.displayName` has been TYPED since the lease landed and was never read from the
