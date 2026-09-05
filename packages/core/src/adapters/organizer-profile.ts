@@ -868,7 +868,17 @@ export function makeProfileIo(
             for await (const m of client.fetch(uids.join(","), { uid: true }, { uid: true })) {
               if (typeof m.uid === "number") still.push(m.uid);
             }
-          } catch { return; }
+          } catch (err) {
+            /* The lease's rule, and for the same reason: a custody read that could not RUN proves
+             * nothing in either direction, and returning normally here reports removal to a caller
+             * that counts it. `writeOrganizerProfile` sets `removed = oldRefs.length` from a normal
+             * return, so the count described settings documents that may still be in the folder. */
+            throw new ProfileUnavailableError(
+              `the expunge of ${uids.length} settings message(s) from ${META_FOLDER} could not be `
+              + `verified: ${err instanceof Error ? err.message : String(err)}`,
+              { op: "remove_profiles" },
+            );
+          }
           if (still.length > 0) {
             throw new ProfileUnavailableError(
               `${still.length} settings message(s) survived the expunge in ${META_FOLDER}`,

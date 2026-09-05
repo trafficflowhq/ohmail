@@ -2743,10 +2743,27 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           holderSeen.since = since; holderSeen.state = state;
           holderSeen.capabilities = capabilities;
         } catch (err) {
+          /* ── AND IT IS RECORDED WHERE A PERSON CAN SEE IT, NOT ONLY IN A LOG ───────────────
+           *
+           * Keeping the row's previous answer is right: a look that failed is not evidence about
+           * who holds the mailbox. What was wrong is that it left the STATE looking healthy. A
+           * reader whose lease reads keep failing went on presenting an ordinary connected pane
+           * with a stale holder in it, and the mark this field exists for was set only on the
+           * startup path — so the one shape it was added to prevent, a reliability signal that
+           * renders as its own healthy state, survived at poll time, which is where a mailbox
+           * actually spends its life.
+           *
+           * Kept from the FIRST failure, exactly as at startup, so the surface can say how long
+           * it has been true; the success path above sets it back to `null`. */
+          organizer = {
+            ...organizer,
+            unreadableSince: organizer.unreadableSince ?? new Date().toISOString(),
+          };
           log("organizer_peek_failed", {
             err,
             reason: "this install reads this mailbox and could not see who organizes it; the row "
-              + "keeps its previous answer and the next pass looks again",
+              + "keeps its previous answer, the pane says the lease is unreadable, and the next "
+              + "pass looks again",
           });
         }
       };
@@ -3980,6 +3997,24 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               // A failed cycle is a bad network or a sleeping laptop, not a reason to stop being a
               // mail app. Offline is a property of this mode: the organizer pauses and the viewer
               // stays complete — the API keeps serving the mirror over the bridge either way.
+              /* ── EXCEPT WHEN WHAT FAILED WAS THE LEASE, WHICH IS NOT A PASSING CONDITION ────
+               *
+               * A cycle that died because `ohmail/_meta` could not be read is the organizer half
+               * of the reader case beside it, and it was the louder of the two: the gate throws,
+               * this handler logged, and the next tick tried again behind an ordinary connected
+               * state. When the cause is a folder over the ceiling that does not clear by itself,
+               * so the install organizes nothing for as long as it lasts and says nothing about
+               * it.
+               *
+               * Narrowed BY CLASS deliberately. Arming this mark for every cycle failure would
+               * make a dropped connection look like an unreadable lease, and the field would stop
+               * meaning anything. Cleared by the next successful gate, like the other paths. */
+              if (err instanceof LeaseUnavailableError) {
+                organizer = {
+                  ...organizer,
+                  unreadableSince: organizer.unreadableSince ?? new Date().toISOString(),
+                };
+              }
               log("sync_cycle_failed", { err });
             })
             .finally(schedule);

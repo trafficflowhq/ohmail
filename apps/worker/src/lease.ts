@@ -370,9 +370,28 @@ export async function releaseMailboxClaim(adapter: MailboxAdapter, installId: st
    * the answer is a handful of records rather than a folder. Where the capability is absent the
    * bounded window is still used — the same records as before — and the shortfall is REPORTED
    * rather than counted as done. */
-  const found = typeof io.findOwnRecords === "function"
-    ? await io.findOwnRecords(installId)
-    : null;
+  /* ── AND A SEARCH THE SERVER REFUSED IS NOT "THIS ADAPTER CANNOT SEARCH" ──────────────────
+   *
+   * `findOwnRecords` answers `null` for BOTH, and this read them as one: refused searches fell
+   * through to the newest-window fallback exactly like an older adapter that has no search at
+   * all. The two are not the same claim. Where the capability is absent the window is the best
+   * this install has ever had and the fallback is honest; where the search was REFUSED, the
+   * complete answer exists on the server and this pass simply did not get it — so removing what
+   * the window happens to cover and returning a count says "released" about a mailbox that may
+   * still hold older residue of ours.
+   *
+   * The comment above promised the shortfall would be REPORTED rather than counted as done. It
+   * was not: the function returned a bare number and had no way to say so. It does now — and the
+   * report is a throw, because every caller already wraps this and logs
+   * `organizer_claim_release_failed` with copy that says the true consequence. */
+  const canSearchOwn = typeof io.findOwnRecords === "function";
+  const found = canSearchOwn ? await io.findOwnRecords!(installId) : null;
+  if (canSearchOwn && found === null) {
+    throw new Error(
+      `the records this install owns in ${META_FOLDER} could not be asked for by id, so a release `
+      + "cannot be told from a partial one — nothing was removed on this pass",
+    );
+  }
   const messages = found ?? await io.listClaims().catch((err: unknown) => {
     if (err instanceof MetaFolderTruncatedError) return [...err.records];
     throw err;

@@ -2540,10 +2540,26 @@ export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: s
             for await (const m of client.fetch(uids.join(","), { uid: true }, { uid: true })) {
               if (typeof m.uid === "number") still.push(m.uid);
             }
-          } catch {
-            /* An unreadable folder is not evidence the expunge failed; the refusal check above is
-             * what stands in that case. */
-            return;
+          } catch (err) {
+            /* ── A CUSTODY READ THAT COULD NOT RUN IS NOT A CUSTODY READ ────────────────────
+             *
+             * This returned, on the reasoning that an unreadable folder is not evidence the
+             * expunge failed. True, and beside the point: it is not evidence the expunge
+             * SUCCEEDED either, and the caller reads a normal return as removal having happened.
+             * `releaseMailboxClaim` then reports a positive count, so a release that proved
+             * nothing was indistinguishable from one that proved custody — the exact silent
+             * success this read-back was added to remove, one layer further out.
+             *
+             * The asymmetry that governs everything in this file applies here too: a reader may
+             * act on a partial answer, a WRITE may not claim an outcome it cannot demonstrate.
+             * Every caller of the release already wraps it and logs
+             * `organizer_claim_release_failed`, whose copy says the true thing — the claim ages
+             * out of the folder on its own — so a throw here costs a truthful log line and
+             * nothing else. */
+            throw new Error(
+              `the expunge of ${uids.length} claim message(s) from ${META_FOLDER} could not be `
+              + `verified: ${err instanceof Error ? err.message : String(err)}`,
+            );
           }
           if (still.length > 0) {
             throw new Error(
@@ -2963,23 +2979,35 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
      * ── AND THE ABSENCE THIS BLOCK TESTS IS SAFE UNDER A TRUNCATED WINDOW, WHICH THE CONFIRM'S
      *    IS NOT ─────────────────────────────────────────────────────────────────────────────
      *
-     * The stronger statement, and the one that actually holds: **every claim this read could NEWLY
-     * need to see was appended AFTER the election**, and anything appended after the election is
-     * inside a newest-first window by construction. That covers our own claim, and it covers a
-     * rival that renewed in the gap — which is the case this verify exists to catch.
+     * ── THE ARGUMENT THAT USED TO STAND HERE WAS FALSE, AND IT FAILED IN THE ONE DIRECTION
+     *    THAT COSTS TWO ORGANIZERS ──────────────────────────────────────────────────────────
      *
-     * A rival that is OLDER than the window is not a gap in this read; it is the ELECTION's own
-     * documented residual, already reasoned about where the window is defined, and re-deciding it
-     * here would be a second opinion about the same folder rather than a check on this write.
+     * It read: every claim this verify could NEWLY need to see was appended AFTER the election,
+     * and anything appended after the election is inside a newest-first window BY CONSTRUCTION.
+     * The second half does not follow. A window is bounded by COUNT, not by time, so "appended
+     * later" only implies "inside the window" while fewer than a ceiling's worth of messages
+     * arrive after it. Order the three events the other way and the invariant is simply untrue:
      *
-     * The earlier version of this argued only that our own appended claim is the newest record.
-     * True, and too narrow: it says nothing about the rival, which is the half the guard is for.
+     *   1. a rival renews its claim — appended, newest, and at this instant inside any window;
+     *   2. a ceiling's worth of ordinary messages arrive, which anyone with APPEND rights to the
+     *      folder can cause and which a shared mailbox can produce without anybody intending it;
+     *   3. this gate appends its own claim and verifies.
      *
-     * If a server ever broke the ordering, the guard degrades to "our claim is missing" — a lost
-     * race, which releases and retries. Safe direction, so the invariant is load-bearing for
-     * correctness rather than for safety. The confirm below tests the absence of OLD refs, which a
-     * newest-first window genuinely can miss, and carries its own coverage check for that reason. */
-    const after = (await readClaims(() => io.listClaims())).records;
+     * The rival's renewal is now more than a ceiling back. Our own claim is the newest record, so
+     * `ownSurvived` passes and nothing looks wrong — the window contains this install and nobody
+     * else, the confirm reads `organize`, and the rival goes on organizing the same mailbox from
+     * the other side until its next gate. TWO ORGANIZERS, reached without a single lost write.
+     *
+     * So a verify over a TRUNCATED folder asks the server for the claim set, exactly as the
+     * election does, through the same helper: completeness for claims is the property this check
+     * needs and a window cannot supply it. Below the ceiling nothing changes and no search is
+     * issued. If the set cannot be obtained the gate refuses rather than confirming — our claim is
+     * already in the folder, so the next cycle re-decides with it present, which is the safe
+     * direction.
+     *
+     * The confirm below tests the absence of OLD refs, which a newest-first window genuinely can
+     * miss, and carries its own coverage check for that reason. */
+    const after = (await electionRead(await readClaims(() => io.listClaims()))).records;
     verifyClaims = after
       .map((m) => parseClaim(m.raw, m.ref))
       .filter((c): c is ClaimRecord => c !== null);
