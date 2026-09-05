@@ -1336,6 +1336,8 @@ export async function costsForMonth(
   const rows = await tx
     .select({
       provider: platformCosts.provider,
+      // The METRIC, because manual precedence is per line now — see the note below.
+      metric: platformCosts.metric,
       costCents: platformCosts.costCents,
       currency: platformCosts.currency,
       fetchedAt: platformCosts.fetchedAt,
@@ -1362,26 +1364,70 @@ export async function costsForMonth(
 
   // Sum each provider's metrics, per source, then pick. Summing before picking is what makes
   // "Vercel cost $41" a whole answer rather than whichever metric happened to sort first.
-  const totals = new Map<string, { cents: number; fetchedAt: Date; note: string | null; enteredBy: string | null; currency: string }>();
+  // ── MANUAL PRECEDENCE IS PER LINE, NOT PER PROVIDER ─────────────────────────────────────
+  //
+  // A manual row used to replace a provider's WHOLE API total. So an operator correcting one
+  // line of an invoice — the plan fee from $19 to $20, say — silently discarded every other line
+  // the API had measured: `Pro $19 + Functions $5` became `$20`, not `$25`, and the board called
+  // it "entered manually" as though a person had checked the whole bill. Precedence now applies
+  // where the disagreement is, which is the METRIC: the operator's `Pro` replaces the API's
+  // `Pro`, and `Functions` keeps the figure the vendor gave.
+  //
+  // A provider is labelled `manual` when ANY of its lines came from a person, because that is
+  // what the chip has to warn about; the notes below carry who said what.
+  const byMetric = new Map<string, typeof rows[number]>();
   for (const r of rows) {
-    const key = `${r.provider}|${r.source}`;
-    const acc = totals.get(key);
-    if (acc) {
-      acc.cents += r.costCents;
-      if (r.fetchedAt > acc.fetchedAt) acc.fetchedAt = r.fetchedAt;
-    } else {
-      totals.set(key, {
-        cents: r.costCents, fetchedAt: r.fetchedAt, note: r.note,
-        enteredBy: r.enteredBy, currency: r.currency,
-      });
+    const key = `${r.provider}|${r.metric}`;
+    const held = byMetric.get(key);
+    // Manual beats API for the same metric; between two of a kind the newer stamp wins.
+    if (!held
+      || (r.source === "manual" && held.source === "api")
+      || (r.source === held.source && r.fetchedAt > held.fetchedAt)) {
+      byMetric.set(key, r);
     }
   }
 
-  for (const [key, acc] of totals) {
-    const [provider, source] = key.split("|") as [CostProvider, "api" | "manual"];
-    const current = byProvider.get(provider)!;
-    // MANUAL WINS, whatever the API said and whenever it said it.
-    if (current.source === "manual" && source === "api") continue;
+  const totals = new Map<CostProvider, {
+    cents: number; fetchedAt: Date; notes: Array<{ note: string | null; enteredBy: string | null }>;
+    currency: string; anyManual: boolean; anyApi: boolean; oldestApi: Date | null; mixed: boolean;
+  }>();
+  for (const r of byMetric.values()) {
+    const key = r.provider as CostProvider;
+    const acc = totals.get(key);
+    if (!acc) {
+      totals.set(key, {
+        cents: r.costCents, fetchedAt: r.fetchedAt,
+        notes: r.source === "manual" ? [{ note: r.note, enteredBy: r.enteredBy }] : [],
+        currency: r.currency,
+        anyManual: r.source === "manual", anyApi: r.source === "api",
+        oldestApi: r.source === "api" ? r.fetchedAt : null,
+        mixed: false,
+      });
+      continue;
+    }
+    acc.cents += r.costCents;
+    if (r.fetchedAt > acc.fetchedAt) acc.fetchedAt = r.fetchedAt;
+    // CURRENCIES ARE NOT ADDED. Rows in two currencies summed into one number carrying whichever
+    // sorted first, and the board renders every figure with a `$`. The adapters refuse a foreign
+    // currency now and the manual endpoint refuses one too, so this is the last door — and a
+    // provider whose stored rows disagree reports as unmeasured rather than as a number no
+    // currency supports.
+    if (r.currency !== acc.currency) acc.mixed = true;
+    if (r.source === "manual") {
+      acc.anyManual = true;
+      acc.notes.push({ note: r.note, enteredBy: r.enteredBy });
+    } else {
+      acc.anyApi = true;
+      // The STALENESS verdict is the OLDEST api line's, not the newest: a provider whose plan
+      // fee refreshed while its usage line went stale is not current.
+      if (acc.oldestApi === null || r.fetchedAt < acc.oldestApi) acc.oldestApi = r.fetchedAt;
+    }
+  }
+
+  for (const [provider, acc] of totals) {
+    if (acc.mixed) continue; // left `unconfigured`: not a figure this board can render
+    const stale = acc.anyApi && acc.oldestApi !== null
+      && now.getTime() - acc.oldestApi.getTime() > COST_STALE_AFTER_MS;
     byProvider.set(provider, {
       provider,
       cents: acc.cents,
@@ -1389,12 +1435,15 @@ export async function costsForMonth(
       fetchedAt: acc.fetchedAt,
       // A manual figure does not go stale: a person read an invoice, and an invoice does not
       // change. An API figure does — a provider that stopped answering leaves its last row
-      // standing, and this is the word that stops it reading as current.
-      source: source === "manual"
-        ? "manual"
-        : now.getTime() - acc.fetchedAt.getTime() > COST_STALE_AFTER_MS ? "stale" : "api",
-      note: source === "manual" ? acc.note : null,
-      enteredBy: source === "manual" ? acc.enteredBy : null,
+      // standing, and this is the word that stops it reading as current. A provider carrying
+      // BOTH is `manual` if any line is stale-free, and `stale` when an API line it still
+      // depends on has stopped moving.
+      source: acc.anyManual && !stale ? "manual" : stale ? "stale" : "api",
+      // EVERY operator's note, not one row's. Alice's compute line and Bob's network line summed
+      // to one figure that carried only Bob's provenance, which attributed her figure to him.
+      note: acc.notes.length === 0 ? null
+        : acc.notes.map((n) => n.note).filter((n): n is string => !!n).join(" · ") || null,
+      enteredBy: acc.notes.length === 1 ? acc.notes[0]!.enteredBy : null,
     });
   }
 

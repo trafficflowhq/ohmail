@@ -73,8 +73,28 @@ export const COST_RANK_LIMIT = 10;
  */
 export const COST_ACCOUNT_SCAN_CAP = 500;
 
-/** micro-USD → cents, rounded. The ledger's own rounding rule, one unit up. */
+/**
+ * micro-USD → cents, rounded. The ledger's own rounding rule, one unit up.
+ *
+ * PER-ROW ONLY, for display of a single model or host. The month's AI TOTAL is summed in
+ * MICRO-USD and rounded once — see `aiCents` — because rounding each model first and adding the
+ * results loses the total's own cent: three models at 4,000 micro-USD each are `0 + 0 + 0`
+ * where the 12,000 they sum to is a cent. Same defect as the per-service rounding next door in
+ * `platform-costs.ts`, in a different table.
+ */
 const microToCents = (micro: number): number => Math.round(micro / 10_000);
+
+/**
+ * micro-USD → cents for a TOTAL: rounded once, and never down to zero from a positive amount.
+ *
+ * A ledger that recorded spend and a board that says `$0.00` disagree about whether anything
+ * happened, and the ledger is the one that measured it.
+ */
+function totalMicroToCents(micro: number): number {
+  if (micro === 0) return 0;
+  const cents = Math.round(micro / 10_000);
+  return micro > 0 ? Math.max(1, cents) : cents;
+}
 
 /** The month a date falls in, as `[start, end)` in UTC. */
 function monthBounds(at: Date): { start: Date; end: Date; label: string } {
@@ -181,7 +201,12 @@ export async function adminCosts(db: Db, now: Date): Promise<AdminCostSnapshot> 
   const hosts = rowsOf<{ host: string; calls: number; cost_micro: string | number }>(hostRows)
     .map((r) => ({ host: r.host, calls: Number(r.calls), cents: microToCents(Number(r.cost_micro)) }));
 
-  const aiCents = models.reduce((sum, m) => sum + m.cents, 0);
+  // Summed in MICRO-USD and rounded ONCE. `models[].cents` is each row's own display rounding
+  // and adding those loses the total's cent — see `microToCents`.
+  const aiCents = totalMicroToCents(
+    rowsOf<{ cost_micro: string | number }>(modelRows)
+      .reduce((sum, r) => sum + Number(r.cost_micro), 0),
+  );
 
   // ── 3. the APPORTIONMENT, in ONE statement ──────────────────────────────────────────────
   //
@@ -307,7 +332,12 @@ export async function adminCosts(db: Db, now: Date): Promise<AdminCostSnapshot> 
   // simple, unscaled total: the split exists for the projection only.
   const daysInMonth = Math.round((end.getTime() - start.getTime()) / 86_400_000);
   const elapsedDays = Math.max(1, now.getUTCDate());
-  const monthToDate = (infraCents ?? 0) + aiCents;
+  // AN UNMEASURED MONTH IS UNMEASURED, NEVER `$0.00`. With no platform rows and no AI calls,
+  // `infrastructureCents` is null and this used to coerce it to zero — so the headline, the one
+  // figure an operator reads first, said the month had cost nothing when nothing had been
+  // measured. That is the module's forbidden sentence at the top of the page, and the panel
+  // below it was carefully saying "not configured" the whole time.
+  const monthToDate = infraCents === null && aiCents === 0 ? null : (infraCents ?? 0) + aiCents;
 
   // A STALE READING IS PROJECTED FROM THE DAY IT WAS TAKEN, not from today, and the comment
   // above used to claim staleness "scales correctly" while the arithmetic did the opposite. A
@@ -344,6 +374,7 @@ export async function adminCosts(db: Db, now: Date): Promise<AdminCostSnapshot> 
     // vendor's tile is a reconciliation against `aiCents`, not a term in `infrastructureCents`,
     // so counting it here would describe a sum it is not part of.
     unmeasuredProviders: infraProviders.length - measured.length,
+    infrastructureProviders: infraProviders.length,
     aiCents,
     models,
     hosts,

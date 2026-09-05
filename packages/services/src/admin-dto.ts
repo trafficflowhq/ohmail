@@ -937,6 +937,16 @@ export interface AdminCostSnapshot {
    * is the field that says so.
    */
   unmeasuredProviders: number;
+  /**
+   * How many providers the INFRASTRUCTURE total is over — the denominator
+   * {@link unmeasuredProviders} is counted against.
+   *
+   * It is not `providers.length`: the model vendor's tile is on that table as a reconciliation
+   * against `aiCents` and is not a term in `infrastructureCents`, so counting it would describe
+   * a sum it is not part of. The board rendered "1 of 5 counted" for a month where the truth was
+   * 0 of 4 until this field existed.
+   */
+  infrastructureProviders: number;
   /** Σ of every model's cost this month, in cents. Measured at the call. */
   aiCents: number;
   models: AiModelCost[];
@@ -946,7 +956,15 @@ export interface AdminCostSnapshot {
    */
   hosts: Array<{ host: string; calls: number; cents: number }>;
   /** Infrastructure + AI, month to date. */
-  monthToDateCents: number;
+  /**
+   * SPEND SO FAR THIS MONTH — infrastructure plus AI — or `null` when NOTHING has been measured.
+   *
+   * `null` rather than `0`, on the same rule as {@link ProviderCostView.cents}: a month with no
+   * platform rows and no model calls has not cost nothing, it has not been measured. This used
+   * to coerce an absent infrastructure figure to zero, so the headline — the first number an
+   * operator reads — said `$0.00` while the panel underneath it correctly said "not configured".
+   */
+  monthToDateCents: number | null;
   /**
    * MTD ÷ elapsed days × the month's length. `null` when there is nothing measured to project
    * from — a projection of an unmeasured month is a number about nothing.
