@@ -37,6 +37,8 @@ import {
   type SyncSnapshotPage,
   type UnsubscribeResult,
   type WithheldMarker,
+  OUTBOX_TYPE,
+  OUTBOX_ABANDONED_TYPE,
 } from "./types.js";
 
 /**
@@ -109,6 +111,23 @@ interface PendingMutation {
    * wait on stay with `flushPending()` — see {@link OhmailEngine.ownerSettled}.
    */
   restored?: boolean;
+  /** Server-answered failures so far. See {@link OUTBOX_MAX_SERVER_FAILURES} for what counts. */
+  attempts?: number;
+  /** Epoch ms before which no drive may dispatch this verb. */
+  nextAt?: number;
+  /**
+   * TRUE when `nextAt` came from the SERVER's `Retry-After` rather than this client's backoff.
+   *
+   * The two waits are not the same kind of thing and must not be honoured the same way. Ours is
+   * pacing, and an explicit "try now" — a person pressing Try again, a host flushing after a
+   * connection returns — may override it. The server's is an instruction, and overriding it turns
+   * a considerate client into the thing the header exists to prevent: `flushPending` ignored
+   * `nextAt` entirely, so a mobile app that flushes after every successful sync would retry a
+   * one-hour `Retry-After` every few minutes, for ever, while spending none of the ceiling.
+   */
+  waitIsServerNamed?: boolean;
+  /** The last server sentence, carried so an abandoned verb can quote it. */
+  lastError?: { message: string; code: string | null; status: number | null };
 }
 
 /**
@@ -120,7 +139,36 @@ interface PendingMutation {
  * IndexedDB on the webapp, sqlite on mobile, whatever `MirrorStore` a future surface binds
  * (INSTANT-ARCH §6.2 stage 1: the intent is durable the moment it is expressed).
  */
-export const OUTBOX_TYPE = "outbox_entry";
+export { OUTBOX_TYPE } from "./types.js";
+
+/**
+ * THE PERSISTED OUTBOX SHAPE THIS BUILD WRITES. Exported so a guard can say "one past current"
+ * instead of a literal.
+ *
+ * A test needed a version "from the future" to prove an unknown shape is left alone rather than
+ * replayed, and it spelled that as a number. The number became current TWICE — at `v: 2` and again
+ * at `v: 3` — and each time the guard silently inverted into asserting that the CURRENT shape is
+ * unrecognised, which is the opposite of its claim. Deriving from here it cannot happen a third
+ * time.
+ */
+export const OUTBOX_ENTRY_VERSION = 3;
+
+/**
+ * WHERE AN ABANDONED VERB GOES — a client-local record like {@link OUTBOX_TYPE}, holding a verb the
+ * server refused {@link OUTBOX_MAX_SERVER_FAILURES} times in a way nobody modelled.
+ *
+ * A SEPARATE TYPE, not a flag on the outbox entry, and the reason is what each collection means to
+ * the drive: everything in `OUTBOX_TYPE` is replayed, so a "do not replay me" flag would be a rule
+ * every present and future reader of that collection has to remember. Moving the record makes the
+ * replay set correct by construction — `restoreOutbox` reads `OUTBOX_TYPE` and there is nothing to
+ * skip.
+ *
+ * It is `putLocal` at seq 0 like its neighbour, so the windowed prune (which only evicts `message`
+ * rows) cannot take it and no `/sync` delta can contradict it. That durability is the point: a verb
+ * that failed is the user's work, and the one thing worse than a queue that hammers forever is a
+ * queue that silently drops what it gave up on.
+ */
+export { OUTBOX_ABANDONED_TYPE } from "./types.js";
 
 /**
  * One persisted verb. `v` names the shape so a future build can migrate rather than guess;
@@ -136,7 +184,14 @@ export const OUTBOX_TYPE = "outbox_entry";
  * replay before the `mail_send` that names its row.
  */
 interface PersistedOutboxEntry {
-  v: 1;
+  /**
+   * `3` since the record lifecycle was made failure-atomic. **`v: 1` and `v: 2` are still accepted
+   * and still replay** — see {@link isPersistedOutboxEntry}, where the migration is the whole point: this
+   * shape is written the moment a verb is expressed and read back after an upgrade, so a gate that
+   * demanded `v === 2` would silently orphan every verb queued by the previous build. The user's
+   * unsent mail would be on disk, valid, and never looked at again.
+   */
+  v: 1 | 2 | 3;
   id: string;
   key: string;
   /** Session-monotonic tiebreak within one `at` millisecond. */
@@ -144,6 +199,127 @@ interface PersistedOutboxEntry {
   /** Epoch ms at enqueue, from the engine's injected clock. */
   at: number;
   mutation: EngineMutation;
+  /**
+   * SERVER-ANSWERED failures so far — not attempts. Absent on a `v: 1` record and read as 0, which
+   * is the honest value: that build counted nothing, so nothing is known to have failed, and the
+   * verb gets a full ceiling's patience under the new rule rather than being retired on arrival.
+   *
+   * Persisted rather than kept in memory because the bound has to survive a restart. A counter that
+   * resets on boot is not a bound at all — it turns "give up after eight" into "give up after eight
+   * consecutive tries without a restart", which for a poisoned verb on a laptop that sleeps is
+   * indistinguishable from forever.
+   */
+  attempts?: number;
+  /** Epoch ms before which no drive may dispatch this verb. Absent ⇒ eligible now. */
+  nextAt?: number;
+  /**
+   * TRUE when `nextAt` came from the SERVER's `Retry-After` rather than this client's backoff.
+   *
+   * The two waits are not the same kind of thing and must not be honoured the same way. Ours is
+   * pacing, and an explicit "try now" — a person pressing Try again, a host flushing after a
+   * connection returns — may override it. The server's is an instruction, and overriding it turns
+   * a considerate client into the thing the header exists to prevent: `flushPending` ignored
+   * `nextAt` entirely, so a mobile app that flushes after every successful sync would retry a
+   * one-hour `Retry-After` every few minutes, for ever, while spending none of the ceiling.
+   */
+  waitIsServerNamed?: boolean;
+  /** The last server sentence, kept so an abandoned verb can say WHY without inventing a reason. */
+  lastError?: { message: string; code: string | null; status: number | null };
+  /**
+   * TRUE once a newer verb for the same target has been expressed — see
+   * {@link OhmailEngine.supersedeAbandoned}. Retrying such a record would overwrite the newer
+   * intent with an older one the person cannot see is stale, so the retry is refused and only
+   * Discard remains.
+   */
+  superseded?: boolean;
+  /**
+   * WHY A RETRY WAS REFUSED, once one has been — `outbox_superseded`, `outbox_expired`, or
+   * `outbox_unknown_kind`. Persisted so the refusal survives a reload: a control that keeps
+   * offering itself after every press is a silent no-op is worse than no control.
+   */
+  retryRefused?: string;
+}
+
+/**
+ * ── WHAT A VERB IS ABOUT — the TARGET, not the kind ──────────────────────────────────────────
+ *
+ * `supersedeKey` answers "same kind, same target", which is right for the QUEUE: replacing a
+ * queued `triage_set` with a newer `triage_set` is the user's latest word on one scalar.
+ *
+ * It is not enough for the ABANDONED list, and the difference is destructive. A record sits there
+ * for hours; meanwhile the thing it names moves on. An abandoned `draft_discard` retried after the
+ * draft was edited DELETES the newer text. An abandoned `folder_delete` retried after the folder
+ * was renamed destroys the renamed folder. An abandoned read retried after a deliberate unread puts
+ * the server back at read. Keying on kind cannot see any of those, because the kinds differ.
+ *
+ * So the abandoned list keys on the TARGET, and any newer verb naming the same target retires the
+ * older record (`supersedeAbandoned`). The two rules coexist deliberately: the queue keeps the
+ * narrower one, because a newer `move` must not silently swallow a queued `triage_set` that is
+ * still going to be delivered.
+ *
+ * `null` means "no target another verb can collide with": the creates (nothing exists yet to name)
+ * and a `mail_send` with no `draftId` (a compose-and-send in one, which owns no server row an older
+ * record could overwrite — the ruling's carve-out, and the reason such a send stays retryable).
+ *
+ * Exhaustive over `MutationKind` by construction: the `satisfies` below makes a new verb a compile
+ * error here rather than a silent `null`, because silently opting a verb out of supersession is
+ * exactly how a destructive retry gets through.
+ */
+export function targetOf(m: EngineMutation): string | null {
+  switch (m.kind) {
+    case "triage_set":
+    case "move":
+    case "message_delete":
+      return `message:${m.messageId}`;
+    // The read verbs name a LIST, so they have no single target; `supersedeAbandoned` subtracts
+    // their ids the way `supersedeQueued` does and marks a record narrowed to nothing.
+    case "mark_seen":
+    case "feed_mark_seen":
+      return null;
+    case "tag_assign":
+      return `message:${m.messageId}`;
+    case "tag_create":
+      return null;
+    case "tag_rename":
+    case "tag_recolor":
+    case "tag_delete":
+      return `tag:${m.tagId}`;
+    case "folder_create":
+      return null;
+    case "folder_rename":
+    case "folder_delete":
+    case "folder_op_dismiss":
+      return `folder:${m.folderId}`;
+    case "rule_create":
+      return null;
+    case "rule_update":
+    case "rule_delete":
+      return `rule:${m.ruleId}`;
+    case "screener_decide":
+      return `sender:${m.senderId}`;
+    case "draft_save":
+      return m.draftId === null ? null : `draft:${m.draftId}`;
+    case "draft_discard":
+    case "draft_accept":
+    case "draft_schedule_cancel":
+      return `draft:${m.draftId}`;
+    // A send that NAMES a draft shares that draft's target: an abandoned send PUTs its stale body
+    // before sending, so a newer edit must retire it. A send that names none owns nothing an older
+    // record could overwrite.
+    case "mail_send":
+      return m.draftId ? `draft:${m.draftId}` : null;
+    default: {
+      /**
+       * EXHAUSTIVE BY CONSTRUCTION. A new `MutationKind` is a compile error here, never a silent
+       * `null` — and silently opting a verb out of supersession is exactly how a destructive retry
+       * gets through: the record survives, nothing retires it, and Try again applies a stale intent
+       * to a target that has moved on.
+       */
+      const unreachable: never = m;
+      void unreachable;
+      return null;
+    }
+  }
 }
 
 /**
@@ -187,16 +363,70 @@ function supersedeKey(m: EngineMutation): string | null {
   }
 }
 
-/** The shape gate for {@link PersistedOutboxEntry} — see `v` above for why unknown ⇒ keep, not drop. */
+/**
+ * IS THIS AN UNKEYED CREATE TOO OLD TO REPLAY? — one predicate, so the boot replay and the manual
+ * Try again cannot come to disagree about it.
+ *
+ * Past the server's idempotency window a replay is not a replay: the key has been forgotten, so the
+ * request mints a SECOND row — a second draft, a second rule. The boot path has always dropped such
+ * verbs; the retry button had no check at all, and the record a person presses there is by
+ * construction an old one, since it spent a whole ceiling getting into that list.
+ *
+ * The membership test mirrors `restoreOutbox`'s exactly rather than widening it: a create that
+ * carries a key of its own is safe at any age, and only these two arrive without one.
+ */
+function pastCreateDedupe(e: PersistedOutboxEntry, now: number): boolean {
+  const unkeyedCreate = e.mutation.kind === "rule_create"
+    || (e.mutation.kind === "draft_save" && e.mutation.draftId === null);
+  return unkeyedCreate && now - e.at > OUTBOX_UNKEYED_CREATE_TTL_MS;
+}
+
+/**
+ * The shape gate for {@link PersistedOutboxEntry} — see `v` above for why unknown ⇒ keep, not drop.
+ *
+ * **BOTH `v: 1` AND `v: 2` PASS, and the `v: 1` arm is not politeness.** The outbox is written when
+ * a verb is expressed and read back on the next boot, which may be the boot AFTER an upgrade. A
+ * gate that admitted only the current version would leave every verb queued by the previous build
+ * on disk, shaped correctly, and never replayed — the user's unsent work, lost silently, by the
+ * very record type that exists to make it durable. The optional fields are read defensively for the
+ * same reason: a `v: 1` record has no `attempts`, and `??` is what makes it a valid `v: 2`.
+ */
 function isPersistedOutboxEntry(e: unknown): e is PersistedOutboxEntry {
   if (typeof e !== "object" || e === null) return false;
   const r = e as Record<string, unknown>;
-  return r.v === 1
+  return (r.v === 1 || r.v === 2 || r.v === 3)
     && typeof r.id === "string" && r.id.length > 0
     && typeof r.key === "string" && r.key.length > 0
     && typeof r.n === "number" && typeof r.at === "number"
+    && (r.attempts === undefined || typeof r.attempts === "number")
+    && (r.nextAt === undefined || typeof r.nextAt === "number")
     && typeof r.mutation === "object" && r.mutation !== null
     && typeof (r.mutation as Record<string, unknown>).kind === "string";
+}
+
+/**
+ * ONE VERB THE SERVER WOULD NOT TAKE — what {@link OhmailEngine.abandoned} hands a surface.
+ *
+ * `error` carries the SERVER's own sentence rather than a category this client invented, for the
+ * reason every refusal on this path already follows: the code that made the decision wrote a true
+ * sentence, and a second taxonomy here is how somebody gets told the wrong thing. Where the server
+ * said nothing usable — an unhandled 500 says "internal error" — the surface is responsible for
+ * saying so plainly rather than repeating it.
+ */
+export interface AbandonedMutation {
+  id: string;
+  key: string;
+  mutation: EngineMutation;
+  /** Epoch ms when the verb was first expressed, so a surface can say how long it has been stuck. */
+  at: number;
+  attempts: number;
+  error: { message: string; code: string | null; status: number | null };
+  /** A newer change to the same thing has since been saved; Try again is refused. */
+  superseded: boolean;
+  /** False once a retry has been refused (superseded, too old, or a verb this build cannot run). */
+  retryable: boolean;
+  /** The refusal's code, when there is one — the surface picks its sentence from this. */
+  refusedCode: string | null;
 }
 
 /**
@@ -894,6 +1124,93 @@ export interface EngineOptions {
 export const OUTBOX_REPLAY_DEADLINE_MS = 10_000;
 
 /**
+ * REFUSALS THAT ARE A STATE MACHINE WORKING, NOT A FAULT — they spend none of the give-up ceiling.
+ *
+ * `send_queued` and `send_in_flight` are the gated send's own vocabulary: the server HAS the
+ * reservation and an attempt is live or was left live by a crashed invocation. Both arrive with an
+ * ordinary numeric status and no `Retry-After`, so {@link OhmailEngine.serverAnswered} counted them
+ * as unmodelled server failures — and eight of them would abandon a send whose SMTP submission may
+ * still be running. That is the worst possible thing to give up on: the overlay drops, the composer
+ * unlocks, and the next press mints a FRESH key, which is a second delivery of a message the first
+ * attempt may have already sent. The whole reservation design exists to make that impossible.
+ *
+ * These are waits, and a wait is not evidence about the verb. `send_unverified` and `send_failed`
+ * are deliberately absent: both are already non-retryable and never reach this test.
+ */
+const MODELLED_WAIT_CODES = new Set([
+  // The gated send's own vocabulary: the server HAS the reservation and an attempt is live or was
+  // left live by a crashed invocation.
+  "send_queued",
+  "send_in_flight",
+  // The desktop sidecar's DELIBERATE refusal while the hosted mailbox is unreachable
+  // (`apps/sidecar/src/cloud-proxy.ts#offlineResponse`): `503`, `retryable: true`, and NO
+  // `Retry-After`, because it does not know when the network returns. It is the offline case
+  // wearing a server's clothes — an ordinary Cloud outage would otherwise abandon eight verbs'
+  // worth of a person's work on reconnect, which is the exact loss the `network` carve-out
+  // exists to prevent and was missed only because this one arrives with a status.
+  "offline_read_only",
+  // The response to an unreadable answer on a 2xx (`readJsonOrAmbiguous`): the server acted and
+  // we cannot read what it said. Ambiguity is not evidence that the verb is bad.
+  "unreadable_response",
+]);
+
+/**
+ * ── THE GIVE-UP CEILING, AND WHY A DURABLE OUTBOX NEEDS ONE ──────────────────────────────────
+ *
+ * A retryable rejection used to re-queue with no counter, no delay and no end: `queue.push(p)`,
+ * re-persist, and the next drive tries again. That is right for the case it was written for — a
+ * laptop with no network — and wrong for the case nobody had seen yet, which is a verb the server
+ * will refuse identically for ever. `HttpAdapter` classifies any unhandled 500 as retryable by
+ * default (`retryable ?? (status >= 500 || status === 429)`), so a single mis-shaped request could
+ * become a permanent background loop that survives restarts, holding the user's overlay open the
+ * whole time and telling them nothing.
+ *
+ * So: {@link OUTBOX_MAX_SERVER_FAILURES} SERVER-ANSWERED failures and the verb is abandoned —
+ * visibly, into {@link OUTBOX_ABANDONED_TYPE}, where a person can retry or discard it.
+ *
+ * ── ONLY A SERVER-ANSWERED FAILURE COUNTS, AND THAT DISTINCTION IS THE WHOLE DESIGN ──────────
+ *
+ * `code: "network"` and `code: "timeout"` never count. An offline laptop must retry for ever, as it
+ * always has: the verb is fine, the wire is not, and a ceiling there would throw away work for the
+ * exact reason the durable outbox exists. Nor does a refusal that names its own interval — a
+ * `503 db_busy` carrying `Retry-After` is a server declining work it KNOWS it cannot do yet, so it
+ * waits that long and spends none of the queue's patience. Without that carve-out a twenty-minute
+ * connection-pool outage would abandon every legitimate verb in flight, which is a far worse defect
+ * than the one this ceiling closes.
+ *
+ * The counter is therefore not "attempts" in the ordinary sense. It counts only the evidence that
+ * the SERVER looked at this verb and failed in a way nobody modelled.
+ */
+export const OUTBOX_MAX_SERVER_FAILURES = 8;
+
+/**
+ * The first backoff after a server-answered failure, doubling to {@link OUTBOX_BACKOFF_CAP_MS}.
+ *
+ * 30 s rather than something brisk because the retry buys nothing on its own: the verb already has
+ * its Idempotency-Key, so there is no race to win, and a poisoned verb retried quickly is just a
+ * faster loop.
+ *
+ * ── THE WINDOW IS ~63 MINUTES, AND THIS COMMENT SAID FOUR HOURS ────────────────────────────
+ *
+ * Eight failures means SEVEN waits: 30 s, 1, 2, 4, 8, 16 and 32 minutes — 3 810 s, a little over an
+ * hour. The cap is therefore never reached by a countable failure; it binds only a `Retry-After` a
+ * server names. The earlier claim of "a little over four hours" was arithmetic nobody did, and it
+ * is the kind of number a reader takes on trust because it sounds like it was measured.
+ *
+ * An hour is still the right span for what this is for — long enough that a brief server-side
+ * incident is repaired inside the window and the verb lands on its own, short enough that somebody
+ * returning after lunch is told rather than left with a spinner. If it should be longer, the
+ * ceiling is the knob — and doubling it adds EIGHT hours, not four: failures 8 through 15 each
+ * wait the full one-hour cap. (The first seven are the only ones the doubling is still climbing
+ * through.) Stated because the last version of this sentence was arithmetic nobody had done,
+ * and a number that sounds measured is taken on trust.
+ */
+export const OUTBOX_BACKOFF_BASE_MS = 30_000;
+
+/** The ceiling on one wait. Beyond an hour the retry is no longer the thing that will fix it. */
+export const OUTBOX_BACKOFF_CAP_MS = 3_600_000;
+
+/**
  * HOW OLD an UNKEYED CREATE may be and still replay — the server's own `idempotencyExpiry`
  * (24 h), mirrored as a literal for the same reason every compose-cap mirror is: this bundle
  * pulls in no server module. Only `rule_create` and a first `draft_save` are judged by it; see
@@ -1043,6 +1360,11 @@ export class OhmailEngine {
   private readonly optimisticSent = new Map<string, { header: string; expiresAtMs: number }>();
   private readonly queue: PendingMutation[] = [];
   /**
+   * See {@link OhmailEngine.abandoned} — a stable snapshot for `useSyncExternalStore`, keyed on
+   * the store's own version rather than invalidated by hand.
+   */
+  private abandonedCache: { v: number; out: AbandonedMutation[] } | null = null;
+  /**
    * OVERLAYS WHOSE ECHO HAS NOT BEEN APPLIED YET, overlay id → the {@link drainEpoch} captured
    * when the mutation's POST returned. An entry lands here when the post-confirm reconcile
    * drain FAILED (or was deliberately deferred by the boot replay), and its overlay then
@@ -1059,6 +1381,12 @@ export class OhmailEngine {
   private drainEpoch = 0;
   /** {@link OhmailEngine.restoreOutbox}'s latch. */
   private outboxRestored = false;
+  /**
+   * TRUE once the store is known to hold what disk holds — `hydrate()` resolved, or a host called
+   * `restoreOutbox()` after loading it itself. {@link restoreOutboxIfLoaded} reads this so the
+   * drive cannot latch the restore over a store that has not been read.
+   */
+  private storeLoaded = false;
   /** See {@link OUTBOX_REPLAY_DEADLINE_MS}; overridable only through the test seam. */
   private readonly replayDeadlineMs: number;
   /**
@@ -1306,6 +1634,7 @@ export class OhmailEngine {
         // The durable outbox re-arms with the same load that revives the mirror, so the first
         // publish below already carries every un-sent verb's optimistic effect — the boot
         // render is continuous with the killed session. See {@link OhmailEngine.restoreOutbox}.
+        this.storeLoaded = true;
         this.restoreOutbox();
         this.notify();
       })
@@ -1425,7 +1754,9 @@ export class OhmailEngine {
    * per-mutation `syncFresh()` would wait on this very promise.
    */
   private async drive(): Promise<void> {
-    this.restoreOutbox();
+    // NOT `restoreOutbox()` — see {@link restoreOutboxIfLoaded}. The drive can be reached before
+    // `hydrate()` resolves, and latching there loses the previous session's verbs for good.
+    this.restoreOutboxIfLoaded();
     await this.replayOutbox();
     await this.drain();
   }
@@ -1459,7 +1790,13 @@ export class OhmailEngine {
     // Every RESTORED entry (its owner died with its session), plus every same-session entry
     // whose result nobody routes — see {@link OhmailEngine.ownerSettled} for the two families
     // that stay with `flushPending()`.
+    // `nextAt` is the backoff gate: a verb the server already refused waits out its delay instead
+    // of being retried on every drive. Filtered here rather than inside `dispatch` so a waiting
+    // verb never leaves the queue at all — it keeps its place in user order for the drive that
+    // does take it, and nothing downstream has to know it was skipped.
+    const ready = this.now().getTime();
     const batch = this.queue
+      .filter((p) => (p.nextAt ?? 0) <= ready)
       .filter((p) => p.restored === true || !OhmailEngine.ownerSettled(p.mutation))
       .sort((a, b) => (a.at - b.at) || (a.n - b.n));
     if (batch.length === 0) return;
@@ -1555,8 +1892,44 @@ export class OhmailEngine {
    * paint is skipped.
    */
   restoreOutbox(): void {
+    // Calling this IS the statement that the store was loaded first, so it also arms the drive's
+    // own door — a host that loaded and restored has nothing left for `restoreOutboxIfLoaded` to
+    // wait on.
+    this.storeLoaded = true;
+    /**
+     * THE HOST'S STATEMENT THAT IT LOADED FIRST. Calling this latches the restore, so a caller
+     * that has not loaded the store latches over an empty one and the previous session's verbs
+     * are never replayed. `hydrate()` and the mobile boot both load before they call it; the
+     * DRIVE does not, which is why the drive uses {@link restoreOutboxIfLoaded} instead.
+     */
+    this.restoreOutboxOnce();
+  }
+
+  /**
+   * THE DRIVE'S DOOR: a no-op that does NOT latch until the store is known to be loaded.
+   *
+   * `drive()` is reachable from `mutate → dispatch → syncFresh` before `hydrate()` resolves. It
+   * used to call the latching version, so a mutation made in the first moments of a session could
+   * latch the restore over an unloaded store — and every verb the previous session left on disk
+   * was then never replayed for the whole session. The verbs were durable, present, and ignored.
+   *
+   * Not latching is the safe half: the worst case is that the restore happens on the next drive
+   * instead of this one, which costs one cycle. Latching early costs a session.
+   */
+  private restoreOutboxIfLoaded(): void {
+    if (!this.outboxLoadable()) return;
+    this.restoreOutboxOnce();
+  }
+
+  /** True once the store is loaded — by `hydrate()` resolving, or by a host that loaded it. */
+  private outboxLoadable(): boolean {
+    return this.storeLoaded;
+  }
+
+  private restoreOutboxOnce(): void {
     if (this.outboxRestored) return;
     this.outboxRestored = true;
+
     const rows = this.store.entries<unknown>(OUTBOX_TYPE)
       .map((e) => e.entity)
       .filter(isPersistedOutboxEntry)
@@ -1588,10 +1961,9 @@ export class OhmailEngine {
        * honest direction for exactly these two: a duplicate appears silently and wrongly;
        * an absent day-old unsaved intent is what the user already believes happened.
        */
-      const pastDedupe = this.now().getTime() - e.at > OUTBOX_UNKEYED_CREATE_TTL_MS;
-      const unkeyedCreate = e.mutation.kind === "rule_create"
-        || (e.mutation.kind === "draft_save" && e.mutation.draftId === null);
-      if (pastDedupe && unkeyedCreate) {
+      // The same predicate `retryAbandoned` applies — see {@link pastCreateDedupe}. It was two
+      // copies of one rule for as long as there was only one caller.
+      if (pastCreateDedupe(e, this.now().getTime())) {
         void this.dropOutbox(e.id);
         continue;
       }
@@ -1603,8 +1975,48 @@ export class OhmailEngine {
         const effects = mutationEffects(this.read(), e.mutation, { now: asExpressed, uuid: this.uuid });
         if (effects.length > 0) this.overlays.set(e.id, effects);
       } catch { /* a malformed or out-of-vocabulary mutation paints nothing; the wire decides */ }
-      this.queue.push({ id: e.id, key: e.key, mutation: e.mutation, at: e.at, n: e.n, restored: true });
+      this.queue.push({
+        id: e.id, key: e.key, mutation: e.mutation, at: e.at, n: e.n, restored: true,
+        // A `v: 1` record carries none of these; `?? 0` is what makes it a valid `v: 2` in memory
+        // and gives it the full ceiling rather than retiring it on arrival.
+        attempts: e.attempts ?? 0,
+        ...(e.nextAt !== undefined ? { nextAt: e.nextAt } : {}),
+        /**
+         * A `v: 2` RECORD WITH A WAIT AND NO FLAG IS READ AS SERVER-NAMED.
+         *
+         * `waitIsServerNamed` was added to the `v: 2` shape in place, so records written before it
+         * can carry a `nextAt` that came from a `Retry-After` and no way to say so. Reading the
+         * absent flag as `false` makes the explicit-flush path ignore an interval the SERVER
+         * chose — the one wait this client has no right to override.
+         *
+         * So the ambiguity resolves toward obedience: a `v: 2` record that has a wait is assumed
+         * to have been told to wait. `v: 1` had no `nextAt` at all and is unaffected; `v: 3` always
+         * carries the flag explicitly, which is what the version bump is for.
+         */
+        ...(e.waitIsServerNamed !== undefined
+          ? { waitIsServerNamed: e.waitIsServerNamed }
+          : (e.v === 2 && e.nextAt !== undefined ? { waitIsServerNamed: true } : {})),
+        ...(e.lastError !== undefined ? { lastError: e.lastError } : {}),
+      });
       restored = true;
+    }
+    /**
+     * A VERB IN BOTH COLLECTIONS IS A CRASH RESIDUE, AND THE LIVE ROW WINS.
+     *
+     * `abandon()` writes the abandoned record before deleting the outbox one, so a kill between the
+     * two leaves both. The pair is not self-resolving: a later replay success deletes only the live
+     * copy and leaves a false "could not be saved" row, and Discard deletes only the abandoned copy
+     * while the live verb goes on to execute — a person told it was thrown away, watching it land.
+     *
+     * Resolved here, at boot, where both collections are in hand: anything still queued is by
+     * definition not abandoned, so the abandoned twin is the stale one and goes. The other order
+     * would delete work that is about to be retried.
+     */
+    const queuedIds = new Set(this.queue.map((q) => q.id));
+    for (const row of this.store.entries<unknown>(OUTBOX_ABANDONED_TYPE)) {
+      if (!queuedIds.has(row.id)) continue;
+      void this.store.commitLocal([], [{ type: OUTBOX_ABANDONED_TYPE, id: row.id }])
+        .catch(() => { /* best-effort; the next boot tries again */ });
     }
     if (!restored) return;
     // Restored entries must replay in their (at, n) order even when a same-session verb was
@@ -1713,23 +2125,15 @@ export class OhmailEngine {
           // server that expires the cursor it just issued, and is surfaced rather than looped on.
           // It bounds the snapshot path too — at most one snapshot can follow a 410 per drain.
           rebootstrapped = true;
-          // THE DURABLE OUTBOX RIDES THROUGH THE RESET. A 410 is a statement about the CURSOR,
-          // never about the user's intents — but `resetForBootstrap()` wipes the whole store,
-          // outbox rows included. Snapshot the RAW rows before the wipe and write them back
-          // after, byte-for-byte: that covers the queued verbs, the verb whose request is in
-          // the air at this very moment (its terminal cleanup will find its row where it left
-          // it), and an unknown-build entry deliberately held out of the queue — a kill between
-          // the reset and any of their settlements loses nothing (the first cut
-          // re-persisted only `this.queue` and lost the other two shapes).
-          const outboxRows = this.store.entries<unknown>(OUTBOX_TYPE);
+          // THE SEQ-0 ROWS RIDE THROUGH THE WIPE, and the STORE is what carries them: it
+          // partitions them in `resetForBootstrap` and re-writes them inside the wipe's own
+          // transaction. This used to be a snapshot here, a wipe, and a one-by-one write-back —
+          // a durable zero-row window in which a kill, or one refused re-put, lost every queued
+          // verb and every abandoned record. It was also a second writer of a rule the store
+          // already owned for the cross-tab case.
           await this.store.resetForBootstrap(); // cursor → "0"
           // The wipe took the rules with it — the re-bootstrap owes the rules-first pass again.
           rulesFirstDone = false;
-          for (const row of outboxRows) {
-            try {
-              await this.store.putLocal(OUTBOX_TYPE, row.id, row.entity);
-            } catch { /* storage refused — the queue still holds the live verbs for this session */ }
-          }
           this.notify();
           // Back to the top: with a snapshot route the cursor of "0" selects the snapshot and the
           // delta drain then resumes from `asOfSeq`; without one it selects `since=0`, which is
@@ -3272,14 +3676,38 @@ export class OhmailEngine {
      * killed between this line and the server's answer — a tab closed mid-`pagehide` flush, an
      * app swiped away with a verb in flight — restarts with the entry still in the mirror
      * store, replays it under the SAME Idempotency-Key, and the verb lands exactly once. The
-     * write is one small `putLocal`; on the in-memory store it is free, and its failure (a
-     * full quota, a private window) is swallowed because a verb that cannot be persisted must
-     * still be SENT — that is exactly today's behaviour, not a new risk.
+     * write is one small commit; on the in-memory store it is free.
+     *
+     * ── WHEN THE WRITE IS REFUSED, THE VERB DECIDES ────────────────────────────────────────
+     *
+     * For almost everything the failure (a full quota, a private window) is swallowed and the
+     * verb goes on the wire anyway: a `triage_set` that gets sent twice sets the same state twice,
+     * and refusing to send it would cost the user a real action to protect them from nothing.
+     *
+     * A SEND IS NOT THAT VERB. Its Idempotency-Key is the only thing standing between "retry" and
+     * "a second message in someone's inbox", and the key lives in the row that just failed to be
+     * written. Dispatch it anyway and the sequence is: POST issued, process dies before the
+     * answer, next boot has no record the send was ever expressed, the user sends it again — and
+     * the server, with no key to match, delivers twice. There is no recovery from a delivered
+     * message. So a send whose durable record was refused is rolled back and says so, which the
+     * composer can act on (it still holds the text) in a way a duplicate delivery can never be.
      */
     const pending: PendingMutation = {
       id, key, mutation: enriched, at: this.now().getTime(), n: this.outboxSeq++,
     };
-    await this.putOutbox(pending);
+    const persisted = await this.putOutbox(pending);
+    if (!persisted && enriched.kind === "mail_send") {
+      this.overlays.delete(id);
+      this.overlayRev++;
+      this.notify();
+      return {
+        id, key, status: "rolled_back", seq: null,
+        error: new MutationRejectedError(
+          "this device could not record the send, and sending without a record risks delivering it twice",
+          { status: null, code: "storage_refused", retryable: true },
+        ),
+      };
+    }
 
     /**
      * THE ORDER BARRIER GATES FRESH DISPATCHES TOO — in two tiers, matching the two holds.
@@ -3313,21 +3741,449 @@ export class OhmailEngine {
     return this.dispatch(pending);
   }
 
-  /** Persist one outbox entry (best-effort — see the call in {@link OhmailEngine.mutate}). */
-  private async putOutbox(p: PendingMutation): Promise<void> {
-    const entry: PersistedOutboxEntry = {
-      v: 1, id: p.id, key: p.key, n: p.n, at: p.at, mutation: p.mutation,
-    };
-    try {
-      await this.store.putLocal(OUTBOX_TYPE, p.id, entry);
-    } catch { /* storage refused — the verb still goes on the wire, exactly as before */ }
+  /**
+   * ── ONE OUTBOX DISPATCH AT A TIME, WHATEVER ROAD IT CAME IN BY ──────────────────────────
+   *
+   * `replayOutbox` had a single-flight of its own; `flushPending` had none, and the per-record
+   * retry added a third road. Two surfaces could therefore start concurrent flushes — press Try
+   * again on A, press it on B while A's request is still open — and for the read-flag verbs, whose
+   * supersession key is `null`, ordering is the whole contract: a newer unread landing before an
+   * older read leaves the server at the older value.
+   *
+   * A promise chain rather than a boolean, so callers QUEUE instead of being refused: a person who
+   * pressed twice gets both attempts, in the order they pressed. `then(fn, fn)` because a rejected
+   * predecessor must not cancel the successor — `dispatch` never throws, but this gate has no
+   * business assuming that about a future caller.
+   */
+  private outboxChain: Promise<unknown> = Promise.resolve();
+
+  private outboxGate<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.outboxChain.then(fn, fn);
+    this.outboxChain = run.then(() => undefined, () => undefined);
+    return run;
   }
 
-  /** Hard-delete one outbox entry on its terminal outcome (best-effort, same reasoning). */
+  /**
+   * ONE DISPATCH, DEADLINE-BOUNDED, WITH THE SAME BARRIER SEMANTICS THE BOOT REPLAY USES.
+   *
+   * Extracted from `replayOutbox`'s loop so the per-record retry cannot be the one road without a
+   * deadline. Without it, a half-open request leaves `retryAbandoned()` — and the surface promise
+   * a person is watching a spinner on — pending for ever.
+   *
+   * On timeout the in-flight attempt still OWNS its entry (it settles, re-queues, or leaves it
+   * persisted for the next boot), and becomes the order barrier {@link replayHold} names, so no
+   * other outbox dispatch may start behind it.
+   */
+  private async dispatchWithDeadline(
+    p: PendingMutation,
+    opts: { deferReconcile?: boolean } = {},
+  ): Promise<{ result: MutationResult | null; timedOut: boolean }> {
+    const attempt = this.dispatch(p, opts);
+    let releaseActive!: () => void;
+    const active = new Promise<void>((resolve) => { releaseActive = resolve; });
+    this.replayActive = active;
+    void attempt.then(() => releaseActive(), () => releaseActive());
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timedOut = false;
+    const raced = await Promise.race([
+      attempt.then((r) => ({ r })),
+      new Promise<{ r: null }>((resolve) => {
+        timer = setTimeout(() => { timedOut = true; resolve({ r: null }); }, this.replayDeadlineMs);
+      }),
+    ]);
+    if (timer !== undefined) clearTimeout(timer);
+    if (this.replayActive === active) this.replayActive = null;
+
+    if (timedOut) {
+      const hold: Promise<void> = attempt.then(() => undefined, () => undefined).finally(() => {
+        if (this.replayHold === hold) this.replayHold = null;
+        void this.syncFresh().catch(() => { /* the scheduler's cadence retries */ });
+      });
+      this.replayHold = hold;
+      releaseActive();
+      return { result: null, timedOut: true };
+    }
+    return { result: raced.r, timedOut: false };
+  }
+
+  /**
+   * Persist one outbox entry. ANSWERS WHETHER IT LANDED — see the call in {@link OhmailEngine.mutate}.
+   *
+   * It used to answer `void` and swallow every failure, with the reasoning that "a verb that
+   * cannot be persisted must still be SENT". That is right for almost every verb and wrong for
+   * exactly one, so the caller now gets to decide instead of this method deciding for all of them.
+   */
+  private async putOutbox(p: PendingMutation): Promise<boolean> {
+    const entry: PersistedOutboxEntry = {
+      v: OUTBOX_ENTRY_VERSION, id: p.id, key: p.key, n: p.n, at: p.at, mutation: p.mutation,
+      ...(p.attempts !== undefined ? { attempts: p.attempts } : {}),
+      ...(p.nextAt !== undefined ? { nextAt: p.nextAt } : {}),
+      ...(p.waitIsServerNamed !== undefined ? { waitIsServerNamed: p.waitIsServerNamed } : {}),
+      ...(p.lastError !== undefined ? { lastError: p.lastError } : {}),
+    };
+    try {
+      await this.store.commitLocal([{ type: OUTBOX_TYPE, id: p.id, entity: entry }], []);
+      return true;
+    } catch {
+      return false; // storage refused — what that costs depends on the verb; see `mutate`.
+    }
+  }
+
+  /**
+   * Hard-delete one outbox entry on its terminal outcome (best-effort, same reasoning).
+   *
+   * ── WHY THIS ONE STAYED ON `prune` WHEN THE REST OF THE OUTBOX MOVED TO `commitLocal` ──────
+   *
+   * `commitLocal` is write-then-publish: memory changes only once the storage transaction has
+   * resolved. That is the whole point of it for the PAIRED writes — `abandon` must never be
+   * observable with the verb in both collections or in neither. But three callers of this method
+   * are synchronous `void` functions that cannot await anything: `sweepAwaitingEcho`, and the two
+   * retirement arms of `supersedeQueued`. They call it as `void this.dropOutbox(id)` and their own
+   * caller reads the store immediately afterwards, which worked only because `prune` evicts from
+   * `records` BEFORE its first await. Moving this line to `commitLocal` pushed the eviction two
+   * microtasks later and the row was still readable after the sweep that retired it — measured as
+   * seven kill-restart failures in `durable-outbox.test.ts`, none of which is about storage.
+   *
+   * A LONE DELETE HAS NOTHING TO BE ATOMIC WITH, and memory-first fails in the safe direction
+   * here: memory says gone, disk may still hold the row, and a row that outlives its delete
+   * replays under its original Idempotency-Key. The direction `commitLocal` exists to forbid is
+   * the opposite one — memory publishing a write that storage refused — and no delete can produce
+   * it. So this is not the migration left half-finished; `prune` is the correct primitive for a
+   * single-key terminal delete, and it is also the only one that evicts `unflushed` (`store.ts`),
+   * which a bare `transact` would leave to the next carry-forward.
+   */
   private async dropOutbox(id: string): Promise<void> {
     try {
       await this.store.prune([{ type: OUTBOX_TYPE, id }]);
     } catch { /* an undeleted entry replays idempotently — the safe direction */ }
+  }
+
+  /**
+   * DID THE SERVER LOOK AT THIS VERB AND FAIL IN A WAY NOBODY MODELLED?
+   *
+   * Only a `true` here spends the give-up ceiling, so this test decides whether a verb can ever be
+   * abandoned. It is written to say NO whenever it is unsure, because the two mistakes are not
+   * symmetric: a false negative costs one more retry, and a false positive throws away a user's
+   * work that would have landed.
+   *
+   * Three families answer no.
+   *
+   *  · **`network` / `timeout`.** The adapter raises these when the request never got an answer —
+   *    `code: "network"` from a rejected fetch, `code: "timeout"` from `withDeadline`. An offline
+   *    laptop must retry for ever; the verb is fine and the wire is not.
+   *  · **A refusal carrying `Retry-After`.** The server declined work it knows it cannot do yet
+   *    (`503 db_busy` from a starved pool) and said when to come back. Counting that would abandon
+   *    every legitimate verb in flight during a pool outage — a far bigger loss than the loop this
+   *    ceiling closes.
+   *  · **No status at all.** Nothing reached an HTTP response, so nothing attributes the failure to
+   *    the server.
+   */
+  private static serverAnswered(err: MutationRejectedError): boolean {
+    if (err.code === "network" || err.code === "timeout") return false;
+    if (err.retryAfterMs !== null) return false;
+    if (MODELLED_WAIT_CODES.has(err.code ?? "")) return false;
+    // A BARE 429 — an edge or proxy rate limit with no JSON body and no `Retry-After`, so it
+    // arrives with no code at all. Rate limiting is a wait by definition; counting it means a
+    // throttle abandons work rather than delaying it, and the caller has no way to say otherwise.
+    if (err.status === 429) return false;
+    return typeof err.status === "number";
+  }
+
+  /**
+   * GIVE UP ON ONE VERB, VISIBLY.
+   *
+   * The visible half reuses the explicit-refusal arm exactly — overlay dropped, echo forgotten,
+   * `overlayRev++`, `notify()` — because from the user's side this IS a refusal: the row reverts
+   * and what they asked for did not happen. Presenting it as anything softer would leave a change
+   * on screen that no longer exists anywhere.
+   *
+   * What differs is where the record goes. An explicit refusal calls `dropOutbox` and the verb is
+   * gone; this MOVES it to {@link OUTBOX_ABANDONED_TYPE}, so the work survives, a person can read
+   * what the server said, and "Try again" is possible. Dropping it would make the ceiling a silent
+   * data-loss feature, which is worse than the unbounded loop it replaces.
+   *
+   * The write happens BEFORE the delete, and the order is load-bearing: a crash between the two
+   * leaves the verb in both collections, which replays a verb the user can also see and retry —
+   * recoverable, and idempotent under its unchanged key. The other order loses it outright.
+   */
+  private async abandon(
+    p: PendingMutation, attempts: number, err: MutationRejectedError,
+  ): Promise<MutationResult> {
+    /**
+     * ── GIVING UP ON A SEND IS NOT PROOF IT DID NOT LEAVE ────────────────────────────────────
+     *
+     * Eight answers this client could not model are eight unknowns, not evidence of
+     * non-delivery. Reporting a `mail_send` as a generic `rolled_back` says the opposite: the
+     * composer treats it as a failure, and the next press is free to mint a FRESH key — a second
+     * `POST /drafts` and a second delivery of mail the reservation may already have sent.
+     *
+     * So a send is recoded to the vocabulary the product already has for exactly this state.
+     * `send_unverified` is the gated send's own terminal ambiguity — SMTP threw AND the Sent
+     * probe found nothing — and `phaseFor` in the compose surface already renders it: "we could
+     * not confirm this send; check your Sent folder before retrying". That surface was built for
+     * this and was simply unreachable from here.
+     *
+     * The recode is applied to BOTH the returned result and the persisted `lastError`, because
+     * the two are read by different people at different times: the result by whoever pressed, the
+     * record by whoever opens the list tomorrow. One of them saying "failed" is enough to buy a
+     * duplicate.
+     *
+     * Try again on such a record then means "ask the server what happened under this key" — the
+     * same-key replay is verify-before-resend, so its outcomes are `confirmed`, `send_failed`, or
+     * still unverified, and never a second message.
+     */
+    const isSend = p.mutation.kind === "mail_send";
+    const reported = isSend
+      ? new MutationRejectedError(
+        "We could not confirm this send. Check your Sent folder before retrying.",
+        {
+          status: err.status,
+          code: "send_unverified",
+          retryable: false,
+          retryAfterMs: err.retryAfterMs,
+        },
+      )
+      : err;
+
+    const record: PersistedOutboxEntry = {
+      v: 3, id: p.id, key: p.key, n: p.n, at: p.at, mutation: p.mutation,
+      attempts,
+      lastError: { message: reported.message, code: reported.code, status: reported.status },
+    };
+    /**
+     * ── TWO WRITES, TWO FAILURE MODES, AND NEITHER MAY BE SWALLOWED ─────────────────────────
+     *
+     * This used to be one `try` around both calls with an empty `catch`, and the comment claimed
+     * the verb "stays queued". It did not: `dispatch` has already removed `p` from the queue by
+     * the time it calls here, so a failed write left the verb in NEITHER collection and nowhere
+     * in memory — gone, silently, which is precisely the loss the abandoned collection exists to
+     * prevent.
+     *
+     * WRITE FAILS ⇒ stay queued, for real. Put `p` back on the queue and re-persist it. The verb
+     * keeps its (exhausted) attempt count, so it will try to abandon again on the next drive and
+     * succeed once storage recovers; until then it is a live verb, which is recoverable, rather
+     * than a lost one, which is not.
+     *
+     * DELETE FAILS ⇒ both rows persist, and that is the tolerable half: the boot resolver
+     * (`restoreOutbox`) deletes an abandoned twin of anything still queued, so the pair converges
+     * on the LIVE row — a verb that runs again rather than one that vanished. The order here is
+     * chosen for exactly that: write first, delete second, so a crash between them lands in the
+     * recoverable state.
+     */
+    /**
+     * ── ONE TRANSACTION, BOTH KEYS ──────────────────────────────────────────────────────────
+     *
+     * When this resolves, disk, memory, `this.queue`, `overlays`, `awaitingEcho` and
+     * `abandoned()` all agree that `p` is abandoned. When it rejects, NONE of them has changed
+     * and `p` is back on the queue with its attempts intact — so no interleaving of abort,
+     * process death or a concurrent flush can leave a verb in both collections, in neither, or
+     * in one on disk and the other in memory.
+     *
+     * This was two best-effort writes with an ordering argument between them ("write first, so a
+     * crash lands on the recoverable side"). The argument was sound and the premise was not:
+     * `putLocal` publishes to memory BEFORE its flush can reject, so a refused write left the row
+     * live in memory and in the unflushed set, where the next flush persisted it — twins on disk,
+     * and a strip offering Retry on a verb still executing. `commitLocal` removes the window
+     * rather than reasoning about which side of it is safer.
+     */
+    try {
+      await this.store.commitLocal(
+        [{ type: OUTBOX_ABANDONED_TYPE, id: p.id, entity: record }],
+        [{ type: OUTBOX_TYPE, id: p.id }],
+      );
+    } catch {
+      // Nothing moved. The verb goes back on the queue where it was, with its attempts, and waits
+      // out a full cap before trying again — a store that just refused will not accept the next
+      // write a millisecond later either.
+      p.nextAt = this.now().getTime() + OUTBOX_BACKOFF_CAP_MS;
+      this.queue.push(p);
+      return { id: p.id, key: p.key, status: "queued", seq: null, error: reported };
+    }
+
+    this.overlays.delete(p.id);
+    this.awaitingEcho.delete(p.id);
+    this.overlayRev++;
+    this.notify();
+    return { id: p.id, key: p.key, status: "rolled_back", seq: null, error: reported };
+  }
+
+  /**
+   * THE VERBS THIS CLIENT GAVE UP ON — newest first, for the status strip and its sheet.
+   *
+   * Read straight from the mirror rather than from memory, so it is correct on the first render
+   * after a boot, when nothing has been dispatched yet and the only evidence is on disk.
+   */
+  abandoned(): AbandonedMutation[] {
+    /**
+     * ── KEYED ON THE STORE'S VERSION, NOT INVALIDATED BY HAND ───────────────────────────────
+     *
+     * Value-cached because `useSyncExternalStore` compares snapshots by identity: a method that
+     * allocates a fresh array per call re-renders for ever.
+     *
+     * But the invalidation used to be eleven `abandonedCache = null` lines placed by hand, and one
+     * of them was a boot-path line that moved THREE times — each move answered by a review finding
+     * an earlier return in front of it. That is not a bug that gets fixed by a fourth move; it is
+     * a rule that cannot be maintained by placement. Every store write bumps `ver` — `putLocal`,
+     * `commitLocal`, `prune`, `applyResponse`, `resetForBootstrap`, `adoptWipedBaseline`, `load()`
+     * — so keying on it means a boot latch, a 410, a cross-tab adoption or a rejected commit can
+     * never leave this stale, and there is no line left to position wrongly. The same pattern
+     * `bucketsOf` and `search()` already use.
+     *
+     * The previous array's identity is kept when the rebuilt list is field-equal, so an ordinary
+     * /sync page — which bumps `ver` without touching this collection — does not re-render the
+     * strip.
+     */
+    const v = this.store.version();
+    if (this.abandonedCache !== null && this.abandonedCache.v === v) return this.abandonedCache.out;
+    const out: AbandonedMutation[] = [];
+    for (const row of this.store.entries<unknown>(OUTBOX_ABANDONED_TYPE)) {
+      const e = row.entity;
+      if (!isPersistedOutboxEntry(e)) continue;
+      out.push({
+        id: e.id, key: e.key, mutation: e.mutation, at: e.at,
+        attempts: e.attempts ?? OUTBOX_MAX_SERVER_FAILURES,
+        error: e.lastError ?? { message: "the server did not accept this change", code: null, status: null },
+        superseded: e.superseded === true,
+        retryable: e.superseded !== true && e.retryRefused === undefined,
+        refusedCode: e.retryRefused ?? (e.superseded === true ? "outbox_superseded" : null),
+      });
+    }
+    const next = out.sort((a, b) => b.at - a.at);
+    const prev = this.abandonedCache?.out;
+    const same = prev !== undefined
+      && prev.length === next.length
+      && prev.every((p, i) => {
+        const n = next[i]!;
+        return p.id === n.id && p.superseded === n.superseded && p.retryable === n.retryable
+          && p.attempts === n.attempts && p.error.code === n.error.code
+          && p.error.message === n.error.message;
+      });
+    this.abandonedCache = { v, out: same ? prev : next };
+    return this.abandonedCache.out;
+  }
+
+  /**
+   * PUT ONE GIVEN-UP VERB BACK — under its ORIGINAL Idempotency-Key, through the one dispatch road.
+   *
+   * ── IT RETURNS THE RESULT, AND THAT IS THE POINT ────────────────────────────────────────
+   *
+   * This answered a boolean and the surfaces threw it away. A retried send answering
+   * `send_unverified` therefore showed nothing at all — no warning, no record (it had been deleted
+   * before dispatch), and a person free to press send again on mail that may already have left.
+   * For a verb `ownerSettled` covers, the sheet row is the only thing waiting on the result, so
+   * the row is where the answer has to land.
+   *
+   * ── ONE RECORD, AND ONLY THIS RECORD ────────────────────────────────────────────────────
+   *
+   * It used to call queue-wide `flushPending()`, which ignores every client backoff. Retrying A
+   * therefore dispatched unrelated Q early, and if Q sat at seven failures that collateral attempt
+   * spent its eighth and abandoned it — a foreground press compressing another verb's hour of
+   * patience into seconds. Now it dispatches exactly `p`, through `dispatchWithDeadline`, under the
+   * same `outboxGate` every other road takes, and touches no other record's `nextAt` or `attempts`.
+   *
+   * ── ORDER OF OPERATIONS, EACH STEP CHOSEN FOR ITS FAILURE ───────────────────────────────
+   *
+   * Refuse first (a coded `rolled_back`, the record flagged un-retryable on disk so the button
+   * stops lying). Then rebuild the overlay, so the intent is visible again while the request is
+   * open rather than absent until a restart. Then `putOutbox` — which THROWS here rather than
+   * swallowing, because the abandoned row is about to be deleted and losing both is the one
+   * outcome with no recovery. Only then prune the abandoned row, and only then dispatch.
+   */
+  async retryAbandoned(id: string): Promise<MutationResult> {
+    const refuse = async (
+      e: PersistedOutboxEntry | null, code: string, message: string,
+    ): Promise<MutationResult> => {
+      if (e) {
+        // Flagged on disk: a refusal that leaves the control offering itself is a button whose
+        // every press is a silent no-op, which is worse than no button.
+        try {
+          await this.store.commitLocal(
+            [{ type: OUTBOX_ABANDONED_TYPE, id: e.id, entity: { ...e, retryRefused: code } }], []);
+          this.notify();
+        } catch { /* the in-memory refusal below still stands for this session */ }
+      }
+      return {
+        id, key: e?.key ?? id, status: "rolled_back", seq: null,
+        error: new MutationRejectedError(message, { code, retryable: false }),
+      };
+    };
+
+    const row = this.store.entries<unknown>(OUTBOX_ABANDONED_TYPE).find((r) => r.id === id);
+    if (!row || !isPersistedOutboxEntry(row.entity)) {
+      return refuse(null, "outbox_unknown_kind", "This change cannot be retried by this version.");
+    }
+    const e = row.entity;
+    if (e.superseded === true) {
+      return refuse(e, "outbox_superseded", "A newer change to the same thing has since been saved.");
+    }
+    if (pastCreateDedupe(e, this.now().getTime())) {
+      return refuse(e, "outbox_expired", "This change is too old to send safely — it would be created twice.");
+    }
+
+    const p: PendingMutation = {
+      id: e.id, key: e.key, mutation: e.mutation, at: e.at, n: e.n,
+      restored: true, attempts: 0,
+    };
+
+    // The overlay, rebuilt AT THE INSTANT THE VERB WAS EXPRESSED — not now — so a re-applied
+    // triage or read state carries its original stamp rather than pretending to be fresh.
+    const effects = mutationEffects(this.read(), e.mutation, {
+      now: () => new Date(e.at), uuid: this.uuid,
+    });
+    if (effects.length > 0) this.overlays.set(p.id, effects);
+    this.overlayRev++;
+    this.notify();
+
+    /**
+     * ONE TRANSACTION, the other way round: the live row appears and the abandoned row goes, or
+     * neither happens. A rejection leaves the record exactly where the person can still see it —
+     * which is what makes `storage_refused` an honest answer rather than a hopeful one.
+     *
+     * The previous shape wrote the live row, then pruned the abandoned one, and reported refusal
+     * if the write threw. But the write had already installed the row in memory and in the
+     * unflushed set, so a later unrelated flush persisted a verb the person had been told could
+     * not be saved — and a reboot replayed it.
+     */
+    try {
+      await this.store.commitLocal(
+        [{
+          type: OUTBOX_TYPE,
+          id: p.id,
+          entity: {
+            v: OUTBOX_ENTRY_VERSION, id: p.id, key: p.key, n: p.n, at: p.at, mutation: p.mutation,
+            attempts: 0,
+          } satisfies PersistedOutboxEntry,
+        }],
+        [{ type: OUTBOX_ABANDONED_TYPE, id: p.id }],
+      );
+    } catch {
+      this.overlays.delete(p.id);
+      this.overlayRev++;
+      this.notify();
+      return {
+        id, key: e.key, status: "rolled_back", seq: null,
+        error: new MutationRejectedError(
+          "This change could not be saved on this device. Try again once there is room.",
+          { code: "storage_refused", retryable: false },
+        ),
+      };
+    }
+
+    const { result, timedOut } = await this.outboxGate(() => this.dispatchWithDeadline(p));
+    if (timedOut || result === null) {
+      // The in-flight attempt owns the entry from here; `replayHold` is the barrier.
+      return { id: p.id, key: p.key, status: "queued", seq: null };
+    }
+    return result;
+  }
+
+  /** Throw an abandoned verb away for good. The overlay is long gone; this only clears the record. */
+  async discardAbandoned(id: string): Promise<void> {
+    try {
+      await this.store.commitLocal([], [{ type: OUTBOX_ABANDONED_TYPE, id }]);
+    } catch { /* best-effort, exactly like every other outbox write */ }
+    this.notify();
   }
 
   /**
@@ -3356,7 +4212,65 @@ export class OhmailEngine {
    *    server's own write-ownership; `mail_send` is never touched (the reservation machinery
    *    owns it); creates supersede nothing.
    */
+  /**
+   * A NEWER VERB ALSO RETIRES AN ABANDONED RECORD FOR THE SAME TARGET — marked, never deleted.
+   *
+   * `supersedeQueued` protects the QUEUE from a stale replay. The abandoned list needed the same
+   * protection and did not have it: draft body B is abandoned, body C saves successfully, and
+   * pressing Try again on B re-queues it under its original key and overwrites C. The user asked to
+   * retry something they could not see was stale, and lost the newer text.
+   *
+   * MARKED rather than deleted, and that is the whole judgement here. Deleting would silently throw
+   * away work a person can still see listed — the failure this collection exists to prevent. So the
+   * record stays, `retryAbandoned` refuses it, and the surface says a newer change to the same thing
+   * has since been saved, leaving Discard as the honest remaining answer.
+   *
+   * Same key rule as the queue's (`supersedeKey`), so the two cannot come to disagree about what
+   * "the same target" means. `null` keys — creates, sends, the read-flag list verbs — never
+   * participate, exactly as they do not in the queue.
+   */
+  private async supersedeAbandoned(m: EngineMutation): Promise<void> {
+    const key = targetOf(m);
+    const readIds = m.kind === "mark_seen" || m.kind === "feed_mark_seen"
+      ? new Set(m.messageIds ?? [])
+      : null;
+    if (key === null && readIds === null) return;
+
+    let changed = false;
+    const writes: Array<Promise<unknown>> = [];
+    for (const row of this.store.entries<unknown>(OUTBOX_ABANDONED_TYPE)) {
+      const e = row.entity;
+      if (!isPersistedOutboxEntry(e) || e.superseded === true) continue;
+
+      let retire = false;
+      if (readIds !== null) {
+        // A newer read-flag verb subtracts ids, exactly as `supersedeQueued` does. A record whose
+        // whole list is covered has nothing left to say and is retired; a partial overlap leaves
+        // it alone, because its untouched ids still carry an intent nothing else will deliver.
+        const older = e.mutation.kind === "mark_seen" || e.mutation.kind === "feed_mark_seen"
+          ? (e.mutation.messageIds ?? [])
+          : null;
+        retire = older !== null && older.length > 0 && older.every((id) => readIds.has(id));
+      } else {
+        retire = targetOf(e.mutation) === key;
+      }
+      if (!retire) continue;
+
+      changed = true;
+      writes.push(this.store.commitLocal(
+        [{ type: OUTBOX_ABANDONED_TYPE, id: e.id, entity: { ...e, superseded: true } }], [])
+        .catch(() => { /* the in-memory refusal below still stands for this session */ }));
+    }
+    // AWAITED before the row can be re-enabled: a marker still in flight is a window in which
+    // another tab — or this one, on a fast second press — can retry a record that is already stale.
+    await Promise.all(writes);
+    if (changed) {
+      this.notify();
+    }
+  }
+
   private supersedeQueued(m: EngineMutation): void {
+    void this.supersedeAbandoned(m);
     if (this.queue.length === 0) return;
     const key = supersedeKey(m);
     const readIds = m.kind === "mark_seen" || m.kind === "feed_mark_seen"
@@ -3628,22 +4542,106 @@ export class OhmailEngine {
         ? err
         : new MutationRejectedError(String(err), { retryable: false });
       if (rejection.retryable) {
+        /**
+         * ── COUNT IT, DELAY IT, OR GIVE UP ON IT ────────────────────────────────────────────
+         *
+         * Three outcomes, and which one applies turns entirely on WHO failed. See
+         * {@link OUTBOX_MAX_SERVER_FAILURES}: a transport failure or a refusal that named its own
+         * interval buys the verb another go for free, and only an unmodelled server answer spends
+         * the ceiling. `serverAnswered` is the test, and it is deliberately conservative — anything
+         * this client cannot positively attribute to the server is treated as transport, because
+         * abandoning a verb that would have landed is the worse of the two mistakes.
+         */
+        const counts = OhmailEngine.serverAnswered(rejection);
+        const attempts = (p.attempts ?? 0) + (counts ? 1 : 0);
+
+        if (counts && attempts >= OUTBOX_MAX_SERVER_FAILURES) {
+          return await this.abandon(p, attempts, rejection);
+        }
+
+        /**
+         * ── A TRANSPORT FAILURE WAITS FOR NOTHING, AND THAT IS NOT AN OPTIMISATION ──────────
+         *
+         * Only a failure the SERVER answered earns a delay. An offline laptop re-queues with no
+         * `nextAt` at all and is retried by the very next drive, exactly as it always was — the
+         * drive's own cadence is the only pacing that case ever needed or had.
+         *
+         * Delaying it instead was a real defect for the length of one commit: it made every verb
+         * queued by a network failure sit out a 30 s backoff, which is the behaviour the durable
+         * outbox is built on top of, and eighteen kill-restart guards went red at once saying so.
+         * The lesson is the same one `serverAnswered` encodes — the queue's patience is spent on
+         * evidence about the SERVER, and a wire that dropped tells you nothing about the verb.
+         *
+         * `Math.min` on the cap and on the named interval both: a proxy is free to send a
+         * `Retry-After` of a week, and a queue that honours it has stopped being a queue.
+         */
+        const wait = rejection.retryAfterMs !== null
+          ? Math.min(rejection.retryAfterMs, OUTBOX_BACKOFF_CAP_MS)
+          : counts
+            ? Math.min(OUTBOX_BACKOFF_BASE_MS * 2 ** Math.max(0, attempts - 1), OUTBOX_BACKOFF_CAP_MS)
+            : null;
+
         // Keep the overlay (the user's intent stands) + queue for a retry with
         // the SAME Idempotency-Key — the server dedupes a half-landed attempt.
+        p.attempts = attempts;
+        if (wait !== null) {
+          p.nextAt = this.now().getTime() + wait;
+          p.waitIsServerNamed = rejection.retryAfterMs !== null;
+        }
+        p.lastError = { message: rejection.message, code: rejection.code, status: rejection.status };
         this.queue.push(p);
         // Re-assert the durable entry. Normally redundant with `mutate()`'s write, but it is
         // the belt for the one window where it is not: a 410 reset wiped the store while this
         // request was in flight, and without this line the queued verb would be memory-only
-        // again — the exact state the durable outbox exists to retire.
+        // again — the exact state the durable outbox exists to retire. It also persists the
+        // counter and the delay, which is what makes the bound survive a restart.
         await this.putOutbox(p);
         return { id: p.id, key: p.key, status: "queued", seq: null, error: rejection };
       }
       // EXPLICIT REFUSAL: the local effect rolls back VISIBLY, once — the overlay drops, the
       // row reverts, and the rejection (with the server's own sentence) rides the result for
-      // the surface to say. The durable entry goes with it: a refused verb must not replay.
+      // the surface to say.
       this.overlays.delete(p.id);
       this.awaitingEcho.delete(p.id);
-      await this.dropOutbox(p.id);
+      /**
+       * ── WHERE THE REFUSAL GOES WHEN NOBODY IS WAITING FOR IT ────────────────────────────
+       *
+       * The result carries the server's sentence, and for a verb the user is watching that is
+       * enough: the composer is open, the strip is on screen, someone reads it.
+       *
+       * A RESTORED VERB HAS NO SUCH READER. Its owner died with the previous session — that is
+       * what `restored` means — so returning the sentence to a caller that is a drive loop
+       * throws it away, and dropping the row with it leaves the person's work gone and
+       * unexplained: they queued something, closed the app, and it is simply not there. The
+       * record is the only home an outcome has that outlives the retry, so the refusal is
+       * WRITTEN INTO IT, one transaction, and the list shows what happened and why.
+       *
+       * `send_unverified` is the exception to `retryRefused` and keeps its Retry. The adapter
+       * emits it `retryable: false`, and it is right that no automatic drive replays it — a
+       * send whose answer was lost must never be re-POSTed blindly. But Try again on it is
+       * verify-under-the-same-key, not a second message, and that is exactly the action a
+       * person with an unverified send needs. Hiding the control would leave them with a row
+       * that says something went wrong and no way to find out.
+       */
+      if (p.restored === true) {
+        const code = rejection.code;
+        const record: PersistedOutboxEntry = {
+          v: OUTBOX_ENTRY_VERSION, id: p.id, key: p.key, n: p.n, at: p.at, mutation: p.mutation,
+          attempts: p.attempts ?? 0,
+          lastError: { message: rejection.message, code, status: rejection.status },
+          ...(code === "send_unverified" ? {} : { retryRefused: code ?? "refused" }),
+        };
+        try {
+          await this.store.commitLocal(
+            [{ type: OUTBOX_ABANDONED_TYPE, id: p.id, entity: record }],
+            [{ type: OUTBOX_TYPE, id: p.id }],
+          );
+        } catch { /* nothing moved; the verb stays queued on disk and the list is rebuilt on boot */ }
+      } else {
+        // The durable entry goes with it: a refused verb whose owner read the sentence must not
+        // replay, and must not sit in a list claiming to be unfinished work.
+        await this.dropOutbox(p.id);
+      }
       this.overlayRev++;
       this.notify();
       return { id: p.id, key: p.key, status: "rolled_back", seq: null, error: rejection };
@@ -3879,6 +4877,12 @@ export class OhmailEngine {
    * the hold clears. The entries stay queued and persisted; the hold's settle nudges a drive.
    */
   async flushPending(): Promise<MutationResult[]> {
+    // THE SAME SINGLE-FLIGHT every other outbox road takes — see {@link outboxGate}. Without it
+    // two surfaces could flush concurrently and, for the null-key read verbs, land newer-then-older.
+    return this.outboxGate(() => this.flushPendingInner());
+  }
+
+  private async flushPendingInner(): Promise<MutationResult[]> {
     // An in-flight replay attempt is waited out (bounded by its deadline) — dispatching beside
     // it is the same stale-wins race the fresh-mutate gate closes.
     while (this.replayActive) {
@@ -3887,10 +4891,61 @@ export class OhmailEngine {
     if (this.replayHold) {
       return this.queue.map((p) => ({ id: p.id, key: p.key, status: "queued" as const, seq: null }));
     }
-    const batch = this.queue.splice(0, this.queue.length)
+    /**
+     * ── NO BACKOFF GATE HERE, AND THAT IS DELIBERATE ────────────────────────────────────────
+     *
+     * `flushPending` is an EXPLICIT "try now" — a host calling it has just done something
+     * (finished an action, regained a connection, watched a person press Send) and is asking for
+     * this queue to go out. The backoff paces the AUTOMATIC drive, which retries on its own
+     * schedule with nobody watching; applying it to a deliberate request means a person pressing a
+     * button and nothing happening for thirty seconds, with no way to tell that from a hang.
+     *
+     * This gate WAS here for one commit, on the reasoning that a bound should hold on every road
+     * out of the queue. Three mobile guards said otherwise within a minute: on that platform
+     * `outboxAutoReplay` is false, so `flushPending` is the ONLY road, and gating it turned "one
+     * 500, then an immediate in-place flush lands the send" into a silent queued state. The
+     * intuition was right about the shape and wrong about which road — the ceiling is what bounds
+     * this path, not the delay, and it still applies: eight server-answered failures abandon the
+     * verb whether they arrived through the drive or through here.
+     */
+    // A wait the SERVER named is honoured even here — see `waitIsServerNamed`. Our own backoff is
+    // not: this is the explicit try-now road, and on mobile it is the only road.
+    const ready = this.now().getTime();
+    const held = this.queue.filter((p) => p.waitIsServerNamed === true && (p.nextAt ?? 0) > ready);
+    const batch = this.queue.filter((p) => !(p.waitIsServerNamed === true && (p.nextAt ?? 0) > ready))
       .sort((a, b) => (a.at - b.at) || (a.n - b.n));
-    const results: MutationResult[] = [];
-    for (const p of batch) results.push(await this.dispatch(p));
+    this.queue.length = 0;
+    this.queue.push(...held);
+    // A verb waiting out the server's own interval is reported as queued rather than omitted, so a
+    // caller gets one result per verb it is holding.
+    const results: MutationResult[] = held.map((p) => ({
+      id: p.id, key: p.key, status: "queued" as const, seq: null,
+    }));
+    /**
+     * DEADLINE-BOUNDED, like every other dispatch road.
+     *
+     * This loop awaited `dispatch` directly, so one half-open request held the flush — and every
+     * caller awaiting it, including a surface's spinner — open indefinitely. The boot replay and
+     * the per-record retry both bound their attempts; this was the road that did not, which made
+     * "every send has a time limit" false in the one place a host calls most often.
+     *
+     * A timed-out attempt still OWNS its entry and becomes the order barrier, so the remaining
+     * batch is left queued rather than dispatched behind it — the same rule the replay follows,
+     * for the same reason: a newer verb must not land before an older one that may yet commit.
+     */
+    for (let i = 0; i < batch.length; i++) {
+      const p = batch[i]!;
+      const { result, timedOut } = await this.dispatchWithDeadline(p);
+      if (timedOut || result === null) {
+        results.push({ id: p.id, key: p.key, status: "queued", seq: null });
+        for (const rest of batch.slice(i + 1)) {
+          this.queue.push(rest);
+          results.push({ id: rest.id, key: rest.key, status: "queued", seq: null });
+        }
+        break;
+      }
+      results.push(result);
+    }
     return results;
   }
 

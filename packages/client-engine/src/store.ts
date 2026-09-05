@@ -1,5 +1,5 @@
 import { applyToRecords, flattenResponse, maxSeqOf, recordKey, type MirrorRecord } from "./apply.js";
-import { isProtectedMessage } from "./types.js";
+import { isCarriedLocalType, isProtectedMessage } from "./types.js";
 import type { Cursor, EngineMessage, SyncChange, SyncResponse } from "./types.js";
 
 /**
@@ -103,6 +103,37 @@ export interface MirrorStore extends EntityReader {
    * deltas already applied to the rows that were kept.
    */
   prune(keys: ReadonlyArray<{ type: string; id: string }>): Promise<void>;
+
+  /**
+   * ── THE OUTBOX'S OWN WRITE: ATOMIC ACROSS KEYS, AND WRITE-THEN-PUBLISH ───────────────────
+   *
+   * Every put and every delete lands, or none does — one storage transaction — and **memory
+   * changes only once that transaction has completed**. On rejection nothing in memory moved and
+   * nothing entered the unflushed set.
+   *
+   * That inversion is the whole point, and it is why this exists beside `putLocal` rather than
+   * replacing it. `putLocal` is memory-FIRST: it sets the record, bumps the version and then
+   * awaits the flush, so a rejected write leaves the row live in memory and in `unflushed`, where
+   * the next unrelated flush persists it. For a /sync row that is correct — the row is
+   * re-derivable from the server and the durable cursor must never run ahead of its rows, which is
+   * what carry-forward guarantees. For the OUTBOX it is exactly wrong: a queued verb derives from
+   * nothing, it IS the user's intent, and its Idempotency-Key is the only thing standing between
+   * "retry" and "second delivery". A row that is live in memory but not on disk is a verb that
+   * will be dispatched and then forgotten by the next boot — which is how a fresh key, and a
+   * second delivery, happen.
+   *
+   * Atomic ACROSS KEYS because the outbox's transitions move a record between two collections.
+   * Abandoning is "write the abandoned row, delete the live row"; as two calls it has a window in
+   * which both exist or neither does, and no ordering of the two removes it. As one transaction
+   * there is no window.
+   *
+   * Refuses any put with `seq !== 0`, and takes no cursor and no meta: it cannot move the sync
+   * cursor even by mistake — the same statement `purge` already makes.
+   */
+  commitLocal(
+    puts: ReadonlyArray<{ type: string; id: string; entity: unknown }>,
+    deletes: ReadonlyArray<{ type: string; id: string }>,
+  ): Promise<void>;
   /**
    * HARD-DELETE EVERY RECORD CARRYING EXACTLY `seq` — the abandoned-snapshot-prefix sweep.
    *
@@ -184,6 +215,8 @@ export abstract class BaseMirrorStore implements MirrorStore {
   private unflushedCursor: Cursor | null = null;
   /** A `wipe()` that was asked for and did not complete. Nothing may be written while it stands. */
   private wipeOwed = false;
+  /** The seq-0 rows an owed wipe must carry back through — see {@link resetForBootstrap}. */
+  private wipeKeep: MirrorRecord[] = [];
 
   abstract load(): Promise<void>;
   /** Flush a dirty set + (optionally) the new cursor + meta entries atomically. */
@@ -193,7 +226,8 @@ export abstract class BaseMirrorStore implements MirrorStore {
     metaEntries: Array<[string, unknown]>,
   ): Promise<void>;
   /** Drop ALL persisted state. */
-  protected abstract wipe(): Promise<void>;
+  /** `keep` are the seq-0 rows that must survive the clear, written inside the same transaction. */
+  protected abstract wipe(keep?: MirrorRecord[]): Promise<void>;
   /**
    * HARD-DELETE persisted records by "type:id" key — the persistence half of {@link prune}.
    *
@@ -203,6 +237,13 @@ export abstract class BaseMirrorStore implements MirrorStore {
    * purpose: a prune must never be able to move the sync cursor.
    */
   protected abstract purge(keys: string[]): Promise<void>;
+
+  /**
+   * The persistence half of {@link BaseMirrorStore.commitLocal} — ONE transaction, all of it or
+   * none. Mirrors the `persist`/`purge` split; unlike either, it must not publish anything to
+   * memory (its caller does that, and only on success).
+   */
+  protected abstract transact(puts: MirrorRecord[], deletes: string[]): Promise<void>;
 
   getCursor(): Cursor {
     return this.cursor;
@@ -280,8 +321,9 @@ export abstract class BaseMirrorStore implements MirrorStore {
    */
   private async settleWipe(): Promise<void> {
     if (!this.wipeOwed) return;
-    await this.wipe();
+    await this.wipe(this.wipeKeep);
     this.wipeOwed = false;
+    this.wipeKeep = [];
   }
 
   /**
@@ -493,6 +535,31 @@ export abstract class BaseMirrorStore implements MirrorStore {
     }
   }
 
+  /**
+   * See {@link MirrorStore.commitLocal}. Write, THEN publish.
+   *
+   * `settleWipe()` first, for the reason `flush` does it: nothing may be written while an owed
+   * wipe stands, or the write lands on a baseline that is about to be cleared.
+   */
+  async commitLocal(
+    puts: ReadonlyArray<{ type: string; id: string; entity: unknown }>,
+    deletes: ReadonlyArray<{ type: string; id: string }>,
+  ): Promise<void> {
+    if (puts.length === 0 && deletes.length === 0) return;
+    const recs: MirrorRecord[] = puts.map((p) => {
+      const rec: MirrorRecord = { type: p.type, id: p.id, seq: 0, entity: p.entity };
+      return rec;
+    });
+    await this.settleWipe();
+    // The persistence FIRST, and nothing touched until it resolves. A rejection therefore leaves
+    // this store exactly as it was — no record, no version bump, nothing in `unflushed` for a
+    // later flush to carry to disk behind the caller's back.
+    await this.transact(recs, deletes.map((d) => recordKey(d.type, d.id)));
+    for (const rec of recs) this.records.set(recordKey(rec.type, rec.id), rec);
+    for (const d of deletes) this.records.delete(recordKey(d.type, d.id));
+    this.ver++;
+  }
+
   /** See {@link MirrorStore.putLocal} — seq 0, latest wins, never through the seq guard. */
   async putLocal(type: string, id: string, entity: unknown | null): Promise<void> {
     const rec: MirrorRecord = { type, id, seq: 0, entity };
@@ -562,7 +629,32 @@ export abstract class BaseMirrorStore implements MirrorStore {
   }
 
   async resetForBootstrap(): Promise<void> {
-    this.records.clear();
+    /**
+     * ── THE SEQ-0 ROWS SURVIVE THE 410, AND THEY SURVIVE IT INSIDE THE WIPE ─────────────────
+     *
+     * A 410 is a statement about the CURSOR, never about the user's intents. Everything with a
+     * seq came from the server and comes back from it, and so do most of the seq-0 rows — a
+     * `message_body` is re-fetched, a `view_meta` waterline costs one re-mark. The OUTBOX rows
+     * derive from nothing a re-bootstrap can return, and they are the whole carve-out: see
+     * {@link isCarriedLocalType}. Keeping every seq-0 row instead would be the wider rule
+     * `adoptWipedBaseline` uses for the cross-tab case, and it is wrong here — bodies are
+     * discarded by a re-bootstrap by design, which `body-hydration.test.ts` pins.
+     *
+     * The engine used to do this by hand: snapshot the outbox rows, call the wipe, write them
+     * back one at a time. That has a durable zero-row window — a kill after the clear, or one
+     * refused re-put, and the verbs are gone — and it made the engine a second writer of a rule
+     * the store already owns for the cross-tab case (`adoptWipedBaseline` partitions exactly this
+     * way). The partition happens here now, and `wipe` puts them back inside its own transaction,
+     * so there is no window at all.
+     *
+     * Computed at call time from `records`, so a `wipeOwed` retry carries them too.
+     */
+    const carried = (r: MirrorRecord): boolean =>
+      r.seq === 0 && r.entity !== null && isCarriedLocalType(r.type);
+    this.wipeKeep = [...this.records.values()].filter(carried);
+    for (const [k, v] of [...this.records]) {
+      if (!carried(v)) this.records.delete(k);
+    }
     this.meta.clear();
     this.cursor = "0";
     this.highSeq = 0;
@@ -603,6 +695,12 @@ export class MemoryMirrorStore extends BaseMirrorStore {
   }
   protected async wipe(): Promise<void> {
     /* in-memory only */
+  }
+  protected async transact(): Promise<void> {
+    /* in-memory only — the base publishes to the map once this resolves, which it always does.
+       NOTE for anyone reaching for this store in a durability test: it CANNOT refuse, so it
+       cannot exercise `commitLocal`'s rejection path at all. That is the blindness that let the
+       first cut of this work go green; use `IndexedDbMirrorStore` with a faulty factory. */
   }
   protected async purge(): Promise<void> {
     /* in-memory only — the base class already dropped the records from the map */

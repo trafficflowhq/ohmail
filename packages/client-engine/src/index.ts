@@ -330,10 +330,24 @@ export {
   // The durable outbox's client-local record type. Exported so the kill-restart guards (and
   // any storage tooling) read the shipped name rather than a hand-copied string.
   OUTBOX_TYPE,
+  // Where a verb goes once the client gives up on it — a separate collection rather than a flag,
+  // so the replay set stays correct by construction. The surfaces that render the "could not be
+  // saved" list read this name, and so do the guards.
+  OUTBOX_ABANDONED_TYPE,
+  OUTBOX_ENTRY_VERSION,
+  // The supersession target rule. Exported so its table can be pinned directly rather than
+  // inferred from end-to-end behaviour, which fixture shapes make an unreliable way to reach it.
+  targetOf,
+  type AbandonedMutation,
   // The boot replay's per-attempt deadline and the unkeyed-create replay horizon — exported so
   // the guards read the shipped numbers, not copies.
   OUTBOX_REPLAY_DEADLINE_MS,
   OUTBOX_UNKEYED_CREATE_TTL_MS,
+  // The give-up ceiling and its backoff, same reasoning: a guard that hard-codes 8 is asserting
+  // against its own copy of the rule rather than against the shipped one.
+  OUTBOX_MAX_SERVER_FAILURES,
+  OUTBOX_BACKOFF_BASE_MS,
+  OUTBOX_BACKOFF_CAP_MS,
   // The eager recent-window hydration bounds. Exported so the guards read the shipped numbers.
   EAGER_BODIES_MAX,
   EAGER_BODIES_SLICE,

@@ -317,9 +317,42 @@ export class SqlMirrorStore extends BaseMirrorStore {
     await db.batch(keys.map((key) => ({ sql: "DELETE FROM entities WHERE key = ?", params: [key] })));
   }
 
-  protected async wipe(): Promise<void> {
+  /**
+   * ONE `batch` for the outbox's puts and deletes together — see `MirrorStore.commitLocal`.
+   *
+   * `SqlExecutor.batch` already promises atomicity, which is the whole requirement. It ignores
+   * `torn` and never sets it, and that is correct here rather than an omission: `torn` exists for
+   * the memory-first path, where memory has already run ahead of disk and a failure has to be
+   * remembered. This method publishes nothing until the batch resolves, so there is no ahead-ness
+   * to record.
+   */
+  protected async transact(puts: MirrorRecord[], deletes: string[]): Promise<void> {
+    if (puts.length === 0 && deletes.length === 0) return;
     const db = await this.open();
-    const statements: SqlStatement[] = [{ sql: "DELETE FROM entities" }, { sql: "DELETE FROM meta" }];
+    const statements: SqlStatement[] = [
+      ...puts.map((rec) => ({
+        sql: UPSERT_ENTITY,
+        params: [`${rec.type}:${rec.id}`, JSON.stringify(rec)],
+      })),
+      ...deletes.map((key) => ({ sql: "DELETE FROM entities WHERE key = ?", params: [key] })),
+    ];
+    await db.batch(statements);
+  }
+
+  /**
+   * `keep` rides through the clear, in the SAME batch — see the IndexedDB twin for the argument.
+   */
+  protected async wipe(keep: MirrorRecord[] = []): Promise<void> {
+    const db = await this.open();
+    const statements: SqlStatement[] = [
+      { sql: "DELETE FROM entities" },
+      // Straight back in, before this batch commits.
+      ...keep.map((rec) => ({
+        sql: UPSERT_ENTITY,
+        params: [`${rec.type}:${rec.id}`, JSON.stringify(rec)],
+      })),
+      { sql: "DELETE FROM meta" },
+    ];
     // Clearing meta drops the stamp too. Re-write it in the SAME batch: a database that is
     // empty and unowned would be silently claimable by the next account to open it.
     if (this.owner !== null) statements.push({ sql: UPSERT_META, params: [OWNER_KEY, encodeMeta(this.owner)] });

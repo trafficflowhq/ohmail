@@ -744,13 +744,57 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
     await txDone(tx);
   }
 
-  protected async wipe(): Promise<void> {
+  /**
+   * ONE TRANSACTION for the outbox's puts and deletes together — see `MirrorStore.commitLocal`.
+   *
+   * The generation fence is read INSIDE the transaction for the same reason `persist` reads it
+   * there, and the same abort-on-mismatch makes the refusal atomic: nothing this call was asked to
+   * write reaches disk. `META` is in the transaction only to read that stamp — this method writes
+   * no cursor and no meta, which is the structural half of "it cannot move the sync cursor".
+   *
+   * "Died mid-transaction" and "aborted" are the same state to IndexedDB, which is exactly why
+   * this is the seam the fault-injection tests use: a transaction that never completes is
+   * indistinguishable from a process that stopped, and both leave disk untouched.
+   */
+  protected async transact(puts: MirrorRecord[], deletes: string[]): Promise<void> {
+    if (puts.length === 0 && deletes.length === 0) return;
+    const db = await this.open();
+    const tx = db.transaction([ENTITIES, META], "readwrite");
+    const entities = tx.objectStore(ENTITIES);
+    const meta = tx.objectStore(META);
+
+    const found = generationOf(await requestDone(meta.get(GEN_KEY)));
+    if (found !== this.generation) {
+      const expected = this.generation;
+      this.generation = found;
+      try { tx.abort(); } catch { /* already settled */ }
+      throw new MirrorGenerationChanged(expected, found);
+    }
+    for (const rec of puts) entities.put(rec, `${rec.type}:${rec.id}`);
+    for (const key of deletes) entities.delete(key);
+    await txDone(tx);
+  }
+
+  /**
+   * `keep` RIDES THROUGH THE CLEAR, inside this transaction.
+   *
+   * A 410 is a statement about the CURSOR, never about the user's intents, and the seq-0 rows —
+   * the durable outbox above all — derive from nothing a re-bootstrap can bring back. The engine
+   * used to snapshot them, call this, and write them back one at a time; a kill between the clear
+   * and the write-back, or a single refused re-put, lost them. Here there is no window: the clear
+   * and the re-put are the same transaction, so either the wipe happened with the rows intact or
+   * it did not happen at all.
+   */
+  protected async wipe(keep: MirrorRecord[] = []): Promise<void> {
     const db = await this.open();
     const tx = db.transaction([ENTITIES, META], "readwrite");
     const meta = tx.objectStore(META);
     // Read before the clear takes it — see `bindOwner` for why the counter must not reset.
     const gen = generationOf(await requestDone(meta.get(GEN_KEY)));
-    tx.objectStore(ENTITIES).clear();
+    const entities = tx.objectStore(ENTITIES);
+    entities.clear();
+    // Straight back in, before this transaction commits.
+    for (const rec of keep) entities.put(rec, `${rec.type}:${rec.id}`);
     meta.clear();
     // Clearing META drops the stamp too. Re-write it in the SAME transaction: a database
     // that is empty and unowned would be silently claimable by the next account to open

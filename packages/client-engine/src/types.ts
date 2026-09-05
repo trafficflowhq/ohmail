@@ -1705,12 +1705,33 @@ export class MutationRejectedError extends Error {
   readonly status: number | null;
   readonly code: string | null;
   readonly retryable: boolean;
-  constructor(message: string, opts: { status?: number | null; code?: string | null; retryable?: boolean } = {}) {
+  /**
+   * How long the SERVER asked us to wait, in ms, from its `Retry-After` — or `null` when it said
+   * nothing.
+   *
+   * Load-bearing for the outbox's give-up ceiling, not merely informational. A refusal that names
+   * its own interval is a server declining work it KNOWS it cannot do yet (a starved connection
+   * pool answering `503 db_busy`), which is a different event from a server that failed in a way
+   * nobody modelled. The first must not consume the queue's patience — a twenty-minute pool outage
+   * would otherwise abandon every legitimate verb in flight — and the second must, or a poisoned
+   * verb hammers forever. See `OUTBOX_MAX_SERVER_FAILURES`.
+   *
+   * `null` and `0` are deliberately different: `0` is a server saying "immediately", which is still
+   * the server having spoken.
+   */
+  readonly retryAfterMs: number | null;
+  constructor(
+    message: string,
+    opts: {
+      status?: number | null; code?: string | null; retryable?: boolean; retryAfterMs?: number | null;
+    } = {},
+  ) {
     super(message);
     this.name = "MutationRejectedError";
     this.status = opts.status ?? null;
     this.code = opts.code ?? null;
     this.retryable = opts.retryable ?? false;
+    this.retryAfterMs = opts.retryAfterMs ?? null;
   }
 }
 
@@ -1775,4 +1796,27 @@ export function decodeSeqCursor(cursor: Cursor): number | null {
   } catch {
     return null;
   }
+}
+
+
+/**
+ * THE TWO CLIENT-LOCAL TYPES THAT SURVIVE A RE-BOOTSTRAP.
+ *
+ * Declared here rather than in `engine.ts` because the STORE is what carries them through a wipe
+ * (`BaseMirrorStore.resetForBootstrap`) and the ENGINE is what writes and replays them, and the
+ * rule "these two, and only these two, ride through a 410" has to be one declaration or it is two
+ * that drift. `engine.ts` re-exports them, so every existing importer is unaffected.
+ *
+ * The carve-out is narrow on purpose. Every seq-0 row is client-local, but most of them are
+ * RE-DERIVABLE: a `message_body` is re-fetched on demand and a `view_meta` waterline costs one
+ * re-mark. These two derive from nothing — a queued verb IS the user's intent, and an abandoned
+ * one is the intent nothing else will ever deliver. A 410 is a statement about the CURSOR, so it
+ * may take everything the cursor can bring back and nothing it cannot.
+ */
+export const OUTBOX_TYPE = "outbox_entry";
+export const OUTBOX_ABANDONED_TYPE = "outbox_abandoned";
+
+/** The rows {@link OUTBOX_TYPE} and {@link OUTBOX_ABANDONED_TYPE} name, as a membership test. */
+export function isCarriedLocalType(type: string): boolean {
+  return type === OUTBOX_TYPE || type === OUTBOX_ABANDONED_TYPE;
 }

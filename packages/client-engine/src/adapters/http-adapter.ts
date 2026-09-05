@@ -253,11 +253,64 @@ function narrowBody(wire: Partial<MessageBodyWire>): MessageBodyWire {
   };
 }
 
+/**
+ * THE FIVE ANSWERS `POST /drafts/:id/send` SPEAKS. Anything else at a status that says the server
+ * ACTED is ambiguity — see the guard that reads this set.
+ *
+ * Named as a set rather than inlined because the guard sits ABOVE the per-status branches (it has
+ * to, or `draftForKey` is already gone by the time it runs) and would otherwise swallow the very
+ * answers those branches exist to handle. It did: lifting the guard turned a `409 {status:"failed"}`
+ * — a definitively-undelivered attempt, terminal and NOT retryable — into a retryable
+ * `send_in_flight`, and the existing send suite said so immediately.
+ */
+const SEND_WIRE_STATUSES = new Set(["sent", "unverified", "queued", "in_flight", "failed"]);
+
 /** `POST /drafts/:id/send` answers this shape at 200 AND at 409 — never the error envelope. */
 interface SendWire {
   status?: "sent" | "unverified" | "failed" | "in_flight" | "queued";
   providerMessageId?: string | null;
   message?: string;
+}
+
+function retryAfterMsOf(res: Response): number | null {
+  const raw = res.headers.get("retry-after");
+  if (raw === null) return null;
+  const trimmed = raw.trim();
+  if (trimmed === "") return null;
+  if (/^\d+$/.test(trimmed)) return Number(trimmed) * 1000;
+  const when = Date.parse(trimmed);
+  if (Number.isNaN(when)) return null;
+  return Math.max(0, when - Date.now());
+}
+
+/**
+ * A 2xx WHOSE BODY WILL NOT PARSE IS AMBIGUITY, NOT A REFUSAL.
+ *
+ * `res.json()` throwing after a successful status means the SERVER ACTED and we cannot read what
+ * it said. The row may exist; the ticket may be minted. Letting the raw `SyntaxError` escape made
+ * `dispatch` wrap it as `retryable: false` — a terminal refusal — so the client dropped its
+ * Idempotency-Key and the next attempt created a SECOND draft, or told a person "no draft was
+ * made" about one that had just been paid for and written.
+ *
+ * Retryable, under the same key, carrying the response's own status so the give-up ceiling can
+ * attribute it. See the send route's equivalent arm for the fuller argument.
+ */
+async function readJsonOrAmbiguous<T>(res: Response, what: string): Promise<T> {
+  try {
+    const body = (await res.json()) as T;
+    // A body that PARSES but is not an object — `null`, a bare string, a number — is the same
+    // ambiguity as one that will not parse, and it used to be worse: `null` threw a TypeError on
+    // the first field access, which `dispatch` wrapped as a terminal refusal. The server acted and
+    // we cannot read what it said; a create that may already exist must not be reported as one
+    // that does not.
+    if (body === null || typeof body !== "object") throw new Error("unusable body");
+    return body;
+  } catch {
+    throw new MutationRejectedError(
+      `We could not read the server's answer to this ${what}. ohmail will ask again under the same key.`,
+      { status: res.status, code: "unreadable_response", retryable: true, retryAfterMs: retryAfterMsOf(res) },
+    );
+  }
 }
 
 /**
@@ -432,8 +485,21 @@ export class HttpAdapter implements EngineAdapter {
       status: res.status,
       code: wire.error?.code ?? null,
       retryable: wire.error?.retryable ?? (res.status >= 500 || res.status === 429),
+      retryAfterMs: retryAfterMsOf(res),
     });
   }
+
+  /**
+   * `Retry-After` as milliseconds, or `null` when the server named no interval.
+   *
+   * RFC 9110 allows both spellings and the API uses the numeric one on the `503 db_busy` its
+   * starved-pool refusal raises; the HTTP-date form is parsed anyway because a proxy in front of
+   * the API may rewrite it, and a misparse here does not merely lose an optimisation — it turns a
+   * server's "wait, I know when" into a failure that counts toward the outbox's give-up ceiling.
+   *
+   * A date in the past clamps to 0 rather than going negative: the server has spoken, and the
+   * answer is "now".
+   */
 
   private noteSeq(res: Response): number | null {
     const raw = res.headers.get("x-sync-seq");
@@ -1376,9 +1442,15 @@ export class HttpAdapter implements EngineAdapter {
           });
           if (!res.ok) throw await this.rejectionOf(res);
           const seq = this.noteSeq(res);
-          const dto = (await res.json()) as { id?: string; updatedAt?: string; createdAt?: string };
+          const dto = await readJsonOrAmbiguous<{ id?: string; updatedAt?: string; createdAt?: string }>(res, "draft save");
           if (!dto.id) {
-            throw new MutationRejectedError("draft create returned no id", { code: "draft_save_failed" });
+            // Parsed, but without the id it promised. Same class as an unreadable body: the row may
+            // exist. Retryable under the same key, carrying the status so the ceiling can attribute
+            // it — a terminal refusal here drops the key and the next attempt creates a second row.
+            throw new MutationRejectedError(
+              "We could not read the server's answer to this draft save. ohmail will ask again under the same key.",
+              { code: "unreadable_response", status: res.status, retryable: true, retryAfterMs: retryAfterMsOf(res) },
+            );
           }
           return {
             changes: seq === null ? [] : [{
@@ -1625,9 +1697,15 @@ export class HttpAdapter implements EngineAdapter {
       });
       if (!created.ok) throw await this.rejectionOf(created);
       this.noteSeq(created);
-      const draft = (await created.json()) as { id?: string; bcc?: unknown };
+      const draft = await readJsonOrAmbiguous<{ id?: string; bcc?: unknown }>(created, "draft create");
       if (!draft.id) {
-        throw new MutationRejectedError("draft create returned no id", { code: "send_failed" });
+        // Same class, and the costliest instance: reporting this as `send_failed` tells a person
+        // no draft was made about one that may have been written and paid for, and frees the next
+        // press to mint a new key.
+        throw new MutationRejectedError(
+          "We could not read the server's answer to this draft. ohmail will ask again under the same key.",
+          { code: "unreadable_response", status: created.status, retryable: true, retryAfterMs: retryAfterMsOf(created) },
+        );
       }
       // ── VERSION-SKEW GUARD: a dropped Bcc must NEVER become a silent send ──────────────────
       //
@@ -1799,7 +1877,12 @@ export class HttpAdapter implements EngineAdapter {
       // nobody received.
       throw new MutationRejectedError(
         wire.message ?? "This send was accepted and is still being handed to your mail server.",
-        { status: res.status, code: "send_queued", retryable: true },
+        {
+          status: res.status, code: "send_queued", retryable: true,
+          // A server that names an interval is obeyed even here: this arm is a WAIT, and the
+          // client's own cadence is not better information than the server's.
+          retryAfterMs: retryAfterMsOf(res),
+        },
       );
     }
 
@@ -1809,7 +1892,46 @@ export class HttpAdapter implements EngineAdapter {
       // triggers the server's verify-by-Sent recovery instead.
       throw new MutationRejectedError(
         wire.message ?? "A send for this draft is already in progress.",
-        { status: res.status, code: "send_in_flight", retryable: true },
+        {
+          status: res.status, code: "send_in_flight", retryable: true,
+          retryAfterMs: retryAfterMsOf(res),
+        },
+      );
+    }
+
+    /**
+     * ── AN UNREADABLE ANSWER ON THIS ROUTE IS AMBIGUITY, NOT FAILURE ─────────────────────────
+     *
+     * Reached when the status says the server ACTED — `res.ok` (the route answers `sent` and
+     * `unverified` at 200, `queued` at 202) or 409 (`failed`/`in_flight`) — but `wire.status` is
+     * none of the five it speaks. A truncated body, a proxy that rewrote it, a 200 that never
+     * finished writing.
+     *
+     * The old fall-through handed this to the generic envelope below, where
+     * `retryable ?? (status >= 500 || status === 429)` reads 200/202/409 as NOT retryable. That
+     * became `dispatch`'s refusal arm → `rolled_back` → the composer unlocking on a send whose
+     * reservation may be committed and whose SMTP may have completed. The next press mints a
+     * FRESH key, and on the mobile path there is no `draftId`, so the server's 409 guard
+     * (`send-service.ts` — it protects a NAMED draft) cannot see it: a second `POST /drafts` and
+     * a second delivery of the same message.
+     *
+     * So: retryable, under the SAME key, with `draftForKey` KEPT. The same-key replay is not a resend — `resumeExisting`
+     * on the server verifies by reservation and by Sent before it does anything — which is why
+     * retrying is the safe act here and giving up is the dangerous one.
+     *
+     * `send_queued` at 202 and `send_in_flight` otherwise, so it lands in the vocabulary the
+     * ceiling already exempts as a modelled wait rather than spending a life on ambiguity.
+     */
+    if ((res.ok || res.status === 409) && !SEND_WIRE_STATUSES.has(wire.status ?? "")) {
+      throw new MutationRejectedError(
+        "We could not read the server's answer to this send. It may already be on its way — "
+        + "ohmail will ask again under the same key.",
+        {
+          status: res.status,
+          code: res.status === 202 ? "send_queued" : "send_in_flight",
+          retryable: true,
+          retryAfterMs: retryAfterMsOf(res),
+        },
       );
     }
 
@@ -1831,6 +1953,13 @@ export class HttpAdapter implements EngineAdapter {
       status: res.status,
       code: env.error?.code ?? null,
       retryable: env.error?.retryable ?? (res.status >= 500 || res.status === 429),
+      // AND THE HEADER. This branch rebuilds the envelope by hand instead of going through
+      // `rejectionFor`, and it silently omitted `Retry-After` — so eight `503 db_busy` answers on
+      // the SEND route counted as unmodelled failures and abandoned a send the server had merely
+      // asked us to wait for. A hand-rolled copy of a shared rule that drops one field is exactly
+      // the drift the shared function exists to prevent; the field is named here rather than
+      // inferred so the omission cannot recur silently.
+      retryAfterMs: retryAfterMsOf(res),
     });
   }
 
@@ -1917,14 +2046,17 @@ export class HttpAdapter implements EngineAdapter {
         },
       });
       if (!minted.ok) throw await this.rejectionOf(minted);
-      const grant = (await minted.json()) as {
+      const grant = await readJsonOrAmbiguous<{
         id?: string; uploadUrl?: string; uploadMethod?: string;
         uploadHeaders?: Record<string, string>;
-      };
+      }>(minted, "attachment upload ticket");
       if (!grant.id || !grant.uploadUrl) {
         throw new MutationRejectedError(
           "This message was not sent: the upload could not be prepared. Try again.",
-          { code: "staging_failed", retryable: true },
+          {
+            code: "staging_failed", status: minted.status, retryable: true,
+            retryAfterMs: retryAfterMsOf(minted),
+          },
         );
       }
 
@@ -1949,7 +2081,17 @@ export class HttpAdapter implements EngineAdapter {
       if (!put.ok) {
         throw new MutationRejectedError(
           "This message was not sent: an attachment could not be uploaded. Try again.",
-          { status: put.status, code: "staging_failed", retryable: put.status >= 500 },
+          {
+            status: put.status,
+            code: "staging_failed",
+            // 429 joins 5xx: the generic path has always read a rate limit as retryable and this
+            // one did not, so a throttled storage backend was a terminal send failure here and a
+            // patient retry everywhere else. One rule, both roads.
+            retryable: put.status >= 500 || put.status === 429,
+            // Storage throttles with `Retry-After` too; without it eight of them abandon a send
+            // that was only ever being asked to slow down.
+            retryAfterMs: retryAfterMsOf(put),
+          },
         );
       }
       ids.push(grant.id);
