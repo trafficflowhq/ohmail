@@ -40,6 +40,7 @@ import {
   subscribeLocale, type AppLocale,
 } from "./locale";
 import { readStoredLocale, writeStoredLocale } from "./store";
+import { localeSequencer } from "./sequencer";
 import type { SecureKV } from "../state/servers";
 
 /**
@@ -107,93 +108,48 @@ export function LocaleProvider(
   const [busy, setBusy] = useState(false);
   const locale = useLocale();
   /* The store is read once per mount. `kv` is a stable binding in the app (one module-level
-     keystore) and an injected double in tests; keying the effect on it would re-read on every
-     render if a caller passed a fresh object, and re-reading a preference is not free on a
-     keystore. */
+     keystore) and an injected double in tests. */
   const kvRef = useRef(kv);
   kvRef.current = kv;
-  /**
-   * THE CHOICE, AS THE LISTENER AND THE BOOT READ MUST SEE IT — written when it CHANGES, never
-   * during render.
-   *
-   * This was assigned in the render body (`chosenRef.current = chosen`), which is a write during
-   * render and only lands when React commits. The foreground listener is registered once and can
-   * fire between a `setChosen` and its commit, so it could resolve against the previous choice and
-   * publish a language the person had just moved away from. It is set in the handler that knows the
-   * new value instead, so the ref is correct the moment the write succeeds.
-   */
-  const chosenRef = useRef<AppLocale | null>(null);
-  /**
-   * HOW MANY EXPLICIT WRITES HAVE HAPPENED — the boot read's guard.
-   *
-   * The keystore read is async and the Settings control is live while it is in flight, so somebody
-   * can choose German before the read resolves. The read then called `setChosen(stored)` and
-   * published the OLD value over the new one — a preference that reverts a second after it is made,
-   * which is the worst kind because the second attempt usually works. The read captures this
-   * counter when it starts and applies nothing if it has moved: a write that happened later is a
-   * decision, and a read that started earlier cannot be news.
-   */
-  const writes = useRef(0);
 
-  useEffect(() => {
-    let live = true;
-    const startedAt = writes.current;
-    void (async () => {
-      const stored = await readStoredLocale(kvRef.current);
-      /* THE WRITE WINS. A choice made while this read was in flight is newer than anything the
-         keystore held when it started, and republishing the stored value would undo it. */
-      if (!live || writes.current !== startedAt) return;
-      chosenRef.current = stored;
-      setChosen(stored);
-      /* Resolved against the DEVICE again rather than against whatever the register happens to
-         hold: clearing the override has to fall back to the phone's language, and this is the one
-         path that runs for both "a choice was stored" and "none was". */
-      setActiveLocale(resolveLocale(stored, deviceLocale()));
-    })();
-    return () => { live = false; };
-  }, []);
+  /**
+   * THE THREE ORDERINGS LIVE IN `sequencer.ts`, NOT HERE.
+   *
+   * A boot read that resolves after a choice, two presses in one render, and a foreground wake
+   * that must see the current choice — each has been wrong once, and each used to be tested by a
+   * model written inside the test file and tied to this one by regexes over the source. That model
+   * could stay green while this code changed, which is what review found. The rules are shipped
+   * code now and the tests drive them; this component is the wiring.
+   *
+   * Built once per mount. `deps` closes over the state setters, which are stable, and reads `kv`
+   * through the ref so a caller passing a fresh object each render does not rebuild it.
+   */
+  const seq = useMemo(() => localeSequencer({
+    read: () => readStoredLocale(kvRef.current),
+    write: (next) => writeStoredLocale(kvRef.current, next),
+    onChosen: setChosen,
+    onBusy: setBusy,
+  }), []);
+
+  useEffect(() => { void seq.boot(); }, [seq]);
 
   /**
    * A DEVICE LANGUAGE CHANGE, PICKED UP WITHOUT A RELAUNCH.
    *
-   * `deviceLocale()`'s own header says it is deliberately not cached because a phone's language can
-   * change under a running app — Android applies a system-language change to a live process. That
-   * was true of the function and false of this provider, which read it once on mount: somebody who
-   * switched their phone to German with ohmail in "System" kept an English app until they killed
-   * it. A comment claiming a property the code does not have is worse than no comment.
-   *
-   * `AppState` is the seam. There is no locale-change event in React Native, and the settings app
+   * `deviceLocale()`'s header says it is deliberately uncached because a phone's language can
+   * change under a running app. That was true of the function and false of this provider, which
+   * read it once on mount. There is no locale-change event in React Native and the settings app
    * has to come to the foreground for the change to be made, so the return to `active` is the
    * moment to re-read — the same listener shape `app/(tabs)/reads.tsx` already uses.
-   *
-   * Guarded on `chosen`: an explicit choice OUTRANKS the device, so a person who picked German on
-   * an English phone must not be reset by walking through their own settings. That is
-   * {@link resolveLocale}'s order, applied on every wake rather than only on mount.
    */
   useEffect(() => {
     const sub = AppState.addEventListener("change", (next) => {
-      if (next !== "active") return;
-      setActiveLocale(resolveLocale(chosenRef.current, deviceLocale()));
+      if (next === "active") seq.wake();
     });
     return () => { sub.remove(); };
-  }, []);
+  }, [seq]);
 
-  const setLocale = useCallback(async (next: AppLocale | null) => {
-    setBusy(true);
-    try {
-      await writeStoredLocale(kvRef.current, next);
-      /* Counted and recorded BEFORE the register is published, so a boot read that resolves in
-         between finds the counter already moved and stands down, and the foreground listener
-         reads the committed choice rather than the one React has not rendered yet. A refused
-         write throws above this line and changes neither. */
-      writes.current += 1;
-      chosenRef.current = next;
-      setChosen(next);
-      setActiveLocale(resolveLocale(next, deviceLocale()));
-    } finally {
-      setBusy(false);
-    }
-  }, []);
+  const setLocale = useCallback((next: AppLocale | null) => seq.set(next), [seq]);
 
   const value = useMemo<LocaleControls>(
     () => ({ locale, locales: LOCALES, chosen, setLocale, busy }),
