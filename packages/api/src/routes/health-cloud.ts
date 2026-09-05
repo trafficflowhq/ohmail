@@ -268,7 +268,11 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // and its whole job is to be the thing that notices. With it, the deploy answers
   // `503 schema_incomplete` and names the reason.
   ["worker_heartbeats", "degraded_since"],
-  // `alert_pass_runs.sinks_configured` — the FIFTH, and now the migration's LAST statement.
+  // `platform_signals.sample_cause` — the migration's LAST statement, which is the whole point:
+  // the last column of the last statement is the only one whose presence implies every object
+  // above it. It moved here from `alert_pass_runs.sinks_configured` when 0030 grew two more
+  // statements; `alerts.ts`'s SCHEMA_BEHIND_MARKER moved with it, in the same commit, because a
+  // marker naming anything earlier reports ready for a migration that stopped halfway.
   //
   // The fourth marker above was chosen because it was last, and then a statement was APPENDED
   // after it. That quietly voided the only property the choice rested on, so this list has to
@@ -276,7 +280,7 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // and for the same reason. Both are kept in step deliberately rather than one deriving from
   // the other, because the alert preflight must not import an API route to answer a question
   // about the database.
-  ["alert_pass_runs", "sinks_configured"],
+  ["platform_signals", "sample_cause"],
 ] as const;
 
 /**

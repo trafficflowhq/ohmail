@@ -248,6 +248,14 @@ export interface AdminPlatformSignal {
   completeBuckets: number;
   sampledBuckets: number;
   expectedBuckets: number;
+  /**
+   * WHY the samples in this window stopped — the closed set in `SAMPLE_CAUSES`, distinct.
+   *
+   * The panel used to describe every sample as page-budget exhaustion, which was one of six
+   * causes and increasingly the rarest, so an operator was sent to a limit that was not
+   * involved. The sentence is keyed on these values and an unknown one fails a test.
+   */
+  sampleCauses: string[];
   fetchedAt: string;
 }
 

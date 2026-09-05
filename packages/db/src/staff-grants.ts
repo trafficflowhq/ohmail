@@ -361,6 +361,11 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
   "public.alert_state": [
     "alert_key", "kind", "severity", "opened_at", "last_seen_at", "notified_at",
     "notify_count", "detail",
+    // When the alert was resolved (cloud 0030), NULL while it is open. The blind role must READ
+    // and WRITE it: resolution marks rather than deletes — an insert cannot be fenced against a
+    // row that is not there — and the API driver runs that pass over exactly this role, so a
+    // grant list without it is 42501 on every external resolution.
+    "resolved_at",
     // The renotify policy's condition signature (cloud 0025) — composed by `alerts.ts` itself
     // from an alert's severity and count, never from content. The blind role must read AND
     // write it: `runAlertPass`'s claim names the column, and the API driver — the sole
@@ -425,6 +430,11 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
   // so if it were.
   "public.platform_signals": [
     "provider", "project", "window_start", "requests", "errors_5xx", "truncated", "fetched_at",
+    // WHICH cause made a bucket a sample (cloud 0030). A closed vocabulary of six words this
+    // repository writes — never a value from the platform, never anything a request carried —
+    // and the console's sentence is keyed on it. The same three-place decision as every column
+    // above: here, the harden script's column-scoped grants, and the census equality.
+    "sample_cause",
   ],
   // The `security_barrier` view, and the ONLY route to `audit_log`. Four named scalars: no
   // `payload`, no `inverse`. The bags are never granted, in any shape.

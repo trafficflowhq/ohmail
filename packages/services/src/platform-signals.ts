@@ -64,6 +64,31 @@ import type { Db } from "./context.js";
 export type SignalProvider = "vercel";
 
 /** One window's traffic for one project, as counted. */
+/**
+ * WHY a bucket is a sample. Six values, closed, and the panel's sentence table is keyed on this
+ * exact set — a cause with no sentence fails a test rather than rendering an empty line.
+ *
+ * `truncated` began meaning one of these (`page_budget`) and grew the other five while the
+ * console went on describing the first, so five of six samples were reported to an operator as
+ * page-budget exhaustion and sent them to a limit that was not involved.
+ */
+export const SAMPLE_CAUSES = [
+  /** The walk stopped after its maximum number of pages. */
+  "page_budget",
+  /** Read before the platform had finished indexing the closed bucket. */
+  "settle_margin",
+  /** A row arrived with no environment or target, so the population is not knowably production. */
+  "missing_provenance",
+  /** A row's request id could not be read, so it cannot be de-duplicated and was skipped. */
+  "unreadable_request_id",
+  /** The pass's wall-clock deadline expired mid-walk. */
+  "deadline",
+  /** The cursor stopped advancing — the endpoint said more rows exist and returned none. */
+  "stalled_cursor",
+] as const;
+
+export type SampleCause = (typeof SAMPLE_CAUSES)[number];
+
 export interface PlatformSignalRow {
   provider: SignalProvider;
   /** The platform's own project name (`ohmail-api`) — an identifier this repository chooses. */
@@ -71,8 +96,10 @@ export interface PlatformSignalRow {
   windowStart: Date;
   requests: number;
   errors5xx: number;
-  /** The walk hit its budget: both counts are lower bounds over the newest slice of the window. */
+  /** A sample: both counts are lower bounds over the newest slice of the window. */
   truncated: boolean;
+  /** WHICH of the six causes made it one, or null when it is not a sample. */
+  sampleCause: SampleCause | null;
 }
 
 /** The port's three outcomes. The union IS the design — see the module header. */
@@ -367,7 +394,7 @@ export function makePlatformSignalPort(
         let errors5xx = 0;
         // Set when any page hands back a row whose request id cannot be read: the counts below
         // become a floor rather than a population, and the row says so. See the mixed-page note.
-        let sampled = false;
+        let sampled: SampleCause | null = null;
         let cursor = window.end.getTime();
         let pages = 0;
         // `requestId` dedupes the boundary: the cursor is inclusive and two requests can share a
@@ -388,7 +415,16 @@ export function makePlatformSignalPort(
             // that says zero. An unread project is reported as a FAILURE, so the pass writes no
             // row for it and the board says "not measured".
             if (pages === 0) return { failed: "deadline_before_first_page" };
-            return { row: { provider: "vercel", project, windowStart: window.start, requests, errors5xx, truncated: true } };
+            // WHAT WAS COUNTED IS EVIDENCE, and it used to be thrown away on this path when the
+            // deadline (rather than the page budget) ended the walk: the catch below returned a
+            // failure and the pages already read went with it, so a slow endpoint left the
+            // bucket MISSING and the rule dark despite real, if partial, measurement. The
+            // declared end of a walk is not what happened during it.
+            return { row: {
+              provider: "vercel", project, windowStart: window.start, requests, errors5xx,
+              truncated: true,
+              sampleCause: pages >= budget ? "page_budget" : "deadline",
+            } };
           }
           pages++;
           const q = new URLSearchParams({
@@ -476,7 +512,7 @@ export function makePlatformSignalPort(
           // made about them. `truncated` already means exactly "these numbers are a floor, do not
           // divide them", and the window read already excludes such buckets from its sums, so the
           // honest fix is to say so rather than to invent a second kind of doubt.
-          if (usable.length < batch.length) sampled = true;
+          if (usable.length < batch.length) sampled = "unreadable_request_id";
           let oldest = cursor;
           for (const r of batch) {
             // ── PROVENANCE: PRODUCTION, OR NOT COUNTED AT ALL ────────────────────────
@@ -506,7 +542,7 @@ export function makePlatformSignalPort(
                 ? (r as { target: string }).target
                 : null;
             if (env !== null && env !== "production") return { failed: "production_filter_ignored" };
-            if (env === null) { sampled = true; continue; }
+            if (env === null) { sampled = "missing_provenance"; continue; }
             const id = typeof r.requestId === "string" ? r.requestId : "";
             // A blank id cannot be de-duplicated, so counting it would inflate the boundary. It is
             // skipped rather than refused: unlike the census script, an approximate count over a
@@ -563,7 +599,10 @@ export function makePlatformSignalPort(
           // count would be the actual defect: it would put a confident total on a board for a
           // window the poll never finished reading.
           if (oldest >= cursor) {
-            return { row: { provider: "vercel", project, windowStart: window.start, requests, errors5xx, truncated: true } };
+            return { row: {
+              provider: "vercel", project, windowStart: window.start, requests, errors5xx,
+              truncated: true, sampleCause: "stalled_cursor",
+            } };
           }
           cursor = oldest;
         }
@@ -573,7 +612,8 @@ export function makePlatformSignalPort(
             provider: "vercel", project, windowStart: window.start, requests, errors5xx,
             // Not `false` — a page with unreadable rows in it made this window a sample, and the
             // walk finishing does not make the population whole again.
-            truncated: sampled,
+            truncated: sampled !== null,
+            sampleCause: sampled,
           },
         };
       }
@@ -759,7 +799,11 @@ export async function runPlatformSignalPass(
     // bucket is a sample of it, and saying so is what gets the bucket re-polled instead of
     // frozen at its first, thinnest reading.
     const settledAt = row0End(raw.windowStart, windowMs) + SIGNAL_SETTLE_MS;
-    const row = now.getTime() >= settledAt ? raw : { ...raw, truncated: true };
+    // The settle margin names ITSELF as the cause; a row that was already a sample for another
+    // reason keeps the reason it arrived with, because that one happened first.
+    const row = now.getTime() >= settledAt
+      ? raw
+      : { ...raw, truncated: true, sampleCause: raw.sampleCause ?? "settle_margin" as const };
     await db
       .insert(platformSignals)
       .values({
@@ -774,6 +818,7 @@ export async function runPlatformSignalPass(
         requests: row.requests,
         errors5xx: row.errors5xx,
         truncated: row.truncated,
+        sampleCause: row.sampleCause,
         fetchedAt: sql`${now.toISOString()}::timestamptz`,
       })
       .onConflictDoUpdate({
@@ -785,6 +830,7 @@ export async function runPlatformSignalPass(
           requests: row.requests,
           errors5xx: row.errors5xx,
           truncated: row.truncated,
+          sampleCause: row.sampleCause,
           fetchedAt: sql`${now.toISOString()}::timestamptz`,
         },
         // ── AND A COMPLETE ROW NEVER REGRESSES TO A SAMPLE ──────────────────────────────

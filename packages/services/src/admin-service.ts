@@ -27,6 +27,7 @@ import {
   SCOPED_ALERT_KINDS,
   alertDriverStatuses,
   platformSignalWindow,
+  listOpenAlertStamps,
   SIGNAL_BUCKET_MS,
   listFailedBillingEvents,
   listStuckSends,
@@ -1914,6 +1915,7 @@ export async function adminPlatformSignals(
     truncated: r.truncated,
     completeBuckets: r.completeBuckets,
     sampledBuckets: r.sampledBuckets,
+    sampleCauses: r.sampleCauses,
     expectedBuckets,
     fetchedAt: r.fetchedAt.toISOString(),
   }));
@@ -1921,13 +1923,10 @@ export async function adminPlatformSignals(
 
 export async function adminAlerts(db: AdminDb, now: Date): Promise<AlertSummary[]> {
   const firing = await evaluateAlerts(db, { now });
-  const stateRows = await db
-    .select({
-      alertKey: alertState.alertKey,
-      openedAt: alertState.openedAt,
-      notifiedAt: alertState.notifiedAt,
-    })
-    .from(alertState);
+  // THROUGH THE DB PACKAGE'S OWN READER, never a select of the table from here: resolution marks
+  // rather than deletes now, so a read without `resolved_at IS NULL` renders fixed history as
+  // live incidents. One accessor is only one accessor if nothing else can reach the rows.
+  const stateRows = await listOpenAlertStamps(db as never);
   const state = new Map(stateRows.map((r) => [r.alertKey, r]));
 
   const evaluated = firing.map((alert) => {

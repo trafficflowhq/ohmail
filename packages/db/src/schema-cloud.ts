@@ -605,6 +605,16 @@ export const workerHeartbeats = pgTable("worker_heartbeats", {
  */
 export const alertState = pgTable("alert_state", {
   alertKey: text("alert_key").primaryKey(),
+  /**
+   * When this alert was resolved, or NULL while it is open (cloud 0030).
+   *
+   * Resolution MARKS rather than deletes, because an INSERT cannot be fenced against a row that
+   * is not there: an older pass paused before its observation write arrives at an empty table,
+   * takes the insert branch, and recreates — and pages — an incident a newer pass had just
+   * resolved. Every reader meaning "open" goes through one accessor applying
+   * `resolved_at IS NULL`, and a source census keeps it that way.
+   */
+  resolvedAt: timestamp("resolved_at", { withTimezone: true }),
   kind: text("kind").notNull(),
   severity: text("severity").notNull().default("critical"),
   openedAt: timestamp("opened_at", { withTimezone: true }).defaultNow().notNull(),
@@ -747,6 +757,15 @@ export const platformSignals = pgTable("platform_signals", {
    * count it does not have.
    */
   truncated: boolean("truncated").notNull().default(false),
+  /**
+   * WHICH of the six causes made this bucket a sample, or NULL when it is not one (cloud 0030).
+   *
+   * `truncated` began meaning "the walk hit its page budget" and grew five more causes, while
+   * the console went on naming the first — so an operator was sent to a limit that was not
+   * involved. The panel's sentence is keyed on this value, and a cause with no sentence fails a
+   * test rather than rendering blank. Constrained to the app-level set of six.
+   */
+  sampleCause: text("sample_cause"),
   fetchedAt: timestamp("fetched_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({
   pk: primaryKey({ columns: [t.provider, t.project, t.windowStart], name: "platform_signals_pk" }),

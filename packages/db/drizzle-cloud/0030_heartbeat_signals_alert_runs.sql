@@ -249,3 +249,41 @@ ALTER TABLE "worker_heartbeats" ADD COLUMN IF NOT EXISTS "degraded_since"
 -- would make an unknown arm look armed.
 ALTER TABLE "alert_pass_runs" ADD COLUMN IF NOT EXISTS "sinks_configured"
   integer NOT NULL DEFAULT 0;
+
+--> statement-breakpoint
+
+-- ══ 7. A RESOLVED ALERT IS MARKED, NOT DELETED ═════════════════════════════════════════════
+--
+-- Resolution used to DELETE the row, and the argument for that was good: `alert_state` is then a
+-- live list of what is wrong, which is what the console renders and what makes "did this page
+-- already?" one lookup. It has one consequence nobody costed. The two arms overlap, so an older
+-- pass can be paused between evaluating a condition and writing its observation while a newer
+-- pass resolves the same key. The older pass then arrives at an EMPTY table and takes the INSERT
+-- branch — and an insert cannot be fenced against a row that is not there. It recreates the
+-- incident the newer pass just resolved, and pages a human about it.
+--
+-- The fence needs something to stand on, so the row survives its own resolution. Readers ask for
+-- `resolved_at IS NULL` through one accessor, a re-fired condition clears the stamp on the
+-- (fenced) conflict path, and the insert branch is reachable only for a key that has never been
+-- seen at all. Tombstones are pruned by count, not only by age: a flapping key must not grow the
+-- table for ever.
+ALTER TABLE "alert_state" ADD COLUMN IF NOT EXISTS "resolved_at"
+  timestamp with time zone;
+--> statement-breakpoint
+
+-- ══ 8. WHICH CAUSE MADE THIS BUCKET A SAMPLE ═══════════════════════════════════════════════
+--
+-- `truncated` began as one thing — the walk hit its page budget — and now has six causes: the
+-- page budget, a read taken inside the settle margin, a row whose provenance is missing, a row
+-- whose request id cannot be read, the wall-clock deadline, and a cursor that stopped advancing.
+-- The console kept describing the first one, so five of the six were reported to an operator as
+-- page-budget exhaustion and sent them to look at a limit that was not involved.
+--
+-- The cause is recorded where the sample is, and the panel's sentence is keyed on this value —
+-- so a cause with no sentence fails a test rather than rendering an empty line. NULL means the
+-- row is not a sample at all, which is the only state `truncated = false` may have.
+--
+-- THIS IS THE LAST STATEMENT OF 0030, so it carries the schema marker: `alerts.ts`'s
+-- SCHEMA_BEHIND_MARKER and the `/health` marker both name this column, because the last column
+-- of the last statement is the only one whose presence implies every object above it.
+ALTER TABLE "platform_signals" ADD COLUMN IF NOT EXISTS "sample_cause" text;

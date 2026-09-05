@@ -1,4 +1,5 @@
-import { and, eq, gt, isNotNull, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
+import { and, eq, gt, isNotNull, isNull, lt, lte, ne, or, sql, type SQL } from "drizzle-orm";
+import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import {
   alertPassRuns, alertState, authEvents, billingEvents, billingReconciliationRuns,
   creditRollupRuns, devices, mailboxes, outboundSends, platformSignals, sessions, workerHeartbeats,
@@ -658,7 +659,7 @@ export function humanAge(seconds: number | null): string {
  * interrupted between the two passed both this check and the matching `/health` marker. Adding a
  * statement to 0030 means moving this constant and that marker together, every time.
  */
-const SCHEMA_BEHIND_MARKER = { table: "alert_pass_runs", column: "sinks_configured" } as const;
+const SCHEMA_BEHIND_MARKER = { table: "platform_signals", column: "sample_cause" } as const;
 
 /**
  * IS THIS DATABASE OLDER THAN THE BUNDLE WE ARE RUNNING? — the alert pass's preflight.
@@ -2198,6 +2199,8 @@ export interface PlatformSignalWindow {
   completeBuckets: number;
   /** How many buckets were excluded as sampled. Rendered, never summed into the rate. */
   sampledBuckets: number;
+  /** Distinct reasons this window's samples stopped — see `SAMPLE_CAUSES`. */
+  sampleCauses: string[];
   /** The newest `fetched_at` among the contributing rows — the panel's freshness stamp. */
   fetchedAt: Date;
 }
@@ -2270,6 +2273,13 @@ export async function platformSignalWindow(
       truncated: sql<boolean>`bool_or(${platformSignals.truncated})`,
       completeBuckets: sql<number>`count(*) filter (where not ${platformSignals.truncated})::int`,
       sampledBuckets: sql<number>`count(*) filter (where ${platformSignals.truncated})::int`,
+      // WHICH causes made this window's samples. Distinct, because three buckets stopped for the
+      // same reason is one sentence for the operator, not three; and an array rather than one
+      // value because they can genuinely differ inside a window — a poll that hit its page
+      // budget on the oldest bucket and the settle margin on the newest is telling you two
+      // different things, and picking one to render would hide the other.
+      sampleCauses: sql<string[]>`coalesce(array_agg(distinct ${platformSignals.sampleCause})
+        filter (where ${platformSignals.sampleCause} is not null), '{}')`,
       // FILTERED like the sums above it, and for the same reason. A sampled bucket contributes
       // no requests and no errors, so letting its `fetched_at` win the max reported figures as
       // freshly read whose newest CONTRIBUTING data was older — the stamp describing a row that
@@ -2293,6 +2303,7 @@ export async function platformSignalWindow(
     truncated: r.truncated === true,
     completeBuckets: Number(r.completeBuckets ?? 0),
     sampledBuckets: Number(r.sampledBuckets ?? 0),
+    sampleCauses: (r.sampleCauses ?? []) as string[],
     fetchedAt: new Date(r.fetchedAt as unknown as string),
   }));
 }
@@ -3036,6 +3047,109 @@ function accountDelivery(
   return { escalate, sinkDegraded };
 }
 
+/* ════════════════════════════════════════════════════════════════════════════════════════
+   THE ALERT-ROW FENCE — one rule, and every writer of `alert_state` goes through it
+   ════════════════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * **No pass may write, delete or claim over a row that a NEWER pass has stamped.**
+ *
+ * ── WHY THIS IS A FUNCTION AND NOT A LINE IN THREE PLACES ────────────────────────────────
+ *
+ * The fence was first written as a `setWhere` on the observation upsert alone, and that was the
+ * whole defect: the invariant is about the ROW, and the upsert is only one of the ways a pass
+ * touches it. Two arms overlap by design and nothing serialises them, so an older pass can and
+ * does arrive after a newer one at every writer:
+ *
+ *   · the RESOLUTION DELETE was unconditional, so an older pass that evaluated the key as
+ *     healthy erased a newer pass's observation AND the notification record beside it — and the
+ *     next pass re-opened the same condition and paged it a second time;
+ *   · the CLAIM read the newer `last_seen_at` under its own lock and did not use it, so an older
+ *     pass could take the lease and send its stale alert while the newer pass, seeing the lease,
+ *     stayed quiet — the wrong text delivered, once, with the right one suppressed;
+ *   · the SETTLE was fenced on the lease and not on the stamp, which is a different question.
+ *
+ * Fixing the path in front of you and not the invariant behind it is how one fence became three
+ * defects. `alert-state-writers.test.ts` asserts by census that this file contains no other
+ * mutation of the table, so a fourth writer cannot quietly appear without one.
+ */
+/**
+ * **THE ONLY WAY TO READ OPEN ALERTS.** Every reader of `alert_state` that means "what is wrong
+ * right now" goes through this, and `alert-state-writers.test.ts` asserts by census that no other
+ * select of the table exists.
+ *
+ * Resolution MARKS rather than deletes (cloud 0030), which is what gives the insert branch of the
+ * observation write something to fence against. The cost of that choice is that every reader now
+ * shares a way to be wrong: a select that forgets `resolved_at IS NULL` renders resolved history
+ * as live incidents — the board filling with things that are already fixed, which is worse than
+ * the resurrection the tombstone was added to prevent. One accessor, one predicate, one place to
+ * get it right.
+ */
+export function selectOpenAlerts<T extends Record<string, AnyPgColumn>>(
+  db: Tx, columns: T, extra?: SQL,
+) {
+  const open = isNull(alertState.resolvedAt);
+  return db.select(columns).from(alertState).where(extra ? and(open, extra) : open);
+}
+
+/**
+ * The stamps the console pairs with a freshly evaluated alert — open rows only.
+ *
+ * Exported as its own reader rather than letting `packages/services` select the table itself:
+ * one accessor is only one accessor if nothing else can reach the rows, and a second package
+ * writing its own `.from(alertState)` is exactly how the `resolved_at IS NULL` predicate would
+ * be forgotten in a file the census does not watch.
+ */
+/**
+ * How many resolved rows the table keeps. Small, because they are evidence for a fence and not a
+ * history: the only reader that needs a tombstone is the next pass deciding whether it may
+ * re-open the key, and one flapping condition must not grow this table for ever.
+ *
+ * Per KEY the bound is already one — `alert_key` is the primary key, so a resolution reuses the
+ * row rather than appending — which is why this cap is over the whole table: the growth that is
+ * actually possible is in the number of distinct keys that have ever fired and stopped.
+ */
+export const ALERT_TOMBSTONE_MAX = 64;
+
+/** Keep the newest {@link ALERT_TOMBSTONE_MAX} resolved rows; drop the rest. */
+async function pruneAlertTombstones(db: Tx): Promise<void> {
+  await db.delete(alertState).where(sql`${alertState.alertKey} in (
+    select alert_key from ${alertState}
+    where resolved_at is not null
+    order by resolved_at desc
+    offset ${ALERT_TOMBSTONE_MAX}
+  )`);
+}
+
+export async function listOpenAlertStamps(db: Tx): Promise<Array<{
+  alertKey: string; openedAt: Date; notifiedAt: Date | null;
+}>> {
+  const rows = await selectOpenAlerts(db, {
+    alertKey: alertState.alertKey,
+    openedAt: alertState.openedAt,
+    notifiedAt: alertState.notifiedAt,
+  });
+  return rows.map((r) => ({
+    alertKey: r.alertKey as string,
+    openedAt: new Date(r.openedAt as unknown as string),
+    notifiedAt: r.notifiedAt === null ? null : new Date(r.notifiedAt as unknown as string),
+  }));
+}
+
+function notWrittenByANewerPass(at: Date) {
+  const iso = at.toISOString();
+  // ── BOTH STAMPS, AND THE SECOND ONE IS WHY THE TOMBSTONE WORKS ────────────────────────
+  //
+  // `last_seen_at` alone does not close the race the tombstone was added for. Resolution marks
+  // the row and leaves `last_seen_at` where the last OBSERVATION put it, so an older pass
+  // arriving after a newer pass resolved the key finds a stamp OLDER than its own `now`, passes
+  // a last-seen-only fence, clears `resolved_at` and re-opens the incident — the resurrection,
+  // reintroduced by the very column meant to prevent it. Keeping the row is what gives the fence
+  // something to read; reading BOTH stamps is what makes it answer correctly.
+  return sql`${alertState.lastSeenAt} <= ${iso}::timestamptz
+    and coalesce(${alertState.resolvedAt}, '-infinity'::timestamptz) <= ${iso}::timestamptz`;
+}
+
 export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise<AlertPassResult> {
   const now = opts.now ?? new Date();
   const repeatMs = opts.repeatMs ?? DEFAULT_ALERT_REPEAT_MS;
@@ -3101,15 +3215,13 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
 
   const firingKeys = new Set(firing.map((a) => a.key));
 
-  const existing = await db
-    .select({
-      alertKey: alertState.alertKey,
-      kind: alertState.kind,
-      notifiedAt: alertState.notifiedAt,
-      notifiedSignature: alertState.notifiedSignature,
-      notifyCount: alertState.notifyCount,
-    })
-    .from(alertState);
+  const existing = await selectOpenAlerts(db, {
+    alertKey: alertState.alertKey,
+    kind: alertState.kind,
+    notifiedAt: alertState.notifiedAt,
+    notifiedSignature: alertState.notifiedSignature,
+    notifyCount: alertState.notifyCount,
+  });
   const byKey = new Map(existing.map((r) => [r.alertKey, r]));
 
   // NO same-key ESCALATION ARM by severity flip alone — that existed for one pass's lifetime
@@ -3123,36 +3235,6 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
   // drivers from both seeing "changed"), so a failed delivery retries and a crashed pass
   // costs `claimTtlMs`, not the interval. A severity flip changes the default signature and
   // therefore pages once the change-arm floor passes — through the claim, not around it.
-
-/* ════════════════════════════════════════════════════════════════════════════════════════
-   THE ALERT-ROW FENCE — one rule, and every writer of `alert_state` goes through it
-   ════════════════════════════════════════════════════════════════════════════════════════ */
-
-/**
- * **No pass may write, delete or claim over a row that a NEWER pass has stamped.**
- *
- * ── WHY THIS IS A FUNCTION AND NOT A LINE IN THREE PLACES ────────────────────────────────
- *
- * The fence was first written as a `setWhere` on the observation upsert alone, and that was the
- * whole defect: the invariant is about the ROW, and the upsert is only one of the ways a pass
- * touches it. Two arms overlap by design and nothing serialises them, so an older pass can and
- * does arrive after a newer one at every writer:
- *
- *   · the RESOLUTION DELETE was unconditional, so an older pass that evaluated the key as
- *     healthy erased a newer pass's observation AND the notification record beside it — and the
- *     next pass re-opened the same condition and paged it a second time;
- *   · the CLAIM read the newer `last_seen_at` under its own lock and did not use it, so an older
- *     pass could take the lease and send its stale alert while the newer pass, seeing the lease,
- *     stayed quiet — the wrong text delivered, once, with the right one suppressed;
- *   · the SETTLE was fenced on the lease and not on the stamp, which is a different question.
- *
- * Fixing the path in front of you and not the invariant behind it is how one fence became three
- * defects. `alert-state-writers.test.ts` asserts by census that this file contains no other
- * mutation of the table, so a fourth writer cannot quietly appear without one.
- */
-function notWrittenByANewerPass(at: Date) {
-  return sql`${alertState.lastSeenAt} <= ${at.toISOString()}::timestamptz`;
-}
 
   // ── record the observation (opened_at survives an UPSERT; last_seen_at advances) ──────
   //
@@ -3195,6 +3277,10 @@ function notWrittenByANewerPass(at: Date) {
         // and not only in the pass's return value. The class is in those rules' signatures too,
         // so the promotion re-pages rather than inheriting the signal's confirmation.
         set: {
+          // A CONDITION THAT FIRES AGAIN RE-OPENS ITS ROW. The fence above has already refused
+          // every pass older than the resolution, so reaching here means this observation is
+          // genuinely newer than the mark — the same key, wrong again, and open again.
+          resolvedAt: null,
           lastSeenAt: now,
           severity: alert.severity,
           detail: alert.detail,
@@ -3324,17 +3410,14 @@ function notWrittenByANewerPass(at: Date) {
     const changeBefore = new Date(now.getTime() - claimTtlMs);
     const sig = alertSignature(alert);
     const won = await db.transaction(async (tx) => {
-      const [cur] = await tx
-        .select({
-          notifiedAt: alertState.notifiedAt,
-          notifiedSignature: alertState.notifiedSignature,
-          claimedUntil: alertState.claimedUntil,
-          // THE PERSISTED CLASS, read under the lock — see the check below.
-          cls: alertState.cls,
-          lastSeenAt: alertState.lastSeenAt,
-        })
-        .from(alertState)
-        .where(eq(alertState.alertKey, alert.key))
+      const [cur] = await selectOpenAlerts(tx, {
+        notifiedAt: alertState.notifiedAt,
+        notifiedSignature: alertState.notifiedSignature,
+        claimedUntil: alertState.claimedUntil,
+        // THE PERSISTED CLASS, read under the lock — see the check below.
+        cls: alertState.cls,
+        lastSeenAt: alertState.lastSeenAt,
+      }, eq(alertState.alertKey, alert.key))
         .limit(1)
         .for("update");
       if (!cur) return false; // resolved underneath this pass — nothing to page
@@ -3445,15 +3528,21 @@ function notWrittenByANewerPass(at: Date) {
     .filter((r) => !SCOPED_ALERT_KINDS.has(r.kind) || evaluatedScopedKeys.has(r.alertKey))
     .map((r) => r.alertKey);
   for (const key of resolved) {
-    // FENCED like every other writer: this pass may only resolve what it actually observed to be
-    // healthy. A newer pass that has since seen the condition again has stamped the row, and an
-    // older pass deleting it here would take the newer observation and its notification record
-    // with it — after which the next pass opens the same key and pages it again.
-    await db.delete(alertState).where(and(
-      eq(alertState.alertKey, key),
-      notWrittenByANewerPass(now),
-    ));
+    // ── RESOLUTION MARKS; IT DOES NOT DELETE ─────────────────────────────────────────
+    //
+    // Deleting made `alert_state` a live list of what is wrong, which is what the console wants
+    // and what makes "did this page already?" one lookup. It also left the observation write's
+    // INSERT branch with nothing to fence against: an older pass paused before its write arrived
+    // at an empty table and recreated — and paged — the incident this pass had just resolved.
+    //
+    // The row survives its own resolution so the fence has something to stand on. Readers ask
+    // through `selectOpenAlerts`, a genuinely new firing clears the stamp on the fenced conflict
+    // path, and the lease is dropped here because a resolved condition has no delivery pending.
+    await db.update(alertState)
+      .set({ resolvedAt: now, claimedUntil: null })
+      .where(and(eq(alertState.alertKey, key), notWrittenByANewerPass(now)));
   }
+  await pruneAlertTombstones(db);
 
   const streak = opts.deliveryStreak;
   if (toNotify.length === 0) {
@@ -4090,8 +4179,7 @@ export async function listOpenAlerts(db: Tx): Promise<Array<{
   /** What the rule said. NULL only for a row written before these columns existed. */
   title: string | null; count: number | null;
 }>> {
-  const rows = await db
-    .select({
+  const rows = await selectOpenAlerts(db, {
       alertKey: alertState.alertKey,
       kind: alertState.kind,
       severity: alertState.severity,
@@ -4109,8 +4197,6 @@ export async function listOpenAlerts(db: Tx): Promise<Array<{
       title: alertState.title,
       count: alertState.count,
     })
-    .from(alertState)
-    .where(isNotNull(alertState.alertKey))
     .orderBy(alertState.openedAt);
   return rows.map((r) => ({
     alertKey: r.alertKey,
