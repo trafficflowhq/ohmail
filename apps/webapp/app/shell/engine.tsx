@@ -35,6 +35,7 @@ import {
 } from "./session-truth";
 import {
   confirmSyncOwner,
+  syncIdentityOf,
   sameSyncStatus,
   startSyncScheduler,
   SYNC_BOOTSTRAPPING,
@@ -862,7 +863,7 @@ export function EngineProvider({
           confirmed owner withdraws it. That is the reported defect reached through a second
           door, and it is why the gate is the BINDING rather than `live`: a latch observed
           before this mount is not evidence about this mount, and one round trip settles it. */}
-      {live && (binding.status === "ready" || deathSeenHere) ? <SessionEnded sync={sync} /> : null}
+      {live && (binding.status === "ready" || deathSeenHere) ? <SessionEnded sync={sync} engine={engine} /> : null}
       {/* THE CHECK-DID-NOT-FINISH OVERLAY, and note what is NOT here: `checking` renders
           nothing at all. A tab whose confirm is being retried keeps painting its mirror
           exactly as `warm` does — no scrim, no dimming, no message. `warm` already paints
@@ -948,7 +949,7 @@ function useInertBackground(active: boolean): void {
  * or screen-reader user is standing on the remedy, not somewhere in a mailbox that no longer
  * answers.
  */
-function SessionEnded({ sync }: { sync: SyncStatus }) {
+function SessionEnded({ sync, engine }: { sync: SyncStatus; engine: OhmailEngine | null }) {
   const t = useTranslations("session");
   const dead = useSessionDead();
   const signInRef = useRef<HTMLAnchorElement | null>(null);
@@ -966,9 +967,25 @@ function SessionEnded({ sync }: { sync: SyncStatus }) {
       return;
     }
     if (probed.current) return;
+    /*
+     * …AND NOT WHEN THE EVIDENCE IS SOMEBODY ELSE'S SESSION.
+     *
+     * `sync.terminal` has two causes, and this probe is right for exactly one of them. A server
+     * refusal is a question about THIS account, and one `POST /auth/refresh` answers it in both
+     * directions. A CONTRADICTED mirror is not: the loop stopped because the cookie jar now
+     * names a different account, so the refresh this would send carries that account's cookies.
+     * It cannot heal anything here — this tab's session is not in the jar to be healed — and
+     * what it does instead is rotate somebody else's refresh token from a tab that is not
+     * theirs, extending a session nobody in this window is signed in to and, in a bad
+     * interleaving, presenting a token their own tab is about to present again.
+     *
+     * Read at EFFECT time rather than at render time: the jar can be rewritten between the two,
+     * which is the whole event this arm is about.
+     */
+    if (syncIdentityOf(engine) === "contradicted") return;
     probed.current = true;
     probeSessionNow();
-  }, [evidence]);
+  }, [evidence, engine]);
 
   useEffect(() => {
     if (dead) signInRef.current?.focus();
