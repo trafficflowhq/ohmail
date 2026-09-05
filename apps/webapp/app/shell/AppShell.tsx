@@ -695,6 +695,7 @@ export function AppShell({
   demo,
   engine,
   resolveOwner,
+  onConfirmed,
   mailboxFacts,
   organizerNoticeTransport,
   mirrorFreshness,
@@ -736,6 +737,12 @@ export function AppShell({
    */
   engine?: ProvidedEngine;
   resolveOwner?: OwnerResolver;
+  /**
+   * Threaded to {@link EngineProvider.onConfirmed} — the Cloud client's binding, committed by the
+   * arm that has already believed the answer rather than by the classifier that produced it.
+   * Absent on the desktop and the demo, like `resolveOwner`.
+   */
+  onConfirmed?: (accountId: string) => void;
   /**
    * "What state are this account's mailboxes in?", as a function the SHELL does not know how
    * to answer — the seventh injected prop, and the same seam as `resolveOwner` for the same
@@ -1133,7 +1140,7 @@ export function AppShell({
   onUnread?: (unread: number) => void;
 }) {
   return (
-    <EngineProvider demo={demo} engine={engine} resolveOwner={resolveOwner}>
+    <EngineProvider demo={demo} engine={engine} resolveOwner={resolveOwner} onConfirmed={onConfirmed}>
       {/* ONE keydown listener for the whole client. Outside `ShellInner` so
           every view mounted under it can declare bindings into the same table, which is
           also the table the `?` sheet is generated from. */}

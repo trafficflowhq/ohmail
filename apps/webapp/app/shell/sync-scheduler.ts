@@ -485,6 +485,24 @@ type GatedAdapter = EngineAdapter & { snapshot?: SnapshotFn; listMessages?: List
  */
 export type SyncIdentity = "holds" | "unconfirmed" | "revoked" | "contradicted";
 
+/**
+ * MAY A READER ASK THE SERVER FOR THIS ACCOUNT'S BYTES, given an identity? — the rule itself,
+ * as one function, so that every door is the same door.
+ *
+ * There were two copies: the adapter spelled it inline and `syncMayRead` spelled it again for the
+ * doors that never reach an adapter. They agreed, and nothing made them agree — which is exactly
+ * how the fourth state (`revoked`) arrived in one of them and not the other, and how the
+ * reach-past body door and the mailbox-facts poll went on reading through a lapsed grant while
+ * the adapter beside them refused.
+ *
+ * `unconfirmed` reads TRUE and that is the whole subtlety: it is the ordinary warm open, the mail
+ * is the person's own, and refusing there would blank a mailbox that is already on screen for the
+ * length of a round trip — the flicker this slice exists to remove.
+ */
+export function mayReadIdentity(state: SyncIdentity): boolean {
+  return state !== "contradicted" && state !== "revoked";
+}
+
 export interface SyncGate {
   /** Wrap the engine's transport. Call once, at construction, on the adapter you pass in. */
   guard(adapter: GatedAdapter): GatedAdapter;
@@ -497,6 +515,17 @@ export interface SyncGate {
   confirm(accountId: string): void;
   /** Run `cb` when the gate opens — the scheduler registers its `wake` here. */
   onOpen(cb: () => void): void;
+  /**
+   * Run `cb` when a REVOKED gate could plausibly be confirmed again — the marker has come back
+   * to naming this mirror's account. The shell registers the session confirm here.
+   *
+   * Without it a revoked gate is a dead end: revocation is monotonic (by design — it must not
+   * oscillate), `confirm` is the only way out, and nothing on a `ready` binding ever calls it,
+   * because `ready` carries no owner and the confirm effect has long since finished. The tab
+   * cleared its terminal strip when the contradiction went away and then sat there: no reads, no
+   * sync, no mutations, no stream, and nothing on screen saying so.
+   */
+  onNeedsConfirm(cb: () => void): void;
   /**
    * Claim the gate for a scheduler's lifetime. There is deliberately no `release`: the
    * predicate a scheduler installs closes ITSELF once that scheduler is stopped (it reads the
@@ -523,6 +552,9 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
    */
   let revoked = false;
   const openers = new Set<() => void>();
+  const reconfirmers = new Set<() => void>();
+  /** Fired at most once per revocation, so a poll cannot turn into a confirm ladder per tick. */
+  let askedToReconfirm = false;
 
   /**
    * WHAT THE MARKER SAID LAST TIME ANYBODY LOOKED. `undefined` means nothing has been observed
@@ -587,6 +619,7 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
        */
       confirmedFor = null;
       revoked = true;
+      askedToReconfirm = false;
     } else if (lastSeen === undefined) {
       lastSeen = marker;
     }
@@ -595,7 +628,22 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
     // may still be live and it is not this window's to use. See `OWNER_SIGNED_OUT`.
     if (marker.kind === "signed-out") return "contradicted";
     if (marker.kind === "account" && marker.id !== mirrorOwner) return "contradicted";
-    if (confirmedFor !== mirrorOwner) return revoked ? "revoked" : "unconfirmed";
+    if (confirmedFor !== mirrorOwner) {
+      if (!revoked) return "unconfirmed";
+      /*
+       * A REVOKED GATE WHOSE MARKER NAMES THIS MIRROR AGAIN CAN BE ASKED ABOUT.
+       *
+       * Revocation stays monotonic — this does not reopen anything, and only a server-confirmed
+       * `confirm` does. What it does is wake the one thing that can ask, because on a `ready`
+       * binding nothing else ever will: the confirm effect finished long ago and `ready` carries
+       * no owner to re-compare. Once per revocation, so a tick cannot become a ladder.
+       */
+      if (marker.kind === "account" && marker.id === mirrorOwner && !askedToReconfirm) {
+        askedToReconfirm = true;
+        for (const cb of reconfirmers) cb();
+      }
+      return "revoked";
+    }
     return "holds";
   };
 
@@ -637,11 +685,10 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
      * world has since changed (the grant has lapsed, and what a read returns now is not this
      * window's business); the jar positively names somebody else or a refused sign-out.
      */
-    const state = identity();
-    if (state === "contradicted" || state === "revoked") throw new ForeignSessionError(what);
-    // NOTE: {@link syncMayRead} is this same predicate, exported for the two Cloud doors that
-    // never reach an adapter. If one moves, the other must — `sync-owner-gate.test.ts` pins that
-    // they agree on all four states.
+    // {@link mayReadIdentity} — the SAME function the non-adapter doors reach through
+    // `syncMayRead`, not a second spelling of it. It was two spellings; they agreed, and nothing
+    // held them together, which is how the fourth state ended up in one of them and not the other.
+    if (!mayReadIdentity(identity())) throw new ForeignSessionError(what);
   };
 
   /**
@@ -742,6 +789,9 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
     },
     onOpen(cb) {
       openers.add(cb);
+    },
+    onNeedsConfirm(cb) {
+      reconfirmers.add(cb);
     },
     claim(next) {
       mayContinue = next;
@@ -1170,9 +1220,17 @@ export function syncIdentityOf(engine: OhmailEngine | null | undefined): SyncIde
  * warm open, the mail is the person's own, and refusing there would blank a mailbox that is
  * already on screen for the length of a round trip.
  */
+/**
+ * ASK ME AGAIN WHEN A REVOKED MIRROR COULD BE CONFIRMED. The shell's own re-entry into the
+ * session confirm; a no-op on an engine with no gate. See {@link SyncGate.onNeedsConfirm}.
+ */
+export function onSyncNeedsConfirm(engine: OhmailEngine | null | undefined, cb: () => void): void {
+  if (!engine) return;
+  GATES.get(engine)?.onNeedsConfirm(cb);
+}
+
 export function syncMayRead(engine: OhmailEngine | null | undefined): boolean {
-  const state = syncIdentityOf(engine);
-  return state !== "contradicted" && state !== "revoked";
+  return mayReadIdentity(syncIdentityOf(engine));
 }
 
 /** The two globals this loop reads, narrowed so a test can hand it neither. */

@@ -156,15 +156,54 @@ export async function withSessionCookieLock<T>(fn: () => Promise<T>): Promise<T>
      * `fn` RAN AND THREW ⇒ its error is the answer, and it must not be retried: re-running a
      * password step because the server said no is a second login attempt nobody asked for, and
      * against a single-use login token it is a guaranteed second failure.
-     *
-     * Otherwise no grant was ever made — an aborted wait (the deadline doing its job), a
-     * hardened embedder with no lock manager, an opaque origin, a document no longer fully
-     * active. All one case: proceed unlocked, which is the behaviour this ceremony had before
-     * the lock existed and which the server's own grace window still covers.
      */
     if (started) throw err;
+    /*
+     * ── THE DEADLINE REFUSES NOW; IT USED TO PROCEED UNLOCKED ──────────────────────────────
+     *
+     * Waiting out and then writing anyway is the original race with a delay in front of it: the
+     * holder is still going to write, this ceremony writes first, and the holder's answer lands
+     * last and restores the account it was refreshing or clears the one just created. Review
+     * pointed out that the test pinning that fallback DEMONSTRATED the attack rather than closing
+     * it, which was fair.
+     *
+     * A refusal is the honest outcome and it is not a dead end: it is retryable, it reaches the
+     * screen through the error path every one of these surfaces already renders, and the state it
+     * describes clears by itself in seconds. A visible "try that again" beats a silent
+     * wrong-account write, which is this slice's stated ordering applied to its own machinery.
+     *
+     * NOT the same case as having no lock manager at all — that falls through below and proceeds,
+     * because a browser without Web Locks would otherwise be unable to sign in, and there the
+     * server's grace window is the only instrument there has ever been.
+     */
+    if (isAbort(err)) {
+      throw new SessionBusyError();
+    }
   }
   return run();
+}
+
+/** Did the wait end because our own deadline aborted it, rather than because there is no lock? */
+function isAbort(err: unknown): boolean {
+  return typeof err === "object" && err !== null && (err as { name?: unknown }).name === "AbortError";
+}
+
+/**
+ * ANOTHER TAB IS STILL WRITING THE SESSION. Retryable by construction: the lock it is waiting on
+ * is released when that tab's request settles or when that tab goes away, so the next attempt is
+ * seconds later and unremarkable.
+ *
+ * A distinct class rather than a generic failure so a surface can tell it apart from a refusal
+ * the SERVER made — nothing has been decided about the credential here, and the copy must not
+ * suggest it has.
+ */
+export class SessionBusyError extends Error {
+  readonly code = "session_busy";
+  readonly retryable = true;
+  constructor() {
+    super("ohmail: another tab is finishing a sign-in or sign-out — try that again in a moment");
+    this.name = "SessionBusyError";
+  }
 }
 
 async function withCrossTabLock(fn: () => Promise<boolean>): Promise<boolean> {
@@ -423,6 +462,14 @@ const NEVER_REFRESH = [
   "/auth/refresh",
   "/auth/verify-email",
   "/auth/2fa/",
+  /*
+   * `/auth/logout` — a 401 here is the server saying the session is ALREADY GONE, which is the
+   * outcome being asked for. `sign-out.ts` reads it exactly that way. Refreshing first re-mints
+   * a session in order to revoke it, which is absurd on its own terms; it also took the sign-out
+   * through a nested acquire of the ceremony lock, which is how the whole sign-out came to hang.
+   * The reentrancy above makes that survivable; this makes it not happen.
+   */
+  "/auth/logout",
   /*
    * `/hello` is the capability handshake, and it is here for a different reason from its
    * neighbours: not because a 401 there is an ANSWER, but because a refresh cannot possibly be

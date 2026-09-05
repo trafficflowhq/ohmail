@@ -59,6 +59,8 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import { pendApiOwner } from "../../api-client";
+import { readOwner } from "../../shell/owner-cookie";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { Button, Icon } from "@ohmail/ui";
@@ -100,6 +102,19 @@ const deepLink = (code: string): string => `ohmail://link?code=${encodeURICompon
  * an identifier here would be a bug waiting for whoever edits this next.
  */
 export function LinkDesktopScreen({ challenge: commitment = "" }: { challenge?: string }) {
+  /*
+   * ── THIS PAGE ACTS ON AN ACCOUNT, SO IT IS NOT A PUBLIC SURFACE ─────────────────────────
+   *
+   * A fresh `/link-desktop` load left the Cloud client `public`, which permits every request.
+   * The sequence review walked: the page is opened under A, another tab establishes B, and
+   * pressing the button mints and RENDERS a one-use pairing credential for B — on a screen whose
+   * whole job is to show a credential to whoever is looking at it.
+   *
+   * `pendApiOwner` during render, for `CloudShell`'s reason: an effect runs after the commit that
+   * mounted the button, and the press can come first. It never widens, so a confirmed shell keeps
+   * its binding and a refused sign-out keeps its block.
+   */
+  pendApiOwner(readOwner());
   const t = useTranslations("linkDesktop");
   /** The sign-in fields and factor controls are the same words `/login` uses; read them once. */
   const tl = useTranslations("login");

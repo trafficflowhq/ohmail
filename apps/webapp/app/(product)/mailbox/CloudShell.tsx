@@ -7,7 +7,7 @@ import { toMailboxFacts } from "./mailbox-facts";
 import { buildToken } from "../../shell/app-update";
 import { startBuildWatch } from "../../shell/build-watch";
 import { COMPOSE_ATTACH_STAGED_SURFACE_BYTES } from "../../components/ComposeAttach";
-import { mailboxes as mailboxApi, pendApiOwner } from "../../api-client";
+import { bindApiOwner, mailboxes as mailboxApi, pendApiOwner } from "../../api-client";
 import { readOwner } from "../../shell/owner-cookie";
 import { resolveOwnerOutcome } from "../session-outcome";
 import { AboutSection } from "./AboutSection";
@@ -34,6 +34,22 @@ import { useCloudFirstRun } from "./useCloudFirstRun";
  * This is the earliest client code on this route. It is idempotent, it is a no-op on every page load
  * that is not a consent return, and it is guarded for the server render inside.
  */
+/*
+ * ── THE BOUNDARY CLOSES BEFORE THE CEREMONY COMPLETES, NOT AFTER ─────────────────────────────
+ *
+ * `beginOAuthReturn()` runs at MODULE SCOPE — the moment this file is imported, which is before
+ * any render and therefore before the render-time `pendApiOwner` below. It sends the consent
+ * completion, and it sent it while the client was still `public`.
+ *
+ * The sequence: a consent return for A loads while the shared jar has become B. The completion
+ * goes out under B's session; the server consumes A's single-use ceremony and only then rejects
+ * the account mismatch. No mailbox is attached to anybody — and A's ceremony is destroyed, so the
+ * person has to start the consent flow over with nothing on screen explaining why.
+ *
+ * So the pend happens first, on the same synchronous line. `readOwner()` is a cookie read with no
+ * side effects and no imports of its own, which is what makes it safe at module scope.
+ */
+pendApiOwner(readOwner());
 beginOAuthReturn();
 
 /**
@@ -226,6 +242,9 @@ export function CloudShell({ demo }: { demo: boolean }) {
       <AppShell
         demo={demo}
         resolveOwner={resolveOwner}
+        /* The classifier answers; THIS commits. See `EngineProvider.onConfirmed` for why the
+           binding cannot live inside `resolveOwnerOutcome`. */
+        onConfirmed={bindApiOwner}
         mailboxFacts={mailboxFacts}
         /* ACKNOWLEDGING THE ORGANIZER NOTICE, which the shared shell cannot do for itself: the
            publish denies it `app/api-client`, so the route is reached from here on this door and

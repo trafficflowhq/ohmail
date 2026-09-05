@@ -312,7 +312,19 @@ export function KeymapProvider({ children }: { children: ReactNode }) {
        * does not block either. A screen that says the session is in question could delete
        * mail behind itself. See `modal-gate.ts`.
        */
-      if (modalIsOpen()) return;
+      if (modalIsOpen()) {
+        /*
+         * AND THE HALF-TYPED CHORD GOES WITH IT.
+         *
+         * Returning early suspends the DISPATCH and used to leave `pending` alone, so a sequence
+         * could straddle the dialog: press `d`, a dialog opens, keys during it are correctly
+         * ignored — and if it closes inside the sequence window a single `d` afterwards completes
+         * the `d d` typed before it and deletes. The prefix outlived the state it was typed in,
+         * which is the same shape as the gate opening a frame late.
+         */
+        pending.current = null;
+        return;
+      }
       const typing = isTypingTarget(e.target);
       const live = ordered().filter((b) => !b.disabled && (b.inInput || !typing));
       const eligible = (b: KeyBinding) => !b.when || b.when(e);

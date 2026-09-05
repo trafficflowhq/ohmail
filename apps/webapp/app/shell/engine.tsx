@@ -35,6 +35,7 @@ import {
 } from "./session-truth";
 import {
   confirmSyncOwner,
+  onSyncNeedsConfirm,
   syncIdentityOf,
   sameSyncStatus,
   startSyncScheduler,
@@ -234,12 +235,28 @@ export function EngineProvider({
   demo: serverDemo,
   engine: provided,
   resolveOwner,
+  onConfirmed,
   children,
 }: {
   demo: boolean;
   /** See {@link ProvidedEngine}. Absent everywhere but the desktop app. */
   engine?: ProvidedEngine;
   resolveOwner?: OwnerResolver;
+  /**
+   * THE ACCOUNT THIS TAB HAS DECIDED IT IS FOR — called once, in the arm that has already
+   * believed the answer, and never from the classifier that produced it.
+   *
+   * The Cloud client is bound here (`CloudShell` supplies `bindApiOwner`). It cannot be done in
+   * `resolveOwnerOutcome`, and the reason is a sequence rather than a preference: that function
+   * runs for every attempt of the ladder, including attempts whose effect has since been
+   * cancelled, and it runs BEFORE the comparison that decides whether the answer is even about
+   * this mirror. Binding there mutated shared state that in-flight requests are judged against,
+   * so a request that left as A could be re-judged as B and allowed to recover under it.
+   *
+   * A prop rather than an import, for the reason `resolveOwner` is one: `app/shell/**` ships
+   * inside the desktop program, which has no session client. Absent on the desktop and the demo.
+   */
+  onConfirmed?: (accountId: string) => void;
   children: ReactNode;
 }) {
   // A mode change after mount (a client-side navigation from `/` to `/?demo=1`, or the
@@ -527,7 +544,12 @@ export function EngineProvider({
            * into an engine swap. Before `setBinding` so the scheduler's first tick after the
            * transition already sees an open gate rather than racing it.
            */
-          if (owner === warm.owner) confirmSyncOwner(warm.engine, owner);
+          if (owner === warm.owner) {
+            confirmSyncOwner(warm.engine, owner);
+            // AFTER the comparison and the cancellation check above: the client is bound to the account
+            // this tab has decided it is for, not to whatever the last resolver happened to see.
+            onConfirmed?.(owner);
+          }
           setBinding(
             owner === warm.owner
               ? { status: "ready", demo: false, engine: warm.engine }
@@ -540,6 +562,7 @@ export function EngineProvider({
         // binding, for the same first-tick reason as the warm arm above.
         const built = createEngine(false, undefined, owner);
         confirmSyncOwner(built, owner);
+        onConfirmed?.(owner);
         setBinding({ status: "ready", demo: false, engine: built });
       })
       .catch((err: unknown) => {
@@ -739,6 +762,33 @@ export function EngineProvider({
         : { status: "resolving" },
     );
   }, [warmOwner, warmEngine]);
+  /**
+   * ═══ A REVOKED MIRROR ASKS TO BE CONFIRMED AGAIN ══════════════════════════════════════════
+   *
+   * Revocation is monotonic on purpose: once the marker has changed, only a fresh server answer
+   * reopens the gate, and it must not oscillate. That left one state with no way out. On a
+   * `ready` binding the confirm effect finished long ago and `ready` carries no owner to
+   * re-compare, so when the marker came back to naming this mirror the tab cleared its terminal
+   * strip — the contradiction really was gone — and then sat there with reads, sync, mutations
+   * and the wake stream all disabled, and nothing on screen saying so. It looked well.
+   *
+   * The gate now says when it could plausibly be asked about (`onNeedsConfirm`, once per
+   * revocation), and this puts the binding back to `warm` so the confirm ladder runs again with
+   * the SAME engine — nothing re-mounts, nothing re-hydrates, and the answer either reopens the
+   * gate or ends the tab honestly.
+   */
+  useEffect(() => {
+    if (!engine || !live) return;
+    let cancelled = false;
+    onSyncNeedsConfirm(engine, () => {
+      if (cancelled) return;
+      const named = readOwner();
+      if (named === null) return;
+      setBinding({ status: "warm", owner: named, engine });
+    });
+    return () => { cancelled = true; };
+  }, [engine, live]);
+
   useEffect(() => {
     if (!engine) return;
     /**

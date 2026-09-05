@@ -64,7 +64,7 @@
  * {@link ApiWire} for backoff and reporting; it decides nothing here.
  */
 
-import { ApiError, auth, bindApiOwner } from "../api-client";
+import { ApiError, auth } from "../api-client";
 import { lastRefreshOutcome } from "../session-refresh";
 import type { OwnerOutcome } from "../shell/engine";
 
@@ -117,25 +117,24 @@ export async function resolveOwnerOutcome(
     const accountId = user?.accountId;
     if (typeof accountId === "string" && accountId !== "") {
       /*
-       * ── AND THE CLOUD CLIENT IS BOUND TO THIS ACCOUNT, HERE ─────────────────────────────
+       * NOTHING IS BOUND HERE, AND THAT IS THE CORRECTION.
        *
-       * This is the one place in the app that learns an account id from the server, so it is the
-       * one place that can say which account the rest of the client is speaking for. Everything
-       * signed-in goes through `api()`, and from this line on `api()` refuses any request whose
-       * cookie marker no longer names this id — see `apiOwnerHolds`.
+       * This function used to call `bindApiOwner(accountId)` on its way past. It reads as
+       * convenient — one place learns the id, so one place records it — and it mutates SHARED
+       * state before the caller has decided whether to believe the answer.
        *
-       * It exists because gating the mail engine was not enough: a shell for A whose browser
-       * became B kept the mailbox correctly stopped and left Settings talking to the new session,
-       * where the other account's recovery codes, TOTP secret, devices and pairing tokens were a
-       * click away. A per-pane check closes today's panes; this closes the seam they share.
+       * The sequence review found: a warm request for A leaves while the client is `pending(A)`;
+       * another tab signs in as B; this classifier answers B and rebinds the client to B on the
+       * spot; the in-flight A request's recovery path then re-reads the binding, sees B, and is
+       * judged to hold — so it refreshes and retries under B and accepts B's answer, all before
+       * the A shell has been torn down. A resolver whose effect was already CANCELLED did it too,
+       * because a cancelled promise still runs its `.then`.
        *
-       * A side effect in a classifier, which is worth defending rather than hiding: the
-       * alternative is a second call somebody has to remember beside every `resolveOwnerOutcome`,
-       * and a binding that can be forgotten is a binding that is missing on exactly the surface
-       * nobody thought about. Both callers — the shell's confirm and `/login`'s ladder — want it,
-       * and rebinding to the same id is a no-op.
+       * So the classifier returns an identity and commits nothing. The caller binds after its own
+       * cancellation check and its own comparison against the mirror's account — `EngineProvider`'s
+       * `onConfirmed`, called
+       * beside `confirmSyncOwner` in the arm where the answer has already been believed.
        */
-      bindApiOwner(accountId);
       return { kind: "owner", accountId };
     }
     /*
