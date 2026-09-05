@@ -1846,6 +1846,25 @@ export interface LeaseIo {
   /** STORE `\Deleted` + EXPUNGE the given messages. */
   removeClaims(refs: readonly unknown[]): Promise<void>;
   /**
+   * EVERY record in the folder bearing this install id, however far back it sits — asked of the
+   * SERVER, not filtered out of a window.
+   *
+   * Optional for `uidValidity`'s reason, and the absence resolves the same safe way: a caller that
+   * cannot ask falls back to the bounded window and reports that it could not see the whole folder,
+   * which is what it did before this existed.
+   *
+   * It exists because RELEASE and ELECTION ask different questions of one folder. The election asks
+   * "who holds this mailbox", which a partial read cannot answer, so it refuses. A release asks
+   * "which of these are MINE" — answerable per record, but only over records it can SEE, and the
+   * newest-first window does not cover crash residue or a claim buried by later arrivals. Searching
+   * by the id answers it completely and returns a handful of records rather than a folder.
+   *
+   * The result is CANDIDATES, not claims: the settings document carries the same install-id header,
+   * so the caller must still parse each one and keep only the claims. Returning them unparsed keeps
+   * one parser in this module rather than two.
+   */
+  findOwnRecords?(installId: string): Promise<RawClaimMessage[] | null>;
+  /**
    * THE SELECTED FOLDER'S UID GENERATION, where the server reports one.
    *
    * OPTIONAL, and this is the one place in this module where an optional capability is the right
@@ -1891,6 +1910,15 @@ export interface LeaseImapClient extends MetaFolderClient {
     path: string,
     query: { messages?: boolean },
   ): Promise<{ messages?: number } | false | undefined>;
+  /**
+   * SEARCH the selected folder by HEADER. Optional. Not the count probe — that asks STATUS for a
+   * scalar; this asks the server WHICH messages carry an id, so a release can find its own records
+   * without reading the folder.
+   */
+  search?(
+    query: { header?: Record<string, string> },
+    options?: { uid?: boolean },
+  ): Promise<number[] | false | undefined>;
   mailboxCreate(path: string): Promise<unknown>;
   mailboxUnsubscribe(path: string): Promise<unknown>;
   getMailboxLock(path: string): Promise<{ release(): void }>;
@@ -2414,6 +2442,33 @@ export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: s
 
     async appendClaim(raw: string): Promise<void> {
       await client.append(await meta.path(), raw, ["\\Seen"]);
+    },
+
+    async findOwnRecords(installId: string): Promise<RawClaimMessage[] | null> {
+      // `null`, never `[]`: "this connection cannot ask" and "there are none" must not be the same
+      // answer, because the caller does something different with each — falls back to the window,
+      // or concludes it has nothing to remove.
+      if (typeof client.search !== "function") return null;
+      const metaPath = await meta.path();
+      const lock = await client.getMailboxLock(metaPath);
+      try {
+        // The SERVER decides which messages match, so position in the folder is irrelevant and the
+        // reply is a handful of ids rather than a window. `parseClaim` still runs at the caller:
+        // the settings document carries this header too, and expunging it would delete the
+        // mailbox's saved configuration.
+        const found = await client.search({ header: { [H.installId]: installId } }, { uid: true });
+        if (!Array.isArray(found) || found.length === 0) return [];
+        const out: RawClaimMessage[] = [];
+        for await (const m of client.fetch(
+          found.join(","), { uid: true, headers: true }, { uid: true },
+        )) {
+          if (!m.headers) continue;
+          out.push({ ref: m.uid, raw: m.headers.toString("utf8") });
+        }
+        return out;
+      } finally {
+        lock.release();
+      }
     },
 
     async removeClaims(refs: readonly unknown[]): Promise<void> {

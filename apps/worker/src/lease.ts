@@ -354,7 +354,26 @@ export async function releaseMailboxClaim(adapter: MailboxAdapter, installId: st
    * and the next install waits out the staleness window before it may take the mailbox — on the
    * lapse, stop-organizing and remove-mailbox paths, which are precisely the moments a person has
    * just said they want this install to let go. */
-  const messages = await io.listClaims().catch((err: unknown) => {
+  /* ── ASK FOR OUR OWN RECORDS BY ID, NOT FOR A WINDOW THAT MIGHT CONTAIN THEM ─────────────
+   *
+   * The bounded read below covers the NEWEST records, and this install's own claim is normally
+   * among them because a claim is renewed by APPENDING. "Normally" is not the guarantee a release
+   * needs. Two ways one of ours sits outside that window, and neither is exotic: crash residue from
+   * an interrupted append-then-expunge, which is older by construction; and a claim buried by a
+   * ceiling's worth of later arrivals in a folder anyone with append rights can write to.
+   *
+   * Missing one is worse than it sounds, because this function RETURNS A COUNT and the caller reads
+   * that as the release having happened. So an incomplete pass reports success while a claim of
+   * ours goes on holding the mailbox against the next install until it goes stale.
+   *
+   * `findOwnRecords` asks the SERVER which messages carry our id, so position stops mattering and
+   * the answer is a handful of records rather than a folder. Where the capability is absent the
+   * bounded window is still used — the same records as before — and the shortfall is REPORTED
+   * rather than counted as done. */
+  const found = typeof io.findOwnRecords === "function"
+    ? await io.findOwnRecords(installId)
+    : null;
+  const messages = found ?? await io.listClaims().catch((err: unknown) => {
     if (err instanceof MetaFolderTruncatedError) return [...err.records];
     throw err;
   });
