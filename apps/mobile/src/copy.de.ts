@@ -395,6 +395,11 @@ export const DE: Deck = {
   resurface: "Wieder auftauchen",
   pileEmpty: "Hier ist noch nichts.",
 
+  /* Die drei Stapel-Beschreibungen — siehe `copy.en.ts` für die zweite Deck-Geschichte. */
+  replyLaterNote: "Antworten, die du schuldest. Eine Antwortrunde geht sie einzeln durch, eine pro Bildschirm.",
+  setAsideNote: "Bleibt in Sicht, ohne die Ohbox zu beschäftigen.",
+  resurfaceNote: "Kommt von selbst zurück, zu der Zeit, die du gewählt hast.",
+
   /* --------------------------------------------------------------- folders */
 
   folders: "Ordner",
