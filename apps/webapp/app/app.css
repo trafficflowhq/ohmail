@@ -5873,6 +5873,13 @@ body.dnd-active * { cursor: grabbing !important; }
      exactly 10 the strips touch, which is a tie the later element wins. A tap 21px under one
      item's centre landed on the next. */
   .set-nav{row-gap:11px}
+  /* THE WRAPPED GHOST PRESETS. `.gate-actions` wraps at `gap:8px`, and Compose's send-later
+     panel puts three ghost presets in roughly 306px at 390 — so they land on separate rows 8px
+     apart. A ghost draws ~33 and its strip reaches 5.5px past each box, so two rows need 11.
+     Row-gap only: the column gap stays 8, so the wrap point does not move and no measured width
+     changes. This surface is not one the width gate opened until now, which is why the overlap
+     survived the first pass. */
+  .gate-actions{row-gap:11px}
   /* THE HEAD'S OWN ROW-GAP, for the pair the shaped B's table predates. The ghost verb sits at
      the foot of `.scn-bulk` and the partition chips are in the container below it, so the gap
      between their strips is the HEAD's, not either container's. The ghost is drawn 31 and its

@@ -23,6 +23,13 @@
    it, and a `background-clip` re-declared here instead of longhands there would be a second copy
    that the next shorthand silently undoes. */
 @media (max-width: 640px){
-  .switch{box-sizing:content-box;padding:10.5px 0;background-clip:content-box}
-  .switch i{top:50%;translate:0 -50%}
+  /* BOTH AXES. The first version padded the vertical only, which left the hit box 40px wide — so
+     a tap 21px either side of the track's centre missed a control whose whole point is that it is
+     small. The track is 40x23 drawn and the target is 44x44; `background-clip:content-box` keeps
+     the PAINT on the drawn track in both directions. 2px each side, because 40 + 4 = 44. */
+  .switch{box-sizing:content-box;padding:10.5px 2px;background-clip:content-box}
+  /* The knob's offsets are measured from the PADDING box, and the padding just moved — so its
+     drawn inset has to absorb the 2px or the knob sits flush against the painted track's edge
+     instead of 2px inside it. 4 = the 2px of new padding plus the 2px inset it always had. */
+  .switch i{top:50%;left:4px;translate:0 -50%}
 }
