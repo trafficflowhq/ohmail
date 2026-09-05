@@ -161,6 +161,44 @@ function num(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
+/**
+ * An ISO-8601 instant that carries its own OFFSET, as milliseconds — or `null`.
+ *
+ * `Date.parse` is not enough on its own and the difference is a month boundary: a timestamp with
+ * no offset (`2026-09-01T07:00:00`) is interpreted in the PROCESS timezone, so the same vendor
+ * response would be attributed to different months on a machine in Berlin and a function in
+ * `fra1`. Both vendors send `Z`; requiring the offset is what makes that a checked fact rather
+ * than an assumption, and a string without one is refused rather than guessed at.
+ */
+function instantMs(v: unknown): number | null {
+  if (typeof v !== "string") return null;
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/.test(v)) return null;
+  const ms = Date.parse(v);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/**
+ * One currency for the whole answer, or the answer is refused.
+ *
+ * Summing across currencies produces a number no currency supports, and labelling it with
+ * whichever one happened to be read last makes it look like a figure. `cost_cents` has exactly
+ * one `currency` column per row, so a response carrying two is not a bill this schema can hold.
+ */
+class Currency {
+  private seen: string | null = null;
+  private conflict = false;
+  observe(v: unknown): void {
+    if (typeof v !== "string" || v === "") return;
+    const c = v.toLowerCase();
+    if (this.seen === null) this.seen = c;
+    else if (this.seen !== c) this.conflict = true;
+  }
+  /** `null` when the response mixed currencies. Absent throughout ⇒ the column's default. */
+  resolve(): string | null {
+    return this.conflict ? null : (this.seen ?? "usd");
+  }
+}
+
 /** `YYYY-MM-DD` — what Anthropic's cost report accepts for `starting_at`/`ending_at`. */
 const isoDay = (d: Date): string => d.toISOString().slice(0, 10);
 
@@ -180,6 +218,9 @@ const ANTHROPIC_PAGE_LIMIT = 31;
  * total is a wrong figure, and a wrong figure is the one thing this module may not produce.
  */
 const ANTHROPIC_MAX_PAGES = 12;
+
+/** `bucket_width=1d`, in milliseconds — what the continuity check in `parseAnthropic` steps by. */
+const ANTHROPIC_BUCKET_MS = 24 * 60 * 60 * 1000;
 
 /**
  * The most JSONL a billing-charges response may be before this adapter refuses to parse it.
@@ -329,12 +370,14 @@ export function makePlatformCostPort(
             window.end.getTime() + CHARGES_BUCKET_TAIL_MS,
             now().getTime() + CHARGES_LOOKAHEAD_MS,
           ));
-          // A window that has not begun is REFUSED rather than dialled. The pass always asks
-          // about the month it is in, so this is unreachable from production — but the port is
-          // exported and a caller with a future window would otherwise be handed forward-accrued
-          // flat fees for a month that has not started, stamped as a measurement, or (further
-          // ahead still) send `to` before `from`.
-          if (askedTo.getTime() <= window.start.getTime()) return { failed: "window_not_started" };
+          // A window that has not begun is REFUSED rather than dialled, and the test is the
+          // CLOCK against the window rather than `askedTo` against it — which was a day late,
+          // because `askedTo` carries the lookahead and so reaches into a month that has not
+          // started during the 24 hours before it does. The pass always asks about the month it
+          // is in, so this is unreachable from production; the port is exported, and a caller
+          // with a future window would otherwise be handed forward-accrued flat fees for a month
+          // that has not started, stamped as a measurement.
+          if (now().getTime() < window.start.getTime()) return { failed: "window_not_started" };
           const url = `https://api.vercel.com/v1/billing/charges?teamId=${encodeURIComponent(team)}`
             + `&from=${window.start.toISOString()}&to=${askedTo.toISOString()}`;
           const res = await getLines(url, { authorization: `Bearer ${token}` });
@@ -375,7 +418,19 @@ export function makePlatformCostPort(
               const at = (raw as { starting_at?: unknown } | null)?.starting_at;
               // A bucket with no usable identity cannot be de-duplicated, so it is kept under a
               // key that cannot collide and refused downstream by the parser's shape guard.
-              buckets.set(typeof at === "string" ? at : `#${buckets.size}`, raw);
+              const key = typeof at === "string" ? at : `#${buckets.size}`;
+              const already = buckets.get(key);
+              if (already !== undefined) {
+                // ONLY AN IDENTICAL REPEAT IS SAFE TO DROP. Two pages carrying the same day with
+                // DIFFERENT amounts is not a duplicate, it is a disagreement — and silently
+                // keeping whichever arrived last picks one of two bills at random. There is no
+                // coherent month to publish, so nothing is.
+                if (JSON.stringify(already) !== JSON.stringify(raw)) {
+                  return { failed: "paging_conflict" };
+                }
+                continue;
+              }
+              buckets.set(key, raw);
             }
             // ONLY a literal `false` finishes the walk. `has_more` absent, or arriving as the
             // STRING "true" after some future change, would otherwise read as completion — and
@@ -443,44 +498,54 @@ function parseVercelCharges(
   lines: string[], window: { start: Date; end: Date },
 ): PlatformCostFetch {
   const totals = new Map<string, { usd: number; quantity: number | null; unit: string | null }>();
-  // A RECOGNISED record is one carrying the fields this parser reads. Counting them is what
-  // separates "the vendor reported nothing charged" from "this parser did not understand the
-  // answer" — the two must never produce the same thing. See the module header.
-  let recognised = 0;
-  let currency = "usd";
+  // Counted only for records that fall INSIDE the window. Counting every recognised record was
+  // the previous shape and it manufactured a zero: minutes after a month starts, the response can
+  // hold only the PREVIOUS month's last bucket, which was recognised, then filtered out, and the
+  // empty-total arm below published a measured `$0.00` for the new month. What this number has to
+  // answer is "did the vendor tell us anything about the month we asked about", and only an
+  // in-window record does.
+  let inWindow = 0;
+  const currency = new Currency();
+  // Detected on a RECORD rather than on a service's total: a credit that happens to be offset by
+  // usage under the SAME service would otherwise keep a per-service breakdown, which is exactly
+  // the shape that cannot represent a credit.
+  let credited = false;
 
   for (const line of lines) {
     const text = line.trim();
     if (text === "") continue;
-    let record: Record<string, unknown>;
+    let parsed: unknown;
     try {
-      record = JSON.parse(text) as Record<string, unknown>;
+      parsed = JSON.parse(text);
     } catch {
-      // ONE UNREADABLE LINE FAILS THE WHOLE RESPONSE, and this is a reversal of what stood
-      // here. Skipping it looked right — a JSONL stream is a sequence of independent records, so
-      // one bad line need not spoil the rest — and it is exactly wrong for a BILL. The commonest
-      // way a line fails to parse is a TRUNCATED STREAM, and skipping the truncated tail sums
-      // the records that did arrive and writes the answer as a measurement: an understatement
-      // wearing the typeface of a total. A bill is not a sequence of independent records, it is
-      // one answer delivered in pieces, and a piece missing makes the answer wrong rather than
-      // shorter.
+      // ONE UNREADABLE LINE FAILS THE WHOLE RESPONSE. Skipping looked right — a JSONL stream is a
+      // sequence of independent records — and is wrong for a BILL: the commonest way a line fails
+      // to parse is a TRUNCATED STREAM, and summing the records that did arrive writes an
+      // understatement wearing the typeface of a total.
       return { failed: "unrecognised_shape" };
     }
+    // `JSON.parse("null")` succeeds and answers `null`, which then threw on the first property
+    // read — a rejected promise out of a port whose whole contract is that every failure is a
+    // code. Same for a bare array or number.
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { failed: "unrecognised_shape" };
+    }
+    const record = parsed as Record<string, unknown>;
     const service = typeof record.ServiceName === "string" ? record.ServiceName : null;
     const billed = num(record.BilledCost);
-    // `ChargePeriodStart`/`ChargePeriodEnd` are required in FOCUS v1.3. Requiring them here is
-    // what stops an unrelated JSON object that happens to carry a `BilledCost` from counting as
-    // a bill — and the start is also what decides which MONTH this record belongs to, below.
-    const from = typeof record.ChargePeriodStart === "string"
-      ? Date.parse(record.ChargePeriodStart) : NaN;
-    if (service === null || billed === null || typeof record.ChargePeriodEnd !== "string"
-        || !Number.isFinite(from)) {
+    // FOCUS v1.3 requires both period fields, and both are parsed as INSTANTS WITH AN OFFSET
+    // rather than with a bare `Date.parse` — see `instantMs`: a timestamp with no offset is read
+    // in the process timezone and can cross the month boundary, so the same response would be
+    // attributed differently on two machines. The end must also follow the start; it used to be
+    // accepted as any string at all, including one before it.
+    const from = instantMs(record.ChargePeriodStart);
+    const to = instantMs(record.ChargePeriodEnd);
+    if (service === null || billed === null || from === null || to === null || to <= from) {
       // Same rule as the unparseable line, for the same reason: a record this parser cannot read
       // is a piece of the bill it cannot account for. `num` already refuses a string, a NaN and
       // an Infinity, so a `BilledCost` that is any of those lands here rather than in the sum.
       return { failed: "unrecognised_shape" };
     }
-    recognised += 1;
     // THE MONTH IS DECIDED BY THE BUCKET'S OWN START, not by the request range, and this is what
     // makes the figure whole. The request is deliberately wider than the month at both ends (see
     // CHARGES_BUCKET_TAIL_MS): the endpoint selects buckets by their END, so a range stopping at
@@ -489,9 +554,9 @@ function parseVercelCharges(
     // bucket to exactly one calendar month — nothing dropped at the end, nothing counted twice
     // at the front.
     if (from < window.start.getTime() || from >= window.end.getTime()) continue;
-    if (typeof record.BillingCurrency === "string" && record.BillingCurrency) {
-      currency = record.BillingCurrency.toLowerCase();
-    }
+    inWindow += 1;
+    currency.observe(record.BillingCurrency);
+    if (billed < 0) credited = true;
     const acc = totals.get(service) ?? { usd: 0, quantity: null, unit: null };
     acc.usd += billed;
     const quantity = num(record.ConsumedQuantity);
@@ -502,34 +567,32 @@ function parseVercelCharges(
     totals.set(service, acc);
   }
 
-  // NOT A ZERO BILL. A response with no record this parser recognises is a response it could not
-  // read, and the one thing this module may never do is decide that means nothing was spent.
-  if (recognised === 0) return { failed: "unrecognised_shape" };
+  // NOT A ZERO BILL. A response that said nothing about the window asked for is a response this
+  // parser could not use, and the one thing this module may never do is decide that means
+  // nothing was spent.
+  if (inWindow === 0) return { failed: "unrecognised_shape" };
+
+  const resolved = currency.resolve();
+  if (resolved === null) return { failed: "mixed_currency" };
 
   // ── A CREDIT COSTS THE BREAKDOWN, NOT THE FIGURE ────────────────────────────────────────
   //
-  // `cost_cents` is a non-negative integer (the migration's CHECK), so a service whose month
-  // nets NEGATIVE — a credit note, an adjustment — cannot be written as itself. Clamping that
-  // service to zero was the previous answer and it is a wrong number: a $5 credit beside $100 of
-  // usage would report $100, and a month that was nothing but a credit would report $0.00 in the
-  // typeface of a measurement.
-  //
-  // So when any service nets negative, the provider gets ONE row carrying the month's NET across
-  // every service instead of a per-service breakdown that cannot represent it. The total is then
-  // right, the detail is gone, and the metric name says which of the two you are looking at. The
-  // breakdown is what is given up, deliberately: it is the part an operator reads, and a figure
-  // that is wrong is worth less than a figure with no detail.
-  const credited = [...totals.values()].some((t) => t.usd < 0);
+  // `cost_cents` is a non-negative integer (the migration's CHECK), so a month containing a
+  // credit cannot be written as a per-service breakdown: clamping the credited service to zero
+  // reports $100 for a month that was $100 of usage and a $5 credit. The provider gets ONE row
+  // carrying the month's NET instead. The total is then right, the detail is gone, and the metric
+  // name says which of the two you are looking at — the breakdown is what is given up, because a
+  // figure that is wrong is worth less than a figure with no detail.
   if (credited) {
-    const net = [...totals.values()].reduce((sum, t) => sum + t.usd, 0);
+    const net = dollarsToCents([...totals.values()].reduce((sum, t) => sum + t.usd, 0));
+    // A month whose credits outweigh its charges is REFUSED rather than floored: `$0.00` written
+    // as a measurement would say the vendor charged nothing, and the vendor said it owed us.
+    if (net < 0) return { failed: "negative_total" };
     return {
       rows: [{
         provider: "vercel", metric: "charges (net of credits)",
         periodStart: window.start, periodEnd: window.end,
-        // Floored only where the whole month's net is below zero — the vendor credited more than
-        // it charged. Zero is then the nearest representable truth, and the metric name is what
-        // stops it reading as "nothing happened".
-        value: null, unit: null, costCents: Math.max(0, dollarsToCents(net)), currency,
+        value: null, unit: null, costCents: net, currency: resolved,
       }],
     };
   }
@@ -551,18 +614,18 @@ function parseVercelCharges(
       periodStart: window.start, periodEnd: window.end,
       value: acc.quantity, unit: acc.unit,
       costCents: dollarsToCents(acc.usd),
-      currency,
+      currency: resolved,
     });
   }
 
-  // Recognised records, and every one of them zero: a real month in which nothing was charged.
+  // In-window records, and every one of them zero: a real month in which nothing was charged.
   // It gets a row that SAYS zero — the distinction the whole module is built on — under a metric
   // name that is the vendor's own word for the response rather than a service that was invented.
   if (rows.length === 0) {
     rows.push({
       provider: "vercel", metric: "charges",
       periodStart: window.start, periodEnd: window.end,
-      value: null, unit: null, costCents: 0, currency,
+      value: null, unit: null, costCents: 0, currency: resolved,
     });
   }
   return { rows };
@@ -586,50 +649,73 @@ function parseAnthropic(
   buckets: unknown[], window: { start: Date; end: Date },
 ): PlatformCostFetch {
   // Dollars, summed as dollars and rounded ONCE at the end. Rounding each result before adding
-  // was the previous shape and it drifts: the recorded live month is 70.7614 + 10.3029 + 4.812 =
-  // 85.8763, which is 8588 cents, and three separate roundings make it 8587. A cent, and the
-  // wrong cent, on a figure whose whole purpose is to be compared against an invoice.
+  // drifts: the recorded live month is 70.7614 + 10.3029 + 4.812 = 85.8763, which is 8588 cents,
+  // and three separate roundings make it 8587.
   let usd = 0;
-  // A RECOGNISED bucket is the shape a live report returns: a time window carrying a `results`
-  // array. Requiring both timestamps is what makes an arbitrary object with a `results` key fail
-  // rather than count.
-  let recognised = 0;
-  let currency = "usd";
+  const currency = new Currency();
+  // The bucket STARTS that landed inside the window, for the continuity check below.
+  const starts: number[] = [];
+
   for (const raw of buckets) {
     const bucket = raw as Record<string, unknown> | null;
-    if (!bucket || typeof bucket !== "object") continue;
-    if (typeof bucket.starting_at !== "string" || typeof bucket.ending_at !== "string"
-        || !Array.isArray(bucket.results)) continue;
-    recognised += 1;
-    const results = bucket.results as Array<Record<string, unknown>>;
-    let read = 0;
-    for (const r of results) {
-      const amount = typeof r?.amount === "string" ? Number(r.amount) : num(r?.amount);
-      if (amount === null || !Number.isFinite(amount)) continue;
-      usd += amount;
-      read += 1;
-      if (typeof r?.currency === "string" && r.currency) currency = r.currency.toLowerCase();
+    // MALFORMED IS `failed`, NOT SKIPPED — and this is the reversal round two asked for. The
+    // guard used to `continue` past a bucket it did not recognise and only refuse when NOTHING
+    // was readable, so one good $5 bucket beside a malformed one published $5 as the whole
+    // month: a partial total in the typeface of a complete one, which is the same defect the
+    // Vercel side already refuses. A report is one answer; a piece of it missing makes the
+    // answer wrong rather than shorter.
+    if (!bucket || typeof bucket !== "object") return { failed: "unrecognised_shape" };
+    const from = instantMs(bucket.starting_at);
+    const to = instantMs(bucket.ending_at);
+    if (from === null || to === null || to <= from || !Array.isArray(bucket.results)) {
+      return { failed: "unrecognised_shape" };
     }
-    // A bucket that HAS results and none of them readable is a day this parser could not
-    // account for, and the whole month it belongs to is therefore not a total. Distinct from a
-    // bucket with `results: []`, which is the vendor saying that day cost nothing — a live
-    // August report holds two of those beside twenty-nine that cost money, so the quiet day is
-    // the ordinary case and must not be confused with the unreadable one.
-    if (results.length > 0 && read === 0) return { failed: "unrecognised_shape" };
+    // A bucket the caller did not ask about is not summed into the month it did ask about. The
+    // timestamps were decorative before this line: a report that answered with a neighbouring
+    // month's day would have had it added to the total.
+    if (from < window.start.getTime() || from >= window.end.getTime()) continue;
+    starts.push(from);
+    for (const r of bucket.results as Array<Record<string, unknown>>) {
+      const amount = typeof r?.amount === "string" && r.amount.trim() !== ""
+        ? Number(r.amount) : num(r?.amount);
+      // Same rule one level down: a result this parser cannot read is money it cannot account
+      // for, so the report is refused rather than summed around.
+      if (amount === null || !Number.isFinite(amount)) return { failed: "unrecognised_shape" };
+      usd += amount;
+      currency.observe(r?.currency);
+    }
   }
-  // No bucket of the shape this parser knows ⇒ a report it cannot read, which is `failed`.
-  if (recognised === 0) return { failed: "unrecognised_shape" };
+
+  // No bucket of the shape this parser knows, inside the window it asked about ⇒ a report it
+  // cannot read. NOT a zero: the one thing this module may never do is decide that an answer it
+  // could not use means nothing was spent.
+  if (starts.length === 0) return { failed: "unrecognised_shape" };
+
+  // CONTINUITY. Quiet days are represented by explicit EMPTY buckets — a live August report
+  // carries two — so a day that is simply ABSENT is data this walk did not receive, not a day
+  // that cost nothing. Pages that between them skip a day would otherwise finish with
+  // `has_more: false` and publish a month short by that day, which is exactly the shape of a
+  // wrong total that looks complete.
+  starts.sort((a, b) => a - b);
+  for (let i = 1; i < starts.length; i += 1) {
+    if (starts[i]! - starts[i - 1]! !== ANTHROPIC_BUCKET_MS) return { failed: "bucket_gap" };
+  }
+
+  const resolved = currency.resolve();
+  if (resolved === null) return { failed: "mixed_currency" };
+  const cents = dollarsToCents(usd);
+  // A NET-NEGATIVE MONTH IS REFUSED, not floored. Flooring was the previous answer and it
+  // publishes `$0.00` as a MEASUREMENT for a month in which the vendor said it owed us money —
+  // "a zero on this board is only ever a row that says zero, written because a vendor said
+  // zero", and the vendor did not say zero. `cost_cents` cannot hold the real figure, so the
+  // honest outcome is the one the union already has for an answer that cannot be stored: nothing
+  // written, the previous row standing, and the board saying so.
+  if (cents < 0) return { failed: "negative_total" };
   return {
     rows: [{
       provider: "anthropic", metric: "tokens",
       periodStart: window.start, periodEnd: window.end,
-      // FLOORED AT ZERO. This total is a SUM across every result in the window, so a credit note
-      // legitimately reduces it — that is real, and dropping the entry would overstate the bill
-      // by the credited amount. The migration's `cost_cents >= 0` CHECK still has to be
-      // satisfied, so a window whose credits outweigh its usage reports as zero rather than
-      // failing the whole provider for one period. Zero is the nearest representable truth here
-      // and not a fabrication: the vendor's own arithmetic put the month below nothing.
-      value: null, unit: null, costCents: Math.max(0, dollarsToCents(usd)), currency,
+      value: null, unit: null, costCents: cents, currency: resolved,
     }],
   };
 }
@@ -675,10 +761,10 @@ export async function runPlatformCostPass(
   const now = opts.now ?? ((): Date => new Date());
   const tx = db as unknown as Tx;
   const at = now();
-  const start = new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), 1));
-  const end = new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth() + 1, 1));
   const report: PlatformCostPassReport = { ranAt: at, providers: [] };
 
+  for (const window of passWindows(at)) {
+    const { start, end } = window;
   for (const provider of opts.providers ?? API_COST_PROVIDERS) {
     let result: PlatformCostFetch;
     try {
@@ -693,6 +779,15 @@ export async function runPlatformCostPass(
       // NOTHING IS WRITTEN. Not a zero, not a placeholder, not a null-cost row. The absence of a
       // row IS the state, and the DTO turns it into `cents: null` + `source: 'unconfigured'`.
       report.providers.push({ provider, outcome: "unconfigured", rows: 0 });
+      continue;
+    }
+    // AN EMPTY SUCCESS IS A FAILURE. The union permits `{ rows: [] }`, and letting it through
+    // would run the replacement below — deleting the month's real measurement, inserting
+    // nothing, and reporting `written` — after which the board says "not configured" for a
+    // provider that had been measured an hour earlier. No adapter here can produce it (both
+    // answer at least one row or a code), so this guards the seam rather than a caller.
+    if ("rows" in result && result.rows.length === 0) {
+      report.providers.push({ provider, outcome: "failed", rows: 0, code: "empty_response" });
       continue;
     }
     if ("failed" in result) {
@@ -775,7 +870,45 @@ export async function runPlatformCostPass(
       });
     }
   }
+  }
   return report;
+}
+
+/**
+ * The windows one pass measures: the OPEN month, and the month before it while it is still
+ * settling.
+ *
+ * ── WHY THE PREVIOUS MONTH IS ASKED AT ALL ────────────────────────────────────────────────
+ *
+ * A pass that only ever asked about the month it was in could never finish one. A vendor's last
+ * charge bucket for September runs to `2026-10-01T07:00Z`, so the final September pass — which
+ * by definition runs before midnight UTC — reads that bucket PART-ACCRUED, and from `00:00Z`
+ * every subsequent pass asks about October and filters September's last bucket out. September's
+ * stored total then stays permanently short by part of its own last day, and nothing ever
+ * revisits it. The board's closed months would each be quietly missing their tail, for ever, and
+ * no failure would be reported: every pass succeeded.
+ *
+ * So the pass re-asks the previous month until it has settled. Two days of grace covers the
+ * widest billing-timezone offset several times over and is cheap — the closed month's answer
+ * stops changing, so the second day's write is the same rows with a newer `fetched_at`.
+ *
+ * A closed month is asked SECOND, deliberately. The open month is what the board projects from
+ * and the invocation has a platform deadline; if only one of the two can finish, it must be the
+ * one somebody is looking at.
+ */
+export const CLOSED_MONTH_GRACE_MS = 2 * 24 * 60 * 60 * 1000;
+
+function passWindows(at: Date): Array<{ start: Date; end: Date }> {
+  const start = new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), 1));
+  const end = new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth() + 1, 1));
+  const windows = [{ start, end }];
+  if (at.getTime() - start.getTime() < CLOSED_MONTH_GRACE_MS) {
+    windows.push({
+      start: new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth() - 1, 1)),
+      end: start,
+    });
+  }
+  return windows;
 }
 
 /** A note shorter than this is refused — the migration's CHECK, in the service. */
