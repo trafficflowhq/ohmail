@@ -73,6 +73,45 @@ Requests carrying a well-formed identifier are unchanged, including one naming s
 not exist or is not yours — that is still an ordinary "not found", and the shape check makes no
 judgement about who may see what.
 
+### Organizing keeps going after the connection drops
+
+If the connection to your mail server ended while ohmail stayed open — the lid closed for long
+enough that your provider hung up, a Wi-Fi change, a VPN reconnecting, the server closing an idle
+session — the app stopped organizing and did not start again. Mail kept arriving in your mailbox
+and the window kept working, but nothing was being filed, and Settings still said this machine was
+organizing. Quitting and reopening was the only thing that fixed it.
+
+ohmail now notices and opens a new connection by itself. It notices two ways, because one is not
+enough: the mail library reports some connection deaths and not others, so the app also watches its
+own work — a run of cycles that cannot read the mailbox is treated as a dead connection after about
+two minutes, whether or not anything reported it.
+
+When it reconnects it re-reads who is organizing the mailbox **before** it moves a single message.
+That matters more than the reconnect itself: coming back from a closed lid is exactly when a
+mailbox has most likely been picked up somewhere else — you opened your mail on another machine
+while this one was asleep. An app that simply resumed filing would spend a cycle organizing a
+mailbox that is no longer its to organize, and two copies of ohmail filing the same mail is the one
+thing the whole design exists to prevent. So it asks first, and if the mailbox has moved it stands
+down and says so.
+
+While the server is out of reach, Settings → Mailboxes says so and says how long, instead of
+claiming to be up to date. Nothing is signed out, nothing is deleted, and no password is needed:
+the app is re-dialling on its own, and the row goes back to normal on the first good cycle.
+
+### Two smaller fixes underneath it
+
+A crash or a lost battery could leave ohmail unable to open your mail at all. The file that stops
+two copies of the app from using one database recorded a process number, and after a reboot the
+system hands those numbers out again — so if an unrelated program happened to be given the old one,
+ohmail concluded another copy of itself was still running and refused to start, permanently. It now
+records enough to tell one process from another, and takes the lock back when the process that
+wrote it is genuinely gone.
+
+And the settings ohmail copies between your installs are compared by content, using a fingerprint
+of that content. Sorting for that fingerprint used the machine's own alphabet ordering, which can
+differ between builds — so two machines holding identical settings could disagree about whether
+they were identical, and each would treat the other's copy as a stranger's. The ordering no longer
+depends on the machine.
 
 ### Deciding on a mailbox another install is organizing
 
