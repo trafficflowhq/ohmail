@@ -709,7 +709,9 @@ function parseVercelCharges(
   const currency = new Currency();
   // The distinct charge-period starts seen inside the window, for the coverage check below, and
   // the furthest END any of them reached — a period is only evidence for the time it covers.
-  const days = new Set<number>();
+  // Keyed by start, so a repeated period is one period. `to` rides along for the contiguity
+  // check, which compares an end against the next start rather than assuming a stride.
+  const periods = new Map<number, { from: number; to: number }>();
   let lastCoveredEnd = 0;
   // Which SERVICES appeared on which day. Coverage used to prove only that each day had at least
   // ONE record, so a stream carrying every service through the 29th and a single service on the
@@ -764,11 +766,29 @@ function parseVercelCharges(
     // at the front.
     if (from < window.start.getTime() || from >= window.end.getTime()) continue;
     inWindow += 1;
-    // A FULL DAY, OR IT IS NOT A DAY'S COVERAGE. A final record that starts on the required day
-    // and ends an hour later reaches the edge while carrying an hour of it, which is a partial
-    // day published as a whole one.
-    if (to - from !== CHARGES_DAY_MS) return { failed: "day_coverage_short" };
-    days.add(from);
+    // ── A BILLING DAY IS NOT ALWAYS 24 HOURS, AND THE PROOF IS NOT AVAILABLE HERE ───────────
+    //
+    // This required EXACTLY 24 hours, which refuses a whole month at a daylight-saving
+    // transition: every observed start is `07:00:00Z`, i.e. UTC-7, which is US Pacific in
+    // summer — so a period spanning the November change is 25 hours and one spanning March is
+    // 23, and one such period fails the month.
+    //
+    // I COULD NOT MEASURE IT. This account has NO DATA before July 2026 (a June query answers
+    // 404 `costs_not_found`), so the 2025-11-02 and 2026-03-08 transitions predate it and the
+    // next one, 2026-11-01, has not happened. Writing a timezone table from the 07:00Z offset
+    // would be an inference presented as a measurement — the exact shape of the error that made
+    // every Anthropic figure a hundred times too large.
+    //
+    // So the check moves to the property coverage actually needs, which IS measurable:
+    // CONTIGUITY — each period ending where the next begins — asserted below. A 23- or 25-hour
+    // period at a transition is contiguous with its neighbours and passes; a one-hour period is
+    // not, because the hours it does not cover leave a hole. The bound here only rejects the
+    // absurd. Measured 2026-09-05 over a live month: 32 periods, every start at 07:00:00Z, every
+    // duration 24.0 h, zero non-contiguous joins.
+    if (to - from < 23 * 60 * 60 * 1000 || to - from > 25 * 60 * 60 * 1000) {
+      return { failed: "day_coverage_short" };
+    }
+    periods.set(from, { from, to });
     if (to > lastCoveredEnd) lastCoveredEnd = to;
     const seen = serviceDays.get(service) ?? new Set<number>();
     seen.add(from);
@@ -795,15 +815,17 @@ function parseVercelCharges(
   // perfect, and the replacement below would publish those fifteen days as the month. The
   // vendor's granularity is one day, so the days it should have covered are computable — and a
   // prefix is exactly what a partial read looks like from here.
-  const covered = [...days].sort((a, b) => a - b);
-  // EVERY DAY, NOT JUST THE LAST ONE. Checking only the maximum start accepted a response that
-  // reached the final day while omitting the first, or the fifteenth — a month with a hole in it,
-  // published as the month. The starts must be consecutive, and the run must reach both edges.
+  // EVERY DAY, NOT JUST THE LAST ONE, and CONTIGUOUSLY. Checking only the maximum start accepted
+  // a response that reached the final day while omitting the first, or the fifteenth — a month
+  // with a hole in it, published as the month. Contiguity is each period ENDING where the next
+  // BEGINS, rather than a fixed stride, so a daylight-saving day of 23 or 25 hours is covered
+  // without this code needing to know the vendor's timezone — see the note above.
+  const covered = [...periods.values()].sort((a, b) => a.from - b.from);
   for (let i = 1; i < covered.length; i += 1) {
-    if (covered[i]! - covered[i - 1]! !== CHARGES_DAY_MS) return { failed: "day_coverage_short" };
+    if (covered[i - 1]!.to !== covered[i]!.from) return { failed: "day_coverage_short" };
   }
   // THE LEADING EDGE, WHEN THE DATABASE PROVES THE ACCOUNT EXISTED — see `PlatformCostWindow`.
-  if (window.requireFullStart && covered[0]! >= window.start.getTime() + CHARGES_DAY_MS) {
+  if (window.requireFullStart && covered[0]!.from >= window.start.getTime() + CHARGES_DAY_MS) {
     return { failed: "day_coverage_short" };
   }
   // ── AND NEVER OTHERWISE, BECAUSE OF THE LIVE DATA ────────────────────────────────────────
@@ -834,10 +856,13 @@ function parseVercelCharges(
   // missing that service's last day, and the day-level check cannot see it because other services
   // covered the day. A service that legitimately started or stopped mid-month is not this: its
   // days are contiguous, and that is what is required rather than a full house.
+  // Per service, the same contiguity — expressed as POSITION in the month's own period list
+  // rather than as a stride, so a 23- or 25-hour day does not read as a hole here either.
+  const order = new Map(covered.map((p, i) => [p.from, i]));
   for (const seen of serviceDays.values()) {
-    const ds = [...seen].sort((a, b) => a - b);
-    for (let i = 1; i < ds.length; i += 1) {
-      if (ds[i]! - ds[i - 1]! !== CHARGES_DAY_MS) return { failed: "day_coverage_short" };
+    const idx = [...seen].map((f) => order.get(f) ?? -1).sort((a, b) => a - b);
+    for (let i = 1; i < idx.length; i += 1) {
+      if (idx[i]! - idx[i - 1]! !== 1) return { failed: "day_coverage_short" };
     }
   }
 
@@ -862,7 +887,7 @@ function parseVercelCharges(
     const net = centsFromMicroCents(netMicro);
     return {
       rows: [{
-        provider: "vercel", metric: "charges (net of credits)",
+        provider: "vercel", metric: TOTAL_METRIC,
         periodStart: window.start, periodEnd: window.end,
         value: null, unit: null, costCents: net, currency: resolved,
         charged: netMicro > 0,
@@ -933,7 +958,7 @@ function parseVercelCharges(
   // name that is the vendor's own word for the response rather than a service that was invented.
   if (rows.length === 0) {
     rows.push({
-      provider: "vercel", metric: "charges",
+      provider: "vercel", metric: TOTAL_METRIC,
       periodStart: window.start, periodEnd: window.end,
       // The vendor answered and its answer was nothing — `charged: false` is what makes this
       // zero legal at the writer, and the only kind of zero that is.
@@ -1096,11 +1121,27 @@ export async function writeMeasuredRows(
   t: Tx, provider: CostProvider, window: { start: Date; end: Date },
   rows: PlatformCostRow[], at: Date,
 ): Promise<void> {
+  // THE GUARD FAILS CLOSED. `charged` is a required boolean at the type, and checked again here
+  // at runtime: a row reaching this function with it UNDEFINED used to skip the refusal
+  // entirely, because `undefined && …` is falsy — a guard that waves through exactly the rows
+  // whose provenance nobody stated. The type stops a caller in this repository; the check stops
+  // one that came through a cast, a fixture, or a future boundary the type does not cross.
   for (const row of rows) {
+    if (typeof row.charged !== "boolean") {
+      throw new ZeroForChargedLine(`${provider}:${row.metric}:charged_unstated`);
+    }
     if (row.charged && row.costCents === 0) {
       throw new ZeroForChargedLine(`${provider}:${row.metric}`);
     }
     if (row.costCents < 0) throw new ZeroForChargedLine(`${provider}:${row.metric}:negative`);
+  }
+  // ONE TOTAL KEY PER PROVIDER-MONTH, refused rather than summed. Two names for one figure is two
+  // primary keys for it, and `costsForMonth` adds rows it cannot tell apart — a $23 month
+  // rendered as $46. A response carrying both a breakdown and a total, or two total spellings, is
+  // not a month this schema can hold.
+  const totals = rows.filter((r) => isTotalMetric(r.metric));
+  if (totals.length > 1 || (totals.length === 1 && rows.length > 1)) {
+    throw new ZeroForChargedLine(`${provider}:two_total_keys`);
   }
   await t.delete(platformCosts).where(and(
     eq(platformCosts.provider, provider),
@@ -1112,8 +1153,13 @@ export async function writeMeasuredRows(
     await t.insert(platformCosts).values({
       provider: row.provider,
       metric: row.metric,
-      periodStart: row.periodStart,
-      periodEnd: row.periodEnd,
+      // THE WINDOW, NOT THE ROW'S OWN DATES. The DELETE above clears the window this pass was
+      // asked about, and inserting on a row's own period would write outside what was cleared —
+      // leaving the previous row for that period standing beside the new one under a different
+      // key. Every row of a pass belongs to the window the pass asked for, and the parsers stamp
+      // them that way; this makes the two impossible to disagree.
+      periodStart: window.start,
+      periodEnd: window.end,
       value: row.value === null ? null : String(row.value),
       unit: row.unit,
       costCents: row.costCents,
@@ -1191,7 +1237,7 @@ export async function runPlatformCostPass(
   for (const provider of opts.providers ?? API_COST_PROVIDERS) {
     let result: PlatformCostFetch;
     try {
-      result = await opts.port.fetch(provider, { start, end });
+      result = await opts.port.fetch(provider, window);
     } catch (err) {
       // A port that THROWS is a port that failed; the union exists so it does not have to, and
       // this is the belt to that. The class only — never the message.
@@ -1262,10 +1308,17 @@ export async function runPlatformCostPass(
         // write its own older snapshot — a regression that looks exactly like a measurement.
         //
         // `>=` ON THE STAMP, not `>`: two passes can share a millisecond, and with `>` both
-        // proceed and the later-committing one wins by luck. Ties are broken by SEQUENCE rather
-        // than by clock, so a pass is fenced out by anything not strictly older than itself —
-        // which also survives a clock that moves backwards, where a stamp comparison alone would
-        // freeze the row until wall time caught up.
+        // proceed and the later-committing one wins by luck. `>=` fences a pass out against
+        // anything not strictly older than itself, so a tie resolves to whichever committed
+        // first rather than to whichever committed last.
+        //
+        // IT DOES NOT SURVIVE A CLOCK THAT MOVES BACKWARDS, and a version of this comment
+        // claimed it did. If the host clock jumps forward and is corrected, the row carries the
+        // future stamp and every later pass is fenced out until wall time catches up — the row
+        // freezes, and `costsForMonth`'s age arithmetic reads the negative age as current rather
+        // than stale. Closing that needs a monotonic sequence stored beside the stamp, which is
+        // a column this table does not have; it is recorded here as a known limit rather than
+        // described as handled.
         const newer = await t.select({ at: platformCosts.fetchedAt })
           .from(platformCosts)
           .where(and(
@@ -1350,7 +1403,12 @@ export const SETTLE_LAG_MS = 24 * 60 * 60 * 1000;
  * post-close request failed until the ceiling, the last pre-close part-accrued figure was left
  * standing for ever and nothing asked again. A figure nobody can refresh is what `stale` is FOR —
  * the board already says so — and giving up on it is the one thing that makes the staleness
- * unrecoverable. So the cadence relaxes and the asking never stops.
+ * unrecoverable. So past this the month is asked ONCE A DAY rather than on every pass, and the
+ * asking does not stop.
+ *
+ * WHAT SETTLES IT is one signal and not two: an `api` row for the month stamped `SETTLE_LAG_MS`
+ * past its end. There is no "the next month already has data" query — that was described here
+ * before it was written, and it was never written.
  */
 export const CLOSED_MONTH_EAGER_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -1427,6 +1485,34 @@ async function passWindows(
 /** Thrown inside the replacement transaction when a NEWER pass has already written the window. */
 class StalePass extends Error {}
 
+/**
+ * THE ONE METRIC NAME A PROVIDER-WIDE TOTAL IS EVER STORED UNDER.
+ *
+ * A provider's month is either a per-service BREAKDOWN or a single TOTAL, and the two are
+ * mutually exclusive shapes. There used to be two names for the total — `charges` for a month
+ * with nothing to break down, and `charges (net of credits)` for one containing a credit — and
+ * two names for one thing is two primary keys for one figure. A hand-entered `charges` row then
+ * sat beside an API `charges (net of credits)` row and `costsForMonth` SUMMED them: a $23 month
+ * rendered as $46, and the projection scaled the doubled figure.
+ *
+ * One name. A credited month says so in its `note`, not in its key. Every writer normalizes to
+ * this, and {@link writeMeasuredRows} refuses a second total key for the same provider-month
+ * rather than letting one through to be summed.
+ */
+export const TOTAL_METRIC = "charges";
+
+/**
+ * Names that MEANT "this is the provider's whole month" before {@link TOTAL_METRIC} was the only
+ * one. Read-side only: rows written under the old name are still in the table, and the family
+ * filter has to recognise them as totals or it will sum one with a breakdown.
+ */
+export const LEGACY_TOTAL_METRICS: readonly string[] = ["charges (net of credits)"];
+
+/** True for any metric that means "the provider's whole month", current or legacy. */
+export function isTotalMetric(metric: string): boolean {
+  return metric === TOTAL_METRIC || LEGACY_TOTAL_METRICS.includes(metric);
+}
+
 /** A note shorter than this is refused — the migration's CHECK, in the service. */
 export const MANUAL_COST_MIN_NOTE = 8;
 
@@ -1460,9 +1546,15 @@ export interface ManualCostEntry {
  */
 export async function recordManualPlatformCost(db: Db, entry: ManualCostEntry): Promise<void> {
   const tx = db as unknown as Tx;
+  // NORMALIZED TO THE ONE TOTAL NAME. An operator typing a provider's whole month used to store
+  // it under whichever word they were given, so a hand-entered `charges` sat beside an API
+  // `charges (net of credits)` and the two were SUMMED — a $23 month rendered as $46. They are
+  // one figure and they now share one key, which is what makes the manual row REPLACE the API's
+  // total rather than add to it.
+  const metric = isTotalMetric(entry.metric) ? TOTAL_METRIC : entry.metric;
   await tx.insert(platformCosts).values({
     provider: entry.provider,
-    metric: entry.metric,
+    metric,
     periodStart: entry.periodStart,
     periodEnd: entry.periodEnd,
     value: entry.value === null || entry.value === undefined ? null : String(entry.value),
@@ -1591,13 +1683,12 @@ export async function costsForMonth(
   // Manual precedence applies WITHIN the family and never across it: an operator correcting `Pro`
   // is correcting a line of the breakdown, and has nothing to say about a total row that
   // supersedes the breakdown entirely.
-  const TOTAL_METRICS = new Set(["charges", "charges (net of credits)"]);
   const newestApi = new Map<string, { at: Date; total: boolean }>();
   for (const r of rows) {
     if (r.source !== "api") continue;
     const held = newestApi.get(r.provider);
     if (!held || r.fetchedAt > held.at) {
-      newestApi.set(r.provider, { at: r.fetchedAt, total: TOTAL_METRICS.has(r.metric) });
+      newestApi.set(r.provider, { at: r.fetchedAt, total: isTotalMetric(r.metric) });
     }
   }
 
@@ -1605,8 +1696,11 @@ export async function costsForMonth(
   for (const r of rows) {
     const family = newestApi.get(r.provider);
     // A row from the shape this provider is no longer reporting in is not part of the month.
-    if (family && TOTAL_METRICS.has(r.metric) !== family.total) continue;
-    const key = `${r.provider}|${r.metric}`;
+    if (family && isTotalMetric(r.metric) !== family.total) continue;
+    // EVERY TOTAL IS ONE KEY. A legacy name and the canonical one are the same figure, so they
+    // collapse onto the same key here rather than being summed as two lines — which is precisely
+    // what a hand-entered `charges` beside an API `charges (net of credits)` used to do.
+    const key = `${r.provider}|${isTotalMetric(r.metric) ? TOTAL_METRIC : r.metric}`;
     const held = byMetric.get(key);
     // Manual beats API for the same metric; between two of a kind the newer stamp wins.
     if (!held
