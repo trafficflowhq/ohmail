@@ -15,7 +15,7 @@
   box-shadow:inset 0 0 0 1px var(--hair);transition:box-shadow .18s var(--swift)}
 .rules-search:focus-within{box-shadow:inset 0 0 0 1.5px var(--accent-hair)}
 .rules-search svg{color:var(--ink3);flex:none}
-.rules-search input{flex:1;border:0;background:none;font:inherit;font-size:13px;min-width:0;color:inherit}
+.rules-search input{flex:1;border:0;background:none;font:inherit;font-size:max(var(--input-floor), calc(13px + var(--type-up)));min-width:0;color:inherit}
 .rules-search input:focus{outline:none}
 .rules-search input::placeholder{color:var(--ink3)}
 /* drop the WebKit search decorations — the native clear glyph is a second, unstyled control */
@@ -24,13 +24,13 @@
 
 /* facets — capsule filter buttons; the active one carries the accent tint */
 .rules-facets{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-.rules-facets button{font-size:11.5px;font-weight:550;color:var(--ink2);border-radius:var(--r-pill);
+.rules-facets button{font-size:calc(11.5px + var(--type-up));font-weight:550;color:var(--ink2);border-radius:var(--r-pill);
   padding:5px 12px;background:var(--tint);transition:background .16s var(--swift),color .16s var(--swift)}
 .rules-facets button:hover{color:var(--ink)}
 .rules-facets button.on{background:var(--accent-soft);color:var(--accent-ink)}
 
 /* bulk trigger — pushed to the trailing edge; the count of rules it will act on is on the label */
-.rules-bulk{margin-left:auto;font-size:11.5px;padding:5px 12px;color:var(--accent-ink)}
+.rules-bulk{margin-left:auto;font-size:calc(11.5px + var(--type-up));padding:5px 12px;color:var(--accent-ink)}
 
 /* the action region — a flat tinted well, not a lifted card. Holds one confirm at a time.
    The BULK confirm renders above the list (it is about the whole filtered set); a single
@@ -40,8 +40,8 @@
 /* The confirm is where a rule is checked character by character before it is acted on, so the
    sentence WRAPS — never the row's ellipsis, which at 390 leaves ~140px of text. `anywhere`
    because the longest token is an address, which has no spaces to break at. */
-.rules-confirm .what{font-size:13px;font-weight:600;color:var(--ink);overflow-wrap:anywhere}
-.rules-confirm > span{font-size:12px;color:var(--ink2);line-height:1.45}
+.rules-confirm .what{font-size:calc(13px + var(--type-up));font-weight:600;color:var(--ink);overflow-wrap:anywhere}
+.rules-confirm > span{font-size:calc(12px + var(--type-up));color:var(--ink2);line-height:1.45}
 .rules-confirm .acts{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
 /* inside the list it separates from the row it belongs to by a breath, not a band */
 .rules-list .rules-confirm{margin:8px 0 12px}
@@ -61,15 +61,15 @@
 .rules-item.editing{background:var(--accent-soft);border-radius:calc(var(--r-card) * 12 / 14);
   margin:0 -6px;padding:0 6px;border-bottom-color:transparent}
 .rules-item .body{display:flex;flex-direction:column;gap:2px;flex:1 1 auto;min-width:0}
-.rules-item .what{font-size:13px;font-weight:600;color:var(--ink);
+.rules-item .what{font-size:calc(13px + var(--type-up));font-weight:600;color:var(--ink);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.rules-item .meta{font-size:11.5px;color:var(--ink3);
+.rules-item .meta{font-size:calc(11.5px + var(--type-up));color:var(--ink3);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rules-item .acts{display:flex;gap:6px;flex:none}
 .rules-view .rules-item .acts .btn,
-.rules-view .rules-confirm .btn{font-size:11.5px;padding:5px 12px}
+.rules-view .rules-confirm .btn{font-size:calc(11.5px + var(--type-up));padding:5px 12px}
 
-.rules-empty{font-size:12.5px;color:var(--ink3);padding:22px 4px;text-align:center}
+.rules-empty{font-size:calc(12.5px + var(--type-up));color:var(--ink3);padding:22px 4px;text-align:center}
 
 /* the standing note keeps a little air above it once a list is in play */
 .rules-view .set-note{margin-top:16px}

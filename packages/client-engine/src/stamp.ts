@@ -133,8 +133,11 @@ export function fullDateTime(instant: Date, zone: string, locale = "en"): string
 /**
  * A MESSAGE'S ROW STAMP — the three bands at the top of this file, applied to one message.
  *
- * Fixture rows carry a display string in `time` and it wins; server-fed rows carry only `date`, so
- * every surface that shows a stamp derives one. It lives in this package rather than in the web app
+ * `time` wins where a row carries one — and NO ROW THIS PRODUCT SERVES DOES any more. The demo's
+ * fixtures used to set it, which meant the rule below never ran over them and the demo showed a
+ * shape frozen at whatever was typed; the adapter stopped copying it onto the message, so every
+ * row — demo and server-fed alike — derives its stamp from `date` here. The branch stays because
+ * the field is still on the type and a caller may set it; it is no longer the demo's path. It lives in this package rather than in the web app
  * because the Screener mints rows for senders that have no message behind them at all, and the
  * phone reads the same function.
  *
