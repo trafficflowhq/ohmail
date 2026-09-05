@@ -106,32 +106,6 @@ body.reading .shell{opacity:.05;transform:scale(.994);pointer-events:none}
   .read-col .reply-dock > .reply { margin-top: 0; }
 }
 
-/* ── A CONVERSATION SIBLING'S OWN VERBS ─────────────────────────────────────────────────────
- *
- * Reply and Forward on an EXPANDED sibling (`MessageCard`), dispatched through the same chrome
- * the focused message's bar uses. A quiet two-verb footer tucked under the sibling's body — NOT
- * a second ActionBar, which would stack the file/defer/read machinery onto a message the reader
- * is only glancing back at. */
-.hm-foot {
-  display: flex;
-  gap: 6px;
-  margin-top: 10px;
-}
-.hm-verb {
-  border: 0;
-  background: none;
-  font: inherit;
-  font-size:calc(12px + var(--type-up));
-  font-weight: 550;
-  color: var(--ink2);
-  padding: 4px 10px;
-  border-radius:var(--r-pill);
-  cursor: pointer;
-  transition: background .15s var(--swift), color .15s var(--swift), transform .15s var(--swift);
-}
-.hm-verb:hover { background: var(--tint); color: var(--ink); }
-.hm-verb:active { transform: scale(.97); }
-
 /* ── THE SUBJECT AS A CONTROL, WITHOUT LOOKING LIKE ONE ──────────────────────────────────────
  *
  * A press on the message title opens the subject-rule sheet (`MessagePane`; the sheet itself is a
@@ -159,4 +133,30 @@ body.reading .shell{opacity:.05;transform:scale(.994);pointer-events:none}
   outline: 2px solid var(--accent);
   outline-offset: 3px;
   border-radius:calc(var(--r-ctl) * 4 / 8);
+}
+
+/* ── THE 44px TOUCH TARGET ON PHONES ────────────────────────────────────────────────────────
+   44px is the thumb's number and the one both platforms publish. It is the size of the PRESSABLE
+   AREA, not of every control: a drawn 44 is right for a button, a list row and an icon button,
+   and wrong for a selector — a segmented control drawn 44 with a 13px label stops reading as
+   chrome and reads as a stack of buttons above the rows, which inverts the hierarchy on a screen
+   whose point is the list.
+
+   So the split is hit versus drawn, by control class. Where 44 IS the control's own phone size it
+   is drawn. Where it is not, the control keeps its drawn size and gains an invisible vertical
+   strip: `::before`, absolutely positioned, 44px tall, centred on the control. Vertical only —
+   neighbours in a row sit 0–6px apart horizontally, so a horizontal strip would overlap the
+   control beside it. `::before` and not `::after`, because `.btn[data-run]::after` is the send
+   band.
+
+   A strip may never overlap another control's box or strip. Where the gap was too short the
+   ROW-GAP grows; column gaps, widths and padding are untouched, so nothing wraps differently and
+   no measured width moves.
+
+   Only under 640px: a pointer does not need this, and the desktop's density is a design the wider
+   layout was drawn around. */
+@media (max-width: 640px){
+  /* SQUARE, so the close control grows in both axes rather than becoming a tall sliver. 38px
+     was the drawn size and is the one number here that moves rather than gaining a floor. */
+  .reader-close{width:44px;height:44px}
 }

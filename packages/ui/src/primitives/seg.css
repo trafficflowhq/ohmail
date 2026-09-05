@@ -34,3 +34,33 @@
   border-radius:calc(var(--r-card) * 10 / 14)}
 .seg[data-stack] button{text-align:left;white-space:normal;border-radius:calc(var(--r-card) * 8 / 14);padding:6px 12px}
 .seg[data-stack].counted button{justify-content:space-between}
+
+/* ── THE 44px TOUCH TARGET ON PHONES ────────────────────────────────────────────────────────
+   44px is the thumb's number and the one both platforms publish. It is the size of the PRESSABLE
+   AREA, not of every control: a drawn 44 is right for a button, a list row and an icon button,
+   and wrong for a selector — a segmented control drawn 44 with a 13px label stops reading as
+   chrome and reads as a stack of buttons above the rows, which inverts the hierarchy on a screen
+   whose point is the list.
+
+   So the split is hit versus drawn, by control class. Where 44 IS the control's own phone size it
+   is drawn. Where it is not, the control keeps its drawn size and gains an invisible vertical
+   strip: `::before`, absolutely positioned, 44px tall, centred on the control. Vertical only —
+   neighbours in a row sit 0–6px apart horizontally, so a horizontal strip would overlap the
+   control beside it. `::before` and not `::after`, because `.btn[data-run]::after` is the send
+   band.
+
+   A strip may never overlap another control's box or strip. Where the gap was too short the
+   ROW-GAP grows; column gaps, widths and padding are untouched, so nothing wraps differently and
+   no measured width moves.
+
+   Only under 640px: a pointer does not need this, and the desktop's density is a design the wider
+   layout was drawn around. */
+@media (max-width: 640px){
+  /* A segmented control draws 29–30.5 and keeps it; the scope form's 25 stays too. */
+  .seg button{position:relative}
+  .seg button::before{content:"";position:absolute;left:0;right:0;top:50%;height:44px;translate:0 -50%;z-index:1}
+  /* STACKED SEGMENTS ARE LIST ROWS, one pixel apart — there is no room for a strip between
+     them, so these draw the 44 instead and the strip is explicitly withdrawn. */
+  .seg[data-stack] button{min-height:44px}
+  .seg[data-stack] button::before{content:none}
+}

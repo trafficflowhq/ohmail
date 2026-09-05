@@ -42,3 +42,29 @@
 .badge.shield{color:var(--accent-ink);background:var(--accent-soft)}
 .badge.place{background:var(--tint);font-weight:550}
 .badge.ai{color:var(--accent-ink);background:var(--accent-soft);font-weight:550}
+
+/* ── THE 44px TOUCH TARGET ON PHONES ────────────────────────────────────────────────────────
+   44px is the thumb's number and the one both platforms publish. It is the size of the PRESSABLE
+   AREA, not of every control: a drawn 44 is right for a button, a list row and an icon button,
+   and wrong for a selector — a segmented control drawn 44 with a 13px label stops reading as
+   chrome and reads as a stack of buttons above the rows, which inverts the hierarchy on a screen
+   whose point is the list.
+
+   So the split is hit versus drawn, by control class. Where 44 IS the control's own phone size it
+   is drawn. Where it is not, the control keeps its drawn size and gains an invisible vertical
+   strip: `::before`, absolutely positioned, 44px tall, centred on the control. Vertical only —
+   neighbours in a row sit 0–6px apart horizontally, so a horizontal strip would overlap the
+   control beside it. `::before` and not `::after`, because `.btn[data-run]::after` is the send
+   band.
+
+   A strip may never overlap another control's box or strip. Where the gap was too short the
+   ROW-GAP grows; column gaps, widths and padding are untouched, so nothing wraps differently and
+   no measured width moves.
+
+   Only under 640px: a pointer does not need this, and the desktop's density is a design the wider
+   layout was drawn around. */
+@media (max-width: 640px){
+  /* An outline chip standing beside 22px tag chips must not draw 44. */
+  .chip.addtag{position:relative}
+  .chip.addtag::before{content:"";position:absolute;left:0;right:0;top:50%;height:44px;translate:0 -50%;z-index:1}
+}

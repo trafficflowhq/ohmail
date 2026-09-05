@@ -5836,3 +5836,51 @@ body.dnd-active * { cursor: grabbing !important; }
   opacity: 0.55;
   cursor: default;
 }
+
+/* ── THE 44px TOUCH TARGET ON PHONES ────────────────────────────────────────────────────────
+   44px is the thumb's number and the one both platforms publish. It is the size of the PRESSABLE
+   AREA, not of every control: a drawn 44 is right for a button, a list row and an icon button,
+   and wrong for a selector — a segmented control drawn 44 with a 13px label stops reading as
+   chrome and reads as a stack of buttons above the rows, which inverts the hierarchy on a screen
+   whose point is the list.
+
+   So the split is hit versus drawn, by control class. Where 44 IS the control's own phone size it
+   is drawn. Where it is not, the control keeps its drawn size and gains an invisible vertical
+   strip: `::before`, absolutely positioned, 44px tall, centred on the control. Vertical only —
+   neighbours in a row sit 0–6px apart horizontally, so a horizontal strip would overlap the
+   control beside it. `::before` and not `::after`, because `.btn[data-run]::after` is the send
+   band.
+
+   A strip may never overlap another control's box or strip. Where the gap was too short the
+   ROW-GAP grows; column gaps, widths and padding are untouched, so nothing wraps differently and
+   no measured width moves.
+
+   Only under 640px: a pointer does not need this, and the desktop's density is a design the wider
+   layout was drawn around. */
+@media (max-width: 640px){
+  /* THE TOPBAR BUTTON IS THE ONE HORIZONTAL CASE. Its neighbours are 10px apart, so the strip
+     may grow sideways; the drawn 39×33 stays and the topbar's height does not move. */
+  .tb-btn{position:relative}
+  /* `z-index`, because the strip is a HIT area and the view header below the topbar paints
+     after it: without this a tap 21px under the button's centre resolved to `.vhead`. The
+     strip paints nothing, so only the hit test changes. */
+  .tb-btn::before{content:"";position:absolute;left:50%;top:50%;width:max(100%,44px);height:44px;translate:-50% -50%;z-index:1}
+  /* The settings nav draws ~34 and keeps it. */
+  .set-nav button{position:relative}
+  .set-nav button::before{content:"";position:absolute;left:0;right:0;top:50%;height:44px;translate:0 -50%;z-index:1}
+  /* 11 AND NOT 10. The nav is a column, so its items are vertical neighbours: each draws ~34
+     and its strip reaches 5px past its box, so two of them need 10px between the boxes — and at
+     exactly 10 the strips touch, which is a tie the later element wins. A tap 21px under one
+     item's centre landed on the next. */
+  .set-nav{row-gap:11px}
+  /* THE HEAD'S OWN ROW-GAP, for the pair the shaped B's table predates. The ghost verb sits at
+     the foot of `.scn-bulk` and the partition chips are in the container below it, so the gap
+     between their strips is the HEAD's, not either container's. The ghost is drawn 31 and its
+     strip reaches 6.5px past its box; a chip is drawn 36 and its strip reaches 4px above its
+     own — 10.5px between the boxes, and there were 9. A tap 21px under the ghost's centre
+     landed on a chip. Row-gap only: the column gap, every width and the wrap are untouched. */
+  .scn-head{row-gap:11px}
+  .pick-bar button{min-height:44px}
+  .ohx-notice button{min-height:44px}
+  .draft-open{min-height:44px}
+}

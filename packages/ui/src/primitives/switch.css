@@ -1,7 +1,28 @@
 /* switch — the knob rides the spring */
 .switch{margin-left:auto;width:40px;height:23px;border-radius:var(--r-pill);border:0;cursor:pointer;padding:0;
-  background:var(--tint2);position:relative;transition:background .2s;flex:none}
+  background-color:var(--tint2);position:relative;transition:background-color .2s;flex:none}
 .switch i{position:absolute;top:2px;left:2px;width:19px;height:19px;border-radius:var(--r-avatar);background:var(--float);
   box-shadow:var(--lift-0);transition:transform .24s var(--spring);font-style:normal}
-.switch[aria-checked="true"]{background:var(--accent)}
+/* `background-color`, NOT the `background` shorthand, and this is load-bearing rather than tidy.
+   The phone rule below grows the switch's pressable area with `content-box` padding and keeps the
+   PAINT at the drawn track with `background-clip:content-box`. A `background:` shorthand resets
+   every background longhand it does not mention — `background-clip` included — and this rule has
+   higher specificity than the phone rule, so the checked switch painted its whole 44px hit box
+   while the unchecked one painted 23. Measured in pixels; the box metrics were identical either
+   way, which is why a geometry check passed it. */
+.switch[aria-checked="true"]{background-color:var(--accent)}
 .switch[aria-checked="true"] i{transform:translateX(17px)}
+
+/* ── THE SWITCH GETS A HIT BOX, NOT A BIGGER TRACK ──────────────────────────────────────────
+   The track is 40×23 and drawn. `content-box` padding grows the pressable area to 44 while
+   `background-clip:content-box` keeps the PAINT on the drawn track, and the knob re-centres
+   against the padded box rather than inheriting the old offset.
+
+   The paint half only works because every rule that sets this colour uses `background-color`
+   rather than the `background` shorthand — see the note at the checked rule above. Three sites set
+   it, and a `background-clip` re-declared here instead of longhands there would be a second copy
+   that the next shorthand silently undoes. */
+@media (max-width: 640px){
+  .switch{box-sizing:content-box;padding:10.5px 0;background-clip:content-box}
+  .switch i{top:50%;translate:0 -50%}
+}

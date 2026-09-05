@@ -204,8 +204,12 @@
   margin-left: 0;
   pointer-events: none;
 }
+/* The longhand, for the reason written at `.switch[aria-checked="true"]` in `switch.css`: a
+   `background:` shorthand here resets `background-clip` and the checked switch paints its whole
+   phone hit box. Three sites set this colour and all three must be longhands — a `background-clip`
+   re-declared in the phone block instead would be a second copy that the next shorthand undoes. */
 .sm-rule[aria-checked="true"] .switch {
-  background: var(--accent);
+  background-color: var(--accent);
 }
 .sm-rule[aria-checked="true"] .switch i {
   transform: translateX(17px);
