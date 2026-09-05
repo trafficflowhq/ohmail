@@ -271,6 +271,26 @@ export function isEmptyProfilePayload(p: OrganizerProfilePayload): boolean {
  * rather than `localeCompare`: a locale-dependent collation is not a stable order across two
  * machines."* This is that rule applied to the file it was written about.
  *
+ * ── AND THESE COMPARATORS ARE STILL NOT TOTAL ORDERS, ON PURPOSE ──────────────────────────
+ *
+ * Each sorts on the natural keys and stops, so two records agreeing on those keys and differing
+ * elsewhere compare EQUAL — and `sort` is stable, so their canonical form is the order they
+ * arrived in. The fingerprint of such a document therefore still depends on input order. That is
+ * a real defect — two installs holding the same records in a different order can compute
+ * different fingerprints for the same document — and it is NOT fixed here.
+ *
+ * Adding a final tie-break — the record's own JSON, say — is one line and was written, measured
+ * and reverted. It changes the CANONICAL FORM, and the canonical form is what the fingerprint is
+ * taken over: every document with a tie that any earlier build has already written into somebody's
+ * mailbox would re-fingerprint under the new rule, so an install running the new code reads a
+ * document it wrote itself last week as a stranger's. Under measurement it destabilised a live
+ * behaviour — the worker's import hold stopped arming, red on two runs of three under an
+ * exclusive database.
+ *
+ * So this is a FORMAT MIGRATION and not a comparator change: it needs a versioned canonical form
+ * and a reader that accepts both. Out of scope for a reconnect lane, and written down rather than
+ * done badly.
+ *
  * ── WHAT THIS ORDER IS, EXACTLY ───────────────────────────────────────────────────────────
  *
  * UTF-16 CODE UNIT order — what `<` and `>` do on JavaScript strings. It is not identical to
@@ -1465,7 +1485,34 @@ export async function readOrganizerProfile(io: ProfileIo): Promise<ProfileReadRe
        installs reading the same folder could pick DIFFERENT documents as the newest — after
        which each would go on believing the other's configuration was a stranger's. A tie-break
        that is not stable across machines is not a tie-break. */
-    return byCodeUnit(JSON.stringify(b.doc), JSON.stringify(a.doc));
+    const byDoc = byCodeUnit(JSON.stringify(b.doc), JSON.stringify(a.doc));
+    if (byDoc !== 0) return byDoc;
+    /* IDENTICAL TIMESTAMP AND IDENTICAL DOCUMENT, DIFFERENT RECORDS — the residue of two installs
+       writing the same configuration, which is an ordinary state rather than a corrupt one. The
+       comparator returned 0 here, so which record won depended on the order the FOLDER happened
+       to list them in, and the winner's `installId` is what decides whether a reader treats the
+       document as its own or as a stranger's. Two installs reading one folder could disagree.
+       Deterministic now — and by the RIGHT key, which is the point below.
+    
+       ── THE NEWEST APPEND WINS, WHICH IS WHAT "NEWEST" ALREADY MEANT ──────────────────────
+    
+       Ordered by `ref` DESCENDING, not by `installId`. The ref is the message's UID, and the
+       write dance is append-then-expunge, so a higher UID IS a later write: when the timestamps
+       tie, the folder's own arrival order is the only remaining fact about which document is
+       newer, and it is a fact rather than a coin toss.
+    
+       An earlier revision of this tie-break sorted by `installId` ascending, which is
+       deterministic and MEANS NOTHING — and it silently changed which record won. The worker's
+       own suite caught it: a reader promoted in place stopped arming its import hold, because the
+       foreign document it was supposed to surface lost a tie to ours on a string comparison. A
+       deterministic order that answers the wrong question is not an improvement on an
+       undetermined one. `installId` stays as the final total-order tie-break, where it decides
+       nothing anybody can observe. */
+    const refA = Number(a.ref);
+    const refB = Number(b.ref);
+    if (Number.isFinite(refA) && Number.isFinite(refB) && refA !== refB) return refB - refA;
+    return byCodeUnit(String(b.ref ?? ""), String(a.ref ?? ""))
+      || byCodeUnit(String(a.installId ?? ""), String(b.installId ?? ""));
   })[0]!;
 
   return {
