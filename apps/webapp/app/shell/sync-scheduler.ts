@@ -525,11 +525,17 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
   const openers = new Set<() => void>();
 
   /**
-   * WHAT THE MARKER SAID LAST TIME ANYBODY LOOKED. `undefined` until the first look, which is
-   * not the same as `absent`: the first observation establishes a baseline and cannot itself be
-   * a transition, or a gate would revoke a confirmation it had just been given.
+   * WHAT THE MARKER SAID LAST TIME ANYBODY LOOKED. `undefined` means nothing has been observed
+   * yet, which is not the same as `absent`: the first observation establishes a baseline and
+   * cannot itself be a transition, or a gate would revoke a confirmation it had just been given.
+   *
+   * SEEDED AT CONSTRUCTION for a named mirror, and the window that closes is real. The gate is
+   * built in the same act that chooses which mirror to open — from the marker — so construction
+   * is when "what it said" is known. Left to the first `identity()` call instead, a change
+   * between those two moments was the baseline rather than a transition, and the whole point of
+   * this state is that a change is what revokes.
    */
-  let lastSeen: OwnerMarker | undefined;
+  let lastSeen: OwnerMarker | undefined = mirrorOwner === null ? undefined : readOwnerMarker();
 
   /** Two markers, same meaning? The comparison a transition is defined against. */
   const sameMarker = (a: OwnerMarker, b: OwnerMarker): boolean =>
@@ -563,11 +569,24 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
        * precisely the window in which a response issued under B lands in A's tab. What was
        * confirmed was "this browser is A's, NOW"; the round trip ends that, and the gate waits
        * for the server to say it again.
+       *
+       * ── AND IT DOES NOT WAIT FOR A CONFIRMATION TO EXIST ──────────────────────────────
+       *
+       * This was `if (confirmedFor !== null)`, which sounds like a tidy no-op and is a hole.
+       * The gate spends the whole confirm ladder — up to four attempts, roughly thirty seconds
+       * — with `confirmedFor` still null while a WARM MIRROR is on screen and its reads are
+       * allowed, because that is what `unconfirmed` is for. In that window: another tab
+       * establishes B, the readable marker is then removed (an older tab, a malformed write, a
+       * hand-cleared cookie) while B's HttpOnly session lives on, and the change was seen and
+       * discarded. The gate stayed `unconfirmed`, `refuseIfForeign` kept letting search,
+       * message bodies and attachments through, and B's bytes reached the screen.
+       *
+       * So a marker change latches `revoked` on a named mirror whether or not anybody has
+       * confirmed it yet. `unconfirmed` keeps its meaning — nobody has said, and nothing has
+       * happened — and stops being reachable after something has happened.
        */
-      if (confirmedFor !== null) {
-        confirmedFor = null;
-        revoked = true;
-      }
+      confirmedFor = null;
+      revoked = true;
     } else if (lastSeen === undefined) {
       lastSeen = marker;
     }
@@ -620,6 +639,9 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
      */
     const state = identity();
     if (state === "contradicted" || state === "revoked") throw new ForeignSessionError(what);
+    // NOTE: {@link syncMayRead} is this same predicate, exported for the two Cloud doors that
+    // never reach an adapter. If one moves, the other must — `sync-owner-gate.test.ts` pins that
+    // they agree on all four states.
   };
 
   /**
@@ -1133,6 +1155,26 @@ export function syncIdentityOf(engine: OhmailEngine | null | undefined): SyncIde
   return GATES.get(engine)?.identity() ?? "holds";
 }
 
+/**
+ * MAY A DIRECT READER ASK THE SERVER FOR THIS ACCOUNT'S BYTES? — the adapter's own rule, exported
+ * so the two doors that do not go through an adapter cannot drift from it.
+ *
+ * They did drift. Both were written when the gate had three states and tested
+ * `=== "contradicted"`; the fourth state arrived and neither moved, so a REVOKED gate — one whose
+ * confirmation the marker has already outlived — went on being readable through the reach-past
+ * body door and the mailbox-facts poll while the adapter beside them refused. Three spellings of
+ * one question is how two of them come to disagree, which is the argument this file makes about
+ * `identity()` itself; this is the same argument applied one layer out.
+ *
+ * `unconfirmed` reads TRUE, deliberately and for the last time in this file: that is the ordinary
+ * warm open, the mail is the person's own, and refusing there would blank a mailbox that is
+ * already on screen for the length of a round trip.
+ */
+export function syncMayRead(engine: OhmailEngine | null | undefined): boolean {
+  const state = syncIdentityOf(engine);
+  return state !== "contradicted" && state !== "revoked";
+}
+
 /** The two globals this loop reads, narrowed so a test can hand it neither. */
 interface VisibilitySource {
   readonly visibilityState: DocumentVisibilityState;
@@ -1324,9 +1366,38 @@ export function startSyncScheduler(
    * And it is no longer set by the FIRST refusal either — that is `refusedAt`.
    */
   let terminal = false;
-  /** Was `terminal` latched by a cookie contradiction rather than by the server? See the release
-   *  in the tick's `revoked`/`unconfirmed` arm for why the two cannot share one flag. */
-  let terminalByContradiction = false;
+  /**
+   * WHY the loop is terminal, as two INDEPENDENT bits rather than one flag naming a winner.
+   *
+   * `terminal` is the union of them, and both causes are real and unrelated: the SERVER refused
+   * this session (sustained, and its own statement about this account), or the cookie jar names
+   * somebody else (this browser's own state, which can change back).
+   *
+   * One flag could not compose. It said "the current terminal is a contradiction's", so a server
+   * refusal that latched first and a contradiction observed afterwards overwrote it — and when
+   * the contradiction cleared, the release took the SERVER's verdict with it. The gate stayed
+   * shut and no bytes flowed, so nothing leaked; what disappeared was a true sentence the person
+   * needed. Two bits, and a contradiction can only ever clear its own.
+   *
+   * ── AND THERE IS NO TEST BESIDE THIS, WHICH IS A STATEMENT AND NOT AN OMISSION ─────────────
+   *
+   * I could not construct a sequence in which the two spellings differ, and one was written and
+   * deleted rather than kept. The obstacle is the loop's own shape: a terminal loop holds NO
+   * TIMER, so the only thing that can drive a tick — and therefore the only thing that can
+   * OBSERVE a marker change — is `wake()`'s probe, which is floored at `BACKOFF_CAP_MS` and
+   * guarded by `visible()`. Driving two observations through it while a server refusal stands
+   * produced a byte-identical published sequence with either spelling.
+   *
+   * So this is a latent hazard removed by construction, not a measured defect repaired. It stays
+   * because the invariant is then local and cheap — a cause can only clear its own bit — rather
+   * than resting on the reachability argument above continuing to hold after the next change to
+   * `wake`. A guard nobody has watched fail is not evidence, and this comment is the evidence
+   * that nobody has.
+   */
+  let terminalByServer = false;
+  let terminalByIdentity = false;
+  /** Re-derive the union after either bit moves. Never assign `terminal` any other way. */
+  const settleTerminal = (): void => { terminal = terminalByServer || terminalByIdentity; };
   /**
    * WHEN a coded refusal arrived that has not been confirmed. Null when there is none.
    *
@@ -1444,6 +1515,20 @@ export function startSyncScheduler(
 
   const connectStream = (): void => {
     if (!wakeFactory || streamDead || stopped || stream !== null || !visible()) return;
+    /*
+     * ── AND NOT WHILE THIS MIRROR'S IDENTITY DOES NOT HOLD ────────────────────────────────
+     *
+     * `/events` is a SESSION-authenticated stream and the server emits the answering account's
+     * sequence on it. Opened without asking, a stale shell for A held a live subscription to B's
+     * activity: content-free as mail goes, and still that account's metadata arriving in a window
+     * that is not theirs, on a connection nobody in it opened.
+     *
+     * The gated tick downstream is what stops the mail being merged, which is why this is a
+     * narrowing rather than a repair of a leak. It is also why it belongs here: the stream is the
+     * one thing in this loop that is not a request, so nothing else in the file was ever going to
+     * ask the question for it.
+     */
+    if ((gate?.identity() ?? "holds") !== "holds") return;
     try {
       const s = wakeFactory();
       stream = s;
@@ -1620,8 +1705,12 @@ export function startSyncScheduler(
        */
       const owns = gate?.identity() ?? "holds";
       if (owns === "contradicted") {
-        terminal = true;
-        terminalByContradiction = true;
+        // The wake stream goes with it: it is session-authenticated, and a subscription this tab
+        // opened for A must not go on receiving B's sequence. `connectStream` refuses to reopen
+        // it while identity does not hold, so this is the close and that is the latch.
+        closeStream();
+        terminalByIdentity = true;
+        settleTerminal();
         bootstrapping = false;
         disarm();
         publish();
@@ -1643,6 +1732,8 @@ export function startSyncScheduler(
        * un-confirmed gate does.
        */
       if (owns === "unconfirmed" || owns === "revoked") {
+        // Same as the contradiction arm: a lapsed grant is not a licence to keep listening.
+        closeStream();
         /*
          * AND THE CONTRADICTION'S OWN LATCH IS RELEASED, because its cause is gone.
          *
@@ -1652,16 +1743,15 @@ export function startSyncScheduler(
          * than its evidence is the defect this whole slice exists to remove. What is NOT
          * released is a `terminal` the SERVER caused: a sustained refusal is the server's own
          * statement about this account, and a marker changing underneath it does not withdraw
-         * it. Hence the flag rather than a bare `terminal = false`.
+         * it. Hence two cause bits rather than one flag: a contradiction clears only its own, and
+         * a server refusal underneath it survives — which is what the single flag got wrong.
          *
          * Nothing resumes here either way. The loop stays disarmed and quiet until a fresh
          * confirmation opens the gate; this only stops it announcing a stop it can no longer
          * support.
          */
-        if (terminalByContradiction) {
-          terminal = false;
-          terminalByContradiction = false;
-        }
+        terminalByIdentity = false;
+        settleTerminal();
         bootstrapping = false;
         disarm();
         publish();
@@ -1670,8 +1760,13 @@ export function startSyncScheduler(
       await engine.syncOnce();
       if (stopped) return;
       // A drain that SUCCEEDED disproves the refusal, so the claim is withdrawn. `arm()` refuses
-      // to set a timer while `terminal`, which is why this clears it BEFORE arming.
-      terminal = false;
+      // to set a timer while `terminal`, which is why this clears it BEFORE arming. A drain can
+      // only have run with the gate holding, so there is no identity cause left to clear —
+      // cleared anyway, because a bit whose invariant is "already false here" is a bit somebody
+      // will make true one refactor from now.
+      terminalByServer = false;
+      terminalByIdentity = false;
+      settleTerminal();
       revalidating = false;
       // …and an UNCONFIRMED refusal is withdrawn here too, or the next transient one an hour later
       // would find `refusedAt` still set, read itself as the confirmation, and latch on the first
@@ -1708,7 +1803,8 @@ export function startSyncScheduler(
           // having a bad minute" and "this tab can no longer be served". `role="alert"`
           // re-announcing on a re-latch is correct — the claim was re-made by the server, not
           // repeated by us.
-          terminal = true;
+          terminalByServer = true;
+          settleTerminal();
           refusedAt = null;
           revalidating = false;
           disarm();

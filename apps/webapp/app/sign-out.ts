@@ -6,7 +6,7 @@ import { REPLY_DRAFT_PREFIX, REPLY_META_PREFIX } from "./shell/mail-send";
 import {
   NOTIFICATION_SUBSCRIPTION_PREFIX, revokeWakeRegistration,
 } from "./shell/notification-settings";
-import { bindApiOwner } from "./api-client";
+import { bindApiOwner, blockApiOwner } from "./api-client";
 import { forgetOwner, markSignedOutPending } from "./shell/owner-cookie";
 import { SCREENER_INTENTS_PREFIX } from "./shell/screener-intents";
 import { SEND_LOCKS_PREFIX } from "./shell/send-lock";
@@ -133,13 +133,23 @@ export async function forgetThisBrowser(
   if (opts.serverHeld) markSignedOutPending();
   else forgetOwner();
   /*
-   * AND THE CLOUD CLIENT STOPS SPEAKING FOR THAT ACCOUNT. `session-outcome.ts` bound it when the
-   * server named an owner; leaving the binding in place after a sign-out would make every later
-   * request refuse against an account nobody is signed in to any more — including the sign-in
-   * that comes next, which is on the ceremony's own allow-list but whose FOLLOW-UP reads are
-   * not. Unbinding is what lets the next confirmation bind cleanly.
+   * ── AND THE CLOUD CLIENT, WHICH IS WHERE THIS GOT IT EXACTLY BACKWARDS ──────────────────
+   *
+   * A CONFIRMED sign-out returns the client to public: there is no session left to be wrong
+   * about, the next screen is `/login`, and leaving a binding in place would refuse every read
+   * the sign-in that follows needs to make.
+   *
+   * A REFUSED one is the opposite, and this line used to do the same thing for both. Sign-out
+   * wrote the safe marker — the whole point of which is that another window stops trusting a
+   * session the server would not revoke — and then unbound the client one line later, which
+   * turned the boundary off for every settings pane mounted afterwards. The sequence the marker
+   * exists to stop was waved through by its own remedy.
+   *
+   * So a refused sign-out BLOCKS: account surfaces refuse, and only the ceremony still goes out,
+   * which is what leaves the logout retryable and the front door open.
    */
-  bindApiOwner(null);
+  if (opts.serverHeld) blockApiOwner();
+  else bindApiOwner(null);
   /*
    * ── THE WAKE REGISTRATION GOES FIRST, BEFORE THE ID THAT NAMES IT IS SWEPT ──────────────
    *

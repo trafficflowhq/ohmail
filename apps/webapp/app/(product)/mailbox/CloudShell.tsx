@@ -7,7 +7,8 @@ import { toMailboxFacts } from "./mailbox-facts";
 import { buildToken } from "../../shell/app-update";
 import { startBuildWatch } from "../../shell/build-watch";
 import { COMPOSE_ATTACH_STAGED_SURFACE_BYTES } from "../../components/ComposeAttach";
-import { mailboxes as mailboxApi } from "../../api-client";
+import { mailboxes as mailboxApi, pendApiOwner } from "../../api-client";
+import { readOwner } from "../../shell/owner-cookie";
 import { resolveOwnerOutcome } from "../session-outcome";
 import { AboutSection } from "./AboutSection";
 import { AccountLocale } from "./AccountLocale";
@@ -150,6 +151,33 @@ export function CloudShell({ demo }: { demo: boolean }) {
    * guarantees.
    */
   const resolveOwner = resolveOwnerOutcome;
+
+  /**
+   * ═══ A NAMED SHELL IS NEVER A PUBLIC SURFACE ══════════════════════════════════════════════
+   *
+   * The account boundary in `api-client.ts` had one nullable state meaning both "there is no
+   * account here" and "there is an account here and the server has not answered yet", and it let
+   * the second one through because the first one must go through. Review walked the consequence:
+   * a deep-linked settings pane over a warm mirror for A mounts, renders and issues requests
+   * while the confirmation is still in flight; another tab establishes B in that window; Security,
+   * Devices, Billing and Mailboxes all pass the boundary and read or change B. A freshly signed-in
+   * B is also exactly when a step-up window is open, which is what puts recovery-code generation
+   * and TOTP enrolment inside the window.
+   *
+   * So the moment a Cloud shell exists, the client stops being public. `readOwner()` is the same
+   * synchronous read the shell uses to choose which mirror to open, so where there is a warm
+   * mirror this names the account it is for and the boundary is as strict as it will be after the
+   * confirm; on a cold load it is `null`, which still fails closed on an absent or signed-out
+   * marker and merely cannot yet say WHICH account — one round trip later the confirm says.
+   *
+   * DURING RENDER, not in an effect, and that is the whole point: an effect runs after the commit
+   * that mounted the panes, and the panes issue their reads from their own effects. React orders
+   * a child's effect BEFORE its parent's, so a pane's first request would go out before an effect
+   * here could have closed the door. `pendApiOwner` never widens — a client already bound or
+   * blocked ignores it — so calling it on every render is idempotent and safe under StrictMode's
+   * double invocation.
+   */
+  pendApiOwner(readOwner());
 
   /**
    * WHAT STATE ARE THIS ACCOUNT'S MAILBOXES IN? Same seam, same reason.

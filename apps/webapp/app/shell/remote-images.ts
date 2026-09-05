@@ -158,6 +158,20 @@ export interface RemoteImagesOptions {
   /** Say why the consent could not be recorded. The server's own sentence, never a guess. */
   onFailed: (message: string) => void;
   /**
+   * MAY THIS WINDOW STILL ASK THE SERVER FOR THIS ACCOUNT'S BYTES? Asked immediately before a
+   * proxied image URL is handed to the renderer, never cached.
+   *
+   * `/img` is one of the two Cloud reads that never go through `api()` — the browser fetches it
+   * itself, from an `<img src>`, so the account boundary cannot see it. On its own that is not a
+   * leak: a message id from A's mirror answers 404 under B's session. It stops being harmless
+   * the moment anything else has already put a valid id from the other account in front of this
+   * window, which is exactly the state every other guard in this slice exists to prevent — so
+   * this one is defence in depth, and it is cheap.
+   *
+   * Absent ⇒ always allowed, which is the desktop and the demo: no cookie jar, no question.
+   */
+  mayRead?: () => boolean;
+  /**
    * THE ACCOUNT'S OWN ANSWER — `"auto"` (the product default: pictures load through the proxy on
    * open) or `"manual"` (the per-message consent flow, which this product shipped with).
    *
@@ -202,9 +216,19 @@ export function useRemoteImages(opts: RemoteImagesOptions): RemoteImagesChrome |
   const onFailedRef = useRef(opts.onFailed);
   useEffect(() => { onFailedRef.current = opts.onFailed; });
 
+  /** Read through a ref so the predicate is consulted at USE time, not at render time. */
+  const mayReadRef = useRef(opts.mayRead);
+  mayReadRef.current = opts.mayRead;
+
   const proxyFor = useCallback(
-    (messageId: string) => (url: string) =>
-      imageProxyUrl(API_BASE ?? "", window.location.origin, messageId, url),
+    (messageId: string) => (url: string) => {
+      // An empty `src` renders nothing and requests nothing, which is the right answer here:
+      // there is no honest image to show for an account this window does not belong to, and a
+      // broken-image icon would be a claim about the mail rather than about the session.
+      const may = mayReadRef.current;
+      if (may && !may()) return "";
+      return imageProxyUrl(API_BASE ?? "", window.location.origin, messageId, url);
+    },
     [],
   );
 

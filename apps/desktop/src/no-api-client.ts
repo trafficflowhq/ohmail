@@ -96,9 +96,16 @@ export const api: <T>(path: string, opts?: RequestOptions) => Promise<T> = absen
  */
 export const bindApiOwner: (accountId: string | null) => void = () => {};
 
+export const pendApiOwner: (owner: string | null) => void = () => {};
+
+export const blockApiOwner: () => void = () => {};
+
 export const boundApiOwner: () => string | null = () => null;
 
-export const apiOwnerHolds: (path: string) => boolean = () => true;
+/** Mirrors the hosted client's shape so the shared shell's types resolve. Always `public` here. */
+export const apiOwnerBinding: () => { kind: "public" } = () => ({ kind: "public" });
+
+export const apiOwnerHolds: (path: string, opts?: { ceremony?: boolean }) => boolean = () => true;
 
 export interface SessionUser {
     userId: string;

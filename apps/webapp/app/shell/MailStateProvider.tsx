@@ -50,7 +50,7 @@ import {
   type ReactNode,
 } from "react";
 import { useDemoMode, useEngine, useFreshness, useSyncStatus } from "./engine";
-import { SYNC_FAILURE_STREAK, syncIdentityOf } from "./sync-scheduler";
+import { SYNC_FAILURE_STREAK, syncMayRead } from "./sync-scheduler";
 import {
   deriveMailState,
   growthStep,
@@ -423,14 +423,17 @@ export function MailStateProvider({
      * while the jar still agreed can answer after it has stopped agreeing — the same reason
      * `answering.current` is read after the await rather than before it.
      *
-     * `contradicted` and not `!== "holds"`: an UNCONFIRMED gate is the ordinary warm open, where
-     * the mailbox facts are this account's own and the strip has always shown them. Refusing
-     * there would blank the strip for a round trip on every load.
+     * {@link syncMayRead} and not a comparison written out here: it is the adapter's own read
+     * rule, exported so this door and the reach-past body door cannot drift from it — and they
+     * had, both still testing `contradicted` alone after the gate grew its fourth state, so a
+     * REVOKED gate went on publishing here while the adapter beside it refused. An UNCONFIRMED
+     * gate still reads, because that is the ordinary warm open: the facts are this account's own
+     * and refusing would blank the strip for a round trip on every load.
      */
-    if (syncIdentityOf(probeEngine) === "contradicted") return;
+    if (!syncMayRead(probeEngine)) return;
     try {
       const got = await now.probe();
-      if (syncIdentityOf(probeEngine) === "contradicted") return;
+      if (!syncMayRead(probeEngine)) return;
       /* THE OWNERSHIP TEST. `now` is this callback's OWN identity, frozen when the callback was
          made; `answering.current` is what is on screen when the answer lands. A request issued for
          the previous account resolves whenever the network says so — `alive.current` only asks

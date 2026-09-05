@@ -101,7 +101,7 @@ import { useAppLocale } from "./LocaleContext";
 import { useScreenerState } from "./screener-state";
 import { useJunkWindow, type JunkWire } from "./junk-window";
 import { useOlderBody, type OlderBodyWire } from "./older-body";
-import { syncIdentityOf } from "./sync-scheduler";
+import { syncMayRead } from "./sync-scheduler";
 import { useScreenerSuggestions, type SenderSuggestion, type SuggestWire } from "./screener-suggest";
 import { AutoSuggestRow } from "./AutoSuggestRow";
 import { ScreeningSection } from "./ScreeningSection";
@@ -2816,7 +2816,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
      rewritten by a sign-in in another tab between the render that built this closure and the
      press that uses it, and the whole point of the check is to catch exactly that. `useCallback`
      with `[engine]` keeps the door's own dependency stable; the answer inside is always live. */
-  const mayReadOlderBody = useCallback(() => syncIdentityOf(engine) !== "contradicted", [engine]);
+  const mayReadOlderBody = useCallback(() => syncMayRead(engine), [engine]);
   const { open: openOlderBody, bodyFor: olderBodyFor } =
     useOlderBody(!demo, olderBodyWire, mayReadOlderBody);
   const hydrateBody = useCallback(
@@ -2869,6 +2869,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * no API — arrives here as `"manual"` and keeps the per-message button. See `consent-state.ts`.
    */
   const remoteImages = useRemoteImages({
+    // `/img` is fetched by the browser from an `<img src>`, so the account boundary in `api()`
+    // never sees it. Same predicate as every other direct reader — see `syncMayRead`.
+    mayRead: mayReadOlderBody,
     onFailed: (message) => toast(message),
     mode: consent.blockRemoteImages ? "manual" : "auto",
     // The pixel switch rides the same hook for the same reason `mode` does: the Settings row and

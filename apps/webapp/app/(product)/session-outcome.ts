@@ -90,7 +90,18 @@ export async function resolveOwnerOutcome(
   opts: { signal?: AbortSignal } = {},
 ): Promise<OwnerOutcome> {
   try {
-    const { user, scope } = await auth.session(opts);
+    /*
+     * `ceremony: true` — THE FRONT DOOR, and this is the only call in the app that may say it.
+     *
+     * This request is how the client finds out whether the browser holds a session at all, so by
+     * definition it runs before anybody could be bound to an account and the account boundary
+     * cannot apply to it. `/auth/session` used to be exempt BY PATH, which handed the same
+     * exemption to six ordinary shell reads — the panes that want the signed-in person's email,
+     * account id and enrolled factors — and therefore handed them the OTHER account's answer
+     * whenever the browser had become somebody else. The exemption belongs to this caller, not
+     * to the route.
+     */
+    const { user, scope } = await auth.session({ ...opts, ceremony: true });
     /*
      * A 200 THAT IS NOT OUR ANSWER. A captive portal, a proxy interstitial and a cache with
      * ideas of its own all return 200 with a body this client can parse into an object with
