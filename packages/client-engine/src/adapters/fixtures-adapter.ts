@@ -180,7 +180,17 @@ export class FixturesAdapter implements EngineAdapter {
       labels: tagsOf(f.id).map((t) => t.id),
       remoteContent: f.trackerNote ? "blocked" : "none",
       updatedAt: iso,
-      time: f.time,
+      /* NO LITERAL STAMP. The row stamp is DERIVED from `date` above, like every server-fed
+         message, and that is the whole point: a fixture that carried its own display string
+         shadowed the real rule (`messageStamp` returns `m.time` and stops), so the demo showed a
+         shape frozen at whatever the product rendered on the day somebody typed it. Three rows
+         said "yesterday" and twenty were a bare weekday — forms the product had stopped producing
+         — and nothing could see it, because no derivation ran over a fixture row anywhere.
+
+         The strings in `data.ts` are an INSTANT SPEC, not display copy: `parseFixtureTime` turns
+         each one into a real date, descending along the array so the mirror's order reproduces the
+         demo's. Keeping them out of the message is what makes the demo render the product's
+         current stamp on any day it is opened, and what lets a render check see the real rule. */
       ...(f.body !== undefined ? { body: f.body } : {}),
       ...(f.threadCount !== undefined ? { threadCount: f.threadCount } : {}),
       ...(f.attachment ? { attachment: f.attachment } : {}),
