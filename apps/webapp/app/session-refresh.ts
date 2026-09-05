@@ -99,6 +99,74 @@ export function lastRefreshOutcome(): RefreshOutcome | null {
  */
 const REFRESH_LOCK = "ohmail:session-refresh";
 
+/**
+ * ═══ THE SAME LOCK, HELD BY THE SIGN-IN CEREMONY ══════════════════════════════════════════
+ *
+ * `refreshSettled` orders THIS TAB's ceremony behind THIS TAB's refresh, and review named what
+ * that cannot reach: `inFlight` is module state, so a refresh running in ANOTHER tab is invisible
+ * to it. Tab A begins a refresh; tab B sees its own `inFlight === null`, waits for nothing, signs
+ * in; A's response lands afterwards and rewrites every session cookie — restoring the previous
+ * account or clearing the one just created. The Web Lock below serialises refreshes against each
+ * other and did nothing about a login, because a login never asked for it.
+ *
+ * So the ceremony asks for it too. Every request that WRITES session cookies — the password step
+ * and each second factor — runs inside the same origin-wide lock, so a refresh in any tab either
+ * completes before the login starts or waits until after it. Ordering across tabs, by the same
+ * instrument that already ordered refreshes across tabs.
+ *
+ * ── HELD AROUND THE REQUEST, NEVER AROUND THE HUMAN ───────────────────────────────────────
+ *
+ * One round trip at a time. Wrapping the whole ceremony — password, then a person finding their
+ * phone, then a code — would hold an origin-wide lock for minutes and stall every other tab's
+ * refresh behind it. Each call takes it, writes, and releases.
+ *
+ * ── AND THE WAIT HAS A FLOOR, FOR `refreshSettled`'S REASON ───────────────────────────────
+ *
+ * A lock is a queue, and a queue behind a holder that never finishes is the deadlock this slice
+ * already fixed once in the other place. `AbortSignal` cancels the WAIT FOR A GRANT — never the
+ * holder, which keeps whatever budget it had — and on expiry the ceremony proceeds unlocked,
+ * which is exactly the behaviour it had before this existed. A race the sign-in may lose beats a
+ * sign-in that cannot happen.
+ */
+export async function withSessionCookieLock<T>(fn: () => Promise<T>): Promise<T> {
+  /*
+   * PER CALL, in a closure, and never module state: two ceremonies can be in flight in one tab
+   * (a resend beside a verify), and a shared flag would let one decide the other's fate. It
+   * answers exactly one question — did `fn` get as far as running? — which is what separates
+   * "the ceremony failed" from "we never got a grant".
+   */
+  let started = false;
+  const run = async (): Promise<T> => {
+    started = true;
+    return fn();
+  };
+  try {
+    const locks = typeof navigator !== "undefined" ? navigator.locks : undefined;
+    if (locks?.request) {
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), SETTLE_DEADLINE_MS);
+      try {
+        return await locks.request(REFRESH_LOCK, { mode: "exclusive", signal: ctl.signal }, run) as T;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+  } catch (err) {
+    /*
+     * `fn` RAN AND THREW ⇒ its error is the answer, and it must not be retried: re-running a
+     * password step because the server said no is a second login attempt nobody asked for, and
+     * against a single-use login token it is a guaranteed second failure.
+     *
+     * Otherwise no grant was ever made — an aborted wait (the deadline doing its job), a
+     * hardened embedder with no lock manager, an opaque origin, a document no longer fully
+     * active. All one case: proceed unlocked, which is the behaviour this ceremony had before
+     * the lock existed and which the server's own grace window still covers.
+     */
+    if (started) throw err;
+  }
+  return run();
+}
+
 async function withCrossTabLock(fn: () => Promise<boolean>): Promise<boolean> {
   try {
     // BOTH the property lookup and the request live inside this try: a `navigator.locks`
