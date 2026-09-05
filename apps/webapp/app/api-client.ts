@@ -679,7 +679,15 @@ export const auth = {
   login: (b: { email: string; password: string }) =>
     api<LoginResult>("/auth/login", { method: "POST", body: b }),
 
-  session: () => api<{ user: SessionUser; scope: "full" | "enrollment" }>("/auth/session"),
+  /**
+   * `signal` is not decoration. `/login` runs a retry ladder beside a sign-in form, and a
+   * confirm still in flight when a password is submitted can finish AFTER the new session's
+   * cookies are set — and the refresh it may trigger rewrites the whole jar. Suppressing the
+   * promise continuation does not undo that; only stopping the request does. Every other
+   * caller omits it and is unchanged.
+   */
+  session: (opts: { signal?: AbortSignal } = {}) =>
+    api<{ user: SessionUser; scope: "full" | "enrollment" }>("/auth/session", opts),
 
   logout: () => api<void>("/auth/logout", { method: "POST", body: {} }),
 

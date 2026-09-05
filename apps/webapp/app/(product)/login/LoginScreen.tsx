@@ -136,16 +136,24 @@ export function LoginScreen() {
    * making somebody wait behind a spinner to be told they may type their password would be a
    * worse trade than the one this fixes. It just stops contradicting the shell.
    *
-   * Cancelled on unmount AND on the first submit: once a password is in flight, a late
-   * confirm arriving from the ladder must not navigate out from under the ceremony.
+   * Cancelled on unmount AND on the first submit — and cancelled means ABORTED, not ignored.
+   * A confirm still in flight when a password is submitted does not merely arrive too late to
+   * navigate: if it 401s it sends `POST /auth/refresh` with the OLD account's refresh cookie,
+   * and that response rewrites the whole jar. Landing after the new session's cookies are set,
+   * a success overwrites them with the previous account's and a failure clears them — so the
+   * person is switched back, or signed straight out, seconds after completing a sign-in.
+   * Suppressing the promise continuation cannot undo a `Set-Cookie`; only stopping the request
+   * before it becomes a refresh can. The ladder made that window wider, so it carries the fix.
    */
   useEffect(() => {
     if (!configured) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const abort = new AbortController();
     cancelBootstrapRef.current = () => {
       cancelled = true;
       if (timer !== undefined) clearTimeout(timer);
+      abort.abort();
     };
     // A ceremony already owns this page — see `submittedRef`. Nothing to confirm.
     if (submittedRef.current) return;
@@ -155,7 +163,7 @@ export function LoginScreen() {
       // already excluded. Caught anyway, and read as "stop asking": an unhandled rejection
       // from a page whose whole job is to render a form would be a worse outcome than a
       // ladder that ends early.
-      const outcome = await resolveOwnerOutcome().catch(() => null);
+      const outcome = await resolveOwnerOutcome({ signal: abort.signal }).catch(() => null);
       if (cancelled || outcome === null) return;
       if (outcome.kind === "owner") {
         router.replace(`/${window.location.hash}`);
@@ -170,6 +178,7 @@ export function LoginScreen() {
     return () => {
       cancelled = true;
       if (timer !== undefined) clearTimeout(timer);
+      abort.abort();
     };
   }, [configured, router]);
 

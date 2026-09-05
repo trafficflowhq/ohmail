@@ -28,8 +28,8 @@
     "endedBody": "Diese Sitzung konnte nicht bestätigt werden, also wurde nichts geladen. Melde dich neu an — deine Post ist dann wieder da.",
     "endedMidUse": "Diese Sitzung ist beendet — es wird nichts Neues mehr geladen; was du siehst, ist der Stand von davor. Melde dich an, um weiterzumachen.",
     "unconfirmedTitle": "Die Sitzungsprüfung wurde nicht abgeschlossen.",
-    "unconfirmedBody": "ohmail war nicht erreichbar, daher wurde nichts geladen. Deine Sitzung ist nicht beendet — versuch es noch einmal.",
-    "unconfirmedBodyWarm": "ohmail war nicht erreichbar, daher wurde nichts Neues geladen. Was du siehst, ist die Post, die schon auf diesem Gerät liegt. Deine Sitzung ist nicht beendet — versuch es noch einmal.",
+    "unconfirmedBody": "ohmail konnte die Prüfung nicht abschließen, daher wurde nichts geladen. Versuch es gleich noch einmal.",
+    "unconfirmedBodyWarm": "ohmail konnte die Prüfung nicht abschließen, daher wurde nichts Neues geladen. Was du siehst, ist die Post, die schon auf diesem Gerät liegt. Versuch es gleich noch einmal.",
     "tryAgain": "Erneut versuchen",
     "signIn": "Anmelden",
     "openDemo": "Demo öffnen"
