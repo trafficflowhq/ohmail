@@ -540,6 +540,13 @@ reappeared a moment later with nothing on screen saying why.
 Keyboard hints no longer draw on touch screens, or in windows too narrow to hold both the hint and
 the verb it belongs to.
 
+Holding Shift no longer runs a shortcut that did not ask for it. Shift-Backspace and
+Shift-Delete were reaching the ordinary delete — on Windows that combination means "delete
+permanently", and in several editors it kills a line, so anyone pressing it meant something
+other than this app's undoable delete. Any named key — Backspace, Delete, Enter, Escape, the
+arrows — now needs its shortcut to ask for Shift before a shifted press counts. Punctuation is
+unchanged, because Shift is how those characters are typed: ? still opens the shortcut sheet.
+
 On a phone, hold a row for about half a second to start a selection. Until now there was no way
 in at all on a touch screen — picking a row needed a key or a modifier — so the whole selection
 bar was desktop-only. While a selection is up, tapping a row adds it or takes it out instead of

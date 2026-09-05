@@ -210,8 +210,31 @@ export function chordMatches(chord: string, e: KeyboardEvent): boolean {
   if (e.altKey && !altGr) return false;
   if (wantMod !== (e.metaKey || (e.ctrlKey && !altGr))) return false;
   if (wantShift && !e.shiftKey) return false;
-  // `?` is itself typed with Shift on most layouts, so only LETTERS are held to the rule.
-  if (!wantShift && e.shiftKey && /^[a-z]$/.test(key)) return false;
+  /**
+   * A SHIFTED PRESS IS A DIFFERENT GESTURE — for LETTERS, and for NAMED keys.
+   *
+   * This used to hold only letters to the rule, on the argument that "`?` is itself typed with
+   * Shift on most layouts". That argument is right and it is about CHARACTER keys, where Shift
+   * is how the character is produced: `?` is Shift+/, and refusing it would make the shortcut
+   * sheet unopenable. It does not extend to keys whose identity Shift cannot change.
+   *
+   * `Backspace` is not a letter, so the old test let a bare `Backspace` binding match ⇧⌫ —
+   * measured, and it was not theoretical: over a selection in the Ohbox, ⇧⌫ ran the ordinary
+   * delete and spent the pick. ⇧⌫ is "delete permanently" on Windows and a line-kill in several
+   * editors; a user pressing it is not asking for this app's ordinary, undoable delete, and
+   * silently giving them one is the wrong answer to a gesture that means something else. The
+   * single-message delete had the identical hole.
+   *
+   * So the test splits on what Shift can DO to the key rather than on letter-ness:
+   *   · `key.length > 1` — a NAMED key (Backspace, Delete, Enter, Escape, the arrows). Shift
+   *     cannot change which key it is, so a shifted press is a distinct chord and a bare
+   *     binding must not claim it. A binding that WANTS it declares `shift+…` and is admitted
+   *     by `wantShift` above, which is how `shift+ArrowDown` keeps working.
+   *   · `/^[a-z]$/` — a letter. Unchanged, and the reason is unchanged.
+   *   · anything else of length 1 — punctuation, where Shift is the typing gesture. Allowed,
+   *     which is what keeps `?` and the bracket keys reachable on every layout.
+   */
+  if (!wantShift && e.shiftKey && (key.length > 1 || /^[a-z]$/.test(key))) return false;
   return key.length === 1 ? e.key.toLowerCase() === key.toLowerCase() : e.key === key;
 }
 
