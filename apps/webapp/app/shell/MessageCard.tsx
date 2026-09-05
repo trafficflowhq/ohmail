@@ -209,6 +209,12 @@ export function MessageHeader({
               aria-expanded={contact?.key === key}
               onClick={(e) => {
                 contactAnchor.current = e.currentTarget;
+                /* A TRIGGER TOGGLES. This set the state unconditionally, so pressing an open chip
+                   re-opened the popover it was already showing — and once the chip was excluded
+                   from the menu's outside-press listener (so one press stops being a close and an
+                   immediate re-open), nothing dismissed it at all. The exclusion is right; a
+                   trigger that only ever opens is what made it look wrong. */
+                if (contact?.key === key) { setContact(null); return; }
                 setContact({
                   key,
                   messageId: message.id,
