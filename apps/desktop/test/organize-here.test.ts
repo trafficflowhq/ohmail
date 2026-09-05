@@ -91,6 +91,21 @@ vi.mock("../src/bridge-fetch.js", () => ({
   },
 }));
 
+/**
+ * THE REQUESTS MINUS THE PANE'S STANDING POLL — which is what "the press wrote something" means.
+ *
+ * The pane reads `GET /local/mailboxes/connections` on mount and every fifteen seconds, to learn
+ * whether this machine can reach each mailbox's server. It is background traffic, not an action,
+ * and the assertions in this file are about the ONE request a press is allowed to send. Filtered
+ * rather than relaxed into a containment check: `toHaveLength(1)` is the half that says a press
+ * did not also do something else, and that is the half worth keeping.
+ *
+ * The read itself is asserted in `desktop-mailboxes.test.ts`, so this exemption cannot hide its
+ * removal.
+ */
+const pressed = (): { url: string; method: string; body?: string }[] =>
+  bridged.filter((c) => c.url !== "/local/mailboxes/connections");
+
 interface Host {
   __TAURI_INTERNALS__?: {
     invoke: (command: string, payload?: Record<string, unknown>) => Promise<unknown>;
@@ -233,7 +248,7 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
     // A ceremony that only said "are you sure" would make somebody guess at both.
     expect(text).toContain("zorin-9950");
     expect(text).toContain("left alone either way");
-    expect(bridged, "the first press wrote something instead of asking").toEqual([]);
+    expect(pressed(), "the first press wrote something instead of asking").toEqual([]);
   });
 
   it("confirming authorizes ONE becoming through the local door, and says when it happens", async () => {
@@ -244,10 +259,10 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
     // THE ROUTE. The local door's own action, keyed on the mailbox id — not the account's
     // `POST /mailboxes/:id/organize`, which is a different ceremony with a different authority
     // and is not served on this door at all.
-    expect(bridged).toHaveLength(1);
-    expect(bridged[0]!.url).toBe("/local/organizer/takeover");
-    expect(bridged[0]!.method).toBe("POST");
-    expect(JSON.parse(bridged[0]!.body!)).toEqual({ mailboxId: "mbx-reader" });
+    expect(pressed()).toHaveLength(1);
+    expect(pressed()[0]!.url).toBe("/local/organizer/takeover");
+    expect(pressed()[0]!.method).toBe("POST");
+    expect(JSON.parse(pressed()[0]!.body!)).toEqual({ mailboxId: "mbx-reader" });
 
     /* THE SENTENCE, AND IT NO LONGER SENDS ANYBODY TO RESTART THE APP. This comment said exactly
        that while the assertion under it pinned the restart sentence — the copy came back and the

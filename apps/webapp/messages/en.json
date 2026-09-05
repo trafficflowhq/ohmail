@@ -2156,6 +2156,8 @@
     "desktopStateError": "Not connecting ({code})",
     "desktopStateHandedOver": "Handed over to another install",
     "desktopStateDisconnected": "Disconnected",
+    "desktopStateUnreachable": "Can't reach the mail server.",
+    "desktopStateUnreachableSince": "Can't reach the mail server. Last answered {when}.",
     "desktopStatePaused": "Paused",
     "desktopStateFirstOpen": "Opening for the first time",
     "desktopStateCatchingUp": "Still catching up",

@@ -145,7 +145,8 @@ import {
 // remove them. See that file's header for what is per mailbox and what is per install.
 import {
   LocalRoster,
-  type CredentialState, type LocalMailboxRuntime, type OrganizerState,
+  type CredentialState, type LocalMailboxRuntime, type MailboxConnectionState,
+  type OrganizerState,
 } from "./roster.js";
 // Removing a mailbox takes this install's copy of its mail with it. See `local-mirror.ts` for why
 // this is the sidecar's job and not `MailboxService.delete`'s.
@@ -180,7 +181,7 @@ export type SidecarImapConfig = Omit<ImapConfig, "auth"> & { auth: { user: strin
  * process was the same statement as the mailbox's while there was one mailbox; with several it
  * would be an answer about whichever one the shell happened to ask about last.
  */
-export type { CredentialState, OrganizerState } from "./roster.js";
+export type { CredentialState, MailboxConnectionState, OrganizerState } from "./roster.js";
 
 /**
  * WHAT THE ENGINE HANDS A DIAL — currently the one thing an adapter cannot report by throwing.
@@ -492,6 +493,16 @@ export interface Sidecar {
    * asks for it explicitly. A snapshot per call, never a live map: a poll writes these fields.
    */
   organizerStates(): Record<string, OrganizerState>;
+  /**
+   * Whether this install can reach each mailbox's server right now, keyed by row id.
+   *
+   * BESIDE {@link organizerStates} and never folded into it. The two answer different questions
+   * and Settings needs both: this install is still the ORGANIZER of a mailbox it cannot currently
+   * REACH, and collapsing the pair would either invite somebody to take back a mailbox nobody
+   * took, or let the pane go on saying "On this machine" over a socket that has been dead for an
+   * hour. A snapshot per call, like its neighbour.
+   */
+  connectionStates(): Record<string, MailboxConnectionState>;
   /** Connect, ensure the `ohmail/*` tree exists, drain, then poll. */
   start(): Promise<void>;
   /**
@@ -4583,6 +4594,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         get leaseNonce() { return leaseNonce; },
         set leaseNonce(v) { leaseNonce = v; },
         get profileSync() { return profileSync; },
+        /* THE CONNECTION'S OWN ANSWER, derived and never stored: the pair of closure fields IS
+           the state, and this shapes them for a caller. `reachable` is the negation of "we have
+           observed a death that no re-dial has undone" — not a probe, and deliberately not one:
+           asking the socket here would put an IMAP round trip on a settings render. */
+        get connection() {
+          return { reachable: connectionDeadSince === null, unreachableSince: connectionDeadSince };
+        },
         serialize,
         syncUntilQuiet,
         credentialState: async () => (await resolveLogin()).state,
@@ -5026,7 +5044,28 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          * On `handle` ALONE. A probe opens a socket to a host named in its body, so a phone on
          * the same network must not be able to ask this computer to make one. */
         const localProbeMatch = req.method === "POST" && url.pathname === "/local/mailboxes/probe";
-        const localAction = (req.method === "DELETE" && url.pathname === "/local/stored-login")
+        /* -- `GET /local/mailboxes/connections` — CAN THIS MACHINE REACH THEM RIGHT NOW ---------
+         *
+         * A THIRD route ahead of the shared table, on the identical argument the two above it
+         * carry: it reports the liveness of sockets THIS PROCESS holds. The hosted service has no
+         * such thing to report — its mailboxes are attached by a worker on a shard, and a
+         * connection there is a fact about a machine no user is sitting at — so adding it to
+         * `packages/api`'s table would be hosted surface invented for a desktop lifecycle.
+         *
+         * AND IT IS NOT A COLUMN, which is the other reason it is here rather than on
+         * `GET /mailboxes`. A dead connection does not survive a restart: a relaunch dials a
+         * fresh one. Recording it durably would make every first boot after an outage report a
+         * mailbox as unreachable that is already connected.
+         *
+         * ON `handle` ALONE, like its two neighbours: `handleHost` and `handleLan` serve a PAIRED
+         * DEVICE, and whether THIS COMPUTER's socket is up is a question for somebody sitting at
+         * this computer. A phone's own view of its host is the pairing layer's answer, not this
+         * one.
+         */
+        const localConnectionsMatch = req.method === "GET"
+          && url.pathname === "/local/mailboxes/connections";
+        const localAction = localConnectionsMatch
+          || (req.method === "DELETE" && url.pathname === "/local/stored-login")
           || (req.method === "POST" && url.pathname === "/local/organizer/takeover")
           || localRemoveMatch !== null
           || localOrganizeMatch !== null
@@ -5112,6 +5151,21 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 { status: refused ? 400 : 500, headers: { "content-type": "application/json" } },
               );
             }
+          }
+          if (localConnectionsMatch) {
+            /* Instants as ISO strings, `null` while reachable — the shape every other lifecycle
+               instant on this transport takes, so the shell parses it the same way. No mailbox
+               address and no server name: which provider a person is on is the identifying
+               signal this package keeps off the wire's diagnostics, and the row id is what
+               correlates this with the list the pane already holds. */
+            const items = runtimes.all().map((r) => ({
+              mailboxId: r.mailboxId,
+              reachable: r.connection.reachable,
+              unreachableSince: r.connection.unreachableSince?.toISOString() ?? null,
+            }));
+            return new Response(JSON.stringify({ items }), {
+              status: 200, headers: { "content-type": "application/json" },
+            });
           }
           if (localProbeMatch) {
             /* THE PROBE, AND ONLY THE PROBE. `probeConnection` dials and answers; it takes no
@@ -5820,6 +5874,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        */
       organizerStates() {
         return Object.fromEntries(runtimes.all().map((r) => [r.mailboxId, r.organizer]));
+      },
+      connectionStates() {
+        return Object.fromEntries(runtimes.all().map((r) => [r.mailboxId, r.connection]));
       },
       /**
        * The SEED's answer, unchanged for every existing caller. See `LocalRoster.seed`: the row

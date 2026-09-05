@@ -87,6 +87,23 @@ let bridgeReply: () => Response = () => new Response(null, { status: 202 });
 /** Every request the pane put down the pipe, in order. */
 let bridged: { url: string; method: string }[] = [];
 
+/**
+ * THE PANE'S REQUESTS MINUS ITS STANDING POLL — what a PRESS did, which is what these cases judge.
+ *
+ * The pane reads `GET /local/mailboxes/connections` on mount and every fifteen seconds after, to
+ * learn whether this machine can reach each mailbox's server right now. That is background
+ * traffic, not an action anybody took, and every exact-equality assertion below is about the one
+ * thing a click sent down the pipe. Filtering it here keeps those assertions EXACT rather than
+ * relaxing them into `toContain`, which is what would actually lose them: a press that fired two
+ * requests instead of one would pass a containment check.
+ *
+ * The exemption is closed by {@link "the pane asks whether this machine can reach its mailboxes"}
+ * below, which asserts the read HAPPENS. Without that, deleting the poll would make every case
+ * here go green for a reason none of them is about.
+ */
+const pressed = (): { url: string; method: string }[] =>
+  bridged.filter((c) => c.url !== "/local/mailboxes/connections");
+
 /** Shell commands the pane sent, in order. Today that is the sign-out and nothing else. */
 let shellCommands: string[] = [];
 /**
@@ -269,6 +286,64 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
+describe("the desktop mailbox pane and a mail server it cannot reach", () => {
+  /**
+   * ── THE ROW MUST NOT SAY "UP TO DATE" OVER A SOCKET THAT HAS BEEN DEAD FOR AN HOUR ────────
+   *
+   * The engine holds one connection per mailbox and a desktop process outlives its sockets. When
+   * one dies the engine re-dials on its own — but between the death and the heal the mirror stops
+   * growing, and every sentence in the ladder above this one describes mail MOVING. "Up to date"
+   * is true of a mirror that stopped an hour ago; "Reading only" reads nothing. The pane has to
+   * say the fact instead.
+   *
+   * It is a fact and nothing else — no "signed out", no instruction. The mailbox is untouched,
+   * the password is untouched, and the engine re-dials by itself; a sentence implying the person
+   * must act would be asking for work that is not theirs.
+   */
+  it("says the mail server cannot be reached, and how long that has been true", async () => {
+    bridgeReply = () => new Response(JSON.stringify({
+      items: [{
+        mailboxId: "mbx-1",
+        reachable: false,
+        unreachableSince: new Date(Date.now() - 20 * 60_000).toISOString(),
+      }],
+    }), { status: 200, headers: { "content-type": "application/json" } });
+
+    const el = await render("local");
+    const text = el.textContent ?? "";
+
+    /* THE READ HAPPENED. This is what closes `pressed()`'s exemption: without this assertion,
+       deleting the poll would make every exact-equality case in this file go green for a reason
+       none of them is about. */
+    expect(bridged).toContainEqual({ url: "/local/mailboxes/connections", method: "GET" });
+
+    expect(text).toContain("Can't reach the mail server");
+    // A DURATION and not a date. An outage that began twenty minutes ago rendered as "5 Sep 2026"
+    // answers nothing a person opening Settings mid-outage is asking.
+    expect(text).toContain("20 minutes ago");
+    // …and the sentences it outranks are gone, rather than sitting beside it contradicting it.
+    expect(text).not.toContain("Up to date");
+    // No advice, no blame, no account language: this is not a sign-out and must never read as one.
+    expect(text.toLowerCase()).not.toContain("sign in");
+    expect(text.toLowerCase()).not.toContain("signed out");
+  });
+
+  /**
+   * AN ENGINE THAT DOES NOT SERVE THE ROUTE IS "CANNOT TELL", NEVER "UNREACHABLE".
+   *
+   * A desktop updates on its own schedule, so a window newer than its engine is an ordinary
+   * state rather than a fault — and the served host transport does not carry the local routes at
+   * all. The dangerous default is the other one: a pane that read silence as an outage would tell
+   * somebody their mail had stopped every time an update landed.
+   */
+  it("falls back to the ordinary state when the engine does not answer the question", async () => {
+    bridgeReply = () => new Response(null, { status: 404 });
+    const text = (await render("local")).textContent ?? "";
+    expect(text).toContain("Up to date");
+    expect(text).not.toContain("Can't reach the mail server");
+  });
+});
+
 describe("the desktop mailbox pane on the hosted door", () => {
   it("lists the mailboxes, says where they are managed, and offers the way there", async () => {
     const el = await render("cloud");
@@ -329,7 +404,7 @@ describe("the desktop mailbox pane on the hosted door", () => {
     const el = await render("cloud");
     await act(async () => { buttonSaying(el, "Sync now")!.click(); });
 
-    expect(bridged).toEqual([{ url: "/mailboxes/mbx-1/resync", method: "POST" }]);
+    expect(pressed()).toEqual([{ url: "/mailboxes/mbx-1/resync", method: "POST" }]);
     // The strip at the foot of the rail reads the same route on a slower clock; the pane pushes it.
     expect(refreshed).toBe(1);
     // The row says what it did, and cannot be pressed again while it is pending.
@@ -407,7 +482,7 @@ describe("the desktop mailbox pane on the standalone door", () => {
   it("keeps the resync, which the local engine serves out of its own route table", async () => {
     const el = await render("local");
     await act(async () => { buttonSaying(el, "Sync now")!.click(); });
-    expect(bridged).toEqual([{ url: "/mailboxes/mbx-1/resync", method: "POST" }]);
+    expect(pressed()).toEqual([{ url: "/mailboxes/mbx-1/resync", method: "POST" }]);
     expect(invoked).toEqual([]);
   });
 
@@ -446,7 +521,7 @@ describe("the desktop mailbox pane on the standalone door", () => {
        `deriveOnboardingStep` answers null for it — correctly — and the intent has to ride the
        route or the stage opens, finds the completion stamp and closes again on the same render. */
     expect(window.location.hash).toBe("#/first-run/add");
-    expect(bridged, "the press connected something instead of opening the flow").toEqual([]);
+    expect(pressed(), "the press connected something instead of opening the flow").toEqual([]);
   });
 
   it("does not offer Add mailbox on the hosted door", async () => {
@@ -503,7 +578,7 @@ describe("the desktop mailbox pane on the standalone door", () => {
     // behind the account's second factor; here there is no factor to ask for, so the statement of
     // consequences IS the ceremony.
     await act(async () => { verb!.click(); });
-    expect(bridged, "the row's verb removed the mailbox with nothing confirmed").toEqual([]);
+    expect(pressed(), "the row's verb removed the mailbox with nothing confirmed").toEqual([]);
 
     const panel = el.querySelector('[role="alertdialog"]');
     expect(panel, "the confirmation is not an alertdialog").not.toBeNull();
@@ -597,7 +672,7 @@ describe("the desktop mailbox pane on the standalone door", () => {
        true`, and on this door the launch session's second-factor stamp is written once at boot —
        so it answers 403 from five minutes after launch for the life of the process, which is
        every machine that has been open longer than a coffee. */
-    expect(bridged).toEqual([{ url: "/local/mailboxes/mbx-1", method: "DELETE" }]);
+    expect(pressed()).toEqual([{ url: "/local/mailboxes/mbx-1", method: "DELETE" }]);
     expect(el.querySelector('[role="alertdialog"]'), "the panel stayed open on success").toBeNull();
     /* THE RE-READ IS NOT THIS CASE'S ANY MORE, and that is a correction rather than a weakening.
        This fixture is ONE mailbox and it is the one the engine serves, which is now the state in
@@ -649,7 +724,7 @@ describe("the desktop mailbox pane on the standalone door", () => {
 
     /* THE REMOVAL FIRST, AND ON THE LOCAL ROUTE — unchanged. Then the shell command that clears
        `config.json`, which is the half the removal cannot reach. */
-    expect(bridged).toEqual([{ url: "/local/mailboxes/mbx-1", method: "DELETE" }]);
+    expect(pressed()).toEqual([{ url: "/local/mailboxes/mbx-1", method: "DELETE" }]);
     expect(loggedOutCount(), "the door configuration was left naming a mailbox nobody has").toBe(1);
     /* AND THE GATE IS HANDED THE NEW STATE. Without this the window keeps a mail client mounted
        over an engine that is `NotConfigured`; with it, the gate re-keys and routes to the door
@@ -684,7 +759,7 @@ describe("the desktop mailbox pane on the standalone door", () => {
       buttonExactly(el, "Remove mailbox")!.click();
       for (let i = 0; i < 12; i++) await Promise.resolve();
     });
-    expect(bridged).toEqual([{ url: "/local/mailboxes/mbx-1", method: "DELETE" }]);
+    expect(pressed()).toEqual([{ url: "/local/mailboxes/mbx-1", method: "DELETE" }]);
     expect(loggedOutCount(), "the install was signed out of a mailbox the person still has").toBe(0);
     expect(refreshed, "the pane did not re-read after removing one of two").toBeGreaterThan(0);
   });
@@ -718,7 +793,7 @@ describe("the desktop mailbox pane on the standalone door", () => {
       buttonExactly(el, "Remove mailbox")!.click();
       for (let i = 0; i < 12; i++) await Promise.resolve();
     });
-    expect(bridged).toEqual([{ url: "/local/mailboxes/mbx-1", method: "DELETE" }]);
+    expect(pressed()).toEqual([{ url: "/local/mailboxes/mbx-1", method: "DELETE" }]);
     expect(loggedOutCount()).toBe(1);
     expect(el.textContent ?? "").toContain("The engine refused to clear the stored login");
     expect(published, "a failed logout was reported to the gate as a new engine state")
@@ -736,7 +811,7 @@ describe("the desktop mailbox pane on the standalone door", () => {
       buttonExactly(el, "Remove mailbox")!.click();
       for (let i = 0; i < 12; i++) await Promise.resolve();
     });
-    expect(bridged).toEqual([{ url: "/local/mailboxes/mbx-1", method: "DELETE" }]);
+    expect(pressed()).toEqual([{ url: "/local/mailboxes/mbx-1", method: "DELETE" }]);
     expect(loggedOutCount(), "the pane signed the install out with nowhere to report it").toBe(0);
     expect(refreshed).toBeGreaterThan(0);
   });
@@ -764,7 +839,7 @@ describe("the desktop mailbox pane on the standalone door", () => {
     await act(async () => { buttonExactly(el, "Remove")!.click(); });
     await act(async () => { buttonExactly(el, "Keep it")!.click(); });
     expect(el.querySelector('[role="alertdialog"]')).toBeNull();
-    expect(bridged).toEqual([]);
+    expect(pressed()).toEqual([]);
   });
 
   it("EVERY LIVE ROW OFFERS REMOVE, and the route wipes the row it names", async () => {
@@ -807,7 +882,7 @@ describe("the desktop mailbox pane on the standalone door", () => {
       buttonExactly(el, "Remove mailbox")!.click();
       for (let i = 0; i < 12; i++) await Promise.resolve();
     });
-    expect(bridged).toEqual([{ url: "/local/mailboxes/mbx-2", method: "DELETE" }]);
+    expect(pressed()).toEqual([{ url: "/local/mailboxes/mbx-2", method: "DELETE" }]);
     /* AND NO SIGN-OUT. A mailbox remains, so the install is still correctly configured for it;
        signing the door out here would take away a mailbox nobody asked to remove. */
     expect(shellCommands, "removing one of two signed the whole install out").toEqual([]);
@@ -831,7 +906,7 @@ describe("the desktop mailbox pane on the standalone door", () => {
       buttonExactly(el, "Remove mailbox")!.click();
       for (let i = 0; i < 12; i++) await Promise.resolve();
     });
-    expect(bridged).toEqual([{ url: "/local/mailboxes/mbx-1", method: "DELETE" }]);
+    expect(pressed()).toEqual([{ url: "/local/mailboxes/mbx-1", method: "DELETE" }]);
     expect(shellCommands, "the install stayed configured for a mailbox it no longer has")
       .toEqual(["engine_logout"]);
     /* AND THE GATE IS TOLD. Without this the window would go on rendering the app over an install

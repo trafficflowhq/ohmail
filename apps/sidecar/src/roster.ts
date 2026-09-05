@@ -64,6 +64,32 @@ export type CredentialState =
    */
   | "foreign-host";
 
+/**
+ * WHETHER THIS INSTALL CAN REACH ONE MAILBOX'S SERVER RIGHT NOW.
+ *
+ * It is not on {@link OrganizerState} and must not be folded into it, because the two answer
+ * different questions and the pane needs both. "Who organizes this mailbox" is a fact about the
+ * LEASE and survives an outage untouched — this install is still the organizer of a mailbox it
+ * cannot currently reach, and saying otherwise would invite a person to take a mailbox back that
+ * was never taken from them. "Can I reach it" is a fact about a SOCKET, and it is the one that
+ * decides whether "On this machine" is presently true in any useful sense.
+ *
+ * IN MEMORY ONLY, deliberately. A dead connection does not survive a restart — a relaunch dials
+ * a fresh one — so a column recording it would be a durable statement about a transient fact,
+ * wrong from the first boot after every outage.
+ */
+export interface MailboxConnectionState {
+  /** False from the first observation of death until a re-dial completes. */
+  reachable: boolean;
+  /**
+   * When it was FIRST observed dead in the current outage, or null while reachable.
+   *
+   * First and never latest: this is what the settings row renders as "unreachable since", and a
+   * clock restarted by each failed re-dial would report a two-hour outage as seconds old.
+   */
+  unreachableSince: Date | null;
+}
+
 /** Why this install is not organizing a mailbox, when it is not. One answer per mailbox. */
 export interface OrganizerState {
   organizing: boolean;
@@ -166,6 +192,20 @@ export interface LocalMailboxRuntime {
   /** The portable organizer profile's write-behind, per mailbox because the document lives in
    *  that mailbox's own `ohmail/_meta`. */
   profileSync: OrganizerProfileSync;
+
+  // ── THE FOURTEENTH ───────────────────────────────────────────────────────────────────────────
+  /**
+   * Can this install reach this mailbox's server right now — see {@link MailboxConnectionState}.
+   *
+   * READ-ONLY, and that is the difference from the thirteen above. Those are what the GATE
+   * writes; this is what the CONNECTION does, and the only writers are the adapter's own death
+   * report and the bound over failing cycles. A setter would let a caller assert a socket is
+   * healthy, which is the one thing no caller can know.
+   *
+   * An accessor rather than a copy for the same reason the thirteen are: the pane reads it a poll
+   * after the gate wrote it, and a frozen record would render a two-hour-old outage as current.
+   */
+  readonly connection: MailboxConnectionState;
 
   // ── THE ENTRY POINTS ─────────────────────────────────────────────────────────────────────────
   /** Run this mailbox's serial queue. */

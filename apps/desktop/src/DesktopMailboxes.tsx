@@ -83,7 +83,7 @@
  * door could perform. The control is below, beside the resync, on the local door alone.
  */
 
-import { Fragment, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { Button, SettingsActions, SettingsBanner, SettingsNote, SettingsRow, SettingsSection, SettingsVerdict } from "@ohmail/ui";
 
@@ -175,6 +175,53 @@ interface MailboxWire {
   inboundQuietSince?: string | null;
   inboundQuietDismissedAt?: string | null;
   createdAt?: string;
+}
+
+/** Whether this install can reach one mailbox's server right now. Row id → the answer. */
+export interface MailboxReach {
+  reachable: boolean;
+  /** ISO instant of the FIRST observation of death in the current outage; null while reachable. */
+  unreachableSince: string | null;
+}
+
+/**
+ * CAN THIS MACHINE REACH ITS MAILBOXES RIGHT NOW — a desktop-only read, on purpose.
+ *
+ * It is NOT part of `MailboxFacts`, and that is not tidiness. Those facts are the shared shell's,
+ * served by `GET /mailboxes` on both doors and consumed by the hosted client too, where "our
+ * socket to your provider" is a fact about a worker on a shard that no user is sitting at. The
+ * liveness of THIS process's own connections has a reader on exactly one surface, so it has a
+ * route on exactly one door.
+ *
+ * ── AN EMPTY ANSWER IS "CANNOT TELL", NEVER "UNREACHABLE" ─────────────────────────────────────
+ *
+ * Three ways this legitimately returns nothing: an engine older than the route (a desktop updates
+ * on its own schedule), the served host transport, which does not carry the local routes at all,
+ * and any transport failure. All three mean the same thing to a reader — no answer — and the
+ * ladder's fallback for an absent id is the state it had before this existed. The dangerous
+ * default is the other one: a pane that read silence as "unreachable" would tell somebody their
+ * mail had stopped every time an update landed.
+ */
+export async function readMailboxReachVia(
+  fetchImpl: (url: string, init?: unknown) => Promise<Response>,
+): Promise<Record<string, MailboxReach>> {
+  let body: { items?: Array<{ mailboxId?: unknown; reachable?: unknown; unreachableSince?: unknown }> };
+  try {
+    const res = await fetchImpl("/local/mailboxes/connections");
+    if (!res.ok) return {};
+    body = (await res.json()) as typeof body;
+  } catch {
+    return {};
+  }
+  const out: Record<string, MailboxReach> = {};
+  for (const it of body.items ?? []) {
+    if (typeof it.mailboxId !== "string" || typeof it.reachable !== "boolean") continue;
+    out[it.mailboxId] = {
+      reachable: it.reachable,
+      unreachableSince: typeof it.unreachableSince === "string" ? it.unreachableSince : null,
+    };
+  }
+  return out;
 }
 
 /**
@@ -513,6 +560,25 @@ export function DesktopMailboxes(
   /* What can go wrong here: the engine refuses a resync (offline, most often), or the operating
      system refuses to open a browser. One line, rendered where the press happened. */
   const [problem, setProblem] = useState<string | null>(null);
+  /**
+   * WHICH MAILBOXES THIS MACHINE CAN REACH — its own poll, and it has to be its own.
+   *
+   * The facts poller reads `GET /mailboxes`, which is the shared route and carries no answer to
+   * this question; see `readMailboxReachVia`. Fifteen seconds is the engine's own poll interval,
+   * so the pane converges within one cycle of the engine noticing, and the first read runs
+   * immediately rather than after a delay — a person opening Settings during an outage is
+   * exactly who this line is for.
+   */
+  const [reach, setReach] = useState<Record<string, MailboxReach>>({});
+  useEffect(() => {
+    let live = true;
+    const read = (): void => {
+      void readMailboxReachVia(bridgeFetch).then((r) => { if (live) setReach(r); });
+    };
+    read();
+    const id = setInterval(read, 15_000);
+    return () => { live = false; clearInterval(id); };
+  }, []);
   /** Mailboxes whose resync this pane has queued, so the row can say so until it lands. */
   const [queued, setQueued] = useState<ReadonlySet<string>>(() => new Set());
   /** Mailboxes whose quiet-notice dismissal is in flight, so the button debounces (mail 0078). */
@@ -966,6 +1032,27 @@ export function DesktopMailboxes(
     }
     if (m.status === "disabled") {
       return m.disabledReason ? t("desktopStateHandedOver") : t("desktopStateDisconnected");
+    }
+    /* ── UNREACHABLE OUTRANKS BOTH THE ROLE AND THE PROGRESS ───────────────────────────────
+     *
+     * Above the reader arm and above every progress arm, because all of them describe mail
+     * MOVING and none of it is. "Reading only" over a dead socket reads nothing; "Up to date" is
+     * true of a mirror that stopped growing an hour ago. It stays BELOW `error` and `disabled`,
+     * which are durable statements about the row that a live socket would not contradict.
+     *
+     * It says a fact and nothing else — no "signed out", no "check your connection", no advice.
+     * The mailbox is untouched, the password is untouched, and the engine re-dials on its own;
+     * a sentence implying the person must act would be asking for work that is not theirs. */
+    const r = reach[m.id];
+    if (r && !r.reachable) {
+      /* `agoStamp(...).rel` AND NOT `day(...)`: an outage is a DURATION, and the neighbouring
+         `day` stamp is deliberately date-only because the sentences it serves are standing facts
+         somebody reads once. "Unreachable since 5 Sep 2026" tells a person nothing about an
+         outage that began twenty minutes ago; "unreachable since 20 minutes ago" is the whole
+         answer. It is the same stamp the quiet-mailbox line already uses on this pane. */
+      return r.unreachableSince
+        ? t("desktopStateUnreachableSince", { when: agoStamp(r.unreachableSince, Date.now()).rel })
+        : t("desktopStateUnreachable");
     }
     if (m.organizerRole === "reader") return t("stateReading");
     if (m.syncBlockedSince) return t("desktopStatePaused");

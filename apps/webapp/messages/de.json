@@ -2156,6 +2156,8 @@
     "desktopStateError": "Keine Verbindung ({code})",
     "desktopStateHandedOver": "An eine andere Installation übergeben",
     "desktopStateDisconnected": "Getrennt",
+    "desktopStateUnreachable": "Der Mailserver ist nicht erreichbar.",
+    "desktopStateUnreachableSince": "Der Mailserver ist nicht erreichbar. Letzte Antwort {when}.",
     "desktopStatePaused": "Pausiert",
     "desktopStateFirstOpen": "Wird zum ersten Mal geöffnet",
     "desktopStateCatchingUp": "Holt noch auf",
