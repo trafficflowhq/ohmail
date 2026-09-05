@@ -197,6 +197,34 @@ export const SIGNAL_BACKFILL_BUCKETS = 3;
 /** The window one poll covers. Matches the cron's cadence — three of these make the rule's 15 min. */
 export const SIGNAL_WINDOW_MS = 5 * 60 * 1000;
 
+/**
+ * How long after a bucket CLOSES before a read of it may be called complete.
+ *
+ * ── A CLOSED WINDOW IS NOT AN INDEXED WINDOW ─────────────────────────────────────────────
+ *
+ * The poll already waits for the bucket to close, which is what stops a short window being
+ * reported as a full one. It did not wait for the platform to finish INDEXING that bucket, and
+ * those are different clocks. A pass firing seconds after the boundary gets a perfectly
+ * well-formed, non-truncated page that is simply missing the requests still on their way into
+ * the log store — and this file already records which ones those are: "the rows that arrive late
+ * are the slow and failing ones".
+ *
+ * The consequence was permanent, not transient. A row written non-truncated is HELD, held
+ * buckets are never re-polled, so the late 5xx never entered the numerator for that bucket and
+ * never could. The rate came out systematically low, on a population that looked complete.
+ *
+ * So a read taken inside this margin is recorded as a SAMPLE. That is not a new mechanism: a
+ * sampled bucket is excluded from the rule's arithmetic AND excluded from `held`, so the next
+ * pass re-polls it and overwrites it with a settled read. The margin costs one pass of latency
+ * on a fresh bucket and buys a population that is actually finished.
+ */
+export const SIGNAL_SETTLE_MS = 90 * 1000;
+
+/** When the bucket that starts at `windowStart` closed. */
+function row0End(windowStart: Date, windowMs: number): number {
+  return windowStart.getTime() + windowMs;
+}
+
 /** How long `platform_signals` rows are kept. The rule reads 15 minutes; the board reads a day. */
 export const SIGNAL_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -368,6 +396,19 @@ export function makePlatformSignalPort(
             // because that is what an operator recognises on the board and what the config sets.
             projectId: ids.get(project) ?? project,
             ownerId: team,
+            // ── PRODUCTION ONLY ───────────────────────────────────────────────────────
+            //
+            // The query was project-wide, and a project's log store holds its PREVIEW traffic
+            // too. So a preview deployment poked by CI or opened by hand contributed its 5xx to
+            // the population this rule pages on, and its successes diluted a real production
+            // outage in the same denominator. Neither direction is acceptable: the alert names
+            // the API customers are using.
+            //
+            // Sent as a server-side filter AND enforced locally on every row below, because this
+            // endpoint has never been exercised against the live service (see the standing gap)
+            // and an unverified parameter that the API quietly ignores would leave the defect in
+            // place while reading as fixed — which is this subsystem's signature failure.
+            environment: "production",
             startDate: String(window.start.getTime()),
             endDate: String(cursor),
           });
@@ -427,6 +468,16 @@ export function makePlatformSignalPort(
           if (usable.length < batch.length) sampled = true;
           let oldest = cursor;
           for (const r of batch) {
+            // THE LOCAL HALF OF THE PRODUCTION FILTER. A row that names a non-production
+            // environment or target is dropped whatever the query asked for; a row that names
+            // neither is counted, because on a deployment whose logs carry no such field every
+            // request IS the production one and refusing them all would take the rule dark.
+            const env = typeof (r as { environment?: unknown }).environment === "string"
+              ? (r as { environment: string }).environment
+              : typeof (r as { target?: unknown }).target === "string"
+                ? (r as { target: string }).target
+                : null;
+            if (env !== null && env !== "production") continue;
             const id = typeof r.requestId === "string" ? r.requestId : "";
             // A blank id cannot be de-duplicated, so counting it would inflate the boundary. It is
             // skipped rather than refused: unlike the census script, an approximate count over a
@@ -662,7 +713,13 @@ export async function runPlatformSignalPass(
   const unconfigured = answers.some((a) => "unconfigured" in a);
   const written: PlatformSignalRow[] = [];
   for (const a of answers) if (!("failed" in a) && !("unconfigured" in a)) written.push(...a.rows);
-  for (const row of written) {
+  for (const raw of written) {
+    // THE SETTLE MARGIN, applied here because this is where the pass's clock is. See
+    // `SIGNAL_SETTLE_MS`: a read taken before the log store has finished indexing a closed
+    // bucket is a sample of it, and saying so is what gets the bucket re-polled instead of
+    // frozen at its first, thinnest reading.
+    const settledAt = row0End(raw.windowStart, windowMs) + SIGNAL_SETTLE_MS;
+    const row = now.getTime() >= settledAt ? raw : { ...raw, truncated: true };
     await db
       .insert(platformSignals)
       .values({
@@ -690,6 +747,17 @@ export async function runPlatformSignalPass(
           truncated: row.truncated,
           fetchedAt: sql`${now.toISOString()}::timestamptz`,
         },
+        // ── BUT ONLY A NEWER READ OVERWRITES ────────────────────────────────────────────
+        //
+        // "A re-poll is a better read" holds only if it is a LATER read. Two passes can overlap
+        // — the API arm's scheduler retries into a running call, and a leader takeover pokes a
+        // second one — and the slower of them can answer last with an EARLIER view of the log
+        // store. Unfenced, that older answer overwrote the newer counts and rewound `fetched_at`;
+        // and if the stale answer happened to be non-truncated, the bucket was then held as
+        // complete on the poorer of the two reads and never repaired.
+        //
+        // The row's own stamp is the fence, the same shape the alert row and the pass row use.
+        setWhere: sql`${platformSignals.fetchedAt} <= ${now.toISOString()}::timestamptz`,
       });
   }
 

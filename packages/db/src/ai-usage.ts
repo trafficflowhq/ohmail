@@ -110,6 +110,8 @@ export function makeAiUsageRecorder(
   const now = opts.now ?? ((): Date => new Date());
   const bufferMs = opts.bufferMs ?? (host === "api" ? 0 : AI_USAGE_BUFFER_MS);
   const pending = new Map<string, Bucket>();
+  /** The buffered hosts' flush timer — see `record` below for why it exists. */
+  let timer: ReturnType<typeof setTimeout> | null = null;
   let lastFlushAt = now().getTime();
   let dropped = 0;
 
@@ -176,6 +178,7 @@ export function makeAiUsageRecorder(
     // re-merge a failed bucket back into `pending` without racing calls that arrived during the
     // failed write, which is more state than the honest alternative: count the loss and move on.
     pending.clear();
+    if (timer !== null) { clearTimeout(timer); timer = null; }
     lastFlushAt = now().getTime();
     try {
       await write(buckets);
@@ -198,11 +201,24 @@ export function makeAiUsageRecorder(
         pending.delete(`${bucket.day} ${bucket.model}`);
         return write([bucket]).catch(() => { dropped += 1; });
       }
-      // THE BUFFERED HOSTS. Flushed on the next call past the window rather than on a timer, so
-      // this module holds no handle a process has to remember to release; the caller's own
-      // shutdown calls `flush()` for the tail. A quiet deployment therefore holds at most one
-      // window's worth of rows until either another call or a shutdown lands them.
-      if (now().getTime() - lastFlushAt >= bufferMs) void drain();
+      // THE BUFFERED HOSTS. Flushed on the next call past the window — AND on a timer, which
+      // this deliberately did not have.
+      //
+      // "The next call lands the last one" is true only on a busy deployment. A host that makes
+      // its first metered call and then goes quiet held that call in memory indefinitely: no
+      // later call to trigger the check, no timer, and the only other flush is shutdown. The
+      // debit was on the ledger and the usage row was not, which is precisely the shape
+      // `ai_usage_unrecorded` fires on — so the alert reported a broken recorder for hours while
+      // the recorder was working exactly as written. A quiet deployment is the one most likely
+      // to hit it and the least likely to have anyone watching.
+      //
+      // The timer is unref'd, so it still holds no handle a process must remember to release: it
+      // will not keep an event loop alive on its own, and `flush()` on shutdown remains the tail.
+      if (now().getTime() - lastFlushAt >= bufferMs) { void drain(); return undefined; }
+      if (timer === null && pending.size > 0) {
+        timer = setTimeout(() => { timer = null; void drain(); }, bufferMs);
+        (timer as { unref?: () => void }).unref?.();
+      }
       return undefined;
     },
     flush: drain,
@@ -259,8 +275,42 @@ export function makeAiUsageRecorder(
  * names which — empty when `unrecorded` is `false`.
  */
 export async function aiUsageUnrecorded(
-  db: Tx, opts: { day: Date },
+  db: Tx, opts: { day: Date; lookbackDays?: number },
 ): Promise<{ unrecorded: boolean; missingHosts: AiUsageHost[] }> {
+  // ── THE CALENDAR MUST NOT RESOLVE AN INCIDENT ────────────────────────────────────────
+  //
+  // This asked about ONE UTC day, so a debit at 23:59 whose usage row never arrived stopped
+  // being visible at 00:00 — not because anything was recorded, but because the question moved
+  // on. The gap is permanent (that day's cost table stays wrong for ever) and the board went
+  // green within minutes of it appearing, which is the worst possible combination: a real,
+  // unrepaired hole rendering as health.
+  //
+  // Each day is still judged AGAINST ITS OWN usage rows — a host recording today says nothing
+  // about yesterday's silence, and unioning the two would let today's traffic mask yesterday's
+  // hole. What changes is how many of those per-day verdicts the pass looks at.
+  const days = Math.max(1, opts.lookbackDays ?? AI_USAGE_LOOKBACK_DAYS);
+  const missingAcross = new Set<AiUsageHost>();
+  for (let back = 0; back < days; back++) {
+    const at = new Date(opts.day.getTime() - back * 24 * 60 * 60 * 1000);
+    const one = await unrecordedOnDay(db, at);
+    for (const h of one.missingHosts) missingAcross.add(h);
+  }
+  const across = [...missingAcross];
+  return { unrecorded: across.length > 0, missingHosts: across };
+}
+
+/**
+ * How many days back the check above looks. Two, which is the smallest number that stops a
+ * midnight from clearing an unrepaired gap while keeping the answer about recent, actionable
+ * days rather than about history nobody is going to reconcile.
+ */
+export const AI_USAGE_LOOKBACK_DAYS = 2;
+
+/** One UTC day, judged against its own usage rows. */
+async function unrecordedOnDay(
+  db: Tx, day: Date,
+): Promise<{ unrecorded: boolean; missingHosts: AiUsageHost[] }> {
+  const opts = { day };
   const start = new Date(Date.UTC(
     opts.day.getUTCFullYear(), opts.day.getUTCMonth(), opts.day.getUTCDate(),
   ));

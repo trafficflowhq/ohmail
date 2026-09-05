@@ -232,6 +232,22 @@ export interface AdminPlatformSignal {
   errors5xx: number;
   /** The counts are a lower bound over the window's newest slice — the panel says "sampled". */
   truncated: boolean;
+  /**
+   * How much of the advertised window these figures actually cover, and why the row exists at
+   * all rather than being filtered away.
+   *
+   * The rule refuses to divide a partial population, and for a while this projection expressed
+   * that by DROPPING such a project — which handed the console an empty list, the same answer it
+   * gets from a deployment with no platform token at all. A failed poll and an unconfigured one
+   * became indistinguishable, and the panel's own "sampled" rendering was made unreachable,
+   * since every row that survived was by construction complete.
+   *
+   * So the row is emitted with its coverage and the panel says what was measured. Silence is
+   * reserved for the one thing it should mean: nothing has ever been read.
+   */
+  completeBuckets: number;
+  sampledBuckets: number;
+  expectedBuckets: number;
   fetchedAt: string;
 }
 

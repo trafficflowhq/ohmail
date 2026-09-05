@@ -1891,31 +1891,30 @@ export async function adminPlatformSignals(
   db: AdminDb, now: Date,
 ): Promise<AdminPlatformSignal[]> {
   const rows = await platformSignalWindow(db, now, DEFAULT_ALERT_THRESHOLDS.api5xxWindowMs);
+  const expectedBuckets = Math.round(
+    DEFAULT_ALERT_THRESHOLDS.api5xxWindowMs / SIGNAL_BUCKET_MS,
+  );
   return rows
-    // A PROJECT WITH NOTHING COMPLETE IS NOT MEASURED, and must not be rendered as measured.
-    // Since sampled buckets are excluded from the sums, a window whose every bucket was sampled
-    // comes back with zeroed figures — and emitting that row put "0 5xx of 0 requests" on the
-    // board, which reads as a healthy measurement of a quiet deployment. It is the absence of
-    // one. Dropping the row returns the panel to its "not measured" branch, which is the honest
-    // rendering and the same one an unconfigured deployment gets.
-    // AND A PARTIAL WINDOW IS NOT THE FIFTEEN MINUTES THIS PANEL NAMES. The line beside these
-    // figures reads "in the last 15m", and with one poll missed it was the sum of ten. The rule
-    // that pages on the same window refuses it outright — so an operator could read an apparently
-    // measured rate off the board for a project the pager considers unmeasured, and the two
-    // surfaces disagreeing about what is known is worse than either answer alone.
+    // ── THE ROW CARRIES ITS COVERAGE; IT IS NOT FILTERED INTO SILENCE ──────────────────
     //
-    // The same expectation as the rule, computed the same way, so the two cannot drift: every
-    // bucket of the window, complete. Short of that the row is dropped and the panel falls back
-    // to "not measured", which is what it already says before the first poll lands.
-    .filter((r) => r.completeBuckets >= Math.round(
-      DEFAULT_ALERT_THRESHOLDS.api5xxWindowMs / SIGNAL_BUCKET_MS,
-    ))
+    // Two wrong answers were tried here before this one. Emitting a partial window's figures
+    // under a label reading "in the last 15m" reported ten minutes as fifteen. Dropping the row
+    // instead handed the console `[]` — which is what a deployment with NO PLATFORM TOKEN sends,
+    // so a failed poll became indistinguishable from an unconfigured one, and the panel's
+    // "sampled" branch became unreachable because every surviving row was complete by
+    // construction. One misstated a measurement; the other hid that a measurement was attempted.
+    //
+    // The figures and their coverage travel together and the panel says what was measured. An
+    // empty list now means exactly one thing: nothing has ever been read for this deployment.
     .map((r) => ({
     provider: r.provider,
     project: r.project,
     requests: r.requests,
     errors5xx: r.errors5xx,
     truncated: r.truncated,
+    completeBuckets: r.completeBuckets,
+    sampledBuckets: r.sampledBuckets,
+    expectedBuckets,
     fetchedAt: r.fetchedAt.toISOString(),
   }));
 }
