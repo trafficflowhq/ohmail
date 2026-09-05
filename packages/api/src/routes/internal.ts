@@ -111,7 +111,9 @@ import { learnMissingSmtpSizes } from "../smtp-size.js";
  * came to describe a rule set several times smaller than the one that shipped.
  *
  * It writes exactly two: `alert_state`, which it may INSERT, UPDATE and DELETE because the pass
- * opens a row, claims the notification and deletes the row when the condition clears; and
+ * opens a row, claims the notification, MARKS the row resolved when the condition clears, and
+ * prunes old resolved rows — resolution stopped deleting in cloud 0030, but the DELETE grant is
+ * still required for that prune; and
  * `alert_pass_runs`, one row per arm, because the arm that is hardest to observe from anywhere
  * else must be able to record that it ran.
  *

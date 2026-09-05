@@ -1,4 +1,4 @@
-import { and, eq, gte, lt, sql } from "drizzle-orm";
+import { and, eq, gte, lt, sql, lte } from "drizzle-orm";
 import { aiUsageDaily, creditLedger } from "./schema-cloud.js";
 import type { Tx } from "./change-log.js";
 
@@ -300,16 +300,72 @@ export async function aiUsageUnrecorded(
   // So the days are walked OLDEST FIRST and the first gap found is the one reported, whole: its
   // hosts, its date. The oldest is the right one to name because it is the one that will not
   // repair itself — a newer day may still be waiting on a buffer that has not flushed.
+  // ── ONE SCAN PER TABLE, WHATEVER THE LOOKBACK ────────────────────────────────────────
+  //
+  // The first version of the lookback called a per-day helper in a loop, which doubled the
+  // ledger scan on every alert pass the moment the lookback went from one day to two. That is
+  // paid on every pass of both arms for ever, and it was visible immediately: a real-Postgres
+  // case that ran in well under the five-second default started taking nearly four, so a test
+  // measuring storage went marginal for a reason that had nothing to do with storage.
+  //
+  // Both tables are read ONCE over the whole window and grouped by day; the per-day verdicts are
+  // then computed in memory, which is where they always belonged — the queries answer "what
+  // happened", the arithmetic answers "does that mean a host is silent".
   const days = Math.max(1, opts.lookbackDays ?? AI_USAGE_LOOKBACK_DAYS);
+  const newest = startOfUtcDay(opts.day);
+  const oldest = new Date(newest.getTime() - (days - 1) * DAY_MS);
+  const end = new Date(newest.getTime() + DAY_MS);
+
+  const debitRows = await db
+    .select({
+      day: sql<string>`to_char(date_trunc('day', ${creditLedger.createdAt} at time zone 'UTC'), 'YYYY-MM-DD')`,
+      reason: creditLedger.reason,
+      n: sql<number>`count(*)::int`,
+    })
+    .from(creditLedger)
+    .where(and(
+      gte(creditLedger.createdAt, oldest),
+      lt(creditLedger.createdAt, end),
+      sql`${creditLedger.reason} in ('debit_classify','debit_draft','debit_propose','debit_workflow')`,
+    ))
+    .groupBy(sql`1`, creditLedger.reason);
+
+  const usageRows = await db
+    .select({ day: aiUsageDaily.day, host: aiUsageDaily.host })
+    .from(aiUsageDaily)
+    .where(and(gte(aiUsageDaily.day, dayOf(oldest)), lte(aiUsageDaily.day, dayOf(newest))))
+    .groupBy(aiUsageDaily.day, aiUsageDaily.host);
+
+  const debitsByDay = new Map<string, Map<string, number>>();
+  for (const r of debitRows) {
+    const key = String(r.day);
+    const m = debitsByDay.get(key) ?? new Map<string, number>();
+    m.set(r.reason, Number(r.n));
+    debitsByDay.set(key, m);
+  }
+  const hostsByDay = new Map<string, Set<string>>();
+  for (const r of usageRows) {
+    const key = String(r.day);
+    const set = hostsByDay.get(key) ?? new Set<string>();
+    set.add(r.host);
+    hostsByDay.set(key, set);
+  }
+
+  // OLDEST FIRST — the oldest unrepaired day is the one that will not fix itself; a newer one
+  // may still be waiting on a buffer that has not flushed.
   for (let back = days - 1; back >= 0; back--) {
-    const at = new Date(opts.day.getTime() - back * 24 * 60 * 60 * 1000);
-    const one = await unrecordedOnDay(db, at);
-    if (one.unrecorded) {
-      return { unrecorded: true, missingHosts: one.missingHosts, day: dayOf(at) };
-    }
+    const at = new Date(newest.getTime() - back * DAY_MS);
+    const key = dayOf(at);
+    const one = verdictForDay(debitsByDay.get(key), hostsByDay.get(key));
+    if (one.unrecorded) return { unrecorded: true, missingHosts: one.missingHosts, day: key };
   }
   return { unrecorded: false, missingHosts: [], day: null };
 }
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const startOfUtcDay = (d: Date): Date =>
+  new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
 
 /**
  * How many days back the check above looks. Two, which is the smallest number that stops a
@@ -319,35 +375,16 @@ export async function aiUsageUnrecorded(
 export const AI_USAGE_LOOKBACK_DAYS = 2;
 
 /** One UTC day, judged against its own usage rows. */
-async function unrecordedOnDay(
-  db: Tx, day: Date,
-): Promise<{ unrecorded: boolean; missingHosts: AiUsageHost[] }> {
-  const opts = { day };
-  const start = new Date(Date.UTC(
-    opts.day.getUTCFullYear(), opts.day.getUTCMonth(), opts.day.getUTCDate(),
-  ));
-  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+/** One UTC day's verdict, computed from the two grouped reads above. No queries here. */
+function verdictForDay(
+  byReason: Map<string, number> | undefined,
+  presentHosts: Set<string> | undefined,
+): { unrecorded: boolean; missingHosts: AiUsageHost[] } {
   const NONE: { unrecorded: false; missingHosts: [] } = { unrecorded: false, missingHosts: [] };
-
-  const debitRows = await db
-    .select({ reason: creditLedger.reason, n: sql<number>`count(*)::int` })
-    .from(creditLedger)
-    .where(and(
-      gte(creditLedger.createdAt, start),
-      lt(creditLedger.createdAt, end),
-      sql`${creditLedger.reason} in ('debit_classify','debit_draft','debit_propose','debit_workflow')`,
-    ))
-    .groupBy(creditLedger.reason);
-  const byReason = new Map(debitRows.map((r) => [r.reason, Number(r.n)]));
+  if (!byReason || byReason.size === 0) return NONE;
   const anyDebits = [...byReason.values()].some((n) => n > 0);
   if (!anyDebits) return NONE;
-
-  const usageRows = await db
-    .select({ host: aiUsageDaily.host })
-    .from(aiUsageDaily)
-    .where(eq(aiUsageDaily.day, dayOf(start)))
-    .groupBy(aiUsageDaily.host);
-  const present = new Set(usageRows.map((r) => r.host));
+  const present = presentHosts ?? new Set<string>();
 
   // ── TOTAL SILENCE, NAMING ONLY THE HOSTS THAT COULD HAVE SPENT IT ───────────────────
   //
@@ -382,3 +419,4 @@ async function unrecordedOnDay(
 
   return { unrecorded: missing.length > 0, missingHosts: missing };
 }
+

@@ -256,11 +256,15 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   ["alert_state", "cls"],
   ["alert_pass_runs", "ran_at"],
   ["platform_signals", "errors_5xx"],
-  // `worker_heartbeats.degraded_since` — the FOURTH, and it is the LAST statement of the
-  // migration, which is what makes it worth having beyond its own rule. Statements inside one
-  // migration apply in order, so a database that has this column has every column above it too;
-  // the marker therefore covers the two heartbeat columns that carry no marker of their own
-  // (`ai_circuit_open_since` is the other) and closes the file's own remaining gap.
+  // `worker_heartbeats.degraded_since` — the FOURTH. It WAS the last statement of the migration
+  // when it was added, and that is no longer true: 0030 has grown twice since, so this entry now
+  // carries only its own rule and the "implies everything above it" property belongs to the last
+  // entry in this list. The sentence claiming otherwise stood here while two statements sat
+  // below it — a comment that had quietly become the opposite of the code, in the one file whose
+  // whole job is to notice that kind of drift.
+  //
+  // It is kept because it still covers the two heartbeat columns that carry no marker of their
+  // own (`ai_circuit_open_since` is the other).
   //
   // Its own rule is the ordinary one: `worker_degraded` READS this column on every pass, and the
   // API arm runs that pass. Without the marker an API deployed ahead of the migration 42703s

@@ -397,8 +397,16 @@ export function makePlatformSignalPort(
         let sampled: SampleCause | null = null;
         let cursor = window.end.getTime();
         let pages = 0;
-        // `requestId` dedupes the boundary: the cursor is inclusive and two requests can share a
-        // millisecond, so without it a row at the edge is counted twice on consecutive laps.
+        // ── WHY THE CURSOR STAYS INCLUSIVE AND THE DE-DUPLICATION IS THE ANSWER ──────────
+        //
+        // Each lap asks for everything up to and including the previous lap's OLDEST timestamp,
+        // because several requests can share a millisecond: excluding that instant would drop
+        // every row that shares it with the one we happened to see last. So the boundary row is
+        // deliberately re-read, and `requestId` is what stops it being counted twice.
+        //
+        // This is also why the window's half-open correction belongs to `window.end` alone and
+        // not to every lap — subtracting a millisecond per lap turns the deliberate overlap into
+        // a gap, and the row was still stored as a complete population.
         const seen = new Set<string>();
 
         while (cursor > window.start.getTime()) {
@@ -457,7 +465,15 @@ export function makePlatformSignalPort(
             // Made half-open here, at the one place the foreign convention is visible: one
             // millisecond off the end, so the boundary instant belongs to exactly one bucket —
             // the newer one, whose start it is.
-            endDate: String(cursor - 1),
+            // ── HALF-OPEN AT THE WINDOW'S END, NOT AT EVERY LAP'S ────────────────────
+            //
+            // The `- 1` is about THIS API's inclusive `endDate` versus our half-open buckets, so
+            // it belongs to the window boundary and nowhere else. Applying it to `cursor` on
+            // every lap made the walk skip rows stamped exactly at the previous lap's oldest
+            // timestamp — the cursor is inclusive precisely so those rows are re-read and
+            // de-duplicated — and the row was still stored `truncated: false`, so a bucket
+            // missing a second of traffic was reported as a complete population.
+            endDate: String(pages === 1 ? window.end.getTime() - 1 : cursor),
           });
           let res: Response;
           try {

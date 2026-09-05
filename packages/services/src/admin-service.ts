@@ -2,7 +2,6 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { accounts, auditLog, mailboxCredentials, mailboxes, users, isMailboxSyncBlockReason } from "@trafficflow/db";
 import {
   accountSuspensions,
-  alertState,
   authEvents,
   billingEvents,
   // The invoice mirror (cloud 0029) — cash actually received, and its own reconciliation

@@ -202,7 +202,11 @@ export function makeClassifierCircuit(
     // stamp below records that this process has had an answer AT ALL, which is what tells a
     // reader that its closed circuit is health rather than inexperience.
     firstOpenedAt = null;
-    lastSuccessAt = new Date();
+    // THE SAME CLOCK THE TRIP USES. `firstOpenedAt` is stamped from the injected `now()` and
+    // this was stamped from the machine's, so a test that advances its own clock produced two
+    // times that cannot be compared — and in production a host whose clock steps could record a
+    // success that precedes the outage it ended. One clock, or the pair means nothing.
+    lastSuccessAt = new Date(now());
     cooldownMs = baseCooldown;
   }
 

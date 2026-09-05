@@ -1897,11 +1897,20 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
         `${w.errors5xx} of ${w.requests} request(s) to ${w.project} returned 5xx in the last ` +
         `${humanAge(Math.round(t.api5xxWindowMs / 1000))} — past both floors ` +
         `(${t.api5xxMinErrors} errors AND ${(t.api5xxMinRate * 100).toFixed(0)}%). ` +
-        (w.sampledBuckets > 0
-          ? `${w.sampledBuckets} further bucket(s) in this window were SAMPLED and are excluded ` +
-            "from these figures: their counts are lower bounds, and a lower bound cannot be " +
-            "divided into a rate. The figures above are from complete buckets only. "
-          : "") +
+        // ── THE SAMPLED-BUCKET CLAUSE WAS DELETED, NOT FIXED, AND HERE IS WHY ────────────
+        //
+        // It read "N further bucket(s) in this window were SAMPLED and are excluded", and it
+        // could never render. The table's primary key is (provider, project, window_start), so a
+        // fifteen-minute window holds at most three rows for one project; this rule now requires
+        // all three to be COMPLETE before it fires at all. Three complete plus one sampled is
+        // four rows in three slots. The branch was unreachable the moment the population gate
+        // landed, and a sentence nobody can reach is a sentence nobody can check — it would have
+        // gone on describing an exclusion the rule no longer performs.
+        //
+        // The information it carried is not lost: the console renders coverage per project and
+        // names the cause of every sample. That surface can show it because it does not require
+        // a complete window to render.
+        
         `Newest platform read ${humanAge(secondsBetween(now, w.fetchedAt))} ago.`,
       count: w.errors5xx,
       oldestSeconds: null,
@@ -3183,6 +3192,28 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
     const behindAcct = accountDelivery(
       behindStreak, sinks, outcomes, delivered, failed, errors, now, opts,
     );
+    // ── THE PASS STILL RECORDS THAT IT RAN ────────────────────────────────────────────
+    //
+    // This path skipped `recordAlertPass`, and the consequence was a second alert with the wrong
+    // remedy. `alert_driver_dark` watches the OTHER arm's `alert_pass_runs` row; an arm that
+    // reaches this branch every cycle — the migration landed, the harden script not re-run, so
+    // the blind role cannot read the new objects — never writes one, and after thirty minutes
+    // the healthy arm pages "the API driver has stopped running". It has not stopped. It is
+    // running and saying, correctly and loudly, that the schema is behind. The operator is sent
+    // to look for a dead cron instead of at the grant.
+    //
+    // Recording here is safe by this table's own contract: `recordAlertPass` is try/catch and a
+    // pass must outlive its own bookkeeping, so on a database that genuinely cannot be written
+    // this is a no-op rather than a throw.
+    await recordAlertPass(db, {
+      driver: opts.driver,
+      now,
+      firing: firing.length,
+      delivered: delivered.length,
+      failedSinks: failed.length,
+      sinkFailureStreak: behindStreak?.consecutiveFailures ?? 0,
+      sinksConfigured: sinks.length,
+    });
     return {
       now: now.toISOString(),
       firing,
@@ -3471,10 +3502,15 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
 
   // ── resolve what is no longer firing ──────────────────────────────────────────────────
   //
-  // DELETE rather than a `resolved_at` column: `alert_state` is then a live list of what is
-  // wrong, which is both what the console wants to render and what makes "did this page
-  // already?" a single row lookup. The history that matters is the log line, which is
-  // structured and timestamped and is not going to be queried by this table.
+  // MARK, not delete — and this comment said DELETE sixty lines above the statement that marks,
+  // which is one function stating one invariant two ways. The argument for deleting was good and
+  // it lost to a defect it could not see: an INSERT cannot be fenced against a row that is not
+  // there, so an older pass paused before its observation write recreated and paged an incident
+  // a newer pass had just resolved.
+  //
+  // What the deleted-row argument wanted is preserved by the accessor rather than by the
+  // storage: `selectOpenAlerts` applies `resolved_at IS NULL`, so every reader still sees a live
+  // list of what is wrong, and "did this page already?" is still one row lookup.
   //
   // ── BUT A PASS MAY ONLY RESOLVE WHAT IT ACTUALLY EVALUATED ────────────────────────────
   //
@@ -3539,7 +3575,26 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
     // through `selectOpenAlerts`, a genuinely new firing clears the stamp on the fenced conflict
     // path, and the lease is dropped here because a resolved condition has no delivery pending.
     await db.update(alertState)
-      .set({ resolvedAt: now, claimedUntil: null })
+      .set({
+        resolvedAt: now,
+        claimedUntil: null,
+        // ── A TOMBSTONE KEEPS THE KEY AND THE STAMPS, AND NOTHING ELSE ───────────────
+        //
+        // The erasure ruling for this table (see `erasure-fixture.ts`) rested on the rows being
+        // deleted the moment their condition stopped firing, which is what made a per-account
+        // rule's `fix_href = "/accounts/<uuid>"` self-clearing. Marking instead of deleting made
+        // that premise false: the uuid would sit on a tombstone until 64 later resolutions
+        // pushed it out, and on a quiet deployment that is indefinitely.
+        //
+        // So the mark blanks every column that can carry one. The fence needs the key,
+        // `last_seen_at` and `resolved_at`; the notification record stays so a condition that
+        // re-fires inside its renotify interval does not page twice. Nothing else on a resolved
+        // row is read by anything, and a re-open overwrites all of it from the new observation.
+        fixHref: null,
+        detail: null,
+        title: null,
+        affectedAccounts: null,
+      })
       .where(and(eq(alertState.alertKey, key), notWrittenByANewerPass(now)));
   }
   await pruneAlertTombstones(db);
@@ -3593,8 +3648,9 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
   // ── settle every claim: CONFIRM if something accepted, otherwise RELEASE ───────────────
   //
   // Guarded by `claimed_until = <this pass's lease>` so a pass can only settle its own claim.
-  // A row that was deleted as resolved, or claimed by another driver after this lease
-  // expired, matches nothing — and in both cases doing nothing is right.
+  // A row that was RESOLVED under this pass — the mark clears `claimed_until` — or claimed by
+  // another driver after this lease expired matches nothing, and in both cases doing nothing is
+  // right.
   //
   // Releasing is what keeps a misconfigured webhook self-correcting rather than a silent
   // hole, and `notify_count` moves ONLY on a confirm, so it counts pages that were actually
