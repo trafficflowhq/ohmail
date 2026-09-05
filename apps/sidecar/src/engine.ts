@@ -4251,6 +4251,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * shell's "sync now", `syncMailbox`) feeds the same bound the poll timer does.
        */
       const syncUntilQuiet = async (maxCycles = 100): Promise<number> => {
+        // THE HEAL, IMMEDIATELY BEFORE THE DRAIN IT IS FOR — and outside `drainPass`'s serialized
+        // body, which would deadlock. See `redialIfDead`. It never throws: a server that is still
+        // down leaves the drain below to fail in its own words, which is the class the bound
+        // counts and every failure counter exempts.
+        await redialIfDead();
         try {
           const cycles = await drainPass(maxCycles);
           noteCycleServed();
@@ -4304,6 +4309,253 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * though this install still organized the mailbox. Reading through a getter is what keeps
        * the map's view and the gate's view the same view.
        */
+      /**
+       * DIAL, THEN LEARN, THEN ACT — the ONE sequence a launch and a re-dial both run.
+       *
+       * This was the body of `start()`, and extracting it is the whole of what makes reconnect
+       * safe rather than merely present. A re-dial that resumed the drain over a fresh socket
+       * WITHOUT re-reading the organizer lease would dual-organize for one cycle against a claim
+       * that arrived during the outage — and reconnect-after-sleep is precisely when a mailbox is
+       * most likely to have changed hands. "Exactly one active organizer per mailbox" is the
+       * invariant, and a SECOND implementation of this sequence is how it would be broken: two
+       * copies drift, and the copy that drifts is the one nobody launches.
+       *
+       * So there is one copy, and the order inside it is the rule already written above the gate
+       * below — the lease is read BEFORE the first move, and `ensureFolders` IS a move. Creating
+       * the `ohmail/*` tree in a mailbox Cloud is organizing is a write this install has no
+       * business making.
+       *
+       * IT DOES NOT ARM THE POLL TIMER, and that is the one edit the extraction made. `start()`
+       * calls `schedule()` after it; a re-dial runs inside a drain whose own chain already ends
+       * in `schedule()`. Leaving the call in here would give a re-dialled mailbox TWO timers —
+       * two overlapping drains, and an append to `ohmail/_meta` per timer per interval.
+       */
+      const dialAndGate = async (): Promise<void> => {
+        await adapter.connect();
+        // ── EVERYTHING BELOW RUNS ON AN AUTHENTICATED SOCKET, SO IT IS WRAPPED ──────────────
+        //
+        // `connect()` LOGS IN and then LISTs, and `apps/sidecar/src/main.ts` answers a rejected
+        // `start()` by LOGGING it and continuing to serve the mirror — deliberately, because a
+        // first sync of a real mailbox takes minutes and a UI that waits for it looks broken. The
+        // two compose into a leak: before this `catch`, a throw from the lease gate, from
+        // `ensureFolders` or from the first drain left an authenticated login open with no handle
+        // anywhere that could close it, for the life of the process.
+        //
+        // iCloud caps concurrent connections per account, and a laptop shares that budget with
+        // Apple Mail and the user's phone — so a leaked login is not merely untidy, it is the
+        // mailbox eventually refusing to connect, in somebody else's app.
+        //
+        // A `catch` and NOT a `finally`: the whole point of a healthy launch is that the login
+        // survives it. The poll timer, `syncUntilQuiet()` and the organizer claim all run on this
+        // connection. Tests assert both directions — the login released when `start()` throws,
+        // and the login still open when it returns.
+        //
+        // The shape is the one used everywhere else this codebase holds an IMAP login across work
+        // that can fail — `packages/api/src/send-adapter.ts:68-71`,
+        // `packages/api/src/attachments-adapter.ts:36-41` and the hosted sync worker all
+        // close-then-rethrow the ORIGINAL error around exactly this window.
+        try {
+          // ── THE LEASE IS READ BEFORE THE FIRST MOVE, AND `ensureFolders` IS A MOVE ────────
+          //
+          // Reconnect is learn-then-act: the local engine reads the organizer lease BEFORE its
+          // first move. Creating the `ohmail/*` tree in a mailbox Cloud is organizing is a write
+          // this install has no business making, and reconnect-after-sleep is exactly when a
+          // mailbox is most likely to have changed hands. Gated here and drained through the
+          // already-gated inner `drain`, so a launch reads the lease ONCE rather than claiming
+          // twice before it has done any work.
+          //
+          // A lease we could not READ is not a lease we lost. Offline is a property of both modes,
+          // so an unreachable `ohmail/_meta` must leave a usable app rather than a failed launch:
+          // the organizer is paused, the viewer is complete, and the poll timer asks again. It is
+          // exempted BY CLASS, the same way the hosted sync worker exempts it — never by
+          // inspecting a message. The login is deliberately KEPT here: it is the connection the
+          // next poll asks over, and it is the one non-throwing exit from this window that has
+          // further work to do.
+          let permitted: boolean;
+          try {
+            permitted = await serialize(mayOrganize);
+          } catch (err) {
+            if (!(err instanceof LeaseUnavailableError)) throw err;
+            // `err` and not `err.message`, and this is the sharpest case for that rule:
+            // `LeaseUnavailableError` is constructed with `{ cause: err }` around an ImapFlow
+            // failure, so its message quotes the folder and the driver's response. The logger
+            // reduces it to `errorClass: "LeaseUnavailableError"` — which is the exemption this
+            // catch block is ABOUT, so the log now names the class the code branched on.
+            log("start_lease_unavailable", {
+              err,
+              reason: "the organizer lease could not be read, so this install organizes nothing " +
+                "yet; the mirror is served and the next poll asks again",
+            });
+            /* AND IT IS RECORDED WHERE A PERSON CAN SEE IT — carried over from the launch
+             * sequence this function was extracted from. A log line is not a user-visible state,
+             * and when the cause is a folder over the ceiling it does not clear on its own, so a
+             * desktop would otherwise sit in an ordinary connected state organizing nothing. Kept
+             * from the FIRST failure rather than refreshed, so a surface can say how long it has
+             * been true; every path that reads the lease successfully sets it back to `null`.
+             *
+             * THE LEASE, NOT THE SOCKET. A dead connection has its own clock
+             * (`connectionDeadSince`) and must never land here: "we cannot read who organizes this
+             * mailbox" and "this machine cannot reach the server" are different sentences. */
+            organizer = {
+              organizing: false,
+              reason: organizer.reason,
+              heldBy: organizer.heldBy,
+              unreadableSince: organizer.unreadableSince ?? new Date().toISOString(),
+            };
+            // NO `schedule()` HERE — the CALLER arms the timer. That is what lets a re-dial
+            // run this identical sequence without arming a second one for the same mailbox.
+            return;
+          }
+          /* -- `!permitted` IS "NOT THE ORGANIZER", NOT "STOP" — THE LAUNCH HALF  --
+           *
+           * This branch used to `return` here, and what it returned before is the whole first
+           * drain, the special-folder discovery AND `schedule()` — so a stood-down install came up
+           * with no poll timer at all. On `priorStandDown` it also closed the login, under a
+           * comment whose first sentence was the pre-0083 doctrine verbatim: *"A stood-down
+           * install STOPS SYNCING ENTIRELY — it does not keep passively mirroring, and it must not
+           * keep burning a connection either."*
+           *
+           * That is no longer what a stand-down means, and TWO other comments in this same file
+           * already say so. The stand-down logs *"it keeps its login and its poll timer, its
+           * mirror goes on growing"*; and the takeover route's own header says *"A demoted install
+           * is now a READER — it keeps its login and its poll timer and goes on cycling — so the
+           * gate runs again on the very next poll, reads the stamp, and promotes. No relaunch."*
+           * Neither could be true while this line returned: there was no next poll to read the
+           * stamp on, so "Organize from this machine" did nothing at all until the app was
+           * restarted — and that button is the whole of how a person takes a mailbox back onto a
+           * machine that has stood down, so "it needs a relaunch" was not a small caveat.
+           *
+           * So a reader falls through: it drains, it schedules, and it keeps the connection the
+           * next poll asks over. The ONE thing it does not do is below.
+           */
+          if (!permitted && stopped) {
+            // THE MAILBOX WAS REMOVED — the only `false` that still means "do nothing".
+            // `mayOrganize` has already cleared the timer and closed the login on that arm; there
+            // is no mirror to grow and nothing to schedule.
+            return;
+          }
+          // Before the first cycle of an ORGANIZER, always: the pipeline routes into `ohmail/*`
+          // and a move to a folder the server does not have fails. The hosted sync worker does the
+          // same thing at attach time.
+          //
+          // NEVER FOR A READER, and this is the sharpest line in the branch above: `ensureFolders`
+          // is the IMAP WRITE that creates somebody else's `ohmail/*` tree, and the header forty
+          // lines up already says so — *"reconnect is learn-then-act … creating the `ohmail/*` tree
+          // in a mailbox Cloud is organizing is a write this install has no business making"*. It
+          // was gated by the `return` that has just gone, so it needs its own gate now.
+          if (permitted) {
+            await adapter.ensureFolders();
+            // See {@link foldersEnsured}: the poll's own call must not repeat what this just did.
+            foldersEnsured = true;
+          }
+          // ── Mail 0065: DISCOVER THE PROVIDER'S OWN \Junk AND \Trash, AND WRITE THEM DOWN ──
+          //
+          // The hosted worker's attach hook, mirrored here because the LOCAL engine is its own
+          // attach path: without this, a local install's `mailboxes.trash_folder` stays NULL for
+          // ever, so its own API refuses every delete (`no_trash_folder`) and its spam verdicts
+          // never reach the provider's Junk. Read-only (one LIST), re-written every attach so a
+          // renamed folder heals, best-effort: a discovery failure keeps the stored answer and
+          // the fallbacks are never destructive. imap-types.ts carries the product rule.
+          //
+          // A READER RUNS THIS TOO, deliberately. It is one LIST and a write to this install's own
+          // row — no mailbox write of any kind — and the knowledge is what makes a promotion take
+          // effect on the next poll rather than on the next launch.
+          if (typeof adapter.findSpecialFolders === "function"
+            && typeof repo.setMailboxSpecialFolders === "function") {
+            try {
+              const found = await adapter.findSpecialFolders();
+              await repo.setMailboxSpecialFolders(mb.id, {
+                junkFolder: found.junk, trashFolder: found.trash,
+              });
+            } catch (err) {
+              log("special_folder_discovery_failed", { err });
+            }
+          }
+          await serialize(() => drain(100));
+          // (the poll timer is armed by the caller — see the header)
+        } catch (err) {
+          // The ORIGINAL error, rethrown — `main.ts` decides what a failed launch means, and it
+          // must not be told the connection failed to close when what failed was the drain.
+          await adapter.close().catch(() => { /* the connection is already broken */ });
+          throw err;
+        }
+      };
+
+      /**
+       * RE-DIAL A CONNECTION THAT IS KNOWN DEAD — the heal, and where it may run from.
+       *
+       * ── IT MUST NOT BE CALLED FROM INSIDE THE SERIAL QUEUE, AND THAT IS A DEADLOCK ─────────
+       *
+       * The obvious place for this is the head of the drain, after the `stopped` check. It is
+       * the wrong place: `serialize` chains onto `tail`, so a `serialize` call made from inside a
+       * serialized function waits for the function that is waiting for it. `dialAndGate` takes
+       * the queue twice (the gate, then the first drain), so a re-dial from inside `drainPass`
+       * hangs the mailbox for ever with no error anywhere — the failure this whole lane is about,
+       * reached by the fix for it. So it runs on the PUBLIC entry point, immediately before the
+       * drain it is healing for, and the drain itself is untouched.
+       *
+       * ── A FRESH ADAPTER, NOT A RE-OPENED ONE ──────────────────────────────────────────────
+       *
+       * `ImapAdapter.connect()` does reset its own lifecycle flags, so re-dialling in place would
+       * work for the socket. It is still wrong here for two reasons that are not about the
+       * socket: an adapter RETIRED by a bound breach refuses every call for ever by design
+       * (`assertUsable`), and a fresh dial is the only shape in which "this install opened a new
+       * connection" is observable from outside — which is what a test can hold and a log can
+       * report. The hosted worker's re-attach builds a new one for the same reason.
+       *
+       * ── IT NEVER THROWS ───────────────────────────────────────────────────────────────────
+       *
+       * A re-dial that fails must leave the drain to fail in its own words. Rethrowing here would
+       * replace `LeaseUnavailableError` — the class the bound counts and every failure counter
+       * exempts — with a dial error, so a server that is simply still down would start looking
+       * like a broken mailbox.
+       *
+       * ── AND A FAILED ATTEMPT DOES NOT RESET THE CLOCK ─────────────────────────────────────
+       *
+       * `connectionDeadSince` keeps its first observation across any number of failed re-dials.
+       * It is what Settings renders as "unreachable since", and a number that restarted every
+       * time the app tried again would report a two-hour outage as fifteen seconds old.
+       */
+      let redialling = false;
+      const redialIfDead = async (): Promise<void> => {
+        if (stopped || connectionDeadSince === null || redialling) return;
+        /* THE SAME PRECONDITION `start()` KEEPS, and for the same reason: an empty password is a
+           login attempt the server will refuse, and a refused login counts toward a lockout on
+           some providers. A mailbox with no usable credential is not unreachable, it is waiting
+           for a person, and dialling it repeatedly would turn that into a locked account. */
+        if (login.state !== "ready" || !login.pass) return;
+        redialling = true;
+        const deadSince = connectionDeadSince;
+        const detectedBy = connectionDeadBy;
+        try {
+          try { await adapter.close(); } catch { /* the connection is already broken */ }
+          adapter = dialAdapter();
+          await dialAndGate();
+          connectionDeadSince = null;
+          connectionDeadBy = null;
+          leaseUnavailableSince = null;
+          leaseUnavailableCycles = 0;
+          log("mailbox_reconnected", {
+            mailboxId: mb.id,
+            detectedBy: detectedBy ?? "bound",
+            totalMs: Date.now() - deadSince.getTime(),
+            reason: "the mail server connection was re-opened and the organizer lease was read " +
+              "again BEFORE anything was moved, so a claim that arrived during the outage is " +
+              "honoured on the first cycle back rather than a cycle later",
+          });
+        } catch (err) {
+          log("mailbox_reconnect_failed", {
+            err, mailboxId: mb.id,
+            totalMs: Date.now() - deadSince.getTime(),
+            reason: "the connection could not be re-opened; this install organizes nothing and " +
+              "serves the mirror it already has, and the next poll tries again. The clock the " +
+              "settings row reports is unchanged — it measures the outage, not the attempts",
+          });
+        } finally {
+          redialling = false;
+        }
+      };
+
       const rt: LocalMailboxRuntime = {
         mailboxId: mb.id,
         address: mb.address,
@@ -4345,149 +4597,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // away. Deliberately BEFORE `connect()`: an empty password is a login attempt the
           // server will refuse, and a refused login on some providers counts toward a lockout.
           if (login.state !== "ready" || !login.pass) return;
-          await adapter.connect();
-          // ── EVERYTHING BELOW RUNS ON AN AUTHENTICATED SOCKET, SO IT IS WRAPPED ──────────────
-          //
-          // `connect()` LOGS IN and then LISTs, and `apps/sidecar/src/main.ts` answers a rejected
-          // `start()` by LOGGING it and continuing to serve the mirror — deliberately, because a
-          // first sync of a real mailbox takes minutes and a UI that waits for it looks broken. The
-          // two compose into a leak: before this `catch`, a throw from the lease gate, from
-          // `ensureFolders` or from the first drain left an authenticated login open with no handle
-          // anywhere that could close it, for the life of the process.
-          //
-          // iCloud caps concurrent connections per account, and a laptop shares that budget with
-          // Apple Mail and the user's phone — so a leaked login is not merely untidy, it is the
-          // mailbox eventually refusing to connect, in somebody else's app.
-          //
-          // A `catch` and NOT a `finally`: the whole point of a healthy launch is that the login
-          // survives it. The poll timer, `syncUntilQuiet()` and the organizer claim all run on this
-          // connection. Tests assert both directions — the login released when `start()` throws,
-          // and the login still open when it returns.
-          //
-          // The shape is the one used everywhere else this codebase holds an IMAP login across work
-          // that can fail — `packages/api/src/send-adapter.ts:68-71`,
-          // `packages/api/src/attachments-adapter.ts:36-41` and the hosted sync worker all
-          // close-then-rethrow the ORIGINAL error around exactly this window.
-          try {
-            // ── THE LEASE IS READ BEFORE THE FIRST MOVE, AND `ensureFolders` IS A MOVE ────────
-            //
-            // Reconnect is learn-then-act: the local engine reads the organizer lease BEFORE its
-            // first move. Creating the `ohmail/*` tree in a mailbox Cloud is organizing is a write
-            // this install has no business making, and reconnect-after-sleep is exactly when a
-            // mailbox is most likely to have changed hands. Gated here and drained through the
-            // already-gated inner `drain`, so a launch reads the lease ONCE rather than claiming
-            // twice before it has done any work.
-            //
-            // A lease we could not READ is not a lease we lost. Offline is a property of both modes,
-            // so an unreachable `ohmail/_meta` must leave a usable app rather than a failed launch:
-            // the organizer is paused, the viewer is complete, and the poll timer asks again. It is
-            // exempted BY CLASS, the same way the hosted sync worker exempts it — never by
-            // inspecting a message. The login is deliberately KEPT here: it is the connection the
-            // next poll asks over, and it is the one non-throwing exit from this window that has
-            // further work to do.
-            let permitted: boolean;
-            try {
-              permitted = await serialize(mayOrganize);
-            } catch (err) {
-              if (!(err instanceof LeaseUnavailableError)) throw err;
-              // `err` and not `err.message`, and this is the sharpest case for that rule:
-              // `LeaseUnavailableError` is constructed with `{ cause: err }` around an ImapFlow
-              // failure, so its message quotes the folder and the driver's response. The logger
-              // reduces it to `errorClass: "LeaseUnavailableError"` — which is the exemption this
-              // catch block is ABOUT, so the log now names the class the code branched on.
-              log("start_lease_unavailable", {
-                err,
-                reason: "the organizer lease could not be read, so this install organizes nothing " +
-                  "yet; the mirror is served and the next poll asks again",
-              });
-              /* AND IT IS RECORDED WHERE A PERSON CAN SEE IT. A log line is not a user-visible
-               * state, and when the cause is a folder over the ceiling this does not clear on its
-               * own — so a desktop would otherwise sit in an ordinary connected state while
-               * organizing nothing at all. The mark is kept from the FIRST failure rather than
-               * refreshed, so the surface can say how long it has been true. Every path that reads
-               * the lease successfully sets it back to `null`. */
-              organizer = {
-                organizing: false,
-                reason: organizer.reason,
-                heldBy: organizer.heldBy,
-                unreadableSince: organizer.unreadableSince ?? new Date().toISOString(),
-              };
-              schedule();
-              return;
-            }
-            /* -- `!permitted` IS "NOT THE ORGANIZER", NOT "STOP" — THE LAUNCH HALF  --
-             *
-             * This branch used to `return` here, and what it returned before is the whole first
-             * drain, the special-folder discovery AND `schedule()` — so a stood-down install came up
-             * with no poll timer at all. On `priorStandDown` it also closed the login, under a
-             * comment whose first sentence was the pre-0083 doctrine verbatim: *"A stood-down
-             * install STOPS SYNCING ENTIRELY — it does not keep passively mirroring, and it must not
-             * keep burning a connection either."*
-             *
-             * That is no longer what a stand-down means, and TWO other comments in this same file
-             * already say so. The stand-down logs *"it keeps its login and its poll timer, its
-             * mirror goes on growing"*; and the takeover route's own header says *"A demoted install
-             * is now a READER — it keeps its login and its poll timer and goes on cycling — so the
-             * gate runs again on the very next poll, reads the stamp, and promotes. No relaunch."*
-             * Neither could be true while this line returned: there was no next poll to read the
-             * stamp on, so "Organize from this machine" did nothing at all until the app was
-             * restarted — and that button is the whole of how a person takes a mailbox back onto a
-             * machine that has stood down, so "it needs a relaunch" was not a small caveat.
-             *
-             * So a reader falls through: it drains, it schedules, and it keeps the connection the
-             * next poll asks over. The ONE thing it does not do is below.
-             */
-            if (!permitted && stopped) {
-              // THE MAILBOX WAS REMOVED — the only `false` that still means "do nothing".
-              // `mayOrganize` has already cleared the timer and closed the login on that arm; there
-              // is no mirror to grow and nothing to schedule.
-              return;
-            }
-            // Before the first cycle of an ORGANIZER, always: the pipeline routes into `ohmail/*`
-            // and a move to a folder the server does not have fails. The hosted sync worker does the
-            // same thing at attach time.
-            //
-            // NEVER FOR A READER, and this is the sharpest line in the branch above: `ensureFolders`
-            // is the IMAP WRITE that creates somebody else's `ohmail/*` tree, and the header forty
-            // lines up already says so — *"reconnect is learn-then-act … creating the `ohmail/*` tree
-            // in a mailbox Cloud is organizing is a write this install has no business making"*. It
-            // was gated by the `return` that has just gone, so it needs its own gate now.
-            if (permitted) {
-              await adapter.ensureFolders();
-              // See {@link foldersEnsured}: the poll's own call must not repeat what this just did.
-              foldersEnsured = true;
-            }
-            // ── Mail 0065: DISCOVER THE PROVIDER'S OWN \Junk AND \Trash, AND WRITE THEM DOWN ──
-            //
-            // The hosted worker's attach hook, mirrored here because the LOCAL engine is its own
-            // attach path: without this, a local install's `mailboxes.trash_folder` stays NULL for
-            // ever, so its own API refuses every delete (`no_trash_folder`) and its spam verdicts
-            // never reach the provider's Junk. Read-only (one LIST), re-written every attach so a
-            // renamed folder heals, best-effort: a discovery failure keeps the stored answer and
-            // the fallbacks are never destructive. imap-types.ts carries the product rule.
-            //
-            // A READER RUNS THIS TOO, deliberately. It is one LIST and a write to this install's own
-            // row — no mailbox write of any kind — and the knowledge is what makes a promotion take
-            // effect on the next poll rather than on the next launch.
-            if (typeof adapter.findSpecialFolders === "function"
-              && typeof repo.setMailboxSpecialFolders === "function") {
-              try {
-                const found = await adapter.findSpecialFolders();
-                await repo.setMailboxSpecialFolders(mb.id, {
-                  junkFolder: found.junk, trashFolder: found.trash,
-                });
-              } catch (err) {
-                log("special_folder_discovery_failed", { err });
-              }
-            }
-            await serialize(() => drain(100));
-            schedule();
-          } catch (err) {
-            // The ORIGINAL error, rethrown — `main.ts` decides what a failed launch means, and it
-            // must not be told the connection failed to close when what failed was the drain.
-            await adapter.close().catch(() => { /* the connection is already broken */ });
-            throw err;
-          }
+          await dialAndGate();
+          // ARMED HERE and not inside the sequence above. `schedule()` returns at `stopped`,
+          // which is the mailbox-was-removed arm's exit and the one path that must not poll.
+          schedule();
         },
         /**
          * STOP THIS MAILBOX AND LEAVE THE STORE ALONE.
