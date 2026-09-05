@@ -42,9 +42,22 @@ import { StreamCard, StreamArt } from "@ohmail/ui";
 import { senderName, displayTime } from "./format";
 import { displayAddress } from "./idn";
 import { MessageActionBar, type MessageAction } from "./MessagePane";
+import { MessageRecipients } from "./MessageRecipients";
 import { FoldTableArt } from "./StreamShell";
 import type { RemoteImagesChrome } from "./remote-images";
 import { MessageBody as MessageBodyView } from "../components/MessageBody";
+
+/**
+ * HOW MANY RECIPIENTS A CARD NAMES BEFORE THE REST BECOMES A COUNT.
+ *
+ * The reading pane names everyone; a card is a summary and has one head's worth of room. Two
+ * is what a `To` label plus two `Name – address` chips occupy without the row becoming the
+ * tallest thing in the head at 390px, which is the width most of this view is read at
+ * (`scripts/fit-render.mjs` measures the block at 390 and 1440). Above it the block folds to
+ * `+N more`, behind the same press that already reveals the exact date and the message's
+ * physical folder — see `MessageRecipients`.
+ */
+const CARD_RECIPIENT_CHIPS = 2;
 
 export interface StreamCardMemoProps {
   /** The message. Its REFERENCE is not stable across a version bump (`presentationReader` clones a
@@ -114,6 +127,22 @@ function StreamCardMemoInner({
         loadTrackingPixels={remoteImages?.loadPixels ?? false}
       />
     ) : undefined;
+  /**
+   * WHO ELSE GOT IT — the reading pane's own block, capped (`CARD_RECIPIENT_CHIPS`).
+   *
+   * WITHHELD ENTIRELY BELOW TWO. A message addressed to one person is the ordinary case, and
+   * "To: you" under every subject in the stream is a line that never says anything — the item
+   * asks that a message with SEVERAL recipients say so, so the card draws the block exactly
+   * when there is something to say and is otherwise the header it was. The reading pane keeps
+   * naming the single recipient, because a reader who opened a message is asking about that
+   * message; a card is a summary of a pile.
+   *
+   * `to`/`cc` are absent on a DTO that predates them and on a bare test message, hence `?? 0`
+   * — an unknown audience is not several.
+   */
+  const recipientCount = (m.to?.length ?? 0) + (m.cc?.length ?? 0);
+  const recipients: ReactNode =
+    recipientCount > 1 ? <MessageRecipients message={m} max={CARD_RECIPIENT_CHIPS} /> : undefined;
   const art: ReactNode = m.art ? (
     <StreamArt ariaLabel={m.art.ariaLabel} caption={m.art.caption}>
       <FoldTableArt />
@@ -135,6 +164,7 @@ function StreamCardMemoInner({
       failedLabel={failedLabel}
       withheldLabel={withheldLabel}
       bodySlot={bodySlot}
+      recipients={recipients}
       art={art}
       unread={unread}
       current={current}

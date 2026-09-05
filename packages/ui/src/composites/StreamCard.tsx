@@ -87,6 +87,20 @@ export interface StreamCardProps {
    */
   onToggle?: (open: boolean) => void;
   /**
+   * WHO ELSE THE MESSAGE WENT TO, under the subject.
+   *
+   * A SLOT and not a shape, for the reason `actions` is one: the reading pane already has a
+   * recipients block with chips, a contact popover and a details disclosure in it, and a
+   * composite that re-described any of that would be a second copy of it drifting from the
+   * first. The caller passes the app's own `MessageRecipients`; this file only decides where
+   * it sits and how much air it gets.
+   *
+   * Default-absent, so a card whose caller passes nothing is exactly the card that shipped
+   * before — which is also how a one-recipient message renders: the caller withholds the node
+   * rather than the card drawing an empty row.
+   */
+  recipients?: ReactNode;
+  /**
    * THE MESSAGE'S VERBS, at the foot of the card.
    *
    * Optional and default-absent: a card with no bar is exactly the card that shipped before.
@@ -125,6 +139,7 @@ export function StreamCard({
   bodySlot,
   onSelect,
   onToggle,
+  recipients,
   actions,
 }: StreamCardProps) {
   const [open, setOpen] = useState(false);
@@ -281,6 +296,9 @@ export function StreamCard({
           <span className="t num">{time}</span>
         </div>
         <h3>{subject}</h3>
+        {/* Under the subject, inside the head's padding — the same order the reading pane
+            keeps (sender, subject, then who else), so a card and a panel read alike. */}
+        {recipients ? <div className="sc-rcpts">{recipients}</div> : null}
       </div>
       <div className="sc-clip" ref={clipRef}>
         {showViewer ? (

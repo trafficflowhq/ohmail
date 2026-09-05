@@ -23,6 +23,13 @@
 .sc-line .amt{flex:none;font-variant-numeric:tabular-nums;font-size:calc(12px + var(--type-up));font-weight:550}
 .sc-line .t{margin-left:auto;font-size:calc(11px + var(--type-up));color:var(--ink3);font-variant-numeric:tabular-nums;flex:none}
 .sc-head h3{font-size:16.5px;font-weight:600;letter-spacing:-.015em;margin:5px 0 0;line-height:1.3;text-wrap:balance}
+/* THE RECIPIENTS SLOT. The block inside it is the reading pane's own (`.msg-rcpts`, `app.css`)
+   and brings its own type and colour, so all this owns is the air above it — the block's own
+   `margin-top` is written for a panel with a body under it, and a card head has the subject
+   directly above instead. `min-width:0` so a long address ellipsises against the head rather
+   than widening the card. */
+.sc-rcpts{margin-top:2px;min-width:0}
+.sc-rcpts .msg-rcpts{margin-top:6px}
 .sc-clip{position:relative;overflow:hidden;max-height:348px;transition:max-height .5s var(--spring)}
 .scast.short .sc-clip{max-height:none}
 .sc-body{padding:9px 26px 18px;font-size:calc(13.5px + var(--type-up));line-height:1.7;color:var(--ink);white-space:pre-line;max-width:62ch;margin:0}

@@ -19,10 +19,9 @@
  *    bold name with the small address beside it, and a no-name sender prints the bare address
  *    ONCE — `senderName`/`rowAddress`, `format.ts`), the ⋯ actions menu LEFT of the stamp with
  *    the date on the right, the message's own quiet subject line under the sender (SUBJECT-D —
- *    the RAW `m.subject`, reply prefixes included), and the recipients WRITTEN OUT (viewer redesign)
- *    — To and Cc in full, each recipient a chip that opens {@link ContactPopover}, with a
- *    "details" press left holding only what the chips do not say: the exact date and where the
- *    message physically sits. Worn by the focused message (composed by `MessagePane`) and by a
+ *    the RAW `m.subject`, reply prefixes included), and the recipients — {@link
+ *    MessageRecipients}, the block a Reads card now wears too, which is why it lives in its own
+ *    file rather than here. Worn by the focused message (composed by `MessagePane`) and by a
  *    sibling panel alike, so a message reads the same wherever it is.
  *
  *  · {@link MessageCard} — a conversation SIBLING's panel: the header and the body through the
@@ -38,22 +37,19 @@ import { AttachmentStrip } from "../components/AttachmentStrip";
 import { MessageBody } from "../components/MessageBody";
 import { opensInSystemViewer } from "./open-attachment";
 import { replyAllRecipients } from "./compose-from";
-import { ContactPopover, type ContactPopoverState } from "./ContactPopover";
 import {
   avatarHue,
   displayTime,
   fullDateTime,
   initialsOf,
-  recipientRows,
   rowAddress,
   senderName,
   withheldCopyKey,
-  type RecipientRowChip,
 } from "./format";
 import { displayAddress } from "./idn";
 import { useBodyStalled, useMessageChrome } from "./message-chrome";
+import { MessageRecipients } from "./MessageRecipients";
 import { MoreMenu, type MoreMenuItem } from "./MoreMenu";
-import { placePicker } from "./TagPicker";
 
 /**
  * THE HEADER — who it is from, what it is called, when, and who else it went to.
@@ -88,31 +84,18 @@ export function MessageHeader({
 }) {
   const tm = useTranslations("message");
   const tr = useTranslations("screening");
-  const to = useTranslations("ohbox");
   const chrome = useMessageChrome();
-  const [details, setDetails] = useState(false);
   /** The ⋯ disclosure. The trigger owns the keyboard's way back — see `closeMenu`. */
   const [menuOpen, setMenuOpen] = useState(false);
   const moreRef = useRef<HTMLButtonElement>(null);
-  /**
-   * The open contact popover, or null — one per header, because one chip is pressed at a time
-   * and a second press re-points it (the same one-question-at-a-time rule the ⋯ menu keeps).
-   * The pressed chip element is held beside it so Escape can put the keyboard back where the
-   * press came from, and so the screening sheet is anchored on the chip rather than nowhere.
-   */
-  const [contact, setContact] = useState<(ContactPopoverState & { key: string }) | null>(null);
-  const contactAnchor = useRef<HTMLButtonElement | null>(null);
   // A message swap in the same mounted position (the single-message pane re-pointed by
   // selection) must not leave a menu open over a different message's verbs — same rule the
-  // pill applies on `message.id`. The contact popover follows it for the same reason.
-  useEffect(() => { setMenuOpen(false); setContact(null); }, [message.id]);
+  // pill applies on `message.id`. The recipients block keeps the same rule for its own
+  // popover and fold, on its own state — see `MessageRecipients`.
+  useEffect(() => { setMenuOpen(false); }, [message.id]);
   const closeMenu = (): void => {
     setMenuOpen(false);
     moreRef.current?.focus();
-  };
-  const closeContact = (): void => {
-    setContact(null);
-    contactAnchor.current?.focus();
   };
 
   // `?? []` tolerates a bare test harness that predates the field; the real provider always
@@ -124,7 +107,6 @@ export function MessageHeader({
   const abs = fullDateTime(message);
   /** Show the absolute form when the reader has asked for it AND there is one to show. */
   const showAbs = chrome.absoluteTime && !!abs;
-  const rows = recipientRows(message, ownAddresses);
 
   /**
    * The menu's items, built from what the chrome actually wires — an unwired verb is an absent
@@ -176,68 +158,6 @@ export function MessageHeader({
       run: () => { closeMenu(); chrome.forward!(message.id); },
     });
   }
-
-  /**
-   * ── THE RECIPIENTS, WRITTEN OUT (viewer redesign) ────────────────────────────────────────────────
-   *
-   * To and Cc in full, one CHIP per person — the folded "to me, Anna Roth +2 · cc 2" line and
-   * the details-press-to-see-everyone are retired: who a message went to is not a secret worth
-   * one more press. (`Bcc` does not render because the wire does not carry it: an incoming
-   * message's blind copies are, by definition, not in its headers, and `EngineMessage` has no
-   * such field — a row for it would be a control over data that cannot exist.)
-   *
-   * The FACE is names-first and decoded (`displayAddress`); the VALUE under every chip is the
-   * stored wire address, which is what the popover's verbs dispatch. A "me" chip wears the
-   * ACCOUNT's identity — `chrome.ownNameOf` (from `GET /mailboxes`' `displayName`), never the
-   * sender's spelling of the reader — and falls back to the bare address when the mailbox
-   * carries no label, because inventing a name is worse than omitting one.
-   */
-  const chipRow = (label: string, group: "to" | "cc", chips: RecipientRowChip[]): ReactNode =>
-    chips.length === 0 ? null : (
-      <div className="rcpt-row">
-        <span className="rcpt-k">{label}</span>
-        {chips.map((r, i) => {
-          const key = `${group}:${i}`;
-          const face = r.me ? (chrome.ownNameOf?.(r.address) ?? null) : r.name;
-          const shown = displayAddress(r.address);
-          return (
-            <button
-              key={key}
-              type="button"
-              className="rcpt-chip"
-              aria-haspopup="menu"
-              aria-expanded={contact?.key === key}
-              onClick={(e) => {
-                contactAnchor.current = e.currentTarget;
-                /* A TRIGGER TOGGLES. This set the state unconditionally, so pressing an open chip
-                   re-opened the popover it was already showing — and once the chip was excluded
-                   from the menu's outside-press listener (so one press stops being a close and an
-                   immediate re-open), nothing dismissed it at all. The exclusion is right; a
-                   trigger that only ever opens is what made it look wrong. */
-                if (contact?.key === key) { setContact(null); return; }
-                setContact({
-                  key,
-                  messageId: message.id,
-                  address: r.address,
-                  name: face,
-                  ...placePicker(e.currentTarget),
-                });
-              }}
-            >
-              {face ? (
-                <>
-                  <span className="rcpt-name">{face}</span>
-                  {" – "}
-                  <span className="rcpt-addr">{shown}</span>
-                </>
-              ) : (
-                <span className="rcpt-addr">{shown}</span>
-              )}
-            </button>
-          );
-        })}
-      </div>
-    );
 
   /**
    * SUBJECT-D — the message's own quiet subject line, under the sender, on EVERY panel.
@@ -340,56 +260,7 @@ export function MessageHeader({
         </span>
       </div>
       {subjectLine}
-      {rows.empty ? null : (
-        <div className="msg-rcpts">
-          {chipRow(tm("toLabel"), "to", rows.to)}
-          {chipRow(tm("ccLabel"), "cc", rows.cc)}
-          {/* What the chips do not already say: the exact date and where the message
-              physically sits. The full To/Cc list left this disclosure — it is ON screen now. */}
-          <button
-            type="button"
-            className="msg-rcpt-more"
-            aria-expanded={details}
-            aria-label={tm("detailsAria")}
-            onClick={() => setDetails((v) => !v)}
-          >
-            {tm("details")} <Icon name="chev" size={10} />
-          </button>
-        </div>
-      )}
-      {details ? (
-        <dl className="msg-rcpt-full">
-          {abs ? (
-            <div>
-              <dd>
-                <time dateTime={message.date ?? undefined}>{abs}</time>
-              </dd>
-            </div>
-          ) : null}
-          {message.physicalFolder ? (
-            <div>
-              <dd>{to("onServer", { folder: message.physicalFolder })}</dd>
-            </div>
-          ) : null}
-        </dl>
-      ) : null}
-      {contact ? (
-        <ContactPopover
-          state={contact}
-          anchor={contactAnchor.current}
-          onWrite={
-            chrome.writeTo
-              ? () => chrome.writeTo!(contact.address, contact.name ?? undefined)
-              : undefined
-          }
-          onScreen={
-            chrome.screenAddress
-              ? () => chrome.screenAddress!(message.id, contact.address, contactAnchor.current)
-              : undefined
-          }
-          onClose={closeContact}
-        />
-      ) : null}
+      <MessageRecipients message={message} />
     </>
   );
 }

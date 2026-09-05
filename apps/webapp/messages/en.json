@@ -1381,6 +1381,8 @@
     "ccLabel": "Cc",
     "details": "details",
     "detailsAria": "Show the exact date and where this message sits",
+    "moreRecipients": "+{count} more",
+    "moreRecipientsAria": "Show every recipient, the exact date and where this message sits",
     "contactAria": "Options for {who}",
     "copyAddress": "Copy address",
     "write": "Write",

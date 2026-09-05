@@ -60,6 +60,23 @@ that failed carried nothing identifying which action it was.
 Nothing else about a response changes, and the hosted services send the same value they
 sent before.
 
+### Reading views say who else got the message
+
+A message in Reads showed who sent it and when, and nothing about who it was addressed to — so
+mail written to you alone and mail sent to a list of eleven looked exactly the same until you
+opened it.
+
+The reading views now carry the same recipients line the message header has always had: the
+people a message went to, named, under the subject. It is the same block in both places rather
+than a second one written to look like it, so a name is drawn the same way and does the same
+thing wherever you meet it — pressing one still offers to copy the address, write to that person,
+or open their screener settings.
+
+A card has one head's worth of room, so it names the first two and folds the rest into a count
+you can press; pressing it names everyone, along with the exact date and the folder the message
+sits in on your server. A message addressed to one person draws no line at all — "To: you" under
+every subject in the stream is not worth the space.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

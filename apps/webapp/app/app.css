@@ -282,6 +282,34 @@ body.reading .shell {
   content-visibility: visible;
 }
 
+/* …AND A CARD HOLDING AN OPEN POPOVER GIVES THAT UP AGAIN, because containment makes it a
+   POSITIONING BOX.
+
+   `content-visibility: auto` implies `contain: layout paint`, and a layout-contained element
+   becomes the CONTAINING BLOCK for every `position: fixed` descendant. The contact popover
+   (`.cpop`) is fixed and renders INSIDE the recipients block, which now sits in a card's head —
+   so its coordinates, measured against the viewport by `placePicker`, are resolved against the
+   CARD instead, and the card's left edge is added to every one of them.
+
+   Measured on this pile, before this rule: at 1440 the popover's box was [1514,1714] in a 1440px
+   window — off screen entirely — and `document.elementFromPoint` at its own centre answered
+   `nothing`. At 390 the box landed INSIDE the window (the card's left edge is only 16px there)
+   and the popover still was not what was painted at its centre: the stream was. That second
+   reading is the reason the guard asks the page what is at the point rather than reading a rect
+   off the element — a rect reports whatever coordinate space the element is in, so it agrees
+   with the defect. With this rule both widths put the popover's own menu item at its centre.
+
+   SCOPED TO THE CARD THAT HAS ONE OPEN, not to every card: the hundreds below keep the
+   optimisation, and a card is released exactly while something is hanging off it. That is a
+   different condition from the OPEN card — the recipients block is in the head and is reachable
+   while the card is collapsed, and pressing a chip deliberately does NOT expand the card
+   (`MessageRecipients`), so a release keyed on `.open` would not cover this. `:has()` is what
+   lets the condition be the descendant's presence, which is the thing that actually matters. */
+.view-reads .stream .scast:has(.cpop),
+.view-receipts .stream .scast:has(.cpop) {
+  content-visibility: visible;
+}
+
 /* ================= the sent-mail seed review ================= */
 /* One column, scrollable, on the panel — the same furniture the gate cards use, sized for a
    list that may hold four hundred people. Nothing here is a modal: the screen replaces the
