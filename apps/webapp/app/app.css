@@ -260,6 +260,28 @@ body.reading .shell {
   contain-intrinsic-size: auto 200px;
 }
 
+/* …AND THE OPEN CARD GIVES THAT UP AGAIN, because containment makes it a positioning box.
+
+   `content-visibility: auto` implies `contain: layout paint`, and a layout-contained element
+   becomes the CONTAINING BLOCK for `position: fixed` descendants. Everything that hangs off the
+   card's action bar is placed against the viewport by measuring it — and inside a contained card
+   those coordinates are resolved against the CARD instead. Measured at 1440: the date picker
+   opened at x 1807 in a 1440px window, which is off screen entirely. At 390 it landed inside only
+   because the card's own left edge is 16px, so the same defect looked like a phone that worked.
+
+   Only the OPEN card is released, and that is the whole trade: the hundreds of collapsed cards
+   below keep the optimisation, and the one card a reader is inside — the only one that can have a
+   menu, a chooser or a picker hanging off it — is laid out normally. `SenderMenu`, `TagPicker` and
+   `SubjectRuleSheet` mount at the shell root and were never affected; the picker inside the bar
+   and the contact popover inside the recipients block are the two that sit within a card.
+
+   `scripts/fit-render.mjs` opens the picker from a Reads card and asserts it lies inside the
+   window, at every width and in both languages. */
+.view-reads .stream .scast.open,
+.view-receipts .stream .scast.open {
+  content-visibility: visible;
+}
+
 /* ================= the sent-mail seed review ================= */
 /* One column, scrollable, on the panel — the same furniture the gate cards use, sized for a
    list that may hold four hundred people. Nothing here is a modal: the screen replaces the
