@@ -87,7 +87,7 @@ import {
 import { hostsFor, providerById, providerLabel, type ProviderPreset } from "../../shell/providers";
 import { ProviderPicker } from "../../shell/ProviderPicker";
 import { AGO_COPY, agoStamp, dayStamp } from "../../shell/format";
-import { isSyncBlockReason, readerStandDown, showInboundQuiet } from "../../shell/mail-state";
+import { claimLeftBehind, isSyncBlockReason, readerStandDown, showInboundQuiet } from "../../shell/mail-state";
 import { useMailState } from "../../shell/MailStateProvider";
 import { displayAddress } from "../../shell/idn";
 
@@ -2007,6 +2007,12 @@ export function MailboxSection() {
            legacy arm and adds the role one; its header carries the `holder OR consent` rule and
            why a freshly connected reader is deliberately not a stand-down. */
         const standDown = readerStandDown(m);
+        /* THE MAILBOX STILL CARRIES THIS INSTALL'S CLAIM, and the row says somebody else holds it.
+           `claimLeftBehind` carries the whole test; what it changes below is that the release verb
+           is offered on a READER row too, because the claim it takes off the mailbox is this
+           install's own. Without it the row offers a takeover — displacing yourself — and the one
+           press that actually resolves the state is unreachable from the pane. */
+        const stranded = claimLeftBehind(m);
         return (
           <div className="mbx-row" key={m.id}>
             <div className="mbx-main">
@@ -2136,19 +2142,21 @@ export function MailboxSection() {
                   Offered only where this account IS the organizer. On a reader row the block
                   above already names the holder and offers the takeover, and a "stop organizing"
                   button there would act on a machine this pane does not speak for. */}
-              {standDown === null && m.status === "connected" && m.organizerRole !== "reader"
-                && m.organizeConsentedAt ? (
+              {/* `standDown === null && organizerRole !== "reader"` is the test for "this install
+                  organizes it"; `stranded` is the other way the release is the right verb. */}
+              {((standDown === null && m.organizerRole !== "reader") || stranded)
+                && m.status === "connected" && m.organizeConsentedAt ? (
                 <div className="mbx-org" data-role="organizer">
                   <SettingsBanner
-                    label={t("stateOrganizing")}
-                    description={t("stateOrganizingHere")}
+                    label={stranded ? t("stateReading") : t("stateOrganizing")}
+                    description={stranded ? t("stateClaimLeftBehind") : t("stateOrganizingHere")}
                     action={releaseFor === m.id ? undefined : (
                       <Button
                         variant="ghost"
                         className="mbx-btn"
                         onClick={() => setReleaseFor(m.id)}
                       >
-                        {t("stopOrganizing")}
+                        {stranded ? t("releaseClaim") : t("stopOrganizing")}
                       </Button>
                     )}
                   />
@@ -2159,14 +2167,14 @@ export function MailboxSection() {
                       is red. */}
                   {releaseFor === m.id ? (
                     <div className="mbx-handover">
-                      <p className="mbx-handover-what">{t("stopOrganizingWhat")}</p>
+                      <p className="mbx-handover-what">{stranded ? t("releaseClaimWhat") : t("stopOrganizingWhat")}</p>
                       <SettingsActions>
                         <Button
                           variant="primary"
                           disabled={releasing.has(m.id)}
                           onClick={() => { void confirmRelease(m.id); }}
                         >
-                          {t("stopOrganizingConfirm")}
+                          {stranded ? t("releaseClaimConfirm") : t("stopOrganizingConfirm")}
                         </Button>
                         <Button variant="ghost" onClick={() => setReleaseFor(null)}>
                           {t("cancel")}

@@ -277,6 +277,40 @@ export function readerStandDown(m: {
 }
 
 /**
+ * THIS INSTALL'S OWN CLAIM IS STILL ON THE MAILBOX WHILE THIS INSTALL IS NOT ORGANIZING IT.
+ *
+ * The two-sided belief, and a real state rather than a theoretical one: an install that stood down
+ * without its claim being taken out of the mailbox leaves a record every OTHER install reads as
+ * "somebody holds this", so they stand down too — and this one reads their absence the same way.
+ * Nothing organizes the mailbox, and each side's row says the other one does. A claim seen this way
+ * had been sitting for three days.
+ *
+ * `organizedBy` is written from the claim record itself by the per-cycle peek, so `kind` is what the
+ * MAILBOX says, not what this row remembers. On this pane `cloud` IS this install: the pane is the
+ * hosted account's and a mailbox has one hosted organizer. A local install's own pane asks the same
+ * question about `local` claims, one client over.
+ *
+ * The verb this unlocks is the ordinary release — the only thing that takes a claim off a mailbox is
+ * the process holding it — so the mechanism is unchanged and only its REACHABILITY moves. The rule
+ * is that the release is reachable whenever this install's claim is on the mailbox, whatever the
+ * local stand-down state says, because the stand-down state is exactly what is wrong here.
+ *
+ * Consent is asked for the reason {@link readerStandDown} asks it: a reader that never agreed to be
+ * organized is a fresh mailbox, whose next screen is the consent statement and not a release.
+ */
+export function claimLeftBehind(m: {
+  status?: string;
+  organizerRole?: "organizer" | "reader";
+  organizedBy?: { kind: string | null; name: string | null; since: string | null } | null;
+  organizeConsentedAt?: string | null;
+}): boolean {
+  if (m.status !== "connected") return false;
+  if (m.organizerRole !== "reader") return false;
+  if (m.organizeConsentedAt === null || m.organizeConsentedAt === undefined) return false;
+  return m.organizedBy?.kind === "cloud";
+}
+
+/**
 /**
  * ONE ROW, AS BOTH DERIVATIONS BELOW NEED TO SEE IT.
  *
