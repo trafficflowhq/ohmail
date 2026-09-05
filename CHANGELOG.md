@@ -533,6 +533,10 @@ On a mailbox another ohmail install is organizing, Move, Screening and Delete ar
 press them rather than after the mail has moved and come back, in the sentence the rest of the app
 uses — and the selection stays, so you do not have to build it again.
 
+Moving a single message is refused the same way, and it used to be the case that showed the
+problem most plainly: the message left the list, the server declined the request, and it
+reappeared a moment later with nothing on screen saying why.
+
 Keyboard hints no longer draw on touch screens, or in windows too narrow to hold both the hint and
 the verb it belongs to.
 

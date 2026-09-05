@@ -4837,6 +4837,27 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
           const view = action.slice("move:".length) as OhmailView;
           const folder = FOLDER_OF_VIEW[view];
           if (!folder || folder === m.folder) break;
+          /**
+           * A READER MOVES NOTHING, AND HEARS SO BEFORE ANYTHING LEAVES.
+           *
+           * This arm used to dispatch and let the server refuse: the row left the list, the
+           * request was declined, the engine rolled the optimistic overlay back, and the
+           * message reappeared a beat later with no sentence explaining why. The rule was
+           * already written once and asked by three other callers — the Screener's own bar,
+           * the delete window, and the SELECTION's move — so it is asked here in the same
+           * words, from the same helper, at the same moment: at the press, before the wire.
+           *
+           * `roleRef` and not `screenerRole`: the refusal answers with the role at PRESS time,
+           * which is the whole reason that ref exists.
+           */
+          const refusedMove = readerMoveRefusal(roleRef.current, {
+            named: (name) => t("screener.readerMoveRefused", { name }),
+            unknown: () => t("screener.readerMoveRefusedUnknown"),
+          });
+          if (refusedMove !== null) {
+            toast(refusedMove);
+            break;
+          }
           void engine.mutate({ kind: "move", messageId: m.id, folder });
           toast(t("ohbox.toastMoved", { place: PLACE_LABEL[view] ?? view }));
           break;
