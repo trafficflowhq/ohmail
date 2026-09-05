@@ -32,7 +32,16 @@
  * count closes only when the last dialog has gone.
  */
 
-import { useEffect } from "react";
+import { useEffect, useLayoutEffect } from "react";
+
+/**
+ * `useLayoutEffect` in a browser; `useEffect` where there is nothing to commit. The shell's own
+ * idiom (`MailStateProvider`, `older-mail.ts`, `attachments.ts`), chosen at module scope for its
+ * two reasons: hooks must be the same hook on every render, and a bare `useLayoutEffect` in a
+ * server render is a `console.error` (Next pre-renders client components), which the
+ * zero-console-errors rule refuses.
+ */
+const useCommitEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 
 let open = 0;
 
@@ -46,9 +55,26 @@ export function modalIsOpen(): boolean {
  *
  * The cleanup is what makes it safe: a dialog that unmounts without its own effect running —
  * a route change, an error boundary — still releases, because React runs cleanups on unmount.
+ *
+ * ── AND IT IS TAKEN IN THE COMMIT, NOT AFTER IT ────────────────────────────────────────────
+ *
+ * This was a passive `useEffect`, and a passive effect is scheduled AFTER the commit that
+ * painted the dialog. So there was a window — one in which the dialog is on screen, its scrim
+ * is drawn and its button is focused — where {@link modalIsOpen} still answered `false` and the
+ * keymap dispatched a mailbox verb. The whole reason this file exists is that a screen saying
+ * the session is in question must not park or delete mail, and a gate that opens one frame late
+ * is that defect with a smaller window rather than without one.
+ *
+ * `useLayoutEffect` runs INSIDE the commit, in the same synchronous block as the render that
+ * produced it, so nothing — not a key event, not a microtask — can observe the gap. The same
+ * correction `MailStateProvider`'s ownership ref carries, for the same reason.
+ *
+ * Not a render-phase increment, which would be the only way to be earlier still: a render may be
+ * discarded or double-invoked (StrictMode), and a count incremented by a render React throws
+ * away is a gate that never reopens.
  */
 export function useModalGate(active: boolean): void {
-  useEffect(() => {
+  useCommitEffect(() => {
     if (!active) return;
     open += 1;
     return () => {

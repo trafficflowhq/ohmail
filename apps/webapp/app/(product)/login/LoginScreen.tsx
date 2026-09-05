@@ -191,15 +191,38 @@ export function LoginScreen() {
    * The answer is the server's, asked fresh on every mount — `needsSetup` flips false the
    * moment the first account exists, after which this form is the front door it always was.
    * Any failure to learn the state falls through to the form, which is never wrong.
+   *
+   * ── IT BELONGS TO THE CEREMONY TOO, AND IT DID NOT ────────────────────────────────────────
+   *
+   * This is a SECOND request off this page, and the ladder above knew nothing about it. Two
+   * consequences, one of them expensive:
+   *
+   *  · a refresh nobody ordered. `api()` refreshes and retries on a 401, and a refresh rewrites
+   *    every session cookie whenever its response lands. A delayed 401 here therefore rewrote
+   *    the jar underneath a sign-in the ceremony had carefully ordered itself behind. That half
+   *    is fixed where it belongs — `/hello` is in `NEVER_REFRESH` (`session-refresh.ts`), so no
+   *    caller of it can start one — because this page is not the only place it is asked.
+   *  · a navigation from behind a password. `router.replace("/setup")` arriving mid-ceremony
+   *    takes the person off a form they have already submitted. The ladder's own two guards are
+   *    the right ones: `submittedRef` refuses to start once a ceremony owns the page, and the
+   *    signal is aborted when one begins, so a late answer navigates nothing.
    */
   useEffect(() => {
     if (!SELF_HOST_BUILD || !configured) return;
+    // A ceremony already owns this page — see `submittedRef`. Nothing to ask.
+    if (submittedRef.current) return;
     let cancelled = false;
+    const abort = new AbortController();
+    const stop = () => { cancelled = true; abort.abort(); };
+    // Chained rather than replaced: the confirm ladder above installs its own canceller in the
+    // same ref, and a submit has to stop BOTH. The order is immaterial; losing one is not.
+    const previous = cancelBootstrapRef.current;
+    cancelBootstrapRef.current = () => { previous?.(); stop(); };
     void (async () => {
-      const hello = await serverHello();
+      const hello = await serverHello({ signal: abort.signal });
       if (!cancelled && hello?.needsSetup === true) router.replace("/setup");
     })();
-    return () => { cancelled = true; };
+    return stop;
   }, [configured, router]);
 
   const run = async (fn: () => Promise<void>, tried: FactorTried): Promise<void> => {

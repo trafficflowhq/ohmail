@@ -123,6 +123,15 @@ async function withCrossTabLock(fn: () => Promise<boolean>): Promise<boolean> {
 }
 
 /**
+ * How long {@link refreshSettled} will wait to be ordered behind a refresh already in flight.
+ *
+ * Fifteen seconds: comfortably past a serverless cold start plus a rotation (the budget the
+ * refresh itself is deliberately given no ceiling for), and far short of a form somebody decides
+ * is broken. It is not a request timeout and must never become one — see `refreshSettled`.
+ */
+export const SETTLE_DEADLINE_MS = 15_000;
+
+/**
  * ═══ WAIT FOR ANY REFRESH ALREADY IN FLIGHT, AND DO NOT CANCEL IT ═════════════════════════
  *
  * A refresh REWRITES THE WHOLE COOKIE JAR: a success rotates `tf_session`, `tf_refresh`,
@@ -146,6 +155,27 @@ async function withCrossTabLock(fn: () => Promise<boolean>): Promise<boolean> {
  * up holding the credential the person actually asked for.
  *
  * Never rejects, and resolves immediately when nothing is in flight.
+ *
+ * ── AND IT GIVES UP, WHICH IS THE HALF THAT WAS MISSING ────────────────────────────────────
+ *
+ * "The refresh finishes and writes whatever it writes; the login then runs and writes last" was
+ * written as though the refresh always finishes. Nothing here guaranteed that. The fetch has no
+ * application deadline on purpose (a cold start must not become a sign-out —
+ * `session-resume.test.ts` pins that), and the cross-tab Web Lock has none either: a queued tab
+ * waits for a grant held by a tab that may be hung, suspended or wedged behind a network stack
+ * that never settles. In that state a password submit awaited this for ever — no login request
+ * was ever sent, the form stayed busy, and nothing on screen said why.
+ *
+ * That is a worse failure than the one the ordering exists to prevent. The collision it guards
+ * against is a race that MAY happen; a wait with no floor is a sign-in that CANNOT happen. So the
+ * wait is bounded and the caller proceeds.
+ *
+ * {@link SETTLE_DEADLINE_MS} bounds the WAIT, never the refresh — the request is untouched, is
+ * still shared, still single-flight, and still gets however long it needs. What expires is one
+ * caller's willingness to be ordered behind it. Past the deadline the ordering guarantee is gone
+ * and the old race is back for that one submit: a refresh landing afterwards can still rewrite
+ * the jar. That is the honest trade and it is stated here rather than glossed, because the
+ * alternative is a form that never submits at all.
  */
 export async function refreshSettled(): Promise<void> {
   // Read once: `inFlight` is nulled by the callback's own `finally`, so re-reading after the
@@ -153,7 +183,17 @@ export async function refreshSettled(): Promise<void> {
   // bounded one. One refresh is the one this caller can have collided with.
   const pending = inFlight;
   if (!pending) return;
-  await pending.catch(() => undefined);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      pending.catch(() => undefined),
+      new Promise<void>((resolve) => { timer = setTimeout(resolve, SETTLE_DEADLINE_MS); }),
+    ]);
+  } finally {
+    // Cleared whichever arm won: a live timer holds the event loop open in Node and keeps a
+    // fake-timer test's queue non-empty, and the promise it resolves is already unreachable.
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 /**
@@ -315,6 +355,22 @@ const NEVER_REFRESH = [
   "/auth/refresh",
   "/auth/verify-email",
   "/auth/2fa/",
+  /*
+   * `/hello` is the capability handshake, and it is here for a different reason from its
+   * neighbours: not because a 401 there is an ANSWER, but because a refresh cannot possibly be
+   * the remedy for one. The route carries no credential meaning — it reports what the server is
+   * and whether it has any accounts yet — and its callers are page mounts that treat any failure
+   * as "behave normally".
+   *
+   * What it cost while it was absent: `/login` asks `/hello` on mount, independently of the
+   * already-signed-in ladder. A delayed 401 there — an edge gate, a proxy, a server mid-deploy —
+   * sent `api()` into a refresh carrying the PREVIOUS account's cookies, and a refresh rewrites
+   * the whole jar whenever it lands. Arriving after somebody had finished signing in as a
+   * different account, it restored the old session or cleared the new one. The ceremony cannot
+   * order itself behind a request it does not know exists, so the fix is that this route never
+   * starts one.
+   */
+  "/hello",
 ];
 
 export function mayRefreshFor(path: string): boolean {

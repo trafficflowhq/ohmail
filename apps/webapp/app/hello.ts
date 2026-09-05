@@ -67,13 +67,31 @@ export interface ServerHello {
  * the answer is not the shape `/hello` promises — the caller's fallback is always "the ordinary
  * screen", so a wrong `null` costs a normal page, never a broken one.
  */
-export async function serverHello(): Promise<ServerHello | null> {
+export async function serverHello(opts: { signal?: AbortSignal } = {}): Promise<ServerHello | null> {
   if (!apiConfigured()) return null;
+  /*
+   * TWO REASONS TO STOP, ONE SIGNAL. The deadline above is this module's own and applies to every
+   * caller. `opts.signal` is the CALLER's — the sign-in page aborts this the moment a password is
+   * submitted, so an answer cannot navigate out from under a ceremony that has already started.
+   *
+   * Composed by hand rather than with `AbortSignal.any`, which is newer than the browsers this
+   * bundle targets: a `serverHello` that throws `AbortSignal.any is not a function` would be
+   * caught below and reported as `null`, i.e. as "could not learn what the server is" — a real
+   * failure wearing the shape of a normal answer, on old browsers only.
+   */
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), HELLO_TIMEOUT_MS);
+  const onAbort = () => ctl.abort();
+  if (opts.signal?.aborted) ctl.abort();
+  else opts.signal?.addEventListener("abort", onAbort, { once: true });
   try {
-    const h = await api<Partial<ServerHello>>("/hello", { signal: AbortSignal.timeout(HELLO_TIMEOUT_MS) });
+    const h = await api<Partial<ServerHello>>("/hello", { signal: ctl.signal });
     if (h?.product !== "ohmail" || typeof h.needsSetup !== "boolean") return null;
     return h as ServerHello;
   } catch {
     return null;
+  } finally {
+    clearTimeout(timer);
+    opts.signal?.removeEventListener("abort", onAbort);
   }
 }

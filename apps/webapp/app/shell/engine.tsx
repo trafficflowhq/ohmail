@@ -259,6 +259,13 @@ export function EngineProvider({
    * `"resolving"` is what everything else starts as, INCLUDING a browser that remembers whose
    * mailbox this is. The warm open is one render later and {@link browserPass} is why.
    */
+  /**
+   * A DEPLOYMENT ERROR, HELD UNTIL A RENDER CAN THROW IT. `null` in every healthy tab, for the
+   * life of the tab. Written only by the confirm's `.catch`, and only for the two errors that
+   * mean "this bundle has no server"; read once, below the hooks. See both sites for why the
+   * throw cannot happen where the error is caught.
+   */
+  const [fatal, setFatal] = useState<unknown>(null);
   const [binding, setBinding] = useState<Binding>(() => {
     const demo = resolveDemo(serverDemo);
     if (demo) return { status: "ready", demo, engine: createEngine(demo) };
@@ -535,22 +542,32 @@ export function EngineProvider({
         setBinding({ status: "ready", demo: false, engine: built });
       })
       .catch((err: unknown) => {
-        // A build with no API base is NOT "we could not prove who you are" — it is a broken
-        // deployment, and rendering the session screen for it would be the same silent lie
-        // `EngineUnarmedError` exists to end: a signed-in user told their session expired
-        // when the truth is that this bundle was never wired to a server. Let it escape to
-        // the error boundary and the console instead of dressing it as an auth outcome.
-        if (err instanceof EngineUnarmedError) throw err;
         /*
-         * AND THE CLASSIFIER'S OWN RETHROW, which this branch used to swallow.
+         * ═══ A BROKEN DEPLOYMENT REACHES THE ERROR BOUNDARY — BY BEING RE-THROWN IN A RENDER ═
          *
-         * `session-outcome.ts` deliberately rethrows `ApiError(0, "api_unconfigured")` — a
-         * bundle wired to no server is a broken deployment, not an auth outcome, and both
-         * files' comments promise it reaches the error boundary. It is not an
-         * `EngineUnarmedError`, so it fell through to the report-and-`unconfirmed` arm below
-         * and told the operator to press Try again forever at a build that can never succeed.
+         * Two errors mean "this bundle was never wired to a server", and neither is an auth
+         * outcome: `EngineUnarmedError`, and the `ApiError(0, "api_unconfigured")` that
+         * `session-outcome.ts` deliberately rethrows. Rendering the session screen for either
+         * would be the silent lie `EngineUnarmedError` exists to end — a signed-in person told
+         * their session expired when the truth is that nobody finished the deploy.
+         *
+         * `throw err` HERE DOES NOT DO THAT, and the two lines that used to stand here said it
+         * did. This is a detached `.catch` on a promise nothing awaits: a throw from it is an
+         * unhandled rejection, which React error boundaries do not see (they catch throws from
+         * render, from lifecycles and from `useEffect` bodies — never from a callback that runs
+         * later on the microtask queue). So the promised deployment-error screen never appeared;
+         * what appeared was a tab wedged on `resolving`, or a warm mirror that never resolved,
+         * with a rejection in the console and no boundary anywhere.
+         *
+         * Held and rethrown from the RENDER instead — the one place a boundary is watching. The
+         * `fatal` state below is written once and never cleared: there is no recovery from a
+         * bundle with no server, and a Try again over it would be the same false promise in a
+         * different shape.
          */
-        if (isApiUnconfigured(err)) throw err;
+        if (err instanceof EngineUnarmedError || isApiUnconfigured(err)) {
+          if (!cancelled) setFatal(err);
+          return;
+        }
         /**
          * EVERY OTHER THROW IS ALSO NOT AN AUTH OUTCOME, and this branch used to say it was.
          *
@@ -587,12 +604,14 @@ export function EngineProvider({
    * A FRESH SESSION CLEARS AN UNCONFIRMED CHECK — the one automatic escape from `unconfirmed`.
    *
    * `unconfirmed` is the end of the ladder, so without this it stands until somebody presses
-   * Try again. But a `204` from `POST /auth/refresh` is a server-confirmed world change, and
-   * it can arrive from somewhere this tree is not watching: the sync loop's own probe, or
-   * another tab whose refresh rotated the shared jar (the Web Locks mutex in
-   * `session-refresh.ts` serialises them). `session-truth.ts` already publishes exactly that
-   * event for exactly this shape of stuck state — the attachments seam and the message body
-   * both use it — so the confirm joins them.
+   * Try again. But a `204` from `POST /auth/refresh` is a server-confirmed world change, and it
+   * can arrive from somewhere this tree is not watching — the sync loop's own probe, a body
+   * fetch, the attachments seam. `session-truth.ts` already publishes exactly that event for
+   * exactly this shape of stuck state, so the confirm joins them.
+   *
+   * (An earlier version of this paragraph also named "another tab whose refresh rotated the
+   * shared jar". It cannot: see the same-tab note below, which is the correction rather than a
+   * caveat on it.)
    *
    * Bounded by construction: at most one revival per successful refresh, and this returns the
    * binding to its FIRST attempt rather than resuming a ladder, so a revival cannot compound
@@ -774,6 +793,17 @@ export function EngineProvider({
       wake: cloudWakeStream(),
     });
   }, [engine, live, onSyncStatus]);
+
+  /**
+   * THE ONE PLACE A BOUNDARY IS WATCHING. See the confirm's `.catch`: a throw from a detached
+   * promise callback is an unhandled rejection and reaches no error boundary, so a bundle wired
+   * to no server has to be re-thrown from a render to produce the deployment-error screen both
+   * this file and `session-outcome.ts` promise it will.
+   *
+   * After every hook, so the hook order is identical on the render that throws and the one
+   * before it. Never cleared: there is no recovery from a build with no API.
+   */
+  if (fatal !== null) throw fatal;
 
   if (binding.status === "resolving" || binding.status === "unauthenticated") {
     return <SessionScreen status={binding.status} />;
