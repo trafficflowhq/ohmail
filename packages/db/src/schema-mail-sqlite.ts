@@ -876,7 +876,7 @@ export const messages = sqliteTable("messages", {
   // sheet PREVIEWED. Every function here is IMMUTABLE, which is what makes it indexable.
   ixFromDomain: index("messages_account_from_domain_idx").on(
     t.accountId,
-    sql`substring(lower(${t.fromAddress}) from position('@' in lower(${t.fromAddress})) + 1)`,
+    sql`substr(lower(${t.fromAddress}), instr(lower(${t.fromAddress}), '@') + 1)`,
     t.id,
   ),
 }));
