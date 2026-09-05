@@ -16,7 +16,7 @@ import {
   unhuskJunkFiledBody as unhuskJunkFiledBodyTx,
   type JunkHuskIdentity, type JunkUnhuskOutcome,
 } from "../husk-restore.js";
-import { dialect } from "@trafficflow/db/dialect";
+import { dialect, type Dialect } from "@trafficflow/db/dialect";
 import { effectForDestination } from "../rules.js";
 // The Sent shape's single source — the stale-residue cleanup must never take a Sent row (its
 // export in imap-types.ts carries the watermark argument).
@@ -726,8 +726,21 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    * there — it is that the store is reached through one serialized connection, so there is no
    * second writer for a lock to exclude. The comments below say what each lock is FOR, and every
    * one of those reasons is about ordering two writers.
+   *
+   * ── WHY IT IS CARRIED AND NOT LOOKED UP EVERY TIME ────────────────────────────────────────
+   *
+   * The brand is stamped on the handle a connection factory returns. A TRANSACTION is a different
+   * object, built by the query builder, and it inherits nothing — so the repository {@link
+   * transaction} makes has no brand to read, and every construct below would throw inside a block
+   * that is exactly where the locks matter. {@link transaction} therefore hands the child its
+   * parent's dialect rather than letting it look one up, which is also the only reading that is
+   * CORRECT: a transaction cannot be on a different store from the handle that opened it.
    */
-  private get d() { return dialect(this.db); }
+  private carriedDialect: Dialect | null = null;
+
+  private get d(): Dialect {
+    return (this.carriedDialect ??= dialect(this.db));
+  }
 
   async findByDedupKey(mailboxId: string, dedupKey: string): Promise<StoredMessage | null> {
     const rows = await this.db.select().from(messages)
@@ -2056,7 +2069,12 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   async transaction<T>(fn: (repo: DrizzleRepo) => Promise<T>): Promise<T> {
-    return this.db.transaction(async (txdb) => fn(new DrizzleRepo(txdb as Db)));
+    return this.db.transaction(async (txdb) => {
+      const inner = new DrizzleRepo(txdb as Db);
+      // The transaction speaks this handle's dialect by construction — see `carriedDialect`.
+      inner.carriedDialect = this.d;
+      return fn(inner);
+    });
   }
 
   async getMailbox(mailboxId: string) {
