@@ -1,6 +1,7 @@
 import {
   CAPABILITY_REQUESTS, deriveRequestKey,
-  DEFAULT_STALE_AFTER_MS, LeaseUnavailableError, META_FOLDER, isMalformed, parseClaim, runLeaseGate,
+  DEFAULT_STALE_AFTER_MS, LeaseUnavailableError, META_FOLDER, MetaFolderTruncatedError,
+  isMalformed, parseClaim, runLeaseGate,
   type LeaseIo, type LeaseOp, type LeaseSelf, type LeaseVerdict, type OrganizerClaim,
   type TakeoverAuthorization,
 } from "@trafficflow/core/adapters/organizer-lease";
@@ -336,7 +337,27 @@ function byOf(verdict: Exclude<LeaseVerdict, { verdict: "organize" }>): Organize
 export async function releaseMailboxClaim(adapter: MailboxAdapter, installId: string): Promise<number> {
   if (!hasLeaseIo(adapter)) return 0;
   const io = adapter.leaseIo();
-  const messages = await io.listClaims();
+  /* ── A FULL FOLDER MUST NOT STOP A RELEASE, AND THE ELECTION'S RULE IS NOT THIS ONE ─────────
+   *
+   * `listClaims()` refuses a folder it could not read whole, because the GATE reads an incomplete
+   * election as "nobody holds this mailbox" and would start organizing one somebody else has. That
+   * refusal is right there and wrong here, for the reason this function's own contract already
+   * gives above: a teardown must not be abortable by bookkeeping.
+   *
+   * The question here is not "who holds this mailbox" — it is "which of these are MINE", and that
+   * is answered per-record by install id. A record this window did not cover cannot be identified,
+   * but it also cannot be ours in the case that matters: a claim we are releasing was renewed by
+   * APPENDING, so it is at the END of the folder and inside a newest-first window by construction.
+   * The error carries those records for exactly this, which is why they are required on it.
+   *
+   * Getting this wrong is not a lost claim, it is a DELAYED handover: our claim stays in the folder
+   * and the next install waits out the staleness window before it may take the mailbox — on the
+   * lapse, stop-organizing and remove-mailbox paths, which are precisely the moments a person has
+   * just said they want this install to let go. */
+  const messages = await io.listClaims().catch((err: unknown) => {
+    if (err instanceof MetaFolderTruncatedError) return [...err.records];
+    throw err;
+  });
   const ours = messages
     .map((m) => ({ ref: m.ref, claim: parseClaim(m.raw, m.ref) }))
     .filter((c) => c.claim !== null && !isMalformed(c.claim) && c.claim.installId === installId)
