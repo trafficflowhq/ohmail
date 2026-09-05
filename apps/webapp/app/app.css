@@ -3619,8 +3619,13 @@ textarea.c-input:read-only {
      rules these override) and, on the seed card, a breath under its Confirm / Not now row.
      `env(safe-area-inset-bottom)` stays: a home indicator still eats the bottom of the
      scrollport, and `env(...,0px)` resolves to 0 everywhere else. */
+  /* The stream's reservation is a `::after` spacer, not padding (`packages/ui`
+     `stream.css`) — the card's action pill is sticky against the scrollport, and bottom padding
+     would push its resting edge up by exactly that much. So the phone's value goes to the
+     variable the spacer is sized from, and the padding here stays 0. */
   .view .stream {
-    padding: 0 6px calc(48px + env(safe-area-inset-bottom, 0px));
+    padding: 0 6px 0;
+    --stream-tail: calc(48px + env(safe-area-inset-bottom, 0px));
   }
   .view .scroller {
     padding-bottom: calc(48px + env(safe-area-inset-bottom, 0px));
@@ -3686,16 +3691,23 @@ textarea.c-input:read-only {
   .view-screener .scn-read {
     display: none;
   }
+  /* THESE TWO RESERVATIONS WERE 60px FOR A CONTROL THAT IS NOT THERE. The full-screen read's
+     verbs are the decision bar, sticky at the TOP of the surface (234–253px tall at 390) — there
+     is nothing at the foot to clear, and measured with the 44px capsules the last body line ends
+     ~156px above the viewport's bottom, so the 60 cleared nothing and never had. What a scroller
+     at the bottom of a phone's viewport actually owes is the same falloff every other scroller in
+     this block reserves plus the home indicator, so it is that number now rather than a third
+     one. `.scn-read` is `position: fixed; inset: 0`, so its bottom edge really is the glass. */
   .view-screener.scn-full .scn-read {
     display: block;
     position: fixed;
     inset: 0;
     z-index: var(--z-read);
     border-radius: 0;
-    padding-bottom: 60px;
+    padding-bottom: calc(48px + env(safe-area-inset-bottom, 0px));
   }
   .scn-mails {
-    padding: 16px 18px 60px;
+    padding: 16px 18px calc(48px + env(safe-area-inset-bottom, 0px));
   }
   .search-wrap {
     padding: 0 14px;

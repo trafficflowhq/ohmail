@@ -77,6 +77,41 @@ you can press; pressing it names everyone, along with the exact date and the fol
 sits in on your server. A message addressed to one person draws no line at all — "To: you" under
 every subject in the stream is not worth the space.
 
+### The verbs stay with you while you read a long message
+
+Opening a message in Reads or Receipts expanded the card in place and put its verbs — reply,
+forward, park, resurface, move, delete — at the very bottom of it. On a long message that is a
+screen or more below where you are reading: on a phone the row sat 2 700 pixels down an 844-pixel
+window, so answering the mail you had just read meant scrolling past all of it first.
+
+The row now rests against the bottom of the reading area while the message is taller than the
+window, and settles into place at the end of the message when you reach it. It stays inside the
+card it belongs to — it never rides over the message above or below — and it does not hide itself
+when you scroll down, which is the direction you read in. There is no scrim over the text: the row
+is an opaque capsule, the same one the reading column and the reading overlay use, and the text
+passes under it as it does there.
+
+Its More menu opens upward, and stays inside the window at every width in both languages.
+
+### Small fixes on phones
+
+**Keyboard shortcuts are no longer printed on devices that have no keyboard.** The action row
+labelled its verbs with the keys that trigger them — `r` for reply, `⇧f` for forward — and those
+labels rendered on phones, naming keys the device cannot type. They are hidden where the primary
+pointer is a finger. The shortcuts themselves are unchanged, and still shown, on anything with a
+keyboard.
+
+**The notification strip clears the home indicator.** The strip that appears after an action, with
+its Undo, was placed a fixed distance from the bottom of the window. On a phone whose screen
+extends under a home indicator that distance was measured from the glass rather than from the
+usable area, which could put the strip and the action row it was spaced away from in the same
+place. Both now allow for it.
+
+**The Screener's full-screen read reserved space for nothing.** Reading a sender's mail full-screen
+on a phone left 60 pixels empty under the last line for a control that is not there — that screen's
+decision buttons are at the top. It reserves what every other scrolling list in the app reserves
+instead, and allows for the home indicator, which the old number did not.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

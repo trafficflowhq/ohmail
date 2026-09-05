@@ -1,5 +1,10 @@
-/* toast — floats at the foot of the page, carries its own undo */
-.toast{position:fixed;left:50%;bottom:72px;translate:-50% 12px;z-index:var(--z-toast);
+/* toast — floats at the foot of the page, carries its own undo.
+
+   72px clears the pinned action pill (which rests 12px off the bottom and is 41px tall, 56px on a
+   phone). It is measured from the VIEWPORT, so on a phone whose viewport reaches under the home
+   indicator it has to clear that too, or the toast and the pill it was spaced away from end up in
+   the same strip. `env(...,0px)` is 0 in a browser window and on the desktop. */
+.toast{position:fixed;left:50%;bottom:calc(72px + env(safe-area-inset-bottom,0px));translate:-50% 12px;z-index:var(--z-toast);
   background:var(--float);border-radius:var(--r-pill);box-shadow:var(--lift-2);
   padding:9px 18px;font-size:calc(12.5px + var(--type-up));color:var(--ink);opacity:0;pointer-events:none;
   transition:opacity .25s var(--swift), translate .3s var(--spring);max-width:88vw;text-align:center}

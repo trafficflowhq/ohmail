@@ -1,5 +1,15 @@
 /* reads skim stream — the newsletters themselves, clamped, on the canvas */
-.stream{min-width:0;min-height:0;overflow-y:auto;padding:2px 12px 48px;scroll-behavior:smooth}
+/* THE BOTTOM RESERVATION IS A FLOW SPACER, NOT PADDING — and that is what makes the card's pill
+   float at a fixed offset. A sticky box resolves against the scrollport's CONTENT box, so 48px of
+   bottom padding puts the pill's resting edge 48px further up than the number it was given: a bar
+   at `bottom: 12px` came to rest 60px off the scrollport's edge, 70px on a phone. Subtracting the
+   padding back out (`bottom: calc(12px - var(--stream-tail))`) works in Chromium and is a bet on
+   how an engine builds that rectangle, which is not a bet to take when the desktop app is
+   WebKitGTK. A `::after` of the same height reserves the same space in flow, leaves the content
+   box flush with the scrollport, and makes `bottom: 12px` mean 12px everywhere.
+   `--stream-tail` so the phone breakpoint can add the safe area to it without restating the rule. */
+.stream{--stream-tail:48px;min-width:0;min-height:0;overflow-y:auto;padding:2px 12px 0;scroll-behavior:smooth}
+.stream::after{content:"";display:block;height:var(--stream-tail)}
 /* One item, one line, at every width — the rule and the reason are `list-pane.css`'s
    `.list-hints`: the strip holds the `? shortcuts` affordance, and nowrap/overflow stand
    guard against anything it is ever handed after that. */
@@ -74,15 +84,36 @@
    one — that overlap crowds the text above it, so give the pill its own breathing room. */
 .scast.open .sc-x,
 .scast.short.pend .sc-x{margin-top:16px;margin-bottom:22px}
-/* THE MESSAGE'S VERBS, at the foot of the card that is being read.
+/* THE MESSAGE'S VERBS, at the foot of the card that is being read — AND THEY FLOAT WHILE IT IS
+ * TALLER THAN THE ROOM.
  *
  * The node is the reading pane's own bar, so it arrives with `.msg-actions` — which carries
- * `position:sticky;bottom:12px`, correct in a scrolling reading column and wrong here: the card
- * is not the scroller, so a sticky bar would resolve against the STREAM and float over every
- * other card as this one passed. Two classes beat one, so `.scast .sc-actions` puts it back in
- * flow without touching the pane's rule. The `container: abar / inline-size` and the pill skin
- * on `> .abar` are inherited unchanged, which is the whole point of reusing the class. */
-.scast .sc-actions{position:static;max-width:none;margin:0 22px 22px}
+ * `position:sticky;bottom:12px`. That rule was overridden to `static` here on the reasoning that
+ * a sticky bar "would resolve against the STREAM and float over every other card as this one
+ * passed". That is not how sticky works, and the cost of the mistake was the whole verb row: on a
+ * long card the reader was inside the message and its verbs were a screen or more below, out of
+ * view at every width (measured: y 2712 in an 844px window at 390, y 1648 in a 900px one at 1440).
+ *
+ * A sticky box is confined to its CONTAINING BLOCK, which is the card — it can travel within the
+ * card and can never leave it. So the bar floats while the card is taller than the scrollport and
+ * comes to rest in flow at the card's end, exactly as it does in the reading column. Only the
+ * expanded card mounts a bar, so at most one is ever floating.
+ *
+ * THE OFFSET CARRIES THE SAFE AREA, AND THE SPACER CANNOT DO IT FOR HIM. `--stream-tail` gains
+ * `env(safe-area-inset-bottom)` on phones (`app.css`), and that governs where the bar comes to
+ * rest IN FLOW at the card's end. While the card is taller than the room the bar is not in flow —
+ * it is pinned against the SCROLLPORT's bottom edge, and on a viewport that reaches under a home
+ * indicator that edge is the glass. So the inset belongs on the offset as well.
+ *
+ * Unconditionally, not inside the phone block, and the difference is a real band rather than a
+ * tidiness argument: the scroller's reservation carries the inset from 900px down, so scoping the
+ * offset to 640 would leave 641–900 — a tablet in a standalone window — resting clear of the
+ * indicator and pinning into it, which is the exact mismatch this clause exists to remove.
+ * `env(...,0px)` is 0 in every browser window and on the desktop, so nothing moves there.
+ *
+ * `max-width` and the margins stay this file's; the `container: abar / inline-size` and the pill
+ * skin on `> .abar` are inherited unchanged, which is the whole point of reusing the class. */
+.scast .sc-actions{position:sticky;bottom:calc(12px + env(safe-area-inset-bottom,0px));max-width:none;margin:0 22px 22px}
 
 /* ── the rendered-message viewer ──────────────────────────────────────────────────────
    A card whose caller supplied a `bodySlot` renders the sanitized html viewer (the one the

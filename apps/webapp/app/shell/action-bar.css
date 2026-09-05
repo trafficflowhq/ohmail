@@ -299,6 +299,29 @@
   color: inherit;
 }
 
+/* AND THEY DO NOT RENDER WHERE THERE ARE NO KEYS.
+ *
+ * `touch-keys.css` states the case in full: a hint that names an INPUT the device does not have
+ * is a claim the product cannot keep. It hides the top bar's ⌘K, the reader's "esc to return",
+ * the decision capsules' letters and the rail's Command row — and it never reached this bar, so
+ * `r` and `⇧f` were on screen at 390px on every message pill, and `⇧U` and `esc` on the
+ * selection strip.
+ *
+ * The rule lives here rather than in `touch-keys.css` for one reason: the declaration it has to
+ * beat is `.abar kbd` directly above, in this same file, so ORDER decides it and no specificity
+ * game is needed. In `touch-keys.css` it would be a rule in one chunk overriding a rule in
+ * another, which is why every selector there is deliberately over-specific.
+ *
+ * `bar-density` measures the row in the same media state the reader is in, so the admission
+ * follows the narrower row rather than fighting it — the caps come off before the widths are
+ * taken, not after. The chord itself is untouched: a phone with a keyboard attached still types
+ * it, and the `?` sheet still lists it. */
+@media (pointer: coarse) {
+  .abar kbd {
+    display: none;
+  }
+}
+
 /* ── the read control — its dot previews the OUTCOME ───────────────────────────────  */
 
 .abar-dot {
