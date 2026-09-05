@@ -137,10 +137,38 @@ export interface PlatformCostRow {
  * The port's three outcomes. The union IS the design — see the module header for why a two-armed
  * version (rows or nothing) is the shape that produces a believed margin.
  */
+/**
+ * Every way this module reports a failure — a CLOSED union, not free text.
+ *
+ * The code reaches `report.providers[].code`, an INFO log line, and the body of
+ * `GET /internal/platform-costs/run`. Three of the sites that produce one used to interpolate
+ * `Error.name`, which is a mutable property of an object a vendor's runtime can supply, so
+ * arbitrary text could ride out through all three. A transport or write failure now maps to a
+ * fixed member and the original class is dropped: what is lost is a shade of diagnosis, what is
+ * gained is that no value from outside this process is ever echoed by an operator surface.
+ */
+export type PlatformCostFailure =
+  | "unrecognised_shape"     // a body, line or bucket this parser does not recognise
+  | "non_json"               // a document response that is not JSON at all
+  | "response_too_large"     // past MAX_CHARGES_BYTES; refused rather than parsed
+  | "paging_stalled"         // `has_more` with no cursor, or a cursor already walked
+  | "paging_conflict"        // two pages disagree about one bucket
+  | "too_many_pages"         // the page budget could not finish the walk
+  | "bucket_gap"             // a day missing between pages, or at a window boundary
+  | "day_coverage_short"     // a stream that stopped before the window's days were covered
+  | "mixed_currency"         // more than one currency in one answer
+  | "missing_currency"       // a monetary record that names no currency at all
+  | "negative_total"         // credits outweighed charges; the column cannot hold it
+  | "window_not_started"     // asked about a window that has not begun
+  | "empty_response"         // a success carrying no rows
+  | "transport"              // the request never produced a status
+  | "write"                  // the database refused the rows
+  | `http_${number}`;        // a status the vendor returned
+
 export type PlatformCostFetch =
   | { rows: PlatformCostRow[] }
   | { unconfigured: true }
-  | { failed: string };
+  | { failed: PlatformCostFailure };
 
 export interface PlatformCostPort {
   fetch(provider: CostProvider, window: { start: Date; end: Date }): Promise<PlatformCostFetch>;
@@ -234,9 +262,27 @@ class Currency {
     if (this.seen === null) this.seen = c;
     else if (this.seen !== c) this.conflict = true;
   }
-  /** `null` when the response mixed currencies. Absent throughout ⇒ the column's default. */
-  resolve(): string | null {
-    return this.conflict ? null : (this.seen ?? "usd");
+  /** True when a monetary record named no currency at all — see `resolve`. */
+  private missing = false;
+  /** Call for every record that carries MONEY. A monetary record must name its currency. */
+  observeRequired(v: unknown): void {
+    if (typeof v !== "string" || v === "") { this.missing = true; return; }
+    this.observe(v);
+  }
+  /**
+   * The one currency this answer is in, or a REASON there is not one.
+   *
+   * `"mixed"` and `"missing"` are separate because they are different faults with the same
+   * consequence. Defaulting a missing currency to USD was the previous behaviour and it is the
+   * false-measurement shape again one level down: the figure would be stored and rendered as
+   * dollars on the word of a field the vendor did not send. A response with NO monetary record
+   * at all (a genuinely quiet month) never calls `observeRequired`, so it still resolves to the
+   * column's default and a real zero is still expressible.
+   */
+  resolve(): string | { failed: "mixed_currency" | "missing_currency" } {
+    if (this.conflict) return { failed: "mixed_currency" };
+    if (this.missing) return { failed: "missing_currency" };
+    return this.seen ?? "usd";
   }
 }
 
@@ -320,6 +366,9 @@ const CHARGES_BUCKET_TAIL_MS = 24 * 60 * 60 * 1000;
  */
 const CHARGES_LOOKAHEAD_MS = 24 * 60 * 60 * 1000;
 
+/** One charge period, in milliseconds — the vendor's granularity is one day. */
+const CHARGES_DAY_MS = 24 * 60 * 60 * 1000;
+
 /**
  * Build the live port.
  *
@@ -341,16 +390,17 @@ export function makePlatformCostPort(
   /** One bounded GET. Every failure — transport, status, non-JSON — is a CODE, never a throw. */
   const get = async (
     url: string, headers: Record<string, string>,
-  ): Promise<{ ok: true; body: unknown } | { ok: false; code: string }> => {
+  ): Promise<{ ok: true; body: unknown } | { ok: false; code: PlatformCostFailure }> => {
     let res: Response;
     try {
       res = await doFetch(url, { headers, signal: AbortSignal.timeout(timeoutMs) });
-    } catch (err) {
-      // The NAME only, never the message: a fetch error's message carries the URL, and this
-      // string is written to a column granted to the blind staff role.
-      return { ok: false, code: `transport:${String((err as Error)?.name ?? "unknown")}` };
+    } catch {
+      // A CLOSED MEMBER, not the error's name. The name is a mutable property of an object a
+      // vendor's runtime supplies, and this string reaches an operator surface — see
+      // {@link PlatformCostFailure}. The message was never used: it carries the URL.
+      return { ok: false, code: "transport" };
     }
-    if (!res.ok) return { ok: false, code: `http_${res.status}` };
+    if (!res.ok) return { ok: false, code: `http_${res.status}` as PlatformCostFailure };
     try {
       return { ok: true, body: await res.json() };
     } catch {
@@ -368,19 +418,19 @@ export function makePlatformCostPort(
    */
   const getLines = async (
     url: string, headers: Record<string, string>,
-  ): Promise<{ ok: true; lines: string[] } | { ok: false; code: string }> => {
+  ): Promise<{ ok: true; lines: string[] } | { ok: false; code: PlatformCostFailure }> => {
     let res: Response;
     try {
       res = await doFetch(url, { headers, signal: AbortSignal.timeout(timeoutMs) });
-    } catch (err) {
-      return { ok: false, code: `transport:${String((err as Error)?.name ?? "unknown")}` };
+    } catch {
+      return { ok: false, code: "transport" };
     }
-    if (!res.ok) return { ok: false, code: `http_${res.status}` };
+    if (!res.ok) return { ok: false, code: `http_${res.status}` as PlatformCostFailure };
     let text: string;
     try {
       text = await res.text();
-    } catch (err) {
-      return { ok: false, code: `transport:${String((err as Error)?.name ?? "unknown")}` };
+    } catch {
+      return { ok: false, code: "transport" };
     }
     // REFUSED, not truncated. See MAX_CHARGES_BYTES: a body past the ceiling is a vendor whose
     // shape changed, and half of a bill is a wrong number rather than a partial one.
@@ -423,7 +473,7 @@ export function makePlatformCostPort(
             + `&from=${window.start.toISOString()}&to=${askedTo.toISOString()}`;
           const res = await getLines(url, { authorization: `Bearer ${token}` });
           if (!res.ok) return { failed: res.code };
-          return parseVercelCharges(res.lines, window);
+          return parseVercelCharges(res.lines, window, now());
         }
         case "anthropic": {
           const key = trimmed(env.ANTHROPIC_ADMIN_API_KEY);
@@ -478,7 +528,7 @@ export function makePlatformCostPort(
             // completion here means writing seven days as a month, the exact defect this loop
             // exists to remove. Anything that is not a boolean is an answer this adapter does
             // not understand, which is `failed` and never a total.
-            if (body.has_more === false) return parseAnthropic([...buckets.values()], window);
+            if (body.has_more === false) return parseAnthropic([...buckets.values()], window, now());
             if (body.has_more !== true) return { failed: "unrecognised_shape" };
             const next = typeof body.next_page === "string" && body.next_page ? body.next_page : null;
             // `has_more` with no cursor, or a cursor already walked, is an answer this adapter
@@ -536,7 +586,7 @@ export function makePlatformCostPort(
  * replaces the same primary key and `fetched_at` moves with it.
  */
 function parseVercelCharges(
-  lines: string[], window: { start: Date; end: Date },
+  lines: string[], window: { start: Date; end: Date }, asOf: Date,
 ): PlatformCostFetch {
   const totals = new Map<string, { usd: number; quantity: number | null; unit: string | null }>();
   // Counted only for records that fall INSIDE the window. Counting every recognised record was
@@ -547,6 +597,8 @@ function parseVercelCharges(
   // in-window record does.
   let inWindow = 0;
   const currency = new Currency();
+  // The distinct charge-period starts seen inside the window, for the coverage check below.
+  const days = new Set<number>();
   // Detected on a RECORD rather than on a service's total: a credit that happens to be offset by
   // usage under the SAME service would otherwise keep a per-service breakdown, which is exactly
   // the shape that cannot represent a credit.
@@ -596,7 +648,8 @@ function parseVercelCharges(
     // at the front.
     if (from < window.start.getTime() || from >= window.end.getTime()) continue;
     inWindow += 1;
-    currency.observe(record.BillingCurrency);
+    days.add(from);
+    currency.observeRequired(record.BillingCurrency);
     if (billed < 0) credited = true;
     const acc = totals.get(service) ?? { usd: 0, quantity: null, unit: null };
     acc.usd += billed;
@@ -613,8 +666,25 @@ function parseVercelCharges(
   // nothing was spent.
   if (inWindow === 0) return { failed: "unrecognised_shape" };
 
+  // DAY COVERAGE. Refusing a MALFORMED line caught a stream that broke mid-record and nothing
+  // else: a body that stops cleanly after day fifteen of a finished month is syntactically
+  // perfect, and the replacement below would publish those fifteen days as the month. The
+  // vendor's granularity is one day, so the days it should have covered are computable — and a
+  // prefix is exactly what a partial read looks like from here.
+  const covered = [...days].sort((a, b) => a - b);
+  const lastBillable = Math.min(
+    window.end.getTime() - CHARGES_DAY_MS,
+    Math.floor(asOf.getTime() / CHARGES_DAY_MS) * CHARGES_DAY_MS,
+  );
+  // The vendor's day starts at its own billing-timezone offset, so the comparison is by whole
+  // days elapsed rather than by instant: what must hold is that the last day present is not
+  // BEFORE the last day that could already have been billed.
+  if (covered[covered.length - 1]! + CHARGES_DAY_MS <= lastBillable) {
+    return { failed: "day_coverage_short" };
+  }
+
   const resolved = currency.resolve();
-  if (resolved === null) return { failed: "mixed_currency" };
+  if (typeof resolved !== "string") return resolved;
 
   // ── A CREDIT COSTS THE BREAKDOWN, NOT THE FIGURE ────────────────────────────────────────
   //
@@ -641,7 +711,19 @@ function parseVercelCharges(
     };
   }
 
+  // ── ROUNDING ONCE, AT THE TOTAL, THEN ALLOCATING ────────────────────────────────────────
+  //
+  // Rounding each service on its own loses the invoice's cent: three separate services at
+  // $0.004 are three zero-cent rows and a provider total of nothing, where the bill says one
+  // cent. The month's total is therefore rounded ONCE and the difference handed to the largest
+  // service, so the rows always sum to the figure the board renders and no cent is invented or
+  // lost. The arithmetic runs in INTEGER TENTHS-OF-A-CENT rather than on the dollar floats:
+  // `Math.round(1.005 * 100)` is 100 because the float is really 1.00499…, which silently
+  // shortchanges a legitimate charge by a cent every time it appears.
+  const providerCents = dollarsToCents([...totals.values()].reduce((sum, t) => sum + t.usd, 0));
   const rows: PlatformCostRow[] = [];
+  let allocated = 0;
+  let largest: PlatformCostRow | null = null;
   for (const [metric, acc] of totals) {
     // A service the account has never touched contributes an exact 0 on every day in the range —
     // fifty-five of the sixty-five service names in a live response are that. Writing them would
@@ -653,13 +735,22 @@ function parseVercelCharges(
     // rows. The alternative is to stop storing a breakdown at all, which costs more than the
     // half-cent it saves.
     if (acc.usd === 0) continue;
-    rows.push({
+    const row: PlatformCostRow = {
       provider: "vercel", metric,
       periodStart: window.start, periodEnd: window.end,
       value: acc.quantity, unit: acc.unit,
       costCents: dollarsToCents(acc.usd),
       currency: resolved,
-    });
+    };
+    allocated += row.costCents;
+    if (largest === null || row.costCents > largest.costCents) largest = row;
+    rows.push(row);
+  }
+  // The residual: what rounding each service separately lost or gained against the month's own
+  // rounded total. It goes to the largest row, where it is proportionally smallest — and never
+  // below zero, because the column cannot hold that.
+  if (largest !== null && allocated !== providerCents) {
+    largest.costCents = Math.max(0, largest.costCents + (providerCents - allocated));
   }
 
   // In-window records, and every one of them zero: a real month in which nothing was charged.
@@ -690,7 +781,7 @@ function parseVercelCharges(
  * — and a value that does not parse is skipped rather than treated as zero.
  */
 function parseAnthropic(
-  buckets: unknown[], window: { start: Date; end: Date },
+  buckets: unknown[], window: { start: Date; end: Date }, asOf: Date,
 ): PlatformCostFetch {
   // CENTS — see `centsFromAnthropic` for why this is not dollars, and what it cost to find out.
   // Summed at full precision and rounded ONCE at the end, because the vendor reports fractional
@@ -726,7 +817,7 @@ function parseAnthropic(
       // for, so the report is refused rather than summed around.
       if (amount === null || !Number.isFinite(amount)) return { failed: "unrecognised_shape" };
       cents += centsFromAnthropic(amount);
-      currency.observe(r?.currency);
+      currency.observeRequired(r?.currency);
     }
   }
 
@@ -735,18 +826,34 @@ function parseAnthropic(
   // could not use means nothing was spent.
   if (starts.length === 0) return { failed: "unrecognised_shape" };
 
-  // CONTINUITY. Quiet days are represented by explicit EMPTY buckets — a live August report
-  // carries two — so a day that is simply ABSENT is data this walk did not receive, not a day
-  // that cost nothing. Pages that between them skip a day would otherwise finish with
-  // `has_more: false` and publish a month short by that day, which is exactly the shape of a
-  // wrong total that looks complete.
+  // CONTINUITY, AT BOTH ENDS AS WELL AS IN THE MIDDLE. Quiet days are represented by explicit
+  // EMPTY buckets — a live August report carries two — so a day that is simply ABSENT is data
+  // this walk did not receive, not a day that cost nothing.
+  //
+  // Stepping the returned starts catches an INTERIOR omission and nothing else, which was the
+  // hole: a report that answered days 2–30, or 1–15 of a month that has ended, is internally
+  // consecutive and passes. So the run is also required to REACH THE WINDOW'S OWN EDGES —
+  // the first expected day, and the last day that can already have been billed.
   starts.sort((a, b) => a - b);
   for (let i = 1; i < starts.length; i += 1) {
     if (starts[i]! - starts[i - 1]! !== ANTHROPIC_BUCKET_MS) return { failed: "bucket_gap" };
   }
+  if (starts[0]! !== window.start.getTime()) return { failed: "bucket_gap" };
+  // The last day the vendor can be REQUIRED to have reported: the last day that has fully
+  // CLOSED, or the window's own last day for a month that has ended — whichever is earlier.
+  //
+  // Yesterday rather than today, measured: a report asked on 4 September returned buckets for
+  // the 1st, 2nd and 3rd and none for the 4th. Requiring today's partial bucket would refuse
+  // every open month for the hours before the vendor writes it, which is a false `bucket_gap` on
+  // a healthy provider — and this check must only ever fire on data that is genuinely missing.
+  const lastExpected = Math.min(
+    window.end.getTime() - ANTHROPIC_BUCKET_MS,
+    Math.floor(asOf.getTime() / ANTHROPIC_BUCKET_MS) * ANTHROPIC_BUCKET_MS - ANTHROPIC_BUCKET_MS,
+  );
+  if (starts[starts.length - 1]! < lastExpected) return { failed: "bucket_gap" };
 
   const resolved = currency.resolve();
-  if (resolved === null) return { failed: "mixed_currency" };
+  if (typeof resolved !== "string") return resolved;
   // THE SIGN IS TESTED BEFORE THE ROUNDING, and the ordering is the guard rather than a detail:
   // `Math.round(-0.4)` is NEGATIVE ZERO and `-0 < 0` is false, so a small credit balance rounded
   // first slips past the refusal below and is written as a measured $0.00 — the false zero this
@@ -775,8 +882,8 @@ export interface PlatformCostPassReport {
     provider: CostProvider;
     outcome: "written" | "unconfigured" | "failed";
     rows: number;
-    /** A closed code on `failed` (`http_401`, `transport:TimeoutError`, `unrecognised_shape`). */
-    code?: string;
+    /** A closed code on `failed` — see {@link PlatformCostFailure}. Never a vendor's own text. */
+    code?: PlatformCostFailure;
   }>;
 }
 
@@ -820,7 +927,7 @@ export async function runPlatformCostPass(
     } catch (err) {
       // A port that THROWS is a port that failed; the union exists so it does not have to, and
       // this is the belt to that. The class only — never the message.
-      result = { failed: `threw:${String((err as Error)?.name ?? "unknown")}` };
+      result = { failed: "transport" };
     }
 
     if ("unconfigured" in result) {
@@ -873,6 +980,16 @@ export async function runPlatformCostPass(
       // provider — a half-written month presented as an unwritten one, which is the worst of
       // both readings. All of it lands or none of it does.
       await tx.transaction(async (t) => {
+        // ONE WRITER PER (PROVIDER, WINDOW), serialized by the database rather than by hoping.
+        // Two passes overlapping — a manual trigger beside the clock, or two replicas — could
+        // both run their DELETE before either INSERT landed, after which one pass's per-service
+        // rows and the other's net row both survive (different primary keys) and the month read
+        // SUMS them into a doubled total wearing a fresh timestamp. A transaction-scoped
+        // advisory lock makes the second pass wait for the first to commit, so the replacement
+        // is atomic against other replacements and not merely against readers. It is released
+        // with the transaction, so a crash cannot strand it.
+        await t.execute(sql`select pg_advisory_xact_lock(
+          hashtext(${`platform_costs:${provider}:${start.toISOString()}`}))`);
         await t.delete(platformCosts).where(and(
           eq(platformCosts.provider, provider),
           eq(platformCosts.periodStart, start),
@@ -914,7 +1031,7 @@ export async function runPlatformCostPass(
     } catch (err) {
       report.providers.push({
         provider, outcome: "failed", rows: 0,
-        code: `write:${String((err as Error)?.name ?? "unknown")}`,
+        code: "write",
       });
     }
   }
@@ -949,14 +1066,21 @@ export const CLOSED_MONTH_GRACE_MS = 2 * 24 * 60 * 60 * 1000;
 function passWindows(at: Date): Array<{ start: Date; end: Date }> {
   const start = new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), 1));
   const end = new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth() + 1, 1));
-  const windows = [{ start, end }];
+  // THE CLOSED MONTH GOES FIRST, and this reverses what stood here. The open month was asked
+  // first on the reasoning that it is what the board projects from — but the open month is asked
+  // again in six hours and the closed one has only these two days to be finished in. Both
+  // providers' open-month requests can spend the whole 60-second invocation between them (each
+  // GET may take 15 s and the cost report may page), so ordering the settling month last is
+  // ordering it to be dropped: the pass would report success, the closed month would keep its
+  // part-accrued total, and the grace window would expire with nothing having re-read it.
+  // Whichever half is cut short, the one that can still recover is the open month.
   if (at.getTime() - start.getTime() < CLOSED_MONTH_GRACE_MS) {
-    windows.push({
-      start: new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth() - 1, 1)),
-      end: start,
-    });
+    return [
+      { start: new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth() - 1, 1)), end: start },
+      { start, end },
+    ];
   }
-  return windows;
+  return [{ start, end }];
 }
 
 /** A note shorter than this is refused — the migration's CHECK, in the service. */
