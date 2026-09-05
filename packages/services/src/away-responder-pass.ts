@@ -434,6 +434,14 @@ async function answerForAccount(
 
   for (const [mailboxId, group] of byMailbox) {
     if (result.sent >= budget) { result.capped = true; return; }
+    /* ── THE CALLER'S STOP, PER MAILBOX ─────────────────────────────────────────────────────
+     *
+     * The check at the top of `runAwayResponderPass` sees the pass ONCE, and the desktop hands
+     * this pass a single account — so on the door that needs it most, that outer check fires
+     * before any work and never again. Everything that could go wrong during a pass therefore
+     * went unseen: the socket dies, a re-dial re-reads the lease, a stranger's claim is found,
+     * and this loop is still holding candidates it selected under the old answer. */
+    if (deps.cancelled?.()) { result.capped = true; return; }
 
     /* THE TRANSPORT, OPENED AT MOST ONCE PER MAILBOX AND ONLY ON DEMAND. `null` once a factory has
        thrown, so a broken mailbox costs ONE failed dial per run rather than one per candidate. */
@@ -460,6 +468,12 @@ async function answerForAccount(
     try {
       for (const candidate of group) {
         if (result.sent >= budget) { result.capped = true; return; }
+        /* AND PER CANDIDATE, which is the one that actually bounds the damage. A mailbox's group
+           can hold many correspondents, and each `answerOne` is a DELIVERY: without this, a
+           hand-over discovered after the first reply still let the rest of the group go out in
+           the user's name from an install that no longer organizes the mailbox. Beside the
+           budget check because it answers the same question — may this pass send one more? */
+        if (deps.cancelled?.()) { result.capped = true; return; }
         await answerOne(
           db, responder, candidate, ownAddresses, textHash, transport, result, now, log,
         );

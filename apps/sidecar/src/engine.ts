@@ -2284,6 +2284,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           }
           return before.length > 0;
         });
+        /* THE CREDENTIAL IS GONE, so a refusal recorded against the old one is stale evidence.
+           This path does NOT detach the runtime, which is why the flag needs clearing here rather
+           than by construction — see `signInRefused`. */
+        clearSignInRefusal("the stored password was forgotten");
         log("stored_login_cleared", {
           mailboxId: mb.id,
           state: had ? "removed" : "absent",
@@ -2582,12 +2586,37 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * throttle and some answer by locking the account — the app turning a wrong password into
        * a lost mailbox. So this suspends the automatic re-dial entirely.
        *
-       * Cleared by construction rather than by a setter: every path that changes a credential —
-       * `PATCH /local/mailboxes/:id`, forgetting the stored login — DETACHES this runtime and
-       * attaches a fresh one, so a new password gets a new runtime with this flag unset. That is
-       * the same guarantee the immutable-credential rule above `imapConfig` already relies on.
+       * ── HOW IT CLEARS, STATED ACCURATELY ────────────────────────────────────────────────
+       *
+       * This comment used to say that EVERY credential path detaches the runtime and attaches a
+       * fresh one, so the flag could never outlive a password change. That is true of
+       * `PATCH /local/mailboxes/:id` for a NON-SEED mailbox and false of the other two: the seal
+       * route deliberately excludes the seed (a seed reconfiguration replaces the engine, so the
+       * next launch was seconds away), and `forgetStoredLogin` never detaches at all. On those
+       * paths a refused sign-in would have survived the very act that fixes it, and the mailbox
+       * would sit there refusing to dial until the app was quit.
+       *
+       * So the flag is cleared EXPLICITLY by {@link clearSignInRefusal}, which those paths call,
+       * and the comment now describes the code rather than the code's intention.
        */
       let signInRefused = false;
+      /**
+       * A CREDENTIAL CHANGED, so the refusal is no longer evidence about anything.
+       *
+       * The next poll dials again on its own; nothing here needs to force one. Also resets the
+       * backoff, because a new password is a new question and it should be asked promptly rather
+       * than at the end of whatever wait the old one had earned.
+       */
+      const clearSignInRefusal = (why: string): void => {
+        if (!signInRefused && redialAttempts === 0) return;
+        signInRefused = false;
+        redialAttempts = 0;
+        redialNotBefore = 0;
+        log("mailbox_sign_in_retry_armed", {
+          mailboxId: mb.id,
+          reason: `${why}; the stored refusal is discarded and the next poll dials again`,
+        });
+      };
       /** Backoff for the failures that MAY pass. Attempts since the last successful dial. */
       let redialAttempts = 0;
       /** Wall-clock instant before which no re-dial is attempted. */
@@ -4603,7 +4632,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              itself resolves its adapter through the same getter, so the check is what stands
              between it and a replaced connection. */
           assertSameConnection(gen, conn);
-          if (organizing) await profileSync.onOrganize();
+          if (organizing) await profileSync.onOrganize(conn);
           return cycles;
         });
 
@@ -4713,12 +4742,17 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         /* STOPPED WHILE WE DIALLED. `connect()` is the longest await in this sequence and
            `detach()` can complete inside it, so the gate below — which APPENDS a claim to the
            user's mailbox — must not be reached by a runtime that has been told it is finished. */
-        if (stopped) {
-          await adapter.close().catch(() => { /* already going away */ });
-          return { leaseRead: false };
-        }
+        /* CAPTURED FIRST, BEFORE THE STOPPED CHECK — and the order is the point rather than
+           tidiness. This close exists to release the login THIS sequence just opened, so it must
+           name that connection and not the binding, which a re-dial can move. Capturing after the
+           check left one `adapter.close()` inside the gated region, which is the receiver-position
+           shape the census now refuses. */
         const gen = generation;
         const conn = adapter;
+        if (stopped) {
+          await conn.close().catch(() => { /* already going away */ });
+          return { leaseRead: false };
+        }
         // ── EVERYTHING BELOW RUNS ON AN AUTHENTICATED SOCKET, SO IT IS WRAPPED ──────────────
         //
         // `connect()` LOGS IN and then LISTs, and `apps/sidecar/src/main.ts` answers a rejected
@@ -4872,7 +4906,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // in a mailbox Cloud is organizing is a write this install has no business making"*. It
           // was gated by the `return` that has just gone, so it needs its own gate now.
           if (permitted) {
-            await adapter.ensureFolders();
+            /* THE CONNECTION THIS DIAL ESTABLISHED, not the binding. `dialAndGate` captures
+               `conn` immediately after `connect()`, and every `await` between there and here —
+               the lease read most of all — is a window in which a re-dial can move the binding.
+               Creating somebody else's `ohmail/*` tree through a connection this sequence never
+               gated is the defect the cycles were fixed for, on the launch path. */
+            assertSameConnection(gen, conn);
+            await conn.ensureFolders();
             // See {@link foldersEnsured}: the poll's own call must not repeat what this just did.
             foldersEnsured = true;
           }
@@ -4888,10 +4928,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // A READER RUNS THIS TOO, deliberately. It is one LIST and a write to this install's own
           // row — no mailbox write of any kind — and the knowledge is what makes a promotion take
           // effect on the next poll rather than on the next launch.
-          if (typeof adapter.findSpecialFolders === "function"
+          if (typeof conn.findSpecialFolders === "function"
             && typeof repo.setMailboxSpecialFolders === "function") {
             try {
-              const found = await adapter.findSpecialFolders();
+              const found = await conn.findSpecialFolders();
               await repo.setMailboxSpecialFolders(mb.id, {
                 junkFolder: found.junk, trashFolder: found.trash,
               });
@@ -4905,7 +4945,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         } catch (err) {
           // The ORIGINAL error, rethrown — `main.ts` decides what a failed launch means, and it
           // must not be told the connection failed to close when what failed was the drain.
-          await adapter.close().catch(() => { /* the connection is already broken */ });
+          /* `conn` AND NOT `adapter`, the same late-binding fault `noteConnectionDead` documents:
+             this line exists to release the login THIS sequence opened, and after a re-dial the
+             binding is a different, healthy connection — closing that one would retire the
+             replacement on the way out of a failure that had nothing to do with it. */
+          await conn.close().catch(() => { /* the connection is already broken */ });
           throw err;
         }
       };
@@ -5145,6 +5189,15 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // away. Deliberately BEFORE `connect()`: an empty password is a login attempt the
           // server will refuse, and a refused login on some providers counts toward a lockout.
           if (login.state !== "ready" || !login.pass) return;
+          /* THE LAUNCH DIAL JOINS THE SAME WAIT `detach()` HONOURS.
+           *
+           * `detach()` awaited `tail` and the re-dial handle, but not this — so a removal landing
+           * during a LAUNCH could close the adapter while `dialAndGate` was still inside it, and
+           * the stand-down that arm now performs (releasing the claim the gate just renewed) would
+           * be cut off by detach's own close. Re-dial and launch run the identical sequence; they
+           * should be waited for identically. */
+          let settleStart: () => void = () => {};
+          redialInFlight = new Promise<void>((resolve) => { settleStart = resolve; });
           try {
             await dialAndGate();
           } catch (err) {
@@ -5177,6 +5230,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             }
             schedule();
             throw err;
+          } finally {
+            settleStart();
           }
           // ARMED HERE and not inside the sequence above. `schedule()` returns at `stopped`,
           // which is the mailbox-was-removed arm's exit and the one path that must not poll.

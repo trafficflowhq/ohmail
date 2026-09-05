@@ -702,18 +702,34 @@ export class OrganizerProfileSync {
    * The write-behind tick. Called ONLY from a cycle the lease gate admitted; never throws —
    * a profile fault must not count against a mailbox whose provider did nothing wrong.
    */
-  async onOrganize(): Promise<void> {
+  /**
+   * @param pinned the connection the CALLER read its organizer lease on, when it has one.
+   *
+   * The desktop supplies it and the hosted worker does not, and that difference is not stylistic.
+   * On the desktop a re-dial can replace the connection under a pass that is already running, and
+   * `deps.adapter` is a live getter — so publishing through it means publishing through whatever
+   * connection is current when the line runs, which may be one this pass never gated.
+   *
+   * Handing the connection in makes the pin EXPLICIT rather than an accident of statement order.
+   * The capture below happened to sit above every `await` in this method, so it read the right
+   * adapter for a reason no comment stated and one added `await` anywhere above it would have
+   * silently undone — with every test still green, because the capture is synchronous today.
+   */
+  async onOrganize(pinned?: MailboxAdapter): Promise<void> {
     const { deps } = this;
     const log = deps.log ?? ((): void => undefined);
     if (this.inFlight) return;
-    if (!hasProfileIo(deps.adapter)) return;
+    const adapter = pinned ?? deps.adapter;
+    if (!hasProfileIo(adapter)) return;
     const now = (deps.now ?? ((): Date => new Date()))();
     const interval = deps.flushIntervalMs ?? DEFAULT_PROFILE_FLUSH_INTERVAL_MS;
     if (this.seeded && now.getTime() - this.lastAttemptAt < interval) return;
     this.inFlight = true;
     try {
       this.lastAttemptAt = now.getTime();
-      const io = deps.adapter.profileIo({ installId: deps.self.installId, mailboxId: deps.mailboxId });
+      /* THE PINNED CONNECTION, not the live getter — see the parameter. Correct wherever this
+         line moves to, and no longer dependent on nothing awaiting above it. */
+      const io = adapter.profileIo({ installId: deps.self.installId, mailboxId: deps.mailboxId });
       const payload = await serializeOrganizerProfile(deps.db, deps.accountId);
       const fp = profileFingerprint(payload);
 
