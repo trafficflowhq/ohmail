@@ -844,28 +844,35 @@ export function makeProfileIo(
               if (typeof m.size === "number") sizes.set(m.uid, m.size);
             }
           }
-          /* Newest first while choosing, so the document that matters is the one kept — then the
-           * result is put back in folder order, which is what every caller reads. */
+          /* ── A REPORTED SIZE ORDERS THE WORK; IT NEVER DECIDES A REFUSAL ────────────────────
+           *
+           * The prefilter used to add reported sizes up and refuse a COMPLETE scan when the total
+           * crossed the budget — before a single byte had been fetched. That hands the decision to
+           * the server: one answering `RFC822.SIZE` in gigabytes for records that are actually
+           * tiny makes a perfectly readable folder refuse, and a settings write that refuses is a
+           * person's rules not applying. The same number was already established as untrusted in
+           * the other direction, where a server under-reports to get an oversized message through;
+           * it cannot be authority for one direction and a lie in the other.
+           *
+           * Sizes are a HINT now, and the only thing they are allowed to affect is ORDER — cheap
+           * records first, so the budget buys as many real documents as it can before it runs out.
+           * Every refusal below is decided by bytes that actually arrived, through the ranged
+           * fetch. The COUNT ceiling stays here because a count is this module's own arithmetic
+           * over records it asked for, not a number the server volunteered about their size. */
           const chosen: number[] = [];
-          let bytes = 0;
           for (const uid of [...capped].reverse()) {
-            const size = sizes.get(uid) ?? 0;
-            if (chosen.length >= PROFILE_MESSAGES_MAX_PER_FETCH || bytes + size > maxBytes) {
+            if (chosen.length >= PROFILE_MESSAGES_MAX_PER_FETCH) {
               if (complete) {
                 throw new ProfileUnavailableError(
                   `the settings in ${META_FOLDER} could not be read completely: the folder holds `
-                  + `more than ${PROFILE_MESSAGES_MAX_PER_FETCH} settings records or ${maxBytes} `
-                  + "bytes of them, and a write must see every one before it may replace any",
+                  + `more than ${PROFILE_MESSAGES_MAX_PER_FETCH} settings records, and a write must `
+                  + "see every one before it may replace any",
                   { op: "list_profiles" },
                 );
               }
-              /* The newest record is kept even when it alone is over the ceiling: a document too
-               * large to read is the PARSER's refusal to make, and returning nothing for it is the
-               * "no settings published" lie by another route. */
-              if (chosen.length > 0) break;
+              break;
             }
             chosen.push(uid);
-            bytes += size;
           }
           const order = chosen.slice().reverse();
           const win: Array<{ rec: RawProfileMessage; size: number }> = [];
@@ -899,11 +906,19 @@ export function makeProfileIo(
             oversized += 1;
               continue;
             }
+            /* ── EVERY BYTE THAT ARRIVED IS CHARGED, WHETHER IT IS KEPT OR THROWN AWAY ─────
+             *
+             * The budget used to move only for records that turned out to BE settings. A record
+             * that is not one still crossed the connection, still cost the memory to hold while it
+             * was examined, and then left the budget untouched — so a folder of near-misses could
+             * be walked for ever at nearly the full budget apiece. What the ceiling is defending
+             * is the transfer, and a byte spent on a message that turns out to be a newsletter is
+             * spent exactly the same as one spent on a document. */
+            const size = got.source.byteLength;
+            held += size;
             const raw = got.source.toString("utf8");
             if (!looksLikeProfile(raw)) continue;
-            const size = got.source.byteLength;
             win.push({ rec: { ref: got.uid, raw }, size });
-            held += size;
             while (win.length > PROFILE_MESSAGES_MAX_PER_FETCH) {
               if (complete) {
                 throw new ProfileUnavailableError(
@@ -946,13 +961,22 @@ export function makeProfileIo(
            * through the one bounded function, charging the budget after every reply. Slower than
            * one command, and this is the path that runs when the server cannot answer the cheap
            * question — correctness first, and it is the fallback rather than the common case. */
-          const addrs: Array<{ uid: number; seq: number }> = [];
+          /* ── ADDRESSED BY UID, NEVER BY SEQUENCE NUMBER ────────────────────────────────────
+           *
+           * The first pass takes a sequence RANGE, which is the only way to say "the newest so
+           * many" — but what it collects are UIDs, and the second pass asks for those. Sequence
+           * numbers are positions in the folder as it stood when the range was answered, and an
+           * expunge on another connection renumbers every one above it downward without touching
+           * UIDVALIDITY. Walking them one at a time means each later fetch can land on a different
+           * message than the one enumerated: a document silently skipped, a stranger's message
+           * read in its place, and no error anywhere. UIDs do not move. */
+          const addrs: number[] = [];
           for await (const m of client.fetch(`${start}:*`, { uid: true }, { uid: false })) {
-            addrs.push({ uid: m.uid, seq: m.seq ?? 0 });
+            addrs.push(m.uid);
           }
-          for (const at of addrs) {
+          for (const uid of addrs) {
             seen++;
-            const got = await fetchSourceBounded(String(at.seq || at.uid), false, maxBytes - bytes);
+            const got = await fetchSourceBounded(String(uid), true, maxBytes - bytes);
             if (got === null) continue;
             if (got === "over") {
               if (complete) {
@@ -965,11 +989,12 @@ export function makeProfileIo(
               }
               continue;
             }
+            // Charged whether kept or discarded — see the note on the search path.
+            const size = got.source.byteLength;
+            bytes += size;
             const raw = got.source.toString("utf8");
             if (!looksLikeProfile(raw)) continue;
-            const size = got.source.byteLength;
             win.push({ rec: { ref: got.uid, raw }, size });
-            bytes += size;
             while (
               win.length > PROFILE_MESSAGES_MAX_PER_FETCH
               // `win.length > 1` keeps the newest record even when it ALONE is over the ceiling, so

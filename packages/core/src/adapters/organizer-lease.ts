@@ -1937,7 +1937,12 @@ export interface LeaseImapClient extends MetaFolderClient {
    * is a client-library convenience rather than a command: a fake that omits it must behave
    * exactly as before, so absence means "unknown", never "empty".
    */
-  readonly mailbox?: { exists?: number; uidValidity?: number | bigint } | false;
+  /**
+   * `uidNext` is the top of the uid space, and it is what a descending windowed SEARCH walks down
+   * from — see {@link searchDescending}. Optional like the rest: a connection that cannot say has
+   * no way to window, and falls back to one unbounded search.
+   */
+  readonly mailbox?: { exists?: number; uidValidity?: number | bigint; uidNext?: number } | false;
   /**
    * A NOOP, which is how a long-lived connection LEARNS what changed under it.
    *
@@ -1961,7 +1966,12 @@ export interface LeaseImapClient extends MetaFolderClient {
    * without reading the folder.
    */
   search?(
-    query: { header?: Record<string, string | boolean>; before?: Date },
+    /**
+     * `uid` is a UID SEQUENCE criterion (`UID <lo>:<hi>`), which is how the search is bounded to a
+     * window rather than asked about the whole folder. imapflow compiles it in
+     * `lib/search-compiler.js` under `case 'UID'`, read there rather than assumed.
+     */
+    query: { header?: Record<string, string | boolean>; before?: Date; uid?: string },
     options?: { uid?: boolean },
   ): Promise<number[] | false | undefined>;
   mailboxCreate(path: string): Promise<unknown>;
@@ -2461,6 +2471,19 @@ const SEARCH_UIDS_MAX = 501;
 const SEARCH_FETCH_BATCH = 100;
 
 /**
+ * How wide one descending UID window is. A window can name at most this many uids, so it bounds
+ * the SEARCH reply the way {@link SEARCH_FETCH_BATCH} bounds the FETCH command.
+ */
+const SEARCH_UID_WINDOW = 500;
+
+/**
+ * How many windows one search may walk before it gives up and reports that it could not ask.
+ * Bounds the ROUND TRIPS the way the window bounds the reply: a sparse uid space would otherwise
+ * page for ever looking for a handful of records.
+ */
+const SEARCH_WINDOW_BUDGET = 20;
+
+/**
  * How many uids one EXPUNGE of the ack sweep carries. Two hundred, for the same reason the fetch
  * batch is a hundred: the command line stays a fixed size whatever the folder did, and a refusal
  * costs one batch rather than the whole compaction.
@@ -2497,14 +2520,83 @@ export function ackSweepCutoff(before: Date): Date {
  */
 const OWN_RECORDS_MAX = 5_000;
 
+/**
+ * ── THE SEARCH ITSELF IS BOUNDED, NOT ONLY WHAT IS DONE WITH ITS ANSWER ───────────────────────
+ *
+ * Capping the uid list after it arrives bounds the FETCH and nothing else: the reply to a bare
+ * `UID SEARCH` is however many uids the server chooses to name, materialised in this process
+ * before a single line of ours runs. A folder nobody can be stopped from appending to is exactly
+ * where that matters, and "we then ignore most of them" is not a defence against having received
+ * them.
+ *
+ * So the folder is searched in DESCENDING UID WINDOWS — `UID SEARCH <criteria> UID <lo>:<hi>` —
+ * each of which can name at most one uid per number in the window, so each reply is bounded by
+ * construction. Descending because every caller here wants the NEWEST records and stops once it
+ * has enough: a live claim, a settings document, the acknowledgements at the end of the folder.
+ *
+ * TWO THINGS THIS COSTS, both stated rather than hidden:
+ *
+ *   · round trips. A folder whose uids are sparse — a long-lived mailbox that has expunged most
+ *     of what it ever held — needs several windows to find a handful of records. That is why the
+ *     walk has a WINDOW BUDGET and gives up rather than paging for ever: exhausting it returns
+ *     `null`, which every caller already treats as "could not ask" and refuses on. Slower and
+ *     honest beats unbounded.
+ *   · a starting point. The walk needs the top of the uid space, which is `uidNext`. Where the
+ *     connection cannot say, there is no way to window at all and the single unbounded search is
+ *     what remains — the behaviour this module had before, kept deliberately rather than failing
+ *     a connection that simply cannot answer the question.
+ */
+async function searchDescending(
+  client: Pick<LeaseImapClient, "search" | "mailbox" | "status">,
+  query: { header: Record<string, string | boolean>; before?: Date },
+  max: number,
+): Promise<number[] | null> {
+  if (typeof client.search !== "function") return null;
+
+  const selected = client.mailbox;
+  const top = typeof selected === "object" && selected !== null && typeof selected.uidNext === "number"
+    ? selected.uidNext - 1
+    : null;
+
+  /* ONE CALL SITE, and the census in `organizer-lease-meta-window.test.ts` counts on it: two ways
+   * of asking this server about this folder, no more. The windowed walk and the unbounded fallback
+   * are the same question with and without a `UID` term, so they issue from one site rather than
+   * two — a second would read as a third way of asking.
+   *
+   * The census matches source TEXT, so spelling the call pattern out in a comment counts as a use
+   * of it. That is not a flaw in the census: it is why it can be trusted to notice a real one. */
+  const out: number[] = [];
+  let hi = top !== null && top >= 1 ? top : null;
+  const budget = hi === null ? 1 : SEARCH_WINDOW_BUDGET;
+
+  for (let window = 0; window < budget; window++) {
+    const lo = hi === null ? null : Math.max(1, hi - SEARCH_UID_WINDOW + 1);
+    const found = await client.search(
+      lo === null || hi === null ? query : { ...query, uid: `${lo}:${hi}` },
+      { uid: true },
+    );
+    if (!Array.isArray(found)) return null;
+    out.push(...found);
+    // No uid ceiling to walk down from: this was the one unbounded pass, and it is the answer.
+    if (lo === null || hi === null) return out;
+    if (lo === 1) return out;          // the whole folder has been covered
+    if (out.length > max) return out;  // enough in hand, and the caller's ceiling decides the rest
+    hi = lo - 1;
+  }
+  /* The budget ran out with folder still unexamined. That is not an answer, and reporting it as
+   * one would be the "could not look" / "there are none" confusion this module refuses everywhere
+   * else. */
+  return null;
+}
+
 async function searchHeaders(
   client: Pick<LeaseImapClient, "search" | "fetch">,
   query: { header: Record<string, string | boolean>; before?: Date },
   opts?: { max?: number; refuseWhenOver?: boolean },
 ): Promise<RawClaimMessage[] | null> {
   if (typeof client.search !== "function") return null;
-  const found = await client.search(query, { uid: true });
-  if (!Array.isArray(found)) return null;
+  const found = await searchDescending(client, query, opts?.max ?? SEARCH_UIDS_MAX);
+  if (found === null) return null;
   if (found.length === 0) return [];
   /* ── THE REPLY IS BOUNDED BEFORE IT IS SPENT, NOT AFTER ────────────────────────────────────
    *

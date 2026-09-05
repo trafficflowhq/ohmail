@@ -364,8 +364,14 @@ export async function applyMetaRequests(
       log("meta_requests_paged", {
         mailboxId: rt.mailboxId, accountId: rt.accountId,
         page: err.records.length, records: recordsPresentIn(err),
-        reason: "ohmail/_meta holds more than one read may take, so this cycle drains the newest "
-          + "page and expunges what it settles; the folder is smaller for the next one",
+        /* The same two speeds the block comment above sets out, and this line said only the
+         * fast one — it claimed the folder is smaller for the next cycle, which is what settling
+         * a request does NOT do: the acknowledgement written in its place holds the count. The
+         * correction belongs here as much as in the comment, because this is the sentence an
+         * operator actually reads. */
+        reason: "ohmail/_meta holds more than one read may take, so this cycle settles the newest "
+          + "page: those decisions stop waiting now, and the record count comes back under the "
+          + "ceiling once the acknowledgements written in their place age past the sweep's cutoff",
       });
       records = [...err.records];
     } else {
