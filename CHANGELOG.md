@@ -94,6 +94,41 @@ rather than as another line of small grey text above the pile descriptions. Noth
 appears — it is a standing fact about your mail, and it stays until you turn the responder off — so
 it is tinted rather than alarming. Its sentence also reads correctly in English for every
 combination of audience and rate; one of them did not agree with its subject.
+### Changes that could not be saved now say so
+
+A change you make offline is written to this device's storage and retried until it lands. Until
+now that retrying had no end: a change the server would refuse every time was retried for ever,
+across restarts, holding the optimistic result on screen and never mentioning it.
+
+The queue now stops after a bounded number of failures the server actually answered, and both the
+desktop app and the phone show what it gave up on — what was being done, the server's own reason
+where there is a usable one, and a choice between trying again and discarding it. Trying again
+reuses the original request key, so an attempt that succeeded and only lost its reply is not sent a
+second time. The outcome of that attempt is written onto the entry itself, so a refusal is still
+there tomorrow and after a restart — not only in the moment it arrived, on the screen that
+happened to be open.
+
+If this device's storage refuses the write, a message is not sent and the composer says so: the
+request key that stops a retry from delivering twice lives in the record that just failed to be
+written, and sending without one risks a second copy nobody can take back. Any other change is
+still sent at once, but would not survive a restart until storage recovers — repeating it costs
+nothing, so refusing it would cost you the action to protect you from nothing.
+
+One caveat remains, stated because a release note that leaves it out would read as a stronger
+promise than the code makes: two of the four routes to the network — a change you make right now,
+and the batch replayed when the app wakes — still run outside the single lane the retries use.
+
+Two failures deliberately do not count toward that limit. A dropped connection or a timed-out
+request never does, so a machine that is simply offline keeps retrying for as long as it takes;
+neither does a server that refuses and says when to come back. Without those exceptions a long
+outage would have discarded every pending change at once, which is worse than the problem being
+fixed.
+
+The drafted-reply button also stops repeating the server's message when that message is the generic
+one an unhandled fault produces. Real refusals — no actions left on the account, a message that
+cannot be drafted against, no drafter configured — are still shown word for word.
+
+
 ### A malformed address in a request is answered, not swallowed
 
 Every address in this app's API — the identifier in `/drafts/<id>`, `/messages/<id>`, and about
