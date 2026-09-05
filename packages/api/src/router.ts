@@ -135,6 +135,23 @@ export interface RouteOptions {
   /** SSE / oauth-redirect: reduced pipeline — no JSON envelope, no CSRF, no idempotency. */
   raw?: boolean;
   /**
+   * **THIS ROUTE ANSWERS FOR THE CREDENTIAL IT RESOLVED, NOT FOR THE SESSION THAT CARRIED THE
+   * REQUEST.** The sign-in and token routes: `/auth/login`, `/auth/refresh`,
+   * `/auth/verify-email`, `/auth/desktop-claim`, `/oauth/token`.
+   *
+   * All five are `public`, so `withSession` resolves whatever credential is ambient — and then
+   * the handler resolves a SECOND one out of the body, which is the one the response is about.
+   * A browser refreshing an expired token has no session at all and the response still belongs to
+   * an account; a caller holding a live session presents a credential that must belong to the
+   * same account or be refused (`refuseCrossAccountCredential`).
+   *
+   * The flag changes only where {@link ACCOUNT_HEADER} takes its value: `deps.credentialAccount`
+   * instead of `deps.session`. It grants nothing and gates nothing, so a route that carries it
+   * wrongly cannot become more permissive — it can only stop naming an account, which
+   * `account-header-census.test.ts` asserts against the frozen list.
+   */
+  credentialSubject?: boolean;
+  /**
    * NO session resolution at all — not even the opportunistic "populate it if a token
    * happens to be present" that `public` still does. `/health` only: a liveness probe must
    * cost exactly one query and must not be able to fail inside `withSession`, outside the

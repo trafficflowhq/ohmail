@@ -54,6 +54,21 @@ export interface ServiceContext {
   /** Present on session-scoped requests: the caller's own session id,
    *  used for step-up window checks and "current device" marking. */
   sessionId?: string | null;
+  /**
+   * **WHOSE CREDENTIAL DID THIS REQUEST ACTUALLY RESOLVE?** Called by the auth seams that mint or
+   * rotate a session (`establish`, `mintRotation`) with the account the presented credential
+   * belongs to, and ONLY on their success paths.
+   *
+   * It exists because the sign-in and token routes answer for an account that the request's own
+   * session does not name — a browser with no session at all refreshes a token, and the response
+   * belongs to that token's account. The API layer wires this to the response's account header so
+   * the header can name the body's subject rather than the ambient session; see `ACCOUNT_HEADER`
+   * in `packages/api/src/app.ts`.
+   *
+   * Optional and ignored by every other caller: the worker, the sidecar and the test harnesses
+   * construct a context without it, and a service that never mints a session never calls it.
+   */
+  noteCredentialAccount?: (accountId: string) => void;
   /** Client network metadata, threaded for auth audit and lockout. */
   ip?: string;
   userAgent?: string;

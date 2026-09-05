@@ -97,5 +97,9 @@ export function serviceContext(
     ip: clientIp(req),
     userAgent: req.headers.get("user-agent") ?? undefined,
     origin: req.headers.get("origin") ?? undefined,
+    // The one wiring point for the response's account header on the credential routes. Every
+    // service that mints or rotates a session reports through this, so a sign-in route added
+    // later is covered without remembering to do anything — see `ACCOUNT_HEADER` in `app.ts`.
+    noteCredentialAccount: (accountId: string) => { deps.credentialAccount = accountId; },
   };
 }

@@ -68,7 +68,7 @@ export const sessionLifecycleRoutes: Route[] = [
     method: "POST",
     pattern: "/auth/refresh",
     cost: "ceremony",
-    options: { public: true },
+    options: { public: true, credentialSubject: true },
     handler: async (req, deps) => {
       const jar = parseCookies(req.headers.get("cookie"));
       const cookieRefresh = cookieSurface(deps) ? jar["tf_refresh"] : undefined;

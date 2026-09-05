@@ -147,8 +147,10 @@ function firstMisshapenParam(route: Route, params: RouteParams): string | null {
 }
 
 /**
- * **THE ACCOUNT THIS RESPONSE WAS ISSUED FOR.** Present on every response whose request
- * resolved a session; absent on every response that did not.
+ * **THE ACCOUNT THIS RESPONSE'S CONTENTS BELONG TO** — and on the sign-in and token routes that
+ * is the account the CREDENTIAL resolved to, not the session that carried the request.
+ *
+ * Present on every response that has a subject; absent on every response that does not.
  *
  * ── THE SEQUENCE NO CLIENT-SIDE CHECK CAN SEE ────────────────────────────────────────────────
  *
@@ -185,13 +187,38 @@ function firstMisshapenParam(route: Route, params: RouteParams): string | null {
  * sidecar, which builds its own `createApp([...])` from a different route list and shares no
  * middleware list with any of them.
  *
+ * ── THE SIGN-IN AND TOKEN ROUTES ANSWER FOR SOMEBODY ELSE ────────────────────────────────────
+ *
+ * `/auth/login`, `/auth/refresh`, `/auth/verify-email`, `/auth/desktop-claim` and `/oauth/token`
+ * are `public`: `withSession` resolves whatever credential happens to be ambient, and then the
+ * handler resolves a SECOND one out of the body. Those two need not name the same account, and
+ * taking the header from the session was wrong on exactly the requests where it matters most —
+ * the account switches. A caller holding a live session for A who posted B's refresh token was
+ * answered `X-Ohmail-Account: A` over a body containing B's tokens.
+ *
+ * Two changes, and they are different in kind. The header on these routes now names
+ * `deps.credentialAccount`, reported by the seam that actually minted or rotated the session
+ * (`establish`, `mintRotation`) on its success path only — so a response that established nothing
+ * names nobody. And the ambiguous request itself is REFUSED rather than described:
+ * `refuseCrossAccountCredential` answers 409 before anything is rotated or issued, because no
+ * legitimate client presents a session for one account and a credential for another. The header
+ * cannot be made honest while the request underneath it is ambiguous.
+ *
  * ── ABSENT IS NOT PERMISSION ─────────────────────────────────────────────────────────────────
  *
- * Absence means no session was resolved: an anonymous route, a public route reached without a
- * credential, a 401, or a 404/405/400 answered before any pipeline ran. None of those carry mail
- * bytes or metadata for anybody. A client that has bound itself to an account must therefore
- * treat a MISSING header on an authenticated read as a refusal rather than as silence — the
- * failure this closes is precisely one where nothing looks wrong.
+ * Absence means the response has no account subject: an anonymous route, a public route reached
+ * without a credential, a 401, a 404/405/400 answered before any pipeline ran, or a credential
+ * route that established nothing (a refused sign-in, a `twofa_required` challenge that carries no
+ * tokens). A client that has bound itself to an account must treat a MISSING header on an
+ * authenticated read as a refusal rather than as silence — the failure this closes is precisely
+ * one where nothing looks wrong.
+ *
+ * **One documented exception carries mailbox metadata with no header, and it is not a bypass:**
+ * `GET /admin/accounts/:id` is `anonymous`, so no session is resolved and none can be named, and
+ * it is authorized separately by the operator's shared secret plus a `staff_sessions` row
+ * (`routes/admin.ts`). Its `AccountDetail.mailboxes` projection is mailbox metadata for a staff
+ * reader, not mail for an account holder. No customer-facing route reaches mail bytes or mailbox
+ * metadata without a session.
  */
 export const ACCOUNT_HEADER = "X-Ohmail-Account";
 
@@ -210,8 +237,14 @@ export const ACCOUNT_HEADER = "X-Ohmail-Account";
  * absence as a refusal is then refused, rather than being handed a value that is not what it
  * looks like. Account ids are UUIDs and comfortably inside the set.
  */
-function nameTheAccount(res: Response, deps: ApiDeps): Response {
-  const account = ownerCookieValue(deps.session?.accountId);
+function nameTheAccount(res: Response, deps: ApiDeps, route: Route | null): Response {
+  // ON A CREDENTIAL ROUTE THE AMBIENT SESSION IS NOT THE SUBJECT, and it is not consulted at all.
+  // A refused sign-in made while holding somebody's session would otherwise be labelled with that
+  // session's account — a response that established nothing, named as if it had.
+  const subject = route?.options?.credentialSubject
+    ? deps.credentialAccount
+    : deps.session?.accountId;
+  const account = ownerCookieValue(subject);
   if (!account) return res;
   const headers = new Headers(res.headers);
   headers.set(ACCOUNT_HEADER, account);
@@ -228,7 +261,8 @@ function nameTheAccount(res: Response, deps: ApiDeps): Response {
 export function createApp(routes: Route[]): App {
   return {
     async handle(req: Request, deps: ApiDeps): Promise<Response> {
-      return nameTheAccount(await dispatch(routes, req, deps), deps);
+      const { res, route } = await dispatch(routes, req, deps);
+      return nameTheAccount(res, deps, route);
     },
   };
 }
@@ -240,23 +274,29 @@ export function createApp(routes: Route[]): App {
  * They name nobody, because they are answered before `withSession` runs — but they are answered
  * BY the same rule rather than by falling outside it, and a reader does not have to check.
  */
-async function dispatch(routes: Route[], req: Request, deps: ApiDeps): Promise<Response> {
+async function dispatch(
+  routes: Route[], req: Request, deps: ApiDeps,
+): Promise<{ res: Response; route: Route | null }> {
   const { pathname } = new URL(req.url);
   const m = matchRoute(routes, req.method, pathname);
   if (!m.matched) {
-    return m.methodNotAllowed
-      ? errorResponse("method_not_allowed", 405, "method not allowed")
-      : errorResponse("not_found", 404, "not found");
+    return {
+      res: m.methodNotAllowed
+        ? errorResponse("method_not_allowed", 405, "method not allowed")
+        : errorResponse("not_found", 404, "not found"),
+      route: null,
+    };
   }
   const badParam = firstMisshapenParam(m.route, m.params);
   if (badParam) {
-    return errorResponse(
-      "validation_failed", 400, `${badParam} must be an id`, undefined, false,
-    );
+    return {
+      res: errorResponse("validation_failed", 400, `${badParam} must be an id`, undefined, false),
+      route: m.route,
+    };
   }
   const chain = m.route.options?.anonymous
     ? ANONYMOUS_PIPELINE
     : m.route.options?.raw ? RAW_PIPELINE : FULL_PIPELINE;
   const composed = chain.reduceRight<Handler>((next, mw) => mw(next, m.route), m.route.handler);
-  return composed(req, deps, m.params);
+  return { res: await composed(req, deps, m.params), route: m.route };
 }

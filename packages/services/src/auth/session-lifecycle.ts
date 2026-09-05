@@ -13,6 +13,40 @@ import type {
 import type { SessionScope } from "./resolve-session.js";
 
 /**
+ * **A LIVE SESSION FOR ONE ACCOUNT MAY NOT PRESENT A CREDENTIAL FOR ANOTHER.**
+ *
+ * The sign-in and token routes are `public`: `withSession` resolves whatever credential happens
+ * to be presented, and the route then resolves a SECOND, independent credential out of the body.
+ * Nothing compared them. So a caller holding a live session for A could post a refresh token, an
+ * authorization code or a password belonging to B and be answered normally — B's tokens, minted
+ * and returned, on a request the whole stack had already labelled as A's.
+ *
+ * That is not an escalation: it needs B's credential to begin with. It is a CONFUSION, and it is
+ * the exact one the response's account header exists to make visible — a client comparing the
+ * header would see A, accept the answer, and bind B's freshly minted session to A's mirror. The
+ * header cannot be made honest while the request underneath it is ambiguous, so the ambiguity is
+ * refused rather than described.
+ *
+ * **No legitimate client produces this shape.** Signing in as somebody else begins by signing out;
+ * a rotation presents the family belonging to the session that holds it. The refusal is therefore
+ * a 409 about the REQUEST rather than a 401 about the credential: both credentials are valid, and
+ * that is the problem.
+ *
+ * **A sessionless caller is unaffected**, and that is what keeps the ordinary paths whole:
+ * `ctx.accountId` is `""` when no session resolved (`packages/api/src/context.ts`), which is the
+ * common case for a browser refreshing an expired access token and for every native exchange.
+ * This compares only when there is something to compare.
+ */
+export function refuseCrossAccountCredential(ctx: ServiceContext, credentialAccountId: string): void {
+  if (ctx.accountId && ctx.accountId !== credentialAccountId) {
+    throw new ServiceError(
+      "session_conflict", 409,
+      "this browser holds a session for a different account — sign out before using this credential",
+    );
+  }
+}
+
+/**
  * SessionLifecycle — the session MACHINERY, carved out of `AuthService` so the desktop-as-host
  * tier can run it (Phase 3). This class is what a session IS once it exists: the mint
  * (`establish`), rotation with refresh-reuse detection, family revocation, logout, the device
@@ -453,6 +487,12 @@ export class SessionLifecycle {
       surface?: SessionSurface;
     },
   ): Promise<SessionEstablished> {
+    // BEFORE ANY WRITE. This is the single seam every full session is minted through — the
+    // first-factor exchange, both 2FA verifies, the recovery code, the native PKCE exchange, the
+    // desktop-link claim and the paired device — so the cross-account refusal is asked once here
+    // rather than at seven call sites, one of which would eventually be added without it.
+    // `revokeEnrollmentSessions` below is a write, so the check precedes it.
+    refuseCrossAccountCredential(ctx, user.accountId);
     const db = asTx(ctx);
     const now = ctx.now();
     // A FULL session exists ⇒ no password-only session for this user may still be
@@ -536,6 +576,10 @@ export class SessionLifecycle {
     await this.throttleReset(db, `user:${user.id}`);
     await this.throttleReset(db, `email:${user.email}`);
 
+    // Reported here and not at the top, so a ceremony that THROWS after the guard — or a
+    // transaction that rolls back — never leaves the response labelled with an account whose
+    // session was not in the end established. See ACCOUNT_HEADER in `packages/api/src/app.ts`.
+    ctx.noteCredentialAccount?.(user.accountId);
     return {
       status: "authenticated",
       user: await this.sessionUser(db, user.id),
@@ -611,6 +655,22 @@ export class SessionLifecycle {
     // `surface` lands on the cookie window — see `surfaceTtls`, which owns that decision.
     const ttls = surfaceTtls(this.cfg, surface);
 
+    // A ROTATION IS NOT A MINT, so it does not pass through `establish` and needs the refusal of
+    // its own. Asked BEFORE the consuming UPDATE below, so a refused request rotates nothing:
+    // the token stays live for the client that legitimately holds it.
+    //
+    // The read costs a lookup on the unique `token_hash` index, and only when a session actually
+    // resolved. The ordinary web refresh presents an EXPIRED access token, so `ctx.accountId` is
+    // empty and this branch never runs — the sessionless cookie path is untouched, which is the
+    // condition this whole change was ruled under.
+    if (ctx.accountId) {
+      const [presentedRow] = await db.select({ accountId: refreshTokens.accountId })
+        .from(refreshTokens).where(eq(refreshTokens.tokenHash, tokenHash)).limit(1);
+      // An UNKNOWN token is not a conflict — it falls through to the 401 below, which is the
+      // answer it deserves and the one that says nothing about whether it ever existed.
+      if (presentedRow) refuseCrossAccountCredential(ctx, presentedRow.accountId);
+    }
+
     const [row] = await db.update(refreshTokens)
       .set({ consumedAt: now })
       .where(and(
@@ -661,7 +721,7 @@ export class SessionLifecycle {
           const renewable = session != null && session.revokedAt == null
             && (ttls.absoluteTtlMs == null
               || now.getTime() - session.createdAt.getTime() <= ttls.absoluteTtlMs);
-          if (renewable) return this.mintRotation(db, existing, now, ttls);
+          if (renewable) return this.mintRotation(ctx, db, existing, now, ttls);
         }
         // ── THE LOST-RESPONSE RECOVERY, past the grace window, cookie surface only ────────────
         //
@@ -777,7 +837,7 @@ export class SessionLifecycle {
       throw new ServiceError("unauthorized", 401, "session has reached its maximum lifetime");
     }
 
-    return this.mintRotation(db, row, now, ttls);
+    return this.mintRotation(ctx, db, row, now, ttls);
   }
 
   /**
@@ -799,6 +859,7 @@ export class SessionLifecycle {
    * window by a path that resolved the surface once and read the config again later.
    */
   private async mintRotation(
+    ctx: ServiceContext,
     db: Tx,
     base: { accountId: string; userId: string; sessionId: string; familyId: string },
     now: Date,
@@ -827,6 +888,10 @@ export class SessionLifecycle {
       lastSeenAt: now,
     }).where(eq(sessions.id, base.sessionId));
 
+    // THE ROTATION'S SUCCESS TAIL — every one of `rotateRefresh`'s return paths (the hot path,
+    // the concurrent-rotation grace, and the recovery arm) funnels through here, so the account
+    // the presented credential belongs to is reported once rather than at five returns.
+    ctx.noteCredentialAccount?.(base.accountId);
     return {
       accessToken: newAccess, refreshToken: newRefresh, tokenType: "Bearer",
       expiresIn: Math.floor(this.cfg.accessTtlMs / 1000),
@@ -965,7 +1030,7 @@ export class SessionLifecycle {
           // recovery loser, or a stale presenter colliding with the one live rotation. It
           // converges exactly like a grace-loser — the shared jar takes whichever cookie
           // lands last.
-          return this.mintRotation(tx, existing, now, ttls);
+          return this.mintRotation(ctx, tx, existing, now, ttls);
         }
         if (verdict === "used") return null;   // a second holder in real use: the sweep's case
         // IDLE-BOUND: nothing was spent since — but that is only evidence of a lost response
@@ -996,7 +1061,7 @@ export class SessionLifecycle {
           // the jar that rotation had just refilled. A fresh spend converges; anything else
           // is genuinely the sweep's case (no live tip at all).
           return (await classify()) === "racer"
-            ? this.mintRotation(tx, existing, now, ttls)
+            ? this.mintRotation(ctx, tx, existing, now, ttls)
             : null;
         }
         // Audited IN the claim's transaction: no recovery without its row while the
@@ -1006,7 +1071,7 @@ export class SessionLifecycle {
           .where(eq(users.id, existing.userId)).limit(1);
         await this.audit(tx, user ?? null, "refresh_recovered", undefined, txCtx,
           `family=${existing.familyId} session=${existing.sessionId}`);
-        return this.mintRotation(tx, existing, now, ttls);
+        return this.mintRotation(ctx, tx, existing, now, ttls);
       });
     } catch {
       return null;

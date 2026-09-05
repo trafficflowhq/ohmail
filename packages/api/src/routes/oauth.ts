@@ -68,7 +68,7 @@ export const oauthRoutes: Route[] = [
     method: "POST",
     pattern: "/oauth/token",
     cost: "ceremony",
-    options: { public: true },
+    options: { public: true, credentialSubject: true },
     handler: async (req, deps) => {
       const body = await readBody<TokenBodyAuthCode | TokenBodyRefresh>(req);
       const tokens = await auth(deps).token(serviceContext(deps, req), body);

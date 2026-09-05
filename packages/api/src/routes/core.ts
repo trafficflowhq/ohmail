@@ -80,7 +80,7 @@ export const coreRoutes: Route[] = [
     method: "POST",
     pattern: "/auth/verify-email",
     cost: "ceremony",
-    options: { public: true },
+    options: { public: true, credentialSubject: true },
     handler: async (req, deps) => {
       const body = await readBody<{ token?: unknown; password?: unknown }>(req);
       const result = await auth(deps).verifyEmail(serviceContext(deps, req), body);
@@ -122,7 +122,7 @@ export const coreRoutes: Route[] = [
     method: "POST",
     pattern: "/auth/login",
     cost: "ceremony",
-    options: { public: true },
+    options: { public: true, credentialSubject: true },
     handler: async (req, deps) => {
       const body = await readBody<{ email: string; password: string }>(req);
       const result = await auth(deps).login(serviceContext(deps, req), body);
@@ -209,7 +209,7 @@ export const coreRoutes: Route[] = [
     method: "POST",
     pattern: "/auth/desktop-claim",
     cost: "ceremony",
-    options: { public: true },
+    options: { public: true, credentialSubject: true },
     handler: async (req, deps) => {
       // `kind` is the claimant's own platform declaration (desktop-linux/-macos/-windows, or
       // the legacy "macos" — also the default when absent, which is what every shipped desktop
