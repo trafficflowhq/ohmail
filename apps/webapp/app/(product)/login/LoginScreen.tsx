@@ -44,6 +44,7 @@ import {
 } from "../../api-client";
 import { SELF_HOST_BUILD, serverHello } from "../../hello";
 import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "../../shell/confirm-schedule";
+import { refreshSettled } from "../../session-refresh";
 import { resolveOwnerOutcome } from "../session-outcome";
 
 type Stage = "password" | "twofa";
@@ -220,6 +221,17 @@ export function LoginScreen() {
     submittedRef.current = true;
     cancelBootstrapRef.current?.();
     void run(async () => {
+      /*
+       * LET ANY REFRESH ALREADY IN FLIGHT FINISH FIRST, and never cancel it.
+       *
+       * The abort above stops the session READ, which is enough to prevent a NEW refresh from
+       * starting — but one the ladder had already entered is still running, and its response
+       * rewrites every session cookie whenever it arrives. Landing after this ceremony, it
+       * restores the previous account or clears the new session. The refresh is shared
+       * single-flight state that other callers are awaiting, so the fix is to order the two
+       * rather than to cancel one: it writes, then we write. See `refreshSettled`.
+       */
+      await refreshSettled();
       const result = await auth.login({ email: email.trim(), password });
       setPassword("");
       if (result.status === "enrollment") {

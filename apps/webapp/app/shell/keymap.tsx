@@ -43,6 +43,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { modalIsOpen } from "./modal-gate";
 /* The rules that stop key hints being shown on devices with no keys. It rides with the
    registry rather than with any one component because the chrome it hides is spread across the
    shell, the dock and the reading overlay, and this module is the one thing that is in the
@@ -298,6 +299,20 @@ export function KeymapProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      /*
+       * A BLOCKING DIALOG SUSPENDS EVERY BINDING — asked as a fact about the app, not read
+       * off the DOM.
+       *
+       * The session dialogs render over the shell and mark the mailbox `inert`, which stops
+       * focus and hit-testing INSIDE `.app-root` and does nothing about this listener: it is
+       * bound to `document`, and the dialog's own buttons are siblings of the mailbox rather
+       * than descendants of it. So with the dialog up and focus correctly on its remedy,
+       * `e` still parked the focused message and `d` `d` still ran the delete ceremony —
+       * which ends by clicking its own danger button programmatically, something `inert`
+       * does not block either. A screen that says the session is in question could delete
+       * mail behind itself. See `modal-gate.ts`.
+       */
+      if (modalIsOpen()) return;
       const typing = isTypingTarget(e.target);
       const live = ordered().filter((b) => !b.disabled && (b.inInput || !typing));
       const eligible = (b: KeyBinding) => !b.when || b.when(e);
