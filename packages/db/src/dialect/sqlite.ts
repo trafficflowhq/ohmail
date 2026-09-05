@@ -23,10 +23,14 @@ import type { Dialect, LockOptions, SearchArm } from "./index.js";
  * window functions — which the ranked reads use in place of the server's `DISTINCT ON` — in 3.25.
  * The highest of the three is the floor.
  */
-export const SQLITE_MINIMUM = { returning: "3.35.0", unixepochSubsec: "3.42.0", windowFunctions: "3.25.0" } as const;
+export const SQLITE_MINIMUM = {
+  returning: "3.35.0", unixepochSubsec: "3.42.0", windowFunctions: "3.25.0",
+  /** `octet_length`, which a CHECK in the schema itself uses — the highest of the four. */
+  octetLength: "3.43.0",
+} as const;
 
 /** The floor as a comparable tuple: the highest of the three requirements above. */
-const MINIMUM_TUPLE = [3, 42, 0] as const;
+const MINIMUM_TUPLE = [3, 43, 0] as const;
 
 function versionTuple(version: string): [number, number, number] {
   const parts = version.split(".").map((n) => Number.parseInt(n, 10));
@@ -49,7 +53,8 @@ export function assertSqliteCapabilities(probe: { version: string; compileOption
     throw new Error(
       `this store needs SQLite ${minMajor}.${minMinor}.${minPatch} or newer and found ${probe.version}: ` +
         `RETURNING needs ${SQLITE_MINIMUM.returning}, unixepoch('subsec') needs ` +
-        `${SQLITE_MINIMUM.unixepochSubsec}, window functions need ${SQLITE_MINIMUM.windowFunctions}.`,
+        `${SQLITE_MINIMUM.unixepochSubsec}, window functions need ${SQLITE_MINIMUM.windowFunctions}, ` +
+        `octet_length needs ${SQLITE_MINIMUM.octetLength}.`,
     );
   }
   if (!probe.compileOptions.some((o) => o.toUpperCase().includes("ENABLE_FTS5"))) {
@@ -109,19 +114,31 @@ export function sqliteDialect(): Dialect {
       for (const listener of listeners.get(channel) ?? []) listener(payload);
     },
 
-    // `like` here folds ASCII only, so a subject in any other alphabet would match by accident of
-    // encoding. Folding both sides explicitly makes the comparison mean what the server's does.
+    // Folded on both sides so the comparison is at least symmetric — but NOT equivalent to the
+    // server's, and the difference is worth knowing before it is relied on: this store's `lower()`
+    // folds ASCII and nothing else, so `Ä` and `ä` remain distinct here and do not on Postgres. A
+    // search for a name in any other alphabet therefore matches less on a device. Closing that gap
+    // needs a folded column or an ICU build, neither of which this store has; naming it is what
+    // stops the next reader assuming the two are the same comparison.
     ilike: (column, pattern) => sql`lower(${column}) like lower(${pattern})`,
 
     interval: (ms: number) => sql`${Math.trunc(ms)}`,
 
-    jsonHasAny: (column, keys) => sql`EXISTS (
-      SELECT 1 FROM json_each(${column}) WHERE json_each.key IN ${keys}
-    )`,
+    /** As the server's, and for the same reason: an array is one parameter, not a list. */
+    jsonHasAny: (column, keys) => {
+      if (keys.length === 0) return sql`0`;
+      const members = keys.map((k) => sql`${k}`);
+      return sql`EXISTS (
+        SELECT 1 FROM json_each(${column}) WHERE json_each.key IN (${sql.join(members, sql`, `)})
+      )`;
+    },
 
     exec: async (db, statement) => {
       const handle = db as { all?: (s: SQL) => Promise<unknown[]>; run?: (s: SQL) => Promise<unknown> };
-      if (typeof handle.all === "function") return handle.all(statement);
+      if (typeof handle.all === "function") {
+        const rows = await handle.all(statement);
+        return rows.map((r) => (Array.isArray(r) ? r : Object.values(r as object)));
+      }
       await handle.run?.(statement);
       return [];
     },

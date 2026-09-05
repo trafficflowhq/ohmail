@@ -19,6 +19,22 @@
  *
  * The brand lives on a globally registered symbol rather than a module-local one, so two copies
  * of this package in one process still agree.
+ *
+ * ── WHAT HAS A CALLER TODAY, AND WHAT IS WAITING FOR ONE ──────────────────────────────────
+ *
+ * Two members are in use: `forUpdate` at four sites and `advisoryLock` at one, all in the
+ * repository. **The other fourteen have no caller yet** — they exist because a census over the
+ * engine's own sources named every construct that would need one, and porting those sources is
+ * the next piece of work rather than this one.
+ *
+ * That is stated because the alternative is worse in both directions. Code with no caller is code
+ * nothing exercises, and this file's own rule is that a guard nobody has watched fail is not
+ * evidence — so each unused member is executed by a test against a real store rather than merely
+ * rendered, and the ones that were wrong were wrong in ways only running them showed. And
+ * deleting them until needed would mean the census has no vocabulary to name what it finds.
+ *
+ * A member that is still listed here with no caller when the port is finished is a member to
+ * delete, not to keep.
  */
 import { sql, type SQL } from "drizzle-orm";
 import { pgDialect } from "./pg.js";
@@ -132,8 +148,16 @@ export interface Dialect {
   /** Does this JSON object hold any of these keys at its top level? */
   jsonHasAny(column: SQL | unknown, keys: readonly string[]): Promise<SQL> | SQL;
 
-  /** Run a statement for its effect and hand back the rows, if any. */
-  exec(db: unknown, statement: SQL): Promise<unknown[]>;
+  /**
+   * Run a statement for its effect and hand back the rows, if any — each row as an ARRAY of its
+   * column values, in the order the statement selected them.
+   *
+   * One shape on both stores, and it is the narrower of the two on purpose. The server's driver
+   * returns named objects and the device's returns positional arrays; a helper that passed each
+   * through would compile everywhere and read correctly on exactly one, which is the failure this
+   * seam exists to prevent. Positional is the shape both can produce honestly.
+   */
+  exec(db: unknown, statement: SQL): Promise<unknown[][]>;
 
   readonly search: {
     /** Word-based search over the indexed subject and body. */

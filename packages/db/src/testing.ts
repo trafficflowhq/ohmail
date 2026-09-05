@@ -11,7 +11,7 @@ import postgres from "postgres";
 import { adoptBaseline } from "./baseline.js";
 import { JOURNALS } from "./migrate.js";
 import { schema } from "./schema.js";
-import { brandDialect, assertSqliteCapabilities } from "./dialect/index.js";
+import { brandDialect } from "./dialect/index.js";
 import { migrateSqlite } from "./sqlite-migrate.js";
 
 /**
@@ -72,14 +72,8 @@ async function makeSqliteTestDb(): Promise<PgliteDatabase<typeof schema>> {
     };
   };
   const raw = new DatabaseSync(":memory:");
-  raw.exec("PRAGMA foreign_keys=ON");
-
-  assertSqliteCapabilities({
-    version: String((raw.prepare("select sqlite_version() as v").all()[0] as { v: string }).v),
-    compileOptions: (raw.prepare("pragma compile_options").all() as { compile_options: string }[])
-      .map((r) => r.compile_options),
-  });
-
+  // The capability check and `PRAGMA foreign_keys` are the migrator's, not this factory's — see
+  // `migrateSqlite`. A factory that does them itself is a factory the NEXT factory does not copy.
   let tail: Promise<unknown> = Promise.resolve();
   const serial = <T>(job: () => T): Promise<T> => {
     const next = tail.then(job, job);

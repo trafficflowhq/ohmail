@@ -57,12 +57,23 @@ export function pgDialect(): Dialect {
 
     interval: (ms: number) => sql`(${`${Math.trunc(ms)} milliseconds`}::interval)`,
 
-    jsonHasAny: (column, keys) => sql`${column} ?| ${keys as unknown as string[]}`,
+    /**
+     * `?|` takes a text ARRAY, and an array handed to the builder as one parameter is rendered as
+     * a list of placeholders — valid-looking SQL that the server rejects. Spelled as an explicit
+     * array constructor so each key is still bound rather than inlined.
+     */
+    jsonHasAny: (column, keys) => {
+      if (keys.length === 0) return sql`false`;
+      const members = keys.map((k) => sql`${k}`);
+      return sql`${column} ?| array[${sql.join(members, sql`, `)}]::text[]`;
+    },
 
     exec: async (db, statement) => {
       const handle = db as { execute: (s: SQL) => Promise<unknown> };
       const result = (await handle.execute(statement)) as { rows?: unknown[] } | unknown[];
-      return Array.isArray(result) ? result : (result.rows ?? []);
+      const rows = Array.isArray(result) ? result : (result.rows ?? []);
+      // Positional, to match the other arm — see the contract on `Dialect.exec`.
+      return rows.map((r) => (Array.isArray(r) ? r : Object.values(r as object)));
     },
 
     search: {
