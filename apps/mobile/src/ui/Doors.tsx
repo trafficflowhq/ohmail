@@ -48,6 +48,7 @@
  * condition has to read, and nobody outside it ever sees.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { refuse, sayRefusal, type Refusal } from "../refusal";
 import { TextInput, View } from "react-native";
 import { Copy } from "../copy";
 import { useConnection } from "../net/connection";
@@ -69,14 +70,14 @@ type Probe =
   | { k: "idle" }
   | { k: "asking" }
   | { k: "probed"; origin: string; flavor: string; base: string; prefixed: boolean }
-  | { k: "failed"; sentence: string };
+  | { k: "failed"; sentence: Refusal };
 
 /** One sentence per non-pairing outcome — the honest end of a flow, never a dead control. */
-export function sentenceFor(n: Negotiation, step?: PickerStep): string {
-  if (n.kind === "unreachable") return Copy.unreachable(n.detail);
-  if (n.kind === "not-ohmail") return Copy.notOhmail;
-  if (step?.kind === "managed-signin-later") return Copy.managedDeferred;
-  return Copy.noPairing;
+export function sentenceFor(n: Negotiation, step?: PickerStep): Refusal {
+  if (n.kind === "unreachable") return refuse("unreachable", n.detail);
+  if (n.kind === "not-ohmail") return refuse("notOhmail");
+  if (step?.kind === "managed-signin-later") return refuse("managedDeferred");
+  return refuse("noPairing");
 }
 
 export function Doors({
@@ -162,7 +163,7 @@ export function Doors({
          checks — and the NORMALIZED origin is what travels on, never the raw typing. */
       const origin = parseServerAddress(typed);
       if (origin === null) {
-        setProbe({ k: "failed", sentence: addressProblem(typed) ?? Copy.notOhmail });
+        setProbe({ k: "failed", sentence: addressProblem(typed) ?? refuse("notOhmail") });
         return;
       }
       setProbe({ k: "asking" });
@@ -310,7 +311,7 @@ function Result({
   if (probe.k === "failed") {
     return (
       <Txt variant="caption" tone="ink2" style={{ lineHeight: 16, paddingHorizontal: 4 }}>
-        {probe.sentence}
+        {sayRefusal(probe.sentence)}
       </Txt>
     );
   }

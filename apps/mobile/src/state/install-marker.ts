@@ -62,6 +62,7 @@
  * reinstall) has a working SQLite by definition, because the app just launched.
  */
 import type { ServerProfileStore } from "./servers";
+import { refuse, type Refusal } from "../refusal";
 /* These `reason` fields reach the Servers screen through `Copy.serversInstallUnknown` and
    `serversPurgeRefused`, so they are copy. */
 import { Copy } from "../copy";
@@ -110,7 +111,7 @@ export type InstallVerdict =
   /** No marker: the container is new, so every stored pairing belongs to a dead install. */
   | { kind: "fresh-install"; generation: string; purged: true }
   /** The marker store could not be read. Nothing was purged; the reason is for the log. */
-  | { kind: "unknown"; reason: string }
+  | { kind: "unknown"; reason: Refusal }
   /**
    * The container is new, and the keystore REFUSED to give the old install's pairings up.
    *
@@ -120,7 +121,7 @@ export type InstallVerdict =
    * a purge that reported itself done over a surviving refresh token would be the take-back
    * class's own defect inside its own fix.
    */
-  | { kind: "purge-refused"; reason: string };
+  | { kind: "purge-refused"; reason: Refusal };
 
 /**
  * Settle whether this launch belongs to the install that stored the pairings, purging them
@@ -141,7 +142,7 @@ export async function settleInstallGeneration(
   try {
     db = await deps.openExecutor(INSTALL_MARKER_DB);
   } catch (err) {
-    return { kind: "unknown", reason: Copy.installMarkerUnopenable(String(err)) };
+    return { kind: "unknown", reason: refuse("installMarkerUnopenable", String(err)) };
   }
   try {
     await db.batch([
@@ -175,12 +176,12 @@ export async function settleInstallGeneration(
     try {
       await profiles.purgeAll();
     } catch (err) {
-      return { kind: "purge-refused", reason: Copy.installPurgeFailed(String(err)) };
+      return { kind: "purge-refused", reason: refuse("installPurgeFailed", String(err)) };
     }
     await stamp();
     return { kind: "fresh-install", generation, purged: true };
   } catch (err) {
-    return { kind: "unknown", reason: Copy.installMarkerUnreadable(String(err)) };
+    return { kind: "unknown", reason: refuse("installMarkerUnreadable", String(err)) };
   } finally {
     await db.close?.();
   }

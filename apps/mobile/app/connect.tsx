@@ -14,6 +14,8 @@
  * show the ceremony's words, success lands on the Servers screen showing the live mirror.
  */
 import { useCallback, useState } from "react";
+import { type Refusal } from "../src/refusal";
+import { sayRefusal } from "../src/refusal";
 import { TextInput, View } from "react-native";
 import { router } from "expo-router";
 import { Copy } from "../src/copy";
@@ -24,7 +26,7 @@ import { Button, Panel, Screen, Scroller, Section, Txt } from "../src/ui/base";
 import { DetailBar } from "../src/ui/chrome";
 import { useLocale } from "../src/i18n/LocaleProvider";
 
-type Phase = { k: "idle" } | { k: "pairing" } | { k: "failed"; reason: string };
+type Phase = { k: "idle" } | { k: "pairing" } | { k: "failed"; reason: Refusal };
 
 export default function ConnectScreen() {
   /* Subscribed to the language, so a switch in Settings redraws this screen instead of
@@ -91,7 +93,7 @@ export default function ConnectScreen() {
                 {Copy.connectRefusedTitle}
               </Txt>
               <Txt variant="caption" tone="ink2" style={{ lineHeight: size.caption * leading.base }}>
-                {phase.reason}
+                {sayRefusal(phase.reason)}
               </Txt>
             </View>
           </Panel>

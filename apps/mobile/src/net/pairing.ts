@@ -73,6 +73,7 @@ import {
    translated with everything else. The `throw new Error(…)` messages below do not: they are
    programming faults nobody but a developer ever reads. */
 import { Copy, faultDetail } from "../copy";
+import { refuse, type Refusal } from "../refusal";
 import { dropWakeRow } from "./push.js";
 import { resolveApiBase } from "./server-base.js";
 
@@ -315,32 +316,32 @@ function isLoopback(host: string): boolean {
  * own trust store exactly as any website is, and a pin there would add a way for the pairing to
  * break on certificate renewal while adding nothing.
  */
-export function admitOrigin(origin: string, pin: string | null): { ok: true } | { ok: false; reason: string } {
+export function admitOrigin(origin: string, pin: string | null): { ok: true } | { ok: false; reason: Refusal } {
   const normalized = normalizeOrigin(origin);
   const host = normalized.replace(/^https?:\/\//, "").replace(/:\d+$/, "");
   if (normalized.startsWith("http://") && !isLoopback(host)) {
     return {
       ok: false,
-      reason: Copy.admitCleartext,
+      reason: refuse("admitCleartext"),
     };
   }
   if (originNeedsPin(normalized)) {
     if (pin === null) {
       return {
         ok: false,
-        reason: Copy.admitNoPin,
+        reason: refuse("admitNoPin"),
       };
     }
     if (!canPin()) {
       return {
         ok: false,
-        reason: Copy.admitCannotPin,
+        reason: refuse("admitCannotPin"),
       };
     }
     if (!installPin(normalized, pin)) {
       return {
         ok: false,
-        reason: Copy.admitPinNotStored,
+        reason: refuse("admitPinNotStored"),
       };
     }
   }
@@ -364,12 +365,12 @@ export interface PairingEnv {
 
 export type PairOutcome =
   | { kind: "paired"; session: ConnectedSession }
-  | { kind: "refused"; reason: string };
+  | { kind: "refused"; reason: Refusal };
 
 export type ConnectOutcome =
   | { kind: "connected"; session: ConnectedSession }
   /** `needsRepair`: the credential is gone (a refusal cleared it) — one scan re-pairs. */
-  | { kind: "refused"; reason: string; needsRepair?: boolean };
+  | { kind: "refused"; reason: Refusal; needsRepair?: boolean };
 
 const bareFetch = (): FetchLike => globalThis.fetch.bind(globalThis) as FetchLike;
 
@@ -393,10 +394,10 @@ export async function pairWithServer(
   const fetchImpl = env.fetchImpl ?? bareFetch();
   const origin = normalizeOrigin(input.origin);
   if (!/^https?:\/\/\S+$/.test(origin)) {
-    return { kind: "refused", reason: Copy.pairBadAddress(input.origin) };
+    return { kind: "refused", reason: refuse("pairBadAddress", input.origin) };
   }
   const token = input.token.trim();
-  if (token === "") return { kind: "refused", reason: Copy.pairEmptyToken };
+  if (token === "") return { kind: "refused", reason: refuse("pairEmptyToken") };
 
   // 0 — THE TRANSPORT, BEFORE THE FIRST REQUEST AND NOT BEFORE THE REDEEM. `/hello` below is
   // already a request to this origin, so a pin installed after it would leave the negotiation
@@ -415,19 +416,18 @@ export async function pairWithServer(
     // unreadable and, worse, indistinguishable from a dead network — so the shape is recognised
     // and the sentence says what happened and what to do (`host-pinning.ts`).
     if (pin !== null && isPinFailure(negotiated.detail)) {
-      return { kind: "refused", reason: Copy.pinChanged };
+      return { kind: "refused", reason: refuse("pinChanged") };
     }
-    return { kind: "refused", reason: Copy.pairUnreachable(negotiated.detail) };
+    return { kind: "refused", reason: refuse("pairUnreachable", negotiated.detail) };
   }
   if (negotiated.kind === "not-ohmail") {
-    return { kind: "refused", reason: Copy.pairNotOhmail };
+    return { kind: "refused", reason: refuse("pairNotOhmail") };
   }
   const step = nextStep(negotiated.hello);
   if (step.kind !== "pair") {
     return {
       kind: "refused",
-      reason:
-        step.kind === "managed-signin-later" ? Copy.pairManagedDeferred : Copy.pairNoPairing,
+      reason: refuse(step.kind === "managed-signin-later" ? "pairManagedDeferred" : "pairNoPairing"),
     };
   }
 
@@ -448,7 +448,7 @@ export async function pairWithServer(
     // socket the negotiation used, so a key that changed between them is the same event and gets
     // the same sentence rather than a second, vaguer one about a missing API.
     if (pin !== null && isPinFailure(resolved.reason)) {
-      return { kind: "refused", reason: Copy.pinChanged };
+      return { kind: "refused", reason: refuse("pinChanged") };
     }
     return { kind: "refused", reason: resolved.reason };
   }
@@ -501,7 +501,7 @@ export async function pairWithServer(
       answer = await parse(redeemed);
     }
   } catch {
-    return { kind: "refused", reason: Copy.pairRedeemUnreachable };
+    return { kind: "refused", reason: refuse("pairRedeemUnreachable") };
   }
   const tokens = answer.tokens;
   if (!redeemed.ok || typeof tokens?.accessToken !== "string" || typeof tokens.refreshToken !== "string") {
@@ -509,8 +509,8 @@ export async function pairWithServer(
     // exact judgment); anything else shows the server's own words.
     const message =
       answer.error?.code === "pairing_invalid" || typeof answer.error?.message !== "string"
-        ? Copy.pairCodeRejected
-        : answer.error.message;
+        ? refuse("pairCodeRejected")
+        : refuse("verbatimDetail", answer.error.message);
     return { kind: "refused", reason: message };
   }
 
@@ -525,7 +525,7 @@ export async function pairWithServer(
     // (An identity read on the desktop-host door would let this name the account; not today.)
     return {
       kind: "refused",
-      reason: Copy.pairNoAccountName,
+      reason: refuse("pairNoAccountName"),
     };
   }
 
@@ -554,7 +554,7 @@ export async function pairWithServer(
     } catch (err) {
       return {
         kind: "refused",
-        reason: Copy.pairOwedDeletion(faultDetail(err)),
+        reason: refuse("pairOwedDeletion", faultDetail(err)),
       };
     }
   }
@@ -599,9 +599,7 @@ export async function pairWithServer(
     }
     return {
       kind: "refused",
-      reason: closed
-        ? Copy.pairNotStoredClosed(faultDetail(err))
-        : Copy.pairNotStoredOpen(faultDetail(err)),
+      reason: refuse(closed ? "pairNotStoredClosed" : "pairNotStoredOpen", faultDetail(err)),
     };
   }
   const connected = await buildSession(env, profile, tokens.accessToken);
@@ -662,7 +660,7 @@ export type ForgetOutcome =
    * Something the user was told would go is still here. `reason` is a showable sentence naming
    * WHAT remains and what happens next; the deletion stays owed in the profile index either way.
    */
-  | { kind: "partial"; reason: string };
+  | { kind: "partial"; reason: Refusal };
 
 /**
  * FORGET A PAIRING — the whole ceremony, at the seam rather than in the React provider.
@@ -732,7 +730,7 @@ export async function forgetProfile(
       // forget does not start. The credential stays, which is the recoverable state.
       return {
         kind: "partial",
-        reason: Copy.forgetCannotStart(faultDetail(err)),
+        reason: refuse("forgetCannotStart", faultDetail(err)),
       };
     }
   }
@@ -775,7 +773,7 @@ export async function forgetProfile(
   } catch (err) {
     return {
       kind: "partial",
-      reason: Copy.forgetKeystoreRefused(faultDetail(err)),
+      reason: refuse("forgetKeystoreRefused", faultDetail(err)),
     };
   }
 
@@ -793,7 +791,7 @@ export async function forgetProfile(
     // that could still open the mailbox — but the mail is still here and the wipe is still owed.
     return {
       kind: "partial",
-      reason: Copy.forgetMailRemains(faultDetail(err)),
+      reason: refuse("forgetMailRemains", faultDetail(err)),
     };
   }
   return told ? { kind: "forgotten" } : { kind: "partial", reason: NOT_TOLD() };
@@ -802,7 +800,7 @@ export async function forgetProfile(
 /** See {@link forgetProfile}: everything local is gone; the server was not told. A GETTER over
  *  the deck rather than a captured string — this module is imported at the top of the graph, long
  *  before a language is resolved, and a constant would freeze the sentence in English. */
-const NOT_TOLD = (): string => Copy.forgetServerUnreachable;
+const NOT_TOLD = (): Refusal => refuse("forgetServerUnreachable");
 
 /**
  * Finish the forgets that did not finish — run once at launch, BEFORE any profile is read.
@@ -922,7 +920,7 @@ export async function connectProfile(env: PairingEnv, profile: ServerProfile): P
 export async function connectProfileById(env: PairingEnv, id: string): Promise<ConnectOutcome> {
   const profile = (await env.profiles.list()).find((p) => p.id === id);
   if (profile === undefined) {
-    return { kind: "refused", reason: Copy.notPairedHere };
+    return { kind: "refused", reason: refuse("notPairedHere") };
   }
   return connectProfile(env, profile);
 }
@@ -954,7 +952,7 @@ async function buildSession(
   if (await env.profiles.isOwedForget(profile.id)) {
     return {
       kind: "refused",
-      reason: Copy.forgetStillPending,
+      reason: refuse("forgetStillPending"),
     };
   }
   /**
@@ -1026,7 +1024,7 @@ async function buildSession(
     return {
       kind: "refused",
       needsRepair: true,
-      reason: Copy.pairEndedRefused,
+      reason: refuse("pairEndedRefused"),
     };
   }
   const boot = await bootEngine(env.engineDeps, {

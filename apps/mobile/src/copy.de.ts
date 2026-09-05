@@ -422,6 +422,8 @@ export const DE: Deck = {
     }
   },
 
+  verbatimDetail: (detail: string) => detail,
+
   /* --------------------------------------------------------------- folders */
 
   folders: "Ordner",

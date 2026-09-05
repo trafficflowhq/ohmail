@@ -36,6 +36,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Platform } from "react-native";
 import { Copy } from "../copy";
+import { refuse, sayRefusal, type Refusal } from "../refusal";
 import { mirrorExists, mirrorOwnerKey } from "../engine/boot";
 import { nativeEngineDeps } from "../engine/native";
 import { settleInstallGeneration } from "../state/install-marker";
@@ -67,11 +68,11 @@ export type ConnectionState =
   | { k: "idle" }
   | { k: "connecting"; origin: string }
   | { k: "live"; session: ConnectedSession }
-  | { k: "refused"; reason: string }
+  | { k: "refused"; reason: Refusal }
   /** A mid-use death: the server refused the session's token. One scan re-pairs. */
-  | { k: "ended"; reason: string };
+  | { k: "ended"; reason: Refusal };
 
-export type Attempt = { ok: true } | { ok: false; reason: string };
+export type Attempt = { ok: true } | { ok: false; reason: Refusal };
 
 export interface Connection {
   state: ConnectionState;
@@ -141,7 +142,7 @@ export function useConnection(): Connection {
  * failed reason — so it could reach a German screen in English. A getter over the deck now, not a
  * captured string: this module is imported long before a language is resolved.
  */
-const SUPERSEDED = (): string => Copy.connectSuperseded;
+const SUPERSEDED = (): Refusal => refuse("connectSuperseded");
 
 export function ConnectionProvider({ children }: { children: ReactNode }) {
   const env = useMemo<PairingEnv>(
@@ -253,7 +254,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         // The server judged this family's token — a revoke or a reuse-past. Render mail no
         // further: tear down and say the one-gesture remedy.
         teardown(session);
-        setState({ k: "ended", reason: Copy.pairEndedOnServer });
+        setState({ k: "ended", reason: refuse("pairEndedOnServer") });
         void refreshProfiles();
       });
       setState({ k: "live", session });
@@ -291,8 +292,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       const row = (await env.profiles.list()).find((p) => p.id === id);
       if (live.current.k === "live") teardown(live.current.session);
       if (row === undefined) {
-        if (stillCurrent()) setState({ k: "refused", reason: Copy.notPairedHere });
-        return { ok: false, reason: Copy.notPairedHere };
+        if (stillCurrent()) setState({ k: "refused", reason: refuse("notPairedHere") });
+        return { ok: false, reason: refuse("notPairedHere") };
       }
       if (stillCurrent()) setState({ k: "connecting", origin: row.origin });
       const outcome = await connectProfileById(env, id);
@@ -349,7 +350,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         //    the pairings alone rather than act on a guess. Not using them and not destroying
         //    them are different acts, and only the first is safe to take on a maybe.
         if (install.kind === "purge-refused") {
-          if (stillCurrent()) setState({ k: "refused", reason: Copy.serversPurgeRefused(install.reason) });
+          if (stillCurrent()) setState({ k: "refused", reason: refuse("serversPurgeRefused", sayRefusal(install.reason)) });
           return;
         }
         //    AND `unknown` STOPS THE LAUNCH TOO, without deleting anything.
@@ -366,7 +367,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         //    mirror does, so a launch that cannot open it is a launch that could not have read
         //    any mail either.
         if (install.kind === "unknown") {
-          if (stillCurrent()) setState({ k: "refused", reason: Copy.serversInstallUnknown(install.reason) });
+          if (stillCurrent()) setState({ k: "refused", reason: refuse("serversInstallUnknown", sayRefusal(install.reason)) });
           return;
         }
         // 2. FINISH THE FORGETS THAT DID NOT FINISH. A forget writes its intent before it
@@ -390,7 +391,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       .catch((err) => {
         setState((s) =>
           s.k === "starting"
-            ? { k: "refused", reason: Copy.pairingsUnreadable(String(err)) }
+            ? { k: "refused", reason: refuse("pairingsUnreadable", String(err)) }
             : s,
         );
       });
@@ -432,7 +433,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
           try {
             await env.profiles.setActive(profileId);
           } catch (err) {
-            return { ok: false, reason: String(err) };
+            /* The platform's own words, quoted — the diagnostic rule, now expressed as a key. */
+            return { ok: false, reason: refuse("verbatimDetail", String(err)) };
           }
           await refreshProfiles();
           return runConnect(profileId, stillCurrent);

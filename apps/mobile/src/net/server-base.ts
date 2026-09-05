@@ -67,6 +67,7 @@
 /* The refusals this module returns are rendered on the address field, so they are copy and live
    in the deck. See `copy.en.ts`'s "transport & pairing refusals" block. */
 import { Copy } from "../copy";
+import { refuse, type Refusal } from "../refusal";
 import { originNeedsPin } from "@ohmail/client-engine";
 import {
   apiBaseFor,
@@ -120,11 +121,11 @@ export { apiBaseFor };
  * reason the parse is imported rather than restated: one rule about which addresses need a pin, so
  * the door cannot come to disagree with the seam (`admitOrigin`) that enforces it.
  */
-const NEEDS_THE_CODE = (): string => Copy.baseNeedsTheCode;
+const NEEDS_THE_CODE = (): Refusal => refuse("baseNeedsTheCode");
 
-export function addressProblem(typed: string): string | null {
+export function addressProblem(typed: string): Refusal | null {
   const trimmed = typed.trim();
-  if (trimmed === "") return Copy.baseAddressMissing;
+  if (trimmed === "") return refuse("baseAddressMissing");
   const origin = parseServerAddress(trimmed);
   if (origin !== null) {
     /**
@@ -182,9 +183,9 @@ export function addressProblem(typed: string): string | null {
      * somewhere is the one given.
      */
     if (originNeedsPin(httpsSpelling)) return NEEDS_THE_CODE();
-    return Copy.baseCleartext;
+    return refuse("baseCleartext");
   }
-  return Copy.baseNotAnAddress;
+  return refuse("baseNotAnAddress");
 }
 
 /** The route the derivation probes. Authenticated on every ohmail table, so a bare GET 401s. */
@@ -549,7 +550,7 @@ export type BaseVerdict =
   /** The base every `/sync`-family request must be composed against. */
   | { kind: "base"; base: string; prefixed: boolean }
   /** Nothing at this address answers as an ohmail API. `reason` is showable. */
-  | { kind: "refused"; reason: string };
+  | { kind: "refused"; reason: Refusal };
 
 /**
  * WHERE THE API IS ON THIS ORIGIN — the bare root, or behind `/api`.
@@ -670,7 +671,7 @@ export async function resolveApiBase(
   if (!reached && transportFailures.length > 0) {
     return {
       kind: "refused",
-      reason: Copy.baseApiUnreachable(transportFailures[0]!),
+      reason: refuse("baseApiUnreachable", transportFailures[0]!),
     };
   }
 
@@ -681,7 +682,7 @@ export async function resolveApiBase(
   if (stalled) {
     return {
       kind: "refused",
-      reason: stalledAfterHeaders ? Copy.baseApiStopped : Copy.baseApiTimeout,
+      reason: refuse(stalledAfterHeaders ? "baseApiStopped" : "baseApiTimeout"),
     };
   }
 
@@ -700,7 +701,7 @@ export async function resolveApiBase(
   if (transportFailures.length > 0) {
     return {
       kind: "refused",
-      reason: Copy.baseApiMixed(transportFailures[0]!),
+      reason: refuse("baseApiMixed", transportFailures[0]!),
     };
   }
 
@@ -708,6 +709,6 @@ export async function resolveApiBase(
      a true word, which is what the two arms above exist to protect. */
   return {
     kind: "refused",
-    reason: Copy.baseApiNotFound,
+    reason: refuse("baseApiNotFound"),
   };
 }

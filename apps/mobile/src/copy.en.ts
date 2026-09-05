@@ -676,6 +676,13 @@ const TABLE = {
     }
   },
 
+  /**
+   * THE SERVER'S OWN WORDS, PASSED THROUGH. A refusal carries a deck key, so a message that is not
+   * ours needs a key that says exactly that: the pairing redeem quotes whatever the server wrote
+   * when the failure is not one of the enumerable ones. The diagnostic rule, expressed as a key.
+   */
+  verbatimDetail: (detail: string) => detail,
+
   /* --------------------------------------------------------------- folders */
 
   /*

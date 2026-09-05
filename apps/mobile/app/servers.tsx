@@ -16,6 +16,8 @@
  * quiet way a comment becomes a false claim.
  */
 import { useCallback, useState, useSyncExternalStore } from "react";
+import { type Refusal } from "../src/refusal";
+import { sayRefusal } from "../src/refusal";
 import { View } from "react-native";
 import { router } from "expo-router";
 import { Copy } from "../src/copy";
@@ -33,7 +35,7 @@ export default function ServersScreen() {
   useLocale();
   const conn = useConnection();
   /** What a forget could not take back. Held HERE — see the note beside where it renders. */
-  const [forgetFailure, setForgetFailure] = useState<string | null>(null);
+  const [forgetFailure, setForgetFailure] = useState<Refusal | null>(null);
 
   return (
     <Screen>
@@ -56,7 +58,7 @@ export default function ServersScreen() {
                 key={p.id}
                 profile={p}
                 active={p.id === conn.activeId}
-                onForgetFailed={(r) => setForgetFailure(r === "" ? null : r)}
+                onForgetFailed={setForgetFailure}
               />
             ))}
             <View style={{ paddingHorizontal: 20, paddingTop: 6 }}>
@@ -79,7 +81,7 @@ export default function ServersScreen() {
           <Panel style={{ marginTop: 14, paddingVertical: 14 }}>
             <View style={{ paddingHorizontal: 20 }}>
               <Txt variant="caption" tone="ink2" style={{ lineHeight: 16 }}>
-                {Copy.serversForgetFailed(forgetFailure)}
+                {Copy.serversForgetFailed(sayRefusal(forgetFailure))}
               </Txt>
             </View>
           </Panel>
@@ -120,7 +122,7 @@ function StatusPanel() {
         {s.k === "refused" || s.k === "ended" ? (
           <>
             <Txt variant="settingsLabel" tone="accent">{Copy.connectRefusedTitle}</Txt>
-            <Txt variant="caption" tone="ink2" style={{ lineHeight: 16 }}>{s.reason}</Txt>
+            <Txt variant="caption" tone="ink2" style={{ lineHeight: 16 }}>{sayRefusal(s.reason)}</Txt>
           </>
         ) : null}
         {s.k === "live" ? <LiveFacts /> : null}
@@ -171,7 +173,7 @@ function ProfileRow({ profile, active, onForgetFailed }: {
   profile: ServerProfile;
   active: boolean;
   /** Raised to the SCREEN, because a partial forget removes this very row. See its note there. */
-  onForgetFailed: (reason: string) => void;
+  onForgetFailed: (reason: Refusal | null) => void;
 }) {
   const conn = useConnection();
   const t = useTheme();
@@ -184,7 +186,7 @@ function ProfileRow({ profile, active, onForgetFailed }: {
   // removes exactly this row).
   const forget = async () => {
     const wasLast = conn.profiles.length === 1;
-    onForgetFailed("");
+    onForgetFailed(null);
     const outcome = await conn.forget(profile.id);
     if (!outcome.ok) {
       // NOT a local setState: the credential half succeeds first, so this component is usually

@@ -14,6 +14,8 @@
  * keeps the camera off.
  */
 import { useCallback, useRef, useState } from "react";
+import { type Refusal } from "../src/refusal";
+import { sayRefusal } from "../src/refusal";
 import { View } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { router } from "expo-router";
@@ -27,7 +29,7 @@ import { useLocale } from "../src/i18n/LocaleProvider";
 type Phase =
   | { k: "scanning"; badCode: boolean }
   | { k: "pairing" }
-  | { k: "failed"; reason: string };
+  | { k: "failed"; reason: Refusal };
 
 export default function ScanScreen() {
   /* Subscribed to the language, so a switch in Settings redraws this screen instead of
@@ -110,7 +112,7 @@ export default function ScanScreen() {
         <Panel style={{ margin: 12, paddingVertical: 16 }}>
           <View style={{ paddingHorizontal: 20, gap: 10 }}>
             <Txt variant="settingsLabel" tone="accent">{Copy.connectRefusedTitle}</Txt>
-            <Txt variant="caption" tone="ink2" style={{ lineHeight: 16 }}>{phase.reason}</Txt>
+            <Txt variant="caption" tone="ink2" style={{ lineHeight: 16 }}>{sayRefusal(phase.reason)}</Txt>
             <Button
               label={Copy.scanAgain}
               variant="solid"

@@ -39,6 +39,7 @@ import {
    straight to the connect screen — so they are copy and live in the deck. The thrown faults in
    this file are not: nobody but a developer reads a stack trace. */
 import { Copy } from "../copy";
+import { refuse, type Refusal } from "../refusal";
 
 /** What the platform must provide — expo modules in the app, node modules in tests. */
 export interface MobileEngineDeps {
@@ -139,7 +140,7 @@ export const IDENTITY_PROBE_DEADLINE_MS = 8000;
  */
 export type IdentityVerdict =
   | { kind: "verified" | "unverified" }
-  | { kind: "mismatch"; reason: string };
+  | { kind: "mismatch"; reason: Refusal };
 
 export type EngineBoot =
   | {
@@ -155,7 +156,7 @@ export type EngineBoot =
        */
       verifyIdentity: () => Promise<IdentityVerdict>;
     }
-  | { kind: "refused"; reason: string };
+  | { kind: "refused"; reason: Refusal };
 
 /**
  * ONE MIRROR PER (ORIGIN, ACCOUNT) — composed HERE rather than in the
@@ -457,7 +458,7 @@ function accountGuarded(
 export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig): Promise<EngineBoot> {
   const origin = normalizeOrigin(config.origin);
   if (!/^https?:\/\/\S+$/.test(origin)) {
-    return { kind: "refused", reason: Copy.bootBadOrigin(config.origin) };
+    return { kind: "refused", reason: refuse("bootBadOrigin", config.origin) };
   }
   /**
    * THE ADAPTER'S BASE — the measured one, or the origin. See {@link ConnectConfig.apiBase}.
@@ -473,7 +474,7 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
     ? origin
     : normalizeOrigin(config.apiBase);
   if (!/^https?:\/\/\S+$/.test(apiBase)) {
-    return { kind: "refused", reason: Copy.bootBadApiBase(config.apiBase ?? "") };
+    return { kind: "refused", reason: refuse("bootBadApiBase", config.apiBase ?? "") };
   }
   /**
    * ── THE BASE MUST BE DERIVABLE FROM THE ORIGIN, AND THAT IS A STRUCTURAL INVARIANT ────────────
@@ -501,13 +502,13 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
   if (apiBase !== origin && apiBase !== `${origin}/api`) {
     return {
       kind: "refused",
-      reason: Copy.bootApiBaseOffOrigin(apiBase, origin),
+      reason: refuse("bootApiBaseOffOrigin", apiBase, origin),
     };
   }
   const token = config.token?.trim() ?? "";
   const accountId = config.accountId.trim();
   if ((!token && !config.auth) || !accountId) {
-    return { kind: "refused", reason: Copy.bootNeedsCredential };
+    return { kind: "refused", reason: refuse("bootNeedsCredential") };
   }
   // The credential, behind two seams (headers + fetch). The manager supplies both; the
   // static path composes the same shapes from the pasted token, so everything below is one
@@ -541,7 +542,7 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
     if (identity.kind === "mismatch") {
       return {
         kind: "mismatch",
-        reason: Copy.bootAccountMismatch(identity.serverSays, accountId),
+        reason: refuse("bootAccountMismatch", identity.serverSays, accountId),
       };
     }
     identityCleared = true;
@@ -556,7 +557,7 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
     await store.load();
   } catch (err) {
     store.close();
-    return { kind: "refused", reason: Copy.bootMirrorFailed(String(err)) };
+    return { kind: "refused", reason: refuse("bootMirrorFailed", String(err)) };
   }
 
   const engine = new OhmailEngine({
