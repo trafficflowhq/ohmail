@@ -789,12 +789,34 @@ export interface WorldPile {
   items: PileItem[];
 }
 
-/** The pile blurbs — one wording, shared with the desktop client's. */
-export const PILE_META: Record<PileKind, { title: string; note: string }> = {
-  replyLater: { title: "Answer Later", note: "Answers you owe. A Reply Run walks them one screen at a time." },
-  setAside: { title: "Parked", note: "Kept in view without keeping the Ohbox busy." },
-  resurface: { title: "Resurface", note: "Comes back on its own, at the time you chose." },
-};
+/**
+ * The pile blurbs, READ FROM THE COPY DECK AT CALL TIME.
+ *
+ * This was `PILE_META`, a const holding its own copies of the three titles and notes, spread
+ * into each pile row. The titles it held were the same English the deck held, so the two agreed
+ * and nothing ever looked wrong — until a translated deck existed, at which point the More
+ * screen (which reads `Copy`) followed it and the Piles screen (which read this) did not. Both
+ * titles and notes stayed English on that one screen, and no test could see it, because in
+ * English the two decks are indistinguishable.
+ *
+ * A FUNCTION, not a const, and that is the part that keeps it fixed: a module-level const would
+ * capture whatever the deck said when this module was first imported, which is the same defect
+ * again with a longer fuse. Reading inside the call means the row carries whatever the deck says
+ * at the moment it is built, however the deck comes to be chosen.
+ *
+ * The `switch` is exhaustive over `PileKind`; a new pile that forgets its wording will not
+ * compile rather than rendering a blank strip.
+ */
+function pileCopy(kind: PileKind): { title: string; note: string } {
+  switch (kind) {
+    case "replyLater": return { title: Copy.replyLater, note: Copy.replyLaterNote };
+    case "setAside": return { title: Copy.setAside, note: Copy.setAsideNote };
+    case "resurface": return { title: Copy.resurface, note: Copy.resurfaceNote };
+  }
+}
+
+/** The pile kinds, in the order the screen stacks them. */
+const PILE_KINDS: readonly PileKind[] = ["replyLater", "setAside", "resurface"];
 
 export function livePiles(pres: EntityReader, v: WorldView): WorldPile[] {
   const piles = triagePiles(pres);
@@ -808,9 +830,9 @@ export function livePiles(pres: EntityReader, v: WorldView): WorldPile[] {
       ? { resurfaceAt: messageDisplayTime({ date: e.resurfaceAt }, v.now, v.zone, v.locale ?? "en") }
       : {}),
   });
-  return (Object.keys(PILE_META) as PileKind[]).map((kind) => ({
+  return PILE_KINDS.map((kind) => ({
     kind,
-    ...PILE_META[kind],
+    ...pileCopy(kind),
     items: piles[kind].map(toItem),
   }));
 }

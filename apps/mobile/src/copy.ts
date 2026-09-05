@@ -452,6 +452,19 @@ export const Copy = {
   park: "Park",
   resurface: "Resurface",
   pileEmpty: "Nothing here yet.",
+  /*
+   * THE PILE BLURBS LIVE HERE, not beside the projection that builds the rows.
+   *
+   * They were a second deck — a `PILE_META` const in `state/live.ts`, spread into each pile row,
+   * with its own copies of the three titles. The titles above were already correct and already
+   * used by the More screen, so the two decks agreed in English and nothing looked wrong; the
+   * moment a translated deck existed, the More screen followed it and the Piles screen did not.
+   * A screen that reads a private copy of the wording cannot be translated, and the defect is
+   * invisible until somebody translates.
+   */
+  replyLaterNote: "Answers you owe. A Reply Run walks them one screen at a time.",
+  setAsideNote: "Kept in view without keeping the Ohbox busy.",
+  resurfaceNote: "Comes back on its own, at the time you chose.",
 
   /* --------------------------------------------------------------- folders */
 
