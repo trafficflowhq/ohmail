@@ -147,9 +147,12 @@ export async function adminCosts(db: Db, now: Date): Promise<AdminCostSnapshot> 
   // 2026-09-05, the two disagree by two orders of magnitude for this deployment (the ledger
   // records ~$0.01 for a month the vendor bills at ~$0.87), which is a metering gap an operator
   // should be looking at rather than a number that should be silently added to another.
-  const providers = (await costsForMonth(db, start, now)).map(viewOf);
+  const raw = await costsForMonth(db, start, now);
+  const providers = raw.map(viewOf);
   const infraProviders = providers.filter((p) => p.provider !== AI_VENDOR);
   const measured = infraProviders.filter((p) => p.cents !== null);
+  // The same set with the flat/scalable split still on it — `viewOf` projects for the wire.
+  const infraMeasured = raw.filter((p) => p.provider !== AI_VENDOR && p.cents !== null);
   const infraCents = measured.length === 0
     ? null
     : measured.reduce((sum, p) => sum + (p.cents ?? 0), 0);
@@ -162,9 +165,12 @@ export async function adminCosts(db: Db, now: Date): Promise<AdminCostSnapshot> 
   // API reading is pro-rated would multiply a flat fee by (days-in-month ÷ days-elapsed): a $20
   // flat charge entered on day 3 of 30 would project as ~$200. `api` and `stale` readings ARE
   // usage-to-date (a `stale` row is simply an old one of those) and scale correctly.
-  const flatCents = measured
-    .filter((p) => p.source === "manual")
-    .reduce((sum, p) => sum + (p.cents ?? 0), 0);
+  // PER METRIC, not per provider. Classifying a whole provider by its `source` meant one
+  // hand-entered line made the entire provider unscaled — a $20 manual plan fee beside $5 of
+  // measured usage left none of the usage pro-rated — and when the API half went stale the
+  // inverse happened and the flat fee WAS pro-rated, at the aggregate's newest stamp.
+  // `flatCents` is now the provider's own split, computed where the per-metric rows still exist.
+  const flatCents = infraMeasured.reduce((sum, p) => sum + p.flatCents, 0);
   // Retained for the DTO's own figure; the projection below scales each provider by the day its
   // reading was taken rather than working from this single total.
   const scalableInfraCents = (infraCents ?? 0) - flatCents;
@@ -349,15 +355,16 @@ export async function adminCosts(db: Db, now: Date): Promise<AdminCostSnapshot> 
   // Each scalable provider is therefore scaled by ITS OWN elapsed days. A `stale` row carries
   // the date it was obtained; an `api` row's date is today's by definition, so this changes
   // nothing for a healthy provider.
-  const scalableRate = measured
-    .filter((p) => p.source !== "manual")
-    .reduce((sum, p) => {
-      const takenOn = p.fetchedAt === null ? now : new Date(p.fetchedAt);
-      const daysAtReading = takenOn >= start && takenOn < end
-        ? Math.max(1, takenOn.getUTCDate())
-        : elapsedDays;
-      return sum + (p.cents ?? 0) / daysAtReading;
-    }, 0);
+  const scalableRate = infraMeasured.reduce((sum, p) => {
+    // Only the part that is NOT a flat fee, and scaled from the day the API half was read.
+    const scalable = (p.cents ?? 0) - p.flatCents;
+    if (scalable <= 0) return sum;
+    const takenOn = p.scalableFetchedAt ?? now;
+    const daysAtReading = takenOn >= start && takenOn < end
+      ? Math.max(1, takenOn.getUTCDate())
+      : elapsedDays;
+    return sum + scalable / daysAtReading;
+  }, 0);
   // The AI half is written continuously by the recorder, so its elapsed count is today's.
   const projectedCents = infraCents === null && aiCents === 0
     ? null

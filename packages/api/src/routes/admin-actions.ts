@@ -389,6 +389,13 @@ async function platformCost(
   // refuse a response that mixes currencies, which leaves this endpoint as the only way a
   // non-USD figure could enter the table. Converting on the operator's behalf would need a rate
   // and a date this system does not have, so it refuses and says which value it refused.
+  // A PRESENT-BUT-NOT-A-STRING currency is REFUSED, not defaulted. `"usd"` as the fallback for
+  // anything non-string meant ISO-4217 NUMERIC `978` — euros — was stored as dollars, which is
+  // the failure this check exists to prevent, arriving through the check itself. The default
+  // applies only when the field is ABSENT.
+  if (body.currency !== undefined && typeof body.currency !== "string") {
+    return { status: 400, body: { error: { code: "currency_unsupported" } } };
+  }
   const currency = typeof body.currency === "string" ? body.currency.trim().toLowerCase() : "usd";
   if (currency !== "usd") {
     return { status: 400, body: { error: { code: "currency_unsupported" } } };
