@@ -114,9 +114,11 @@ written, and sending without one risks a second copy nobody can take back. Any o
 still sent at once, but would not survive a restart until storage recovers — repeating it costs
 nothing, so refusing it would cost you the action to protect you from nothing.
 
-One caveat remains, stated because a release note that leaves it out would read as a stronger
-promise than the code makes: two of the four routes to the network — a change you make right now,
-and the batch replayed when the app wakes — still run outside the single lane the retries use.
+Every route to the network now shares one lane, in the order the requests were made: a change you
+make right now, the batch replayed when the app wakes, a retry you press, and a flush after the
+connection returns. Two of the four used to run outside it. That mattered most for marking things
+read: nothing else orders those, so a newer "unread" could reach the server before an older
+"read" and leave it at the older value, with both requests reporting success.
 
 Two failures deliberately do not count toward that limit. A dropped connection or a timed-out
 request never does, so a machine that is simply offline keeps retrying for as long as it takes;

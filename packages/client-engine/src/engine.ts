@@ -1390,24 +1390,25 @@ export class OhmailEngine {
   /** See {@link OUTBOX_REPLAY_DEADLINE_MS}; overridable only through the test seam. */
   private readonly replayDeadlineMs: number;
   /**
-   * THE ORDER BARRIER a timed-out replay leaves behind: the still-in-flight dispatch, held
-   * until it settles. While it stands, NO further outbox dispatch may start — not the next
-   * drive's replay and not a `flushPending` — because the hung request may yet commit, and a
-   * verb dispatched behind it could land an older value after a newer one on the server. The
-   * barrier clears itself on settle; a process death clears it the honest way (every
-   * still-owed verb is persisted and replays in order next boot).
+   * ── THE GATE'S OWN STATE: THE ORDER BARRIER A TIMED-OUT DISPATCH LEAVES BEHIND ────────────
+   *
+   * The still-in-flight dispatch, held until it settles. While it stands, NO further outbox
+   * dispatch may start on ANY road, because the hung request may yet commit and a verb
+   * dispatched behind it could land an older value after a newer one on the server. It clears
+   * itself on settle; a process death clears it the honest way — every still-owed verb is
+   * persisted and replays in order next boot.
+   *
+   * It used to be called `replayHold` and to have a short-lived twin, `replayActive`, which
+   * armed for the whole of each attempt so that a fresh verb WAITED rather than queued. The twin
+   * is gone: {@link outboxGate} is a promise chain, so joining it IS waiting out whatever is in
+   * flight, and every dispatch on that chain is deadline-bounded — a waiter can no longer
+   * inherit a hung request's unboundedness, which was the only reason the twin needed to exist
+   * separately. What is left is the one distinction that is real: a bounded wait you JOIN, and a
+   * hold that may stand for minutes, which a person pressing Send must never be made to sit
+   * through. The gate honours this before releasing a queued caller; `mutate` reads it
+   * synchronously first, and queues the verb rather than joining at all.
    */
-  private replayHold: Promise<void> | null = null;
-  /**
-   * THE SHORT-LIVED TWIN of {@link replayHold}: the replay attempt CURRENTLY being awaited by
-   * the drive. Armed for the whole of each attempt — not only after its deadline — because a
-   * fresh same-target verb dispatched while a restored replay is mid-air can commit first and
-   * be overwritten when the slower replay lands (user-always-wins, violated in the window the
-   * deadline had not yet noticed). Fresh dispatches and flushes WAIT on it (it is bounded by
-   * the attempt's own deadline); only when an attempt times out does the long-lived
-   * {@link replayHold} take over and waiting turn into queueing.
-   */
-  private replayActive: Promise<void> | null = null;
+  private outboxHold: Promise<void> | null = null;
   /** {@link EngineOptions.outboxAutoReplay}, resolved once. */
   private readonly autoReplayOn: boolean;
   /** Session-monotonic outbox tiebreak; seeded past every restored entry's `n`. */
@@ -1782,11 +1783,43 @@ export class OhmailEngine {
     // The host owns the whole replay (`outboxAutoReplay: false` — the mobile shape): the drive
     // touches nothing, and `flushPending` routes every result to its ledger.
     if (!this.autoReplayOn) return;
-    // A timed-out dispatch from an earlier drive is still in the air — see {@link replayHold}:
+    // A timed-out dispatch from an earlier drive is still in the air — see {@link outboxHold}:
     // nothing may be dispatched behind it until it settles, so this drive skips its replay and
-    // goes straight to the drain. The queue keeps everything, in order, for the drive after.
-    if (this.replayHold) return;
+    // goes straight to the drain. Read here rather than left to the gate on purpose: the gate
+    // would make this drive WAIT for the hold, and a drive that waits is a drain that waits —
+    // reads are never hostage to a hung write. The queue keeps everything, in order, for the
+    // drive after; the hold's own settle nudges one.
+    if (this.outboxHold) return;
+    /**
+     * A DRIVE REACHED FROM INSIDE A DISPATCH DOES NOT REPLAY.
+     *
+     * A confirmed dispatch awaits `syncFresh()` to reconcile, and that is a `drive()`, and a
+     * drive calls this. So this method can be entered while a gated dispatch is still on the
+     * chain — and joining the gate there would queue it behind its own holder, which never
+     * settles. The deadlock is silent: the promise just hangs, and the guard that catches it
+     * reads as a timeout rather than a defect.
+     *
+     * Skipping is the honest answer rather than a workaround, and it is the same one the hold
+     * above gives: that nested drive exists to DRAIN, the queue keeps everything in user order,
+     * and the next drive replays it. Reads are never hostage to a write.
+     */
+    if (this.inOutboxGate) return;
     if (this.queue.length === 0) return;
+    // THE GATE, around the whole batch. The body re-reads the hold at release — see the gate's
+    // own note: a dispatch this batch queued behind may have timed out and armed one, and
+    // replaying behind a request still in the air is the reordering the barrier exists to stop. Order within the batch is user order and the batch must
+    // not be interleaved with a `mutate` or a `flushPending` — a fresh verb landing between two
+    // replayed ones can commit first and be overwritten when the older one lands, which is
+    // user-always-wins violated in exactly the window nobody watches. This road was the last one
+    // outside the gate; `replayActive` was its private stand-in, and a private stand-in only
+    // serializes the callers that know about it.
+    return this.outboxGate(() => this.replayOutboxInner());
+  }
+
+  private async replayOutboxInner(): Promise<void> {
+    // Release-time re-read. Skipping is right here for the same reason it is at the top: the
+    // drive goes on to its drain, and the queue keeps everything in order for the drive after.
+    if (this.outboxHold) return;
     // Every RESTORED entry (its owner died with its session), plus every same-session entry
     // whose result nobody routes — see {@link OhmailEngine.ownerSettled} for the two families
     // that stay with `flushPending()`.
@@ -1815,56 +1848,22 @@ export class OhmailEngine {
     // dropped.
     for (let i = 0; i < batch.length; i++) {
       const p = batch[i]!;
-      const attempt = this.dispatch(p, { deferReconcile: true });
-      // The WHOLE attempt is guarded, not just its post-deadline tail — see {@link replayActive}.
-      // The waiter promise is a DEFERRED, settled by the attempt OR by the deadline, whichever
-      // comes first: a waiter must never inherit the attempt's own unboundedness — a hung
-      // request would otherwise suspend every fresh mutate and flush for ever, precisely the
-      // stranding the deadline exists to end. Released only after the hold decision below, so
-      // a woken waiter always finds the world it should queue against.
-      let releaseActive!: () => void;
-      const active = new Promise<void>((resolve) => { releaseActive = resolve; });
-      this.replayActive = active;
-      void attempt.then(() => releaseActive(), () => releaseActive());
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      let timedOut = false;
-      await Promise.race([
-        attempt,
-        new Promise<void>((resolve) => {
-          timer = setTimeout(() => { timedOut = true; resolve(); }, this.replayDeadlineMs);
-        }),
-      ]);
-      if (timer !== undefined) clearTimeout(timer);
-      if (this.replayActive === active) this.replayActive = null;
+      // ONE ROAD. This loop used to hand-roll the deadline, the barrier and the hold, which is
+      // how `retryAbandoned` came to be the road WITHOUT a deadline: the code that had one was
+      // not reusable, so the third caller re-derived a subset of it. It is the same method now.
+      const { timedOut } = await this.dispatchWithDeadline(p, { deferReconcile: true });
       if (timedOut) {
         // ORDER IS THE CONTRACT, so a timeout stops the BATCH, not just the wait: the hung
-        // request may yet commit, and dispatching the entries behind it would let a newer
-        // write land before an older one — mark-read then mark-unread arriving reversed is
-        // the exact class the serial replay exists to prevent. The rest go back on the queue
-        // (stamps intact — the next replay re-sorts), and the in-flight dispatch becomes the
-        // ORDER BARRIER: no later drive's replay and no `flushPending` may start another
-        // outbox dispatch until it settles (see {@link replayHold}). This drive still
-        // proceeds to its drain — reads are never hostage to a hung write.
-        const hold: Promise<void> = attempt.then(
-          () => undefined,
-          () => undefined,
-        ).finally(() => {
-          if (this.replayHold === hold) this.replayHold = null;
-          // The barrier's own settle is the wake-up: verbs expressed while it stood are
-          // sitting in the queue (mutate() gates on the hold), and nothing else is guaranteed
-          // to drive soon on a quiet tab. `syncFresh`, not `syncOnce`: the settle can land
-          // while the drive that armed this hold is STILL draining, and joining it would join
-          // a replay pass that already ran — the queued verbs need the drive AFTER it.
-          void this.syncFresh().catch(() => { /* the scheduler's cadence retries */ });
-        });
-        this.replayHold = hold;
+        // request may yet commit, and dispatching the entries behind it would let a newer write
+        // land before an older one — mark-read then mark-unread arriving reversed is the exact
+        // class the serial replay exists to prevent. The rest go back on the queue with their
+        // stamps intact (the next replay re-sorts), and the in-flight dispatch is already the
+        // order barrier: `dispatchWithDeadline` armed {@link outboxHold} before returning, so
+        // no road may start another dispatch until it settles. This drive still proceeds to its
+        // drain — reads are never hostage to a hung write.
         this.queue.unshift(...batch.slice(i + 1));
-        // NOW wake the waiters — after the hold stands, so each re-check lands in the queue
-        // branch instead of dispatching into the very race the barrier exists to prevent.
-        releaseActive();
         return;
       }
-      releaseActive();
     }
   }
 
@@ -3710,35 +3709,92 @@ export class OhmailEngine {
     }
 
     /**
-     * THE ORDER BARRIER GATES FRESH DISPATCHES TOO — in two tiers, matching the two holds.
+     * ── THE FRESH VERB TAKES THE SAME GATE AS EVERY OTHER ROAD ─────────────────────────────
      *
-     * A replay attempt CURRENTLY in the air ({@link replayActive}) is waited out: it is
-     * bounded by its own deadline, the verb has already painted and persisted, and dispatching
-     * concurrently could let this fresh write commit first and be overwritten when the slower
-     * replay lands. The loop re-checks because a batch replays attempts back to back.
+     * This was the last dispatch outside {@link outboxGate}. It waited out a private
+     * `replayActive` deferred instead, which serialized it against the DRIVE's replay and
+     * against nothing else — so a `mutate` and a `flushPending`, or two `mutate`s, could be on
+     * the wire together. For the read verbs, whose supersession key is `null`, ordering IS the
+     * contract: a newer unread landing before an older read leaves the server at the older
+     * value, and nothing afterwards notices.
      *
-     * A TIMED-OUT attempt ({@link replayHold}) may stand for minutes, so the verb waits in the
-     * QUEUE instead (status `queued` — expressed, safe, not yet on the wire); the hold's own
-     * settle chains the drive that delivers it. The one exception is the caller-settled create
-     * (`draft_save`, draftId null): its caller adopts `entityId` from THIS result and has no
-     * retry path of its own, so it awaits the hold however long — a late-adopted draft id is
-     * correct, an orphaned `queued` create is a twin factory.
+     * Joining the chain is what "wait out whatever is in flight" now means, and it is bounded —
+     * every dispatch on the chain goes through {@link dispatchWithDeadline}.
+     *
+     * THE HOLD IS STILL READ SYNCHRONOUSLY, FIRST, and that asymmetry is deliberate: it may
+     * stand for minutes, and a person pressing Send must not sit through it. The verb waits in
+     * the QUEUE instead — expressed, painted, persisted, not yet on the wire — and the hold's
+     * own settle chains the drive that delivers it. The one exception is the caller-settled
+     * create (`draft_save`, draftId null): its caller adopts `entityId` from THIS result and has
+     * no retry path of its own, so it joins the gate and waits however long. A late-adopted
+     * draft id is correct; an orphaned `queued` create is a twin factory.
      */
-    while (this.replayActive) {
-      await this.replayActive;
-    }
-    if (this.replayHold) {
-      const awaitsHold = enriched.kind === "draft_save" && enriched.draftId === null;
-      if (!awaitsHold) {
-        this.queue.push(pending);
-        return { id, key, status: "queued", seq: null };
-      }
-      while (this.replayHold) {
-        await this.replayHold;
-      }
-    }
+    const awaitsHold = enriched.kind === "draft_save" && enriched.draftId === null;
+    /**
+     * Set by `dispatch` when it skipped a reconcile this road must issue off the chain, and
+     * WHICH KIND: the no-echo branch's drain is awaited (the caller's result depends on it),
+     * the optimistic-send branch's is issued in the background (the compose must not wait on a
+     * poll). Guessing one from the result's status conflated them and made a send wait.
+     */
+    let owed: "await" | "background" | null = null;
+    const queued = (): MutationResult => {
+      this.queue.push(pending);
+      return { id, key, status: "queued", seq: null };
+    };
 
-    return this.dispatch(pending);
+    for (;;) {
+      // The create that must not be orphaned waits the hold out BEFORE joining the chain, never
+      // while holding it: a caller that sat on the gate for the length of a hung request would
+      // stall every other road behind it, which is the stranding the deadline exists to end
+      // wearing a different hat.
+      if (this.outboxHold) {
+        if (!awaitsHold) return queued();
+        await this.outboxHold;
+        continue;
+      }
+
+      // Deadline-bounded like every other road. A timeout leaves the attempt owning its entry
+      // and arms the hold; the verb is answered `queued` rather than left on a hung request.
+      const out = await this.outboxGate(async () => {
+        // Released now — and a hold may have been armed by the dispatch we queued behind.
+        if (this.outboxHold) return null;
+        /**
+         * ── THE GATE COVERS THE WIRE, NOT THE RECONCILE ─────────────────────────────────────
+         *
+         * `deferReconcile` here for the reason it exists: the reconcile drain must happen
+         * OUTSIDE the chain. Held inside, it serializes the drains along with the dispatches,
+         * and three triage keystrokes during one in-flight poll stop sharing a single follow-up
+         * and pay one round trip each — measured the moment this road was gated, 5 syncs where
+         * the guard expects 3. The ordering contract is about what reaches the WIRE; once the
+         * POST has returned, the next verb may go, and the mirror catch-up belongs to whoever
+         * is draining anyway.
+         */
+        return this.dispatchWithDeadline(pending, {
+          deferReconcile: true,
+          onReconcileDeferred: (mode) => { owed = mode; },
+        });
+      });
+      if (out === null) {
+        if (!awaitsHold) return queued();
+        continue; // the create re-reads the hold at the top and waits it out off the chain
+      }
+      if (out.timedOut || out.result === null) return queued();
+      // OFF THE CHAIN NOW, so concurrent verbs coalesce onto one drive exactly as they did
+      // before this road was gated. `syncFresh` joins an in-flight drain rather than starting a
+      // second; a failure leaves the overlay standing on `awaitingEcho`, which the deferred
+      // dispatch has already registered.
+      //
+      // ONLY WHEN THE DISPATCH ACTUALLY DEFERRED ONE. A mutation whose answer carried its own
+      // changes took the `applyChanges` branch and reconciles nothing — issuing a drain for it
+      // would put a round trip on the one path that is guaranteed not to need it, and behind a
+      // stalled poll it would hang the verb outright.
+      if (owed === "await") {
+        await this.syncFresh().catch(() => { /* the overlay stands until a drain proves the echo */ });
+      } else if (owed === "background") {
+        void this.syncFresh().catch(() => { /* the write landed; the next poll catches up */ });
+      }
+      return out.result;
+    }
   }
 
   /**
@@ -3758,10 +3814,47 @@ export class OhmailEngine {
   private outboxChain: Promise<unknown> = Promise.resolve();
 
   private outboxGate<T>(fn: () => Promise<T>): Promise<T> {
-    const run = this.outboxChain.then(fn, fn);
+    /**
+     * ── THE GATE SERIALIZES; IT DOES NOT WAIT OUT A HOLD ─────────────────────────────────────
+     *
+     * A caller joins the chain when it calls, and is released when everything ahead has settled.
+     * A hold can be armed in between — by the very dispatch this caller is queued behind, which
+     * timed out with its request still in the air. So every body re-reads {@link outboxHold} at
+     * its start, which is release time, and that is the "consult before release" the roads need.
+     *
+     * The gate deliberately does NOT `await` the hold on the caller's behalf. It stands for as
+     * long as a hung request does, which can be minutes, and the whole point of the deadline is
+     * that nobody is suspended past it: a fresh verb answers `queued`, a flush answers `queued`
+     * per entry, a drive skips its replay and goes on to drain. Waiting here would put every one
+     * of them back on the unbounded promise the deadline exists to escape — measured, once: a
+     * fresh verb behind a hung replay hung with it.
+     */
+    const release = async (): Promise<T> => {
+      this.inOutboxGate = true;
+      try {
+        return await fn();
+      } finally {
+        this.inOutboxGate = false;
+      }
+    };
+    const run = this.outboxChain.then(release, release);
     this.outboxChain = run.then(() => undefined, () => undefined);
     return run;
   }
+
+  /**
+   * True while a gated body is running.
+   *
+   * NOT a re-entrancy token, and it must not be used as one: it stays true while the holder is
+   * suspended at an await, so a genuinely concurrent caller arriving in that window would read it
+   * as "I am nested" and run beside the holder — which is the single-flight defeated, silently,
+   * in exactly the concurrent case it exists for. It was written that way for one run and three
+   * of this file's own serialization guards caught it.
+   *
+   * Its one job is to let {@link replayOutbox} recognise that a drive was reached from INSIDE a
+   * dispatch, where the replay must be skipped rather than queued behind its own holder.
+   */
+  private inOutboxGate = false;
 
   /**
    * ONE DISPATCH, DEADLINE-BOUNDED, WITH THE SAME BARRIER SEMANTICS THE BOOT REPLAY USES.
@@ -3771,19 +3864,17 @@ export class OhmailEngine {
    * a person is watching a spinner on — pending for ever.
    *
    * On timeout the in-flight attempt still OWNS its entry (it settles, re-queues, or leaves it
-   * persisted for the next boot), and becomes the order barrier {@link replayHold} names, so no
+   * persisted for the next boot), and becomes the order barrier {@link outboxHold} names, so no
    * other outbox dispatch may start behind it.
    */
   private async dispatchWithDeadline(
     p: PendingMutation,
-    opts: { deferReconcile?: boolean } = {},
+    opts: { deferReconcile?: boolean; onReconcileDeferred?: (mode: "await" | "background") => void } = {},
   ): Promise<{ result: MutationResult | null; timedOut: boolean }> {
+    // NO SEPARATE "ACTIVE" DEFERRED. Every caller of this method reaches it through
+    // {@link outboxGate}, and the chain does not release the next one until this returns — so
+    // being on the chain IS the in-flight barrier, and it is bounded by the deadline below.
     const attempt = this.dispatch(p, opts);
-    let releaseActive!: () => void;
-    const active = new Promise<void>((resolve) => { releaseActive = resolve; });
-    this.replayActive = active;
-    void attempt.then(() => releaseActive(), () => releaseActive());
-
     let timer: ReturnType<typeof setTimeout> | undefined;
     let timedOut = false;
     const raced = await Promise.race([
@@ -3793,15 +3884,13 @@ export class OhmailEngine {
       }),
     ]);
     if (timer !== undefined) clearTimeout(timer);
-    if (this.replayActive === active) this.replayActive = null;
 
     if (timedOut) {
       const hold: Promise<void> = attempt.then(() => undefined, () => undefined).finally(() => {
-        if (this.replayHold === hold) this.replayHold = null;
+        if (this.outboxHold === hold) this.outboxHold = null;
         void this.syncFresh().catch(() => { /* the scheduler's cadence retries */ });
       });
-      this.replayHold = hold;
-      releaseActive();
+      this.outboxHold = hold;
       return { result: null, timedOut: true };
     }
     return { result: raced.r, timedOut: false };
@@ -4172,7 +4261,7 @@ export class OhmailEngine {
 
     const { result, timedOut } = await this.outboxGate(() => this.dispatchWithDeadline(p));
     if (timedOut || result === null) {
-      // The in-flight attempt owns the entry from here; `replayHold` is the barrier.
+      // The in-flight attempt owns the entry from here; `outboxHold` is the barrier.
       return { id: p.id, key: p.key, status: "queued", seq: null };
     }
     return result;
@@ -4346,7 +4435,10 @@ export class OhmailEngine {
    * In this mode a confirmed no-echo mutation registers in {@link awaitingEcho} instead of
    * draining, and that following drain's success is what retires its overlay.
    */
-  private async dispatch(p: PendingMutation, opts: { deferReconcile?: boolean } = {}): Promise<MutationResult> {
+  private async dispatch(
+    p: PendingMutation,
+    opts: { deferReconcile?: boolean; onReconcileDeferred?: (mode: "await" | "background") => void } = {},
+  ): Promise<MutationResult> {
     try {
       const outcome = await this.adapter.mutate(p.mutation, { idempotencyKey: p.key });
       /**
@@ -4428,7 +4520,10 @@ export class OhmailEngine {
          */
         // In the boot replay's deferred mode the drive's own drain follows immediately and
         // carries the flip, so no background drain is issued — one drain, not two.
-        if (!opts.deferReconcile) void this.syncFresh().catch(() => { /* see above — the write landed */ });
+        // BACKGROUND, never awaited: this branch already materialised the sent copy, and the
+        // gesture the person is watching — the compose closing — may not be hostage to a poll.
+        if (opts.deferReconcile) opts.onReconcileDeferred?.("background");
+        else void this.syncFresh().catch(() => { /* see above — the write landed */ });
       } else {
         /**
          * NO ECHO BODY — pull the authoritative delta from a drain that STARTED after this POST
@@ -4475,6 +4570,7 @@ export class OhmailEngine {
         if (opts.deferReconcile) {
           this.awaitingEcho.set(p.id, epochAtConfirm);
           echoPending = true;
+          opts.onReconcileDeferred?.("await");
         } else {
           try {
             await this.syncFresh();
@@ -4869,7 +4965,7 @@ export class OhmailEngine {
   /**
    * Retry every queued mutation (reconnect path), preserving keys and order.
    *
-   * Refuses to DISPATCH while {@link replayHold} stands — a timed-out replay's request is
+   * Refuses to DISPATCH while {@link outboxHold} stands — a timed-out replay's request is
    * still in the air, and dispatching behind it could land an older value after a newer one —
    * but it still ANSWERS, one `queued` result per entry: `useMailSend.flush` re-arms its
    * backoff timer only when a result says its key is still queued, so an empty array here
@@ -4877,18 +4973,26 @@ export class OhmailEngine {
    * the hold clears. The entries stay queued and persisted; the hold's settle nudges a drive.
    */
   async flushPending(): Promise<MutationResult[]> {
+    // THE HOLD IS READ BEFORE JOINING, exactly as `mutate` reads it, and for the same reason:
+    // the gate WAITS OUT a standing hold before releasing, so a check inside the gated body
+    // could never see one and this method would sit for minutes instead of answering. Its
+    // contract is to answer — `useMailSend.flush` re-arms its backoff only when a result says
+    // the key is still queued, and an empty array reads as "nothing left".
+    if (this.outboxHold) {
+      return this.queue.map((p) => ({ id: p.id, key: p.key, status: "queued" as const, seq: null }));
+    }
     // THE SAME SINGLE-FLIGHT every other outbox road takes — see {@link outboxGate}. Without it
     // two surfaces could flush concurrently and, for the null-key read verbs, land newer-then-older.
     return this.outboxGate(() => this.flushPendingInner());
   }
 
   private async flushPendingInner(): Promise<MutationResult[]> {
-    // An in-flight replay attempt is waited out (bounded by its deadline) — dispatching beside
-    // it is the same stale-wins race the fresh-mutate gate closes.
-    while (this.replayActive) {
-      await this.replayActive;
-    }
-    if (this.replayHold) {
+    // No in-flight wait and no hold check here: this body runs INSIDE {@link outboxGate}, which
+    // does not release it until everything ahead has settled and no hold stands. A hold armed
+    // while this was queued is therefore waited out by the gate — which is right for a caller
+    // already committed to flushing. The hold that must NOT be waited out is one standing when
+    // the host calls; `flushPending` reads that one before joining.
+    if (this.outboxHold) {
       return this.queue.map((p) => ({ id: p.id, key: p.key, status: "queued" as const, seq: null }));
     }
     /**
