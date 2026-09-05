@@ -1810,7 +1810,9 @@ export type LeaseOp =
    * Same CLASS as every other lease IO fault on purpose: the hosts' exemptions and the LOCAL/Cloud
    * exclusions are all by class, so a new class would fall into `maxSyncFailures` and quarantine a
    * customer's mailbox over a folder that is not its fault. */
-  | "meta_folder_full";
+  | "meta_folder_full"
+  /** STORE `\Deleted` + EXPUNGE the acknowledgements past their life — see {@link RequestOp}. */
+  | "sweep_acks";
 
 export class LeaseUnavailableError extends Error {
   /**
@@ -2376,6 +2378,69 @@ export async function readMetaFolderWindow(
  *
  * The CALLER holds the folder's lock. This issues no APPEND and no STORE: it is a read.
  */
+/**
+ * ── AN EXPUNGE THAT RESOLVED `true` IS NOT A REMOVAL, AND THIS IS THE ONLY PLACE THAT SAYS SO ──
+ *
+ * `messageDelete` is `resolveRange` followed by `run('EXPUNGE', …)`. The STORE that marks
+ * `\Deleted` is internal to it and its result is NOT propagated, so a refused STORE under an
+ * accepted EXPUNGE resolves `true` having removed nothing. The only way to tell that from a real
+ * removal is to ask the folder for the uids again and be told they are gone.
+ *
+ * TWO OUTCOMES ARE FAILURES HERE, and conflating them was round nine's finding 1:
+ *
+ *   · the uids are still there — the expunge did nothing;
+ *   · the read could not RUN — nothing was established in either direction.
+ *
+ * The second is the one that reads as success if it is allowed to return normally, because every
+ * caller treats a normal return as "removed" and reports a count from it. The expunge is still
+ * allowed to have worked; what is refused is REPORTING that it did.
+ *
+ * One implementation for all three deletion paths — claims, settings documents and stale
+ * acknowledgements — because three copies of a rule this fiddly is how two of them come to
+ * disagree about what `true` meant.
+ */
+async function proveGone(
+  client: Pick<LeaseImapClient, "fetch">,
+  uids: readonly number[],
+  what: string,
+  op: LeaseOp,
+): Promise<void> {
+  if (typeof client.fetch !== "function") return;
+  const still: number[] = [];
+  try {
+    for await (const m of client.fetch(uids.join(","), { uid: true }, { uid: true })) {
+      if (typeof m.uid === "number") still.push(m.uid);
+    }
+  } catch (err) {
+    throw new LeaseUnavailableError(
+      `the expunge of ${uids.length} ${what} from ${META_FOLDER} could not be verified: `
+      + `${err instanceof Error ? err.message : String(err)}`,
+      { op },
+    );
+  }
+  if (still.length > 0) {
+    throw new LeaseUnavailableError(
+      `${still.length} ${what} survived the expunge in ${META_FOLDER} — the server accepted the `
+      + "command and removed nothing",
+      { op },
+    );
+  }
+}
+
+/**
+ * The most uids a header search will carry forward, one PAST the largest ceiling any caller
+ * applies to the result — so "exactly at the ceiling" stays distinguishable from "over it", which
+ * is what the claim-set refusal turns on. A server that answers with more than this is answering
+ * about a folder no caller here will act on anyway.
+ */
+const SEARCH_UIDS_MAX = 501;
+
+/**
+ * How many uids go into one FETCH command. Keeps the command line and the in-flight reply bounded
+ * regardless of what the server said, which the single-command form could not.
+ */
+const SEARCH_FETCH_BATCH = 100;
+
 async function searchHeaders(
   client: Pick<LeaseImapClient, "search" | "fetch">,
   query: { header: Record<string, string | boolean>; before?: Date },
@@ -2384,10 +2449,30 @@ async function searchHeaders(
   const found = await client.search(query, { uid: true });
   if (!Array.isArray(found)) return null;
   if (found.length === 0) return [];
+  /* ── THE REPLY IS BOUNDED BEFORE IT IS SPENT, NOT AFTER ────────────────────────────────────
+   *
+   * The uid list comes from a SERVER, and every ceiling that acts on it — the claim-set ceiling,
+   * the caller's own limits — is applied to the RESULT of this function. Between the two sat an
+   * unbounded array turned into ONE comma-separated FETCH: a server answering with a million uids
+   * got a megabytes-long command line built for it and the whole reply materialised in memory,
+   * before anything was in a position to say the set was too large. The check that refuses an
+   * oversized claim set cannot run if the process is already gone.
+   *
+   * So the set is cut to one past the largest ceiling any caller applies — one PAST, so a caller
+   * can still tell "exactly at the ceiling" from "over it", which is the distinction its refusal
+   * is built on — and fetched in batches rather than as a single command. Bounded work for an
+   * unbounded answer, which is the property this seam needed and did not have.
+   */
+  const capped = found.length > SEARCH_UIDS_MAX
+    ? found.slice(0, SEARCH_UIDS_MAX)
+    : found;
   const out: RawClaimMessage[] = [];
-  for await (const m of client.fetch(found.join(","), { uid: true, headers: true }, { uid: true })) {
-    if (!m.headers) continue;
-    out.push({ ref: m.uid, raw: m.headers.toString("utf8") });
+  for (let i = 0; i < capped.length; i += SEARCH_FETCH_BATCH) {
+    const batch = capped.slice(i, i + SEARCH_FETCH_BATCH);
+    for await (const m of client.fetch(batch.join(","), { uid: true, headers: true }, { uid: true })) {
+      if (!m.headers) continue;
+      out.push({ ref: m.uid, raw: m.headers.toString("utf8") });
+    }
   }
   return out;
 }
@@ -2532,42 +2617,10 @@ export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: s
          * difference between reporting a claim removed and leaving it live while saying otherwise,
          * which is the whole reason a caller is allowed to trust the count.
          *
-         * A connection that cannot be asked is not treated as proof either way — there is nothing
-         * to check against, and inventing a pass would be the same defect one layer up. */
-        if (typeof client.fetch === "function") {
-          const still: number[] = [];
-          try {
-            for await (const m of client.fetch(uids.join(","), { uid: true }, { uid: true })) {
-              if (typeof m.uid === "number") still.push(m.uid);
-            }
-          } catch (err) {
-            /* ── A CUSTODY READ THAT COULD NOT RUN IS NOT A CUSTODY READ ────────────────────
-             *
-             * This returned, on the reasoning that an unreadable folder is not evidence the
-             * expunge failed. True, and beside the point: it is not evidence the expunge
-             * SUCCEEDED either, and the caller reads a normal return as removal having happened.
-             * `releaseMailboxClaim` then reports a positive count, so a release that proved
-             * nothing was indistinguishable from one that proved custody — the exact silent
-             * success this read-back was added to remove, one layer further out.
-             *
-             * The asymmetry that governs everything in this file applies here too: a reader may
-             * act on a partial answer, a WRITE may not claim an outcome it cannot demonstrate.
-             * Every caller of the release already wraps it and logs
-             * `organizer_claim_release_failed`, whose copy says the true thing — the claim ages
-             * out of the folder on its own — so a throw here costs a truthful log line and
-             * nothing else. */
-            throw new Error(
-              `the expunge of ${uids.length} claim message(s) from ${META_FOLDER} could not be `
-              + `verified: ${err instanceof Error ? err.message : String(err)}`,
-            );
-          }
-          if (still.length > 0) {
-            throw new Error(
-              `${still.length} claim message(s) survived the expunge in ${META_FOLDER} — the server `
-              + "accepted the command and removed nothing",
-            );
-          }
-        }
+         * {@link proveGone} holds the rule for all three deletion paths — claims, settings
+         * documents and stale acknowledgements — including the half this file learned late: a read
+         * that could not RUN establishes nothing and must not return normally. */
+        await proveGone(client, uids, "claim message(s)", "remove_claims");
       } finally {
         lock.release();
       }
@@ -2741,8 +2794,20 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
         .map((m) => ({ ref: m.ref, claim: parseClaim(m.raw, m.ref) }))
         .filter((c): c is { ref: unknown; claim: OrganizerClaim } =>
           c.claim !== null && !isMalformed(c.claim) && c.claim.installId === self.installId);
+      /* ── "NEWEST" MEANS WHAT `coalesce` MEANS BY IT, AND THIS USED TO MEAN SOMETHING ELSE ──
+       *
+       * This compared heartbeats alone with a strict `>`, so among copies sharing an instant it
+       * kept whichever the read happened to yield first — input order deciding which of this
+       * install's own records survives. `coalesce` breaks that tie on the NONCE, and the two
+       * disagreeing is not cosmetic: the record this prune keeps is the one the NEXT gate reads
+       * back as ours. Drop the copy carrying `self.lastNonce` and keep a sibling, and the next
+       * cycle finds a live claim under our own install id that we cannot account for — which is
+       * the clone defence's exact trigger, aimed at ourselves.
+       *
+       * Equal heartbeats are not a curiosity here: a renew and its residue are written in the same
+       * pass, and a claim is stamped to the millisecond. */
       const newest = ours.reduce<{ ref: unknown; claim: OrganizerClaim } | null>(
-        (best, c) => (best === null || c.claim.heartbeat.getTime() > best.claim.heartbeat.getTime() ? c : best),
+        (best, c) => (best === null || compareRecency(c.claim, best.claim) < 0 ? c : best),
         null);
       const residue = ours
         .filter((c) => c !== newest)
@@ -4137,7 +4202,19 @@ export function parseAck(raw: string, key: string, ref?: unknown): AckRecord | n
  * WHICH REQUEST OPERATION FAILED. Mirrors {@link LeaseOp} and for the same reason: a catch that
  * wraps more than one IMAP command must name which one threw.
  */
-export type RequestOp = "list_requests" | "append_request" | "remove_requests" | "no_request_io";
+export type RequestOp =
+  | "list_requests"
+  | "append_request"
+  | "remove_requests"
+  /**
+   * SEARCH + EXPUNGE the acknowledgements past their life. Its own op rather than
+   * {@link remove_requests} because the two fail for different reasons and an operator reading
+   * "requests could not be removed" would go looking at the drain: this is the COMPACTOR, the only
+   * thing that ever makes `ohmail/_meta` smaller, and a folder that stops shrinking is the fault
+   * worth naming on its own.
+   */
+  | "sweep_acks"
+  | "no_request_io";
 
 export class RequestUnavailableError extends Error {
   readonly op: RequestOp;
@@ -4196,6 +4273,15 @@ export interface RawMetaMessage {
  * from this folder is wrong on a partial view.
  */
 export const META_RECORDS_MAX_PER_FETCH = 500;
+
+/* `SEARCH_UIDS_MAX` is declared far above, beside the search it bounds, and must stay one past
+ * this ceiling. Spelled as a literal there because this constant is declared later in the file;
+ * pinned here so the two cannot drift apart silently — a cap BELOW the ceiling would make an
+ * exactly-at-the-ceiling claim set look oversized, and one far above would put the bound back
+ * where it cannot do its job. */
+const _searchCapMatchesCeiling: SEARCH_UIDS_MAX_IS_CEILING_PLUS_ONE = true;
+type SEARCH_UIDS_MAX_IS_CEILING_PLUS_ONE = typeof SEARCH_UIDS_MAX extends 501 ? true : never;
+void _searchCapMatchesCeiling;
 
 /** The shared read: the folder's headers, unfiltered and bounded — the parsers sort it out. */
 export interface MetaRecordsIo {
@@ -4435,10 +4521,59 @@ export function makeRequestOrganizerIo(
       const metaPath = await meta.path();
       const lock = await client.getMailboxLock(metaPath);
       try {
-        if (typeof client.search !== "function") return 0;
-        const found = await client.search({ header: { [AH.ack]: true }, before }, { uid: true });
-        if (!Array.isArray(found) || found.length === 0) return 0;
-        await client.messageDelete(found, { uid: true });
+        if (typeof client.search !== "function") {
+          throw new RequestUnavailableError(
+            `${META_FOLDER} cannot be searched by this connection, so stale acknowledgements `
+            + "cannot be identified and none were removed",
+            { op: "sweep_acks" },
+          );
+        }
+        /* ── THE CUTOFF IS FLOORED TO A DAY BOUNDARY, AND THAT IS NOT ROUNDING ───────────────
+         *
+         * IMAP's SEARCH BEFORE takes a DATE, not an instant. Where the server does not advertise
+         * `WITHIN`, the library turns a `before` carrying a time of day into a date-only term and
+         * ADVANCES it by one day, so that a caller asking for "older than this instant" is never
+         * given less than it asked for. That is the right direction for a READER and exactly the
+         * wrong one here: this call DELETES, so the widened term reaches records filed on the
+         * cutoff's own day — an acknowledgement barely half a day old, removed as though it were
+         * a day past its life.
+         *
+         * Flooring to midnight makes the term one the library sends unchanged, and moves the only
+         * remaining error to the safe side: acknowledgements may survive up to a day longer than
+         * the nominal life, and none younger than it is ever removed. Keeping a record too long
+         * costs one row in a folder that gets swept again next cycle; removing a live one loses
+         * an answer somebody is waiting for. */
+        const floored = new Date(Date.UTC(
+          before.getUTCFullYear(), before.getUTCMonth(), before.getUTCDate(),
+        ));
+        const found = await client.search(
+          { header: { [AH.ack]: true }, before: floored }, { uid: true },
+        );
+        /* A REFUSED SEARCH IS NOT AN EMPTY FOLDER — the library resolves `false` rather than
+         * rejecting. Returning 0 for it reported a sweep that had not happened, and the sweep is
+         * the only thing that ever makes this folder smaller: a caller told "0 stale" concludes
+         * there is nothing to compact. The drain already logs a failed sweep and carries on, which
+         * is what it should do with this. */
+        if (!Array.isArray(found)) {
+          throw new RequestUnavailableError(
+            `the search for stale acknowledgements in ${META_FOLDER} was refused, so none were `
+            + "removed and the folder was not compacted",
+            { op: "sweep_acks" },
+          );
+        }
+        if (found.length === 0) return 0;
+        const done = await client.messageDelete(found, { uid: true });
+        if (done === false) {
+          throw new RequestUnavailableError(
+            `the server refused to expunge ${found.length} stale acknowledgement(s) from `
+            + META_FOLDER,
+            { op: "sweep_acks" },
+          );
+        }
+        /* And a `true` proves only that a command ran — the claim path's rule, for the same
+         * reason. Reporting a sweep that removed nothing is how a permanently full folder gets
+         * mistaken for one that is being kept in trim. */
+        await proveGone(client, found, "stale acknowledgement(s)", "sweep_acks");
         return found.length;
       } finally {
         lock.release();
@@ -4485,6 +4620,13 @@ export function makeRequestOrganizerIo(
           if (done === false) {
             throw new Error(`the server refused to expunge ${uids.length} message(s) from ${META_FOLDER}`);
           }
+          /* AND A `true` IS NOT A REMOVAL — the same proof the claim and settings paths take, for
+           * the reason the comment above already gives and could not enforce. The refusal check
+           * sees an explicit `false`; it cannot see a refused STORE under an accepted EXPUNGE,
+           * which resolves `true` and removes nothing. Without the read-back the drain counted the
+           * request settled while it sat in the folder, so every later cycle re-read it — and the
+           * counters said the drain was working. */
+          await proveGone(client, uids, "settled request record(s)", "remove_claims");
         } finally {
           lock.release();
         }

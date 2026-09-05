@@ -117,6 +117,12 @@ import { META_FOLDER, makeMetaFolderRef, lastSequence, type MetaFolderClient } f
 /** The profile format version this build writes and fully understands. */
 export const PROFILE_VERSION = 1;
 
+/**
+ * How many uids go into one FETCH command when the settings records are addressed by uid. Keeps
+ * both the command line and the in-flight reply bounded regardless of how many the server named.
+ */
+const PROFILE_FETCH_BATCH = 100;
+
 /** The discriminator and bookkeeping headers. The lease's `H` table, for the profile. */
 const H = {
   profile: "X-Ohmail-Profile",
@@ -587,11 +593,23 @@ export interface ProfileImapClient extends MetaFolderClient {
   mailboxCreate(path: string): Promise<unknown>;
   mailboxUnsubscribe(path: string): Promise<unknown>;
   getMailboxLock(path: string): Promise<{ release(): void }>;
+  /**
+   * SEARCH, by header. Optional — a connection without it falls back to the bounded range read,
+   * which is what this module did before and is honest about its limits.
+   *
+   * With it, the settings records can be found REGARDLESS OF POSITION, which a window cannot do:
+   * see {@link listProfileMessages}. Resolves `false` when the server refuses, exactly as the
+   * library does, and that is not the same answer as an empty folder.
+   */
+  search?(
+    query: { header?: Record<string, string | boolean> },
+    options?: { uid?: boolean },
+  ): Promise<number[] | false | undefined>;
   fetch(
     range: string,
-    query: { uid?: boolean; source?: boolean },
+    query: { uid?: boolean; source?: boolean; size?: boolean },
     options?: { uid?: boolean },
-  ): AsyncIterableIterator<{ uid: number; seq?: number; source?: Buffer }>;
+  ): AsyncIterableIterator<{ uid: number; seq?: number; source?: Buffer; size?: number }>;
   append(path: string, content: string | Buffer, flags?: string[]): Promise<unknown>;
   messageDelete(range: number[], options?: { uid?: boolean }): Promise<unknown>;
 }
@@ -747,6 +765,105 @@ export function makeProfileIo(
          * So the retention test is applied AFTER the discriminator. A flood of non-profile messages
          * now costs transfer and nothing else. */
         const complete = opts?.complete === true;
+
+        /**
+         * The uids of every settings record in the folder, newest last, or `null` when the
+         * connection cannot be asked or the server REFUSED — which is not the same answer as
+         * "there are none" and must never be read as one.
+         */
+        const profileUids = async (c: ProfileImapClient): Promise<number[] | null> => {
+          if (typeof c.search !== "function") return null;
+          const found = await c.search({ header: { [H.profile]: true } }, { uid: true });
+          if (!Array.isArray(found)) return null;
+          return [...found].sort((a, b) => a - b);
+        };
+
+        /** Sizes first, then source for the survivors only — see the note at the call site. */
+        const readByUid = async (uids: readonly number[]): Promise<{
+          win: Array<{ rec: RawProfileMessage; size: number }>; seen: number;
+        }> => {
+          if (uids.length === 0) return { win: [], seen: 0 };
+          /* One past the count ceiling, so "exactly at the ceiling" stays distinguishable from
+           * "over it" — the distinction the complete scan's refusal turns on. */
+          const capped = uids.slice(-(PROFILE_MESSAGES_MAX_PER_FETCH + 1));
+          const sizes = new Map<number, number>();
+          for (let i = 0; i < capped.length; i += PROFILE_FETCH_BATCH) {
+            const batch = capped.slice(i, i + PROFILE_FETCH_BATCH);
+            for await (const m of client.fetch(batch.join(","), { uid: true, size: true }, { uid: true })) {
+              if (typeof m.size === "number") sizes.set(m.uid, m.size);
+            }
+          }
+          /* Newest first while choosing, so the document that matters is the one kept — then the
+           * result is put back in folder order, which is what every caller reads. */
+          const chosen: number[] = [];
+          let bytes = 0;
+          for (const uid of [...capped].reverse()) {
+            const size = sizes.get(uid) ?? 0;
+            if (chosen.length >= PROFILE_MESSAGES_MAX_PER_FETCH || bytes + size > maxBytes) {
+              if (complete) {
+                throw new ProfileUnavailableError(
+                  `the settings in ${META_FOLDER} could not be read completely: the folder holds `
+                  + `more than ${PROFILE_MESSAGES_MAX_PER_FETCH} settings records or ${maxBytes} `
+                  + "bytes of them, and a write must see every one before it may replace any",
+                  { op: "list_profiles" },
+                );
+              }
+              /* The newest record is kept even when it alone is over the ceiling: a document too
+               * large to read is the PARSER's refusal to make, and returning nothing for it is the
+               * "no settings published" lie by another route. */
+              if (chosen.length > 0) break;
+            }
+            chosen.push(uid);
+            bytes += size;
+          }
+          const order = chosen.slice().reverse();
+          const win: Array<{ rec: RawProfileMessage; size: number }> = [];
+          let held = 0;
+          for (let i = 0; i < order.length; i += PROFILE_FETCH_BATCH) {
+            const batch = order.slice(i, i + PROFILE_FETCH_BATCH);
+            const got = new Map<number, Buffer>();
+            for await (const m of client.fetch(batch.join(","), { uid: true, source: true }, { uid: true })) {
+              if (m.source) got.set(m.uid, m.source);
+            }
+            for (const uid of batch) {
+              const src = got.get(uid);
+              // A record the search named and the fetch did not return was expunged in the gap.
+              // Its absence is not evidence about any other record, so the read simply goes on.
+              if (src === undefined) continue;
+              const raw = src.toString("utf8");
+              if (!looksLikeProfile(raw)) continue;
+              /* ── THE MEASURED BYTES ARE THE BOUND; THE REPORTED ONES ARE THE OPTIMISATION ──
+               *
+               * The size pass above is what keeps a hostile literal off the wire, and it is worth
+               * having. It is NOT the ceiling, because a server that reports no size at all would
+               * otherwise disable the ceiling entirely: an absent measurement read as zero is the
+               * same defect as a refused search read as an empty folder, and it was in the first
+               * draft of this very function — every record measured 0, both ceilings inert, and
+               * the complete scan's refusal silently unreachable.
+               *
+               * So the bound is applied again here against bytes that actually arrived. On a
+               * complete scan that is a refusal; on a read the oldest are evicted, keeping the
+               * newest even when it alone is over, because a document too large to read is the
+               * parser's refusal to make rather than a silent absence. */
+              const size = src.byteLength;
+              win.push({ rec: { ref: uid, raw }, size });
+              held += size;
+              while (held > maxBytes && (complete || win.length > 1)) {
+                if (complete) {
+                  throw new ProfileUnavailableError(
+                    `the settings in ${META_FOLDER} could not be read completely: the folder holds `
+                    + `more than ${PROFILE_MESSAGES_MAX_PER_FETCH} settings records or ${maxBytes} `
+                    + "bytes of them, and a write must see every one before it may replace any",
+                    { op: "list_profiles" },
+                  );
+                }
+                held -= win.shift()!.size;
+              }
+            }
+          }
+          return { win, seen: capped.length };
+        };
+
         const readFrom = async (start: number): Promise<{
           win: Array<{ rec: RawProfileMessage; size: number }>; seen: number;
         }> => {
@@ -820,7 +937,36 @@ export function makeProfileIo(
          * write — rare, and never on the per-cycle path the bound was introduced to protect —
          * while retention stays bounded by the ceilings above, which is where the memory risk was.
          */
-        let read = await readFrom(complete ? 1 : from);
+        /* ── ASK THE SERVER WHICH MESSAGES ARE SETTINGS, RATHER THAN WHERE THEY MIGHT BE ────
+         *
+         * The retention below spends its ceilings on profile records, which stops a flood from
+         * EVICTING the current document. It cannot put back one the RANGE never asked for, and
+         * the range was computed over ALL messages: `total - PROFILE_MESSAGES_MAX_PER_FETCH + 1`
+         * counts backwards through claims, acknowledgements and whatever else shares the folder.
+         * A settings document with a ceiling's worth of later messages on top of it therefore sat
+         * outside the window entirely — and the read reported "no settings have been published"
+         * for a mailbox that has some. The organizer taking the mailbox over then routes mail by
+         * local defaults until the next complete write refuses, which is a person's rules silently
+         * not applied rather than an error anybody sees.
+         *
+         * Only settings records carry the discriminator, so a header SEARCH answers the question
+         * the window was approximating: complete for profiles by construction and independent of
+         * position. The same medicine as the lease's claim set, for the same reason.
+         *
+         * ── AND THE BYTES ARE BOUNDED BEFORE THEY ARE DELIVERED, NOT AFTER ─────────────────
+         *
+         * The byte ceiling was applied to `m.source` — which the library has already buffered in
+         * full by the time it is measured. Measuring afterwards bounds what is RETAINED and
+         * nothing about what is transferred, so a single hostile literal could exhaust the process
+         * before any ceiling was consulted; and every non-profile message in the range was
+         * converted to a string and discarded without ever entering the counter. Sizes come first
+         * now, in their own cheap pass, and source is fetched only for the records that survive
+         * both ceilings.
+         */
+        const searched = await profileUids(client);
+        let read = searched !== null
+          ? await readByUid(searched)
+          : await readFrom(complete ? 1 : from);
 
         /* ── AND THE SEQUENCE WINDOW CAN SLIDE OUT FROM UNDER THE RANGE ───────────────────────
          *
@@ -831,7 +977,9 @@ export function makeProfileIo(
          * while it was being read — and far enough, `from` lands past the end and the unordered
          * range returns a single message. Throw that away and read the folder whole; `1:*` is
          * anchored at both ends and cannot slide. */
-        if (!complete && from > 1 && read.seen < PROFILE_MESSAGES_MAX_PER_FETCH) read = await readFrom(1);
+        if (searched === null && !complete && from > 1 && read.seen < PROFILE_MESSAGES_MAX_PER_FETCH) {
+          read = await readFrom(1);
+        }
 
         for (const w of read.win) out.push(w.rec);
         return out;
