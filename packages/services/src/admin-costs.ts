@@ -85,6 +85,12 @@ function monthBounds(at: Date): { start: Date; end: Date; label: string } {
 
 const isoDay = (d: Date): string => d.toISOString().slice(0, 10);
 
+/**
+ * The provider whose bill IS the AI line, and which is therefore excluded from the
+ * infrastructure aggregate. See section 1 of {@link adminCosts} for what including it cost.
+ */
+const AI_VENDOR = "anthropic" as const;
+
 /** A provider's figure, projected for the wire (dates as ISO strings). */
 const viewOf = (c: ProviderCost): ProviderCostView => ({
   provider: c.provider,
@@ -108,8 +114,22 @@ export async function adminCosts(db: Db, now: Date): Promise<AdminCostSnapshot> 
   const { start, end, label } = monthBounds(now);
 
   // ── 1. infrastructure ───────────────────────────────────────────────────────────────────
+  //
+  // THE MODEL VENDOR IS NOT INFRASTRUCTURE HERE, and leaving it in double-counted the headline.
+  // Its `platform_costs` row is the vendor's own invoice-side figure for the same model calls
+  // that section 2 totals from `ai_usage_daily`, and both were added into month-to-date and the
+  // projection — one spend, counted twice, on the board an operator judges margin from.
+  //
+  // The AI half keeps `ai_usage_daily` as the headline's number: it is measured at the call, it
+  // is per-model, it exists on every deployment, and the apportionment and every margin figure
+  // are computed from it. The vendor's row stays in `providers` — the table below still shows
+  // it — where it is worth more than it was in the sum: it is the RECONCILIATION. Measured
+  // 2026-09-05, the two disagree by two orders of magnitude for this deployment (the ledger
+  // records ~$0.01 for a month the vendor bills at ~$0.87), which is a metering gap an operator
+  // should be looking at rather than a number that should be silently added to another.
   const providers = (await costsForMonth(db, start, now)).map(viewOf);
-  const measured = providers.filter((p) => p.cents !== null);
+  const infraProviders = providers.filter((p) => p.provider !== AI_VENDOR);
+  const measured = infraProviders.filter((p) => p.cents !== null);
   const infraCents = measured.length === 0
     ? null
     : measured.reduce((sum, p) => sum + (p.cents ?? 0), 0);
@@ -125,6 +145,8 @@ export async function adminCosts(db: Db, now: Date): Promise<AdminCostSnapshot> 
   const flatCents = measured
     .filter((p) => p.source === "manual")
     .reduce((sum, p) => sum + (p.cents ?? 0), 0);
+  // Retained for the DTO's own figure; the projection below scales each provider by the day its
+  // reading was taken rather than working from this single total.
   const scalableInfraCents = (infraCents ?? 0) - flatCents;
 
   // ── 2. AI, by model and by host ─────────────────────────────────────────────────────────
@@ -286,10 +308,30 @@ export async function adminCosts(db: Db, now: Date): Promise<AdminCostSnapshot> 
   const daysInMonth = Math.round((end.getTime() - start.getTime()) / 86_400_000);
   const elapsedDays = Math.max(1, now.getUTCDate());
   const monthToDate = (infraCents ?? 0) + aiCents;
-  const scalableMonthToDate = scalableInfraCents + aiCents;
+
+  // A STALE READING IS PROJECTED FROM THE DAY IT WAS TAKEN, not from today, and the comment
+  // above used to claim staleness "scales correctly" while the arithmetic did the opposite. A
+  // usage-to-date figure fetched on day 10 and read on day 20 was divided by 20: it projected to
+  // $15 on a 30-day month where the reading itself implies $30, and it SHRANK further every day
+  // the provider stayed down — a bill that quietly falls while nobody can measure it, which is
+  // the wrong direction for the one number an operator watches for surprises.
+  //
+  // Each scalable provider is therefore scaled by ITS OWN elapsed days. A `stale` row carries
+  // the date it was obtained; an `api` row's date is today's by definition, so this changes
+  // nothing for a healthy provider.
+  const scalableRate = measured
+    .filter((p) => p.source !== "manual")
+    .reduce((sum, p) => {
+      const takenOn = p.fetchedAt === null ? now : new Date(p.fetchedAt);
+      const daysAtReading = takenOn >= start && takenOn < end
+        ? Math.max(1, takenOn.getUTCDate())
+        : elapsedDays;
+      return sum + (p.cents ?? 0) / daysAtReading;
+    }, 0);
+  // The AI half is written continuously by the recorder, so its elapsed count is today's.
   const projectedCents = infraCents === null && aiCents === 0
     ? null
-    : flatCents + Math.round((scalableMonthToDate / elapsedDays) * daysInMonth);
+    : flatCents + Math.round((scalableRate + aiCents / elapsedDays) * daysInMonth);
 
   return {
     now: now.toISOString(),
@@ -298,7 +340,10 @@ export async function adminCosts(db: Db, now: Date): Promise<AdminCostSnapshot> 
     infrastructureCents: infraCents,
     // The QUALIFIER. A total over four measured providers and one absent is not a bill, and this
     // is the number that says so — `infrastructureCents` alone would read as complete.
-    unmeasuredProviders: providers.length - measured.length,
+    // Counted over the INFRASTRUCTURE providers only, for the reason section 1 gives: the model
+    // vendor's tile is a reconciliation against `aiCents`, not a term in `infrastructureCents`,
+    // so counting it here would describe a sum it is not part of.
+    unmeasuredProviders: infraProviders.length - measured.length,
     aiCents,
     models,
     hosts,

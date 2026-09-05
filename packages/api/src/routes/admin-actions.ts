@@ -382,14 +382,25 @@ async function platformCost(
     return { status: 400, body: { error: { code: "cost_cents_invalid" } } };
   }
 
+  // USD ONLY, AND REFUSED RATHER THAN CONVERTED. The board sums every provider's cents into one
+  // infrastructure total and renders it with a `$`; nothing between this write and that render
+  // carries a currency, so a EUR row entered here becomes euros added to dollars and displayed
+  // as dollars — a number no currency supports, presented as money. Both API adapters already
+  // refuse a response that mixes currencies, which leaves this endpoint as the only way a
+  // non-USD figure could enter the table. Converting on the operator's behalf would need a rate
+  // and a date this system does not have, so it refuses and says which value it refused.
+  const currency = typeof body.currency === "string" ? body.currency.trim().toLowerCase() : "usd";
+  if (currency !== "usd") {
+    return { status: 400, body: { error: { code: "currency_unsupported" } } };
+  }
+
   await recordManualPlatformCost(deps.db, {
     provider: provider as CostProvider,
     metric,
     periodStart,
     periodEnd,
     costCents,
-    ...(typeof body.currency === "string" && body.currency.trim()
-      ? { currency: body.currency.trim().toLowerCase().slice(0, 8) } : {}),
+    currency,
     ...(typeof body.value === "number" && Number.isFinite(body.value) ? { value: body.value } : {}),
     ...(typeof body.unit === "string" && body.unit.trim()
       ? { unit: body.unit.trim().slice(0, 32) } : {}),
