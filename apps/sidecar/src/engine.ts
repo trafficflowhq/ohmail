@@ -4,7 +4,10 @@ import {
   StaticKeyProvider, kekRingFingerprint, UNMETERED_STORAGE_CAP,
   type KekEnvIdentity, type KeyProvider, type Logger, type OpenSendAdapter, type SendAdapter,
 } from "@trafficflow/core/mail";
-import { ImapAdapter, buildImapAuth, type ImapConfig, type MailboxAdapter, type CredMetaAuth } from "@trafficflow/core/adapters/imap";
+import {
+  ImapAdapter, ImapConnectionClosedError, buildImapAuth,
+  type ImapConfig, type MailboxAdapter, type CredMetaAuth,
+} from "@trafficflow/core/adapters/imap";
 import { makeDrizzleRepo, type WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 // The engine's OWN resolution of the Ohbox posture, never a second reading of it. `rules.ts` owns
 // what an absent or unrecognised value means, and both hosts ask it the same question.
@@ -179,6 +182,22 @@ export type SidecarImapConfig = Omit<ImapConfig, "auth"> & { auth: { user: strin
  */
 export type { CredentialState, OrganizerState } from "./roster.js";
 
+/**
+ * WHAT THE ENGINE HANDS A DIAL — currently the one thing an adapter cannot report by throwing.
+ *
+ * A record rather than a bare callback parameter so the next connection-scoped fact (a logger
+ * bound to the mailbox id, a clock) is added without re-writing every double's signature. The
+ * hosted worker passes the same shape to its own factory.
+ */
+export interface AdapterDialContext {
+  /**
+   * The connection died between calls. Called from an event handler, so it MUST NOT THROW and
+   * must not await anything the caller depends on — see `ImapAdapter#guardAsyncErrors`, which
+   * swallows whatever comes back out of it.
+   */
+  onConnectionError: (err: unknown) => void;
+}
+
 export interface SidecarConfig {
   /** Where the local mirror lives. Created if absent; locked while open. */
   dataDir: string;
@@ -244,8 +263,26 @@ export interface SidecarConfig {
    * before this existed — the shell passes the password on every launch.
    */
   keks?: Record<number, Buffer>;
-  /** Injected for tests; production dials a real server. */
-  adapterFactory?: (cfg: ImapConfig) => MailboxAdapter;
+  /**
+   * Injected for tests; production dials a real server.
+   *
+   * ── THE SECOND ARGUMENT IS THE DEAD-CONNECTION CALLBACK, AND IT IS NOT OPTIONAL FURNITURE ──
+   *
+   * `ImapAdapter` reports the one failure it cannot throw — a socket that dies between calls —
+   * by calling {@link ImapAdapterOpts.onConnectionError}, and the ONLY place this engine can
+   * supply it is where the adapter is constructed. Passing it through the factory rather than
+   * wiring it after construction is what makes the seam honest: a test double that wants to
+   * model a dead connection gets the same handle production gets, from the same call, instead
+   * of reaching into the engine for it.
+   *
+   * The worker's factory has carried this shape since the dead-connection fix
+   * (`apps/worker/src/index.ts`, `makeAdapter`); this is the same one, not a second convention.
+   * Existing doubles that declare one parameter keep working — an extra argument is not an
+   * error in JavaScript and is assignable in TypeScript — so absence of the second parameter in
+   * a double means "this double never dies asynchronously", which is true of every fake with no
+   * event surface.
+   */
+  adapterFactory?: (cfg: ImapConfig, ctx: AdapterDialContext) => MailboxAdapter;
   /**
    * THE SUBMISSION DIAL, for compositions that must be able to REFUSE one.
    *
@@ -791,6 +828,20 @@ function localServices(
 export const DEFAULT_POLL_INTERVAL_MS = 15_000;
 
 /**
+ * THE DIAL CONTEXT FOR A CONNECTION NOBODY KEEPS — a probe and a send.
+ *
+ * Both open a login, do one thing and close it inside the call that made them. There is no poll
+ * timer over them and no runtime to mark, so "the connection died between calls" describes
+ * nothing: either the call is still in flight and the failure comes back as a THROW, or the
+ * connection is already closed and its death is what we asked for.
+ *
+ * A named constant rather than an inline `() => {}` at each site, because the empty body is a
+ * claim — "there is nothing to heal here" — and it should be stated once with the reason attached
+ * rather than twice with none.
+ */
+const ONE_SHOT_DIAL: AdapterDialContext = { onConnectionError: () => { /* see above */ } };
+
+/**
  * THE BUDGET FOR THE HISTORICAL-NAME REPAIR, per drain. See `backfillStoredNames` below.
  *
  * Two numbers rather than one, because they bound different things. The BATCH is how many rows one
@@ -1151,7 +1202,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * fall through to their own default, which is a real `ImapAdapter`.
      */
     const probeOpts = config.adapterFactory
-      ? { adapterFactory: (cfg: ImapConfig) => config.adapterFactory!(cfg) as unknown as ProbeDialer }
+      ? { adapterFactory: (cfg: ImapConfig) => config.adapterFactory!(cfg, ONE_SHOT_DIAL) as unknown as ProbeDialer }
       : {};
     /**
      * …AND THE SUBMISSION LEG, on the same condition and for the same reason.
@@ -1213,7 +1264,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            door does not set — the desktop dials the user's own server with the adapter's
            defaults. Passed positionally so the factory lands in the fourth slot. */
         ? makeSendAdapter(depsFor(), mailboxId, {},
-            (cfg: ImapConfig) => config.adapterFactory!(cfg) as unknown as ImapAdapter)
+            (cfg: ImapConfig) => config.adapterFactory!(cfg, ONE_SHOT_DIAL) as unknown as ImapAdapter)
         : makeSendAdapter(depsFor(), mailboxId);
     };
 
@@ -2314,9 +2365,97 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * which is the honest degraded mode: no key means the claim advertises no `requests` and a
        * reader is refused at the door with the holder named. */
       const requestKey = deriveRequestKey({ auth: imapConfig.auth, address: mb.address });
-      const adapter = config.adapterFactory ? config.adapterFactory(imapConfig) : new ImapAdapter(imapConfig);
+
+      // ══════════════════════════════════════════════════════════════════════════════════════
+      //  THE CONNECTION'S OWN STATE — the fact the engine used to have no way to hold
+      // ══════════════════════════════════════════════════════════════════════════════════════
+      //
+      // A desktop process outlives its sockets. A lid closed past the provider's idle timeout, a
+      // Wi-Fi change, a VPN flap or a server `BYE` ends the connection while everything else in
+      // this closure — the timer, the serial queue, the store, the roster entry — carries on
+      // exactly as before. Before this pair of fields there was nowhere to WRITE that down, so
+      // the poll went on firing into a dead socket and the accessors went on answering
+      // `organizing: true` while nothing was filed and the claim in `ohmail/_meta` aged out.
+      //
+      // `null` is "the connection is believed good". A Date is the FIRST moment it was observed
+      // dead — first, not latest, so the Settings row can say how long and a re-dial that fails
+      // does not reset the clock the person is watching.
+      let connectionDeadSince: Date | null = null;
+      /**
+       * WHICH OBSERVATION MARKED IT DEAD. Two producers, and they are worth telling apart in a
+       * log because only one of them is fast: the adapter's own `close`/`error` event (seconds),
+       * and the duration bound over failing cycles (the arm that works for a connection whose
+       * death produced no event at all).
+       */
+      let connectionDeadBy: "event" | "bound" | null = null;
+
+      /**
+       * BUILD ONE DIAL. Called once at attach and again for every re-dial, because an
+       * `ImapAdapter` that has been closed is not the thing to re-open — the worker's re-attach
+       * builds a fresh one for the same reason, and a fresh instance is the only shape in which
+       * "the factory was called a second time" is observable from outside.
+       */
+      const dialAdapter = (): MailboxAdapter => {
+        const ctx: AdapterDialContext = { onConnectionError: (err) => noteConnectionDead(err) };
+        return config.adapterFactory
+          ? config.adapterFactory(imapConfig, ctx)
+          : new ImapAdapter(imapConfig, { onConnectionError: ctx.onConnectionError });
+      };
+
+      /**
+       * THE CONNECTION DIED BETWEEN CALLS — the callback `guardAsyncErrors` had nobody to call.
+       *
+       * Called from an EventEmitter handler, so it does the smallest amount of work that can be
+       * done synchronously and puts the rest on the serial queue. It must not throw: the adapter
+       * swallows whatever comes back out of it, and a handler that raised inside an `error`
+       * listener would be the uncaught exception the listener exists to prevent, one frame out.
+       *
+       * FIRST OBSERVATION WINS. imapflow's `_socketClose` can produce `error` and then `close`,
+       * and the runtime's re-dial reads "how long has this been dead" — so a second event must
+       * not restart the clock. The adapter already guards its own `close` against re-entry
+       * ({@link ImapAdapter.established}); this guards against the pair.
+       *
+       * IT DOES NOT RE-DIAL. Re-dialling from an event handler would race the cycle that is
+       * running over the adapter it is about to replace; the poll tick owns the re-dial, on the
+       * serial queue, where a drain cannot be halfway through a batch.
+       */
+      const noteConnectionDead = (err: unknown): void => {
+        if (stopped) return;
+        const ended = err instanceof ImapConnectionClosedError;
+        if (connectionDeadSince === null) {
+          connectionDeadSince = now();
+          connectionDeadBy = "event";
+        }
+        log("mailbox_connection_unavailable", {
+          err, mailboxId: mb.id,
+          detectedBy: "event",
+          reason: ended
+            ? "the mail server connection ENDED and this process is still running, so nothing " +
+              "would have re-opened it; the next poll re-dials and re-reads the organizer lease " +
+              "before it moves anything"
+            : "the mail server connection reported an error and this process is still running; " +
+              "the next poll re-dials and re-reads the organizer lease before it moves anything",
+        });
+        // CLOSED ON THE QUEUE, never inline: a cycle may be mid-batch over this very adapter, and
+        // closing it under one is how a drain re-reads mail it already had. `detach()` and the
+        // re-dial take the same queue, so whichever runs first, the other sees a settled state.
+        void serialize(async () => {
+          try { await adapter.close(); } catch { /* the connection is already broken */ }
+        }).catch(() => { /* `serialize` never rejects for the caller's sake; belt and braces */ });
+      };
+
+      let adapter: MailboxAdapter = dialAdapter();
       const syncDeps = {
-        repo, adapter, accountId: world.accountId, mailboxId: mb.id,
+        repo,
+        /**
+         * AN ACCESSOR, NOT A COPY — the same rule the runtime record below states for its
+         * thirteen fields, and here it is load-bearing rather than tidy. A re-dial REPLACES the
+         * adapter, and a `syncDeps` that had captured the old one would hand every cycle after
+         * the first re-dial the connection that died: the drain would keep throwing `NoConnection`
+         * over a healthy socket sitting one binding away.
+         */
+        get adapter() { return adapter; },
+        accountId: world.accountId, mailboxId: mb.id,
         // THE SYNC LOOP'S OWN DIAGNOSTICS, which this composition used to omit — see
         // `SidecarConfig.logger`. Spread here rather than assigned unconditionally so that an
         // install with no logger keeps the pre-existing shape (`log` absent, not `log: undefined`),
@@ -2587,7 +2726,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * decision.
        */
       const profileSync = new OrganizerProfileSync({
-        db, accountId: world.accountId, mailboxId: mb.id, adapter,
+        db, accountId: world.accountId, mailboxId: mb.id,
+        /* AN ACCESSOR for `syncDeps.adapter`'s reason, and this object is the one that would have
+           hidden the defect longest: `OrganizerProfileSync` keeps the deps record for the life of
+           the attachment and reads `deps.adapter` per call, so a captured value would leave the
+           write-behind publishing into a dead socket after a re-dial while every other pass had
+           healed — a partial recovery, which is worse to diagnose than none. */
+        get adapter() { return adapter; },
         self: { installId, kind: "local" },
         producerVersion: "0.0.0",
         ...(config.profileFlushIntervalMs !== undefined

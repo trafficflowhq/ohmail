@@ -230,6 +230,15 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // the diff be the review. Contrast `causeClass`/`causeCode` below, which are derived from a
   // thrown value and therefore must NOT be spoofable by a payload.
   "syncBlockedReason", "op",
+  // `detectedBy` is HOW a dead connection was noticed, and it is on the census for `op`'s reason
+  // one line up: a compile-time literal from a two-member union the CALL SITE holds, not a fact
+  // derived from a thrown value. Its two members are `"event"` (the adapter's own `close`/`error`
+  // listener, which fires in seconds) and `"bound"` (the duration bound over failing cycles, the
+  // arm that works for a connection whose death produced no event at all — every injected double
+  // with no event surface takes it). Telling them apart is the whole diagnostic value of the
+  // line: the same silent stop reached two ways means two different things about the socket, and
+  // without the name both read as one sentence.
+  "detectedBy",
   // ── `closed`: HOW MANY APPOINTMENTS A STAND-DOWN ENDED, added WITH the lines that emit it ──
   //
   // A mailbox changing organizer ends every pending send-later appointment on it — the pass that
