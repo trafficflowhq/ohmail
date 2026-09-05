@@ -52,11 +52,24 @@ export interface ContactPopoverState {
 
 export function ContactPopover({
   state,
+  anchor,
   onWrite,
   onScreen,
   onClose,
 }: {
   state: ContactPopoverState;
+  /**
+   * THE CHIP THAT OPENED THIS, as an element rather than as two numbers.
+   *
+   * The edges below place the popover; this is for the menu inside it, whose dismissal listener
+   * asks whether a press landed outside itself. The chip is outside the MENU, so without this a
+   * press on the open chip ran both halves of one gesture — `mousedown` closed the popover, and
+   * the `click` that followed reopened it — and the control could not be dismissed by pressing the
+   * thing that opened it. `anchor={null}` was passed here deliberately and the reasoning was
+   * wrong: the menu being the popover's whole content says nothing about whether the CHIP is a
+   * trigger, and it is one.
+   */
+  anchor?: HTMLElement | null;
   /** Absent where the chrome wires no compose — the item is then OMITTED, never dead. */
   onWrite?: () => void;
   /** Absent where the chrome wires no screening — same rule. */
@@ -106,11 +119,9 @@ export function ContactPopover({
         <b>{label}</b>
         {state.name ? <small>{who}</small> : null}
       </div>
-      {/* NO ANCHOR, and that is not an omission. This menu is the popover's whole content rather
-          than a disclosure hanging off a button this component owns — the chip that opened it
-          belongs to the recipients block and is not reachable from here. Every press outside the
-          menu dismisses it, which is what this surface did before and still wants. */}
-      <MoreMenu items={items} ariaLabel={t("contactAria", { who })} anchor={null} onClose={onClose} />
+      {/* THE CHIP IS EXCLUDED, for the reason written at the `anchor` prop: it is the trigger,
+          whatever the menu is, and a trigger that is not excluded cannot dismiss what it opened. */}
+      <MoreMenu items={items} ariaLabel={t("contactAria", { who })} anchor={anchor ?? null} onClose={onClose} />
     </div>
   );
 }

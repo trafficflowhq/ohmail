@@ -2083,6 +2083,17 @@ export function MailboxSection() {
                   step of the ceremony exists to follow the first, and with the first gone there is
                   nothing to confirm. The row's role moves at the worker's next pass, which is what
                   the answer under the button says. */}
+              {/* ── ONE REMEDY PER ROW ──────────────────────────────────────────────────────
+                  `readerStandDown` answers non-null for a reader with a holder, and a STRANDED row
+                  is exactly that — so without the `!stranded` below the row drew both remedies at
+                  once: "another ohmail Cloud install has claimed this mailbox", with the
+                  check-then-confirm takeover, directly above the hand-back. Two controls, opposite
+                  directions, one mailbox.
+
+                  The hand-back wins, and it is not a close call: the takeover ceremony exists to
+                  displace a LIVE COMPETING install, and here the holder is this one. Pointed at a
+                  claim of our own it offers to displace ourselves, opens a connection to ask who
+                  holds a mailbox the row already names, and leaves the claim exactly where it is. */}
               {standDown === "released" ? (
                 <>
                   <span className="mbx-sub">
@@ -2096,7 +2107,7 @@ export function MailboxSection() {
                     {t("organizeHere")}
                   </Button>
                 </>
-              ) : standDown ? (
+              ) : standDown && !stranded ? (
                 <>
                   <span className="mbx-bad">{t(`standDown_${standDown}`)}</span>
                   {organizer?.id === m.id ? (

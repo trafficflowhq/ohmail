@@ -370,6 +370,7 @@ export function MessageHeader({
       {contact ? (
         <ContactPopover
           state={contact}
+          anchor={contactAnchor.current}
           onWrite={
             chrome.writeTo
               ? () => chrome.writeTo!(contact.address, contact.name ?? undefined)
