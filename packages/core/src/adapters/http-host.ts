@@ -94,6 +94,32 @@ const BODY_NOT_ALLOWED = JSON.stringify({
 });
 
 /**
+ * THE HEADERS OF A REFUSAL THAT ENDS THE SOCKET — and `connection: close` is the load-bearing
+ * one.
+ *
+ * Each of the three refusals below answers and then calls `res.destroy()`, because the rest of
+ * the request body is still coming and this connection cannot be reused. Node defaults an
+ * HTTP/1.1 response to `Connection: keep-alive`, so without this the answer SAID the connection
+ * was good and the socket died a moment later — a header that contradicts what the server is
+ * about to do.
+ *
+ * That is not cosmetic. A client reading `keep-alive` is entitled to pipeline the next request
+ * onto this socket and to keep feeding the body it was already sending; both then die on a
+ * broken pipe, which surfaces as a transport fault rather than as the 413 the server actually
+ * sent. Saying `close` is how HTTP lets a server refuse mid-body and be understood — the same
+ * fix, for the same reason, that `apps/server/src/handler.ts` applies on its own refusal paths
+ * (`closing()`), which this adapter's paths were simply missing.
+ *
+ * `res.destroy()` stays: the header is the ANNOUNCEMENT, and destroying is what actually stops
+ * an over-cap upload from continuing to cost bytes.
+ */
+const REFUSED_HEADERS = {
+  "content-type": "application/json",
+  "cache-control": "no-store",
+  connection: "close",
+} as const;
+
+/**
  * Does this request CARRY a body at all? RFC 9112 §6: a request has a body iff it declares
  * Content-Length or Transfer-Encoding. Reading node's always-present stream instead would turn
  * every body-less POST into "a body is present" one layer up (point 1).
@@ -257,7 +283,7 @@ async function serve(
   // strictly better than counting here: a capped GET body would still be work nobody asked for.
   const method = (req.method ?? "GET").toUpperCase();
   if ((method === "GET" || method === "HEAD") && hasBody(req)) {
-    res.writeHead(400, { "content-type": "application/json", "cache-control": "no-store" });
+    res.writeHead(400, REFUSED_HEADERS);
     res.end(BODY_NOT_ALLOWED);
     res.destroy();
     return;
@@ -266,7 +292,7 @@ async function serve(
   // Point 4's first half: a DECLARED length over the cap is refused before a byte is read.
   const declared = Number(req.headers["content-length"] ?? 0);
   if (Number.isFinite(declared) && declared > opts.bodyMaxBytes) {
-    res.writeHead(413, { "content-type": "application/json", "cache-control": "no-store" });
+    res.writeHead(413, REFUSED_HEADERS);
     res.end(TOO_LARGE_BODY);
     res.destroy();
     return;
@@ -278,7 +304,7 @@ async function serve(
     onTooLarge: () => {
       tooLarge = true;
       if (!res.headersSent) {
-        res.writeHead(413, { "content-type": "application/json", "cache-control": "no-store" });
+        res.writeHead(413, REFUSED_HEADERS);
         res.end(TOO_LARGE_BODY);
       }
       // A client mid-way through an over-cap upload must not keep feeding the socket.
