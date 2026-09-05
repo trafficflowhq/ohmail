@@ -195,7 +195,23 @@ export const IMAP_REFUSAL_WINDOW_MS = 15 * 60 * 1000;
 export async function imapRefusalsInWindow(
   db: Tx, now: Date, windowMs: number = IMAP_REFUSAL_WINDOW_MS,
 ): Promise<number> {
-  const cut = new Date(now.getTime() - windowMs);
+  // ── ONE UNIT FOR BOTH ENDS: THE MINUTE GRID ──────────────────────────────────────────
+  //
+  // The events are stored minute-floored and the cut was computed exactly, which is two units
+  // for one comparison and drops the bucket the cut falls inside. A refusal at 12:00:59 is
+  // stored at 12:00:00; evaluated at 12:15:30 the exact cut is 12:00:30, so that bucket is
+  // excluded — while the refusal it holds is 14m31s old and squarely inside the fifteen-minute
+  // window the rule advertises. A burst confined to that boundary minute is missed entirely,
+  // which can hold the incident below its threshold or resolve it early.
+  //
+  // The cut is floored to the same grid the buckets sit on, so a bucket is in the window exactly
+  // when any instant it could contain is. The residual is stated rather than hidden: this
+  // includes a bucket whose earliest second is up to 59s older than `windowMs`, which
+  // over-counts by less than one bucket and never under-counts — the safe direction for a rule
+  // that fires above a threshold.
+  const cut = new Date(
+    Math.floor((now.getTime() - windowMs) / REFUSAL_BUCKET_MS) * REFUSAL_BUCKET_MS,
+  );
   const [row] = await db
     .select({ n: sql<number>`coalesce(sum(${authThrottle.failures}), 0)::int` })
     .from(authThrottle)

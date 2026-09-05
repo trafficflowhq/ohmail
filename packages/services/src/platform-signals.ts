@@ -410,7 +410,18 @@ export function makePlatformSignalPort(
             // place while reading as fixed — which is this subsystem's signature failure.
             environment: "production",
             startDate: String(window.start.getTime()),
-            endDate: String(cursor),
+            // ── THIS API'S `endDate` IS INCLUSIVE, AND OUR BUCKETS ARE HALF-OPEN ──────
+            //
+            // A request stamped exactly on a five-minute boundary therefore satisfies BOTH the
+            // older bucket (whose end equals that timestamp) and the newer one (whose start
+            // does), and the de-duplication set is per bucket, so it is counted twice inside one
+            // fifteen-minute window. Nine distinct errors can be read as ten, which moves a rate
+            // across a threshold that was calibrated on the true count.
+            //
+            // Made half-open here, at the one place the foreign convention is visible: one
+            // millisecond off the end, so the boundary instant belongs to exactly one bucket —
+            // the newer one, whose start it is.
+            endDate: String(cursor - 1),
           });
           let res: Response;
           try {

@@ -349,10 +349,29 @@ async function unrecordedOnDay(
     .groupBy(aiUsageDaily.host);
   const present = new Set(usageRows.map((r) => r.host));
 
-  // TOTAL SILENCE. A reason debited today and NOTHING recorded anywhere — the ambiguous
-  // `debit_classify` alone reaches only this branch, because no single host can be named.
+  // ── TOTAL SILENCE, NAMING ONLY THE HOSTS THAT COULD HAVE SPENT IT ───────────────────
+  //
+  // Nothing was recorded anywhere, and the question is who to send someone to look at. This
+  // returned all three hosts unconditionally, so a day whose only debit was `debit_propose` or
+  // `debit_workflow` — reasons only the WORKER can incur — produced a title saying API and
+  // server usage went unrecorded too, and a count of three. Two of those three never made a
+  // call, so two thirds of the remediation is spent proving a negative about hosts that were
+  // never involved.
+  //
+  // The eligible set comes from the debit reasons actually present: worker-exclusive reasons
+  // name the worker, `debit_draft` names the request-serving hosts, and the ambiguous
+  // `debit_classify` is the one reason that genuinely cannot be attributed, so it — and only it
+  // — widens the list to all three.
   if (present.size === 0) {
-    return { unrecorded: true, missingHosts: ["api", "worker", "server"] };
+    const eligible = new Set<AiUsageHost>();
+    if ((byReason.get("debit_propose") ?? 0) + (byReason.get("debit_workflow") ?? 0) > 0) {
+      eligible.add("worker");
+    }
+    if ((byReason.get("debit_draft") ?? 0) > 0) { eligible.add("api"); eligible.add("server"); }
+    if ((byReason.get("debit_classify") ?? 0) > 0) {
+      eligible.add("api"); eligible.add("worker"); eligible.add("server");
+    }
+    return { unrecorded: true, missingHosts: [...eligible] };
   }
 
   const missing: AiUsageHost[] = [];
