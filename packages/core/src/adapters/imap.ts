@@ -105,7 +105,7 @@ import {
 } from "./imap-types.js";
 // The SSRF gate's other half. `pinned-fetch.ts` owns it because a pin and a gate are one
 // mechanism (its header says so); this file is the mail-leg consumer — see `ImapConfig.pin`.
-import { pinnedLookup } from "../net/pinned-fetch.js";
+import { pinnedLookup } from "../net/pinned-lookup.js";
 import {
   AmbiguousMetaFolderError,
   makeLeaseIo, makeLeasePeekIo, makeRequestReaderIo, makeRequestOrganizerIo, personalNamespacesOf,
@@ -312,6 +312,21 @@ export function imapFlowOptions(
        (`imap-flow.js:4045-4069`), so this adds an event and no output. */
     emitLogs: true,
     connectionTimeout: t.connectionMs, greetingTimeout: t.greetingMs, socketTimeout: t.socketMs,
+    /**
+     * NEVER NEGOTIATE COMPRESSION, and it is here rather than left to the default for a reason
+     * that only appears on one of the runtimes this adapter runs on.
+     *
+     * The client offers COMPRESS whenever the server advertises it, and compression is the one
+     * feature in its path that needs a whole compression library. The desktop has one; a phone's
+     * engine does not, and its stand-in throws — so the option's absence would turn "this server
+     * happens to advertise DEFLATE" into a mailbox that cannot be opened, on some providers and
+     * not others, with an error naming a compression function nobody called.
+     *
+     * The saving was never worth it either way: mail arrives once, the body budget already bounds
+     * what a fetch may pull, and the bandwidth a header sync spends is small next to the memory a
+     * second stream costs on a device.
+     */
+    disableCompression: true,
   };
 }
 
