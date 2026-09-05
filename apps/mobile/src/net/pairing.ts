@@ -67,8 +67,12 @@ import {
 import { ServerProfileStore, type ServerProfile } from "../state/servers";
 import { BearerManagerRN, type FetchLike, type RefreshVault } from "./bearer";
 import {
-  canPin, isPinFailure, pin as installPin, unpin, PIN_CHANGED_SENTENCE,
+  canPin, isPinFailure, pin as installPin, unpin,
 } from "./host-pinning";
+/* Every sentence this module hands back reaches a screen, so they live in the copy deck and are
+   translated with everything else. The `throw new Error(…)` messages below do not: they are
+   programming faults nobody but a developer ever reads. */
+import { Copy } from "../copy";
 import { dropWakeRow } from "./push.js";
 import { resolveApiBase } from "./server-base.js";
 
@@ -99,7 +103,7 @@ export async function negotiate(fetchImpl: FetchLike, origin: string): Promise<N
   } catch (err) {
     return { kind: "unreachable", detail: String(err) };
   }
-  if (!res.ok) return { kind: "unreachable", detail: `the server answered ${res.status}` };
+  if (!res.ok) return { kind: "unreachable", detail: Copy.helloStatus(res.status) };
   let body: {
     product?: unknown; flavor?: unknown; apiVersion?: unknown; needsSetup?: unknown;
     features?: { pairing?: unknown };
@@ -317,36 +321,26 @@ export function admitOrigin(origin: string, pin: string | null): { ok: true } | 
   if (normalized.startsWith("http://") && !isLoopback(host)) {
     return {
       ok: false,
-      reason:
-        "That address is a plain, unencrypted connection, and ohmail will not send your mail " +
-        "over one. A desktop running ohmail serves a secure address — open Settings → Devices " +
-        "there and use the code it shows.",
+      reason: Copy.admitCleartext,
     };
   }
   if (originNeedsPin(normalized)) {
     if (pin === null) {
       return {
         ok: false,
-        reason:
-          "That pairing code does not carry this computer's identity, so ohmail cannot tell its " +
-          "connection apart from anything else on your network. Mint a fresh code from the " +
-          "desktop app's Settings → Devices and scan that.",
+        reason: Copy.admitNoPin,
       };
     }
     if (!canPin()) {
       return {
         ok: false,
-        reason:
-          "Pairing with a computer on your own network is not available in this build of the " +
-          "ohmail app yet. Use the Tailscale address from that computer's Settings → Devices " +
-          "instead — it works on every platform.",
+        reason: Copy.admitCannotPin,
       };
     }
     if (!installPin(normalized, pin)) {
       return {
         ok: false,
-        reason: "ohmail could not record this computer's identity on this phone, so it stopped " +
-          "rather than connecting without it.",
+        reason: Copy.admitPinNotStored,
       };
     }
   }
@@ -399,10 +393,10 @@ export async function pairWithServer(
   const fetchImpl = env.fetchImpl ?? bareFetch();
   const origin = normalizeOrigin(input.origin);
   if (!/^https?:\/\/\S+$/.test(origin)) {
-    return { kind: "refused", reason: `not a server address: "${input.origin}"` };
+    return { kind: "refused", reason: Copy.pairBadAddress(input.origin) };
   }
   const token = input.token.trim();
-  if (token === "") return { kind: "refused", reason: "the pairing code is empty" };
+  if (token === "") return { kind: "refused", reason: Copy.pairEmptyToken };
 
   // 0 — THE TRANSPORT, BEFORE THE FIRST REQUEST AND NOT BEFORE THE REDEEM. `/hello` below is
   // already a request to this origin, so a pin installed after it would leave the negotiation
@@ -421,21 +415,19 @@ export async function pairWithServer(
     // unreadable and, worse, indistinguishable from a dead network — so the shape is recognised
     // and the sentence says what happened and what to do (`host-pinning.ts`).
     if (pin !== null && isPinFailure(negotiated.detail)) {
-      return { kind: "refused", reason: PIN_CHANGED_SENTENCE };
+      return { kind: "refused", reason: Copy.pinChanged };
     }
-    return { kind: "refused", reason: `could not reach that server — ${negotiated.detail}` };
+    return { kind: "refused", reason: Copy.pairUnreachable(negotiated.detail) };
   }
   if (negotiated.kind === "not-ohmail") {
-    return { kind: "refused", reason: "that address answers, but not as an ohmail server" };
+    return { kind: "refused", reason: Copy.pairNotOhmail };
   }
   const step = nextStep(negotiated.hello);
   if (step.kind !== "pair") {
     return {
       kind: "refused",
       reason:
-        step.kind === "managed-signin-later"
-          ? "ohmail.app is not offering device pairing right now — its own descriptor says so"
-          : "this server does not offer device pairing",
+        step.kind === "managed-signin-later" ? Copy.pairManagedDeferred : Copy.pairNoPairing,
     };
   }
 
@@ -456,7 +448,7 @@ export async function pairWithServer(
     // socket the negotiation used, so a key that changed between them is the same event and gets
     // the same sentence rather than a second, vaguer one about a missing API.
     if (pin !== null && isPinFailure(resolved.reason)) {
-      return { kind: "refused", reason: PIN_CHANGED_SENTENCE };
+      return { kind: "refused", reason: Copy.pinChanged };
     }
     return { kind: "refused", reason: resolved.reason };
   }
@@ -509,7 +501,7 @@ export async function pairWithServer(
       answer = await parse(redeemed);
     }
   } catch {
-    return { kind: "refused", reason: "could not reach that server to redeem the pairing" };
+    return { kind: "refused", reason: Copy.pairRedeemUnreachable };
   }
   const tokens = answer.tokens;
   if (!redeemed.ok || typeof tokens?.accessToken !== "string" || typeof tokens.refreshToken !== "string") {
@@ -517,7 +509,7 @@ export async function pairWithServer(
     // exact judgment); anything else shows the server's own words.
     const message =
       answer.error?.code === "pairing_invalid" || typeof answer.error?.message !== "string"
-        ? "that pairing code was not accepted — mint a fresh one and scan again"
+        ? Copy.pairCodeRejected
         : answer.error.message;
     return { kind: "refused", reason: message };
   }
@@ -533,8 +525,7 @@ export async function pairWithServer(
     // (An identity read on the desktop-host door would let this name the account; not today.)
     return {
       kind: "refused",
-      reason:
-        "paired, but the server could not name the account this pairing opens — once it holds mail, mint a fresh code and pair again",
+      reason: Copy.pairNoAccountName,
     };
   }
 
@@ -563,9 +554,7 @@ export async function pairWithServer(
     } catch (err) {
       return {
         kind: "refused",
-        reason:
-          `This phone still owes a deletion for that mailbox's copied mail and could not carry ` +
-          `it out (${String(err)}). Restart ohmail so it can finish, then pair again with a fresh code.`,
+        reason: Copy.pairOwedDeletion(String(err)),
       };
     }
   }
@@ -611,10 +600,8 @@ export async function pairWithServer(
     return {
       kind: "refused",
       reason: closed
-        ? `this phone could not store the pairing (${String(err)}) — the session was closed; mint a fresh code and try again`
-        : `this phone could not store the pairing (${String(err)}), and the server could not be ` +
-          `reached to close the session it had just opened — revoke this device from its Devices ` +
-          `list, then mint a fresh code and try again`,
+        ? Copy.pairNotStoredClosed(String(err))
+        : Copy.pairNotStoredOpen(String(err)),
     };
   }
   const connected = await buildSession(env, profile, tokens.accessToken);
@@ -745,9 +732,7 @@ export async function forgetProfile(
       // forget does not start. The credential stays, which is the recoverable state.
       return {
         kind: "partial",
-        reason:
-          `This phone could not start forgetting that server (${String(err)}). Restart ohmail so ` +
-          `it can finish the deletions it already owes, then try again.`,
+        reason: Copy.forgetCannotStart(String(err)),
       };
     }
   }
@@ -790,13 +775,11 @@ export async function forgetProfile(
   } catch (err) {
     return {
       kind: "partial",
-      reason:
-        `This phone would not let go of the pairing (${String(err)}). ` +
-        `Revoke this device from the server's Devices list, which ends the session wherever it is held.`,
+      reason: Copy.forgetKeystoreRefused(String(err)),
     };
   }
 
-  if (ownerKey === null) return told ? { kind: "forgotten" } : { kind: "partial", reason: NOT_TOLD };
+  if (ownerKey === null) return told ? { kind: "forgotten" } : { kind: "partial", reason: NOT_TOLD() };
   try {
     await (opts.closed ?? Promise.resolve());
     await forgetMirror(env.engineDeps, ownerKey);
@@ -810,19 +793,16 @@ export async function forgetProfile(
     // that could still open the mailbox — but the mail is still here and the wipe is still owed.
     return {
       kind: "partial",
-      reason:
-        `The pairing is removed, but the mail this phone had copied could not be deleted ` +
-        `(${String(err)}). ohmail will try again the next time it starts.`,
+      reason: Copy.forgetMailRemains(String(err)),
     };
   }
-  return told ? { kind: "forgotten" } : { kind: "partial", reason: NOT_TOLD };
+  return told ? { kind: "forgotten" } : { kind: "partial", reason: NOT_TOLD() };
 }
 
-/** See {@link forgetProfile}: everything local is gone; the server was not told. */
-const NOT_TOLD =
-  "The pairing and the mail this phone had copied are gone. The server could not be reached to " +
-  "end the session, so it may still count this phone as connected — revoke this device from its " +
-  "Devices list to finish.";
+/** See {@link forgetProfile}: everything local is gone; the server was not told. A GETTER over
+ *  the deck rather than a captured string — this module is imported at the top of the graph, long
+ *  before a language is resolved, and a constant would freeze the sentence in English. */
+const NOT_TOLD = (): string => Copy.forgetServerUnreachable;
 
 /**
  * Finish the forgets that did not finish — run once at launch, BEFORE any profile is read.
@@ -942,7 +922,7 @@ export async function connectProfile(env: PairingEnv, profile: ServerProfile): P
 export async function connectProfileById(env: PairingEnv, id: string): Promise<ConnectOutcome> {
   const profile = (await env.profiles.list()).find((p) => p.id === id);
   if (profile === undefined) {
-    return { kind: "refused", reason: "that server is no longer paired on this phone" };
+    return { kind: "refused", reason: Copy.notPairedHere };
   }
   return connectProfile(env, profile);
 }
@@ -974,10 +954,7 @@ async function buildSession(
   if (await env.profiles.isOwedForget(profile.id)) {
     return {
       kind: "refused",
-      reason:
-        "This server is still being forgotten on this phone — ohmail could not remove its " +
-        "sign-in yet. Restart the app to let it finish, or revoke this device from the server's " +
-        "Devices list.",
+      reason: Copy.forgetStillPending,
     };
   }
   /**
@@ -1049,7 +1026,7 @@ async function buildSession(
     return {
       kind: "refused",
       needsRepair: true,
-      reason: "this pairing ended — the server refused its token. Scan a fresh QR to pair again",
+      reason: Copy.pairEndedRefused,
     };
   }
   const boot = await bootEngine(env.engineDeps, {

@@ -18,6 +18,7 @@ import { DetailBar } from "../src/ui/chrome";
 import { Gated } from "../src/ui/Gated";
 import { Icon, type IconName } from "../src/ui/Icon";
 import { SkeletonList } from "../src/ui/Skeleton";
+import { useLocale } from "../src/i18n/LocaleProvider";
 
 const PILE_ICON: Record<string, IconName> = {
   replyLater: "clock",
@@ -27,6 +28,9 @@ const PILE_ICON: Record<string, IconName> = {
 
 /** Gated like the tabs — a deep-linked route must not render the empty world. */
 export default function TriageScreen() {
+  /* Subscribed to the language, so a switch in Settings redraws this screen instead of
+     waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
+  useLocale();
   return (
     <Gated>
       <TriageBody />

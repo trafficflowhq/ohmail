@@ -38,6 +38,7 @@ import {
 } from "react";
 
 import { Copy } from "../copy";
+import { useLocale } from "../i18n/LocaleProvider";
 import { useConnection } from "../net/connection";
 import {
   readFoldersEnabled,
@@ -694,6 +695,16 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   );
 
   const zone = useMemo(readerZone, []);
+  /*
+   * WHICH LANGUAGE THE ENGINE NAMES A DAY IN — the seam `live.ts` already had and nothing ever
+   * filled. Every date the mirror puts on screen goes through `messageDisplayTime`,
+   * `receiptsByDay` and `screenerSegments`, each of which takes a locale and defaulted to `"en"`
+   * because this view never passed one; a German phone was reading "Fri" and "2 Aug".
+   * `useLocale()` also SUBSCRIBES, so a language switch rebuilds the view rather than leaving the
+   * stamps in the language they were first derived in — the memo lists it as a dependency for
+   * exactly that.
+   */
+  const locale = useLocale();
   const acts = useMemo(
     // expo-crypto's v4 — the same generator the engine composition injects (`native.ts`), taken
     // from the library directly rather than through `engine/native`: the privacy suite's
@@ -869,7 +880,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   const world = useMemo<World>(() => {
     if (engine === null || session === null) return emptyWorld(actions);
     const v: WorldView = {
-      now: new Date(), zone, foldersEnabled: foldersOn,
+      now: new Date(), zone, locale, foldersEnabled: foldersOn,
       // Before the first read this is `[]`, which is `NO_OWN_ADDRESSES` — the posture this
       // client had for its whole life, and the right answer for a phone that has not asked yet.
       ownAddresses: addressesNow.current,
@@ -907,7 +918,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         ownAddresses: addressesNow.current,
         organizer: mailboxes === null ? null : phoneOrganizer(mailboxes),
       },
-      ohbox: { ...ohbox, meta: `${ohbox.unread} unread of ${ohbox.total}` },
+      ohbox: { ...ohbox, meta: Copy.metaUnreadOf(ohbox.unread, ohbox.total) },
       doorbell: {
         initials: screener.waiting.map((r) => r.initial),
         count: screener.waiting.length,
@@ -915,7 +926,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       reads: {
         ...reads,
         waterLabel: Copy.waterline,
-        meta: `${reads.newCount} new`,
+        meta: Copy.metaNew(reads.newCount),
       },
       receipts: {
         groups: receipts.groups,
@@ -923,14 +934,14 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         waterLabel: Copy.waterline,
         total: receipts.total,
         newCount: receipts.newCount,
-        meta: `${receipts.newCount} new`,
+        meta: Copy.metaNew(receipts.newCount),
       },
       screener: {
         ...screener,
-        meta: `${screener.waiting.length} first-time sender${screener.waiting.length === 1 ? "" : "s"} waiting`,
+        meta: Copy.metaWaiting(screener.waiting.length),
       },
       piles,
-      pilesMeta: `${pileTotal} item${pileTotal === 1 ? "" : "s"}`,
+      pilesMeta: Copy.metaItems(pileTotal),
       // The RAW mirror, like the webapp's `reader.list<TagDTO>("tag")` — tags are not projected.
       tags: liveTags(engine.read()),
       // Also raw, and for the same reason: a draft is not presented mail and never passes
@@ -967,7 +978,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         pending: facePending,
         applyAll: applyFaceAllDevices,
       },
-      message: (id) => liveMessage(engine, id, { now: new Date(), zone, foldersEnabled: foldersOn }),
+      message: (id) => liveMessage(engine, id, { now: new Date(), zone, locale, foldersEnabled: foldersOn }),
       sendOutcome: outcomeOf,
       actions,
     };
@@ -978,7 +989,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // the BOOT facts: the settled stamp lands as a drain completes (syncing falls), and the
     // failure sentence is part of what an unsettled screen renders.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [engine, session, scopes, zone, actions, version, outcomeSeq, outcomeOf, freshBeat,
+  }, [engine, session, scopes, zone, locale, actions, version, outcomeSeq, outcomeOf, freshBeat,
     foldersOn, foldersPending, setFoldersEnabled, signatures, conn.syncing, conn.syncError,
     accountFace, accountFaceKnown, facePending, applyFaceAllDevices]);
 

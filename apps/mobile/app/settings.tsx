@@ -29,6 +29,8 @@ import {
 import { usePrefs } from "../src/state/store";
 import { useWorld } from "../src/state/world";
 import { Button, Panel, Rule, Screen, Scroller, Section, TapRow, Txt } from "../src/ui/base";
+import { useLocale, useLocaleControls } from "../src/i18n/LocaleProvider";
+import { type AppLocale } from "../src/i18n/locale";
 import { DetailBar } from "../src/ui/chrome";
 import { Gated } from "../src/ui/Gated";
 import { Segmented } from "../src/ui/Segmented";
@@ -39,6 +41,47 @@ export default function SettingsScreen() {
     <Gated>
       <SettingsBody />
     </Gated>
+  );
+}
+
+/**
+ * SETTINGS → LANGUAGE, as its own component so the null-provider case is a structural absence
+ * rather than a branch inside the settings body.
+ *
+ * `null` is the segment for "follow this phone", and it is a real third state rather than a
+ * cosmetic default — see {@link Copy.language}'s note. The control renders what the DEVICE has
+ * stored, never the optimistic pick: a refused keystore write leaves the segments where they were
+ * and puts one sentence underneath, which is the contract every other settings control here keeps.
+ */
+function LanguagePanel() {
+  const controls = useLocaleControls();
+  const [failed, setFailed] = useState(false);
+  if (controls === null) return null;
+  /* `Segmented` keys its rows by value, so the "follow this phone" state needs a spelling rather
+     than `null`. It is translated at this boundary and nowhere else — `LocaleControls` keeps the
+     `null` that says "nothing is stored", which is the distinction the keystore actually holds. */
+  const segments: { value: AppLocale | "system"; label: string }[] = [
+    { value: "system", label: Copy.languageSystem },
+    { value: "en", label: Copy.languageEnglish },
+    { value: "de", label: Copy.languageGerman },
+  ];
+  const chosen: AppLocale | "system" = controls.chosen ?? "system";
+  return (
+    <View style={{ paddingHorizontal: 16, marginTop: 18 }}>
+      <Txt variant="settingsLabel" style={{ marginBottom: 10 }}>{Copy.language}</Txt>
+      <Segmented<AppLocale | "system">
+        value={chosen}
+        onChange={(next) => {
+          if (controls.busy || next === chosen) return;
+          setFailed(false);
+          controls.setLocale(next === "system" ? null : next).catch(() => { setFailed(true); });
+        }}
+        segments={segments}
+      />
+      <Txt variant="caption" tone="ink3" style={{ marginTop: 10 }}>
+        {failed ? Copy.languageFailed : Copy.languageNote}
+      </Txt>
+    </View>
   );
 }
 
@@ -63,6 +106,9 @@ export function wakeSentence(state: WakeState): string {
 }
 
 function SettingsBody() {
+  /* Subscribed: this is the screen the switch is made ON, so it is the screen that must redraw
+     under the finger rather than on the next navigation. */
+  useLocale();
   const w = useWorld();
   const { themePref, setTheme, facePin, setFacePin } = usePrefs();
   const wake = useWake();
@@ -97,15 +143,23 @@ function SettingsBody() {
               value={themePref}
               onChange={setTheme}
               segments={[
-                { value: "system", label: "System" },
-                { value: "light", label: "Light" },
-                { value: "dark", label: "Dark" },
+                { value: "system", label: Copy.themeSystem },
+                { value: "light", label: Copy.themeLight },
+                { value: "dark", label: Copy.themeDark },
               ]}
             />
             <Txt variant="caption" tone="ink3" style={{ marginTop: 10 }}>
               {Copy.themeNote}
             </Txt>
           </View>
+
+          {/*
+            LANGUAGE — the same shape as the control above it, one row down, because it is the same
+            kind of choice. It draws nothing when no locale provider is mounted, which is the demo's
+            bare panes and the node suite's component renders: a selector that cannot select is the
+            built-and-unreachable shape this screen avoids everywhere else.
+          */}
+          <LanguagePanel />
 
           {/*
             LOOK — the face, in the same panel as light/dark because they are the same class of
@@ -351,8 +405,8 @@ function FoldersPanel({
           value={on ? "on" : "off"}
           onChange={write}
           segments={[
-            { value: "off", label: "Off" },
-            { value: "on", label: "On" },
+            { value: "off", label: Copy.switchOff },
+            { value: "on", label: Copy.switchOn },
           ]}
         />
         <Txt variant="caption" tone="ink3" style={{ marginTop: 10 }}>

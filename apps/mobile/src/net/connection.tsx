@@ -246,7 +246,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         // The server judged this family's token — a revoke or a reuse-past. Render mail no
         // further: tear down and say the one-gesture remedy.
         teardown(session);
-        setState({ k: "ended", reason: "this pairing ended on the server — scan a fresh QR to pair again" });
+        setState({ k: "ended", reason: Copy.pairEndedOnServer });
         void refreshProfiles();
       });
       setState({ k: "live", session });
@@ -284,8 +284,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       const row = (await env.profiles.list()).find((p) => p.id === id);
       if (live.current.k === "live") teardown(live.current.session);
       if (row === undefined) {
-        if (stillCurrent()) setState({ k: "refused", reason: "that server is no longer paired on this phone" });
-        return { ok: false, reason: "that server is no longer paired on this phone" };
+        if (stillCurrent()) setState({ k: "refused", reason: Copy.notPairedHere });
+        return { ok: false, reason: Copy.notPairedHere };
       }
       if (stillCurrent()) setState({ k: "connecting", origin: row.origin });
       const outcome = await connectProfileById(env, id);
@@ -383,7 +383,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       .catch((err) => {
         setState((s) =>
           s.k === "starting"
-            ? { k: "refused", reason: `could not read this phone's stored pairings — ${String(err)}` }
+            ? { k: "refused", reason: Copy.pairingsUnreadable(String(err)) }
             : s,
         );
       });

@@ -25,9 +25,13 @@ import { DetailBar } from "../../src/ui/chrome";
 import { Gated } from "../../src/ui/Gated";
 import { MailRow } from "../../src/ui/MailRow";
 import { SkeletonList } from "../../src/ui/Skeleton";
+import { useLocale } from "../../src/i18n/LocaleProvider";
 
 /** Gated like the tabs: a restored route must land on the connect flow, not an empty list. */
 export default function FolderScreen() {
+  /* Subscribed to the language, so a switch in Settings redraws this screen instead of
+     waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
+  useLocale();
   return (
     <Gated>
       <FolderBody />
@@ -73,7 +77,7 @@ function FolderBody() {
               {leaf}
             </Txt>
             <Txt variant="meta" tone="ink3" tabular>
-              {metaWhen(surface, `${unread} unread of ${total}`) ?? " "}
+              {metaWhen(surface, Copy.metaUnreadOf(unread, total)) ?? " "}
             </Txt>
           </View>
           {/* The full path when the folder is nested, so "Q1" says where it lives — the

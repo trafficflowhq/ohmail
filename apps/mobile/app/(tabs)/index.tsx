@@ -19,8 +19,12 @@ import { Empty, Panel, Screen, Scroller, Section, Tail, Txt } from "../../src/ui
 import { Doorbell, TopBar } from "../../src/ui/chrome";
 import { MailRow } from "../../src/ui/MailRow";
 import { SkeletonList } from "../../src/ui/Skeleton";
+import { useLocale } from "../../src/i18n/LocaleProvider";
 
 export default function OhboxScreen() {
+  /* Subscribed to the language, so a switch in Settings redraws this screen instead of
+     waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
+  useLocale();
   const w = useWorld();
   const pull = usePullToSync();
   const { resurfaced, fresh, seen, total, meta } = w.ohbox;

@@ -27,11 +27,15 @@ import { Badge, Empty, Panel, Screen, Scroller, Tail, TapRow, Txt, Waterline } f
 import { TopBar } from "../../src/ui/chrome";
 import { FadeOut } from "../../src/ui/FadeOut";
 import { SkeletonList } from "../../src/ui/Skeleton";
+import { useLocale } from "../../src/i18n/LocaleProvider";
 
 /** The read line: a card counts as skimmed once its foot clears this fraction. */
 const READ_LINE = 0.62;
 
 export default function ReadsScreen() {
+  /* Subscribed to the language, so a switch in Settings redraws this screen instead of
+     waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
+  useLocale();
   const w = useWorld();
   const pull = usePullToSync();
   const { items, waterlineAboveId, waterLabel, meta } = w.reads;
@@ -150,7 +154,7 @@ function StreamCard({ m, onExpand }: { m: WorldMail; onExpand: () => void }) {
           })
         }
         accessibilityRole="button"
-        accessibilityLabel={`${m.subject}. ${open ? "Collapse" : "Read in full"}.`}
+        accessibilityLabel={Copy.readsCardAria(m.subject, open)}
         style={{ borderRadius: t.radius.card }}
       >
         <View style={{ padding: 18, paddingBottom: 14 }}>
@@ -184,7 +188,7 @@ function StreamCard({ m, onExpand }: { m: WorldMail; onExpand: () => void }) {
           </View>
 
           <View style={{ flexDirection: "row", gap: 6, marginTop: 14 }}>
-            <Badge icon={open ? "chev" : "open"}>{open ? "Collapse" : "Read in full"}</Badge>
+            <Badge icon={open ? "chev" : "open"}>{open ? Copy.readsCollapse : Copy.readsReadInFull}</Badge>
           </View>
         </View>
       </TapRow>

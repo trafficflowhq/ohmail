@@ -42,9 +42,13 @@ import { DetailBar } from "../../../src/ui/chrome";
 import { Gated } from "../../../src/ui/Gated";
 import { Icon } from "../../../src/ui/Icon";
 import { Segmented } from "../../../src/ui/Segmented";
+import { useLocale } from "../../../src/i18n/LocaleProvider";
 
 /** Gated like the tabs — a deep-linked or restored route must not render the empty world. */
 export default function SenderScreen() {
+  /* Subscribed to the language, so a switch in Settings redraws this screen instead of
+     waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
+  useLocale();
   return (
     <Gated>
       <SenderBody />
@@ -325,7 +329,7 @@ function DecisionCapsule({
     >
       <Tap
         accessibilityRole="button"
-        accessibilityLabel={`${destDone(dest)}${ai ? ", suggested" : ""}`}
+        accessibilityLabel={Copy.decideAria(destDone(dest), !!ai)}
         onPress={onFile}
         onPressIn={() => setPressed("main")}
         onPressOut={() => setPressed("none")}
@@ -347,7 +351,7 @@ function DecisionCapsule({
       <View style={{ width: 1, backgroundColor: t.c.hairSoft }} />
       <Tap
         accessibilityRole="button"
-        accessibilityLabel={`${destDone(dest)}, and mark read`}
+        accessibilityLabel={Copy.decideReadAria(destDone(dest))}
         onPress={onFileRead}
         onPressIn={() => setPressed("read")}
         onPressOut={() => setPressed("none")}

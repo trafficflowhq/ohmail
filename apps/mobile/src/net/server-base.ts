@@ -64,6 +64,9 @@
  * them where they are and this base governs exactly the `/sync` family, which is exactly what was
  * measured to need it.
  */
+/* The refusals this module returns are rendered on the address field, so they are copy and live
+   in the deck. See `copy.en.ts`'s "transport & pairing refusals" block. */
+import { Copy } from "../copy";
 import { originNeedsPin } from "@ohmail/client-engine";
 import {
   apiBaseFor,
@@ -117,14 +120,11 @@ export { apiBaseFor };
  * reason the parse is imported rather than restated: one rule about which addresses need a pin, so
  * the door cannot come to disagree with the seam (`admitOrigin`) that enforces it.
  */
-const NEEDS_THE_CODE =
-  "That is a numeric address on a network, and no certificate authority can vouch for one — " +
-  "so ohmail can only trust it through the code your computer shows. Open Settings → " +
-  "Devices there and scan that instead.";
+const NEEDS_THE_CODE = (): string => Copy.baseNeedsTheCode;
 
 export function addressProblem(typed: string): string | null {
   const trimmed = typed.trim();
-  if (trimmed === "") return "Your server's address is missing.";
+  if (trimmed === "") return Copy.baseAddressMissing;
   const origin = parseServerAddress(trimmed);
   if (origin !== null) {
     /**
@@ -146,7 +146,7 @@ export function addressProblem(typed: string): string | null {
      * reason the parse is imported rather than restated: one rule about which addresses need a pin,
      * and the door cannot come to disagree with the seam that enforces it.
      */
-    if (originNeedsPin(origin)) return NEEDS_THE_CODE;
+    if (originNeedsPin(origin)) return NEEDS_THE_CODE();
     return null;
   }
   /**
@@ -181,16 +181,10 @@ export function addressProblem(typed: string): string | null {
      * before it is recommended — and where it would be refused, the sentence that actually leads
      * somewhere is the one given.
      */
-    if (originNeedsPin(httpsSpelling)) return NEEDS_THE_CODE;
-    return (
-      "That is a plain, unencrypted address, and ohmail will not send your mail over one. " +
-      "Give the https address you open ohmail at in a browser."
-    );
+    if (originNeedsPin(httpsSpelling)) return NEEDS_THE_CODE();
+    return Copy.baseCleartext;
   }
-  return (
-    "That does not look like a server address. Give the address you open ohmail at in a " +
-    "browser — for example https://ohmail.example.com — with nothing after the host."
-  );
+  return Copy.baseNotAnAddress;
 }
 
 /** The route the derivation probes. Authenticated on every ohmail table, so a bare GET 401s. */
@@ -676,7 +670,7 @@ export async function resolveApiBase(
   if (!reached && transportFailures.length > 0) {
     return {
       kind: "refused",
-      reason: `could not reach that server to find its mail API — ${transportFailures[0]!}`,
+      reason: Copy.baseApiUnreachable(transportFailures[0]!),
     };
   }
 
@@ -687,11 +681,7 @@ export async function resolveApiBase(
   if (stalled) {
     return {
       kind: "refused",
-      reason: stalledAfterHeaders
-        ? "That server started answering and then stopped, so ohmail stopped waiting. If you run " +
-          "it, check that its proxy is passing requests through to the ohmail API."
-        : "That server did not answer in time, so ohmail stopped waiting. That may be the network " +
-          "between this phone and it, or a route on the server that never replies.",
+      reason: stalledAfterHeaders ? Copy.baseApiStopped : Copy.baseApiTimeout,
     };
   }
 
@@ -710,10 +700,7 @@ export async function resolveApiBase(
   if (transportFailures.length > 0) {
     return {
       kind: "refused",
-      reason:
-        "One of the two addresses ohmail tried answered and was not its mail API, and the other " +
-        `could not be reached — ${transportFailures[0]!}. If you run this server, check that it ` +
-        "is passing /api through to the ohmail API.",
+      reason: Copy.baseApiMixed(transportFailures[0]!),
     };
   }
 
@@ -721,9 +708,6 @@ export async function resolveApiBase(
      a true word, which is what the two arms above exist to protect. */
   return {
     kind: "refused",
-    reason:
-      "That address answers, but ohmail could not find its mail API — neither at the address " +
-      "itself nor under /api. If you run this server, check that its proxy is passing /api " +
-      "through to the ohmail API.",
+    reason: Copy.baseApiNotFound,
   };
 }

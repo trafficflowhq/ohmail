@@ -22,6 +22,7 @@ import { useConnection } from "../src/net/connection";
 import { parsePairLink } from "../src/net/pairing";
 import { Button, Panel, Screen, Txt } from "../src/ui/base";
 import { DetailBar } from "../src/ui/chrome";
+import { useLocale } from "../src/i18n/LocaleProvider";
 
 type Phase =
   | { k: "scanning"; badCode: boolean }
@@ -29,6 +30,9 @@ type Phase =
   | { k: "failed"; reason: string };
 
 export default function ScanScreen() {
+  /* Subscribed to the language, so a switch in Settings redraws this screen instead of
+     waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
+  useLocale();
   const conn = useConnection();
   const [permission, requestPermission] = useCameraPermissions();
   const [phase, setPhase] = useState<Phase>({ k: "scanning", badCode: false });

@@ -29,6 +29,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Copy } from "../copy";
+import { useLocale } from "../i18n/LocaleProvider";
 import { useTheme } from "../theme";
 import { destLabel, DESTINATIONS, domainOf, type Destination, type Scope } from "../state/model";
 import {
@@ -85,6 +86,9 @@ export function MessageActions({
   const t = useTheme();
   const insets = useSafeAreaInsets();
   const w = useWorld();
+  /* The resurface chooser's day rows are named by `Intl`, so this bar needs the language as a
+     value and not only as a subscription. */
+  const locale = useLocale();
   const [open, setOpen] = useState<Open>(null);
 
   // A message swap must not leave a sheet open over a different message's verbs — the same
@@ -248,7 +252,7 @@ export function MessageActions({
               return (
                 <SheetRow
                   key={day.toISOString()}
-                  label={dayLabel(day)}
+                  label={dayLabel(day, locale)}
                   onPress={() => { close(); a.resurfaceAt(m.id, day.toISOString()); }}
                 />
               );
@@ -401,6 +405,8 @@ function ComposeSheet({
   const t = useTheme();
   const insets = useSafeAreaInsets();
   const w = useWorld();
+  /** The send-later day rows, named by `Intl` in the app's language. */
+  const locale = useLocale();
   const [body, setBody] = useState("");
   const [to, setTo] = useState("");
   /**
@@ -748,7 +754,7 @@ function ComposeSheet({
                     <SheetRow
                       key={offset}
                       icon="chev"
-                      label={dayLabel(dayNine(openedAt, offset))}
+                      label={dayLabel(dayNine(openedAt, offset), locale)}
                       onPress={() => setLater({ step: "hours", offset })}
                     />
                   ))}
@@ -884,10 +890,18 @@ type LaterStep =
    *  so the day the reader tapped and the instant the press dispatches cannot drift apart. */
   | { step: "hours"; offset: number };
 
-/** "Mon 1 Sep" for the picked-day rows — weekday, day, month, in the reader's locale defaults. */
-function dayLabel(day: Date): string {
+/**
+ * "Mon 1 Sep" — or "Mo., 1. Sept." — for the picked-day rows.
+ *
+ * The locale was the literal `"en"` and is now the app's. `Intl` is what decides how a language
+ * shortens a weekday and a month, and that is not ours to invent: German writes "Di." with a stop
+ * and "Sept." with one too, which a hand-written table gets wrong in a way nobody reviews. The
+ * failure arm is unchanged and still English, because `toDateString()` is the platform's last
+ * resort on a runtime with no ICU data at all — an unlocalised date beats no date.
+ */
+function dayLabel(day: Date, locale: string): string {
   try {
-    return new Intl.DateTimeFormat("en", { weekday: "short", day: "numeric", month: "short" }).format(day);
+    return new Intl.DateTimeFormat(locale, { weekday: "short", day: "numeric", month: "short" }).format(day);
   } catch {
     return day.toDateString();
   }

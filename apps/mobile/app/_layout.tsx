@@ -4,6 +4,11 @@
  * Theme preference lives in the prefs store, so it has to be read *inside* that
  * provider and handed to the theme provider — hence the small `Shell` split.
  *
+ * The LANGUAGE sits outermost, above everything that draws a word. It has to: the copy deck is
+ * reached through a module import rather than through React, so the provider's job is to resolve
+ * which deck that is (the phone's own language, or an override stored on this device) before any
+ * screen renders — and to publish a switch afterwards. Screens subscribe with `useLocale()`.
+ *
  * The FACE (paper / ohmarchy) is resolved in the same place and for the same reason, from the
  * two scopes that decide it: this device's pin (the prefs store) and the account's synced
  * answer (the world layer's consent read). `resolveFace` is the whole of the order and lives in
@@ -11,6 +16,7 @@
  * verdict. That is also why `Shell` sits INSIDE `WorldProvider`: the account half of the
  * appearance comes off the mirror's own consent read.
  */
+import { useMemo } from "react";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -20,10 +26,16 @@ import { PrefsProvider, usePrefs } from "../src/state/store";
 import { WorldProvider, useWorld } from "../src/state/world";
 import { WakeProvider } from "../src/state/wake";
 import { Toast } from "../src/ui/chrome";
+import { LocaleProvider, useLocale } from "../src/i18n/LocaleProvider";
+import { secureKV } from "../src/state/servers-native";
 
 export default function RootLayout() {
+  /* One keystore binding for the app's lifetime, like the profile store's. The provider holds it
+     in a ref, so a fresh object per render would be harmless — this is tidiness, not correctness. */
+  const kv = useMemo(secureKV, []);
   return (
     <SafeAreaProvider>
+      <LocaleProvider kv={kv}>
       <PrefsProvider>
         {/* The connection layer sits at the root so a live session survives every screen.
             The world layer above the screens renders its mirror; with nothing connected
@@ -41,6 +53,7 @@ export default function RootLayout() {
           </WorldProvider>
         </ConnectionProvider>
       </PrefsProvider>
+      </LocaleProvider>
     </SafeAreaProvider>
   );
 }
@@ -57,6 +70,9 @@ function Shell() {
 
 function Screens() {
   const t = useTheme();
+  /* Subscribed so the stack's own options — nothing worded today, but the screen titles a later
+     header would read — rebuild on a language switch along with everything below. */
+  useLocale();
   return (
     <>
       <StatusBar style={t.scheme === "dark" ? "light" : "dark"} />

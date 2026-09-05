@@ -20,6 +20,8 @@ import { Gated } from "../../src/ui/Gated";
 import { Icon, type IconName } from "../../src/ui/Icon";
 import { Tap, Txt } from "../../src/ui/base";
 import { FadeOut } from "../../src/ui/FadeOut";
+import { Copy } from "../../src/copy";
+import { useLocale } from "../../src/i18n/LocaleProvider";
 
 /**
  * The slice of the navigator's tab-bar props this dock uses. Typed here rather
@@ -40,15 +42,25 @@ interface DockProps {
   };
 }
 
-const TABS: { name: string; label: string; icon: IconName }[] = [
-  { name: "index", label: "Ohbox", icon: "ohbox" },
-  { name: "screener", label: "Screener", icon: "door" },
-  { name: "reads", label: "Reads", icon: "reads" },
-  { name: "receipts", label: "Receipts", icon: "receipts" },
-  { name: "more", label: "More", icon: "more" },
+/*
+ * The five tab names read from the deck through GETTERS, not as captured strings. This table is
+ * built at module scope, long before a language is resolved, so a plain string here would be the
+ * language the process started in for the rest of its life — which is exactly what it was: two of
+ * the five ("Receipts" and "More") stayed English under a German interface, and the other three
+ * are the same word in both languages, so nothing looked wrong enough to notice.
+ */
+const TABS: { name: string; readonly label: string; icon: IconName }[] = [
+  { name: "index", get label() { return Copy.ohbox; }, icon: "ohbox" },
+  { name: "screener", get label() { return Copy.screener; }, icon: "door" },
+  { name: "reads", get label() { return Copy.reads; }, icon: "reads" },
+  { name: "receipts", get label() { return Copy.receipts; }, icon: "receipts" },
+  { name: "more", get label() { return Copy.tabMore; }, icon: "more" },
 ];
 
 export default function TabsLayout() {
+  /* Subscribed to the language, so a switch in Settings redraws this screen instead of
+     waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
+  useLocale();
   return (
     <Gated>
       <Tabs

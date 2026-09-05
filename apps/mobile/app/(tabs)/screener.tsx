@@ -22,6 +22,7 @@ import { Badge, Empty, Panel, Screen, Scroller, Tail, TapRow, Txt } from "../../
 import { TopBar } from "../../src/ui/chrome";
 import { Segmented } from "../../src/ui/Segmented";
 import { SkeletonList } from "../../src/ui/Skeleton";
+import { useLocale } from "../../src/i18n/LocaleProvider";
 
 const EMPTY: Record<ScreenerSeg, { glyph: string; title: string; hint: string }> = {
   waiting: { glyph: "🚪", title: Copy.waitingEmptyTitle, hint: Copy.waitingEmptyHint },
@@ -30,6 +31,9 @@ const EMPTY: Record<ScreenerSeg, { glyph: string; title: string; hint: string }>
 };
 
 export default function ScreenerScreen() {
+  /* Subscribed to the language, so a switch in Settings redraws this screen instead of
+     waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
+  useLocale();
   const w = useWorld();
   const pull = usePullToSync();
   const [seg, setSeg] = useState<ScreenerSeg>("waiting");
@@ -143,7 +147,7 @@ function WaitingRow({ row }: { row: ScreenerRow }) {
     <TapRow
       onPress={() => router.push(`/sender/waiting/${encodeURIComponent(row.routeKey)}`)}
       accessibilityRole="button"
-      accessibilityLabel={`${row.name}, ${row.address}, ${row.held.length} held`}
+      accessibilityLabel={Copy.senderRowAria(row.name, row.address, row.held.length)}
       style={{ paddingHorizontal: 12, paddingVertical: 12 }}
     >
       <View style={{ flexDirection: "row", gap: 12 }}>

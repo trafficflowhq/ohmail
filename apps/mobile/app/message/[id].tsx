@@ -37,6 +37,7 @@ import { DetailBar } from "../../src/ui/chrome";
 import { Gated } from "../../src/ui/Gated";
 import { Icon } from "../../src/ui/Icon";
 import { MessageActions } from "../../src/ui/MessageActions";
+import { useLocale } from "../../src/i18n/LocaleProvider";
 
 /**
  * Gated like the tabs: a deep link (`ohmail://message/<id>`) can mount this route with the
@@ -44,6 +45,9 @@ import { MessageActions } from "../../src/ui/MessageActions";
  * empty world's "no longer here" with no way out.
  */
 export default function MessageScreen() {
+  /* Subscribed to the language, so a switch in Settings redraws this screen instead of
+     waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
+  useLocale();
   return (
     <Gated>
       <MessageBody />

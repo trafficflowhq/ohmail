@@ -28,6 +28,7 @@ import { Empty, Panel, Screen, Scroller, Section, Tail, Txt, Waterline } from ".
 import { TopBar } from "../../src/ui/chrome";
 import { MailRow } from "../../src/ui/MailRow";
 import { SkeletonList } from "../../src/ui/Skeleton";
+import { useLocale } from "../../src/i18n/LocaleProvider";
 
 const READ_LINE = 0.62;
 
@@ -41,6 +42,9 @@ const groupKeyOf = (g: { label: string; items: { id: string }[] }): string =>
   g.items[0]?.id ?? g.label;
 
 export default function ReceiptsScreen() {
+  /* Subscribed to the language, so a switch in Settings redraws this screen instead of
+     waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
+  useLocale();
   const w = useWorld();
   const pull = usePullToSync();
   const { groups, waterlineAboveId, waterLabel, total, meta } = w.receipts;

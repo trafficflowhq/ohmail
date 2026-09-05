@@ -15,8 +15,12 @@ import { Panel, Rule, Screen, Scroller, Section, TapRow, Txt } from "../../src/u
 import { TopBar } from "../../src/ui/chrome";
 import { FoldersGroup } from "../../src/ui/FoldersGroup";
 import { Icon } from "../../src/ui/Icon";
+import { useLocale } from "../../src/i18n/LocaleProvider";
 
 export default function MoreScreen() {
+  /* Subscribed to the language, so a switch in Settings redraws this screen instead of
+     waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
+  useLocale();
   const w = useWorld();
   const pileCountOf = (kind: string) => w.piles.find((p) => p.kind === kind)?.items.length ?? 0;
 

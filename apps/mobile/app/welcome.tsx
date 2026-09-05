@@ -23,8 +23,12 @@ import { useTheme } from "../src/theme";
 import { Screen, Scroller, Txt } from "../src/ui/base";
 import { Doors } from "../src/ui/Doors";
 import { Wordmark } from "../src/ui/Icon";
+import { useLocale } from "../src/i18n/LocaleProvider";
 
 export default function WelcomeScreen() {
+  /* Subscribed to the language, so a switch in Settings redraws this screen instead of
+     waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
+  useLocale();
   const conn = useConnection();
   const t = useTheme();
   if (conn.state.k === "live") return <Redirect href="/" />;

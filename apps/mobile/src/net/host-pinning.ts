@@ -168,9 +168,14 @@ export function isPinFailure(error: unknown): boolean {
   return HANDSHAKE.test(String(error));
 }
 
-/** What to show when a paired desktop presents a key this phone did not agree to. */
-export const PIN_CHANGED_SENTENCE =
-  "This computer's identity has changed since you paired with it, so ohmail stopped rather than " +
-  "trusting it. If you reinstalled ohmail on that computer or restored it from a backup, open " +
-  "Settings → Devices there and pair this phone again with a fresh code. If you did not, " +
-  "something on your network is answering for it.";
+/*
+ * THE SENTENCE THAT USED TO STAND HERE IS NOW `Copy.pinChanged`.
+ *
+ * `PIN_CHANGED_SENTENCE` was the one piece of user-facing prose in this module, and prose is
+ * translated. Leaving it beside {@link isPinFailure} would have made it the single refusal on the
+ * phone that could not be German, so it moved into the copy deck and the two callers
+ * (`net/pairing.ts` and the deck's own `connectSyncFailed`) read it from there.
+ *
+ * The REGEX stayed. It matches a platform's own error text — `javax.net.ssl.SSLHandshakeException`
+ * and its neighbours — which has no language of ours in it and must not acquire one.
+ */

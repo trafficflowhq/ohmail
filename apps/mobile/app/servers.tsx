@@ -25,8 +25,12 @@ import { useTheme } from "../src/theme";
 import { Button, Panel, Screen, Scroller, Section, TapRow, Txt } from "../src/ui/base";
 import { DetailBar } from "../src/ui/chrome";
 import { Doors } from "../src/ui/Doors";
+import { useLocale } from "../src/i18n/LocaleProvider";
 
 export default function ServersScreen() {
+  /* Subscribed to the language, so a switch in Settings redraws this screen instead of
+     waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
+  useLocale();
   const conn = useConnection();
   /** What a forget could not take back. Held HERE — see the note beside where it renders. */
   const [forgetFailure, setForgetFailure] = useState<string | null>(null);

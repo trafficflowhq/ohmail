@@ -26,6 +26,10 @@
  */
 
 /** The two platform halves of one question, as the embedded app config spells them. */
+/* The word "Version" is on the About block, so it is copy. The NUMBERS are not — they come
+   from the artifact's own config and are the same in every language. */
+import { Copy } from "./copy";
+
 export interface BuildConfig {
   /** `expo.version` — the marketing version, both platforms. */
   version?: unknown;
@@ -60,5 +64,5 @@ export function buildLabel(config: BuildConfig, os: "android" | "ios" | string):
     typeof raw === "number" && Number.isFinite(raw) ? String(raw)
       : typeof raw === "string" && raw.trim() !== "" ? raw.trim()
         : null;
-  return build === null ? `Version ${version}` : `Version ${version} (${build})`;
+  return build === null ? Copy.buildVersion(version) : Copy.buildVersionWithCode(version, build);
 }

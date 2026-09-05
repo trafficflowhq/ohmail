@@ -397,7 +397,7 @@ function AddressField({
           autoCorrect={false}
           autoCapitalize="none"
           keyboardType="url"
-          placeholder="ohmail.example.com"
+          placeholder={Copy.doorSelfAddressPlaceholder}
           accessibilityLabel={Copy.doorSelfAddress}
           style={[t.type.msgBody, { color: t.c.ink, paddingVertical: 12 }]}
         />

@@ -23,7 +23,7 @@ export function MailRow({ m, onPress }: { m: Mail; onPress: () => void }) {
     <TapRow
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={`${m.from.name}. ${m.subject}. ${m.time}.${m.unread ? " Unread." : ""}`}
+      accessibilityLabel={Copy.mailRowAria(m.from.name, m.subject, m.time, !!m.unread)}
       style={{ paddingHorizontal: 14, paddingVertical: 12 }}
     >
       <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>

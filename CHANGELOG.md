@@ -596,11 +596,31 @@ kept `RECORD_AUDIO` out of the manifest; iOS was the half still missing.
 The iOS app icon is also flattened for Apple's pipeline rather than left to acquire four white
 corners where the transparent rounding met the platform's own mask.
 
-### The phone speaks English
+### The phone speaks German too
 
-The app ships one language. The German copy the desktop and web clients gained is not on the
-phone, and no part of this app is translated yet — stated here because the same changelog records
-that work for the other clients and a reader should not have to infer which ones it reached.
+The phone client is bilingual. It follows the language your phone is set to, and Settings carries a
+control — System, English, Deutsch — for the times the two should differ; the choice is remembered
+on the device and applies to ohmail alone.
+
+Every string the app can say is translated: the three doors and the pairing flow, the Ohbox, Reads,
+Belege and the Screener, the folder verbs, the message actions and their toasts, the reply and
+forward composer, send later and the scheduled list, tags, Settings and the About block, and each
+refusal the app can give you — a certificate it will not accept, an address it cannot reach, a
+pairing it could not store. The day and month names on your mail come from the platform in the
+language the app is in, so a message listed under "Thursday" or "2 Aug" in English is listed under
+"Donnerstag" or "2. Aug" in German, and the day rows in the send-later and resurface pickers follow
+the same rule.
+
+Where the phone says the same thing as the web client, it says it in the same words, and the two
+are held to that by a test rather than by care. Two more tests stand behind the translation: one
+that fails if the German deck loses a key, a number or an interpolation the English one has, and
+one that fails if any sentence is added to a screen instead of to the deck — which is how the
+untranslated half of an app usually accumulates.
+
+Two things are not translated yet, and are named rather than left to be found: the three pile
+descriptions on the Triage screen, and the short weekday-and-time label used by the resurface
+toast, the scheduled list and the "as of" note on stale mail — those still read "Fri 09:00" in
+both languages.
 
 ## [0.14.0] — 2026-09-03
 

@@ -22,10 +22,14 @@ import { parsePairLink, pendingPairOrigin } from "../src/net/pairing";
 import { leading, size, useTheme } from "../src/theme";
 import { Button, Panel, Screen, Scroller, Section, Txt } from "../src/ui/base";
 import { DetailBar } from "../src/ui/chrome";
+import { useLocale } from "../src/i18n/LocaleProvider";
 
 type Phase = { k: "idle" } | { k: "pairing" } | { k: "failed"; reason: string };
 
 export default function ConnectScreen() {
+  /* Subscribed to the language, so a switch in Settings redraws this screen instead of
+     waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
+  useLocale();
   const conn = useConnection();
   // The picker's "enter a pairing token" step carries the address it already negotiated — through
   // a value held in THIS process, never a route parameter. The app registers the `ohmail` scheme
