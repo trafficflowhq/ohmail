@@ -805,13 +805,20 @@ export function makeProfileIo(
           messageset: string,
           byUid: boolean,
           budget: number,
-        ): Promise<{ uid: number; source: Buffer } | "over" | null> => {
+        ): Promise<{ uid: number; source: Buffer } | { over: number } | null> => {
           const cap = Math.max(1, budget) + 1;
           for await (const m of client.fetch(
             messageset, { uid: true, source: { start: 0, maxLength: cap } }, { uid: byUid },
           )) {
             if (!m.source) continue;
-            if (m.source.byteLength >= cap) return "over";
+            /* ── AN OVER-BUDGET REPLY STILL COST ITS BYTES, AND NOW SAYS SO ─────────────────
+             *
+             * This returned a bare marker and the callers charged nothing for it, so a record that
+             * FILLED its range was free: the budget never moved, every later record was offered
+             * the same room, and a folder of them could be walked for ever — the unbounded walk
+             * the per-reply charge exists to stop, surviving in the one branch that never reached
+             * the charge. Found by the guard written for that charge, which is what it is for. */
+            if (m.source.byteLength >= cap) return { over: m.source.byteLength };
             return { uid: m.uid, source: m.source };
           }
           return null;
@@ -874,14 +881,23 @@ export function makeProfileIo(
             }
             chosen.push(uid);
           }
-          const order = chosen.slice().reverse();
+          /* ── THE BUDGET IS SPENT NEWEST FIRST, AND THAT ORDERING IS LOAD-BEARING ──────────
+           *
+           * This walked in FOLDER order, which was harmless while an over-budget record cost
+           * nothing. Now that every reply is charged — including one that filled its range — an
+           * enormous OLD record fetched first spends the budget before the current document is
+           * ever asked for, and the read answers with nothing about a mailbox that has settings.
+           * `chosen` is already newest-first; the result is put back in folder order at the end,
+           * which is what every caller reads. */
+          const order = chosen;
           const win: Array<{ rec: RawProfileMessage; size: number }> = [];
           let held = 0;
           let oversized = 0;
           for (const uid of order) {
             const got = await fetchSourceBounded(String(uid), true, maxBytes - held);
             if (got === null) continue;   // expunged in the gap; not evidence about any other
-            if (got === "over") {
+            if ("over" in got) {
+              held += got.over;   // it crossed the connection; it is spent
               if (complete) {
                 throw new ProfileUnavailableError(
                   `a settings record in ${META_FOLDER} is larger than the ${maxBytes}-byte budget `
@@ -931,6 +947,7 @@ export function makeProfileIo(
               held -= win.shift()!.size;
             }
           }
+          win.sort((a, b) => Number(a.rec.ref ?? 0) - Number(b.rec.ref ?? 0));
           if (win.length === 0 && oversized > 0) {
             throw new ProfileUnavailableError(
               `the only settings record in ${META_FOLDER} is larger than the ${maxBytes}-byte `
@@ -978,7 +995,8 @@ export function makeProfileIo(
             seen++;
             const got = await fetchSourceBounded(String(uid), true, maxBytes - bytes);
             if (got === null) continue;
-            if (got === "over") {
+            if ("over" in got) {
+              bytes += got.over;   // it crossed the connection; it is spent
               if (complete) {
                 throw new ProfileUnavailableError(
                   `a settings record in ${META_FOLDER} is larger than the ${maxBytes}-byte budget `
