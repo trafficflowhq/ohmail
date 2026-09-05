@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 // From the modules directly, never the package index: the index re-exports this file, and a
 // module that imports its own barrel is a cycle waiting for the first consumer to hit it.
 import { authThrottle } from "./schema.js";
@@ -125,13 +125,22 @@ export const IMAP_REFUSAL_KEY = "imap:refused:all";
 /**
  * Record one admission refusal. Best-effort by contract — see the throw note below.
  *
- * The window ROLLS exactly as the admission counter's does: a row untouched for longer than
- * `windowMs` is reset to 1 by the next refusal rather than trusted, so the count this returns is
- * always "refusals inside a window ending now" and no sweep, poll or expiry job is owed. The
- * consequence, stated: a window that rolls mid-burst splits it across two windows, so a burst
- * straddling the boundary can read lower than it was. That is the safe direction for a rule that
- * fires above a threshold — it can only ever under-report — and it costs at most one window of
- * delay before the burst is fully inside one.
+ * ── A SLIDING WINDOW, WHICH THIS WAS NOT ────────────────────────────────────────────────
+ *
+ * The first version kept ONE row with a count and a window start, resetting the count to 1 when
+ * the row went stale. That is a TUMBLING window anchored at the first refusal, and it was
+ * documented here as merely "under-reporting a burst that straddles a boundary" — which
+ * understated it twice over. One refusal at 00:00, two at 00:14:59 and three at 00:15:01: the
+ * first write after the boundary DISCARDS the two at 00:14:59, so the rule sees three where five
+ * happened inside fifteen minutes. And if the traffic then stops, no further write ever arrives,
+ * so the count is never revised and the incident never fires at all — the failure mode is
+ * silence, on the exact shape (a burst that ends) the rule exists to report.
+ *
+ * A window cannot slide without event times, so the events are kept: ONE ROW PER MINUTE, keyed
+ * by its bucket, and the reader SUMS the buckets inside `[now - windowMs, now]`. Nothing is ever
+ * discarded by a reset, a burst that stops is still counted for a full window afterwards, and
+ * the cost is at most `windowMs / 60s` small rows plus a bounded prune on the write path. The
+ * residual is granularity, not loss: the window's edge moves in minute steps.
  *
  * NEVER LET THIS THROW INTO THE CALLER. It runs on the refusal path, whose job is to return
  * "busy, try again" to a person waiting on an attachment; a counter that failed must not turn a
@@ -148,20 +157,25 @@ export const IMAP_REFUSAL_KEY = "imap:refused:all";
 export async function recordImapRefusal(
   db: Tx, now: Date, windowMs: number = IMAP_REFUSAL_WINDOW_MS,
 ): Promise<void> {
-  const nowIso = now.toISOString();
-  const staleIso = new Date(now.getTime() - windowMs).toISOString();
-  const stale = sql`${authThrottle.windowStartedAt} < ${staleIso}::timestamptz`;
+  const bucket = new Date(Math.floor(now.getTime() / REFUSAL_BUCKET_MS) * REFUSAL_BUCKET_MS);
   await db.insert(authThrottle)
-    .values({ key: IMAP_REFUSAL_KEY, failures: 1, windowStartedAt: now, updatedAt: now })
+    .values({ key: bucketKey(bucket), failures: 1, windowStartedAt: bucket, updatedAt: now })
     .onConflictDoUpdate({
       target: authThrottle.key,
-      set: {
-        failures: sql`case when ${stale} then 1 else ${authThrottle.failures} + 1 end`,
-        windowStartedAt: sql`case when ${stale} then ${nowIso}::timestamptz else ${authThrottle.windowStartedAt} end`,
-        updatedAt: now,
-      },
+      set: { failures: sql`${authThrottle.failures} + 1`, updatedAt: now },
     });
+  // Bounded by construction: two windows of buckets is all any reader can ask for, and the
+  // delete is one indexed prefix scan over a handful of rows. No sweep job is owed.
+  await db.delete(authThrottle).where(and(
+    sql`${authThrottle.key} like ${`${IMAP_REFUSAL_KEY}:%`}`,
+    sql`${authThrottle.windowStartedAt} < ${new Date(now.getTime() - 2 * windowMs).toISOString()}::timestamptz`,
+  ));
 }
+
+/** One minute. The granularity of the sliding window's edge, and the row count it costs. */
+const REFUSAL_BUCKET_MS = 60_000;
+
+const bucketKey = (at: Date): string => `${IMAP_REFUSAL_KEY}:${at.getTime()}`;
 
 /**
  * The default refusal window. Matches `AlertThresholds.imapRefusalWindowMs`, and the two are the
@@ -183,14 +197,13 @@ export async function imapRefusalsInWindow(
 ): Promise<number> {
   const cut = new Date(now.getTime() - windowMs);
   const [row] = await db
-    .select({ failures: authThrottle.failures, windowStartedAt: authThrottle.windowStartedAt })
+    .select({ n: sql<number>`coalesce(sum(${authThrottle.failures}), 0)::int` })
     .from(authThrottle)
-    .where(eq(authThrottle.key, IMAP_REFUSAL_KEY))
-    .limit(1);
-  if (!row) return 0;
-  const started = new Date(row.windowStartedAt as unknown as string);
-  if (started < cut) return 0;
-  return Number(row.failures ?? 0);
+    .where(and(
+      sql`${authThrottle.key} like ${`${IMAP_REFUSAL_KEY}:%`}`,
+      sql`${authThrottle.windowStartedAt} >= ${cut.toISOString()}::timestamptz`,
+    ));
+  return Number(row?.n ?? 0);
 }
 
 export interface ImapSlotInput {

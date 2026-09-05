@@ -2076,7 +2076,12 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
       severity: "warning",
       title: `AI usage went unrecorded on ${usage.missingHosts.join(", ")}`,
       detail:
-        `A metered model call was debited today and ${usage.missingHosts.join(", ")} wrote no ` +
+        // THE DAY IS NAMED, because this can now report a gap from a day that is no longer
+        // today: the check looks back past midnight so an unrepaired hole does not resolve
+        // itself at 00:00, and "debited today" would then send an operator to the wrong ledger
+        // day. The hosts listed are the ones missing on THAT day, together.
+        `A metered model call was debited on ${usage.day} and ` +
+        `${usage.missingHosts.join(", ")} wrote no ` +
         `\`ai_usage_daily\` row for it. The credit was still spent and the mail still routed — ` +
         `this is the cost board's AI column going blind for that host, not an outage. Check the ` +
         `named host's \`onUsage\` wiring.`,
@@ -3119,6 +3124,36 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
   // costs `claimTtlMs`, not the interval. A severity flip changes the default signature and
   // therefore pages once the change-arm floor passes — through the claim, not around it.
 
+/* ════════════════════════════════════════════════════════════════════════════════════════
+   THE ALERT-ROW FENCE — one rule, and every writer of `alert_state` goes through it
+   ════════════════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * **No pass may write, delete or claim over a row that a NEWER pass has stamped.**
+ *
+ * ── WHY THIS IS A FUNCTION AND NOT A LINE IN THREE PLACES ────────────────────────────────
+ *
+ * The fence was first written as a `setWhere` on the observation upsert alone, and that was the
+ * whole defect: the invariant is about the ROW, and the upsert is only one of the ways a pass
+ * touches it. Two arms overlap by design and nothing serialises them, so an older pass can and
+ * does arrive after a newer one at every writer:
+ *
+ *   · the RESOLUTION DELETE was unconditional, so an older pass that evaluated the key as
+ *     healthy erased a newer pass's observation AND the notification record beside it — and the
+ *     next pass re-opened the same condition and paged it a second time;
+ *   · the CLAIM read the newer `last_seen_at` under its own lock and did not use it, so an older
+ *     pass could take the lease and send its stale alert while the newer pass, seeing the lease,
+ *     stayed quiet — the wrong text delivered, once, with the right one suppressed;
+ *   · the SETTLE was fenced on the lease and not on the stamp, which is a different question.
+ *
+ * Fixing the path in front of you and not the invariant behind it is how one fence became three
+ * defects. `alert-state-writers.test.ts` asserts by census that this file contains no other
+ * mutation of the table, so a fourth writer cannot quietly appear without one.
+ */
+function notWrittenByANewerPass(at: Date) {
+  return sql`${alertState.lastSeenAt} <= ${at.toISOString()}::timestamptz`;
+}
+
   // ── record the observation (opened_at survives an UPSERT; last_seen_at advances) ──────
   //
   // BEFORE the claim, not after: the claim is an UPDATE, so the row has to exist for a first
@@ -3221,7 +3256,7 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
         // fence keeps the NEWEST observation and makes an older one a no-op — which is also why
         // the claim above re-reads `cls` under its lock rather than trusting what it evaluated:
         // this statement may have declined to apply what that pass saw.
-        setWhere: sql`${alertState.lastSeenAt} <= ${now.toISOString()}::timestamptz`,
+        setWhere: notWrittenByANewerPass(now),
       });
   }
 
@@ -3313,6 +3348,18 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
       // that has since stopped being one. The row is the authority precisely because it is the
       // thing both passes serialise on; the in-memory class is only a hint about what to try.
       if (cur.cls === "signal") return false;
+      // ── AND THE ROW'S STAMP, WHICH THIS TRANSACTION ALREADY HAD IN HAND ───────────────
+      //
+      // `lastSeenAt` was selected under the lock and then ignored. An older pass can lose its
+      // observation upsert to a newer one — correctly, that fence works — and still arrive here
+      // first, claiming the row and delivering ITS text: the older count, the older detail. The
+      // newer pass then finds the lease held and stays quiet, so the operator gets exactly one
+      // page and it is the stale one. The row's stamp is the authority here for the same reason
+      // the class is.
+      const stamped = cur.lastSeenAt
+        ? new Date(cur.lastSeenAt as unknown as string).getTime()
+        : null;
+      if (stamped !== null && stamped > now.getTime()) return false;
       const heldUntil = cur.claimedUntil ? new Date(cur.claimedUntil as unknown as string) : null;
       if (heldUntil !== null && heldUntil.getTime() > now.getTime()) return false; // in flight
       const notifiedAt = cur.notifiedAt ? new Date(cur.notifiedAt as unknown as string) : null;
@@ -3329,7 +3376,10 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
       await tx
         .update(alertState)
         .set({ claimedUntil: leaseUntil })
-        .where(eq(alertState.alertKey, alert.key));
+        .where(and(
+          eq(alertState.alertKey, alert.key),
+          notWrittenByANewerPass(now),
+        ));
       return true;
     });
     if (won) claimed.push(alert);
@@ -3395,7 +3445,14 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
     .filter((r) => !SCOPED_ALERT_KINDS.has(r.kind) || evaluatedScopedKeys.has(r.alertKey))
     .map((r) => r.alertKey);
   for (const key of resolved) {
-    await db.delete(alertState).where(eq(alertState.alertKey, key));
+    // FENCED like every other writer: this pass may only resolve what it actually observed to be
+    // healthy. A newer pass that has since seen the condition again has stamped the row, and an
+    // older pass deleting it here would take the newer observation and its notification record
+    // with it — after which the next pass opens the same key and pages it again.
+    await db.delete(alertState).where(and(
+      eq(alertState.alertKey, key),
+      notWrittenByANewerPass(now),
+    ));
   }
 
   const streak = opts.deliveryStreak;
@@ -3470,6 +3527,22 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
     await db
       .update(alertState)
       .set(settle)
+      // ── THE ONE WRITER THAT IS *NOT* FENCED ON THE STAMP, AND WHY ────────────────────
+      //
+      // The stamp fence protects OBSERVATIONS — what the world looks like — from being written
+      // backwards. This write records what THIS PASS DID: it delivered, at a signature, and the
+      // row must remember that so the condition is not paged again. Its correct fence is the
+      // LEASE, which answers exactly that question — "am I still the pass that owns this
+      // delivery" — and is strictly narrower than the stamp for it.
+      //
+      // Fencing it on the stamp as well was tried and reverted, because it is wrong in the
+      // ordinary case rather than the racy one: delivery takes seconds, the other arm observes
+      // the same live condition in that window and advances `last_seen_at` — correctly — and the
+      // settle would then be refused, `notified_at` would stay null, and the next pass would page
+      // a human about a condition that had just been paged. A fence that turns routine overlap
+      // into duplicate paging is not a stricter version of this invariant; it is a different and
+      // false one. `alert-state-writers.test.ts` names this site and this reason, so the census
+      // stays honest about there being four writers and three stamp fences.
       .where(and(eq(alertState.alertKey, alert.key), eq(alertState.claimedUntil, leaseUntil)));
   }
 

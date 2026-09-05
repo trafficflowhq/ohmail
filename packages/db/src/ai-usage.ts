@@ -276,7 +276,7 @@ export function makeAiUsageRecorder(
  */
 export async function aiUsageUnrecorded(
   db: Tx, opts: { day: Date; lookbackDays?: number },
-): Promise<{ unrecorded: boolean; missingHosts: AiUsageHost[] }> {
+): Promise<{ unrecorded: boolean; missingHosts: AiUsageHost[]; day: string | null }> {
   // ── THE CALENDAR MUST NOT RESOLVE AN INCIDENT ────────────────────────────────────────
   //
   // This asked about ONE UTC day, so a debit at 23:59 whose usage row never arrived stopped
@@ -288,15 +288,27 @@ export async function aiUsageUnrecorded(
   // Each day is still judged AGAINST ITS OWN usage rows — a host recording today says nothing
   // about yesterday's silence, and unioning the two would let today's traffic mask yesterday's
   // hole. What changes is how many of those per-day verdicts the pass looks at.
+  // ── AND THE ANSWER KEEPS ITS DAY ─────────────────────────────────────────────────────
+  //
+  // The first version of this unioned the missing hosts across the days it looked at and threw
+  // the days away. Two things went wrong with that, both of which send an operator to the wrong
+  // place: a gap from 23:59 kept firing after midnight under a sentence that said it was debited
+  // "today", and hosts missing on DIFFERENT days were reported as one list, which is a state
+  // that never existed — nobody can go and look at a ledger day where those hosts were
+  // simultaneously silent, because there is none.
+  //
+  // So the days are walked OLDEST FIRST and the first gap found is the one reported, whole: its
+  // hosts, its date. The oldest is the right one to name because it is the one that will not
+  // repair itself — a newer day may still be waiting on a buffer that has not flushed.
   const days = Math.max(1, opts.lookbackDays ?? AI_USAGE_LOOKBACK_DAYS);
-  const missingAcross = new Set<AiUsageHost>();
-  for (let back = 0; back < days; back++) {
+  for (let back = days - 1; back >= 0; back--) {
     const at = new Date(opts.day.getTime() - back * 24 * 60 * 60 * 1000);
     const one = await unrecordedOnDay(db, at);
-    for (const h of one.missingHosts) missingAcross.add(h);
+    if (one.unrecorded) {
+      return { unrecorded: true, missingHosts: one.missingHosts, day: dayOf(at) };
+    }
   }
-  const across = [...missingAcross];
-  return { unrecorded: across.length > 0, missingHosts: across };
+  return { unrecorded: false, missingHosts: [], day: null };
 }
 
 /**

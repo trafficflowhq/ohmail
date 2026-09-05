@@ -468,16 +468,34 @@ export function makePlatformSignalPort(
           if (usable.length < batch.length) sampled = true;
           let oldest = cursor;
           for (const r of batch) {
-            // THE LOCAL HALF OF THE PRODUCTION FILTER. A row that names a non-production
-            // environment or target is dropped whatever the query asked for; a row that names
-            // neither is counted, because on a deployment whose logs carry no such field every
-            // request IS the production one and refusing them all would take the rule dark.
+            // ── PROVENANCE: PRODUCTION, OR NOT COUNTED AT ALL ────────────────────────
+            //
+            // The first version of this counted a row with NO provenance field as production,
+            // and wrote into the commit message that it was the backstop making the unverified
+            // `environment=production` parameter safe. It was the opposite: if the API ignores
+            // that parameter, every preview row arrives with no field at all on some shapes, and
+            // "no field means production" waves all of them through. The backstop justified the
+            // risk it was failing to cover.
+            //
+            // Three cases, and only one of them is a request this rule may divide:
+            //
+            //  · NAMED PRODUCTION — counted.
+            //  · NAMED SOMETHING ELSE — the API ignored the filter, which means this window's
+            //    population is not the one asked for. Refuse the whole window rather than count
+            //    the part that happens to be labelled: a filtered population read as complete is
+            //    the defect, and one preview row proves the filter is not being applied.
+            //  · NAMED NOTHING — unmeasured. Not counted, and the bucket becomes a SAMPLE, so it
+            //    is excluded from the rate and re-polled instead of standing as a whole
+            //    population. On a deployment whose logs genuinely carry no such field the rule
+            //    stays dark and says so, which is the honest answer for a population that cannot
+            //    be shown to be the production one.
             const env = typeof (r as { environment?: unknown }).environment === "string"
               ? (r as { environment: string }).environment
               : typeof (r as { target?: unknown }).target === "string"
                 ? (r as { target: string }).target
                 : null;
-            if (env !== null && env !== "production") continue;
+            if (env !== null && env !== "production") return { failed: "production_filter_ignored" };
+            if (env === null) { sampled = true; continue; }
             const id = typeof r.requestId === "string" ? r.requestId : "";
             // A blank id cannot be de-duplicated, so counting it would inflate the boundary. It is
             // skipped rather than refused: unlike the census script, an approximate count over a
@@ -714,6 +732,17 @@ export async function runPlatformSignalPass(
   const written: PlatformSignalRow[] = [];
   for (const a of answers) if (!("failed" in a) && !("unconfigured" in a)) written.push(...a.rows);
   for (const raw of written) {
+    // ── A REPAIR FOR ONE PROJECT DOES NOT REWRITE ANOTHER'S FINISHED ROW ──────────────
+    //
+    // A bucket becomes eligible for repair when ANY expected project is missing or sampled in
+    // it, and the port then re-polls EVERY project for that window — it has one endpoint and one
+    // walk. So a pass sent to finish project B came back with a fresh answer for project A too,
+    // and if that later walk hit its page budget on A, a COMPLETE A row was replaced by a sample.
+    // With two projects whose walks fail alternately, no pass ever leaves both complete, and the
+    // rule stays dark for ever while each project has in fact been measured.
+    //
+    // `held` is the set already complete for this window, and rows in it are not ours to touch.
+    if (held.has(`${raw.project}@${raw.windowStart.getTime()}`)) continue;
     // THE SETTLE MARGIN, applied here because this is where the pass's clock is. See
     // `SIGNAL_SETTLE_MS`: a read taken before the log store has finished indexing a closed
     // bucket is a sample of it, and saying so is what gets the bucket re-polled instead of
@@ -747,7 +776,20 @@ export async function runPlatformSignalPass(
           truncated: row.truncated,
           fetchedAt: sql`${now.toISOString()}::timestamptz`,
         },
-        // ── BUT ONLY A NEWER READ OVERWRITES ────────────────────────────────────────────
+        // ── AND A COMPLETE ROW NEVER REGRESSES TO A SAMPLE ──────────────────────────────
+        //
+        // The same invariant as the skip above, stated where the write happens: a sampled answer
+        // may only overwrite a sample, while a complete one may always overwrite.
+        //
+        // MEASURED, BECAUSE THE FIRST DESCRIPTION OF THIS WAS WRONG: this clause and the skip
+        // above are REDUNDANT — either one alone keeps a complete row complete, and the
+        // cross-project test only goes red when BOTH are removed. It was first written up here
+        // as unreachable dead weight on the reasoning that the skip gets there first; the
+        // mutation says otherwise, which is why mutations and not reasoning decide these
+        // sentences. Both are kept: the skip states the invariant where the pass decides what to
+        // write, this states it where the row is written, and a caller that does not come
+        // through the pass has only the second.
+        // ── AND ONLY A NEWER READ OVERWRITES ────────────────────────────────────────────
         //
         // "A re-poll is a better read" holds only if it is a LATER read. Two passes can overlap
         // — the API arm's scheduler retries into a running call, and a leader takeover pokes a
@@ -757,7 +799,8 @@ export async function runPlatformSignalPass(
         // complete on the poorer of the two reads and never repaired.
         //
         // The row's own stamp is the fence, the same shape the alert row and the pass row use.
-        setWhere: sql`${platformSignals.fetchedAt} <= ${now.toISOString()}::timestamptz`,
+        setWhere: sql`${platformSignals.fetchedAt} <= ${now.toISOString()}::timestamptz
+          and (${row.truncated ? sql`${platformSignals.truncated}` : sql`true`})`,
       });
   }
 
