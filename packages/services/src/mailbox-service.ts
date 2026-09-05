@@ -2058,7 +2058,35 @@ export class MailboxService {
       // The tombstone, checked before the role for `organizeHere`'s reason: a removed mailbox's
       // role says nothing about it.
       if (current.status === "disabled") return { outcome: "disconnected" as const };
-      if (current.organizerRole !== "organizer") return { outcome: "not_organizing" as const };
+      /* ── THE QUESTION IS WHO HOLDS THE CLAIM, NOT WHETHER THIS ROW IS ORGANIZING ────────────
+       *
+       * This read `organizerRole !== "organizer"` and refused everything else, which is right for
+       * the ordinary case and wrong for the one the release exists to resolve.
+       *
+       * An install can stop organizing a mailbox without its CLAIM being taken out of the mailbox.
+       * The claim is a record in the customer's own IMAP folder and only the process holding it can
+       * remove it, so once that process has stood down the record simply stays: every other install
+       * reads it and stands down too, and the one that left it reads their absence the same way.
+       * Nothing files the mailbox and every row says something else does. The row is
+       * `organizer_role = 'reader'` BY DEFINITION in that state — it is what standing down means —
+       * so the old test refused precisely the request that fixes it. The verb was reachable in the
+       * pane and inert here: the stamp was never written, the worker never reached
+       * `releaseOrganizerClaim`, and the stale claim stayed for ever.
+       *
+       * `organized_by_kind = 'cloud'` on a hosted row IS this install: the holder columns are
+       * written from the claim record itself by the per-cycle peek, and a mailbox has one hosted
+       * organizer. So a reader whose holder is Cloud is this install looking at its own abandoned
+       * claim, and giving it up is exactly what the release does.
+       *
+       * WHAT STAYS REFUSED, and this is the half that must not widen: a holder of `local` or
+       * `unknown` is ANOTHER install's claim, which this process cannot remove and must not
+       * pretend to; a NULL holder is nobody's, so there is nothing to give up. Both keep answering
+       * `not_organizing`, which is a success rather than a refusal — the person's intent is
+       * already true. */
+      const organizing = current.organizerRole === "organizer";
+      const ourStrandedClaim = current.organizerRole === "reader"
+        && current.organizedByKind === "cloud";
+      if (!organizing && !ourStrandedClaim) return { outcome: "not_organizing" as const };
       await tx.update(mailboxes)
         .set({
           // NOT the role, and not the holder columns. **The GATE demotes**, exactly as it promotes,
