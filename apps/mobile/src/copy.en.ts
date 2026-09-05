@@ -1136,6 +1136,72 @@ const TABLE = {
   tagNotOnServer:
     "Tags are stored by ohmail, not in your mailbox. Your folders are real IMAP folders and survive if you leave; tags don’t — erasing your account erases them.",
   /** The screening sheet: where THIS SENDER's mail goes, from the open message. */
+
+  /* ─────────────────────────────── screens the census could not see until it read JSX ─────── */
+
+  /*
+   * SEVEN STRINGS THAT WERE JSX TEXT NODES, not literals, and therefore invisible to two
+   * generations of the census. `<Section>Piles</Section>` is a heading on screen and a string
+   * nowhere. They are here now and the census reads JSX text as a rendering position.
+   */
+  /** The Screener's reassurance under the held list. */
+  screenerNothingDeleted: "Nothing was deleted. Every held message is one tap away, in full.",
+  /** A folder, message or sender that is gone by the time the screen opens. */
+  folderGone: "That folder is no longer here.",
+  messageGone: "That message is no longer here.",
+  senderGone: "That sender is no longer in the Screener.",
+  /** The sender sheet's note for a sender nothing has got past yet. */
+  senderFirstContact:
+    "First contact. Nothing from this sender has reached the Ohbox — it waited here.",
+  /** Reads around the suggestion chip: "<place> is the AI's suggestion at 0.82". */
+  senderAiSuggestionAt: "is the AI's suggestion at",
+
+  /* ───────────────────────────── refusals the seams RETURN, and a screen renders ──────────── */
+
+  /*
+   * These were English sentences inside `engine/boot.ts` and `state/install-marker.ts`. Both files
+   * were exempted from the census on the strength of their own headers, which said "thrown Errors";
+   * they also RETURN `reason` fields that `net/pairing.ts` passes straight to the connect screen,
+   * where they appeared under the German "Abgelehnt" heading. A comment is the claim under test,
+   * not the evidence for it, and these are the cost of having used one as evidence.
+   *
+   * They are OUR failures and enumerable, which is what separates them from the platform
+   * diagnostics this deck quotes verbatim — see the census's DIAGNOSTIC RULE.
+   */
+  /*
+   * THE ENGLISH HERE IS BYTE-FOR-BYTE WHAT IT WAS IN `engine/boot.ts` AND `state/install-marker.ts`.
+   *
+   * The first attempt at this move also improved the wording — "the copy on this device" for "the
+   * on-device mirror", "sign-in" for "bearer" — and four existing guards went red naming the exact
+   * sentences they were written against. They were right to. A slice that adds a language moves a
+   * sentence; it does not reword one, because a reworded English sentence is a product change
+   * nobody reviewed hiding inside a translation. If "bearer" is the wrong word for a reader, that
+   * is its own change with its own reasoning.
+   */
+  bootBadOrigin: (origin: string) => `not a server origin: "${origin}"`,
+  bootBadApiBase: (base: string) => `not a server API base: "${base}"`,
+  bootApiBaseOffOrigin: (base: string, origin: string) =>
+    `this server's API base "${base}" is not on the paired address "${origin}" — `
+    + "re-pair this server to record it again",
+  bootNeedsCredential: "a credential and an account id are both required",
+  bootAccountMismatch: (serverSays: string, expected: string) =>
+    `this bearer belongs to account "${serverSays}", not "${expected}" — check the account id you entered`,
+  bootMirrorFailed: (detail: string) => `the on-device mirror could not open: ${detail}`,
+  installMarkerUnopenable: (detail: string) =>
+    `the install marker could not be opened: ${detail}`,
+  installPurgeFailed: (detail: string) =>
+    `the old install's pairings could not be purged: ${detail}`,
+  installMarkerUnreadable: (detail: string) => `the install marker could not be read: ${detail}`,
+  /**
+   * A CONNECTION ATTEMPT THAT LOST A RACE TO A NEWER ONE.
+   *
+   * It lived in `net/connection.tsx` as a constant whose comment said "never rendered as an error",
+   * and the census exempted it on that sentence. Both of its call sites return it as
+   * `{ ok: false, reason }`, and Connect and Scan render every failed reason — so it could reach a
+   * German screen in English. Translated rather than exempted.
+   */
+  connectSuperseded: "a newer connection attempt took over.",
+
   screeningFor: (sender: string) => `Mail from ${sender} goes to`,
   screeningNote: (target: string) =>
     `Becomes a rule — future mail from ${target} files there automatically, and what is already here moves.`,

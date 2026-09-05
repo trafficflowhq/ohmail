@@ -34,6 +34,7 @@ import {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
   useSyncExternalStore, type ReactNode,
 } from "react";
+import { AppState } from "react-native";
 import {
   activeLocale, deviceLocale, DEFAULT_LOCALE, LOCALES, resolveLocale, setActiveLocale,
   subscribeLocale, type AppLocale,
@@ -111,6 +112,10 @@ export function LocaleProvider(
      keystore. */
   const kvRef = useRef(kv);
   kvRef.current = kv;
+  /* Read by the foreground listener, which is registered once and must see the CURRENT choice
+     rather than the one that existed when it was registered. */
+  const chosenRef = useRef<AppLocale | null>(null);
+  chosenRef.current = chosen;
 
   useEffect(() => {
     let live = true;
@@ -124,6 +129,31 @@ export function LocaleProvider(
       setActiveLocale(resolveLocale(stored, deviceLocale()));
     })();
     return () => { live = false; };
+  }, []);
+
+  /**
+   * A DEVICE LANGUAGE CHANGE, PICKED UP WITHOUT A RELAUNCH.
+   *
+   * `deviceLocale()`'s own header says it is deliberately not cached because a phone's language can
+   * change under a running app — Android applies a system-language change to a live process. That
+   * was true of the function and false of this provider, which read it once on mount: somebody who
+   * switched their phone to German with ohmail in "System" kept an English app until they killed
+   * it. A comment claiming a property the code does not have is worse than no comment.
+   *
+   * `AppState` is the seam. There is no locale-change event in React Native, and the settings app
+   * has to come to the foreground for the change to be made, so the return to `active` is the
+   * moment to re-read — the same listener shape `app/(tabs)/reads.tsx` already uses.
+   *
+   * Guarded on `chosen`: an explicit choice OUTRANKS the device, so a person who picked German on
+   * an English phone must not be reset by walking through their own settings. That is
+   * {@link resolveLocale}'s order, applied on every wake rather than only on mount.
+   */
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (next) => {
+      if (next !== "active") return;
+      setActiveLocale(resolveLocale(chosenRef.current, deviceLocale()));
+    });
+    return () => { sub.remove(); };
   }, []);
 
   const setLocale = useCallback(async (next: AppLocale | null) => {

@@ -80,7 +80,7 @@ function MessageBody() {
         <DetailBar />
         <Scroller>
           <Txt variant="note" tone="ink3" style={{ padding: 20 }}>
-            That message is no longer here.
+            {Copy.messageGone}
           </Txt>
         </Scroller>
       </Screen>

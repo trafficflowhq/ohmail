@@ -90,7 +90,7 @@ function SenderBody() {
         <DetailBar title={Copy.screener} />
         <Scroller>
           <Txt variant="note" tone="ink3" style={{ padding: 20 }}>
-            That sender is no longer in the Screener.
+            {Copy.senderGone}
           </Txt>
         </Scroller>
       </Screen>
@@ -114,11 +114,11 @@ function SenderBody() {
                 <Icon name="spark" size={13} color={t.c.accentInk} />
               </View>
               <Txt variant="note" tone="ink2" style={{ flex: 1 }}>
-                First contact. Nothing from this sender has reached the Ohbox — it waited here.
+                {Copy.senderFirstContact}
                 {row.ai ? (
                   <>
                     {" "}
-                    <Txt variant="settingsLabel">{destDone(row.ai.dest)}</Txt> is the AI's suggestion at{" "}
+                    <Txt variant="settingsLabel">{destDone(row.ai.dest)}</Txt> {Copy.senderAiSuggestionAt}{" "}
                     {row.ai.confidence.toFixed(2)}: {row.ai.rationale}.
                   </>
                 ) : null}

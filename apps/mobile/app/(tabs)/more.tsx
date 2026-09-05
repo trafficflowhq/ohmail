@@ -55,7 +55,7 @@ export default function MoreScreen() {
         </View>
 
         <Panel style={{ paddingBottom: 8 }}>
-          <Section style={{ paddingTop: 16 }}>Piles</Section>
+          <Section style={{ paddingTop: 16 }}>{Copy.triage}</Section>
           <Nav
             label={Copy.replyLater}
             count={pileCountOf("replyLater")}

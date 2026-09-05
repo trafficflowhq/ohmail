@@ -362,8 +362,10 @@ export const DE: Deck = {
   },
   screenedNote: (date: string, held: number) =>
     `Aussortiert ${date} · ${held} zurückgehalten, alle gezeigt. Zulassen gibt jede einzelne davon in die gewählte Ansicht frei.`,
-  allowLabel: "Zulassen — zurückgehaltene Post freigeben nach",
-  notSpamLabel: "Kein Spam — alle zurückgehaltene Post verschieben nach",
+  /* No trailing preposition: the destination is chosen in the control beside this label, and
+     "freigeben nach Belege" is not German. The label states the act; the picker states the place. */
+  allowLabel: "Zulassen — zurückgehaltene Post freigeben",
+  notSpamLabel: "Kein Spam — alle zurückgehaltene Post verschieben",
   spamNote:
     "Die Erkennung liest die Struktur — Absender, Header, Linkziele. Inhalte werden nirgendwohin gesendet.",
   waitingEmptyTitle: "Es wartet niemand.",
@@ -550,10 +552,20 @@ export const DE: Deck = {
     `Entschieden — die Installation, die dieses Postfach organisiert, sortiert ${target} beim nächsten Durchlauf ein.`,
   liveDecideFailed: (sender: string) =>
     `Diese Entscheidung ließ sich nicht speichern — ${sender} wartet weiter.`,
+  /*
+   * ── THE DESTINATION LEADS, BECAUSE GERMAN CANNOT TAKE IT AFTER A PREPOSITION ────────────────
+   *
+   * The English is "Released 3 held messages to Reads". Translated literally that is "… nach
+   * Belege freigegeben", and it is wrong: the place names have genders and numbers ("die Belege",
+   * "die Ohbox"), so any preposition in front of a `${dest}` hole needs a case the hole cannot
+   * carry. Naming the destination first and following it with a dash removes the preposition
+   * entirely — the shape the web client's own screening toasts use ("{place} — …"), so this is
+   * following the product rather than inventing for the phone.
+   */
   liveReleased: (n: number, dest: string) =>
-    `${n === 1 ? "1 zurückgehaltene Nachricht" : `${n} zurückgehaltene Nachrichten`} nach ${dest} freigegeben. Es wurde keine Regel geändert.`,
+    `${dest} — ${n === 1 ? "1 zurückgehaltene Nachricht" : `${n} zurückgehaltene Nachrichten`} freigegeben. Es wurde keine Regel geändert.`,
   liveReleasedRuled: (n: number, dest: string) =>
-    `${n === 1 ? "1 zurückgehaltene Nachricht" : `${n} zurückgehaltene Nachrichten`} nach ${dest} freigegeben — die zurückhaltende Regel sortiert jetzt auch dorthin ein.`,
+    `${dest} — ${n === 1 ? "1 zurückgehaltene Nachricht" : `${n} zurückgehaltene Nachrichten`} freigegeben; die zurückhaltende Regel sortiert jetzt auch dorthin ein.`,
   liveReleaseFailed: (sender: string) =>
     `Diese Freigabe ließ sich nicht speichern — Post von ${sender} liegt, wo sie lag.`,
   livePileAdded: (title: string) => `${title} — hinzugefügt.`,
@@ -675,7 +687,34 @@ export const DE: Deck = {
   tagNotOnServer:
     "Tags speichert ohmail, nicht dein Postfach. Deine Ordner sind echte IMAP-Ordner und bleiben, wenn du gehst; Tags nicht — wenn du dein Konto löschst, sind sie weg.",
 
-  screeningFor: (sender: string) => `Post von ${sender} geht nach`,
+
+  screenerNothingDeleted: "Es wurde nichts gelöscht. Jede zurückgehaltene Nachricht ist einen Tipp entfernt, vollständig.",
+  folderGone: "Diesen Ordner gibt es hier nicht mehr.",
+  messageGone: "Diese Nachricht gibt es hier nicht mehr.",
+  senderGone: "Dieser Absender steht nicht mehr im Screener.",
+  senderFirstContact:
+    "Erster Kontakt. Von diesem Absender hat es noch nichts in die Ohbox geschafft — es hat hier gewartet.",
+  senderAiSuggestionAt: "schlägt die KI vor, mit",
+
+  bootBadOrigin: (origin: string) => `keine Server-Adresse: „${origin}“`,
+  bootBadApiBase: (base: string) => `keine API-Adresse des Servers: „${base}“`,
+  bootApiBaseOffOrigin: (base: string, origin: string) =>
+    `die API-Adresse dieses Servers, „${base}“, liegt nicht auf der gekoppelten Adresse „${origin}“ — `
+    + "koppele diesen Server erneut, damit sie erfasst wird",
+  bootNeedsCredential: "eine Anmeldung und eine Konto-Kennung werden beide gebraucht",
+  bootAccountMismatch: (serverSays: string, expected: string) =>
+    `diese Anmeldung gehört zum Konto „${serverSays}“, nicht zu „${expected}“ — prüfe die eingegebene Konto-Kennung`,
+  bootMirrorFailed: (detail: string) => `der Spiegel auf dem Gerät ließ sich nicht öffnen: ${detail}`,
+  installMarkerUnopenable: (detail: string) =>
+    `die Installationsmarke ließ sich nicht öffnen: ${detail}`,
+  installPurgeFailed: (detail: string) =>
+    `die Kopplungen der alten Installation ließen sich nicht entfernen: ${detail}`,
+  installMarkerUnreadable: (detail: string) => `die Installationsmarke ließ sich nicht lesen: ${detail}`,
+  connectSuperseded: "ein neuerer Verbindungsversuch hat übernommen.",
+
+  /* "geht nach" + a place name has the same case problem; the web client's own heading for this
+     pane asks the question instead (`screening.sectionWhere`: "Wohin ihre Post geht"). */
+  screeningFor: (sender: string) => `Wohin die Post von ${sender} geht`,
   screeningNote: (target: string) =>
     `Wird zur Regel — künftige Post von ${target} wird automatisch dorthin einsortiert, und was schon hier ist, wird verschoben.`,
 };

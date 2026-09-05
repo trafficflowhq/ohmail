@@ -617,10 +617,19 @@ that fails if the German deck loses a key, a number or an interpolation the Engl
 one that fails if any sentence is added to a screen instead of to the deck — which is how the
 untranslated half of an app usually accumulates.
 
-Two things are not translated yet, and are named rather than left to be found: the three pile
-descriptions on the Triage screen, and the short weekday-and-time label used by the resurface
-toast, the scheduled list and the "as of" note on stale mail — those still read "Fri 09:00" in
-both languages.
+Two things are not translated yet, and both are named here rather than left to be found.
+
+The Piles screen still describes its three piles in English — the headings are translated, the
+sentence under each is not.
+
+And one date format is still English everywhere it appears: the short weekday-and-time label, which
+reads "Fri 09:00" or "12 Sep, 18:00" in both languages. It is used in more places than a single
+screen, so the full list is: the toast confirming when a message will resurface; the "Sends …" line
+on the Scheduled screen; the "as of" note on mail that has not caught up; the three send-later
+presets (so "Heute Abend (Sat 18:00)"); the day and hour rows inside the send-later picker; and the
+confirmation after a message is scheduled. Every other date on your mail — the row stamps, the day
+headings in Belege, the Screener's stamps, and the day rows in the resurface picker — is in the
+language the app is in.
 
 ## [0.14.0] — 2026-09-03
 

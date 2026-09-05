@@ -35,6 +35,10 @@ import {
   type StorePolicy,
   type SyncChange,
 } from "@ohmail/client-engine";
+/* The `reason` fields below are RETURNED and rendered — `net/pairing.ts` hands a boot reason
+   straight to the connect screen — so they are copy and live in the deck. The thrown faults in
+   this file are not: nobody but a developer reads a stack trace. */
+import { Copy } from "../copy";
 
 /** What the platform must provide — expo modules in the app, node modules in tests. */
 export interface MobileEngineDeps {
@@ -453,7 +457,7 @@ function accountGuarded(
 export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig): Promise<EngineBoot> {
   const origin = normalizeOrigin(config.origin);
   if (!/^https?:\/\/\S+$/.test(origin)) {
-    return { kind: "refused", reason: `not a server origin: "${config.origin}"` };
+    return { kind: "refused", reason: Copy.bootBadOrigin(config.origin) };
   }
   /**
    * THE ADAPTER'S BASE — the measured one, or the origin. See {@link ConnectConfig.apiBase}.
@@ -469,7 +473,7 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
     ? origin
     : normalizeOrigin(config.apiBase);
   if (!/^https?:\/\/\S+$/.test(apiBase)) {
-    return { kind: "refused", reason: `not a server API base: "${config.apiBase ?? ""}"` };
+    return { kind: "refused", reason: Copy.bootBadApiBase(config.apiBase ?? "") };
   }
   /**
    * ── THE BASE MUST BE DERIVABLE FROM THE ORIGIN, AND THAT IS A STRUCTURAL INVARIANT ────────────
@@ -497,15 +501,13 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
   if (apiBase !== origin && apiBase !== `${origin}/api`) {
     return {
       kind: "refused",
-      reason:
-        `this server's API base "${apiBase}" is not on the paired address "${origin}" — ` +
-        `re-pair this server to record it again`,
+      reason: Copy.bootApiBaseOffOrigin(apiBase, origin),
     };
   }
   const token = config.token?.trim() ?? "";
   const accountId = config.accountId.trim();
   if ((!token && !config.auth) || !accountId) {
-    return { kind: "refused", reason: "a credential and an account id are both required" };
+    return { kind: "refused", reason: Copy.bootNeedsCredential };
   }
   // The credential, behind two seams (headers + fetch). The manager supplies both; the
   // static path composes the same shapes from the pasted token, so everything below is one
@@ -539,7 +541,7 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
     if (identity.kind === "mismatch") {
       return {
         kind: "mismatch",
-        reason: `this bearer belongs to account "${identity.serverSays}", not "${accountId}" — check the account id you entered`,
+        reason: Copy.bootAccountMismatch(identity.serverSays, accountId),
       };
     }
     identityCleared = true;
@@ -554,7 +556,7 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
     await store.load();
   } catch (err) {
     store.close();
-    return { kind: "refused", reason: `the on-device mirror could not open: ${String(err)}` };
+    return { kind: "refused", reason: Copy.bootMirrorFailed(String(err)) };
   }
 
   const engine = new OhmailEngine({

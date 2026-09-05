@@ -24,11 +24,22 @@ import { Segmented } from "../../src/ui/Segmented";
 import { SkeletonList } from "../../src/ui/Skeleton";
 import { useLocale } from "../../src/i18n/LocaleProvider";
 
-const EMPTY: Record<ScreenerSeg, { glyph: string; title: string; hint: string }> = {
-  waiting: { glyph: "🚪", title: Copy.waitingEmptyTitle, hint: Copy.waitingEmptyHint },
-  screened: { glyph: "🚪", title: Copy.screenedEmptyTitle, hint: Copy.screenedEmptyHint },
-  spam: { glyph: "🛡", title: Copy.spamEmptyTitle, hint: Copy.spamEmptyHint },
-};
+/**
+ * The three empty states, READ WHEN THE SCREEN RENDERS rather than when this module is imported.
+ *
+ * This was a plain table of `Copy.*` values, which made it a table of ENGLISH values: a deck getter
+ * read at module scope is evaluated once, at import, in whatever language the register held at that
+ * moment — decided by import order, not by the reader. The `useLocale()` subscription three lines
+ * below could not help, because there was nothing left to re-read. `test/copy-census.test.ts` now
+ * fails on any module-scope `Copy.` read anywhere in the tree.
+ */
+function emptyFor(seg: ScreenerSeg): { glyph: string; title: string; hint: string } {
+  switch (seg) {
+    case "waiting": return { glyph: "🚪", title: Copy.waitingEmptyTitle, hint: Copy.waitingEmptyHint };
+    case "screened": return { glyph: "🚪", title: Copy.screenedEmptyTitle, hint: Copy.screenedEmptyHint };
+    case "spam": return { glyph: "🛡", title: Copy.spamEmptyTitle, hint: Copy.spamEmptyHint };
+  }
+}
 
 export default function ScreenerScreen() {
   /* Subscribed to the language, so a switch in Settings redraws this screen instead of
@@ -37,7 +48,7 @@ export default function ScreenerScreen() {
   const w = useWorld();
   const pull = usePullToSync();
   const [seg, setSeg] = useState<ScreenerSeg>("waiting");
-  const empty = EMPTY[seg];
+  const empty = emptyFor(seg);
   const { waiting, screened, spam, meta } = w.screener;
   // Unknown ≠ empty, per SEGMENT: the active shelf's own count against the one settled fact.
   const counts: Record<ScreenerSeg, number> = { waiting: waiting.length, screened: screened.length, spam: spam.length };
@@ -103,7 +114,7 @@ export default function ScreenerScreen() {
                     </TapRow>
                   ))}
                 </View>
-                <Tail>Nothing was deleted. Every held message is one tap away, in full.</Tail>
+                <Tail>{Copy.screenerNothingDeleted}</Tail>
               </>
             )
           ) : null}

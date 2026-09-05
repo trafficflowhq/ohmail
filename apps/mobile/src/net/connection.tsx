@@ -133,8 +133,15 @@ export function useConnection(): Connection {
   return c;
 }
 
-/** The sentence a transition that lost to a newer one answers — never rendered as an error. */
-const SUPERSEDED = "superseded by a newer connection attempt";
+/**
+ * The sentence a transition that lost to a newer one answers.
+ *
+ * This used to say "never rendered as an error", and the census exempted it on that sentence. Both
+ * call sites return it as `{ ok: false, reason: SUPERSEDED() }`, and Connect and Scan render every
+ * failed reason — so it could reach a German screen in English. A getter over the deck now, not a
+ * captured string: this module is imported long before a language is resolved.
+ */
+const SUPERSEDED = (): string => Copy.connectSuperseded;
 
 export function ConnectionProvider({ children }: { children: ReactNode }) {
   const env = useMemo<PairingEnv>(
@@ -292,7 +299,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       await refreshProfiles();
       if (!stillCurrent()) {
         if (outcome.kind === "connected") outcome.session.store.close();
-        return { ok: false, reason: SUPERSEDED };
+        return { ok: false, reason: SUPERSEDED() };
       }
       if (outcome.kind === "refused") {
         setState({ k: "refused", reason: outcome.reason });
@@ -411,7 +418,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
           await refreshProfiles();
           if (!stillCurrent()) {
             if (outcome.kind === "paired") outcome.session.store.close();
-            return { ok: false, reason: SUPERSEDED };
+            return { ok: false, reason: SUPERSEDED() };
           }
           if (outcome.kind === "refused") {
             setState({ k: "refused", reason: outcome.reason });
