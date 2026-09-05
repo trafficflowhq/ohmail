@@ -2,6 +2,7 @@ import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { schema } from "./schema.js";
 import { onNotice } from "./notices.js";
+import { brandDialect } from "./dialect/index.js";
 
 let sql: ReturnType<typeof postgres> | null = null;
 
@@ -20,7 +21,7 @@ export const WORKER_POOL_MAX = 5;
 /** The long-lived singleton connection — for the always-on worker (one process, one pool). */
 export function makeDb(url: string): PostgresJsDatabase<typeof schema> {
   sql = postgres(url, { max: WORKER_POOL_MAX, onnotice: onNotice });
-  return drizzle(sql, { schema });
+  return brandDialect(drizzle(sql, { schema }), "pg");
 }
 
 export async function closeDb(): Promise<void> {
@@ -45,7 +46,7 @@ export interface OwnedDb {
 export function makeOwnedDb(url: string): OwnedDb {
   const own = postgres(url, { max: WORKER_POOL_MAX, connection: WORKER_TIMEOUTS, onnotice: onNotice });
   return {
-    db: drizzle(own, { schema }),
+    db: brandDialect(drizzle(own, { schema }), "pg"),
     close: async () => { await own.end({ timeout: 5 }); },
   };
 }
@@ -609,9 +610,9 @@ export function makePooledDb(
     });
     pools.set(url, pooled);
   }
-  return drizzle(
-    withAcquireCeiling(pooled, opts.acquireTimeoutMs ?? POOLED_ACQUIRE_TIMEOUT_MS),
-    { schema },
+  return brandDialect(
+    drizzle(withAcquireCeiling(pooled, opts.acquireTimeoutMs ?? POOLED_ACQUIRE_TIMEOUT_MS), { schema }),
+    "pg",
   );
 }
 

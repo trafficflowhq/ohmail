@@ -6,6 +6,7 @@ import { drizzle, type PgliteDatabase } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
 import { mailSchema } from "@trafficflow/db/mail";
 import { MAIL_JOURNAL, adoptBaseline, adoptReissuedOriginals } from "@trafficflow/db/journal";
+import { brandDialect } from "@trafficflow/db/dialect";
 import type { Diagnostic } from "./log.js";
 
 /**
@@ -728,7 +729,7 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
     // a few microseconds earlier.
     await client.waitReady;
     const pgliteOpenMs = Date.now() - tOpen;
-    const db = drizzle(client, { schema: mailSchema });
+    const db = brandDialect(drizzle(client, { schema: mailSchema }), "pg");
     // ONE JOURNAL, and the loop is gone with the second one: a `for` over a one-element list is
     // an invitation to put the other element back. `adoptBaseline` still runs — it is a no-op on
     // a brand-new local database (the `fresh` cell of its truth table), and a code path only

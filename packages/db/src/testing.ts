@@ -9,6 +9,7 @@ import postgres from "postgres";
 import { adoptBaseline } from "./baseline.js";
 import { JOURNALS } from "./migrate.js";
 import { schema } from "./schema.js";
+import { brandDialect } from "./dialect/index.js";
 
 /**
  * Create an in-process PGlite-backed Drizzle client with all migrations applied.
@@ -23,7 +24,7 @@ import { schema } from "./schema.js";
  */
 export async function makeTestDb(): Promise<PgliteDatabase<typeof schema>> {
   const client = new PGlite();
-  const db = drizzle(client, { schema });
+  const db = brandDialect(drizzle(client, { schema }), "pg");
   for (const spec of JOURNALS) {
     await adoptBaseline(db, spec);
     await migrate(db, { migrationsFolder: spec.dir, migrationsSchema: spec.migrationsSchema });
