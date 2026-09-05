@@ -94,6 +94,21 @@ const WEEK_MS = 7 * DAY_MS;
 const defaultLog = createLogger({ service: "away-responder" });
 
 export interface AwayResponderPassDeps {
+  /**
+   * STOP BEFORE THE NEXT DELIVERY — a predicate this pass consults between rows.
+   *
+   * A pass that has begun is not entitled to finish. On the desktop the mailbox can change hands
+   * mid-pass: the socket dies, a re-dial re-reads the organizer lease, and a stranger's claim is
+   * found — while this loop is still holding rows it claimed under the old answer. Sending them
+   * duplicates the real organizer's reply, from an install the mailbox no longer belongs to, and
+   * no amount of checking BEFORE the pass can see it because the change happens during.
+   *
+   * Answering `true` stops the loop where it stands. Rows already claimed are left to the
+   * reconciler, which is the same recovery any crash mid-pass takes; nothing new is invented for
+   * this case. Absent means "never cancel", so every hosted caller is unchanged.
+   */
+  cancelled?: () => boolean;
+
   /** The send transport — `makeSendAdapter` on the hosted and self-hosted hosts, the local dial on the desktop. */
   openSendAdapter: OpenSendAdapter;
   /**
@@ -220,6 +235,10 @@ export async function runAwayResponderPass(
 
   for (const responder of live) {
     if (result.sent >= budget) { result.capped = true; break; }
+    /* AND THE CALLER'S OWN STOP — see `cancelled`. An away reply is a promise made on the
+       mailbox's behalf, so an install that has just discovered the mailbox is not its own must
+       not keep making them. */
+    if (deps.cancelled?.()) { result.capped = true; break; }
     /* COUNTED HERE AND NOT FROM `live.length`, because the budget can break this loop on account
        one of thirty: reporting the PROBE's size would tell an operator judging fleet coverage that
        thirty accounts were served when twenty-nine were never read. `capped: true` beside it is

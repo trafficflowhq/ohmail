@@ -63,7 +63,12 @@ export function startEngineVitals(
   log: Diagnostic,
   opts: { intervalMs?: number } = {},
 ): () => void {
-  const bootedAt = Date.now();
+  /* MONOTONIC, and the distinction is not pedantry here. `Date.now()` moves with the wall clock —
+     an NTP step, a suspend, a user correcting the date — so a series built from it can decrease or
+     go negative, and this number's ONE job is to be the x-axis of a drift measurement. A series
+     whose axis can run backwards cannot answer "is memory climbing?", which is the only question
+     the sampler exists for. `performance.now()` is monotonic from process start. */
+  const bootedAt = performance.now();
   const emit = (): void => {
     const m = process.memoryUsage();
     log("engine_vitals", {
@@ -72,7 +77,7 @@ export function startEngineVitals(
       external: m.external,
       // WHICH READING THIS IS, in the only unit that lets a log be read as a series. Without it a
       // sequence of three numbers has no x-axis and cannot answer the drift question at all.
-      uptimeMs: Date.now() - bootedAt,
+      uptimeMs: Math.round(performance.now() - bootedAt),
       reason: "the engine's memory, sampled on a timer; no threshold is attached and none " +
         "should be until the shipped build has been measured against real mailboxes",
     });

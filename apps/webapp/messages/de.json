@@ -2156,6 +2156,7 @@
     "desktopStateError": "Keine Verbindung ({code})",
     "desktopStateHandedOver": "An eine andere Installation übergeben",
     "desktopStateDisconnected": "Getrennt",
+    "desktopStateSignInRefused": "Der Mailserver hat die Anmeldung abgelehnt.",
     "desktopStateUnreachable": "Der Mailserver ist nicht erreichbar.",
     "desktopStateUnreachableSince": "Der Mailserver ist nicht erreichbar. Letzte Antwort {when}.",
     "desktopStatePaused": "Pausiert",

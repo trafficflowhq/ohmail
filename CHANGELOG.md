@@ -104,8 +104,13 @@ A crash or a lost battery could leave ohmail unable to open your mail at all. Th
 two copies of the app from using one database recorded a process number, and after a reboot the
 system hands those numbers out again — so if an unrelated program happened to be given the old one,
 ohmail concluded another copy of itself was still running and refused to start, permanently. It now
-records enough to tell one process from another, and takes the lock back when the process that
-wrote it is genuinely gone.
+records enough to tell one process from another and takes the lock back when the process that wrote
+it is genuinely gone.
+
+On macOS and Windows that identity is not available to us, and ohmail does not guess: it will not
+release a lock held by a process id that is currently alive, because guessing wrong would let two
+copies use one database and corrupt it. After a reboot that reused the number you may still have to
+delete the file the error message names. On Linux the identity is exact and no such step is needed.
 
 And the settings ohmail copies between your installs are compared by content, using a fingerprint
 of that content. Sorting for that fingerprint used the machine's own alphabet ordering, which can

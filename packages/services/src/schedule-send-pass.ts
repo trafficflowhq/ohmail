@@ -84,6 +84,21 @@ export const SCHEDULED_SEND_EXPIRY_MS = 24 * 60 * 60 * 1000;
 const defaultLog = createLogger({ service: "scheduled-send" });
 
 export interface ScheduledSendPassDeps {
+  /**
+   * STOP BEFORE THE NEXT DELIVERY — a predicate this pass consults between rows.
+   *
+   * A pass that has begun is not entitled to finish. On the desktop the mailbox can change hands
+   * mid-pass: the socket dies, a re-dial re-reads the organizer lease, and a stranger's claim is
+   * found — while this loop is still holding rows it claimed under the old answer. Sending them
+   * duplicates the real organizer's reply, from an install the mailbox no longer belongs to, and
+   * no amount of checking BEFORE the pass can see it because the change happens during.
+   *
+   * Answering `true` stops the loop where it stands. Rows already claimed are left to the
+   * reconciler, which is the same recovery any crash mid-pass takes; nothing new is invented for
+   * this case. Absent means "never cancel", so every hosted caller is unchanged.
+   */
+  cancelled?: () => boolean;
+
   /** The send transport — `makeSendAdapter` on the API host, the local dial on the desktop. */
   openSendAdapter: OpenSendAdapter;
   /** The sent-copy projection's cap — absent means the projection refuses (`SendDeps`' rule). */
@@ -186,6 +201,9 @@ export async function runScheduledSendPass(
   result.claimed = rows.length;
 
   for (const row of rows) {
+    /* BETWEEN ROWS, before this one is dialled — see `cancelled`. The rows already claimed
+       above are the reconciler's, exactly as they would be after a crash here. */
+    if (deps.cancelled?.()) { result.deferred += rows.length - result.sent - result.failed; break; }
     const ctx: ServiceContext = {
       db, accountId: row.accountId, userId: null, now, requestId: `sched:${row.id}`,
     };

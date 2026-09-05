@@ -920,6 +920,45 @@ export const LOCAL_CONNECTION_DEAD_AFTER_MS = 120_000;
  */
 export const LOCAL_CONNECTION_DEAD_AFTER_CYCLES = 8;
 
+/** First wait after a dial that failed for a reason that may pass. Doubles; see {@link REDIAL_BACKOFF_MAX_MS}. */
+export const REDIAL_BACKOFF_BASE_MS = 15_000;
+/**
+ * THE CEILING ON THAT WAIT.
+ *
+ * Without a backoff at all, a server that accepts TCP and refuses everything got a fresh dial
+ * every poll — FOUR LOGIN ATTEMPTS A MINUTE, for as long as the app stayed open. Providers
+ * throttle that, and some lock the account; the person's mail then stops for a reason the app
+ * caused. Five minutes is short enough that a real outage heals without anybody pressing
+ * anything and long enough that a broken server sees single figures per hour.
+ */
+export const REDIAL_BACKOFF_MAX_MS = 5 * 60_000;
+
+/**
+ * DID THE SERVER REJECT OUR CREDENTIALS — one bit, and deliberately narrower than the worker's.
+ *
+ * `apps/worker/src/mailboxes.ts`'s `classifyMailboxError` is the repository's real taxonomy and
+ * this is NOT a second copy of it: it answers one question where that answers six, and it is not
+ * imported for a structural reason rather than a stylistic one — that module imports
+ * `makeDb` from `@trafficflow/db/cloud`, and the worker's export map exists precisely to keep the
+ * hosted Postgres pool out of the desktop ("nothing can pull in startWorker, the leader lock or
+ * the Postgres pool"). Adding a subpath for it would breach the boundary this door is built on.
+ *
+ * What is shared is the SIGNAL, so the two cannot disagree about the one case they both judge:
+ * imapflow's `authenticationFailed` flag, which means "the LOGIN command did not succeed", and
+ * the OAuth token client's `OAUTH_INVALID_GRANT`, which means the stored refresh token is dead.
+ * Everything else — a timeout, a TLS failure, a refused socket, a server that is simply down —
+ * is NOT this, and answering `false` for it is what keeps a provider blip from telling somebody
+ * their password is wrong.
+ */
+export function credentialsRefused(err: unknown): boolean {
+  for (let e: unknown = err, hops = 0; e !== null && e !== undefined && hops < 8; hops++) {
+    if ((e as { authenticationFailed?: unknown }).authenticationFailed === true) return true;
+    if ((e as { code?: unknown }).code === "OAUTH_INVALID_GRANT") return true;
+    e = (e as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
 /**
  * DID THIS FAILURE COME FROM THE CONNECTION, OR FROM THE WORK?
  *
@@ -2533,6 +2572,26 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * death produced no event at all).
        */
       let connectionDeadBy: "event" | "bound" | null = null;
+      /**
+       * THE SERVER ANSWERED AND REFUSED THE SIGN-IN — a different thing from an unreachable one,
+       * and the difference decides both what we do and what the person is told.
+       *
+       * An unreachable server is retried, because it may come back on its own. A refused sign-in
+       * will not: the password is wrong, or the token is dead, and only a person can change that.
+       * Retrying it every poll produced four fresh LOGIN attempts a minute, which providers
+       * throttle and some answer by locking the account — the app turning a wrong password into
+       * a lost mailbox. So this suspends the automatic re-dial entirely.
+       *
+       * Cleared by construction rather than by a setter: every path that changes a credential —
+       * `PATCH /local/mailboxes/:id`, forgetting the stored login — DETACHES this runtime and
+       * attaches a fresh one, so a new password gets a new runtime with this flag unset. That is
+       * the same guarantee the immutable-credential rule above `imapConfig` already relies on.
+       */
+      let signInRefused = false;
+      /** Backoff for the failures that MAY pass. Attempts since the last successful dial. */
+      let redialAttempts = 0;
+      /** Wall-clock instant before which no re-dial is attempted. */
+      let redialNotBefore = 0;
 
       /**
        * WHICH CONNECTION THIS MAILBOX IS ON — a counter, bumped by every dial.
@@ -2555,8 +2614,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * `ensureFolders`, the cycles that move mail, and the scheduled-send pass. Reading is not
        * gated by it — a mirror growing over a fresh connection harms nobody.
        */
-      const assertSameConnection = (gen: number): void => {
-        if (gen !== generation) throw new ConnectionReplacedError(gen, generation);
+      const assertSameConnection = (gen: number, conn: MailboxAdapter): void => {
+        /* BOTH, and the instance is not belt-and-braces. The generation says "a re-dial has
+           happened since"; the instance says "the object I am about to write through is the one
+           whose lease I read". They can disagree in one direction that matters: a helper handed a
+           captured adapter can outlive the binding, and a number alone would not notice. Checking
+           the pair makes the guard a statement about the CONNECTION rather than about a counter. */
+        if (gen !== generation || conn !== adapter) throw new ConnectionReplacedError(gen, generation);
       };
 
       /**
@@ -3782,9 +3846,26 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * picker says the time in the user's own clock either way. A failure is CONTAINED like
        * every pass here — the pass re-arms transient faults itself, and mail keeps arriving.
        */
-      const sendScheduled = async (): Promise<void> => {
+      /**
+       * @param gen  the connection generation the caller gated under, and @param conn the adapter
+       *   instance it belongs to. Threaded in rather than read from the closure because this pass
+       *   OUTLIVES a cycle: it is the caller's identity that decides whether a delivery is still
+       *   this install's to make, and the closure's binding is exactly the thing that moves.
+       */
+      const sendScheduled = async (gen: number, conn: MailboxAdapter): Promise<void> => {
         try {
           const r = await runScheduledSendPass(db as never, {
+            /* ── THE PASS STOPS IF THIS MAILBOX STOPS BEING OURS WHILE IT RUNS ─────────────
+             *
+             * Checked BETWEEN ROWS rather than once before the pass, because the change this
+             * defends against happens DURING it: the socket dies, a re-dial re-reads the lease
+             * and finds a stranger's claim, and this loop is still holding appointments it
+             * claimed under the old answer. One check at the top cannot see that; it has already
+             * returned by the time it matters.
+             *
+             * `stopped` is in the predicate for the same reason — a removed mailbox must not go
+             * on sending on its own behalf while `detach()` waits for the pass to end. */
+            cancelled: () => stopped || gen !== generation || conn !== adapter,
             openSendAdapter: openLocalSend,
             /* ── THIS MAILBOX'S APPOINTMENTS, AND NO OTHER MAILBOX'S ──────────────────────
              *
@@ -3849,9 +3930,26 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * RUNTIME, and without the narrowing each organizing mailbox would scan and claim for every
        * other organizing mailbox in the install.
        */
-      const answerAway = async (): Promise<void> => {
+      /**
+       * @param gen  the connection generation the caller gated under, and @param conn the adapter
+       *   instance it belongs to. Threaded in rather than read from the closure because this pass
+       *   OUTLIVES a cycle: it is the caller's identity that decides whether a delivery is still
+       *   this install's to make, and the closure's binding is exactly the thing that moves.
+       */
+      const answerAway = async (gen: number, conn: MailboxAdapter): Promise<void> => {
         try {
           const r = await runAwayResponderPass(db as never, {
+            /* ── THE PASS STOPS IF THIS MAILBOX STOPS BEING OURS WHILE IT RUNS ─────────────
+             *
+             * Checked BETWEEN ROWS rather than once before the pass, because the change this
+             * defends against happens DURING it: the socket dies, a re-dial re-reads the lease
+             * and finds a stranger's claim, and this loop is still holding appointments it
+             * claimed under the old answer. One check at the top cannot see that; it has already
+             * returned by the time it matters.
+             *
+             * `stopped` is in the predicate for the same reason — a removed mailbox must not go
+             * on sending on its own behalf while `detach()` waits for the pass to end. */
+            cancelled: () => stopped || gen !== generation || conn !== adapter,
             openSendAdapter: openLocalSend,
             mailboxIds: [mb.id],
             now,
@@ -3977,7 +4075,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            be literally `if (organizer.organizing) await …`: a source census cannot see through a
            brace, and folding the two together would silently retire a guard that exists to keep
            an organizer-only mailbox write off a reader's drain. */
-        assertSameConnection(gen);
+        assertSameConnection(gen, conn);
         if (organizer.organizing) await profileSync.armHoldFromFolder();
         // BEFORE the cycles, not after: a resurface is a local database fact and does not depend on
         // the mailbox being reachable, so it must survive a cycle that throws on a dead connection.
@@ -4001,14 +4099,19 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         // a reader launch, and an ungated pass here would claim and SEND it, from an install the
         // mailbox's organizer knows nothing about, at a time nobody re-chose. The gate makes the
         // close's failure cost a delay rather than a delivery.
-        assertSameConnection(gen);
-        if (organizer.organizing) await sendScheduled();
+        assertSameConnection(gen, conn);
+        if (organizer.organizing) await sendScheduled(gen, conn);
         // The away responder, directly after the appointment clock and gated the same way. AFTER
         // the cycles would be wrong for the reason the placement note above gives about
         // `sendScheduled`: an away reply has a clock on it too — it is a promise about mail that
         // has just arrived — and it must not wait out a hundred-cycle backlog drain. Its own SMTP
         // dial fails independently of the inbound cycles, and the pass contains its own faults.
-        if (organizer.organizing) await answerAway();
+        /* ITS OWN CHECK, not the one above `sendScheduled`. The scheduled-send pass sits between
+           them and can take a long time — a batch of deliveries, each with its own dial — so by
+           the time this line is reached the connection may have been replaced twice over. A guard
+           six lines up is a guard about a different moment. */
+        assertSameConnection(gen, conn);
+        if (organizer.organizing) await answerAway(gen, conn);
         /* AND THE RECONCILER — UNGATED, unlike the two lines above it. See its own note: those two
            SEND on the mailbox's behalf and a reader must not; this one settles a reservation THIS
            install wrote, by reading. Gating it would leave a demoted install saying "Sending…" for
@@ -4043,7 +4146,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              asked repeatedly rather than once at the top. Between two edges the pipeline writes
              to `conn` — the instance, spread below — so a swap cannot redirect a cycle that is
              already running either. */
-          assertSameConnection(gen);
+          assertSameConnection(gen, conn);
           const cycleStart = Date.now();
           // ── THE MODEL IS RESOLVED ONCE PER CYCLE AND NEVER HELD ───────────────────────────
           //
@@ -4063,7 +4166,25 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // promoted a surviving copy files that copy on the next pass). A drain that stopped on
           // backlog alone declared itself quiet with a move still pending, and a caller trusting
           // `syncUntilQuiet()` then stopped with the delete unfinished until the next poll.
-          const { hasBacklog, owesFiling } = await runSyncCycle({
+          /* ── ACCOUNTED PER CYCLE, NOT PER DRAIN ─────────────────────────────────────────
+           *
+           * The bound used to be recorded once around the whole `drainPass`, and a drain is up to
+           * a hundred cycles. A flapping socket therefore produced this: seven drains fail with
+           * connection-class errors; the socket recovers; a backlog drain serves several real
+           * cycles — clearing nothing, because the drain had not finished; the socket dies again
+           * on a later inner cycle; the drain rejects, the streak advances 7 → 8 and the
+           * connection is declared dead at once. The served cycles should have ended the old
+           * outage and the new failure should have been streak one.
+           *
+           * So a cycle that COMPLETES clears the streak before the next begins, and a
+           * connection-class failure inside the loop starts its own. The wrapper around
+           * `drainPass` still exists for the failures that happen OUTSIDE the loop — the gate
+           * itself, most of all, which is where a dead socket usually surfaces first. */
+          let cycleServed = false;
+          let hasBacklog: boolean;
+          let owesFiling: boolean;
+          try {
+            const outcome = await runSyncCycle({
             ...syncDeps,
             /* THE GATED CONNECTION, spread over `syncDeps`'s live getter on purpose. The getter is
                what lets a re-dialled mailbox use its new connection; this is what stops a drain
@@ -4085,6 +4206,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             // the previous cycle answered.
             importDecisionOpen: await profileSync.importDecisionOpenNow(),
           });
+            cycleServed = true;
+            ({ hasBacklog, owesFiling } = outcome);
+          } finally {
+            if (cycleServed) noteCycleServed();
+          }
           cycleMs.push(Date.now() - cycleStart);
           cycles++;
           if (!hasBacklog) inboundDrained = true;
@@ -4287,7 +4413,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             try {
               /* THE MAILBOX WRITE THIS WHOLE ORDERING PROTECTS — creating somebody else's
                  `ohmail/*` tree. Refused outright if the connection has moved since the gate. */
-              assertSameConnection(gen);
+              assertSameConnection(gen, conn);
               await conn.ensureFolders();
               foldersEnsured = true;
             } catch (err) {
@@ -4406,12 +4532,23 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // knows; this is a write claiming standing it failed to establish, and being wrong costs
           // opposite things — a refused read strands a mailbox nobody organizes, an unproven write
           // puts two organizers on one.
-          const cycleMayStillWrite = !(cycleError instanceof LeaseUnavailableError);
+          const cycleMayStillWrite = !(cycleError instanceof LeaseUnavailableError
+            || cycleError instanceof ConnectionReplacedError);
           if (cycleMayStillWrite) try {
+            /* ── THE POST-DRAIN WRITES ARE ON THE GATED CONNECTION, AND ARE CHECKED FIRST ────
+             *
+             * Everything below appends to, acknowledges in, or expunges from `ohmail/_meta` — the
+             * same folder the organizer lease lives in — and it all used to run on the MUTABLE
+             * binding after the cycles had finished. A pass that gated connection A and reached
+             * here after a re-dial installed B therefore did its request and profile writes on B,
+             * whose own gate was still queued behind this very pass. Two installs writing one
+             * mailbox's decisions, which is the invariant, reached without a single cycle
+             * misbehaving — the cycle half was fixed and this half was not. */
+            assertSameConnection(gen, conn);
             if (organizing) {
               await applyMetaRequests(
                 db, {
-                  mailboxId: mb.id, accountId: world.accountId, adapter, installId,
+                  mailboxId: mb.id, accountId: world.accountId, adapter: conn, installId,
                   requestKey,
                 }, now(),
                 noteRequestEvent,
@@ -4423,9 +4560,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 db, { mailboxId: mb.id, accountId: world.accountId }, now(), noteRequestEvent,
               );
             } else {
+              /* THE READER'S HALF OF THE SAME CHANNEL, checked on its own. The organizer arm above
+                 has its own assertion and this branch is reached instead of it, never after it —
+                 so borrowing that one would leave this path unguarded, which is precisely what the
+                 census found. */
+              assertSameConnection(gen, conn);
               await driveOutstandingRequests(
                 db, {
-                  mailboxId: mb.id, accountId: world.accountId, adapter, installId,
+                  mailboxId: mb.id, accountId: world.accountId, adapter: conn, installId,
                   requestKey,
                 },
                 { installId, kind: "local" }, now(),
@@ -4455,6 +4597,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // organizer-only by being unreachable, and the property has to survive that stopping being
           // true. Publishing the portable profile is a write into somebody else's `ohmail/_meta`,
           // and it is the single-writer rule rather than an optimisation.
+          /* THE PROFILE PUBLISH IS A MAILBOX WRITE TOO — an append and an expunge in
+             `ohmail/_meta` — and it read the LIVE getter, so a stale pass published this
+             install's settings over a connection it had never gated. Checked here; the sync
+             itself resolves its adapter through the same getter, so the check is what stands
+             between it and a replaced connection. */
+          assertSameConnection(gen, conn);
           if (organizing) await profileSync.onOrganize();
           return cycles;
         });
@@ -4672,6 +4820,39 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            * So a reader falls through: it drains, it schedules, and it keeps the connection the
            * next poll asks over. The ONE thing it does not do is below.
            */
+          /* ── STOPPED IS CHECKED WHATEVER THE GATE ANSWERED ──────────────────────────────
+           *
+           * This read `if (!permitted && stopped)`, so a gate that said YES walked straight past
+           * it — and `mayOrganize` is the longest await in the sequence, which makes it the most
+           * likely place for `detach()` to land. A removal or a shutdown overlapping a slow lease
+           * read therefore continued into `ensureFolders`, special-folder discovery and a full
+           * drain on a runtime that had been told it was finished, having already appended a fresh
+           * claim to the mailbox on the way through. `detach()` waited for all of it: it bounded
+           * the damage's duration and prevented none of it.
+           *
+           * The permitted arm STANDS DOWN rather than merely returning. The gate has just renewed
+           * this install's claim on a mailbox it is letting go of, and leaving that behind makes
+           * the next install wait out a claim nobody is honouring. */
+          if (stopped) {
+            if (permitted) {
+              try {
+                await releaseMailboxClaim(conn, installId);
+                log("organizer_claim_released_on_detach", {
+                  mailboxId: mb.id,
+                  reason: "the mailbox was removed or the engine stopped while the organizer " +
+                    "lease was being read, and that read had already renewed this install's " +
+                    "claim; it is given back rather than left to age out",
+                });
+              } catch (err) {
+                log("organizer_claim_release_failed", {
+                  err, mailboxId: mb.id,
+                  reason: "the claim this pass renewed could not be released; it ages out of " +
+                    "ohmail/_meta on its own and another install takes the mailbox then",
+                });
+              }
+            }
+            return { leaseRead: true };
+          }
           if (!permitted && stopped) {
             // THE MAILBOX WAS REMOVED — the only `false` that still means "do nothing".
             // `mayOrganize` has already cleared the timer and closed the login on that arm; there
@@ -4778,6 +4959,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            some providers. A mailbox with no usable credential is not unreachable, it is waiting
            for a person, and dialling it repeatedly would turn that into a locked account. */
         if (login.state !== "ready" || !login.pass) return;
+        /* ── A REFUSED SIGN-IN IS NOT RETRIED, AND A FAILING SERVER IS BACKED OFF ────────────
+         *
+         * Both are the same defect seen from two sides: a dial that cannot succeed being repeated
+         * on the poll's cadence. The first cannot succeed until a person acts, so it is not
+         * attempted at all; the second may, so it is attempted on a widening interval instead of
+         * four times a minute. */
+        if (signInRefused) return;
+        if (Date.now() < redialNotBefore) return;
         /* ── THE RE-DIAL JOINS `tail`, SO `detach()` WAITS FOR IT ────────────────────────────
          *
          * It cannot QUEUE behind `tail` — `dialAndGate` takes the queue twice and a queued
@@ -4832,6 +5021,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            * word "reconnected" may pretend it is. */
           connectionDeadSince = null;
           connectionDeadBy = null;
+          redialAttempts = 0;
+          redialNotBefore = 0;
           if (outcome.leaseRead) {
             leaseUnavailableSince = null;
             leaseUnavailableCycles = 0;
@@ -4857,8 +5048,32 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               "unreachable. The socket is not the mailbox",
           });
         } catch (err) {
+          /* ── WHY IT FAILED DECIDES WHETHER IT IS TRIED AGAIN ─────────────────────────────
+           *
+           * A refused sign-in stops the automatic re-dial for good; anything else widens the
+           * wait. Without this the log line below was literally true — "the next poll tries
+           * again" — and that was the defect, not the remedy. */
+          if (credentialsRefused(err)) {
+            signInRefused = true;
+            log("mailbox_sign_in_failed", {
+              err, mailboxId: mb.id,
+              reason: "the mail server answered and rejected the sign-in, so this install stops " +
+                "dialling until the password or token changes. Retrying on the poll would be " +
+                "four attempts a minute at a server that has already said no, which providers " +
+                "throttle and some answer by locking the account",
+            });
+          } else {
+            redialAttempts += 1;
+            const step = Math.min(
+              REDIAL_BACKOFF_BASE_MS * 2 ** (redialAttempts - 1), REDIAL_BACKOFF_MAX_MS,
+            );
+            /* JITTERED, so several mailboxes on one server do not knock in unison after an
+               outage — the thundering herd every backoff without one produces. */
+            redialNotBefore = Date.now() + Math.round(step * (0.8 + Math.random() * 0.4));
+          }
           log("mailbox_reconnect_failed", {
             err, mailboxId: mb.id,
+            attempt: redialAttempts,
             totalMs: deadSince ? Date.now() - deadSince.getTime() : 0,
             reason: "the connection could not be re-opened; this install organizes nothing and " +
               "serves the mirror it already has, and the next poll tries again. The clock the " +
@@ -4907,7 +5122,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              when a cycle has actually been served. The row must follow the mailbox, not the
              socket, or a re-dial onto a live server with an unreadable lease reports a mailbox
              that is being organized when nothing is being filed. */
-          return { reachable: outageSince === null, unreachableSince: outageSince };
+          return {
+            reachable: outageSince === null,
+            unreachableSince: outageSince,
+            /* THE DIAGNOSIS, not just the fact. "Can't reach the mail server" over a server that
+               answered and said no is the wrong sentence: it sends somebody to look at their
+               network when the answer is their password. */
+            signInRefused,
+          };
         },
         serialize,
         syncUntilQuiet,
@@ -4945,6 +5167,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              * second close here made a failed launch close its login twice. Recording the death
              * and releasing the socket are two jobs; this call site only needs the first. */
             noteConnectionDead(err, generation, null);
+            if (credentialsRefused(err)) {
+              signInRefused = true;
+              log("mailbox_sign_in_failed", {
+                err, mailboxId: mb.id,
+                reason: "the mail server answered this launch and rejected the sign-in; the " +
+                  "mirror is served and nothing is dialled again until the password changes",
+              });
+            }
             schedule();
             throw err;
           }
@@ -5514,6 +5744,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               mailboxId: r.mailboxId,
               reachable: r.connection.reachable,
               unreachableSince: r.connection.unreachableSince?.toISOString() ?? null,
+              signInRefused: r.connection.signInRefused,
             }));
             return new Response(JSON.stringify({ items }), {
               status: 200, headers: { "content-type": "application/json" },

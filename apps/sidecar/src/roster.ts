@@ -88,6 +88,16 @@ export interface MailboxConnectionState {
    * clock restarted by each failed re-dial would report a two-hour outage as seconds old.
    */
   unreachableSince: Date | null;
+  /**
+   * THE SERVER ANSWERED AND REFUSED THE SIGN-IN.
+   *
+   * Separate from `reachable`, because they are different facts with different remedies and the
+   * pane must not confuse them: an unreachable server is retried and heals on its own; a refused
+   * sign-in is not retried at all, and stays until a person changes the password or reconnects
+   * the account. Telling somebody to check their connection when the server has already answered
+   * and said no sends them to look in the wrong place.
+   */
+  signInRefused: boolean;
 }
 
 /** Why this install is not organizing a mailbox, when it is not. One answer per mailbox. */

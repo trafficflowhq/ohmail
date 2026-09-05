@@ -180,6 +180,8 @@ interface MailboxWire {
 /** Whether this install can reach one mailbox's server right now. Row id → the answer. */
 export interface MailboxReach {
   reachable: boolean;
+  /** The server answered and refused the sign-in — a different fact with a different remedy. */
+  signInRefused: boolean;
   /** ISO instant of the FIRST observation of death in the current outage; null while reachable. */
   unreachableSince: string | null;
 }
@@ -205,7 +207,11 @@ export interface MailboxReach {
 export async function readMailboxReachVia(
   fetchImpl: (url: string, init?: unknown) => Promise<Response>,
 ): Promise<Record<string, MailboxReach>> {
-  let body: { items?: Array<{ mailboxId?: unknown; reachable?: unknown; unreachableSince?: unknown }> };
+  let body: {
+    items?: Array<{
+      mailboxId?: unknown; reachable?: unknown; unreachableSince?: unknown; signInRefused?: unknown;
+    }>;
+  };
   try {
     const res = await fetchImpl("/local/mailboxes/connections");
     if (!res.ok) return {};
@@ -219,6 +225,10 @@ export async function readMailboxReachVia(
     out[it.mailboxId] = {
       reachable: it.reachable,
       unreachableSince: typeof it.unreachableSince === "string" ? it.unreachableSince : null,
+      /* ABSENT READS AS `false`, on this file's standing rule: an engine older than the field
+         cannot have refused a sign-in, and the dangerous default is the other one — telling
+         somebody their password was rejected because their app is out of date. */
+      signInRefused: it.signInRefused === true,
     };
   }
   return out;
@@ -571,6 +581,15 @@ export function DesktopMailboxes(
    */
   const [reach, setReach] = useState<Record<string, MailboxReach>>({});
   useEffect(() => {
+    /* ── LOCAL DOOR ONLY ──────────────────────────────────────────────────────────────────
+     *
+     * `/local/mailboxes/connections` exists on the local engine and nowhere else. Mounted
+     * unconditionally, this asked for it on the CLOUD door too, where it falls through the cloud
+     * engine's catch-all proxy and becomes a hosted round trip — four a minute, for a route that
+     * does not exist, for as long as the pane is open. The state it would fill is meaningless
+     * there anyway: a Cloud mailbox's connection belongs to a worker on a shard, not to this
+     * machine. `door` is in the dependency list, so switching doors starts or stops it. */
+    if (door !== "local") { setReach({}); return; }
     let live = true;
     /* THE SEQUENCE GUARD. Two reads are in flight whenever one takes longer than the interval —
        an engine mid-reconnect is exactly when it will — and promises settle in whatever order
@@ -591,7 +610,7 @@ export function DesktopMailboxes(
     read();
     const id = setInterval(read, 15_000);
     return () => { live = false; clearInterval(id); };
-  }, []);
+  }, [door]);
   /** Mailboxes whose resync this pane has queued, so the row can say so until it lands. */
   const [queued, setQueued] = useState<ReadonlySet<string>>(() => new Set());
   /** Mailboxes whose quiet-notice dismissal is in flight, so the button debounces (mail 0078). */
@@ -1057,6 +1076,10 @@ export function DesktopMailboxes(
      * The mailbox is untouched, the password is untouched, and the engine re-dials on its own;
      * a sentence implying the person must act would be asking for work that is not theirs. */
     const r = reach[m.id];
+    /* THE SERVER ANSWERED AND SAID NO — above the unreachable arm, because it is a MORE specific
+       answer to the same question and the generic one would send somebody to check a network
+       that is working perfectly. */
+    if (r?.signInRefused) return t("desktopStateSignInRefused");
     if (r && !r.reachable) {
       /* `agoStamp(...).rel` AND NOT `day(...)`: an outage is a DURATION, and the neighbouring
          `day` stamp is deliberately date-only because the sentences it serves are standing facts
