@@ -20,9 +20,17 @@
  * ── WHAT IT IS NOT ──────────────────────────────────────────────────────────────────────────
  *
  * It authorises nothing and proves nothing. Reading it is not "being signed in": the shell still
- * asks the server whose mailbox this is, and a mismatch or a refusal tears the engine down before
- * anything can be acted on. A forged value gets whoever forged it the name of an empty local
- * database on their own machine.
+ * asks the server whose mailbox this is, and a mismatch or a refusal tears the engine down. A
+ * forged value gets whoever forged it the name of an empty local database on their own machine.
+ *
+ * "Before anything can be acted on" is how that sentence used to end, and it was not true. The
+ * warm engine is SCHEDULED from the render after hydration, so between the optimistic open and
+ * the server's answer it was already draining `/sync` into the mirror this cookie names — under
+ * whatever session the jar held. The teardown was the last word, not the only one. What makes
+ * the claim true now is that the mirror's sync gate stays closed until `GET /auth/session`
+ * names an account equal to this value: the engine paints from the device, and merges nothing,
+ * until then. This value is also read by that gate on every request, so a cookie that later
+ * names somebody else stops the loop rather than redirecting it.
  *
  * That it is readable costs nothing that was not already readable. Script on this origin can
  * enumerate the browser's databases, where the same id is half of every mirror's name, and can

@@ -9,6 +9,7 @@ import {
   type SyncParams,
   type SyncResponse,
 } from "@ohmail/client-engine";
+import { readOwnerMarker, type OwnerMarker } from "./owner-cookie";
 
 /**
  * THE WAKE SIGNAL THIS APP DID NOT HAVE.
@@ -348,9 +349,15 @@ export function backoffDelay(
    continues one have to agree, or the hidden cadence would start drains only to cancel their
    second page. What the gate still refuses — teardown, terminal — it refuses identically.
 
-   `mutate()` is DELIBERATELY NOT GATED. A mutation is the user's own intent and must reach the
-   server whatever the tab is doing; the cost objection is about polling, not about the click
-   somebody just made. */
+   `mutate()` IS NOT GATED ON CADENCE, and that half of the old rule stands: a mutation is the
+   user's own intent and must reach the server whatever the tab is doing — hidden, torn down,
+   backing off. The cost objection is about polling, not about the click somebody just made.
+
+   It IS gated on IDENTITY, which is a different question and was not asked here until the
+   mirror learned its owner. A mutation's outcome is applied to the mirror when it returns, so
+   sending A's archive under B's session acts on the wrong account's server state AND writes
+   the answer into A's mirror. See `guard().mutate`, which refuses it RETRYABLY so the verb is
+   flushed later rather than discarded. */
 
 /**
  * A drain was cancelled between pages. Not a failure: it must not count against the backoff,
@@ -368,11 +375,42 @@ export class SyncAbortedError extends Error {
 const isAborted = (err: unknown): err is SyncAbortedError => err instanceof SyncAbortedError;
 
 /**
+ * A READ was refused because this browser's session belongs to a different account than the
+ * mirror on screen. Not a cancellation and not a network failure: a positive refusal.
+ *
+ * ── WHY IT IS ITS OWN CLASS AND NOT {@link SyncAbortedError} ────────────────────────────────
+ *
+ * `SyncAbortedError` means "the drain stopped between pages", and the scheduler's own catch
+ * reads it that way — no failure count, no report, no retry armed. A body fetch, a search or a
+ * page of older mail is none of those things: it is one request a person made, and it has to
+ * surface to that person as a failure they can see rather than be swallowed as a cancellation
+ * of a loop they never started. Reusing the sync class here would make the scheduler's catch
+ * silently correct for the wrong reason and would put a false sentence ("aborted before the
+ * next page") on a request that has no pages.
+ *
+ * Every consumer already has a path for a rejected read — these are HTTP calls that can 500 —
+ * so this arrives as the failure state that path already renders.
+ */
+export class ForeignSessionError extends Error {
+  readonly code = "foreign_session";
+  constructor(what: string) {
+    super(`ohmail: refused ${what} — this browser's session now belongs to another account`);
+    this.name = "ForeignSessionError";
+  }
+}
+
+/**
  * The per-page continuation gate. Built beside the engine's adapter, claimed by the scheduler.
  *
- * A gate NOBODY has claimed never refuses, so the demo engine, the desktop bundle and a bare
- * `engine.start()` are unaffected — the gate only ever narrows a surface a scheduler is
- * actively driving.
+ * A gate nobody has claimed never refuses ON CADENCE, so the demo engine, the desktop bundle
+ * and a bare `engine.start()` keep their timing unaffected — that part only ever narrows a
+ * surface a scheduler is actively driving.
+ *
+ * **IDENTITY IS THE EXCEPTION, and it has to be.** A gate built for a NAMED mirror refuses to
+ * sync or mutate until somebody has said whose mailbox it is, claimed or not: the claim is
+ * about when a loop may run, and identity is about whose bytes these are. An unclaimed gate
+ * that merged freely would leave `engine.start()` — the demo path, and the fallback branch in
+ * `EngineProvider` — as an ungated drain into a named mirror.
  */
 /**
  * THE TWO CAPABILITIES `EngineAdapter` DOES NOT DECLARE.
@@ -387,9 +425,107 @@ const isAborted = (err: unknown): err is SyncAbortedError => err instanceof Sync
  */
 type GatedAdapter = EngineAdapter & { snapshot?: SnapshotFn; listMessages?: ListOlderFn };
 
+/**
+ * ═══ WHOSE MIRROR IS THIS, AND MAY IT MERGE? ══════════════════════════════════════════════
+ *
+ * A scheduled engine is not a merging engine, and until this existed the two were the same
+ * thing. `SyncResponse` carries no account identity, the route returns the service's result
+ * bare, and the adapter writes the answer straight into IndexedDB `ohmail-mirror:<owner>` —
+ * so whatever session the cookie jar happens to hold decides what lands in the mirror NAMED
+ * for the remembered account. The confirm's own comparison runs only inside the `owner`
+ * arm, which means: bounded to the retry ladder while `checking`, unbounded at `unconfirmed`,
+ * and — the case the review missed — never re-run at `ready`, so a tab confirmed for A that
+ * later sees the jar rewritten to B by a sign-in in another tab merges B's log into A's
+ * mirror for as long as it lives.
+ *
+ * Three answers, and the middle one is the whole design:
+ *
+ *  · `holds`         — this engine may merge. Either it has no name (an in-memory engine
+ *                      cannot leak onto disk) or the confirm named it and the jar agrees.
+ *  · `unconfirmed`   — nobody has told this gate whose mailbox it is YET. Built CLOSED: the
+ *                      default is refusal, so a path that forgets to confirm syncs nothing
+ *                      rather than syncing everything. Reads are still allowed here — this is
+ *                      the ordinary warm open, the person is looking at their own mail, and
+ *                      blanking it for the length of a round trip is the flicker this slice
+ *                      exists to remove.
+ *  · `revoked`       — it WAS confirmed and the marker has since changed. Different from
+ *                      `unconfirmed` in the one way that matters: something happened. Reads
+ *                      refuse alongside merges until a fresh confirm, because the answer a
+ *                      read would come back with is now somebody else's business. The loop
+ *                      disarms QUIETLY — nothing here is a claim about the account, so the
+ *                      strip may not say the mailbox has stopped.
+ *  · `contradicted`  — the jar positively names somebody else, or says a sign-out was asked
+ *                      for and not confirmed. Evidence that this tab is not the one it was,
+ *                      and it latches the loop terminal rather than waiting quietly.
+ *
+ * ── "AN ABSENT COOKIE IS NOT A CONTRADICTION" — STILL TRUE, AND NO LONGER THE WHOLE RULE ───
+ *
+ * That sentence stood alone here, and it was load-bearing in the wrong direction. It is right
+ * about what absence MEANS: a legitimate cold-path session whose `tf_owner` was dropped would
+ * otherwise never sync again, silence is not evidence, and only a present cookie naming
+ * somebody else contradicts. It was wrong about what absence PERMITS.
+ *
+ * The sequence review found: a sign-out whose server call FAILS still did its local half, and
+ * that half erased this marker while the HttpOnly session stayed live on the server. A window
+ * still open for another account then read the absence as silence, read silence as permission,
+ * and went on merging and reading through a session nobody in that window was signed in to.
+ * Absence was not evidence of anything — and a confirmation granted while the marker said A
+ * went on standing after the marker stopped saying A.
+ *
+ * Two changes, and they are the whole of the correction:
+ *
+ *  1. **A CONFIRMATION IS NOT PERMANENT.** Any change in what the marker says — A to absent, A
+ *     to B, absent to A, and every leg of an A→B→A — revokes it. What was confirmed was
+ *     "this browser is A's, now"; the moment "now" stops being true the grant lapses and the
+ *     gate waits for a fresh one. Absence still is not a contradiction: it is the END of a
+ *     confirmation, which is a different and weaker thing, and it is enough.
+ *  2. **A REFUSED SIGN-OUT IS SAID, NOT ERASED.** `sign-out.ts` writes
+ *     {@link OWNER_SIGNED_OUT} on that path instead of clearing, so the state that used to be
+ *     indistinguishable from silence now speaks for itself and contradicts.
+ */
+export type SyncIdentity = "holds" | "unconfirmed" | "revoked" | "contradicted";
+
+/**
+ * MAY A READER ASK THE SERVER FOR THIS ACCOUNT'S BYTES, given an identity? — the rule itself,
+ * as one function, so that every door is the same door.
+ *
+ * There were two copies: the adapter spelled it inline and `syncMayRead` spelled it again for the
+ * doors that never reach an adapter. They agreed, and nothing made them agree — which is exactly
+ * how the fourth state (`revoked`) arrived in one of them and not the other, and how the
+ * reach-past body door and the mailbox-facts poll went on reading through a lapsed grant while
+ * the adapter beside them refused.
+ *
+ * `unconfirmed` reads TRUE and that is the whole subtlety: it is the ordinary warm open, the mail
+ * is the person's own, and refusing there would blank a mailbox that is already on screen for the
+ * length of a round trip — the flicker this slice exists to remove.
+ */
+export function mayReadIdentity(state: SyncIdentity): boolean {
+  return state !== "contradicted" && state !== "revoked";
+}
+
 export interface SyncGate {
   /** Wrap the engine's transport. Call once, at construction, on the adapter you pass in. */
   guard(adapter: GatedAdapter): GatedAdapter;
+  /** May this engine merge right now? Read before every request and at every page boundary. */
+  identity(): SyncIdentity;
+  /**
+   * The server named this mailbox's account. Opens the gate when the name matches the mirror
+   * the engine was built for, and wakes whatever registered through {@link SyncGate.onOpen}.
+   */
+  confirm(accountId: string): void;
+  /** Run `cb` when the gate opens — the scheduler registers its `wake` here. */
+  onOpen(cb: () => void): void;
+  /**
+   * Run `cb` when a REVOKED gate could plausibly be confirmed again — the marker has come back
+   * to naming this mirror's account. The shell registers the session confirm here.
+   *
+   * Without it a revoked gate is a dead end: revocation is monotonic (by design — it must not
+   * oscillate), `confirm` is the only way out, and nothing on a `ready` binding ever calls it,
+   * because `ready` carries no owner and the confirm effect has long since finished. The tab
+   * cleared its terminal strip when the contradiction went away and then sat there: no reads, no
+   * sync, no mutations, no stream, and nothing on screen saying so.
+   */
+  onNeedsConfirm(cb: () => void): void;
   /**
    * Claim the gate for a scheduler's lifetime. There is deliberately no `release`: the
    * predicate a scheduler installs closes ITSELF once that scheduler is stopped (it reads the
@@ -399,9 +535,264 @@ export interface SyncGate {
   claim(mayContinue: () => boolean): void;
 }
 
-export function createSyncGate(): SyncGate {
+/**
+ * @param mirrorOwner the account this engine's mirror is NAMED for, or `null` for an
+ * un-named, in-memory engine. There is deliberately NO DEFAULT: a defaulted owner would make
+ * the permissive branch the one every caller gets by omission, which is the shape of failure
+ * this repository keeps paying for — the shipped path becomes the one no test drives.
+ */
+export function createSyncGate(mirrorOwner: string | null): SyncGate {
   let mayContinue: (() => boolean) | null = null;
+  /** The account the server named for this engine, or `null` while nobody has said. */
+  let confirmedFor: string | null = null;
+  /**
+   * Has a confirmation been TAKEN BACK? The difference between "nobody has said yet" and
+   * "somebody said, and then the world changed", which is the difference between a warm mirror
+   * that may still answer its own reader and one that may not. Cleared only by a fresh confirm.
+   */
+  let revoked = false;
+  const openers = new Set<() => void>();
+  const reconfirmers = new Set<() => void>();
+  /** Fired at most once per revocation, so a poll cannot turn into a confirm ladder per tick. */
+  let askedToReconfirm = false;
+
+  /**
+   * WHAT THE MARKER SAID LAST TIME ANYBODY LOOKED. `undefined` means nothing has been observed
+   * yet, which is not the same as `absent`: the first observation establishes a baseline and
+   * cannot itself be a transition, or a gate would revoke a confirmation it had just been given.
+   *
+   * SEEDED AT CONSTRUCTION for a named mirror, and the window that closes is real. The gate is
+   * built in the same act that chooses which mirror to open — from the marker — so construction
+   * is when "what it said" is known. Left to the first `identity()` call instead, a change
+   * between those two moments was the baseline rather than a transition, and the whole point of
+   * this state is that a change is what revokes.
+   */
+  let lastSeen: OwnerMarker | undefined = mirrorOwner === null ? undefined : readOwnerMarker();
+
+  /** Two markers, same meaning? The comparison a transition is defined against. */
+  const sameMarker = (a: OwnerMarker, b: OwnerMarker): boolean =>
+    a.kind === b.kind && (a.kind !== "account" || b.kind !== "account" || a.id === b.id);
+
+  const identity = (): SyncIdentity => {
+    // An un-named engine has no mirror on disk to pollute. The source guard pins that the
+    // live path never passes `null`; this arm is the demo's and the desktop's.
+    if (mirrorOwner === null) return "holds";
+
+    const marker = readOwnerMarker();
+    /*
+     * ── THE TRANSITION IS THE EVENT, AND READING IS WHEN IT IS NOTICED ────────────────────
+     *
+     * A cookie has no change event, so there is nothing to subscribe to: the only moment this
+     * gate can observe the jar is when somebody asks it a question. It is asked before every
+     * request, at every page boundary and on every tick, which is exactly the set of moments a
+     * stale answer could do damage — so noticing here is noticing in time.
+     *
+     * Revoking is a SIDE EFFECT of a read, and that is deliberate rather than sloppy. The
+     * alternative is a separate `poll()` somebody has to remember to call, which is the shape of
+     * wiring bug this file's own history is full of. It is idempotent (a second read in the same
+     * state changes nothing) and monotone (a revocation is never undone except by `confirm`).
+     */
+    if (lastSeen !== undefined && !sameMarker(lastSeen, marker)) {
+      lastSeen = marker;
+      /*
+       * ANY change revokes, INCLUDING one that arrives back at the confirmed account. An
+       * A→B→A round trip leaves the marker saying exactly what it said before, and a
+       * comparison against the mirror's name cannot see that anything happened — which is
+       * precisely the window in which a response issued under B lands in A's tab. What was
+       * confirmed was "this browser is A's, NOW"; the round trip ends that, and the gate waits
+       * for the server to say it again.
+       *
+       * ── AND IT DOES NOT WAIT FOR A CONFIRMATION TO EXIST ──────────────────────────────
+       *
+       * This was `if (confirmedFor !== null)`, which sounds like a tidy no-op and is a hole.
+       * The gate spends the whole confirm ladder — up to four attempts, roughly thirty seconds
+       * — with `confirmedFor` still null while a WARM MIRROR is on screen and its reads are
+       * allowed, because that is what `unconfirmed` is for. In that window: another tab
+       * establishes B, the readable marker is then removed (an older tab, a malformed write, a
+       * hand-cleared cookie) while B's HttpOnly session lives on, and the change was seen and
+       * discarded. The gate stayed `unconfirmed`, `refuseIfForeign` kept letting search,
+       * message bodies and attachments through, and B's bytes reached the screen.
+       *
+       * So a marker change latches `revoked` on a named mirror whether or not anybody has
+       * confirmed it yet. `unconfirmed` keeps its meaning — nobody has said, and nothing has
+       * happened — and stops being reachable after something has happened.
+       */
+      confirmedFor = null;
+      revoked = true;
+      askedToReconfirm = false;
+    } else if (lastSeen === undefined) {
+      lastSeen = marker;
+    }
+
+    // A sign-out this browser asked for and the server did not confirm. Not silence: a session
+    // may still be live and it is not this window's to use. See `OWNER_SIGNED_OUT`.
+    if (marker.kind === "signed-out") return "contradicted";
+    if (marker.kind === "account" && marker.id !== mirrorOwner) return "contradicted";
+    if (confirmedFor !== mirrorOwner) {
+      if (!revoked) return "unconfirmed";
+      /*
+       * A REVOKED GATE WHOSE MARKER NAMES THIS MIRROR AGAIN CAN BE ASKED ABOUT.
+       *
+       * Revocation stays monotonic — this does not reopen anything, and only a server-confirmed
+       * `confirm` does. What it does is wake the one thing that can ask, because on a `ready`
+       * binding nothing else ever will: the confirm effect finished long ago and `ready` carries
+       * no owner to re-compare. Once per revocation, so a tick cannot become a ladder.
+       */
+      if (marker.kind === "account" && marker.id === mirrorOwner && !askedToReconfirm) {
+        askedToReconfirm = true;
+        for (const cb of reconfirmers) cb();
+      }
+      return "revoked";
+    }
+    return "holds";
+  };
+
+  /**
+   * ═══ THE SECOND RULE: A CONTRADICTED BROWSER READS NOTHING EITHER ═════════════════════════
+   *
+   * `sync`, `snapshot` and `mutate` require `holds` — nobody may merge into a mirror until the
+   * server has named it. That rule was written to protect what lands ON DISK, and it left the
+   * READS ungated on an argument that turns out to be half true: "the server filters by the
+   * session's account and A's ids return 404 under B, so no foreign byte can land."
+   *
+   * The ids are the hole. A tab confirmed for A whose jar is rewritten to B stops syncing and
+   * stays INTERACTIVE — the strip says the mailbox has stopped, the mail underneath is still
+   * on screen and still clickable. Search and Load older mail then ask the server for a LIST,
+   * which is not keyed on any id this mirror holds: B's session answers with B's rows, the
+   * surface renders them, and opening one supplies a valid B id to the body route, which
+   * returns B's full text and HTML. Nothing was written to disk and every byte of it was on
+   * screen. `POST /sync/pull` is the same shape with a bill attached: it stamps every one of
+   * B's mailboxes and wakes worker-side IMAP work for an account nobody in this tab is.
+   *
+   * So the reads are gated too, and on a DIFFERENT predicate, which is the whole design:
+   *
+   *  · `contradicted` — refuse. A present cookie naming somebody else is positive evidence
+   *    that every answer would be another account's, and there is no request this tab can
+   *    make that is worth making.
+   *  · `unconfirmed`  — allow. Absence is silence: the jar either agrees with the mirror or
+   *    says nothing, the person is looking at their own mail in a tab that is still theirs,
+   *    and the whole point of `checking` is that a mailbox already on screen keeps working
+   *    through a confirm that has not answered yet. Refusing here would dim the mirror by
+   *    another means — which is the flicker this slice removes, wearing a third hat.
+   *
+   * @param what named in the message so a console line says which door refused.
+   */
+  const refuseIfForeign = (what: string): void => {
+    /*
+     * `revoked` refuses alongside `contradicted`, and `unconfirmed` still does not. The three
+     * are one question asked at three strengths: nobody has said yet (the warm open — the mail
+     * is the person's own and refusing would blank it for a round trip); somebody said and the
+     * world has since changed (the grant has lapsed, and what a read returns now is not this
+     * window's business); the jar positively names somebody else or a refused sign-out.
+     */
+    // {@link mayReadIdentity} — the SAME function the non-adapter doors reach through
+    // `syncMayRead`, not a second spelling of it. It was two spellings; they agreed, and nothing
+    // held them together, which is how the fourth state ended up in one of them and not the other.
+    if (!mayReadIdentity(identity())) throw new ForeignSessionError(what);
+  };
+
+  /**
+   * One capability, wrapped so it asks {@link refuseIfForeign} before it reaches the wire.
+   *
+   * `async` rather than a bare synchronous throw, and that is not a style choice: a caller that
+   * writes `adapter.fetchBody(id).catch(…)` without a surrounding `try` would let a synchronous
+   * throw escape past its own error handling, so the refusal would surface as a crash on some
+   * call sites and as a handled failure on others. An async wrapper rejects, which is the one
+   * shape every one of these consumers already has a path for.
+   *
+   * Generic over the signature so a capability's own types survive the wrap — a rename or an
+   * added parameter in `@ohmail/client-engine` still fails here rather than being erased into
+   * `any` by a hand-written duplicate of the signature.
+   */
+  const gatedRead = <A extends unknown[], R>(
+    fn: (...args: A) => Promise<R>,
+    what: string,
+  ): ((...args: A) => Promise<R>) => async (...args: A): Promise<R> => {
+    refuseIfForeign(what);
+    const answer = await fn(...args);
+    /*
+     * ── AND AGAIN WHEN THE ANSWER LANDS ───────────────────────────────────────────────────
+     *
+     * The check above is a check at REQUEST time, and a request is not instantaneous. Between it
+     * and the browser attaching credentials — and for the whole flight after that — another tab
+     * can rewrite the shared jar. The response then belongs to whoever the jar named when the
+     * server read it, which is not necessarily who it named when this asked, and nothing in the
+     * body says which. Returning it would put those bytes on a surface built for somebody else.
+     *
+     * ONE CHECK AND NOT TWO, and the second one is worth saying out loud because it was written
+     * and then removed. The obvious shape is to capture the marker at issue and compare it at
+     * arrival. For a NAMED mirror that comparison can never be the check that decides: every
+     * change it could detect is a change `identity()` has already turned into `contradicted` or
+     * `revoked` on this same line, because reading is when a transition is noticed. And for an
+     * UN-NAMED engine it must not fire at all — there is no mirror on disk to protect. A guard
+     * whose verdict is always somebody else's verdict is a guard nobody can watch fail, which is
+     * exactly the shape this repository keeps paying for. So the arrival check is the same
+     * question as the departure check, asked again.
+     *
+     * WHAT IT DOES NOT CATCH: a round trip that begins and ends inside one flight with no read
+     * in between — A to B and back to A — leaves `lastSeen` and the current marker both reading
+     * A, so nothing client-side observed anything. No arrangement of client-side checks closes
+     * that; it needs the server to name the account it answered for. That is a `packages/api`
+     * change, out of this slice, and filed as its own gap row rather than implied away here.
+     */
+    refuseIfForeign(what);
+    return answer;
+  };
+
+  /**
+   * A PAGE of the log, wrapped — `sync`'s own rule rather than {@link gatedRead}'s.
+   *
+   * Two differences, and both matter. It requires `holds` and not merely "not contradicted",
+   * because a page of the log is written STRAIGHT INTO the mirror on disk and that is the one
+   * thing an unconfirmed engine may never do. And it rejects with {@link SyncAbortedError},
+   * because this refusal travels back through the engine's drain into the scheduler's own
+   * catch, which reads that class as "the gate cancelled this drain" — no failure count, no
+   * report, no retry armed. A {@link ForeignSessionError} there would be counted as a network
+   * failure and would arm a backoff for a tab that has already stopped.
+   */
+  const gatedPage = <A extends unknown[], R>(
+    fn: (...args: A) => Promise<R>,
+    what: string,
+  ): ((...args: A) => Promise<R>) => async (...args: A): Promise<R> => {
+    const refuse = (why: string): never => {
+      throw new SyncAbortedError(`${what}: ${why}`);
+    };
+    if (identity() !== "holds") {
+      refuse("this mirror's account is not the one this browser's session belongs to");
+    }
+    const page = await fn(...args);
+    // {@link gatedRead}'s arrival rule, and a page needs it more than a read does: this one is
+    // written STRAIGHT INTO the mirror on disk, where there is no tombstone for a row that
+    // should never have arrived. Same question as the departure check, asked again — see
+    // `gatedRead` for why a marker comparison beside it would be a guard that never decides.
+    if (identity() !== "holds") refuse("the session changed while the page was in flight");
+    return page;
+  };
+
   return {
+    identity,
+    confirm(accountId) {
+      confirmedFor = accountId;
+      // A fresh server answer is what a revocation was waiting for. Cleared BEFORE `identity()`
+      // is consulted below, or the gate would report `revoked` over the confirmation that had
+      // just arrived and never wake anybody.
+      revoked = false;
+      // The marker as it stands at the moment of the confirmation IS the baseline this grant is
+      // measured against. Without this the next read compares against a marker from before the
+      // sign-in and revokes the confirmation on the spot.
+      lastSeen = readOwnerMarker();
+      // Only wake anybody if the confirmation actually opened the gate. A confirm naming
+      // somebody else leaves it closed, which is the defence in depth behind that comparison:
+      // the gate on
+      // A's engine never opens for B even if the binding logic above it were ever softened.
+      if (identity() === "holds") for (const cb of openers) cb();
+    },
+    onOpen(cb) {
+      openers.add(cb);
+    },
+    onNeedsConfirm(cb) {
+      reconfirmers.add(cb);
+    },
     claim(next) {
       mayContinue = next;
     },
@@ -414,20 +805,80 @@ export function createSyncGate(): SyncGate {
         // tautologies. See {@link transportOf}.
         transport: adapter,
         sync: async (params: SyncParams): Promise<SyncResponse> => {
+          /*
+           * IDENTITY FIRST, BEFORE THE CLAIM — and the order is the point. This refusal is
+           * independent of whether any scheduler has claimed the gate, so the sentence above
+           * ("a gate NOBODY has claimed never refuses") holds for the CADENCE predicate and
+           * not for this one. An unclaimed gate on a named mirror still refuses to merge
+           * another account's log; that is not a cadence question.
+           */
+          if (identity() !== "holds") {
+            throw new SyncAbortedError(
+              "this mirror's account is not the one this browser's session belongs to",
+            );
+          }
           if (mayContinue && !mayContinue()) {
             throw new SyncAbortedError("its sync loop was torn down or its session terminally refused");
           }
-          return adapter.sync(params);
+          const page = await adapter.sync(params);
+          // {@link gatedRead}'s arrival rule. A delta page is written straight into the mirror on
+          // disk, so an answer that turns out to have been issued under another session must not
+          // be applied — and the mirror keeps no tombstone for a row that never belonged.
+          if (identity() !== "holds") {
+            throw new SyncAbortedError("the session changed while the page was in flight");
+          }
+          return page;
         },
-        mutate: (m, opts): Promise<MutationOutcome> => adapter.mutate(m, opts),
         /**
-         * FORWARDED, AND NOT GATED — the same rule `mutate` follows, for the same reason.
+         * GATED ON IDENTITY, AND ONLY ON IDENTITY — which reverses one sentence of the rule
+         * above and leaves the rest of it standing.
+         *
+         * "A mutation is the user's own intent and must reach the server whatever the tab is
+         * doing" is still true of CADENCE: a hidden tab, a torn-down loop, a backoff — none of
+         * those may swallow a click. It is not true of identity. A mutation's outcome is
+         * applied to the mirror when it returns, so sending A's archive under B's session both
+         * acts on the wrong account's server state and writes the answer into A's mirror.
+         *
+         * REJECTED AS RETRYABLE, deliberately: the engine keeps a retryable rejection queued
+         * under the same idempotency key and flushes it once the gate opens, so the verb the
+         * person pressed happens exactly once, under the right session, later. A plain `Error`
+         * here would be read as non-retryable and the overlay rolled back — the click silently
+         * discarded, which is the worse failure of the two.
+         */
+        mutate: async (m, opts): Promise<MutationOutcome> => {
+          const refuse = (): never => {
+            throw new MutationRejectedError(
+              "ohmail: this mailbox is not the account this browser is signed in to",
+              { retryable: true },
+            );
+          };
+          if (identity() !== "holds") refuse();
+          const outcome = await adapter.mutate(m, opts);
+          /*
+           * AND AGAIN ON THE WAY BACK, which matters more here than anywhere else on this list.
+           * A mutation's outcome is APPLIED to the mirror, so an answer issued under another
+           * session both acted on the wrong account's server state and would write the result
+           * into this one's. Retryable, as at the top: the verb stays queued under the same
+           * idempotency key and is flushed once the gate opens, so the click happens exactly
+           * once, under the right session, later.
+           */
+          if (identity() !== "holds") refuse();
+          return outcome;
+        },
+        /**
+         * FORWARDED, NOT GATED ON CADENCE, REFUSED WHEN CONTRADICTED.
          *
          * A body fetch happens because somebody selected a message, expanded a card, or
          * opened a Screener row. It is the user's own intent, in a tab they are looking at,
-         * and it is bounded by that act: one request per message opened. The gate exists to
-         * stop a DISCARDED engine paging through a thirty-seven page bootstrap on behalf of
-         * nobody — which is a different shape of cost entirely.
+         * and it is bounded by that act: one request per message opened. The cadence gate
+         * exists to stop a DISCARDED engine paging through a thirty-seven page bootstrap on
+         * behalf of nobody — which is a different shape of cost entirely.
+         *
+         * Identity is the other question, and the answer here is `refuseIfForeign`'s: the id
+         * this request carries is only trustworthy while the session answering it belongs to
+         * the mirror that supplied the id. Once the jar names somebody else, a list this tab
+         * has already rendered can hand the body route an id that IS valid — for them — and
+         * the reply is their mail, in full, on this screen. See {@link refuseIfForeign}.
          *
          * It must be forwarded rather than omitted: a wrapper that dropped it would leave
          * the engine with `adapter.fetchBody` undefined on the LIVE path only — the demo is
@@ -435,7 +886,10 @@ export function createSyncGate(): SyncGate {
          * suite stayed green. This is exactly the class of wiring bug the `transport` field
          * below exists to keep visible.
          */
-        fetchBody: (messageId: string): Promise<MessageBodyWire | null> => adapter.fetchBody(messageId),
+        fetchBody: gatedRead(
+          (messageId: string): Promise<MessageBodyWire | null> => adapter.fetchBody(messageId),
+          "a message body",
+        ),
 
         /*
          * ── THE THREAD OPEN — FORWARDED, NOT GATED, AND SPREAD ────────────────────────────
@@ -443,9 +897,11 @@ export function createSyncGate(): SyncGate {
          * `GET /messages/bodies?ids=…`: every sibling of the conversation being opened, in one
          * request instead of one per message.
          *
-         * NOT GATED, on `fetchBody`'s own argument — it fires because somebody opened a thread,
-         * in a tab they are looking at, and it is bounded by that act. It is in fact the LEAST
-         * speculative call on this list: one request for what used to be N.
+         * NOT GATED ON CADENCE, on `fetchBody`'s own argument — it fires because somebody
+         * opened a thread, in a tab they are looking at, and it is bounded by that act. It is
+         * in fact the LEAST speculative call on this list: one request for what used to be N.
+         * REFUSED WHEN CONTRADICTED, on `fetchBody`'s other argument, and more sharply: this
+         * one returns N bodies per call rather than one.
          *
          * SPREAD, and this is the line that decides whether the batch ever happens outside the
          * demo. `OhmailEngine.hydrateThread` reads the capability structurally and falls back
@@ -460,13 +916,20 @@ export function createSyncGate(): SyncGate {
          * claiming a batch endpoint it has no server for, and `?demo=1` issuing a request on the
          * first thread anybody opens.
          */
-        ...(adapter.fetchBodies ? { fetchBodies: adapter.fetchBodies.bind(adapter) } : {}),
+        ...(adapter.fetchBodies
+          ? { fetchBodies: gatedRead(adapter.fetchBodies.bind(adapter), "a thread's message bodies") }
+          : {}),
 
         /*
-         * FORWARDED, NOT GATED — the same rule as `fetchBody` above: one request per settled
-         * query, from a tab the user is looking at, bounded by the act of typing. The gate is
-         * about a DISCARDED engine paging through a bootstrap on behalf of nobody, which this
-         * is not.
+         * FORWARDED, NOT GATED ON CADENCE, REFUSED WHEN CONTRADICTED — `fetchBody`'s rule,
+         * both halves. One request per settled query, from a tab the user is looking at,
+         * bounded by the act of typing; the cadence gate is about a DISCARDED engine paging
+         * through a bootstrap on behalf of nobody, which this is not.
+         *
+         * And this is the door the identity half was WRITTEN for. A search is the one read
+         * whose result is not keyed on anything this mirror already holds: it asks the server
+         * for a list, so a foreign session answers it with a foreign list, and the ids in that
+         * list then unlock every other read. See {@link refuseIfForeign}.
          *
          * SPREAD rather than always defined, and that is the whole point: an adapter WITHOUT
          * the capability must keep not having it, because the surface reads absence as "this
@@ -474,18 +937,27 @@ export function createSyncGate(): SyncGate {
          * make the demo claim an archive it has no server for — and would do it on the live
          * path only, which is the wiring bug `transport` exists to keep visible.
          */
-        ...(adapter.searchServer ? { searchServer: adapter.searchServer.bind(adapter) } : {}),
+        ...(adapter.searchServer
+          ? { searchServer: gatedRead(adapter.searchServer.bind(adapter), "a server-side search") }
+          : {}),
 
         /*
          * ── THE WORKER DOORBELL — FORWARDED, NOT GATED, AND SPREAD ────────────────────────
          *
          * `POST /sync/pull`: the "Pull new mail" press asking the worker to scan IMAP now.
          *
-         * NOT GATED, on `fetchBody`'s own argument sharpened: it fires on a deliberate press,
-         * in a tab the user is looking at, and it is bounded twice over — once by the act, and
-         * once by the route's own 5 s per-mailbox rate limit. The gate is about a DISCARDED
-         * engine paging through a bootstrap on behalf of nobody; a person pressing "Pull new
-         * mail" is the opposite of that.
+         * NOT GATED ON CADENCE, on `fetchBody`'s own argument sharpened: it fires on a
+         * deliberate press, in a tab the user is looking at, and it is bounded twice over —
+         * once by the act, and once by the route's own 5 s per-mailbox rate limit. The cadence
+         * gate is about a DISCARDED engine paging through a bootstrap on behalf of nobody; a
+         * person pressing "Pull new mail" is the opposite of that.
+         *
+         * REFUSED WHEN CONTRADICTED, and this one is not about bytes at all. Every read on this
+         * list can only show the wrong account's mail; this WRITES — the route stamps every
+         * mailbox on the answering session's account and wakes worker-side IMAP work for it. A
+         * press in a stale tab therefore bills and acts on an account nobody in this tab is,
+         * and the person pressing it cannot see that they did. The strip already says this
+         * mailbox has stopped syncing; the button behind it must not be the exception.
          *
          * SPREAD, NOT ALWAYS-DEFINED: `OhmailEngine.pullAvailable()` is how the control decides
          * to render at all, and it reads the adapter's own optional capability. Defining this
@@ -503,7 +975,40 @@ export function createSyncGate(): SyncGate {
          * `test/pull-wired.test.ts` builds the real live engine through `createEngine` so that
          * deleting this line goes red.
          */
-        ...(adapter.requestPull ? { requestPull: adapter.requestPull.bind(adapter) } : {}),
+        ...(adapter.requestPull
+          ? { requestPull: gatedRead(adapter.requestPull.bind(adapter), "a worker pull") }
+          : {}),
+
+        /*
+         * ── THE ONE-CLICK UNSUBSCRIBE — FORWARDED, REFUSED WHEN CONTRADICTED, AND SPREAD ───
+         *
+         * `POST /messages/:id/unsubscribe`: RFC 8058, performed server-side so the reader's IP
+         * and reading time never reach the sender.
+         *
+         * FORWARDED AT ALL — and this line is a REPAIR, not a precaution, the third on this
+         * list to be one. `OhmailEngine.unsubscribe` reads the capability structurally and
+         * answers `null` when the adapter has none, which a surface is entitled to read as
+         * "this client cannot unsubscribe". The gate is an explicit object literal and this
+         * method was not in it, so on the LIVE PATH — the only path this wrapper exists on —
+         * every account got `null`. `ScreenerView` maps that answer to the SUCCESS sentence:
+         * the control rendered, the press ran, no request left the browser, no unsubscribe was
+         * ever asked for, and the person was told it had been. A silent failure wearing the
+         * face of a completed action, with every suite green because they build engines from
+         * bare adapters. `test/sync-owner-gate.test.ts` builds the real engine through the gate
+         * and counts the request, so deleting this line goes red.
+         *
+         * REFUSED WHEN CONTRADICTED, on `requestPull`'s argument rather than `fetchBody`'s:
+         * this does not read, it ACTS, and it acts at a third party in the answering account's
+         * name. Under a foreign session it would unsubscribe somebody else's mail from
+         * somebody else's list, irreversibly, on a press made in a window that is not theirs.
+         *
+         * SPREAD, for the usual reason: the FixturesAdapter has no server, the demo makes no
+         * external request, and a wrapper that defined this unconditionally would put a live
+         * control over fixtures.
+         */
+        ...(adapter.unsubscribe
+          ? { unsubscribe: gatedRead(adapter.unsubscribe.bind(adapter), "an unsubscribe") }
+          : {}),
 
         /*
          * ── THE COLD-START READ — FORWARDED, AND THIS ONE **IS** THE GATED PAGE ────────────
@@ -515,15 +1020,33 @@ export function createSyncGate(): SyncGate {
          * that exempts the others points the other way here: a DISCARDED engine paging through
          * a whole snapshot is exactly what this gate exists to refuse.
          *
-         * It is nevertheless NOT gated in this literal, and that is deliberate rather than an
-         * omission. The engine calls `snapshot()` from `runSnapshot()`, whose page-1 failure
-         * path LATCHES "this route is unusable" and silently falls back to `since=0`; a
-         * `SyncAbortedError` thrown from here on page 1 would be swallowed as that latch and
-         * the tab would spend the rest of its life on the old bootstrap path. Page 2 onwards
-         * would be worse — `runSnapshot` rethrows there, which is correct for a network
-         * failure and wrong for a cancellation, and the drain would count it against the
-         * backoff. The gate on `sync()` already bounds the drain: the delta pages that follow
-         * the snapshot refuse, and a torn-down loop stops there.
+         * It IS gated, on IDENTITY ONLY, through {@link gatedPage} — and the paragraph that
+         * used to stand here said the opposite, so read what it argued before trusting the
+         * reversal. It said a `SyncAbortedError` from page 1 would be swallowed by
+         * `runSnapshot`'s "this route is unusable" latch, and that page 2 onwards would be
+         * counted against the backoff. Half of that is still true and the other half was
+         * measured wrong.
+         *
+         * Page 1: the latch is real, and it is unreachable in practice. The scheduler re-reads
+         * identity BEFORE `syncOnce()` on every tick, so a drain only starts while the gate
+         * holds; reaching page 1 with a foreign jar needs the cookie to change inside the
+         * microtask between that check and the request. If it ever does happen the tab is
+         * `contradicted` and terminal anyway, and the cost is that a later healed session
+         * replays the log from seq zero instead of taking the snapshot — slower, never wrong.
+         *
+         * Pages 2..n: this is the window that matters and the reason the old paragraph was a
+         * defect rather than a trade-off. A cold account's bootstrap is ~37 pages over several
+         * seconds; a sign-in as somebody else in another tab of the same profile rewrites the
+         * jar in the middle of it, and every remaining page was selected from the NEW session
+         * and written into the mirror named for the old one — durably, because the mirror has
+         * no tombstones for ids it never should have held. `runSnapshot` rethrows from page 2
+         * onwards, and the scheduler's catch reads `SyncAbortedError` as a cancellation, which
+         * is exactly what this is: no failure count, no report, no retry.
+         *
+         * NOT gated on the CADENCE claim, deliberately: `mayContinue` is what a teardown moves,
+         * and refusing page 1 for a teardown WOULD hit the latch above for a reason that has
+         * nothing to do with identity. The gate on `sync()` still bounds the drain there — the
+         * delta pages that follow the snapshot refuse, and a torn-down loop stops.
          *
          * SPREAD, for the third time and the usual reason: defining it unconditionally would
          * make a `FixturesAdapter` behind a gate claim a snapshot endpoint it has no server
@@ -537,7 +1060,14 @@ export function createSyncGate(): SyncGate {
          * `test/snapshot-wired.test.ts` builds the real live engine through `createEngine` so that
          * deleting this line goes red.
          */
-        ...(adapter.snapshot ? { snapshot: adapter.snapshot.bind(adapter) } : {}),
+        ...(adapter.snapshot
+          ? {
+            snapshot: gatedPage(
+              adapter.snapshot.bind(adapter),
+              "the cold-start snapshot",
+            ),
+          }
+          : {}),
 
         /*
          * ── READING PAST THE END OF THE WINDOW — FORWARDED, NOT GATED, AND SPREAD ──────────
@@ -546,9 +1076,15 @@ export function createSyncGate(): SyncGate {
          * this client chose not to keep on disk. Same rule as `fetchBody` and `searchServer` on
          * all three counts.
          *
-         * NOT GATED: it fires when somebody scrolls to the bottom of a pile, in a tab they are
-         * looking at, and it is bounded by that act — one page per scroll, never speculative.
-         * The gate is about a DISCARDED engine paging through a bootstrap on behalf of nobody.
+         * NOT GATED ON CADENCE: it fires when somebody scrolls to the bottom of a pile, in a
+         * tab they are looking at, and it is bounded by that act — one page per scroll, never
+         * speculative. The cadence gate is about a DISCARDED engine paging through a bootstrap
+         * on behalf of nobody.
+         *
+         * REFUSED WHEN CONTRADICTED, for `searchServer`'s reason exactly: this is the second
+         * read that returns a LIST rather than an answer about an id this mirror already holds,
+         * so a foreign session answers it with a foreign page of mail — rendered in the pile,
+         * and every id in it usable against the body route.
          *
          * SPREAD: `OhmailEngine.listOlderAvailable()` decides whether the end of a list offers a
          * control at all. Defining this unconditionally would put "there is more, older mail" at
@@ -558,19 +1094,25 @@ export function createSyncGate(): SyncGate {
          * ninety-day window and is told that is the end of their mail — which is the falsest
          * sentence this app could put on a screen, and it would say it only in production.
          */
-        ...(adapter.listMessages ? { listMessages: adapter.listMessages.bind(adapter) } : {}),
+        ...(adapter.listMessages
+          ? { listMessages: gatedRead(adapter.listMessages.bind(adapter), "a page of older mail") }
+          : {}),
 
         /*
          * ── ATTACHMENTS — FORWARDED, NOT GATED, AND SPREAD ────────────────────────────────
          *
          * Three capabilities, one rule, and it is `searchServer`'s rule for the third time.
          *
-         * NOT GATED: `listAttachments` is one indexed row read when a message is opened, and
-         * the two byte methods fire on a click on a named file. All three are the user's own
-         * intent in a tab they are looking at. The gate is about a DISCARDED engine paging
-         * through a bootstrap on behalf of nobody; a person pressing a PDF is the opposite of
-         * that. Gating them would mean a file that silently refuses to open whenever the
-         * predicate happens to be false.
+         * NOT GATED ON CADENCE: `listAttachments` is one indexed row read when a message is
+         * opened, and the two byte methods fire on a click on a named file. All three are the
+         * user's own intent in a tab they are looking at. The cadence gate is about a DISCARDED
+         * engine paging through a bootstrap on behalf of nobody; a person pressing a PDF is the
+         * opposite of that, and gating them on cadence would mean a file that silently refuses
+         * to open whenever the predicate happens to be false.
+         *
+         * REFUSED WHEN CONTRADICTED: an id reached through a foreign list opens a foreign
+         * file, and these three hand back its BYTES. `fetchAllAttachments` builds an archive of
+         * them.
          *
          * SPREAD, NOT ALWAYS-DEFINED: `OhmailEngine.attachmentsAvailable()` is `typeof
          * adapter.listAttachments === "function" && typeof adapter.fetchAttachment ===
@@ -589,9 +1131,15 @@ export function createSyncGate(): SyncGate {
          * real live engine through `createEngine` so that deleting any one of these three
          * lines goes red.
          */
-        ...(adapter.listAttachments ? { listAttachments: adapter.listAttachments.bind(adapter) } : {}),
-        ...(adapter.fetchAttachment ? { fetchAttachment: adapter.fetchAttachment.bind(adapter) } : {}),
-        ...(adapter.fetchAllAttachments ? { fetchAllAttachments: adapter.fetchAllAttachments.bind(adapter) } : {}),
+        ...(adapter.listAttachments
+          ? { listAttachments: gatedRead(adapter.listAttachments.bind(adapter), "an attachment list") }
+          : {}),
+        ...(adapter.fetchAttachment
+          ? { fetchAttachment: gatedRead(adapter.fetchAttachment.bind(adapter), "an attachment") }
+          : {}),
+        ...(adapter.fetchAllAttachments
+          ? { fetchAllAttachments: gatedRead(adapter.fetchAllAttachments.bind(adapter), "every attachment") }
+          : {}),
       } satisfies GatedAdapter & { transport: EngineAdapter };
     },
   };
@@ -618,6 +1166,71 @@ const GATES = new WeakMap<OhmailEngine, SyncGate>();
 export function registerSyncGate(engine: OhmailEngine, gate: SyncGate): OhmailEngine {
   GATES.set(engine, gate);
   return engine;
+}
+
+/**
+ * THE SERVER NAMED THIS MAILBOX'S ACCOUNT — the one call that opens a named mirror's gate.
+ *
+ * Called from the confirm effect's `owner` arm with the id `GET /auth/session` returned, for
+ * the warm engine once that comparison passes and for the freshly built cold engine. Both
+ * BEFORE `setBinding`, so the first tick of the scheduler that binding starts already sees an
+ * open gate rather than racing it.
+ *
+ * A no-op on an engine with no gate — the demo, the desktop's host-built engine, a bare
+ * `new OhmailEngine`. Those have nothing to open and nothing on disk to protect.
+ */
+export function confirmSyncOwner(engine: OhmailEngine, accountId: string): void {
+  GATES.get(engine)?.confirm(accountId);
+}
+
+/**
+ * MAY THIS ENGINE STILL BE TRUSTED? — the same answer the gate gives its own adapter, for the
+ * doors that do not go through an adapter at all.
+ *
+ * Two Cloud readers reach the API without touching `EngineAdapter`, so wrapping the adapter
+ * cannot reach them: the reach-past body door (`older-body.ts`, a session-held fetch for rows
+ * beyond the mirror window) and the mailbox-facts poll (`MailStateProvider`, `GET /mailboxes`
+ * every thirty seconds). Both keep asking under whatever cookie the jar holds, and both publish
+ * what comes back — a foreign body rendered into the pane, a foreign account's mailbox
+ * addresses and errors rendered into the strip and the From selector.
+ *
+ * One predicate rather than a second spelling of it, deliberately: two ways to ask "is this
+ * still my account" is how the two come to disagree, and the disagreement is invisible.
+ *
+ * `holds` for an engine with no gate — the demo, the desktop's host-built engine, a bare
+ * `new OhmailEngine`. None of them has a Cloud session to be wrong about.
+ */
+export function syncIdentityOf(engine: OhmailEngine | null | undefined): SyncIdentity {
+  if (!engine) return "holds";
+  return GATES.get(engine)?.identity() ?? "holds";
+}
+
+/**
+ * MAY A DIRECT READER ASK THE SERVER FOR THIS ACCOUNT'S BYTES? — the adapter's own rule, exported
+ * so the two doors that do not go through an adapter cannot drift from it.
+ *
+ * They did drift. Both were written when the gate had three states and tested
+ * `=== "contradicted"`; the fourth state arrived and neither moved, so a REVOKED gate — one whose
+ * confirmation the marker has already outlived — went on being readable through the reach-past
+ * body door and the mailbox-facts poll while the adapter beside them refused. Three spellings of
+ * one question is how two of them come to disagree, which is the argument this file makes about
+ * `identity()` itself; this is the same argument applied one layer out.
+ *
+ * `unconfirmed` reads TRUE, deliberately and for the last time in this file: that is the ordinary
+ * warm open, the mail is the person's own, and refusing there would blank a mailbox that is
+ * already on screen for the length of a round trip.
+ */
+/**
+ * ASK ME AGAIN WHEN A REVOKED MIRROR COULD BE CONFIRMED. The shell's own re-entry into the
+ * session confirm; a no-op on an engine with no gate. See {@link SyncGate.onNeedsConfirm}.
+ */
+export function onSyncNeedsConfirm(engine: OhmailEngine | null | undefined, cb: () => void): void {
+  if (!engine) return;
+  GATES.get(engine)?.onNeedsConfirm(cb);
+}
+
+export function syncMayRead(engine: OhmailEngine | null | undefined): boolean {
+  return mayReadIdentity(syncIdentityOf(engine));
 }
 
 /** The two globals this loop reads, narrowed so a test can hand it neither. */
@@ -812,6 +1425,40 @@ export function startSyncScheduler(
    */
   let terminal = false;
   /**
+   * WHY the loop is terminal, as two INDEPENDENT bits rather than one flag naming a winner.
+   *
+   * `terminal` is the union of them, and both causes are real and unrelated: the SERVER refused
+   * this session (sustained, and its own statement about this account), or the cookie jar names
+   * somebody else (this browser's own state, which can change back).
+   *
+   * One flag could not compose. It said "the current terminal is a contradiction's", so a server
+   * refusal that latched first and a contradiction observed afterwards overwrote it — and when
+   * the contradiction cleared, the release took the SERVER's verdict with it. The gate stayed
+   * shut and no bytes flowed, so nothing leaked; what disappeared was a true sentence the person
+   * needed. Two bits, and a contradiction can only ever clear its own.
+   *
+   * ── AND THE SEQUENCE THAT DISTINGUISHES THEM IS REAL, WHICH I CLAIMED IT WAS NOT ───────────
+   *
+   * This shipped with no test and a recorded argument that none was possible: a terminal loop
+   * holds NO TIMER, so the only thing that can drive a tick — and therefore observe a marker
+   * change — is `wake()`'s probe, floored at `BACKOFF_CAP_MS` and guarded by `visible()`.
+   *
+   * The argument was wrong, and the way it was wrong is worth keeping. The floor is real; my
+   * attempt to drive two observations through it advanced past the cap before the SECOND wake and
+   * not before the FIRST, so the probe that was meant to OBSERVE the contradiction was itself
+   * throttled and the gate never saw the other account at all. Two identical published sequences
+   * came back and I read that as "no sequence exists" rather than "my sequence did not run".
+   *
+   * `sync-owner-gate.test.ts`'s "a contradiction that comes and goes does not erase the server's
+   * own refusal" is that sequence, with the cap before BOTH wakes. Measured: with one flag it goes
+   * red, with two bits green. A guard nobody has watched fail is not evidence — and neither is an
+   * argument that it cannot.
+   */
+  let terminalByServer = false;
+  let terminalByIdentity = false;
+  /** Re-derive the union after either bit moves. Never assign `terminal` any other way. */
+  const settleTerminal = (): void => { terminal = terminalByServer || terminalByIdentity; };
+  /**
    * WHEN a coded refusal arrived that has not been confirmed. Null when there is none.
    *
    * This is where the fact lives between the two asks. The poll is stopped (a refusal is believed
@@ -874,7 +1521,28 @@ export function startSyncScheduler(
    * page". What it still refuses is a torn-down scheduler and a terminally refused session,
    * for which no cadence is the right cadence.
    */
-  const mayRequest = (): boolean => !stopped && (!terminal || revalidating);
+  // The gate refuses the engine's NEXT page whenever this scheduler would refuse a new drain.
+  // Claimed and never released: the predicate closes itself via `stopped`, so a torn-down
+  // scheduler cancels the drain it left behind rather than freeing it to keep paging.
+  //
+  // Looked up HERE rather than below `mayRequest`, because `mayRequest` now reads it.
+  const gate = options.gate !== undefined ? options.gate : (GATES.get(engine) ?? null);
+
+  /**
+   * The CADENCE half: is this loop still entitled to make a request at all? Teardown and a
+   * terminally refused session, exactly as before identity existed.
+   *
+   * Split out because the two halves need different ANSWERS. A caller that only wants to know
+   * "am I still alive" must not be told "no" for an identity reason and silently return — the
+   * identity cases have their own branch in `tick()`, which reports the contradiction and
+   * quietly stands down for the unconfirmed one. Folding identity in here is what made the
+   * unconfirmed case return from inside the hydration block with `bootstrapping` still true,
+   * so the strip claimed a bootstrap that was never going to happen.
+   */
+  const mayRunNow = (): boolean => !stopped && (!terminal || revalidating);
+
+  const mayRequest = (): boolean =>
+    mayRunNow() && (gate?.identity() ?? "holds") === "holds";
 
   /** The wake stream, when this build has one and the tab is visible. */
   let stream: WakeStreamLike | null = null;
@@ -894,6 +1562,13 @@ export function startSyncScheduler(
    */
   let pendingWake = false;
 
+  /**
+   * MAY THIS WINDOW HOLD A SESSION-AUTHENTICATED STREAM RIGHT NOW? One spelling, read at four
+   * points in the stream's life, because the stream is the one thing in this loop that keeps
+   * acting after the moment it was created.
+   */
+  const identityHolds = (): boolean => (gate?.identity() ?? "holds") === "holds";
+
   const closeStream = (): void => {
     const s = stream;
     stream = null;
@@ -907,11 +1582,35 @@ export function startSyncScheduler(
 
   const connectStream = (): void => {
     if (!wakeFactory || streamDead || stopped || stream !== null || !visible()) return;
+    /*
+     * ── AND NOT WHILE THIS MIRROR'S IDENTITY DOES NOT HOLD ────────────────────────────────
+     *
+     * `/events` is a SESSION-authenticated stream and the server emits the answering account's
+     * sequence on it. Opened without asking, a stale shell for A held a live subscription to B's
+     * activity: content-free as mail goes, and still that account's metadata arriving in a window
+     * that is not theirs, on a connection nobody in it opened.
+     *
+     * The gated tick downstream is what stops the mail being merged, which is why this is a
+     * narrowing rather than a repair of a leak. It is also why it belongs here: the stream is the
+     * one thing in this loop that is not a request, so nothing else in the file was ever going to
+     * ask the question for it.
+     */
+    if (!identityHolds()) return;
     try {
       const s = wakeFactory();
       stream = s;
       s.addEventListener("open", () => {
         if (stream !== s || stopped) return;
+        /*
+         * ── ASKED AGAIN ON EVERY OPEN, BECAUSE NOT EVERY OPEN IS ONE WE ASKED FOR ──────────
+         *
+         * `connectStream` checks identity once, at construction. `EventSource` then reconnects
+         * BY ITSELF after a transient failure — that is the whole of what the object does — and
+         * the reconnect carries whatever cookies the jar holds at that moment, not the ones it
+         * was opened with. So an open here can be a connection to another account's stream that
+         * nothing in this window requested.
+         */
+        if (!identityHolds()) { closeStream(); return; }
         streamOpen = true;
         // Drain once on every open, not only the first: a reconnect (the server cycles streams
         // before its platform ceiling; a network blip) is a window in which wakes were missed,
@@ -920,11 +1619,32 @@ export function startSyncScheduler(
       });
       s.addEventListener("sync", () => {
         if (stream !== s || stopped) return;
+        // A frame can arrive on a connection the browser re-established under a jar that has
+        // since changed; the open check above is the first line and this is the second.
+        if (!identityHolds()) { closeStream(); return; }
         wake();
       });
       s.addEventListener("error", () => {
         if (stream !== s || stopped) return;
         streamOpen = false;
+        /*
+         * ── AND THIS IS WHERE THE RECONNECT IS ACTUALLY PREVENTED ─────────────────────────
+         *
+         * The error arm below deliberately leaves a CONNECTING stream alive, because that is
+         * the ordinary transient failure and `EventSource` recovers from it on its own. That
+         * recovery is exactly the hazard when the jar has changed in the meantime: the object
+         * re-dials with the new session and the server binds the connection to that account.
+         *
+         * The safety poll's tick closes a contradicted stream, but it runs on the relaxed
+         * cadence a tab with a live stream keeps — the reconnect lands long before it. So the
+         * question is asked at the moment the reconnect is about to be armed. Closing here is
+         * what makes the two checks above defence in depth rather than the only defence.
+         */
+        if (!identityHolds()) {
+          closeStream();
+          armFloor();
+          return;
+        }
         if (s.readyState === WAKE_STREAM_CLOSED) {
           // Non-200: EventSource will not reconnect, and neither will this module — permanent
           // fallback to polling for the session. WHICH refusal it was is deliberately not asked
@@ -949,10 +1669,6 @@ export function startSyncScheduler(
     }
   };
 
-  // The gate refuses the engine's NEXT page whenever this scheduler would refuse a new drain.
-  // Claimed and never released: the predicate closes itself via `stopped`, so a torn-down
-  // scheduler cancels the drain it left behind rather than freeing it to keep paging.
-  const gate = options.gate !== undefined ? options.gate : (GATES.get(engine) ?? null);
   gate?.claim(mayRequest);
 
   const publish = (): void => {
@@ -1060,16 +1776,95 @@ export function startSyncScheduler(
         //
         // Hydration is kept (`hydrated` stays true) — the mirror is loaded and re-reading it
         // on the next wake would be pure waste. Only the REQUEST is withheld.
-        if (!mayRequest()) {
+        // The CADENCE half only — identity is answered below, where it can say which of its
+        // two closed states this is.
+        if (!mayRunNow()) {
           disarm();
           return;
         }
       }
+      /* ── WHOSE MAILBOX IS THIS, ASKED BEFORE EVERY DRAIN ─────────────────────────────
+       *
+       * On EVERY tick, not only the first. The check above runs inside `if (!hydrated)`, so
+       * from the second tick onward nothing stood between the timer and `syncOnce()` — and
+       * `syncOnce` reaches for `/sync/snapshot` first, which is deliberately UNGATED (a page-1
+       * throw latches the route unusable), so page one would leave the browser whatever the
+       * per-page gate said afterwards.
+       *
+       * The two closed answers are told apart because they mean different things to a person:
+       *
+       *  · `contradicted` — the jar names another account. That is positive evidence this tab
+       *    is no longer the one it was, so the loop LATCHES terminal and the strip says so.
+       *    This is the only cover for a `ready` tab whose browser signs into another account
+       *    mid-use: the confirm's comparison answers once, and nothing re-runs it on a live binding.
+       *    `wake()`'s terminal probe re-reads identity, so restoring the cookie self-heals.
+       *  · `unconfirmed` — nobody has said yet. Nothing is wrong, nothing is syncing, and the
+       *    strip may not claim either: it disarms QUIETLY and waits for `onOpen`.
+       */
+      const owns = gate?.identity() ?? "holds";
+      if (owns === "contradicted") {
+        // The wake stream goes with it: it is session-authenticated, and a subscription this tab
+        // opened for A must not go on receiving B's sequence. `connectStream` refuses to reopen
+        // it while identity does not hold, so this is the close and that is the latch.
+        closeStream();
+        terminalByIdentity = true;
+        settleTerminal();
+        bootstrapping = false;
+        disarm();
+        publish();
+        report(
+          "ohmail: this browser now holds another account's session — this mailbox has stopped syncing; sign in again",
+          new SyncAbortedError("the cookie jar names a different account than this mirror"),
+        );
+        return;
+      }
+      /*
+       * `revoked` rides with `unconfirmed` HERE and not with `contradicted`, which is the
+       * opposite of how the read gate treats it — deliberately, and the two are answering
+       * different questions. The read gate asks "may this window act on the answer?" and a
+       * lapsed grant means no. The strip asks "what should the person be told?" and a lapsed
+       * grant is not a claim about the account: the marker changed, which happens on a sign-in
+       * elsewhere, a sign-out, a rotation. Saying "this mailbox has stopped syncing; sign in
+       * again" over that would be the slice's own defect in a new place — a sentence stronger
+       * than the evidence. So it disarms QUIETLY and waits for `onOpen`, exactly as an
+       * un-confirmed gate does.
+       */
+      if (owns === "unconfirmed" || owns === "revoked") {
+        // Same as the contradiction arm: a lapsed grant is not a licence to keep listening.
+        closeStream();
+        /*
+         * AND THE CONTRADICTION'S OWN LATCH IS RELEASED, because its cause is gone.
+         *
+         * `terminal` says "this tab can no longer be served" and the strip says so out loud.
+         * When that claim was made because the jar named somebody else, and the jar has since
+         * stopped naming them, the claim has outlived its evidence — and a sentence stronger
+         * than its evidence is the defect this whole slice exists to remove. What is NOT
+         * released is a `terminal` the SERVER caused: a sustained refusal is the server's own
+         * statement about this account, and a marker changing underneath it does not withdraw
+         * it. Hence two cause bits rather than one flag: a contradiction clears only its own, and
+         * a server refusal underneath it survives — which is what the single flag got wrong.
+         *
+         * Nothing resumes here either way. The loop stays disarmed and quiet until a fresh
+         * confirmation opens the gate; this only stops it announcing a stop it can no longer
+         * support.
+         */
+        terminalByIdentity = false;
+        settleTerminal();
+        bootstrapping = false;
+        disarm();
+        publish();
+        return;
+      }
       await engine.syncOnce();
       if (stopped) return;
       // A drain that SUCCEEDED disproves the refusal, so the claim is withdrawn. `arm()` refuses
-      // to set a timer while `terminal`, which is why this clears it BEFORE arming.
-      terminal = false;
+      // to set a timer while `terminal`, which is why this clears it BEFORE arming. A drain can
+      // only have run with the gate holding, so there is no identity cause left to clear —
+      // cleared anyway, because a bit whose invariant is "already false here" is a bit somebody
+      // will make true one refactor from now.
+      terminalByServer = false;
+      terminalByIdentity = false;
+      settleTerminal();
       revalidating = false;
       // …and an UNCONFIRMED refusal is withdrawn here too, or the next transient one an hour later
       // would find `refusedAt` still set, read itself as the confirmation, and latch on the first
@@ -1106,7 +1901,8 @@ export function startSyncScheduler(
           // having a bad minute" and "this tab can no longer be served". `role="alert"`
           // re-announcing on a re-latch is correct — the claim was re-made by the server, not
           // repeated by us.
-          terminal = true;
+          terminalByServer = true;
+          settleTerminal();
           refusedAt = null;
           revalidating = false;
           disarm();
@@ -1241,6 +2037,15 @@ export function startSyncScheduler(
 
   visibility?.addEventListener("visibilitychange", onVisibility);
   online?.addEventListener("online", wake);
+  /*
+   * THE GATE OPENING IS A WAKE, and it is registered HERE rather than beside the `claim` above
+   * for one mechanical reason: `wake` is a `const` declared further down, so a registration at
+   * the claim site would read it in its temporal dead zone and throw on the first
+   * `startSyncScheduler`. That is the "built, tested, unreachable" shape — the gate would open
+   * and nothing would ever notice, and only a test that confirms AFTER the first tick could
+   * see it. `sync-owner-gate.test.ts` case 1 is that test.
+   */
+  gate?.onOpen(wake);
 
   connectStream();
   publish();

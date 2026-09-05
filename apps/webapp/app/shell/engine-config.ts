@@ -245,13 +245,29 @@ export function createEngine(
    * visibility gate could decide whether a drain STARTED and never whether it continued — a
    * hidden or closed tab kept issuing the remaining pages of a bootstrap. The gate wraps the
    * adapter here because `adapter.sync()` IS the page boundary; the scheduler claims it and
-   * refuses the next page while the tab is hidden or its loop has been torn down. Read
-   * `sync-scheduler.ts` for why the association goes through a `WeakMap` rather than this
-   * function's return type.
+   * refuses the next page while its loop has been torn down. Read `sync-scheduler.ts` for why
+   * the association goes through a `WeakMap` rather than this function's return type.
+   *
+   * IT ALSO CARRIES THE MIRROR'S NAME, which is the second question it answers. `/sync` returns
+   * no account identity, and the engine writes what comes back straight into
+   * `ohmail-mirror:<owner>` — so a page fetched under a session belonging to somebody else
+   * lands in this account's mailbox and stays there. The gate is built CLOSED for a named
+   * mirror and opens only when the confirm names an account equal to `owner`; it re-reads
+   * `tf_owner` on every request, so a browser that signs into another account mid-session stops
+   * this loop instead of feeding it.
    *
    * The demo returns above, so it never gets one: it has no transport to gate.
    */
-  const gate = createSyncGate();
+  /*
+   * THE MIRROR'S NAME, handed to the gate — this is the whole of the identity half.
+   *
+   * `owner` is the same value that names the IndexedDB database below, so the gate can ask
+   * "is the account this browser's session belongs to the account this mirror is FOR?" without
+   * anything new on the wire. `undefined` (the demo path returns earlier; an embedder that
+   * builds an un-named engine) becomes `null`, which the gate reads as "no mirror on disk to
+   * pollute" and leaves open.
+   */
+  const gate = createSyncGate(owner ?? null);
   return registerSyncGate(
     new OhmailEngine({
       /**
