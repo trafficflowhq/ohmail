@@ -2441,9 +2441,27 @@ const SEARCH_UIDS_MAX = 501;
  */
 const SEARCH_FETCH_BATCH = 100;
 
+/**
+ * How many uids one EXPUNGE of the ack sweep carries. Two hundred, for the same reason the fetch
+ * batch is a hundred: the command line stays a fixed size whatever the folder did, and a refusal
+ * costs one batch rather than the whole compaction.
+ */
+const SWEEP_DELETE_BATCH = 200;
+
+/**
+ * The most records one install may own in `ohmail/_meta` before a release refuses to enumerate.
+ *
+ * Deliberately far above anything an honest folder holds — a live install owns ONE claim and the
+ * settings document — so this is a bound on WORK, not a policy. What it is not is the decision
+ * ceiling: a release that quietly stopped at 501 would report success while a claim of ours stayed
+ * behind, which is the one outcome the release path exists to prevent.
+ */
+const OWN_RECORDS_MAX = 5_000;
+
 async function searchHeaders(
   client: Pick<LeaseImapClient, "search" | "fetch">,
   query: { header: Record<string, string | boolean>; before?: Date },
+  opts?: { max?: number; refuseWhenOver?: boolean },
 ): Promise<RawClaimMessage[] | null> {
   if (typeof client.search !== "function") return null;
   const found = await client.search(query, { uid: true });
@@ -2463,9 +2481,24 @@ async function searchHeaders(
    * is built on — and fetched in batches rather than as a single command. Bounded work for an
    * unbounded answer, which is the property this seam needed and did not have.
    */
-  const capped = found.length > SEARCH_UIDS_MAX
-    ? found.slice(0, SEARCH_UIDS_MAX)
-    : found;
+  /* ── A SLICE IS THE RIGHT ANSWER FOR A DECISION AND THE WRONG ONE FOR A RELEASE ──────────
+   *
+   * The election and the peek are deciding, and both apply their own ceiling to the RESULT: a
+   * set larger than the ceiling is refused by the caller, so carrying one past it costs a round
+   * trip and buys nothing. Slicing there is a bound, not a loss.
+   *
+   * A RELEASE is not deciding, it is enumerating. Every record this install owns has to be found
+   * or the release is partial — and a partial release that returns a COUNT reads as success, so
+   * the omitted claim goes on holding the mailbox against the next install until it goes stale.
+   * Silently slicing that set to the decision ceiling was round ten's finding 3, introduced by
+   * the cap that closed round nine's finding 6.
+   *
+   * So the bound is still there and the callers differ in what they mean by crossing it: the
+   * deciders take the slice, the release asks to be REFUSED, which its caller reports as a
+   * release that did not happen rather than one that did. */
+  const max = opts?.max ?? SEARCH_UIDS_MAX;
+  if (found.length > max && opts?.refuseWhenOver === true) return null;
+  const capped = found.length > max ? found.slice(0, max) : found;
   const out: RawClaimMessage[] = [];
   for (let i = 0; i < capped.length; i += SEARCH_FETCH_BATCH) {
     const batch = capped.slice(i, i + SEARCH_FETCH_BATCH);
@@ -2567,7 +2600,16 @@ export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: s
       // each and keeps only claims. Expunging a profile here would delete the mailbox's settings.
       const lock = await client.getMailboxLock(await meta.path());
       try {
-        return await searchHeaders(client, { header: { [H.installId]: installId } });
+        /* EXHAUSTIVE, and refused rather than sliced when it cannot be. The caller deletes what
+         * comes back and reports a count, so a short answer here is a claim left holding the
+         * mailbox while the log says it was released. {@link OWN_RECORDS_MAX} is a ceiling on
+         * work rather than on correctness: it is far above any honest folder, and crossing it
+         * returns `null` — "could not enumerate" — which the release reports as a refusal. */
+        return await searchHeaders(
+          client,
+          { header: { [H.installId]: installId } },
+          { max: OWN_RECORDS_MAX, refuseWhenOver: true },
+        );
       } finally {
         lock.release();
       }
@@ -4562,19 +4604,39 @@ export function makeRequestOrganizerIo(
           );
         }
         if (found.length === 0) return 0;
-        const done = await client.messageDelete(found, { uid: true });
-        if (done === false) {
-          throw new RequestUnavailableError(
-            `the server refused to expunge ${found.length} stale acknowledgement(s) from `
-            + META_FOLDER,
-            { op: "sweep_acks" },
-          );
+        /* ── SWEPT IN BOUNDED BATCHES, BECAUSE THE SET IS AS LARGE AS THE FOLDER GOT ─────────
+         *
+         * The whole matching set used to go into ONE expunge and one custody read. That makes the
+         * compactor's command grow with the mess it exists to clear: thousands of stale
+         * acknowledgements produce a command line a provider can refuse outright, and a refusal
+         * leaves every one of them standing. The folder is then over the ceiling, the bounded read
+         * refuses, and the only thing that could have made it smaller is the command that just
+         * failed — so the state never heals, which is the shape this sweep was moved ahead of the
+         * read to prevent in the first place.
+         *
+         * {@link SWEEP_DELETE_BATCH} uids per expunge, each batch proved gone before the next is
+         * attempted. A batch that fails throws with the batches BEFORE it already removed, so a
+         * refusal part-way through still leaves the folder smaller than it was and the next cycle
+         * resumes on a shorter set. Progress that survives a failure is the property this needs;
+         * an all-or-nothing sweep has none. */
+        let swept = 0;
+        for (let i = 0; i < found.length; i += SWEEP_DELETE_BATCH) {
+          const batch = found.slice(i, i + SWEEP_DELETE_BATCH);
+          const done = await client.messageDelete(batch, { uid: true });
+          if (done === false) {
+            throw new RequestUnavailableError(
+              `the server refused to expunge ${batch.length} stale acknowledgement(s) from `
+              + `${META_FOLDER} (${swept} already removed on this pass)`,
+              { op: "sweep_acks" },
+            );
+          }
+          /* And a `true` proves only that a command ran — the claim path's rule, for the same
+           * reason. Reporting a sweep that removed nothing is how a permanently full folder gets
+           * mistaken for one that is being kept in trim. */
+          await proveGone(client, batch, "stale acknowledgement(s)", "sweep_acks");
+          swept += batch.length;
         }
-        /* And a `true` proves only that a command ran — the claim path's rule, for the same
-         * reason. Reporting a sweep that removed nothing is how a permanently full folder gets
-         * mistaken for one that is being kept in trim. */
-        await proveGone(client, found, "stale acknowledgement(s)", "sweep_acks");
-        return found.length;
+        return swept;
       } finally {
         lock.release();
       }

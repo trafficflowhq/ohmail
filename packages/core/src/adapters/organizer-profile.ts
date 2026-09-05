@@ -607,7 +607,17 @@ export interface ProfileImapClient extends MetaFolderClient {
   ): Promise<number[] | false | undefined>;
   fetch(
     range: string,
-    query: { uid?: boolean; source?: boolean; size?: boolean },
+    /**
+     * `source` may be a BYTE RANGE rather than a flag. `{ start, maxLength }` compiles to
+     * `BODY.PEEK[]<start.maxLength>` (imapflow 1.5.0, `lib/commands/fetch.js`), which is the only
+     * way to bound what a message costs BEFORE the server sends it — read there rather than
+     * assumed, because the whole point of this seam is that it reaches the wire.
+     */
+    query: {
+      uid?: boolean;
+      source?: boolean | { start?: number; maxLength?: number };
+      size?: boolean;
+    },
     options?: { uid?: boolean },
   ): AsyncIterableIterator<{ uid: number; seq?: number; source?: Buffer; size?: number }>;
   append(path: string, content: string | Buffer, flags?: string[]): Promise<unknown>;
@@ -822,8 +832,57 @@ export function makeProfileIo(
           for (let i = 0; i < order.length; i += PROFILE_FETCH_BATCH) {
             const batch = order.slice(i, i + PROFILE_FETCH_BATCH);
             const got = new Map<number, Buffer>();
-            for await (const m of client.fetch(batch.join(","), { uid: true, source: true }, { uid: true })) {
-              if (m.source) got.set(m.uid, m.source);
+            /* ── A RECORD WHOSE SIZE THE SERVER WOULD NOT NAME IS FETCHED WITH A BYTE RANGE ──
+             *
+             * The size pass is what keeps a hostile literal off the wire, and it only works for a
+             * server that answers `RFC822.SIZE`. For one that declines, the previous version asked
+             * for the whole source and measured it afterwards — which bounds what is RETAINED and
+             * nothing at all about what is TRANSFERRED. That was round nine's finding 5 reported
+             * as closed and round ten's finding 5 reopening it, correctly: the backstop below runs
+             * after the bytes have already arrived.
+             *
+             * So an unmeasured record is asked for as `BODY.PEEK[]<0.N>` — the server sends at
+             * most N bytes, whatever the message weighs. N is the budget PLUS ONE, which is what
+             * makes the answer exact rather than merely conservative: a reply SHORTER than N is
+             * the whole document and is safe to parse; a reply of exactly N means the message did
+             * not fit, so it is refused and never parsed. Asking for exactly the budget could not
+             * tell a document that fits precisely from one that overruns.
+             *
+             * Unmeasured records are asked for one at a time. They are the exception — a server
+             * that answers sizes never reaches here — and a per-message range cannot be expressed
+             * for a batch. */
+            const unmeasured = batch.filter((uid) => !sizes.has(uid));
+            const measured = batch.filter((uid) => sizes.has(uid));
+            if (measured.length > 0) {
+              for await (const m of client.fetch(
+                measured.join(","), { uid: true, source: true }, { uid: true },
+              )) {
+                if (m.source) got.set(m.uid, m.source);
+              }
+            }
+            for (const uid of unmeasured) {
+              const budget = maxBytes - held;
+              const cap = Math.max(1, budget) + 1;
+              for await (const m of client.fetch(
+                String(uid), { uid: true, source: { start: 0, maxLength: cap } }, { uid: true },
+              )) {
+                if (!m.source) continue;
+                if (m.source.byteLength >= cap) {
+                  /* It filled the range, so the document is larger than the budget. Refused on a
+                   * complete scan, skipped on a read — never parsed, which is the point: the
+                   * parser is what an oversized document is dangerous to. */
+                  if (complete) {
+                    throw new ProfileUnavailableError(
+                      `a settings record in ${META_FOLDER} is larger than the ${maxBytes}-byte `
+                      + "budget this read may spend, and a write must see every document whole "
+                      + "before it may replace any",
+                      { op: "list_profiles" },
+                    );
+                  }
+                  continue;
+                }
+                got.set(m.uid, m.source);
+              }
             }
             for (const uid of batch) {
               const src = got.get(uid);

@@ -1013,7 +1013,32 @@ export async function driveOutstandingRequests(
    * an operator sees a folder under pressure instead of a drain that quietly does less each pass.
    *
    * The ceiling is the same constant the read enforces. A bound that guessed a different number
-   * would be a second opinion about when this folder is full. */
+   * would be a second opinion about when this folder is full.
+   *
+   * ── AND THE HONEST INVARIANT IS TWO-PART, BECAUSE THIS CHECK CANNOT BE THE WHOLE OF IT ─────
+   *
+   * `records` is a SNAPSHOT taken a round trip ago, and there is no way to make it otherwise:
+   * IMAP has no append-under-condition, no compare-and-set, no transaction spanning a read and a
+   * write. Two readers can each measure the same headroom, each stay honestly within it, and
+   * still cross the ceiling together — and no amount of care on this line prevents that, because
+   * the check and the append cannot be made one operation against a shared folder.
+   *
+   * Pretending otherwise would be the worse outcome: a bound that LOOKS like it guarantees the
+   * folder stays readable invites everything downstream to assume it does. So the invariant is
+   * stated as the two things that are actually true:
+   *
+   *   (a) NO SINGLE WRITER'S CYCLE PUSHES THE FOLDER PAST THE CEILING — the bound below, which
+   *       is enforceable because one install's own arithmetic is entirely under its control; and
+   *
+   *   (b) TWO WRITERS CAN JOINTLY CROSS IT, AND THE FOLDER MUST THEN RECOVER WITHIN ONE CYCLE.
+   *       That is what makes the crossing survivable rather than terminal, and it is why the ack
+   *       sweep runs AHEAD of the bounded read rather than behind it: the sweep needs no read, so
+   *       it still runs when the folder is over the ceiling, it removes the acknowledgements that
+   *       are the bulk of an over-full folder, and the read that follows it in the same cycle
+   *       then succeeds. The refusal is a pause, not a wall.
+   *
+   * (b) is the half with teeth, and it is the half a test must hold: (a) alone is satisfied by an
+   * install that appends nothing at all. */
   const headroom = Math.max(0, META_RECORDS_MAX_PER_FETCH - records.length);
   const appendable = stillQueued.slice(0, headroom);
   if (appendable.length < stillQueued.length) {
