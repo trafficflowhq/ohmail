@@ -604,7 +604,20 @@ export interface ProfileImapClient extends MetaFolderClient {
  * Appended `\Seen`, like the claim, so a subscribed `_meta` in another client shows no unread
  * count for bookkeeping.
  */
-export function makeProfileIo(client: ProfileImapClient, toServerPath: (canonical: string) => string): ProfileIo {
+/**
+ * @param limits Ceilings this IO enforces. Present so the BYTE ceiling can be observed at a size a
+ * test can hold: it defaults to {@link PROFILE_BYTES_MAX_PER_FETCH}, and the only way to exercise
+ * the singleton-over-ceiling path against the real constant is to allocate 128 MiB, which the test
+ * runner cannot even serialise when it reports. A bound nobody can watch reject is the shape this
+ * whole read was rewritten to remove, so the seam is deliberate and narrow — no caller in the
+ * product passes it, asserted by the census in `organizer-profile-bounded.test.ts`.
+ */
+export function makeProfileIo(
+  client: ProfileImapClient,
+  toServerPath: (canonical: string) => string,
+  limits?: { maxBytes?: number },
+): ProfileIo {
+  const maxBytes = limits?.maxBytes ?? PROFILE_BYTES_MAX_PER_FETCH;
   // The lease's resolution, not a second one. The profile and the claim share a folder, so a
   // second spelling of where that folder is would put the settings document and the lease in
   // different places on exactly the servers where it matters.
@@ -671,43 +684,31 @@ export function makeProfileIo(client: ProfileImapClient, toServerPath: (canonica
       const lock = await client.getMailboxLock(metaPath);
       try {
         const out: RawProfileMessage[] = [];
-        // A NOOP that FAILS leaves the cached value standing, which is exactly where this was
-        // before — so the failure is swallowed rather than turned into a fault. Whether it
-        // SUCCEEDED is kept, because the arithmetic below cares: see the probe.
-        let refreshed = false;
-        if (typeof client.noop === "function") {
-          try {
-            await client.noop();
-            refreshed = true;
-          } catch { /* no worse than not asking — but the count below is known to be unrefreshed */ }
-        }
+        /* ── A NOOP CANNOT PROVE A REFRESH, SO NOTHING HERE RESTS ON ONE ────────────────────
+         *
+         * This NOOP'd and treated the call resolving as proof the cached count was current. The
+         * library discards the command's own result (`imap-flow.js` 1.5.0: `async noop() { await
+         * this.run('NOOP'); }`), so a REFUSED noop resolves exactly like an accepted one and
+         * "refreshed" was inferred from the absence of a throw.
+         *
+         * Here that meant a stale cached zero could be trusted and the read return "no settings
+         * have been published" for a mailbox that has some. The count is asked for outright
+         * instead: {@link lastSequence} issues a STATUS naming the folder, which is answered on an
+         * empty folder as readily as a full one — so unlike the FETCH probe this replaced, it needs
+         * no zero check in front of it. The connection's cached `exists` is consulted only where
+         * the server cannot be asked at all. */
         const selected = client.mailbox;
-        const count = typeof selected === "object" && selected !== null ? selected.exists : undefined;
-        // `1:*` is not a valid messageset against an empty mailbox and Dovecot refuses the command
-        // outright, while GreenMail tolerates it. Only a POSITIVELY KNOWN zero skips the fetch —
-        // and it skips the probe below too, which is a FETCH and would be refused for the same
-        // reason at every fresh mailbox's empty folder.
-        if (count === 0) return out;
-        /* ── THE SAME RULE AS THE LEASE'S READ, THROUGH THE SAME FUNCTION ────────────────────
-         *
-         * `from` counts BACK from the end, so a count that is wrong LOW walks the window toward the
-         * start of the folder and gives back the oldest-first read this bound exists to replace.
-         * Two ways to get one and neither announces itself: no `exists` at all, or a NOOP that could
-         * not refresh a stale value.
-         *
-         * `lastSequence` is imported rather than reimplemented. One folder should not have two
+        const cached = typeof selected === "object" && selected !== null ? selected.exists : undefined;
+        const probed = await lastSequence(client, metaPath);
+        /* The lease's rule, for the same reason: a cached count may END this read (an empty folder
+         * is cheap to be wrong about in one direction only) but may never be COUNTED BACK from,
+         * because nothing confirms it and a window in the wrong place loses the document. */
+        if (probed === 0) return out;
+        if (probed === undefined && cached === 0) return out;
+        const total = probed;
+        /* `lastSequence` is imported rather than reimplemented. One folder should not have two
          * answers to "how many messages are in it", and a copy here with a comment pointing at the
-         * original is exactly how the two come to disagree — which is the defect this whole read was
-         * bounded to fix, one level up. */
-        /* And when the probe does not answer either, the length is UNKNOWN — never the cached
-         * value the line above just declared untrustworthy. A count that is wrong HIGH is worse
-         * than no count at all: messageset endpoints are unordered (RFC 3501 §9), so a `501:*`
-         * derived from a stale 1000 against a folder of 400 is read as `400:501` and returns one
-         * message, which here is "no settings have been published" for a mailbox that has some.
-         * `undefined` falls through to `1:*`, where the sliding window below keeps the newest. */
-        const probed = count === undefined || !refreshed ? await lastSequence(client, metaPath) : undefined;
-        const total = probed ?? (refreshed && typeof count === "number" ? count : undefined);
-        if (total === 0) return out;
+         * original is exactly how the two come to disagree. */
         const from = typeof total === "number" && total > PROFILE_MESSAGES_MAX_PER_FETCH
           ? total - PROFILE_MESSAGES_MAX_PER_FETCH + 1
           : 1;
@@ -762,7 +763,13 @@ export function makeProfileIo(client: ProfileImapClient, toServerPath: (canonica
             bytes += size;
             while (
               win.length > PROFILE_MESSAGES_MAX_PER_FETCH
-              || (bytes > PROFILE_BYTES_MAX_PER_FETCH && win.length > 1)
+              // `win.length > 1` keeps the newest record even when it ALONE is over the ceiling, so
+              // a document too large to read is the PARSER's refusal to make rather than a silent
+              // absence. On a COMPLETE scan that exemption is a hole: the write path parses this
+              // list directly, without the reader's per-document guard in front of it, so a single
+              // oversized profile-shaped message becomes an unbounded parse on the settings-write
+              // path. A complete scan refuses on either ceiling, singleton included.
+              || (bytes > maxBytes && (complete || win.length > 1))
             ) {
               /* ── ON A COMPLETE SCAN, EVICTING IS NOT AN OPTION — REFUSE INSTEAD ───────────
                *
@@ -783,7 +790,7 @@ export function makeProfileIo(client: ProfileImapClient, toServerPath: (canonica
               if (complete) {
                 throw new ProfileUnavailableError(
                   `the settings in ${META_FOLDER} could not be read completely: the folder holds more `
-                  + `than ${PROFILE_MESSAGES_MAX_PER_FETCH} settings records or ${PROFILE_BYTES_MAX_PER_FETCH} `
+                  + `than ${PROFILE_MESSAGES_MAX_PER_FETCH} settings records or ${maxBytes} `
                   + "bytes of them, and a write must see every one before it may replace any",
                   { op: "list_profiles" },
                 );
@@ -842,7 +849,33 @@ export function makeProfileIo(client: ProfileImapClient, toServerPath: (canonica
       if (uids.length === 0) return;
       const lock = await client.getMailboxLock(await meta.path());
       try {
-        await client.messageDelete(uids, { uid: true });
+        /* THE RESULT IS READ, AND THEN CHECKED AGAINST THE FOLDER. `messageDelete` resolves
+         * `false` when the server refuses — it does not reject — and this discarded that, so a
+         * refused cleanup was reported as a completed one and every prior document stayed. Worse,
+         * a `true` proves only that an EXPUNGE ran: the STORE that marks `\Deleted` is internal to
+         * the library and its result is not propagated, so a refused store with an accepted expunge
+         * removes nothing and still resolves `true`. Custody is read back. */
+        const done = await client.messageDelete(uids, { uid: true });
+        if (done === false) {
+          throw new ProfileUnavailableError(
+            `the server refused to expunge ${uids.length} settings message(s) from ${META_FOLDER}`,
+            { op: "remove_profiles" },
+          );
+        }
+        if (typeof client.fetch === "function") {
+          const still: number[] = [];
+          try {
+            for await (const m of client.fetch(uids.join(","), { uid: true }, { uid: true })) {
+              if (typeof m.uid === "number") still.push(m.uid);
+            }
+          } catch { return; }
+          if (still.length > 0) {
+            throw new ProfileUnavailableError(
+              `${still.length} settings message(s) survived the expunge in ${META_FOLDER}`,
+              { op: "remove_profiles" },
+            );
+          }
+        }
       } finally {
         lock.release();
       }

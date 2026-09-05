@@ -1977,25 +1977,31 @@ export interface LeaseImapClient extends MetaFolderClient {
  * A NOOP that FAILS leaves the cached value standing, which is exactly where the caller was
  * before — so the failure is swallowed rather than turned into a lease fault.
  */
-async function selectedCount(
-  client: LeaseImapClient,
-): Promise<{ count: number | undefined; refreshed: boolean }> {
-  // `refreshed` is REPORTED rather than swallowed, and that is the whole of what changed here. A
-  // NOOP that fails leaves the caller exactly where it was — with a cached count that may be
-  // STALE-LOW — and a stale-low count is indistinguishable from a true one at the arithmetic below
-  // it. Saying so lets the one caller that can do something about it ask the server directly.
-  let refreshed = false;
-  if (typeof client.noop === "function") {
-    try {
-      await client.noop();
-      refreshed = true;
-    } catch {
-      /* see above: no worse than not asking — but the caller is told the answer is unrefreshed */
-    }
-  }
+async function selectedCount(client: LeaseImapClient): Promise<number | undefined> {
+  /* ── THERE IS NO SUCH THING AS A REFRESHED CACHE HERE, AND THE FLAG THAT SAID SO WAS A LIE ──
+   *
+   * This used to NOOP and report `refreshed: true` when the call resolved. The library makes that
+   * unknowable (`imap-flow.js` 1.5.0):
+   *
+   *     async noop() { await this.run('NOOP'); }
+   *
+   * The command's own result is DISCARDED. A server that REFUSES the NOOP produces a `run` that
+   * resolves `false`, and `noop()` resolves normally regardless — so "the NOOP succeeded" was
+   * inferred from the absence of a throw, which is not evidence of anything. Every caller then
+   * trusted a cached count on the strength of it.
+   *
+   * The consequence was the worst one available. A connection holding a cached `exists = 0` from
+   * before another install appended its claim would refuse the NOOP, be recorded as refreshed,
+   * return the stale zero, and the gate would elect over an EMPTY folder and append a second live
+   * claim. Two organizers on one mailbox, from a boolean.
+   *
+   * A refresh must be proven by the thing it is meant to refresh. So the count is asked for
+   * outright — {@link lastSequence} issues a STATUS naming the folder, which the library passes
+   * through and the server answers with a number — and the connection's own cache is consulted
+   * only where that is impossible.
+   */
   const selected = client.mailbox;
-  const count = typeof selected === "object" && selected !== null ? selected.exists : undefined;
-  return { count, refreshed };
+  return typeof selected === "object" && selected !== null ? selected.exists : undefined;
 }
 
 /**
@@ -2222,61 +2228,34 @@ export async function readMetaFolderWindow(
   //
   // Read DEFENSIVELY: only a POSITIVELY KNOWN zero skips the fetch. A count we cannot see means
   // "unknown", so the fetch still runs.
-  const { count, refreshed } = await selectedCount(client);
-  /* A POSITIVELY KNOWN ZERO STILL SKIPS EVERYTHING, refreshed or not.
+  const cached = await selectedCount(client);
+  /* ── ASK THE SERVER, THEN FALL BACK — NOT THE OTHER WAY ROUND ────────────────────────────
    *
-   * The probe below is a FETCH, and `*` against an empty mailbox is refused by the same servers
-   * that refuse `1:*` — which is the defence this line has always been. It is swallowed rather than
-   * raised, so it could not become a fault, but every fresh mailbox has an empty `ohmail/_meta` and
-   * spending a refused round trip on each of them is the cost this line exists to avoid.
+   * The probe is a STATUS naming the folder, so it costs one scalar round trip and, unlike the
+   * FETCH this used to be, it is answered on an EMPTY folder as readily as a full one. That is why
+   * the zero check now comes AFTER it rather than guarding it: the reason to skip the probe on a
+   * cached zero was that `*` against an empty mailbox is refused by the same servers that refuse
+   * `1:*`, and STATUS is refused by neither.
    *
-   * A zero that is STALE is not closed by the probe either way; it is closed by the NOOP above,
-   * which is what that measurement established. Where the NOOP is absent or failed, a stale zero
-   * reads as empty exactly as it did before any of this — no better, and no worse. */
-  if (count === 0) return { records: [], truncated: false, total: 0 };
-
-  /* ── WHEN THE CHEAP COUNT IS MISSING OR UNTRUSTWORTHY, ASK ────────────────────────────────
-   *
-   * `from` is computed by counting BACK from the end, so a count that is wrong LOW moves the window
-   * toward the start of the folder and gives back exactly the oldest-first read this whole function
-   * exists to replace. Two ways to get one, and neither announces itself:
-   *
-   *   · the client reports no `exists` at all; or
-   *   · the NOOP that would have corrected a stale value FAILED — and its failure is swallowed by
-   *     design, because a refresh that did not happen leaves the caller no worse off than not
-   *     asking. No worse for the old code; for this arithmetic it is the difference between the
-   *     newest window and the oldest one.
-   *
-   * So in both cases the server is asked outright. One extra round trip, on a read that is already
-   * making one, and only on the paths where the cheap answer cannot be trusted — a live connection
-   * that answered its NOOP takes neither. The sliding eviction below still stands behind this for
-   * the case where even that answer does not come.
+   * The connection's cached `exists` is consulted only where the server cannot be asked at all —
+   * a client with no STATUS. It is not a fast path any more, because there is no way to know
+   * whether it is current: see {@link selectedCount}.
    */
-  const probed = count === undefined || !refreshed ? await lastSequence(client, path) : undefined;
+  const probed = await lastSequence(client, path);
 
-  /* ── AND WHEN THE SERVER DOES NOT ANSWER EITHER, DO NOT COUNT BACK FROM THE STALE VALUE ───
+  /* A CACHED COUNT MAY END THE READ, BUT MAY NEVER BE COUNTED BACK FROM ────────────────────
    *
-   * The line above asks precisely because the cached count cannot be trusted. So the fallback may
-   * not be that same count: if the probe also comes back empty, the only honest answer is that the
-   * length of this folder is UNKNOWN, and `null` is how this function says so.
+   * Those are different amounts of trust and they were conflated. Skipping an empty folder is safe
+   * to get wrong in only one direction — a stale zero costs a read that finds nothing — while
+   * counting BACK from a wrong number puts the window in the wrong place, which is how a live
+   * claim disappears. Nothing now confirms a cached value (see {@link selectedCount}), so it keeps
+   * the cheap job and loses the load-bearing one.
    *
-   * The failure it removes is not a smaller window, it is a wrong one, and it is silent. A count
-   * cached at 1000 against a folder another connection has since cut to 400 yields `501:*`, and a
-   * messageset is a RANGE whose endpoints are unordered (RFC 3501 §9): `*` is 400, so the server
-   * reads `501:400` as `400:501` and returns the single message 400. The read then reports
-   * `truncated` — because `from > 1` — for a folder holding 400 records against a ceiling of 500.
-   * Every consumer is misled in the direction that costs the most: the drains refuse a folder that
-   * is comfortably under the limit, and the gate elects on a one-record window in which a live
-   * claim at any lower sequence is simply absent. Two organizers on one mailbox is the outcome
-   * that whole path exists to prevent.
-   *
-   * With `null` the range is `1:*` and the sliding eviction below keeps the newest — the same
-   * guarantee by the other route, at the cost of reading the folder rather than a window of it.
-   * That is the right trade when the alternative is arithmetic on a number known to be wrong: the
-   * bound holds on what is RETAINED either way, and only the transfer is larger.
-   */
-  const total = probed ?? (refreshed && typeof count === "number" ? count : null);
-  if (total === 0) return { records: [], truncated: false, total: 0 };
+   * `null` therefore means "unknown", and unknown reads the folder whole with the sliding eviction
+   * behind it — bounded in what it RETAINS, and correct about which records those are. */
+  if (probed === 0) return { records: [], truncated: false, total: 0 };
+  if (probed === undefined && cached === 0) return { records: [], truncated: false, total: 0 };
+  const total = probed ?? null;
 
   // The window's start. Above the ceiling this deliberately skips the oldest records — see the
   // header: in this folder the oldest are the ones that have been superseded or were never ours.
@@ -2457,7 +2436,12 @@ export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: s
         // the settings document carries this header too, and expunging it would delete the
         // mailbox's saved configuration.
         const found = await client.search({ header: { [H.installId]: installId } }, { uid: true });
-        if (!Array.isArray(found) || found.length === 0) return [];
+        /* A REFUSAL IS NOT AN EMPTY RESULT. The library resolves `false` when the server refuses
+         * the SEARCH — it does not reject — so mapping every non-array to `[]` told the caller
+         * "this install owns no records here", which is the answer that ends a release reporting
+         * success. `null` says "could not ask", and the caller falls back to the bounded window. */
+        if (!Array.isArray(found)) return null;
+        if (found.length === 0) return [];
         const out: RawClaimMessage[] = [];
         for await (const m of client.fetch(
           found.join(","), { uid: true, headers: true }, { uid: true },
@@ -2485,6 +2469,37 @@ export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: s
         const done = await client.messageDelete(uids, { uid: true });
         if (done === false) {
           throw new Error(`the server refused to expunge ${uids.length} claim message(s) from ${META_FOLDER}`);
+        }
+        /* ── AND A `true` PROVES ONLY THAT AN EXPUNGE RAN, NOT THAT THESE MESSAGES WENT ──────
+         *
+         * `messageDelete` is `resolveRange` followed by `run('EXPUNGE', …)` (`imap-flow.js` 1.5.0).
+         * The STORE that marks `\Deleted` is internal to it and its result is not propagated, so a
+         * REFUSED store followed by an accepted EXPUNGE — which then deletes nothing — resolves
+         * `true`. The refusal check above cannot see that.
+         *
+         * Custody is read back instead: the uids must be GONE. On the release path this is the
+         * difference between reporting a claim removed and leaving it live while saying otherwise,
+         * which is the whole reason a caller is allowed to trust the count.
+         *
+         * A connection that cannot be asked is not treated as proof either way — there is nothing
+         * to check against, and inventing a pass would be the same defect one layer up. */
+        if (typeof client.fetch === "function") {
+          const still: number[] = [];
+          try {
+            for await (const m of client.fetch(uids.join(","), { uid: true }, { uid: true })) {
+              if (typeof m.uid === "number") still.push(m.uid);
+            }
+          } catch {
+            /* An unreadable folder is not evidence the expunge failed; the refusal check above is
+             * what stands in that case. */
+            return;
+          }
+          if (still.length > 0) {
+            throw new Error(
+              `${still.length} claim message(s) survived the expunge in ${META_FOLDER} — the server `
+              + "accepted the command and removed nothing",
+            );
+          }
         }
       } finally {
         lock.release();
