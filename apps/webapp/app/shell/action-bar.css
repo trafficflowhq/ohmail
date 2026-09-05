@@ -160,7 +160,7 @@
   background: none;
   cursor: pointer;
   font: inherit;
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   font-weight: 550;
   line-height: 1.5;
   color: var(--ink);
@@ -290,7 +290,7 @@
   min-width: 0;
 }
 .abar-lab {
-  font-size: 11px;
+  font-size:calc(11px + var(--type-up));
   color: var(--ink3);
   padding-right: 2px;
   white-space: nowrap;
@@ -299,7 +299,7 @@
    your own mail server…"). It WRAPS: the panel is flex-wrap for exactly this, and a nowrap here
    would clip the one line the ask depends on. Flexible width so the two buttons keep their size. */
 .abar-note {
-  font-size: 11px;
+  font-size:calc(11px + var(--type-up));
   color: var(--ink3);
   flex: 1 1 220px;
   min-width: 0;
@@ -363,7 +363,7 @@
   background: none;
   cursor: pointer;
   font: inherit;
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
   font-weight: 550;
   line-height: 1.5;
   color: var(--ink);

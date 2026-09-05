@@ -3,7 +3,7 @@
 .dbtn{display:inline-flex;background:var(--float);border-radius:var(--r-pill);box-shadow:var(--lift-0);overflow:hidden;
   transition:box-shadow .2s var(--swift), transform .15s var(--swift)}
 .dbtn:hover{transform:translateY(-1px);box-shadow:var(--lift-2)}
-.dbtn button{padding:6.5px 13px;font-size:12px;font-weight:550;color:var(--ink);border:0;cursor:pointer;
+.dbtn button{padding:6.5px 13px;font-size:calc(12px + var(--type-up));font-weight:550;color:var(--ink);border:0;cursor:pointer;
   background:none;font-family:inherit;line-height:1.5;white-space:nowrap;
   display:inline-flex;align-items:center;gap:6px;transition:background .15s,color .15s}
 .dbtn button:hover{background:var(--tint)}

@@ -20,8 +20,8 @@
 .set-pane{padding:10px 26px 22px;background:var(--panel);border-radius:var(--r-overlay);box-shadow:var(--lift-1);
   container-type:inline-size;container-name:set-pane}
 /* ── titles ── the pane's subject when the nav label needs a qualifier ("Cloud mailboxes") */
-.set-title{font-size:15px;font-weight:600;letter-spacing:-.01em;margin:14px 0 6px}
-.set-lead{font-size:13px;color:var(--ink2);line-height:1.6;margin:0 0 4px;max-width:62ch}
+.set-title{font-size:calc(15px + var(--type-up));font-weight:600;letter-spacing:-.01em;margin:14px 0 6px}
+.set-lead{font-size:calc(13px + var(--type-up));color:var(--ink2);line-height:1.6;margin:0 0 4px;max-width:62ch}
 /* ── rows ── */
 .set-row{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;padding:15px 2px}
 .set-row + .set-row,
@@ -32,28 +32,28 @@
 .set-actions + .set-row,
 .set-banner + .set-row,
 .set-choice + .set-row{border-top:1px solid var(--hair-soft)} /* settings table rule — scanability, same family as receipt rules */
-.set-row .btn{font-size:11.5px;padding:5px 12px;white-space:nowrap}
+.set-row .btn{font-size:calc(11.5px + var(--type-up));padding:5px 12px;white-space:nowrap}
 .set-row .lab{flex:1 1 300px;min-width:0}
-.set-row .lab b{font-size:13px;font-weight:600;display:block}
-.set-row .lab span{font-size:11.5px;color:var(--ink2);display:block;line-height:1.5;max-width:62ch}
+.set-row .lab b{font-size:calc(13px + var(--type-up));font-weight:600;display:block}
+.set-row .lab span{font-size:calc(11.5px + var(--type-up));color:var(--ink2);display:block;line-height:1.5;max-width:62ch}
 /* whatever follows the label block is the row's ONE control cluster: right-aligned, never shrunk */
 .set-row > .lab + *{margin-left:auto}
 .set-row > .lab ~ *{flex:0 0 auto}
 /* a text control IS the flexible thing in its row (the away responder's subject line) */
 .set-row > .lab ~ :is(input,textarea,.set-tag-input){flex:1 1 200px;min-width:0}
-.set-val{margin-left:auto;font-size:12.5px;color:var(--ink2);flex:none;text-align:right}
-.set-sub{font-size:12px;font-weight:600;color:var(--ink3);padding:24px 0 2px}
+.set-val{margin-left:auto;font-size:calc(12.5px + var(--type-up));color:var(--ink2);flex:none;text-align:right}
+.set-sub{font-size:calc(12px + var(--type-up));font-weight:600;color:var(--ink3);padding:24px 0 2px}
 .set-sub:first-child{padding-top:12px}
 /* ── microcopy ── the quiet line under a row; tucked against the row it explains */
-.set-note-inline{font-size:11.5px;color:var(--ink3);padding:2px 2px 12px;line-height:1.55;max-width:62ch}
+.set-note-inline{font-size:calc(11.5px + var(--type-up));color:var(--ink3);padding:2px 2px 12px;line-height:1.55;max-width:62ch}
 .set-row + .set-note-inline{margin-top:-9px}
-.set-note{font-size:11.5px;color:var(--ink2);margin:20px 0 24px;display:flex;gap:8px;align-items:flex-start;line-height:1.5}
+.set-note{font-size:calc(11.5px + var(--type-up));color:var(--ink2);margin:20px 0 24px;display:flex;gap:8px;align-items:flex-start;line-height:1.5}
 .set-note svg{flex:none;color:var(--accent-ink);margin-top:1px}
 /* ── fields ── label above, input, hint below; a group lays them side by side while room lasts */
 .set-field{display:flex;flex-direction:column;gap:6px;padding:8px 0 6px;min-width:0}
-.set-field > label,.set-field-label{font-size:11.5px;font-weight:600;color:var(--ink2)}
+.set-field > label,.set-field-label{font-size:max(var(--input-floor), calc(11.5px + var(--type-up)));font-weight:600;color:var(--ink2)}
 .set-field .set-input,.set-field input,.set-field select,.set-field textarea{
-  width:100%;box-sizing:border-box;padding:9px 12px;font:inherit;font-size:13px;line-height:1.45;color:var(--ink);
+  width:100%;box-sizing:border-box;padding:9px 12px;font:inherit;font-size:max(var(--input-floor), calc(13px + var(--type-up)));line-height:1.45;color:var(--ink);
   background:var(--canvas);border:1px solid var(--hair);border-radius:calc(var(--r-card) * 12 / 14)}
 .set-field select{appearance:none;-webkit-appearance:none;padding-right:34px;cursor:pointer;
   background-image:linear-gradient(45deg,transparent 50%,var(--ink3) 50%),linear-gradient(135deg,var(--ink3) 50%,transparent 50%);
@@ -62,7 +62,7 @@
   outline:var(--focus-w) solid var(--focus,var(--accent));outline-offset:0;border-color:transparent}
 .set-field input:disabled,.set-field select:disabled{color:var(--ink3);background:var(--tint);cursor:default}
 .set-field .set-mono,.set-field input.set-mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.02em}
-.set-field-hint{font-size:11.5px;color:var(--ink3);line-height:1.5;max-width:62ch}
+.set-field-hint{font-size:max(var(--input-floor), calc(11.5px + var(--type-up)));color:var(--ink3);line-height:1.5;max-width:62ch}
 /* a field with its verb beside it ("Test key") — the button never wraps, the input gives, and
    below the width where BOTH fit the verb drops to its own line rather than squeezing the field
    to nothing. `flex:1 1 auto` with a `flex:none` button had no floor: at 390 with the German
@@ -83,14 +83,14 @@
 .set-choice label:has(input:checked){box-shadow:inset 0 0 0 1.5px var(--accent-hair);background:var(--accent-wash,var(--tint))}
 .set-choice label:has(input:focus-visible){outline:var(--focus-w) solid var(--focus,var(--accent));outline-offset:var(--focus-offset)}
 .set-choice input{margin:3px 0 0;accent-color:var(--accent);grid-row:span 2}
-.set-choice b{font-size:13px;font-weight:600}
-.set-choice span{font-size:11.5px;color:var(--ink2);line-height:1.5}
+.set-choice b{font-size:calc(13px + var(--type-up));font-weight:600}
+.set-choice span{font-size:calc(11.5px + var(--type-up));color:var(--ink2);line-height:1.5}
 .set-choice label:has(input:disabled){opacity:.55;cursor:default}
 /* ── verdict ── the answer to a press, under the press that asked. One block, four states. */
 .set-verdict{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;align-items:start;margin:8px 0 6px;padding:11px 13px;
   border-radius:var(--r-card);box-shadow:inset 0 0 0 1px var(--hair-soft);background:var(--tint)}
 .set-verdict-mark{width:16px;height:16px;border-radius:var(--r-avatar);display:inline-flex;align-items:center;justify-content:center;
-  font-size:11px;font-weight:700;line-height:1;margin-top:1px;grid-row:span 3;color:var(--on-accent);background:var(--ink3)}
+  font-size:calc(11px + var(--type-up));font-weight:700;line-height:1;margin-top:1px;grid-row:span 3;color:var(--on-accent);background:var(--ink3)}
 .set-verdict.ok .set-verdict-mark{background:var(--accent)}
 .set-verdict.bad .set-verdict-mark{background:var(--danger,#b3261e)}
 /* `wait` holds the waiting mark (primitives/spinner.css) at the mark's own size — a segment
@@ -98,12 +98,12 @@
 .set-verdict.wait .set-verdict-mark{background:transparent}
 .set-verdict.wait .set-verdict-mark .spin{width:16px;height:16px}
 .set-verdict.off .set-verdict-mark{background:transparent;box-shadow:inset 0 0 0 1.5px var(--hair)}
-.set-verdict b{font-size:12.5px;font-weight:600;color:var(--ink);line-height:1.4}
-.set-verdict p{font-size:11.5px;color:var(--ink2);line-height:1.5;margin:0;max-width:62ch}
+.set-verdict b{font-size:calc(12.5px + var(--type-up));font-weight:600;color:var(--ink);line-height:1.4}
+.set-verdict p{font-size:calc(11.5px + var(--type-up));color:var(--ink2);line-height:1.5;margin:0;max-width:62ch}
 /* the endpoint's sentence and the instruction that repairs it are two blocks, never one
    joined string — see `SettingsVerdictProps.hint` for why a joiner cannot be written */
 .set-verdict-hint{margin-top:4px!important;color:var(--ink3)!important}
-.set-verdict .set-verdict-when{font-size:11px;color:var(--ink3)}
+.set-verdict .set-verdict-when{font-size:calc(11px + var(--type-up));color:var(--ink3)}
 .set-verdict.bad{background:color-mix(in oklab,var(--danger,#b3261e) 6%,transparent)}
 .set-verdict.ok{background:var(--accent-wash,var(--tint))}
 /* ── actions ── a form's verbs, primary first, in one place */
@@ -114,8 +114,8 @@
 .set-banner{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;margin:12px 0 4px;padding:12px 14px;
   border-radius:var(--r-card);background:var(--accent-soft)}
 .set-banner .lab{flex:1 1 240px;min-width:0}
-.set-banner .lab b{display:block;font-size:13px;font-weight:600}
-.set-banner .lab span{display:block;font-size:11.5px;color:var(--ink2);line-height:1.5}
+.set-banner .lab b{display:block;font-size:calc(13px + var(--type-up));font-weight:600}
+.set-banner .lab span{display:block;font-size:calc(11.5px + var(--type-up));color:var(--ink2);line-height:1.5}
 .set-banner .btn{white-space:nowrap;flex:none;margin-left:auto}
 /* ── the density ladder ── read from the PANE's width */
 @container set-pane (max-width: 480px){
@@ -139,7 +139,7 @@
 /* vip capsules */
 .viplist{display:flex;gap:8px;flex-wrap:wrap;padding:12px 0 4px}
 .vip{display:inline-flex;align-items:center;gap:7px;border-radius:var(--r-pill);
-  padding:6px 14px;font-size:12.5px;font-weight:550;background:var(--panel);box-shadow:var(--lift-0)}
+  padding:6px 14px;font-size:calc(12.5px + var(--type-up));font-weight:550;background:var(--panel);box-shadow:var(--lift-0)}
 .vip .vdot{width:6px;height:6px;border-radius:var(--r-avatar);background:var(--accent);opacity:.85}
 .vip.pulse{animation:pulse .8s var(--spring)}
 @keyframes pulse{0%{background:var(--accent-soft)}50%{background:var(--accent-soft)}100%{}}
@@ -147,4 +147,4 @@
 .learned{border-radius:var(--r-overlay);padding:17px 19px;margin:20px 0 8px;
   background:var(--accent-soft);transition:opacity .3s,transform .3s var(--spring)}
 .learned.gone{opacity:0;transform:translateY(-6px);pointer-events:none}
-.learned p{font-size:13px;margin:0 0 12px;line-height:1.5}
+.learned p{font-size:calc(13px + var(--type-up));margin:0 0 12px;line-height:1.5}

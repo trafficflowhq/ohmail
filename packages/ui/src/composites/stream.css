@@ -3,7 +3,7 @@
 /* One item, one line, at every width — the rule and the reason are `list-pane.css`'s
    `.list-hints`: the strip holds the `? shortcuts` affordance, and nowrap/overflow stand
    guard against anything it is ever handed after that. */
-.stream-hints{max-width:620px;margin:0 auto;padding:10px 26px 14px;font-size:11px;color:var(--ink3);
+.stream-hints{max-width:620px;margin:0 auto;padding:10px 26px 14px;font-size:calc(11px + var(--type-up));color:var(--ink3);
   display:flex;gap:12px;align-items:center;flex-wrap:nowrap;overflow:hidden;white-space:nowrap}
 .stream-hints > *{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
 .scast{max-width:620px;margin:0 auto 20px;background:var(--float);border-radius:calc(var(--r-overlay) * 22 / 20);
@@ -11,31 +11,31 @@
   transition:box-shadow .3s var(--swift)}
 .scast.cur{box-shadow:var(--lift-2)}
 .sc-head{padding:20px 26px 0}
-.sc-line{display:flex;align-items:baseline;gap:8px;font-size:12.5px}
+.sc-line{display:flex;align-items:baseline;gap:8px;font-size:calc(12.5px + var(--type-up))}
 .sc-line b{font-weight:600;flex:none}
 /* The address is the handle on the SENDER — clicking it opens the screening sheet, the same
    gesture the lists carry (the shell's one capture handler owns both). `flex:1 1 auto` on a
    nowrap ellipsis means the hit area is the visible text and no more, so it does not quietly
    eat clicks meant for the card. */
-.sc-line .addr{flex:1 1 auto;min-width:0;font-size:11.5px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+.sc-line .addr{flex:1 1 auto;min-width:0;font-size:calc(11.5px + var(--type-up));color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
   cursor:pointer;transition:color .15s}
 .sc-line .addr:hover{color:var(--ink2);text-decoration:underline;text-underline-offset:2px}
-.sc-line .amt{flex:none;font-variant-numeric:tabular-nums;font-size:12px;font-weight:550}
-.sc-line .t{margin-left:auto;font-size:11px;color:var(--ink3);font-variant-numeric:tabular-nums;flex:none}
+.sc-line .amt{flex:none;font-variant-numeric:tabular-nums;font-size:calc(12px + var(--type-up));font-weight:550}
+.sc-line .t{margin-left:auto;font-size:calc(11px + var(--type-up));color:var(--ink3);font-variant-numeric:tabular-nums;flex:none}
 .sc-head h3{font-size:16.5px;font-weight:600;letter-spacing:-.015em;margin:5px 0 0;line-height:1.3;text-wrap:balance}
 .sc-clip{position:relative;overflow:hidden;max-height:348px;transition:max-height .5s var(--spring)}
 .scast.short .sc-clip{max-height:none}
-.sc-body{padding:9px 26px 18px;font-size:13.5px;line-height:1.7;color:var(--ink);white-space:pre-line;max-width:62ch;margin:0}
+.sc-body{padding:9px 26px 18px;font-size:calc(13.5px + var(--type-up));line-height:1.7;color:var(--ink);white-space:pre-line;max-width:62ch;margin:0}
 .sc-body + .sc-body{padding-top:0}
 /* The hydration state line: the same weight as .stream-hints, because it is the
    same kind of statement — a fact about the surface, not part of the mail. `.warn` carries
    the accent so a failed fetch is not mistaken for a quiet aside. */
-.sc-state{margin:0;padding:0 26px 18px;font-size:11.5px;color:var(--ink3)}
+.sc-state{margin:0;padding:0 26px 18px;font-size:calc(11.5px + var(--type-up));color:var(--ink3)}
 .sc-body + .sc-state{padding-top:0}
 .sc-state.warn{color:var(--accent)}
 .sc-art{margin:2px 26px 16px}
 .sc-art svg{display:block;width:100%;height:auto;border-radius:var(--r-card);color:var(--ink3)}
-.sc-art figcaption{font-size:11px;color:var(--ink3);margin-top:7px}
+.sc-art figcaption{font-size:calc(11px + var(--type-up));color:var(--ink3);margin-top:7px}
 .sc-fade{position:absolute;left:0;right:0;bottom:0;height:88px;pointer-events:none;
   /* the one functional gradient: a fade-out mask on clamped cards — decorative gradients stay banned */
   background:var(--sc-fade);
@@ -48,7 +48,7 @@
    still sits inside the fade's band — that overlap is what makes a collapsed card read as one
    object — but from below it now, not on top of the text. */
 .sc-x{position:relative;z-index:1;display:flex;align-items:center;gap:6px;margin:2px auto 20px;border:0;cursor:pointer;
-  padding:5px 15px;border-radius:var(--r-pill);font-size:11.5px;font-weight:600;color:var(--ink2);font-family:inherit;line-height:1.5;
+  padding:5px 15px;border-radius:var(--r-pill);font-size:calc(11.5px + var(--type-up));font-weight:600;color:var(--ink2);font-family:inherit;line-height:1.5;
   background:var(--float);box-shadow:var(--lift-0);
   transition:box-shadow .2s var(--swift), transform .15s var(--swift), color .15s}
 .sc-x:hover{color:var(--ink);transform:translateY(-1px);box-shadow:var(--lift-2)}

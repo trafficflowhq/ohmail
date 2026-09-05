@@ -17,29 +17,29 @@
 /* an inline-size container, so the well below folds on the STRIP's width — the list column's,
    not the viewport's (the same reason the doorbell measures itself) */
 .scn-bulk{display:flex;align-items:center;gap:8px;flex-wrap:wrap;container-type:inline-size}
-.scn-bulk .btn{font-size:11.5px;padding:5.5px 13px;white-space:nowrap}
+.scn-bulk .btn{font-size:calc(11.5px + var(--type-up));padding:5.5px 13px;white-space:nowrap}
 
 /* ── the resting row: a sentence and its one live verb, on the capsules' baseline ── */
 .scn-sg-rest{display:inline-flex;align-items:center;gap:8px;min-width:0}
-.scn-sg-all{font-size:11.5px;color:var(--ink3)}
+.scn-sg-all{font-size:calc(11.5px + var(--type-up));color:var(--ink3)}
 
 /* ── THE ASK WELL ─────────────────────────────────────────────────────────────────────────── */
 .scn-suggest{flex-basis:100%;display:grid;grid-template-columns:1fr auto;gap:8px 12px;align-items:center;
   margin:2px 0 0;padding:11px 13px 12px;border-radius:var(--r-card);background:var(--tint);
   box-shadow:inset 0 0 0 1px var(--hair-soft)}
-.scn-sg-lab{font-size:12px;font-weight:600;color:var(--ink);min-width:0}
+.scn-sg-lab{font-size:calc(12px + var(--type-up));font-weight:600;color:var(--ink);min-width:0}
 /* the ladder is the segmented control, in its small (scope) size; the chosen rung floats */
 .scn-sg-sizes{justify-self:end}
 .scn-sg-sizes .scn-sg-size{font-variant-numeric:tabular-nums}
 /* the status line under the question: the price, the check, or nothing (then no row) */
-.scn-sg-price{grid-column:1 / -1;display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--ink2);
+.scn-sg-price{grid-column:1 / -1;display:flex;align-items:center;gap:8px;font-size:calc(11.5px + var(--type-up));color:var(--ink2);
   font-variant-numeric:tabular-nums;min-width:0}
 .scn-sg-price:empty{display:none}
 /* the verbs, primary first; the progress track rides this row's end while a run is on */
 .scn-sg-actions{grid-column:1 / -1;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
 .scn-sg-actions .scn-prog{margin-left:auto}
 /* the sentence the server sent, or the run's count — quiet, one measure wide */
-.scn-sg-note{grid-column:1 / -1;font-size:11.5px;line-height:1.5;color:var(--ink3);max-width:62ch}
+.scn-sg-note{grid-column:1 / -1;font-size:calc(11.5px + var(--type-up));line-height:1.5;color:var(--ink3);max-width:62ch}
 /* refused: the sentence is the thing to read now, so it takes the reading ink */
 .scn-suggest[data-state="refused"] .scn-sg-note{color:var(--ink2)}
 /* the well folds to one column where the ladder no longer fits beside its label */
@@ -50,7 +50,7 @@
 
 /* ── the run's progress: the sentence, and the same numbers as a track ── */
 .scn-applying{display:flex;align-items:center;gap:10px;flex-basis:100%}
-.scn-applying-lab{font-size:11.5px;color:var(--ink2);font-variant-numeric:tabular-nums}
+.scn-applying-lab{font-size:calc(11.5px + var(--type-up));color:var(--ink2);font-variant-numeric:tabular-nums}
 .scn-prog{appearance:none;-webkit-appearance:none;width:120px;height:3px;border:0;flex:none;
   border-radius:var(--r-pill);background:var(--hair-soft);overflow:hidden}
 .scn-prog::-webkit-progress-bar{background:var(--hair-soft);border-radius:var(--r-pill)}
@@ -61,7 +61,7 @@
    The two the apply steps over (`.off`) are outlined rather than filled — a difference a reader
    sees, not only one they count. */
 .scn-chips{display:flex;gap:6px;flex-wrap:wrap}
-.scn-chip{font:inherit;font-size:11px;font-weight:550;padding:4px 11px;border:0;border-radius:var(--r-pill);
+.scn-chip{font:inherit;font-size:calc(11px + var(--type-up));font-weight:550;padding:4px 11px;border:0;border-radius:var(--r-pill);
   background:var(--tint);color:var(--ink2);cursor:pointer;white-space:nowrap;
   transition:background .14s var(--swift),color .14s var(--swift),box-shadow .14s var(--swift)}
 .scn-chip:hover{background:var(--tint2);color:var(--ink)}

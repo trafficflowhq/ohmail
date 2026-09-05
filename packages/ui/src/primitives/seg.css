@@ -17,16 +17,16 @@
  * the segments' real widths against the parent's content box and flips the attribute. Tokens
  * only: paper draws capsules and a rounded list, ohmarchy draws squares and a square list. */
 .seg{display:inline-flex;width:max-content;max-width:100%;box-sizing:border-box;background:var(--tint2);border-radius:var(--r-pill);padding:2px}
-.seg button{padding:4px 12px;font-size:11.5px;color:var(--ink3);border-radius:var(--r-pill);border:0;cursor:pointer;
+.seg button{padding:4px 12px;font-size:calc(11.5px + var(--type-up));color:var(--ink3);border-radius:var(--r-pill);border:0;cursor:pointer;
   background:none;font-family:inherit;line-height:1.5;white-space:nowrap;flex:none;
   transition:background .18s,color .15s,box-shadow .2s}
 .seg button.on{background:var(--float);color:var(--ink);font-weight:600;box-shadow:var(--lift-0)}
 /* counted variant (Screener sections) */
-.seg.counted button{padding:5.5px 13px;font-size:12px;display:inline-flex;align-items:center;gap:6px}
-.seg button .scnt{font-size:10.5px;color:var(--ink3);font-weight:550;min-width:0}
+.seg.counted button{padding:5.5px 13px;font-size:calc(12px + var(--type-up));display:inline-flex;align-items:center;gap:6px}
+.seg button .scnt{font-size:calc(10.5px + var(--type-up));color:var(--ink3);font-weight:550;min-width:0}
 .seg button.on .scnt{color:var(--ink2)}
 /* scope variant (decision bar) */
-.seg.scope button{padding:3.5px 10px;font-size:11px}
+.seg.scope button{padding:3.5px 10px;font-size:calc(11px + var(--type-up))}
 /* ── the stacked form ── one option per line; the list is as wide as its longest label and
    never wider than the container. Off-band literals through ratios, never snapped: 10px and
    8px under paper, 0 under ohmarchy. */

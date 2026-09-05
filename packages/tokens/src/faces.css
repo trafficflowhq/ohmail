@@ -45,4 +45,14 @@
   /* UI type — on Omarchy 3c feeds these live from fc-match / shell.toml */
   --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
   --font-size-base: 14px;
+
+  /* THE PHONE TYPE STEP, AND THE TEXT-CONTROL FLOOR. Both are `0px` here and width-driven in
+     `packages/ui/src/base.css`, which is what keeps desktop byte-identical: `calc(13px + 0px)` is
+     13px and `max(0px, 13px)` is 13px, so paper computes exactly as it did.
+
+     They are SLOTS AND NOT FACE VALUES — a phone is not a face, and neither is declared in
+     `ohmarchy.css`. `--input-floor` exists because iOS zooms the page when a focused text control
+     is under 16px, which is a browser behaviour rather than a taste. */
+  --type-up: 0px;
+  --input-floor: 0px;
 }

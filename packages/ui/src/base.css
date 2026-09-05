@@ -18,8 +18,28 @@ svg.ic{width:15px;height:15px;flex:none;stroke:currentColor;fill:none;stroke-wid
 
 .mo-canvas{
   font-family:var(--font-ui);
-  font-size:var(--font-size-base); line-height:1.5; color:var(--ink); background:var(--canvas);
+  font-size:calc(var(--font-size-base) + var(--type-up)); line-height:1.5; color:var(--ink); background:var(--canvas);
   -webkit-font-smoothing:antialiased;
+}
+
+/* ── THE PHONE TYPE STEP ────────────────────────────────────────────────────────────────────
+   Every reading role in the shell sat one to three pixels under what the platforms set beside it,
+   and the meta band — timestamps, addresses, previews, settings descriptions — sat furthest under.
+   One restrained step: every role from 10.5px to 15.5px gains exactly one pixel at phone width,
+   nothing at 16px or above moves, and no information-bearing text is left under 12px.
+
+   ON `.mo-canvas` AND NOT `:root`, deliberately: the marketing tree does not wear the canvas and is
+   out of scope. Declared at the width rather than per-declaration so there is ONE place the step
+   is decided and 391 places that merely read it.
+
+   `--input-floor` is a different rule wearing the same mechanism. iOS zooms the page whenever a
+   focused text control is smaller than 16px, so a text field is floored rather than stepped — the
+   step would leave several of them at 14 or 15 and the zoom would still fire.
+
+   640px and not 430: a desktop window narrower than that is a phone-class layout, and the desktop
+   app shares this shell. */
+@media (max-width: 640px){
+  .mo-canvas{ --type-up:1px; --input-floor:16px }
 }
 /* :where() keeps these resets at zero specificity so component classes
    (.btn, .ritem, …) always win regardless of import order. */

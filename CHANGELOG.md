@@ -13,6 +13,17 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Text is a step larger on phones
+
+Every reading role in the app sat one to three pixels under what the phone platforms set beside it,
+and the meta band — timestamps, addresses, preview lines, settings descriptions — sat furthest
+under. At phone width every text role between 10.5px and 15.5px is now exactly one pixel larger.
+Nothing at 16px or above moves, no information-bearing text is left under 12px, and a window wider
+than 640px is unchanged to the pixel.
+
+Text fields are the exception, and they are floored rather than stepped: a focused field under 16px
+makes iOS zoom the whole page, so those land on 16 whatever they were.
+
 ### Controls fit the width they are given
 
 Four things in the app decided their own width from something other than the room they had, and

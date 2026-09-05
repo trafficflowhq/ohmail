@@ -37,7 +37,7 @@
   border-radius:calc(var(--r-ctl) * 10 / 8);
   background: var(--tint);
   box-shadow: inset 0 0 0 1px var(--hair-soft);
-  font-size: 12.5px;
+  font-size:calc(12.5px + var(--type-up));
   line-height: 1.5;
   color: var(--ink2);
 }
@@ -60,7 +60,7 @@
   border: 0;
   cursor: pointer;
   font: inherit;
-  font-size: 12.5px;
+  font-size:calc(12.5px + var(--type-up));
   padding: 5px 11px;
   border-radius:var(--r-pill);
   color: var(--ink);
@@ -89,7 +89,7 @@
   background: none;
   cursor: pointer;
   font: inherit;
-  font-size: 11px;
+  font-size:calc(11px + var(--type-up));
   padding: 2px 0;
   color: var(--ink3);
   transition: color 0.15s var(--swift);
@@ -246,7 +246,7 @@ h4.msg-h, h5.msg-h, h6.msg-h { font-size: 1em; }
    the text alternative is being shown instead. Matches `.msg-body-state` in the UI package
    deliberately: the product speaking about the body, never part of it. */
 .mb-note {
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
   color: var(--ink3);
   margin: 0;
   max-width: 60ch;
@@ -258,6 +258,6 @@ h4.msg-h, h5.msg-h, h6.msg-h { font-size: 1em; }
    sit on one line before its button wraps under a clipped sentence. */
 @media (max-width: 430px) {
   .mb { gap: 10px; }
-  .mb-bar { padding: 8px 10px; font-size: 12px; }
+  .mb-bar { padding: 8px 10px; font-size:calc(12px + var(--type-up)); }
   .mb-sheet { border-radius:calc(var(--r-ctl) * 10 / 8); }
 }

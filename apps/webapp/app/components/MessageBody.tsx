@@ -3235,7 +3235,7 @@ export function frameCsp(imgSource: string | null): string {
  * wins, exactly as they do for every other rule in this sheet. What it fixes is the mail that
  * declares nothing, which is the mail this reflow path exists for.
  */
-export const NATIVE_FONT_SIZE = "14.5px";
+export const NATIVE_FONT_SIZE = "calc(14.5px + var(--type-up))";
 export const NATIVE_LINE_HEIGHT = "1.55";
 
 /**
@@ -3400,6 +3400,23 @@ a[data-ohmail-inert]{text-decoration:line-through;opacity:.75}
      native path's .msg-pre-wrap uses and for the same reason: the element allowed to be
      wide must sit inside the element that scrolls — here they are the same element, capped
      at the column by the * rule above. */
+/* THE FRAME DECLARES THE SLOT ITSELF, and without this line the body renders at the browser's
+   default size with every test still green.
+
+   The re-flow frame is a SEPARATE DOCUMENT. It inherits no custom property from the shell, so the
+   calc() above resolves against a --type-up that does not exist there — and an unresolvable custom
+   property makes the whole declaration invalid at computed-value time, which is font-size: unset,
+   not font-size: 14.5px. The mail body would silently become the browser's default.
+
+   The frame is its own width class, so the phone step is decided here on the frame's OWN width
+   rather than inherited from the shell's.
+
+   NOTE FOR ANYONE EDITING THIS BLOCK: it is inside a JS template literal, so a backtick or a
+   dollar-brace interpolation inside a CSS comment here is a syntax error in the module rather
+   than a comment. Both were written here by hand and both broke the build; the second was in
+   the sentence warning about the first. */
+:root[data-ohmail-reflow]{--type-up:0px}
+@media (max-width:640px){:root[data-ohmail-reflow]{--type-up:1px}}
 :root[data-ohmail-reflow] body{font-size:${NATIVE_FONT_SIZE};line-height:${NATIVE_LINE_HEIGHT};
   overflow-wrap:anywhere}
 :root[data-ohmail-reflow] *{max-width:100% !important}

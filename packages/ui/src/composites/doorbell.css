@@ -30,9 +30,9 @@
    already carries the count ("+10 · 14 waiting" — two numbers, one fact), so its width is the
    same product: the tile's own 26px under paper, zero under ohmarchy. */
 .doorbell .avs .av.more{max-width:calc(26px * (1 - var(--teach)));margin-left:calc(-7px * (1 - var(--teach)));overflow:hidden}
-.doorbell .db-txt{font-size:12px;color:var(--ink2);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.doorbell .db-txt{font-size:calc(12px + var(--type-up));color:var(--ink2);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .doorbell .db-txt b{color:var(--ink);font-weight:600}
-.doorbell .db-go{margin-left:auto;flex:none;font-size:12px;font-weight:600;color:var(--accent-ink)}
+.doorbell .db-go{margin-left:auto;flex:none;font-size:calc(12px + var(--type-up));font-weight:600;color:var(--accent-ink)}
 /* THE FACES ARE THE THING THAT GOES WHEN SPACE RUNS OUT — never the sentence.
    The stack is "a texture, not a census" (see `Doorbell.tsx`): the count lives in the label,
    so dropping the strip costs nothing a user can no longer learn, while dropping a word from
@@ -41,7 +41,7 @@
    domain cut mid-word by an ellipsis is worse than no domain.
 
    309px is the doorbell's CONTENT box, not its border box — `container-type` measures the
-   content edge — so this fires at or below a 335px button and the faces return from 310px.
+   content edge — so this fires at or below a 346px button and the faces return from 321px.
 
    WHAT THE STRIP COSTS, binary-searched in Chrome against the real `next build`, with the
    strip forced visible so the number is a REQUIREMENT and not a fallback. Narrowest content
@@ -52,6 +52,34 @@
      4 faces + "+1039",  "1,043 waiting"           287px   ← a heavily backlogged mailbox
      4 faces + "+12341", "12,345 waiting"          301px
      4 faces + "+99995", "99,999 waiting"          303px   ← worst realistic
+
+   RE-MEASURED FOR THE PHONE TYPE STEP. The sentence and "Screener ›" are both in the stepped
+   band, so at phone width they render at 13px and every row above grows; the face strip does not,
+   because those are fixed boxes. Measured as a DELTA in the real cascade, 12px against 13px — the
+   absolute figures above stay the binary-searched ones, because a second absolute measurement
+   through a different rig would be a second answer to one question:
+
+     paper     Δ +13 · +15 · +16 · +17   → worst realistic 320px
+     ohmarchy  Δ +15 · +18 · +20 · +20   → worst realistic 323px
+
+   So the requirement at phone width moves 303 → 323, and the rung has to move with it. Without
+   that the faces stay put on a five-digit backlog and push "Screener ›" past the pill's edge; the
+   sentence never clips (`flex:none`, `nowrap`), so the failure is the FACES overflowing rather
+   than a cut word.
+
+   BUT THE RUNG CANNOT SIMPLY BE 323 + HEADROOM, and this is the constraint that decides the
+   number. The rung fires on the doorbell's own content box, and the two boxes it has to separate
+   are 6px apart:
+
+     390px phone   → content 316 → text is 13px → needs 323 → the faces MUST drop
+     ≥900px split  → content 322 → text is 12px → needs 303 → the faces MUST STAY
+
+   The desktop column is NARROWER than the phone's requirement and WIDER than its own, because the
+   step applies at one width and not the other. So the rung goes between the two boxes rather than
+   above the larger requirement: 330 was the first value tried and it drops the faces on the
+   desktop split, where nothing was ever too small. **320**: the phone's 316 is 4px inside it and
+   the desktop's 322 is 2px outside. Thin on the desktop side and measured rather than chosen — a
+   desktop column that ever narrows below 321 wants this re-derived, not nudged.
 
    So wherever the faces appear (≥310px) even the 99,999 case clears by 7px, and the 1,043
    case clears by 23px.
@@ -75,7 +103,7 @@
    English-only today (`apps/webapp/messages/` holds just `en.json`). A translation whose word
    for "waiting" is much longer than the margins above would need this re-measured, not
    guessed. */
-@container (max-width: 309px){
+@container (max-width: 320px){
   .doorbell .avs{display:none}
 }
 @media (max-width: 900px){

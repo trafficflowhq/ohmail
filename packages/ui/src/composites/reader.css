@@ -13,7 +13,7 @@
 .reader .msg-actions{bottom:calc(12px + env(safe-area-inset-bottom,0px))}
 @keyframes exhale{from{opacity:0;transform:translateY(18px) scale(.99)}to{opacity:1;transform:none}}
 .reader .msg h2{font-size:29px;margin:18px 0 16px}
-.reader .msg-body{font-size:15.5px;line-height:1.78}
+.reader .msg-body{font-size:calc(15.5px + var(--type-up));line-height:1.78}
 /* The reading overlay sets the body a step larger, so the paragraph gap follows it up to
    the 16px `.reader .msg h2` already uses below itself. Same rhythm, one size louder. */
 .reader .msg-p{margin-bottom:16px}
@@ -39,7 +39,7 @@
 .reader .msg:hover .msg-actions .abar-panel,
 .reader .msg:focus-within .msg-actions .abar-row,
 .reader .msg:focus-within .msg-actions .abar-panel{opacity:1}
-.reader-hint{position:fixed;top:18px;left:50%;translate:-50%;font-size:11px;color:var(--ink3);
+.reader-hint{position:fixed;top:18px;left:50%;translate:-50%;font-size:calc(11px + var(--type-up));color:var(--ink3);
   display:flex;gap:8px;align-items:center;pointer-events:none;z-index:var(--z-read);
   animation:hint 3.6s var(--swift) .2s both}
 @keyframes hint{0%{opacity:0}10%{opacity:1}82%{opacity:1}100%{opacity:0}}
@@ -121,7 +121,7 @@ body.reading .shell{opacity:.05;transform:scale(.994);pointer-events:none}
   border: 0;
   background: none;
   font: inherit;
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
   font-weight: 550;
   color: var(--ink2);
   padding: 4px 10px;

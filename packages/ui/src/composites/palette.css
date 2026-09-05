@@ -3,11 +3,11 @@
 .palette{position:fixed;left:50%;top:15vh;translate:-50%;z-index:var(--z-pal);width:min(520px,92vw);
   border-radius:calc(var(--r-overlay) * 22 / 20);background:var(--float);box-shadow:var(--lift-3);
   overflow:hidden;animation:rise .24s var(--spring)}
-.palette input{width:100%;border:0;background:none;padding:16px 22px;font-size:14.5px;border-bottom:1px solid var(--hair-soft)} /* input boundary — kept */
+.palette input{width:100%;border:0;background:none;padding:16px 22px;font-size:max(var(--input-floor), calc(14.5px + var(--type-up)));border-bottom:1px solid var(--hair-soft)} /* input boundary — kept */
 .palette input:focus{outline:none}
 .palette input::placeholder{color:var(--ink2)}
 .pal-list{list-style:none;max-height:44vh;overflow-y:auto;padding:7px;margin:0}
-.pal-list li{display:flex;align-items:center;gap:10px;padding:9px 14px;border-radius:calc(var(--r-card) * 13 / 14);font-size:13px;cursor:pointer}
+.pal-list li{display:flex;align-items:center;gap:10px;padding:9px 14px;border-radius:calc(var(--r-card) * 13 / 14);font-size:calc(13px + var(--type-up));cursor:pointer}
 .pal-list li svg{color:var(--ink3)}
 .pal-list li.sel{background:var(--accent-soft)}
 .pal-list li.sel svg{color:var(--accent-ink)}
@@ -20,4 +20,4 @@
 .pal-list li.off svg{color:var(--ink3);opacity:.55}
 .pal-list li.off.sel{background:var(--hair-soft)}
 .pal-list li.off.sel svg{color:var(--ink3)}
-.pal-foot{padding:8px 16px;font-size:10.5px;color:var(--ink3);display:flex;gap:12px}
+.pal-foot{padding:8px 16px;font-size:calc(10.5px + var(--type-up));color:var(--ink3);display:flex;gap:12px}

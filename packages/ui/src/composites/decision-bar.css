@@ -5,12 +5,12 @@
   container-type:inline-size}
 .d-btns{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .d-sub{display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap}
-.d-note{font-size:11px;color:var(--ink3);min-width:0;flex:1 1 220px;line-height:1.45}
+.d-note{font-size:calc(11px + var(--type-up));color:var(--ink3);min-width:0;flex:1 1 220px;line-height:1.45}
 /* `.d-keys` is gone with the legend it styled — the keys are on the capsules now. */
-.decide .btn{font-size:11.5px;padding:5.5px 13px}
-.choose-lab{font-size:11.5px;color:var(--ink3);align-self:center}
+.decide .btn{font-size:calc(11.5px + var(--type-up));padding:5.5px 13px}
+.choose-lab{font-size:calc(11.5px + var(--type-up));color:var(--ink3);align-self:center}
 .scn-back{display:none;align-items:center;gap:6px;margin:0 0 12px;padding:0;border:0;background:none;cursor:pointer;
-  font-size:12px;font-weight:600;color:var(--ink2);font-family:inherit}
+  font-size:calc(12px + var(--type-up));font-weight:600;color:var(--ink2);font-family:inherit}
 .scn-back svg{transform:rotate(180deg)}
 
 /* FIX (design-system addition): the five decision split-buttons must
@@ -31,7 +31,7 @@
 }
 @container (max-width: 700px){
   .d-btns{gap:5px}
-  .decide .dbtn button{padding:6px 9px;font-size:11.5px;gap:3px}
+  .decide .dbtn button{padding:6px 9px;font-size:calc(11.5px + var(--type-up));gap:3px}
   .decide .dbtn .d-read{padding:6px 7px}
   /* The cap compresses with the capsule rather than disappearing from it. */
   .decide .dbtn kbd{min-width:0;padding:0 3px;font-size:9px}

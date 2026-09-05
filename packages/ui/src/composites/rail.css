@@ -9,7 +9,7 @@
 .wordmark b em{font-style:normal;color:var(--accent-ink)}
 .compose-cta{
   display:flex;align-items:center;gap:8px;margin:0 4px 16px 0;padding:8px 14px;border-radius:var(--r-pill);border:0;cursor:pointer;
-  font-size:12.5px;font-weight:600;color:var(--ink);background:var(--float);box-shadow:var(--lift-0);
+  font-size:calc(12.5px + var(--type-up));font-weight:600;color:var(--ink);background:var(--float);box-shadow:var(--lift-0);
   font-family:inherit;line-height:1.5;text-align:left;
   transition:box-shadow .2s var(--swift), transform .15s var(--swift);
 }
@@ -19,9 +19,9 @@
 .compose-cta kbd{margin-left:auto;background:transparent;border-color:var(--hair-soft)}
 .compose-cta.on{box-shadow:0 0 0 1.5px var(--accent-hair), var(--lift-0)}
 .rgroup{margin:0 0 14px}
-.rlabel{font-size:11px;font-weight:600;color:var(--ink3);padding:4px 8px 4px}
+.rlabel{font-size:calc(11px + var(--type-up));font-weight:600;color:var(--ink3);padding:4px 8px 4px}
 .rlabel-toggle{display:flex;align-items:center;gap:5px;width:100%;text-align:left;border:0;background:none;cursor:pointer;
-  font-size:11px;font-weight:600;color:var(--ink3);padding:4px 8px;border-radius:var(--r-ctl);font-family:inherit;
+  font-size:calc(11px + var(--type-up));font-weight:600;color:var(--ink3);padding:4px 8px;border-radius:var(--r-ctl);font-family:inherit;
   transition:color .15s}
 .rlabel-toggle:hover{color:var(--ink)}
 /* The chevron LEADS the label — see `RailNav.tsx`. `flex:0 0 auto` so a long group name
@@ -35,7 +35,7 @@
    Tags cut across every view, so nothing above it owns it. */
 .rgroup .rgroup.rsub{margin:3px 0 0}
 .rsub .rlabel-toggle{padding:3px 8px}
-.rsub .ritem{font-size:12.5px;padding:5px 8px}
+.rsub .ritem{font-size:calc(12.5px + var(--type-up));padding:5px 8px}
 /* The "New tag" trigger in a tag group. Quieter than a tag until hovered, so the group still
    reads as a list of tags with one affordance at the end rather than as a list with an odd
    member. The `+` sits exactly where the tag dot does, so the rows stay aligned. Driven by the
@@ -50,34 +50,34 @@
 .ritem-new{cursor:text}
 .ritem-new .ritem-plus{color:var(--accent-ink)}
 .ritem-new-input{flex:1 1 auto;min-width:0;border:0;background:none;padding:0;margin:0;
-  font-family:inherit;font-size:12.5px;font-weight:450;color:var(--ink);line-height:1.5}
+  font-family:inherit;font-size:max(var(--input-floor), calc(12.5px + var(--type-up)));font-weight:450;color:var(--ink);line-height:1.5}
 .ritem-new-input::placeholder{color:var(--ink3)}
 .ritem-new-input:focus{outline:none}
 /* The empty-state invite, and the duplicate-name refusal — both quiet lines inside the group,
    aligned to the tag labels above them (dot column + gap). */
-.rsub-empty{margin:2px 0;padding:5px 8px 5px 25px;font-size:12px;color:var(--ink3);line-height:1.45}
-.rsub-warn{margin:1px 0 3px;padding:2px 8px 2px 25px;font-size:11px;color:var(--danger-ink, var(--ink2));line-height:1.4}
-.rsub .ritem .cnt{font-size:11px}
+.rsub-empty{margin:2px 0;padding:5px 8px 5px 25px;font-size:calc(12px + var(--type-up));color:var(--ink3);line-height:1.45}
+.rsub-warn{margin:1px 0 3px;padding:2px 8px 2px 25px;font-size:calc(11px + var(--type-up));color:var(--danger-ink, var(--ink2));line-height:1.4}
+.rsub .ritem .cnt{font-size:calc(11px + var(--type-up))}
 .ritem{
   display:flex;align-items:center;gap:9px;width:100%;padding:6px 8px;border-radius:calc(var(--r-ctl) * 10 / 8);border:0;cursor:pointer;
   background:none;font-family:inherit;line-height:1.5;
-  font-size:13px;font-weight:450;color:var(--ink2);text-align:left;position:relative;
+  font-size:calc(13px + var(--type-up));font-weight:450;color:var(--ink2);text-align:left;position:relative;
   transition:color .15s, background .15s;
 }
 .ritem:hover{color:var(--ink);background:var(--tint)}
 .ritem.on{color:var(--ink);font-weight:600}
 .ritem.on::before{content:"";position:absolute;left:-10px;top:50%;translate:0 -50%;
   width:4px;height:4px;border-radius:var(--r-avatar);background:var(--accent)}
-.ritem .cnt{margin-left:auto;font-size:11.5px;font-weight:550;color:var(--ink3);
+.ritem .cnt{margin-left:auto;font-size:calc(11.5px + var(--type-up));font-weight:550;color:var(--ink3);
   font-variant-numeric:tabular-nums;min-width:17px;text-align:right;overflow:hidden}
 .ritem .cnt.hot{color:var(--accent-ink)}
 .cnt span{display:inline-block}
 .cnt span.tick{animation:tick .32s var(--spring)}
 @keyframes tick{from{transform:translateY(70%);opacity:0}to{transform:none;opacity:1}}
-.mbx{padding:3.5px 8px;display:flex;align-items:baseline;gap:7px;font-size:11.5px;color:var(--ink2);min-width:0}
+.mbx{padding:3.5px 8px;display:flex;align-items:baseline;gap:7px;font-size:calc(11.5px + var(--type-up));color:var(--ink2);min-width:0}
 .mbx i{width:4px;height:4px;border-radius:var(--r-avatar);background:var(--ink3);flex:none;font-style:normal;align-self:center;opacity:.7}
 .mbx .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.mbx small{color:var(--ink3);font-size:10.5px;margin-left:auto;padding-left:6px;flex:none}
+.mbx small{color:var(--ink3);font-size:calc(10.5px + var(--type-up));margin-left:auto;padding-left:6px;flex:none}
 /* THE APP'S OWN CONTROLS, AT THE FOOT OF THE RAIL — see `dock` in `RailNav.tsx`.
  *
  * `margin-top:auto` takes the rail's slack, so the group sits at the bottom whatever the route
@@ -128,7 +128,7 @@
 .rail-dock .dock-theme{flex:0 0 auto;padding:6px 7px;justify-content:center;color:var(--ink3)}
 .rail-dock .dock-theme:hover{color:var(--ink)}
 .rail-dock + .rail-mail{margin-top:0}
-.rail-mail{margin-top:auto;padding:14px 8px 0;font-size:10.5px;color:var(--ink3)}
+.rail-mail{margin-top:auto;padding:14px 8px 0;font-size:calc(10.5px + var(--type-up));color:var(--ink3)}
 
 /* ── FOLDER TREE ROWS — the rail's Folders group (FOLDERS-SPEC.md §14/§15) ─────────────────
  *
@@ -157,7 +157,7 @@ button.ftw:hover{color:var(--ink)}
 .fpath{color:var(--ink3);font-weight:400}
 .fscroll{max-height:min(320px,42vh);overflow-y:auto;overscroll-behavior:contain;flex:none}
 /* the mailbox address label above each mailbox's tree — only when 2+ mailboxes exist */
-.rmblab{font-size:10.5px;font-weight:600;color:var(--ink3);padding:8px 8px 3px;
+.rmblab{font-size:calc(10.5px + var(--type-up));font-weight:600;color:var(--ink3);padding:8px 8px 3px;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rmblab:first-child{padding-top:2px}
 
@@ -176,13 +176,13 @@ button.ftw:hover{color:var(--ink)}
 .ritem.fpend .flabel{font-style:italic}
 /* a refused command: the row keeps rendering; the sentence stands under it until dismissed */
 .ritem.ffail .fglyph{color:var(--danger-ink, var(--ink2))}
-.fproblem{display:flex;align-items:center;gap:8px;margin:2px 8px 4px 22px;font-size:11px;
+.fproblem{display:flex;align-items:center;gap:8px;margin:2px 8px 4px 22px;font-size:calc(11px + var(--type-up));
   line-height:1.35;color:var(--ink2)}
 .fdismiss{flex:none;border:0;background:none;padding:2px 7px;border-radius:calc(var(--r-ctl) * 7 / 8);font:inherit;
-  font-size:11px;font-weight:600;color:var(--accent-ink);cursor:pointer}
+  font-size:calc(11px + var(--type-up));font-weight:600;color:var(--accent-ink);cursor:pointer}
 .fdismiss:hover{background:var(--tint)}
 /* the delete confirm, inside the menu surface: the numbers first, the verb second */
-.fconfirm{max-width:230px;padding:5px 8px 3px;font-size:11px;line-height:1.4;color:var(--ink2);
+.fconfirm{max-width:230px;padding:5px 8px 3px;font-size:calc(11px + var(--type-up));line-height:1.4;color:var(--ink2);
   white-space:normal}
 .fdanger{color:var(--danger, #b3261e)}
 .fdanger:hover{color:var(--danger, #b3261e)}

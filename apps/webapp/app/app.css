@@ -195,7 +195,7 @@ body.reading .shell {
   flex-direction: column;
   gap: 1px;
   min-width: 0;
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
 }
 .tag-manage-ask b {
   color: var(--ink);
@@ -218,7 +218,7 @@ body.reading .shell {
 .view-note {
   margin: 0;
   padding: 0 30px 10px;
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
   line-height: 1.45;
   color: var(--ink3);
   border-bottom: 1px solid var(--hair-soft);
@@ -315,7 +315,7 @@ body.reading .shell {
   margin: 6px 0 10px;
   padding: 8px 10px;
   font: inherit;
-  font-size: 13px;
+  font-size:calc(13px + var(--type-up));
   color: var(--ink);
   background: var(--canvas);
   border: 1px solid var(--hair);
@@ -326,7 +326,7 @@ body.reading .shell {
 .seed-error {
   margin: 0 0 10px;
   padding: 8px 10px;
-  font-size: 12.5px;
+  font-size:calc(12.5px + var(--type-up));
   line-height: 1.45;
   color: var(--ink);
   background: color-mix(in srgb, var(--danger, #c0392b) 10%, transparent);
@@ -366,7 +366,7 @@ body.reading .shell {
   gap: 8px;
   align-items: baseline;
   padding: 7px 10px;
-  font-size: 13px;
+  font-size:calc(13px + var(--type-up));
 }
 
 .seed-who {
@@ -377,7 +377,7 @@ body.reading .shell {
 .seed-addr,
 .seed-count,
 .seed-note {
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   color: var(--ink3);
 }
 
@@ -388,7 +388,7 @@ body.reading .shell {
 
 .seed-excluded {
   margin: 10px 0 0;
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
   color: var(--ink3);
 }
 
@@ -406,7 +406,7 @@ body.reading .shell {
   justify-content: center;
   gap: 12px;
   padding: 5px 14px;
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   color: var(--ink2);
   background: var(--accent-soft);
 }
@@ -415,7 +415,7 @@ body.reading .shell {
   font-weight: 600;
 }
 .demo-ribbon button {
-  font-size: 11px;
+  font-size:calc(11px + var(--type-up));
   font-weight: 600;
   color: var(--accent-ink);
   border-radius:var(--r-pill);
@@ -447,7 +447,7 @@ body.reading .shell {
   flex-wrap: wrap;
   gap: 4px 9px;
   padding: 5px 14px;
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   color: var(--accent-ink);
   background: var(--accent-soft);
 }
@@ -455,7 +455,7 @@ body.reading .shell {
   font-weight: 600;
 }
 .sync-bar .glyph {
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
   line-height: 1;
 }
 .sync-bar.stopped {
@@ -579,7 +579,7 @@ body.reading .shell {
   flex-wrap: wrap;
   gap: 4px 9px;
   padding: 5px 14px;
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   color: var(--ink2);
   background: var(--tint);
   border-bottom: 1px solid var(--hair);
@@ -656,7 +656,7 @@ body.reading .shell {
   gap: 5px;
   padding: 9px 10px 10px;
   border-radius:calc(var(--r-card) * 12 / 14);
-  font-size: 11px;
+  font-size:calc(11px + var(--type-up));
   line-height: 1.35;
   color: var(--accent-ink);
   background: var(--accent-soft);
@@ -678,7 +678,7 @@ body.reading .shell {
   border: 0;
   border-radius:calc(var(--r-ctl) * 10 / 8);
   font: inherit;
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   font-weight: 550;
   text-align: left;
   color: var(--ink2);
@@ -730,7 +730,7 @@ body.reading .shell {
   overflow-wrap: anywhere;
 }
 .rail-sync .glyph {
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
   line-height: 1;
   flex: none;
   margin-top: 1px;
@@ -740,7 +740,7 @@ body.reading .shell {
   margin-top: 2px;
 }
 .rail-sync .rs-num {
-  font-size: 10.5px;
+  font-size:calc(10.5px + var(--type-up));
   opacity: 0.8;
   overflow-wrap: anywhere;
   font-feature-settings: "tnum";
@@ -849,7 +849,7 @@ body.reading .shell {
   min-width: 0;
   color: var(--ink2);
   text-decoration: none;
-  font-size: 11px;
+  font-size:calc(11px + var(--type-up));
   line-height: 1.35;
 }
 .rail-desktop-cta-link:hover {
@@ -865,7 +865,7 @@ body.reading .shell {
   border-radius:calc(var(--r-ctl) * 6 / 8);
   color: var(--ink3);
   cursor: pointer;
-  font-size: 14px;
+  font-size:calc(14px + var(--type-up));
   line-height: 1;
 }
 .rail-desktop-cta-x:hover {
@@ -899,7 +899,7 @@ body.reading .shell {
   margin: 12px 26px 0;
   padding: 7px 12px;
   border-radius:calc(var(--r-ctl) * 10 / 8);
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
   color: var(--ink2);
   background: var(--accent-soft);
 }
@@ -916,7 +916,7 @@ body.reading .shell {
   color: var(--accent-ink);
 }
 .pick-bar button {
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   font-weight: 600;
   color: var(--accent-ink);
   border-radius:var(--r-pill);
@@ -948,11 +948,11 @@ body.reading .shell {
   flex-wrap: wrap;
   gap: 2px 10px;
   margin: 10px 26px 0;
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
   color: var(--ink2);
 }
 .ohx-notice button {
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   font-weight: 600;
   color: var(--accent-ink);
   border-radius:var(--r-pill);
@@ -1048,37 +1048,37 @@ body.reading .shell {
 }
 .pfi-card h2 {
   margin: 0 0 6px;
-  font-size: 15.5px;
+  font-size:calc(15.5px + var(--type-up));
   line-height: 1.3;
 }
 .pfi-card .pfi-lede {
   margin: 0;
-  font-size: 13px;
+  font-size:calc(13px + var(--type-up));
   line-height: 1.5;
   color: var(--ink2);
 }
 .pfi-card .pfi-holds {
   margin: 8px 0 2px;
-  font-size: 13px;
+  font-size:calc(13px + var(--type-up));
   line-height: 1.5;
   font-weight: 600;
   color: var(--ink);
 }
 .pfi-card .pfi-meta {
   margin: 0;
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
   color: var(--ink3);
 }
 .pfi-card .pfi-note {
   margin: 10px 0 0;
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
   line-height: 1.5;
   color: var(--ink2);
 }
 .pfi-card .pfi-error {
   margin: 10px 0 0;
   padding: 8px 10px;
-  font-size: 12.5px;
+  font-size:calc(12.5px + var(--type-up));
   line-height: 1.45;
   color: var(--ink);
   background: color-mix(in srgb, var(--danger, #c0392b) 10%, transparent);
@@ -1191,13 +1191,13 @@ body.reading .shell {
 }
 .scn-seg button {
   padding: 5.5px 13px;
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
   display: inline-flex;
   align-items: center;
   gap: 6px;
 }
 .scn-seg button .scnt {
-  font-size: 10.5px;
+  font-size:calc(10.5px + var(--type-up));
   color: var(--ink3);
   font-weight: 550;
   min-width: 0;
@@ -1208,7 +1208,7 @@ body.reading .shell {
 /* quick-adjust — the accept and the destination menu that ride each waiting row */
 .scn-act {
   font: inherit;
-  font-size: 11px;
+  font-size:calc(11px + var(--type-up));
   font-weight: 550;
   padding: 4px 9px;
   border: 1px solid var(--line);
@@ -1273,7 +1273,7 @@ body.reading .shell {
 }
 .scn-act-dest {
   font: inherit;
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1305,7 +1305,7 @@ body.reading .shell {
  * pressing it completes something, it does not merely adjust it. */
 .rsf-done {
   font: inherit;
-  font-size: 11px;
+  font-size:calc(11px + var(--type-up));
   font-weight: 550;
   display: inline-flex;
   align-items: center;
@@ -1351,7 +1351,7 @@ body.reading .shell {
   align-items: baseline;
   gap: 6px;
   margin: 0;
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   color: var(--ink3);
 }
 /* The way to the plan, as a link and not a button: it navigates, it buys nothing, and the loudest
@@ -1433,7 +1433,7 @@ body.reading .shell {
   display: flex;
   gap: 8px;
   align-items: flex-start;
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
   color: var(--ink2);
   margin: 0 0 14px;
   line-height: 1.5;
@@ -1461,7 +1461,7 @@ body.reading .shell {
   color: var(--ink3);
 }
 .scn-caption {
-  font-size: 11px;
+  font-size:calc(11px + var(--type-up));
   color: var(--ink3);
   margin: 0 0 10px;
 }
@@ -1476,11 +1476,11 @@ body.reading .shell {
   min-width: 0;
 }
 .scn-reader b {
-  font-size: 12.5px;
+  font-size:calc(12.5px + var(--type-up));
   color: var(--ink);
 }
 .scn-reader span {
-  font-size: 11px;
+  font-size:calc(11px + var(--type-up));
   color: var(--ink3);
   line-height: 1.45;
 }
@@ -1496,7 +1496,7 @@ body.reading .shell {
   max-width: 100%;
   white-space: normal;
   margin-top: 2px;
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   font-weight: 600;
   color: var(--accent-ink);
   border-radius: var(--r-pill);
@@ -1522,7 +1522,7 @@ body.reading .shell {
    answered, and said no — so it is set apart by shape, not by alarm. */
 .scn-relay {
   margin: 0;
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   line-height: 1.5;
   color: var(--ink2);
   max-width: 62ch;
@@ -1537,7 +1537,7 @@ body.reading .shell {
 .scn-relay-state {
   display: block;
   margin: 0 0 14px;
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
   line-height: 1.5;
   color: var(--ink2);
   max-width: 62ch;
@@ -1561,7 +1561,7 @@ body.reading .shell {
 /* The Junk window's footnotes — the per-mailbox degrades and the digit-free retention
    sentence — quiet lines under the rows, in the caption's own voice, padded to the row gutter. */
 .scn-junk-note {
-  font-size: 11px;
+  font-size:calc(11px + var(--type-up));
   color: var(--ink3);
   margin: 10px 14px 0;
 }
@@ -1583,7 +1583,7 @@ body.reading .shell {
   width: 100%;
   box-sizing: border-box;
   font: inherit;
-  font-size: 13px;
+  font-size:max(var(--input-floor), calc(13px + var(--type-up)));
   color: var(--ink);
   background: var(--float);
   border: 1px solid var(--line);
@@ -1602,7 +1602,7 @@ body.reading .shell {
   background: var(--float);
   border-radius:var(--r-card);
   box-shadow: var(--lift-1);
-  font-size: 12.5px;
+  font-size:calc(12.5px + var(--type-up));
   color: var(--ink2);
 }
 .scn-junk-sweep b {
@@ -1627,7 +1627,7 @@ body.reading .shell {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  font-size: 12.5px;
+  font-size:calc(12.5px + var(--type-up));
   flex-wrap: wrap;
 }
 .hm-line b {
@@ -1635,7 +1635,7 @@ body.reading .shell {
 }
 .hm-line .addr {
   min-width: 0;
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   color: var(--ink3);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1643,7 +1643,7 @@ body.reading .shell {
 }
 .hm-line .t {
   margin-left: auto;
-  font-size: 11px;
+  font-size:calc(11px + var(--type-up));
   color: var(--ink3);
   font-variant-numeric: tabular-nums;
   flex: none;
@@ -1663,7 +1663,7 @@ body.reading .shell {
   margin: 0 0 10px;
 }
 .hm-body {
-  font-size: 13.5px;
+  font-size:calc(13.5px + var(--type-up));
   line-height: 1.7;
   color: var(--ink);
   white-space: pre-line;
@@ -1683,7 +1683,7 @@ body.reading .shell {
    quieter than it: the product speaking about the mail, never mistakable for the mail. */
 .hm-state {
   margin: 10px 0 0;
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   color: var(--ink3);
   max-width: 62ch;
 }
@@ -1699,7 +1699,7 @@ body.reading .shell {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
 }
 .hm-unsub.note {
   color: var(--ink3);
@@ -1783,7 +1783,7 @@ body.reading .shell {
 /* Quiet, like the list explainers it borrows from — a muted "{n} tags" line with the `(i)`,
    opening to the colour chips. Inherits the InfoNote structure; only the type is set here. */
 .tag-note {
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
   color: var(--ink3);
 }
 .tag-note-chips {
@@ -1831,7 +1831,7 @@ body.reading .shell {
   flex-wrap: wrap;
 }
 .triage-cta span {
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   color: var(--ink3);
   min-width: 0;
 }
@@ -1913,10 +1913,10 @@ body.reading .shell {
   align-items: baseline;
   padding: 8px 2px;
   border-bottom: 1px solid var(--hair-soft); /* form-field rule — kept */
-  font-size: 13px;
+  font-size:calc(13px + var(--type-up));
 }
 .c-field label {
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   color: var(--ink3);
   width: 56px;
   flex: none;
@@ -2047,14 +2047,14 @@ textarea.c-input:read-only {
   flex: none;
   margin-left: auto;
   padding-left: 10px;
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   color: var(--accent);
 }
 /* A REJECTED RECIPIENT, named. Sits directly under the row it belongs to, on the accent's own
    soft surface rather than a red the system does not have; the field's `aria-describedby`
    points at it, so the reason reaches a screen reader with the field and not as a stray line. */
 .c-error {
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   line-height: 1.55;
   color: var(--ink);
   background: var(--accent-soft);
@@ -2076,7 +2076,7 @@ textarea.c-input:read-only {
   background: none;
   padding: 2px 4px;
   font: inherit;
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   color: var(--ink3);
   cursor: pointer;
   border-radius:calc(var(--r-ctl) * 6 / 8);
@@ -2096,7 +2096,7 @@ textarea.c-input:read-only {
   padding: 10px 2px;
 }
 .c-subject .c-input {
-  font-size: 15px;
+  font-size:max(var(--input-floor), calc(15px + var(--type-up)));
   font-weight: 600;
   letter-spacing: -0.01em;
 }
@@ -2114,13 +2114,13 @@ textarea.c-input:read-only {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size:calc(11px + var(--type-up));
   font-weight: 650;
   color: var(--accent-ink);
   margin-bottom: 12px;
 }
 .draft-body {
-  font-size: 13.5px;
+  font-size:calc(13.5px + var(--type-up));
   line-height: 1.65;
   white-space: pre-line;
   color: var(--ink);
@@ -2183,7 +2183,7 @@ textarea.c-input:read-only {
    container reads like the mechanism and is a no-op. Only the compose-specific type is left. */
 .compose-editor .rte-surface {
   padding: 4px 16px 14px;
-  font-size: 13.5px;
+  font-size:calc(13.5px + var(--type-up));
   line-height: 1.65;
 }
 /* Send and the status line, at the panel's bottom edge. `margin-top: auto` is what pins them:
@@ -2208,7 +2208,7 @@ textarea.c-input:read-only {
   flex-wrap: wrap;
 }
 .send-note {
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   color: var(--ink2);
 }
 /* ABANDONING THE MESSAGE — the Drafts list's confirm panel, in the compose foot.
@@ -2224,7 +2224,7 @@ textarea.c-input:read-only {
    same register: something true about this send that the form cannot show. */
 .compose-forwarding {
   margin: 10px 0 0;
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   color: var(--ink2);
 }
 
@@ -2245,7 +2245,7 @@ textarea.c-input:read-only {
   flex-wrap: wrap;
 }
 .compose-attach-cap {
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   color: var(--ink2);
 }
 /* THE SHRINK DIAL, IN THE ROW IT ACTS ON — the same stored preference Settings edits, worn
@@ -2259,7 +2259,7 @@ textarea.c-input:read-only {
   display: inline-flex;
   align-items: baseline;
   gap: 5px;
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   color: var(--ink2);
   cursor: pointer;
   white-space: nowrap;
@@ -2306,7 +2306,7 @@ textarea.c-input:read-only {
   padding: 5px 8px;
   border-radius:var(--r-ctl);
   background: var(--tint);
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
 }
 /* The name takes the slack and truncates; the size and the remove button keep their intrinsic
    width, so a 90-character filename cannot push the remove control off the panel. */
@@ -2352,7 +2352,7 @@ textarea.c-input:read-only {
    pick changes them. */
 .compose-attach-saved {
   margin: 8px 0 0;
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   line-height: 1.55;
   color: var(--ink2);
   font-variant-numeric: tabular-nums;
@@ -2363,7 +2363,7 @@ textarea.c-input:read-only {
 .compose-attach-scope,
 .compose-attach-duplicate {
   margin: 8px 0 0;
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   line-height: 1.55;
   color: var(--ink2);
 }
@@ -2374,7 +2374,7 @@ textarea.c-input:read-only {
    region, which is a different accessibility contract for the same look. */
 .compose-attach-error {
   margin: 8px 0 0;
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   line-height: 1.55;
   color: var(--ink);
   background: var(--accent-soft);
@@ -2450,7 +2450,7 @@ textarea.c-input:read-only {
   width: 100%;
   padding: 7px 12px;
   border-radius:calc(var(--r-ctl) * 10 / 8);
-  font-size: 12.5px;
+  font-size:calc(12.5px + var(--type-up));
   font-weight: 450;
   color: var(--ink2);
   text-align: left;
@@ -2504,7 +2504,7 @@ textarea.c-input:read-only {
   gap: 8px;
   padding: 7px 10px;
   border-radius:calc(var(--r-ctl) * 9 / 8);
-  font-size: 12.5px;
+  font-size:calc(12.5px + var(--type-up));
   cursor: pointer;
 }
 .rcp-opt b {
@@ -2528,7 +2528,7 @@ textarea.c-input:read-only {
   flex: 1 1 auto;
   min-width: 0;
   color: var(--ink3);
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
 }
 .rcp-opt .rcp-local {
   min-width: 0;
@@ -2580,7 +2580,7 @@ textarea.c-input:read-only {
   padding: 2px 9px;
   border-radius:calc(var(--r-pill) * 999 / 99);
   background: var(--tint);
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
   line-height: 1.5;
   color: var(--ink);
   cursor: grab;
@@ -2617,7 +2617,7 @@ textarea.c-input:read-only {
   padding: 0 1px;
   color: var(--ink3);
   cursor: pointer;
-  font-size: 13px;
+  font-size:calc(13px + var(--type-up));
   line-height: 1;
 }
 .rcp-chip-x:hover {
@@ -2741,7 +2741,7 @@ textarea.c-input:read-only {
   border: 0;
   background: none;
   padding: 11px 16px;
-  font-size: 12.5px;
+  font-size:max(var(--input-floor), calc(12.5px + var(--type-up)));
   border-bottom: 1px solid var(--hair-soft); /* input boundary — kept */
 }
 .tagp input:focus {
@@ -2761,7 +2761,7 @@ textarea.c-input:read-only {
   gap: 9px;
   padding: 8px 11px;
   border-radius:calc(var(--r-card) * 11 / 14);
-  font-size: 12.5px;
+  font-size:calc(12.5px + var(--type-up));
   cursor: pointer;
 }
 .tagp li:hover,
@@ -2771,7 +2771,7 @@ textarea.c-input:read-only {
 .tagp li .ck {
   margin-left: auto;
   color: var(--accent-ink);
-  font-size: 11px;
+  font-size:calc(11px + var(--type-up));
   font-weight: 650;
 }
 .tagp li.none {
@@ -2789,14 +2789,14 @@ textarea.c-input:read-only {
 }
 .tagp-foot {
   padding: 7px 14px 9px;
-  font-size: 10.5px;
+  font-size:calc(10.5px + var(--type-up));
   color: var(--ink3);
 }
 /* The honest note about where a tag lives. Quiet — it is a fact worth knowing before you rely
    on tags, not a warning about a mistake. Wraps, because the sentence is the point. */
 .tagp-note {
   padding: 0 14px 10px;
-  font-size: 10.5px;
+  font-size:calc(10.5px + var(--type-up));
   line-height: 1.45;
   color: var(--ink3);
   border-top: 1px solid var(--line);
@@ -2828,7 +2828,7 @@ textarea.c-input:read-only {
   display: flex;
   flex-wrap: wrap;
   gap: 6px 16px;
-  font-size: 12.5px;
+  font-size:calc(12.5px + var(--type-up));
   flex: 1 1 auto;
   min-width: 0;
 }
@@ -2882,7 +2882,7 @@ textarea.c-input:read-only {
 }
 .gate-card p,
 .login-card .sub {
-  font-size: 13px;
+  font-size:calc(13px + var(--type-up));
   color: var(--ink2);
   line-height: 1.6;
   margin: 0 0 20px;
@@ -2897,17 +2897,17 @@ textarea.c-input:read-only {
 }
 .gate-foot,
 .login-foot {
-  font-size: 11px;
+  font-size:calc(11px + var(--type-up));
   color: var(--ink3);
 }
 .login-passkey {
   width: 100%;
   justify-content: center;
   padding: 11px 18px;
-  font-size: 13.5px;
+  font-size:calc(13.5px + var(--type-up));
 }
 .login-passkey-note {
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   color: var(--ink3);
   line-height: 1.55;
   margin: 12px 0 0;
@@ -2915,7 +2915,7 @@ textarea.c-input:read-only {
 .login-alt {
   display: block;
   margin: 18px auto 0;
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
   font-weight: 600;
   color: var(--ink2);
 }
@@ -2926,7 +2926,7 @@ textarea.c-input:read-only {
   margin-top: 4px;
 }
 .login-totp-label {
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   color: var(--ink3);
   margin: 0 0 10px;
 }
@@ -2955,7 +2955,7 @@ textarea.c-input:read-only {
   border-radius:calc(var(--r-card) * 16 / 14);
   background: var(--accent-soft);
   padding: 14px 16px;
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
   color: var(--ink2);
   line-height: 1.55;
 }
@@ -2967,7 +2967,7 @@ textarea.c-input:read-only {
 }
 .login-beta .btn {
   margin-top: 10px;
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   padding: 5px 13px;
   text-decoration: none;
   display: inline-flex;
@@ -3006,7 +3006,7 @@ textarea.c-input:read-only {
   background: var(--accent);
 }
 .join-rail-label {
-  font-size: 10px;
+  font-size:calc(10px + var(--type-up));
   letter-spacing: 0.01em;
   color: var(--ink3);
   white-space: nowrap;
@@ -3055,13 +3055,13 @@ textarea.c-input:read-only {
   outline-offset: 2px;
 }
 .door-name {
-  font-size: 13px;
+  font-size:calc(13px + var(--type-up));
   font-weight: 600;
   color: var(--ink);
   line-height: 1.3;
 }
 .door-say {
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   color: var(--ink3);
   line-height: 1.5;
 }
@@ -3076,7 +3076,7 @@ textarea.c-input:read-only {
    three, so it sits outside the grid and is spaced away from it — a hint tucked
    under the last tile would read as being about that tile. */
 .door-travel {
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   color: var(--ink3);
   line-height: 1.55;
   margin: 16px 0 0;
@@ -3092,7 +3092,7 @@ textarea.c-input:read-only {
 
 .join-label {
   display: block;
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   font-weight: 600;
   color: var(--ink2);
   margin: 16px 0 6px;
@@ -3100,7 +3100,7 @@ textarea.c-input:read-only {
 .join-input {
   width: 100%;
   padding: 10px 12px;
-  font-size: 13.5px;
+  font-size:max(var(--input-floor), calc(13.5px + var(--type-up)));
   font-family: inherit;
   color: var(--ink);
   background: var(--canvas);
@@ -3125,7 +3125,7 @@ textarea.c-input:read-only {
   padding-top: 14px;
 }
 .join-invite-opt > summary {
-  font-size: 12.5px;
+  font-size:calc(12.5px + var(--type-up));
   color: var(--ink2);
   cursor: pointer;
   list-style: none;
@@ -3147,7 +3147,7 @@ textarea.c-input:read-only {
 }
 .join-hint,
 .join-note {
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   color: var(--ink3);
   line-height: 1.55;
   margin: 7px 0 0;
@@ -3164,7 +3164,7 @@ textarea.c-input:read-only {
   font-weight: 600;
 }
 .join-error {
-  font-size: 12.5px;
+  font-size:calc(12.5px + var(--type-up));
   line-height: 1.55;
   color: var(--ink);
   background: var(--accent-soft);
@@ -3179,7 +3179,7 @@ textarea.c-input:read-only {
   margin-top: 22px;
 }
 .join-alt {
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
   font-weight: 600;
   color: var(--ink2);
   text-decoration: none;
@@ -3198,7 +3198,7 @@ textarea.c-input:read-only {
 }
 .join-secret {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
   letter-spacing: 0.08em;
   color: var(--ink2);
   word-break: break-all;
@@ -3216,7 +3216,7 @@ textarea.c-input:read-only {
 }
 .join-codes code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12.5px;
+  font-size:calc(12.5px + var(--type-up));
   letter-spacing: 0.04em;
   color: var(--ink);
 }
@@ -3224,7 +3224,7 @@ textarea.c-input:read-only {
   display: flex;
   align-items: center;
   gap: 9px;
-  font-size: 12.5px;
+  font-size:calc(12.5px + var(--type-up));
   color: var(--ink2);
 }
 /* The two add-on buttons sit as one control cluster in the settings row's control slot. */
@@ -3249,7 +3249,7 @@ textarea.c-input:read-only {
   padding: 5px 13px;
   border-radius:var(--r-ctl);
   font: inherit;
-  font-size: 12.5px;
+  font-size:calc(12.5px + var(--type-up));
   font-weight: 600;
   color: var(--ink2);
   cursor: pointer;
@@ -3284,12 +3284,12 @@ textarea.c-input:read-only {
   opacity: 0.55;
 }
 .join-plan b {
-  font-size: 14px;
+  font-size:calc(14px + var(--type-up));
   font-weight: 650;
   color: var(--ink);
 }
 .join-plan .num {
-  font-size: 13px;
+  font-size:calc(13px + var(--type-up));
   font-variant-numeric: tabular-nums;
   color: var(--accent-ink);
   font-weight: 600;
@@ -3299,13 +3299,13 @@ textarea.c-input:read-only {
 .join-plan-after {
   grid-column: 2;
   justify-self: end;
-  font-size: 10.5px;
+  font-size:calc(10.5px + var(--type-up));
   color: var(--ink3);
   line-height: 1.2;
 }
 .join-plan-sub {
   grid-column: 1 / -1;
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   color: var(--ink3);
 }
 /* The action. Accent-coloured so the eye lands here rather than on the price — this is the
@@ -3313,7 +3313,7 @@ textarea.c-input:read-only {
 .join-plan-go {
   grid-column: 1 / -1;
   margin-top: 6px;
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
   font-weight: 600;
   color: var(--accent-ink);
 }
@@ -3375,7 +3375,7 @@ textarea.c-input:read-only {
   outline-offset: 2px;
 }
 .pvp-name {
-  font-size: 12.5px;
+  font-size:calc(12.5px + var(--type-up));
   font-weight: 600;
   color: var(--ink);
   line-height: 1.3;
@@ -3383,7 +3383,7 @@ textarea.c-input:read-only {
 .pvp-host {
   max-width: 100%;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 10px;
+  font-size:calc(10px + var(--type-up));
   letter-spacing: 0.01em;
   color: var(--ink3);
   overflow: hidden;
@@ -3411,7 +3411,7 @@ textarea.c-input:read-only {
 }
 .pvp-other .pvp-host {
   font-family: inherit;
-  font-size: 11px;
+  font-size:calc(11px + var(--type-up));
   letter-spacing: 0;
 }
 /* the load-bearing panel: what to fetch from the provider BEFORE typing anything,
@@ -3425,7 +3425,7 @@ textarea.c-input:read-only {
 }
 .pvp-note p {
   margin: 0;
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
   line-height: 1.6;
   color: var(--ink2);
 }
@@ -3434,7 +3434,7 @@ textarea.c-input:read-only {
   align-items: center;
   gap: 5px;
   margin-top: 8px;
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
   font-weight: 600;
   color: var(--accent-ink);
 }
@@ -3460,7 +3460,7 @@ textarea.c-input:read-only {
   margin: 0;
 }
 .login-invite-note {
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   color: var(--ink3);
   line-height: 1.55;
   margin: 14px 0 0;
@@ -3496,7 +3496,7 @@ textarea.c-input:read-only {
     flex: none;
   }
   .topbar b {
-    font-size: 13.5px;
+    font-size:calc(13.5px + var(--type-up));
     font-weight: 650;
     letter-spacing: -0.01em;
     margin-right: auto;
@@ -3507,7 +3507,7 @@ textarea.c-input:read-only {
     gap: 6px;
     padding: 6px 12px;
     border-radius:var(--r-pill);
-    font-size: 11.5px;
+    font-size:calc(11.5px + var(--type-up));
     color: var(--ink2);
     background: var(--panel);
     box-shadow: var(--lift-0);
@@ -3610,7 +3610,7 @@ textarea.c-input:read-only {
     margin: 0;
   }
   .stream-top .meta {
-    font-size: 12px;
+    font-size:calc(12px + var(--type-up));
     color: var(--ink3);
   }
   .view .stream-hints {
@@ -3678,7 +3678,7 @@ textarea.c-input:read-only {
     min-height: 160px;
   }
   .c-subject .c-input {
-    font-size: 14.5px;
+    font-size:max(var(--input-floor), calc(14.5px + var(--type-up)));
   }
   .set-layout {
     width: calc(100% - 28px);
@@ -3710,7 +3710,7 @@ textarea.c-input:read-only {
     padding: 20px 20px 40px;
   }
   .demo-ribbon {
-    font-size: 11px;
+    font-size:calc(11px + var(--type-up));
     padding: 5px 10px;
   }
 }
@@ -3731,19 +3731,19 @@ textarea.c-input:read-only {
   max-width: 620px;
 }
 .acct-h {
-  font-size: 15px;
+  font-size:calc(15px + var(--type-up));
   font-weight: 600;
   letter-spacing: -0.01em;
   margin: 14px 0 6px;
 }
 .acct-lead {
-  font-size: 13px;
+  font-size:calc(13px + var(--type-up));
   color: var(--ink2);
   line-height: 1.6;
   margin: 0 0 4px;
 }
 .acct-sub {
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
   font-weight: 600;
   color: var(--ink3);
   /* one section rhythm with `SettingsSubhead` (packages/ui settings.css): 22px above so a
@@ -3808,7 +3808,7 @@ textarea.c-input:read-only {
 .acct-list {
   margin: 0;
   padding: 0 0 0 15px;
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
   color: var(--ink2);
   line-height: 1.55;
 }
@@ -3816,7 +3816,7 @@ textarea.c-input:read-only {
   margin-top: 5px;
 }
 .acct-fine {
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   color: var(--ink3);
   line-height: 1.55;
   margin: 9px 0 0;
@@ -3839,7 +3839,7 @@ textarea.c-input:read-only {
   text-decoration: underline;
 }
 .acct-warn {
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
   color: var(--ink);
   line-height: 1.55;
   margin: 12px 0;
@@ -3851,7 +3851,7 @@ textarea.c-input:read-only {
    scrollable rather than wrapped: a wrapped shell command is one a reader can copy wrongly. */
 .acct-cmd {
   font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
   color: var(--ink);
   margin: 0 0 12px;
   padding: 10px 13px;
@@ -3933,11 +3933,11 @@ textarea.c-input:read-only {
 .mbx-main { display: flex; flex-direction: column; gap: 2px; min-width: min-content; flex: 1; }
 .mbx-main > .mbx-btn { align-self: flex-start; }
 .mbx-addr {
-  font-size: 14px; color: var(--ink);
+  font-size:calc(14px + var(--type-up)); color: var(--ink);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   min-width: 120px; contain: inline-size;
 }
-.mbx-sub { font-size: 11.5px; color: var(--ink2); }
+.mbx-sub { font-size:calc(11.5px + var(--type-up)); color: var(--ink2); }
 /* The state may WRAP but its buttons may not: `min-width: 0` lets the column give space back
    by dropping the status sentence onto its own line, while each button stays a whole capsule
    (`.mbx-btn` below is `nowrap`/`flex: none`). That is the split the screenshot demanded —
@@ -3947,9 +3947,9 @@ textarea.c-input:read-only {
   display: flex; align-items: center; justify-content: flex-end;
   gap: 8px 10px; flex-wrap: wrap; min-width: 0;
 }
-.mbx-ok { font-size: 12px; color: var(--ink2); font-variant-numeric: tabular-nums; }
-.mbx-bad { font-size: 12px; color: var(--danger, #b3261e); }
-.mbx-wait { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--ink2); }
+.mbx-ok { font-size:calc(12px + var(--type-up)); color: var(--ink2); font-variant-numeric: tabular-nums; }
+.mbx-bad { font-size:calc(12px + var(--type-up)); color: var(--danger, #b3261e); }
+.mbx-wait { display: inline-flex; align-items: center; gap: 7px; font-size:calc(12px + var(--type-up)); color: var(--ink2); }
 /* The waiting mark beside these rows is `Spinner` (packages/ui, `.spin`): a segment running the
    mark's own perimeter, ring or square by the radius token; `.mbx-spin` is the host's hook. */
 /* ── THE DEVICE-CODE, AS THE ONE THING BEING TRANSCRIBED ─────────────────────────────────────
@@ -4168,7 +4168,7 @@ textarea.c-input:read-only {
 
 /* A button label never breaks — "Reconnect Microsoft" on two lines inside its own capsule is
    the cramped wrapping the screenshot showed. The row makes room by wrapping BETWEEN items. */
-.mbx-btn { font-size: 12px; padding: 5px 12px; white-space: nowrap; flex: none; }
+.mbx-btn { font-size:calc(12px + var(--type-up)); padding: 5px 12px; white-space: nowrap; flex: none; }
 /* The takeover panel's two buttons. `wrap` because the confirm sits under a two-sentence
    explanation that is deliberately not shortened, and at 390px the pair must go to a second line
    rather than push the row wider than the card. */
@@ -4246,7 +4246,7 @@ textarea.c-input:read-only {
 }
 .mbx-handover-what {
   margin: 0;
-  font-size: 12.5px;
+  font-size:calc(12.5px + var(--type-up));
   line-height: 1.55;
   color: var(--ink);
   max-width: 62ch;
@@ -4282,10 +4282,10 @@ textarea.c-input:read-only {
 .bill-plan:focus-visible { outline: none; box-shadow: 0 0 0 1.5px var(--accent), var(--lift-2); }
 /* The plan already held is not a thing to buy again — flat, tinted, and not pressable. */
 .bill-plan.is-current { background: var(--tint); box-shadow: none; cursor: default; }
-.bill-plan-name { font-size: 13.5px; color: var(--ink); }
+.bill-plan-name { font-size:calc(13.5px + var(--type-up)); color: var(--ink); }
 .bill-plan-price { font-size: 18px; color: var(--accent-ink); font-variant-numeric: tabular-nums; }
-.bill-plan-meta { font-size: 11px; color: var(--ink2); }
-.bill-plan-cur { font-size: 10.5px; color: var(--ink3); text-transform: uppercase; letter-spacing: .06em; }
+.bill-plan-meta { font-size:calc(11px + var(--type-up)); color: var(--ink2); }
+.bill-plan-cur { font-size:calc(10.5px + var(--type-up)); color: var(--ink3); text-transform: uppercase; letter-spacing: .06em; }
 
 /* ================= the sender affordance in a row ============================
    Clicking a row's circle or address opens that sender's screening. The handler
@@ -4366,7 +4366,7 @@ textarea.c-input:read-only {
    (The focused panel's body keeps `.msg-body`, which the conversation suite holds to exactly
    one per surface; this class is the sibling's slot for the same viewer.) */
 .pm-body {
-  font-size: 14.5px;
+  font-size:calc(14.5px + var(--type-up));
   line-height: 1.55;
   color: var(--ink);
   overflow-wrap: anywhere;
@@ -4427,7 +4427,7 @@ textarea.c-input:read-only {
    button (packages/ui reader.css), which inherits this type wholesale. */
 .msg-subject {
   margin: 8px 0 0;
-  font-size: 13.5px;
+  font-size:calc(13.5px + var(--type-up));
   font-weight: 600;
   letter-spacing: -0.01em;
   line-height: 1.35;
@@ -4455,7 +4455,7 @@ textarea.c-input:read-only {
   padding: 0;
   color: var(--ink2);
   font: inherit;
-  font-size: 15px;
+  font-size:calc(15px + var(--type-up));
   line-height: 1;
   cursor: pointer;
   transition: background .15s, color .15s;
@@ -4489,7 +4489,7 @@ textarea.c-input:read-only {
   align-items: flex-start;
   gap: 3px;
   margin: 10px 0 0;
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   color: var(--ink3);
 }
 .rcpt-row {
@@ -4558,13 +4558,13 @@ textarea.c-input:read-only {
   min-width: 0;
 }
 .cpop-head b {
-  font-size: 12.5px;
+  font-size:calc(12.5px + var(--type-up));
   font-weight: 620;
   color: var(--ink);
   overflow-wrap: anywhere;
 }
 .cpop-head small {
-  font-size: 11px;
+  font-size:calc(11px + var(--type-up));
   color: var(--ink3);
   overflow-wrap: anywhere;
 }
@@ -4587,7 +4587,7 @@ textarea.c-input:read-only {
   background: none;
   padding: 0;
   font: inherit;
-  font-size: 11px;
+  font-size:calc(11px + var(--type-up));
   color: var(--ink2);
   cursor: pointer;
 }
@@ -4599,7 +4599,7 @@ textarea.c-input:read-only {
 }
 .msg-rcpt-full {
   margin: 6px 0 0;
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   color: var(--ink3);
   line-height: 1.6;
 }
@@ -4732,7 +4732,7 @@ textarea.c-input:read-only {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  font-size: 12.5px;
+  font-size:calc(12.5px + var(--type-up));
   margin-bottom: 10px;
 }
 .reply-head b {
@@ -4740,7 +4740,7 @@ textarea.c-input:read-only {
 }
 .reply-head small {
   color: var(--ink3);
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4768,7 +4768,7 @@ textarea.c-input:read-only {
 .reply-head-edit {
   flex: none;
   margin-left: auto;
-  font-size: 11px;
+  font-size:calc(11px + var(--type-up));
   color: var(--ink3);
 }
 .reply-head-btn:hover .reply-head-edit {
@@ -4781,7 +4781,7 @@ textarea.c-input:read-only {
   margin-bottom: 10px;
 }
 .reply-rcpt .c-field {
-  font-size: 12.5px;
+  font-size:calc(12.5px + var(--type-up));
 }
 /* FROM AS THE STACK'S FIRST ROW — the same `.c-field` grammar as To/Cc/Bcc, so all four rows
    share one label gutter and one input line (the caption-style From used to sit below the
@@ -4794,7 +4794,7 @@ textarea.c-input:read-only {
   flex: none;
   margin-left: auto;
   padding-left: 10px;
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
 }
 /* WHICH ADDRESS IS ANSWERING. One recessed line under the "Reply to …" head, in the
    head's own type size — it is context for the editor, not a heading of its own. */
@@ -4803,7 +4803,7 @@ textarea.c-input:read-only {
   flex-wrap: wrap;
   gap: 6px;
   margin: -6px 0 10px;
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   color: var(--ink3);
 }
 /* THE SUBSTITUTION, and the one line here that is allowed to be loud. It says the reply is
@@ -4985,7 +4985,7 @@ textarea.c-input:read-only {
   background: var(--canvas);
   color: var(--ink);
   font: inherit;
-  font-size: 13px;
+  font-size:calc(13px + var(--type-up));
 }
 .rte-linkpop-url:focus-visible {
   outline: 1.5px solid var(--accent);
@@ -4998,7 +4998,7 @@ textarea.c-input:read-only {
   border: 0;
   border-radius:var(--r-ctl);
   font: inherit;
-  font-size: 12.5px;
+  font-size:calc(12.5px + var(--type-up));
   cursor: pointer;
 }
 .rte-linkpop-apply {
@@ -5025,7 +5025,7 @@ textarea.c-input:read-only {
 .rte-linkpop-err {
   flex-basis: 100%;
   margin: 0;
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   color: var(--danger, #b3261e);
 }
 
@@ -5045,7 +5045,7 @@ textarea.c-input:read-only {
   flex: 1 1 auto;
   padding: 4px 13px 12px;
   outline: none;
-  font-size: 13.5px;
+  font-size:calc(13.5px + var(--type-up));
   line-height: 1.62;
   /* A pasted URL has no spaces in it and must not push the column wider than the window. */
   overflow-wrap: anywhere;
@@ -5147,7 +5147,7 @@ textarea.c-input:read-only {
 }
 .fr-editor .rte-surface {
   min-height: 100px;
-  font-size: 13px;
+  font-size:calc(13px + var(--type-up));
   line-height: 1.6;
 }
 .fr-editor:focus-within {
@@ -5169,11 +5169,11 @@ textarea.c-input:read-only {
 }
 .dr-title {
   display: block;
-  font-size: 12.5px;
+  font-size:calc(12.5px + var(--type-up));
 }
 .dr-body {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
   line-height: 1.55;
   color: var(--ink2);
 }
@@ -5187,7 +5187,7 @@ textarea.c-input:read-only {
    sits under the buttons at the size of the body copy rather than shouting. */
 .dr-note {
   margin: 9px 0 0;
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   line-height: 1.5;
   color: var(--ink2);
 }
@@ -5200,7 +5200,7 @@ textarea.c-input:read-only {
 }
 .reply-hint {
   margin-left: auto;
-  font-size: 10.5px;
+  font-size:calc(10.5px + var(--type-up));
   color: var(--ink3);
   display: inline-flex;
   align-items: center;
@@ -5219,7 +5219,7 @@ textarea.c-input:read-only {
    outcomes; a second block styled to match is a second block that stops matching. The
    component is `shell/SendStatus.tsx`. */
 .send-status {
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   line-height: 1.55;
   margin: 10px 0 0;
   border-radius:calc(var(--r-card) * 12 / 14);
@@ -5289,7 +5289,7 @@ textarea.c-input:read-only {
   gap: 10px;
 }
 .ks-head h3 {
-  font-size: 13px;
+  font-size:calc(13px + var(--type-up));
   font-weight: 650;
   margin: 0;
   display: flex;
@@ -5321,7 +5321,7 @@ textarea.c-input:read-only {
   align-items: start;
 }
 .ks-cols h4 {
-  font-size: 10.5px;
+  font-size:calc(10.5px + var(--type-up));
   font-weight: 650;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -5338,7 +5338,7 @@ textarea.c-input:read-only {
   align-items: baseline;
   gap: 10px;
   padding: 4px 0;
-  font-size: 12.5px;
+  font-size:calc(12.5px + var(--type-up));
   color: var(--ink);
 }
 /* Declared but inert here — still listed, because a key that vanishes from the
@@ -5367,7 +5367,7 @@ textarea.c-input:read-only {
 }
 .ks-foot {
   margin: 16px 0 0;
-  font-size: 10.5px;
+  font-size:calc(10.5px + var(--type-up));
   color: var(--ink3);
 }
 @media (max-width: 640px) {
@@ -5427,7 +5427,7 @@ textarea.c-input:read-only {
 .draft-open:hover { background: var(--tint); }
 .draft-line { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
 .draft-subject {
-  font-size: 13px;
+  font-size:calc(13px + var(--type-up));
   font-weight: 600;
   min-width: 0;
   overflow: hidden;
@@ -5437,12 +5437,12 @@ textarea.c-input:read-only {
 .draft-when {
   margin-left: auto;
   flex: none;
-  font-size: 11px;
+  font-size:calc(11px + var(--type-up));
   color: var(--ink3);
   font-variant-numeric: tabular-nums;
 }
 .draft-to {
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   color: var(--ink2);
   min-width: 0;
   overflow: hidden;
@@ -5451,7 +5451,7 @@ textarea.c-input:read-only {
 }
 .draft-badge {
   flex: none;
-  font-size: 10px;
+  font-size:calc(10px + var(--type-up));
   font-weight: 650;
   padding: 1px 8px;
   border-radius:var(--r-pill);
@@ -5459,7 +5459,7 @@ textarea.c-input:read-only {
   background: var(--accent-soft);
 }
 .draft-preview {
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   line-height: 1.5;
   color: var(--ink3);
   overflow: hidden;
@@ -5473,7 +5473,7 @@ textarea.c-input:read-only {
 .draft-state {
   align-self: flex-start;
   margin-top: 2px;
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   line-height: 1.5;
   color: var(--ink);
   background: var(--accent-soft);
@@ -5489,7 +5489,7 @@ textarea.c-input:read-only {
   border: 0;
   cursor: pointer;
   font: inherit;
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   font-weight: 550;
   color: var(--ink3);
   border-radius:var(--r-pill);
@@ -5535,12 +5535,12 @@ textarea.c-input:read-only {
   margin-top: 10px;
 }
 .send-later-custom label {
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   color: var(--ink2);
 }
 .send-later-custom input[type="datetime-local"] {
   font: inherit;
-  font-size: 12.5px;
+  font-size:max(var(--input-floor), calc(12.5px + var(--type-up)));
   color: var(--ink);
   background: var(--panel);
   border: 1px solid var(--hair);
@@ -5552,7 +5552,7 @@ textarea.c-input:read-only {
 /* The Scheduled group's heading in Drafts — the list's own quiet register, not a second
    view title. */
 .drafts-group-head {
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   font-weight: 600;
   color: var(--ink2);
   text-transform: uppercase;
@@ -5592,7 +5592,7 @@ body.dnd-active * { cursor: grabbing !important; }
   box-shadow: var(--lift-3);
   opacity: 0.95;
   pointer-events: none;
-  font-size: 12.5px;
+  font-size:calc(12.5px + var(--type-up));
   line-height: 1.3;
   white-space: nowrap;
 }
@@ -5607,7 +5607,7 @@ body.dnd-active * { cursor: grabbing !important; }
   justify-content: center;
   background: var(--accent);
   color: var(--on-accent);
-  font-size: 11px;
+  font-size:calc(11px + var(--type-up));
   font-weight: 600;
 }
 .drag-ghost .dg-from {
@@ -5674,7 +5674,7 @@ body.dnd-active * { cursor: grabbing !important; }
   gap: 8px;
 }
 .sig-tag {
-  font-size: 10.5px;
+  font-size:calc(10.5px + var(--type-up));
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--ink3);
@@ -5685,7 +5685,7 @@ body.dnd-active * { cursor: grabbing !important; }
   border: 0;
   background: none;
   color: var(--ink3);
-  font-size: 14px;
+  font-size:calc(14px + var(--type-up));
   line-height: 1;
   padding: 2px 4px;
   cursor: pointer;
@@ -5707,7 +5707,7 @@ body.dnd-active * { cursor: grabbing !important; }
   background: none;
   resize: none;
   font: inherit;
-  font-size: 13px;
+  font-size:calc(13px + var(--type-up));
   line-height: 1.45;
   color: var(--ink2);
   padding: 2px 0 0;
@@ -5736,14 +5736,14 @@ body.dnd-active * { cursor: grabbing !important; }
   min-width: 0;
 }
 .reply-subject-text {
-  font-size: 12.5px;
+  font-size:calc(12.5px + var(--type-up));
   color: var(--ink2);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .reply-subject-hint {
-  font-size: 10.5px;
+  font-size:calc(10.5px + var(--type-up));
   color: var(--ink3);
   opacity: 0;
   white-space: nowrap;
@@ -5756,7 +5756,7 @@ body.dnd-active * { cursor: grabbing !important; }
   display: block;
   width: 100%;
   margin: 0 0 8px;
-  font-size: 12.5px;
+  font-size:max(var(--input-floor), calc(12.5px + var(--type-up)));
 }
 
 /* ── the Signatures settings pane ─────────────────────────────────────────────────────────
@@ -5774,14 +5774,14 @@ body.dnd-active * { cursor: grabbing !important; }
 .sig-settings .lab {
   margin-bottom: 6px;
 }
-.sig-settings .lab b { display: block; font-size: 13px; font-weight: 600; }
-.sig-settings .lab span { display: block; font-size: 11.5px; color: var(--ink2); line-height: 1.5; }
+.sig-settings .lab b { display: block; font-size:calc(13px + var(--type-up)); font-weight: 600; }
+.sig-settings .lab span { display: block; font-size:calc(11.5px + var(--type-up)); color: var(--ink2); line-height: 1.5; }
 .sig-settings-editor {
   display: block;
   width: 100%;
   resize: vertical;
   font: inherit;
-  font-size: 13px;
+  font-size:calc(13px + var(--type-up));
   line-height: 1.45;
   /* The same 4-column tab stops the compose block and the markup use — one width everywhere. */
   -moz-tab-size: 4;
@@ -5794,7 +5794,7 @@ body.dnd-active * { cursor: grabbing !important; }
   padding: 6px 8px;
 }
 .sig-preview-text {
-  font-size: 13px;
+  font-size:calc(13px + var(--type-up));
   line-height: 1.45;
   color: var(--ink2);
   white-space: pre-wrap;
@@ -5819,11 +5819,11 @@ body.dnd-active * { cursor: grabbing !important; }
   flex-wrap: wrap;
   gap: 2px 10px;
   margin: -8px 2px 4px;
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
   color: var(--ink3);
 }
 .face-scope button {
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   font-weight: 600;
   color: var(--accent-ink);
   border-radius:var(--r-pill);

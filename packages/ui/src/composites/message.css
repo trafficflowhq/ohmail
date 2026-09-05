@@ -145,19 +145,19 @@
   --msg-measure:621px;
   max-width:640px;width:100%;margin:0 auto;padding:26px 34px 12px;
 }
-.msg-from{display:flex;align-items:center;gap:9px;font-size:12.5px}
+.msg-from{display:flex;align-items:center;gap:9px;font-size:calc(12.5px + var(--type-up))}
 .msg-from b{font-weight:600}
-.msg-from small{color:var(--ink3);font-size:12px}
+.msg-from small{color:var(--ink3);font-size:calc(12px + var(--type-up))}
 .msg-from .av{margin-right:1px}
 /* the from-line as a control — clicking the sender opens their screening */
 .msg-sender{display:inline-flex;align-items:center;gap:9px;min-width:0;
   border:0;background:none;padding:3px 8px 3px 3px;margin-left:-3px;border-radius:var(--r-pill);
-  font:inherit;font-size:12.5px;color:inherit;text-align:left;cursor:pointer;
+  font:inherit;font-size:calc(12.5px + var(--type-up));color:inherit;text-align:left;cursor:pointer;
   transition:background .15s var(--swift)}
 .msg-sender:hover{background:var(--tint)}
 .msg-sender:hover small{color:var(--accent-ink)}
 .msg-sender small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
-.msg-from .t{margin-left:auto;font-size:11.5px;color:var(--ink3);font-variant-numeric:tabular-nums;flex:none;display:flex;gap:10px;align-items:center}
+.msg-from .t{margin-left:auto;font-size:calc(11.5px + var(--type-up));color:var(--ink3);font-variant-numeric:tabular-nums;flex:none;display:flex;gap:10px;align-items:center}
 .msg h2{font-size:24px;font-weight:600;letter-spacing:-.025em;margin:14px 0 14px;line-height:1.25}
 .chips{display:flex;flex-wrap:wrap;gap:7px;margin:0 0 22px;align-items:center}
 /* The body is PROSE, not a text dump.
@@ -166,7 +166,7 @@
    the panel scrolls sideways at 390px. `pre-line` stays — single newlines inside a paragraph are
    the sender's line breaks and mail still means them — and the measure opens from 60ch to 68ch
    now that paragraphs, rather than one wall of text, carry the rhythm. */
-.msg-body{font-size:14.5px;line-height:1.55;color:var(--ink);white-space:pre-line;max-width:var(--msg-measure);margin:0;overflow-wrap:anywhere}
+.msg-body{font-size:calc(14.5px + var(--type-up));line-height:1.55;color:var(--ink);white-space:pre-line;max-width:var(--msg-measure);margin:0;overflow-wrap:anywhere}
 /* The paragraphs `BodyText` emits — deliberately NOT scoped under `.msg-body`, because the same
    component renders the conversation siblings inside `.hm-body`, whose rules live in the app's
    own stylesheet. One class, one rhythm, wherever a mail body is rendered.
@@ -204,7 +204,7 @@
 .msg-history-toggle{display:inline-flex;align-items:center;gap:7px;align-self:flex-start;
   width:fit-content;border:0;background:none;box-shadow:inset 0 0 0 1px var(--hair-soft);
   border-radius:var(--r-pill);padding:4px 12px;margin:0 0 14px;
-  font:inherit;font-size:11.5px;font-weight:500;line-height:1.5;color:var(--ink3);cursor:pointer;
+  font:inherit;font-size:calc(11.5px + var(--type-up));font-weight:500;line-height:1.5;color:var(--ink3);cursor:pointer;
   transition:background .15s var(--swift),color .15s var(--swift)}
 /* The glyph is a ::before, NOT a span: the button's text stays exactly its label, so the
    BodyText tests' byte-for-byte "Show history" and an accessible name without ornament both
@@ -223,10 +223,10 @@
 .msg-link:hover{text-decoration-color:var(--accent)}
 /* The product speaking about the body, never part of it. Deliberately quieter
    than `.msg-body` and set apart from it, so it cannot be read as the sender's words. */
-.msg-body-state{font-size:12px;color:var(--ink3);margin:12px 0 0;max-width:60ch}
+.msg-body-state{font-size:calc(12px + var(--type-up));color:var(--ink3);margin:12px 0 0;max-width:60ch}
 .msg-body-state.warn{color:var(--accent)}
 .attach{display:inline-flex;align-items:center;gap:8px;margin-top:20px;padding:9px 15px;border:0;cursor:pointer;
-  border-radius:var(--r-pill);font-size:12.5px;color:var(--ink);background:var(--panel);box-shadow:var(--lift-0);
+  border-radius:var(--r-pill);font-size:calc(12.5px + var(--type-up));color:var(--ink);background:var(--panel);box-shadow:var(--lift-0);
   font-family:inherit;line-height:1.5;
   transition:transform .15s var(--swift), box-shadow .2s var(--swift)}
 .attach:hover{transform:translateY(-1px);box-shadow:var(--lift-2)}

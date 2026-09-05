@@ -15,10 +15,10 @@
   position:relative;z-index:1;
 }
 .row-top{display:flex;align-items:baseline;gap:8px}
-.row-top .who{font-weight:600;font-size:13px;letter-spacing:-.005em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:0 1 auto;min-width:0;max-width:58%}
+.row-top .who{font-weight:600;font-size:calc(13px + var(--type-up));letter-spacing:-.005em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:0 1 auto;min-width:0;max-width:58%}
 .row.seen .who{font-weight:500;color:var(--ink2)}
-.row-top .addr{flex:1 1 auto;min-width:0;font-size:11px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.row-top .t{margin-left:auto;font-size:11px;color:var(--ink3);font-variant-numeric:tabular-nums;flex:none}
+.row-top .addr{flex:1 1 auto;min-width:0;font-size:calc(11px + var(--type-up));color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row-top .t{margin-left:auto;font-size:calc(11px + var(--type-up));color:var(--ink3);font-variant-numeric:tabular-nums;flex:none}
 /* A STAMP THAT FLIPS THE LIST, and only where one is wired (`MessageRow`'s `onToggleTime`).
    Quiet at rest — a date is a fact on a row, not a button, and every row having a visible control
    in its top corner would be louder than the mail. The affordance is the pointer plus the hover
@@ -33,11 +33,11 @@
    rules below. The 7px the strip used to bring as margin is a negative offset against the
    row's 10px gap, so nothing moved visually when it left the subject span. */
 .row-mid{display:flex;align-items:baseline;gap:10px;margin-top:2px}
-.row .subj{font-size:13.5px;font-weight:500;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:-.008em;min-width:0}
+.row .subj{font-size:calc(13.5px + var(--type-up));font-weight:500;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:-.008em;min-width:0}
 .row.seen .subj{color:var(--ink2);font-weight:450}
-.row .amt{margin-left:auto;flex:none;font-variant-numeric:tabular-nums;font-size:12.5px;font-weight:550;color:var(--ink)}
+.row .amt{margin-left:auto;flex:none;font-variant-numeric:tabular-nums;font-size:calc(12.5px + var(--type-up));font-weight:550;color:var(--ink)}
 .row.seen .amt{color:var(--ink2)}
-.row .prev{font-size:12px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+.row .prev{font-size:calc(12px + var(--type-up));color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
 /* THE GIVE-WAY ORDER IS FLEX-SHRINK ARITHMETIC, deliberately — not intrinsic sizing.
    `min-width:min-content` on the strip was tried as the floor and measured DIFFERENT across
    engines: Chromium floored it at the bounded members, Firefox kept part of the tail's

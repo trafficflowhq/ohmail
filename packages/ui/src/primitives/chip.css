@@ -1,18 +1,18 @@
 /* chips — rationale, tracker, AI and add-affordance capsules */
-.chip{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink2);
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:calc(11.5px + var(--type-up));color:var(--ink2);
   background:var(--tint);border-radius:var(--r-pill);padding:5px 12px}
 .chip svg{color:var(--accent-ink)}
 .chip b{font-weight:600;color:var(--ink)}
 .chip.pending{background:var(--accent-soft)}
-.chip .mini{border:0;padding:0 2px;background:none;cursor:pointer;font:inherit;font-size:11.5px;font-weight:600;color:var(--accent-ink)}
+.chip .mini{border:0;padding:0 2px;background:none;cursor:pointer;font:inherit;font-size:calc(11.5px + var(--type-up));font-weight:600;color:var(--accent-ink)}
 .chip .mini:hover{text-decoration:underline}
 .chip.addtag{background:transparent;box-shadow:inset 0 0 0 1px var(--hair);color:var(--ink3);gap:5px;border:0;cursor:pointer;font:inherit} /* add-affordance outline — input-like, kept */
 .chip.addtag:hover{color:var(--ink);background:var(--tint)}
 .chip.addtag kbd{border:0;background:transparent;padding:0;min-width:0}
 
 /* tag chips — hue names map onto the token tag families */
-.tagchip{font-size:10.5px;font-weight:600;border-radius:var(--r-pill);padding:1px 8px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
-.tagchip.big{font-size:11px;padding:4px 11px}
+.tagchip{font-size:calc(10.5px + var(--type-up));font-weight:600;border-radius:var(--r-pill);padding:1px 8px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.tagchip.big{font-size:calc(11px + var(--type-up));padding:4px 11px}
 .tagchip.hue-rosewood{color:var(--tg-privat-ink);background:var(--tg-privat-bg)}
 .tagchip.hue-ochre{color:var(--tg-buch-ink);background:var(--tg-buch-bg)}
 .tagchip.hue-olive{color:var(--tg-olive-ink);background:var(--tg-olive-bg)}
@@ -36,7 +36,7 @@
 .tdot.hue-heather{background:var(--tg-heather-ink);opacity:.75}
 
 /* badges — the small in-row capsules */
-.badge{font-size:10.5px;color:var(--ink3);background:var(--tint2);border-radius:var(--r-pill);
+.badge{font-size:calc(10.5px + var(--type-up));color:var(--ink3);background:var(--tint2);border-radius:var(--r-pill);
   padding:1px 7px;display:inline-flex;align-items:center;gap:3px;font-variant-numeric:tabular-nums;font-weight:500}
 .badge svg{width:10px;height:10px}
 .badge.shield{color:var(--accent-ink);background:var(--accent-soft)}

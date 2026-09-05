@@ -168,7 +168,7 @@
   }
   :root[data-layout="zero"] .deck > .rail:not(.open) .ritem::after {
     content: attr(data-nav-key);
-    font-size: 11px;
+    font-size:calc(11px + var(--type-up));
     line-height: 1;
     color: var(--ink3);
     border: 1px solid var(--hair-soft);

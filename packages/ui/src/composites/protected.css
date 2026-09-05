@@ -10,6 +10,6 @@
   color:var(--ink);margin:12px 0 12px;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
 .protected .code .dots i{font-style:normal;opacity:0;animation:dotIn .3s var(--spring) forwards}
 @keyframes dotIn{from{opacity:0;translate:0 3px}to{opacity:1;translate:0 0}}
-.protected .code small{font-size:11px;color:var(--ink3);letter-spacing:0;font-family:inherit}
-.protected p{font-size:12px;color:var(--ink2);line-height:1.55;margin:0}
+.protected .code small{font-size:calc(11px + var(--type-up));color:var(--ink3);letter-spacing:0;font-family:inherit}
+.protected p{font-size:calc(12px + var(--type-up));color:var(--ink2);line-height:1.55;margin:0}
 .protected p b{color:var(--ink)}

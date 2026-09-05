@@ -43,14 +43,14 @@
   min-width: 0;
 }
 .sm-who b {
-  font-size: 13px;
+  font-size:calc(13px + var(--type-up));
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .sm-who small {
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   color: var(--ink3);
   white-space: nowrap;
   overflow: hidden;
@@ -59,7 +59,7 @@
 /* the situation: "12 messages — now in Ohbox" */
 .sm-now {
   padding: 0 18px 12px;
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   line-height: 1.5;
   color: var(--ink2);
 }
@@ -67,7 +67,7 @@
 .sm-sec {
   padding: 10px 18px 0;
   border-top: 1px solid var(--hair-soft);
-  font-size: 11px;
+  font-size:calc(11px + var(--type-up));
   font-weight: 600;
   letter-spacing: 0.01em;
   color: var(--ink3);
@@ -87,7 +87,7 @@
   align-items: flex-start;
   padding: 8px 11px;
   border-radius: calc(var(--r-ctl) * 10 / 8);
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
   font-weight: 550;
   color: var(--ink2);
   text-align: left;
@@ -107,7 +107,7 @@
   min-width: 0;
   max-width: 100%;
   white-space: normal;
-  font-size: 11px;
+  font-size:calc(11px + var(--type-up));
   line-height: 1.4;
   color: var(--ink3);
   font-feature-settings: "tnum";
@@ -137,7 +137,7 @@
   gap: 10px;
   padding: 9px 12px;
   border-radius: calc(var(--r-card) * 11 / 14);
-  font-size: 13px;
+  font-size:calc(13px + var(--type-up));
   cursor: pointer;
 }
 .senderm li:hover {
@@ -151,13 +151,13 @@
 .senderm li .ck {
   margin-left: auto;
   color: var(--accent-ink);
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   font-weight: 650;
 }
 /* The two destinations that can send mail on your behalf, marked before you reach them. */
 .senderm li .sm-warn {
   margin-left: auto;
-  font-size: 11px;
+  font-size:calc(11px + var(--type-up));
   font-weight: 650;
   color: var(--accent-ink);
   opacity: 0.8;
@@ -191,11 +191,11 @@
   gap: 2px;
 }
 .sm-rule .lab b {
-  font-size: 12.5px;
+  font-size:calc(12.5px + var(--type-up));
   font-weight: 600;
 }
 .sm-rule .lab small {
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   line-height: 1.45;
   color: var(--ink3);
   font-variant-numeric: tabular-nums;
@@ -226,7 +226,7 @@
   width: 100%;
   padding: 8px 10px;
   border-radius: calc(var(--r-ctl) * 10 / 8);
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
   font-weight: 600;
   line-height: 1.4;
   color: var(--accent-ink);
@@ -239,7 +239,7 @@
 .sm-foot {
   padding: 10px 18px 14px;
   border-top: 1px solid var(--hair-soft);
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   line-height: 1.55;
   color: var(--ink3);
 }
@@ -262,7 +262,7 @@
   align-items: flex-start;
   padding: 8px 11px;
   border-radius: calc(var(--r-ctl) * 10 / 8);
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
   font-weight: 550;
   color: var(--ink2);
   text-align: left;
@@ -278,7 +278,7 @@
   min-width: 0;
   max-width: 100%;
   white-space: normal;
-  font-size: 11px;
+  font-size:calc(11px + var(--type-up));
   line-height: 1.4;
   font-weight: 450;
   color: var(--ink3);
@@ -305,7 +305,7 @@
   text-align: left;
   cursor: pointer;
   font-family: inherit;
-  font-size: 11px;
+  font-size:calc(11px + var(--type-up));
   font-weight: 600;
   letter-spacing: 0.01em;
   color: inherit;
@@ -333,7 +333,7 @@
   padding: 3px 0;
   background: none;
   font-family: inherit;
-  font-size: 12.5px;
+  font-size:max(var(--input-floor), calc(12.5px + var(--type-up)));
   font-weight: 550;
   color: var(--ink);
   border-bottom: 1px solid var(--hair-soft);
@@ -363,7 +363,7 @@
 }
 .sm-confirm p {
   margin: 0;
-  font-size: 12.5px;
+  font-size:calc(12.5px + var(--type-up));
   line-height: 1.5;
   color: var(--ink);
 }
@@ -371,7 +371,7 @@
    styling from `.sm-confirm p` and states its own line-height. */
 .sm-confirm .sm-confirm-fine {
   margin-top: 8px;
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   line-height: 1.5;
   color: var(--ink2);
 }
@@ -380,7 +380,7 @@
    its own (i). Same inset as `.sm-now`, whose sentence it follows. */
 .senderm > .sm-confirm-fine {
   margin: 0 18px 10px;
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   line-height: 1.5;
   color: var(--ink2);
 }
@@ -391,7 +391,7 @@
   margin-top: 12px;
 }
 .sm-confirm-row button {
-  font-size: 12px;
+  font-size:calc(12px + var(--type-up));
   font-weight: 600;
   border-radius: var(--r-pill);
   padding: 6px 13px;
@@ -442,7 +442,7 @@
   gap: 10px;
 }
 .sa-head h3 {
-  font-size: 14px;
+  font-size:calc(14px + var(--type-up));
   font-weight: 650;
   letter-spacing: -0.01em;
   margin: 0;
@@ -465,7 +465,7 @@
 }
 .sa-count,
 .sa-empty {
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   line-height: 1.55;
   color: var(--ink3);
   margin: 8px 0 0;
@@ -485,7 +485,7 @@
   gap: 10px;
 }
 .sa-line b {
-  font-size: 12.5px;
+  font-size:calc(12.5px + var(--type-up));
   font-weight: 600;
   min-width: 0;
   overflow: hidden;
@@ -495,7 +495,7 @@
 .sa-place {
   margin-left: auto;
   flex: none;
-  font-size: 10.5px;
+  font-size:calc(10.5px + var(--type-up));
   font-weight: 600;
   color: var(--accent-ink);
   background: var(--accent-soft);
@@ -507,7 +507,7 @@
   gap: 10px;
   align-items: baseline;
   margin-top: 3px;
-  font-size: 11px;
+  font-size:calc(11px + var(--type-up));
   color: var(--ink3);
 }
 .sa-meta .sa-from {
@@ -524,7 +524,7 @@
 }
 .sa-why {
   margin-top: 5px;
-  font-size: 11.5px;
+  font-size:calc(11.5px + var(--type-up));
   line-height: 1.55;
   color: var(--ink2);
 }
