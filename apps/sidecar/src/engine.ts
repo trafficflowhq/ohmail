@@ -2455,8 +2455,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * not claimed and may not get.
        */
       let organizer: OrganizerState = mb.standDownReason
-        ? { organizing: false, reason: mb.standDownReason as MailboxDisabledReason, heldBy: null }
-        : { organizing: true, reason: null, heldBy: null };
+        ? { organizing: false, reason: mb.standDownReason as MailboxDisabledReason, heldBy: null,
+          unreadableSince: null }
+        : { organizing: true, reason: null, heldBy: null, unreadableSince: null };
       /**
        * THE EXIT FROM A STAND-DOWN — a human asked for this machine, once.
        *
@@ -2703,7 +2704,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              anything down and putting "another install has claimed this mailbox" in front of
              somebody who simply has not finished setup would be false. A DEMOTED reader names the
              stand-down it remembers, so the pane keeps saying why it is not organizing. */
-          organizer = { organizing: false, reason, heldBy: name };
+          organizer = { organizing: false, reason, heldBy: name, unreadableSince: null };
           /* ── ZERO WRITES IN THE STEADY STATE, AND THE CHECK IS NEW (0.14.1) ──────────────
            *
            * This block claimed "ONLY WHEN SOMETHING CHANGED" and then wrote unconditionally — one
@@ -2925,7 +2926,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           }
           takeoverAuthorized = false;
           observedTakeoverAt = null;
-          organizer = { organizing: false, reason: null, heldBy: null };
+          organizer = { organizing: false, reason: null, heldBy: null, unreadableSince: null };
           /* NOT `priorStandDown`. That memory answers "somebody else holds this", and it is what
              `standDownMemory` derives from the row — which now reports a released mailbox as no
              memory at all. Setting it here would make the pane say another organizer had taken the
@@ -3002,7 +3003,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          * make the state sticky for the life of the process.
          */
         if (!consented && !takeoverAuthorized) {
-          organizer = { organizing: false, reason: null, heldBy: null };
+          organizer = { organizing: false, reason: null, heldBy: null, unreadableSince: null };
           await notePeekedHolder(null);
           return false;
         }
@@ -3044,7 +3045,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         });
         if (outcome.organize) {
           leaseNonce = outcome.nonce;
-          organizer = { organizing: true, reason: null, heldBy: null };
+          // Reading the lease is what proves it: a resolved gate clears the unreadable mark.
+          organizer = { organizing: true, reason: null, heldBy: null, unreadableSince: null };
           // THE MEMORY IS SPENT WITH THE STAMP. Reaching here past a remembered stand-down means a
           // human pressed the button and the lease agreed; leaving the memory set would make the
           // very next poll return false for an install that IS the organizer — it would drain as a
@@ -3181,7 +3183,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                     "this install organizes nothing and serves the mirror it already has; the " +
                     "claim it appended ages out of the mailbox on its own",
                 });
-                organizer = { organizing: false, reason: null, heldBy: null };
+                organizer = { organizing: false, reason: null, heldBy: null, unreadableSince: null };
                 stopped = true;
                 if (timer) clearTimeout(timer);
                 try {
@@ -3208,6 +3210,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           organizing: false,
           reason: outcome.reason,
           heldBy: outcome.by?.displayName ?? null,
+          // The lease WAS read to reach a stand-down, so whatever was unreadable no longer is.
+          unreadableSince: null,
         };
         // Standing down voids any unspent authorization, in memory and on the row below. We are not
         // the organizer, so becoming one again is a new becoming and needs a new explicit request.
@@ -4089,6 +4093,18 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 reason: "the organizer lease could not be read, so this install organizes nothing " +
                   "yet; the mirror is served and the next poll asks again",
               });
+              /* AND IT IS RECORDED WHERE A PERSON CAN SEE IT. A log line is not a user-visible
+               * state, and when the cause is a folder over the ceiling this does not clear on its
+               * own — so a desktop would otherwise sit in an ordinary connected state while
+               * organizing nothing at all. The mark is kept from the FIRST failure rather than
+               * refreshed, so the surface can say how long it has been true. Every path that reads
+               * the lease successfully sets it back to `null`. */
+              organizer = {
+                organizing: false,
+                reason: organizer.reason,
+                heldBy: organizer.heldBy,
+                unreadableSince: organizer.unreadableSince ?? new Date().toISOString(),
+              };
               schedule();
               return;
             }
@@ -5391,7 +5407,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * at all reports itself as not organizing, which is true and is what the door chooser
        * renders.
        */
-      organizerState: () => seedRuntime()?.organizer ?? { organizing: false, reason: null, heldBy: null },
+      organizerState: () => seedRuntime()?.organizer
+        ?? { organizing: false, reason: null, heldBy: null, unreadableSince: null },
       credentialState: async () => (await seedRuntime()?.credentialState()) ?? "absent",
       forgetStoredLogin: async () => (await seedRuntime()?.forgetStoredLogin()) ?? false,
       /**

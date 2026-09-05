@@ -71,6 +71,22 @@ export interface OrganizerState {
   reason: MailboxDisabledReason | null;
   /** The other organizer's display name, so the UI can say WHICH machine. */
   heldBy: string | null;
+  /**
+   * SINCE WHEN THE LEASE COULD NOT BE READ AT ALL — ISO 8601, or `null` when it reads fine.
+   *
+   * On the hosted side an unreadable lease is already visible within about four minutes: the
+   * failure is exempt from the sync counter BY CLASS, the mailbox detaches, re-attaches, and the
+   * block is written to the row where the web app renders it.
+   *
+   * On a LOCAL install the same condition was a LOG LINE and nothing else. Nobody reads a desktop
+   * log. So a folder anyone with append rights can fill would leave a person's mail quietly
+   * unorganized with the app showing an ordinary connected state — which is the "reliability
+   * feature that renders as its own healthy state" shape this codebase has been bitten by before.
+   *
+   * Set where the lease read throws, cleared the moment it resolves. The shell renders the
+   * `blocked_lease_unreadable` string that already exists in both catalogues.
+   */
+  unreadableSince: string | null;
 }
 
 /**

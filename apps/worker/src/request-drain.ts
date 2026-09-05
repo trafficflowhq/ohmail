@@ -283,6 +283,35 @@ export async function applyMetaRequests(
   const key = rt.requestKey;
   if (key === null) return EMPTY_RESULT;
 
+  /* ── THE SWEEP RUNS BEFORE THE READ, BECAUSE THE READ IS WHAT IT UNBLOCKS ─────────────────
+   *
+   * The organizer's ack sweep is the only thing that ever makes `ohmail/_meta` SMALLER, and it used
+   * to sit after the bounded read below — which refuses a folder over the ceiling. So a folder that
+   * crossed the ceiling BY ACKS could never come back down: the read refused, the sweep never ran,
+   * the acks stayed, and every drain refused from then on. The compactor was locked behind the door
+   * it exists to open, and nothing about that state is self-healing.
+   *
+   * Asked of the server by header and date, so it costs integers in and an expunge out — no FETCH,
+   * no window, and nothing that a full folder can refuse. It was already a sweep "by AGE alone",
+   * and INTERNALDATE of an ack this organizer appended is its `ackedAt` to the day.
+   *
+   * Failure is logged and swallowed: a sweep that could not run is exactly where this was before,
+   * and it must not stop a drain that might still succeed.
+   */
+  if (typeof io.sweepStaleAcks === "function") {
+    try {
+      const swept = await io.sweepStaleAcks(new Date(now.getTime() - REQUEST_STALE_AFTER_MS));
+      if (swept > 0) {
+        log("meta_ack_sweep", { mailboxId: rt.mailboxId, accountId: rt.accountId, swept });
+      }
+    } catch (err) {
+      log("meta_ack_sweep_failed", {
+        mailboxId: rt.mailboxId, accountId: rt.accountId,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   let records: RawMetaMessage[];
   try {
     records = await io.listMetaRecords();
