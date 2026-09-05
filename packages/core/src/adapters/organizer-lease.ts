@@ -1680,7 +1680,26 @@ export function makeLeasePeekIo(client: LeaseImapClient, toServerPath: (canonica
          *
          * The refusal survives for the case where the server cannot be asked, because "I could not
          * see all of it" must still render as unknown rather than as nobody. */
-        const claims = await searchHeaders(client, { header: { [H.lease]: true } });
+        /* ── THE PEEK REFUSES AN OVERSIZED CLAIM SET; IT NEVER SHOWS PART OF ONE ────────────
+         *
+         * `searchHeaders` caps what it carries, and for a DECIDER that cap is a bound: the gate
+         * compares the set against its own ceiling and refuses anything past it, so a slice
+         * changes nothing. The peek had no such ceiling, so the cap silently became its ANSWER —
+         * seven hundred claims came back as the first five hundred and one, and what fell off the
+         * end is by uid, which is to say the NEWEST. A live renewal omitted while old residue
+         * survives renders as "stopped": this surface telling a person nobody organizes a mailbox
+         * that somebody is actively organizing, which is the exact sentence it was rewritten to
+         * stop saying.
+         *
+         * So it asks to be REFUSED rather than sliced, and the refusal is the same class every
+         * other lease fault uses — a caller that cannot see the whole claim set cannot decide from
+         * it: a reader does not organize on it, an organizer does not renew on it, and the desktop
+         * renders it as an unreadable lease rather than as an empty one. */
+        const claims = await searchHeaders(
+          client,
+          { header: { [H.lease]: true } },
+          { max: META_RECORDS_MAX_PER_FETCH, refuseWhenOver: true },
+        );
         if (claims !== null) return claims;
         throw new MetaFolderTruncatedError(read.records.length, read.total, read.records);
       } finally {
@@ -2447,6 +2466,26 @@ const SEARCH_FETCH_BATCH = 100;
  * costs one batch rather than the whole compaction.
  */
 const SWEEP_DELETE_BATCH = 200;
+
+/**
+ * THE CUTOFF THE ACK SWEEP ACTUALLY DELETES BY — floored to the start of its UTC day.
+ *
+ * EXPORTED because a test double that answers `before` with the raw instant is MORE PERMISSIVE
+ * than the server this module talks to, and a double kinder than production is how a guard comes
+ * to pass for something that would not happen. Two implementations of "which acknowledgements are
+ * old enough" is the same defect as two implementations of "how many messages are in this folder".
+ *
+ * Why a floor at all: IMAP SEARCH BEFORE takes a DATE. Where the server does not advertise
+ * `WITHIN`, the library turns a cutoff carrying a time of day into a date-only term and ADVANCES
+ * it a day so a reader is never given less than it asked for — right for a reader, wrong for
+ * something that DELETES, because the widened term then reaches records filed on the cutoff's own
+ * day. Flooring makes the term one the library sends unchanged and puts the only remaining error
+ * on the safe side: an acknowledgement may outlive its nominal life by up to a day, and none
+ * younger than it is ever removed.
+ */
+export function ackSweepCutoff(before: Date): Date {
+  return new Date(Date.UTC(before.getUTCFullYear(), before.getUTCMonth(), before.getUTCDate()));
+}
 
 /**
  * The most records one install may own in `ohmail/_meta` before a release refuses to enumerate.
@@ -4585,9 +4624,7 @@ export function makeRequestOrganizerIo(
          * the nominal life, and none younger than it is ever removed. Keeping a record too long
          * costs one row in a folder that gets swept again next cycle; removing a live one loses
          * an answer somebody is waiting for. */
-        const floored = new Date(Date.UTC(
-          before.getUTCFullYear(), before.getUTCMonth(), before.getUTCDate(),
-        ));
+        const floored = ackSweepCutoff(before);
         const found = await client.search(
           { header: { [AH.ack]: true }, before: floored }, { uid: true },
         );

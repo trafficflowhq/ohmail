@@ -777,6 +777,47 @@ export function makeProfileIo(
         const complete = opts?.complete === true;
 
         /**
+         * ── EVERY SOURCE THIS ADAPTER READS COMES THROUGH HERE, AND IT ALWAYS RANGES ────────
+         *
+         * ONE reply, asked for as `BODY.PEEK[]<0.N>`, so the server sends at most N bytes
+         * whatever the message weighs. Three separate places used to fetch source and only one
+         * of them was bounded, which is why the transport bound was reported closed twice while
+         * two routes to an unbounded transfer stayed open.
+         *
+         * THE SERVER'S SIZE CLAIM IS UNTRUSTED INPUT. The size pass is a PREFILTER — it lets an
+         * obviously huge record be skipped without asking for it at all — and it is not a bound,
+         * because a server free to answer `RFC822.SIZE: 1` is free to then send ten megabytes.
+         * Anything that decides what to transfer from a number the same server supplied is
+         * trusting the thing it is defending against. So measured and unmeasured are fetched the
+         * same way, and the reported size never decides the range.
+         *
+         * N IS THE REMAINING BUDGET PLUS ONE, which makes the answer exact rather than merely
+         * cautious: a reply SHORTER than N is the whole document and safe to parse, and a reply
+         * of exactly N means the message did not fit and is refused unparsed. Asking for exactly
+         * the budget cannot tell a document that fits precisely from one that overruns.
+         *
+         * ONE AT A TIME, because the caller must charge each reply to the budget BEFORE the next
+         * range is computed. Fetching a batch together hands every message in it the same nearly
+         * full range, so a hundred individually-legal replies transfer a hundred times the
+         * budget — the aggregate defeated by the very bound that was supposed to hold it.
+         */
+        const fetchSourceBounded = async (
+          messageset: string,
+          byUid: boolean,
+          budget: number,
+        ): Promise<{ uid: number; source: Buffer } | "over" | null> => {
+          const cap = Math.max(1, budget) + 1;
+          for await (const m of client.fetch(
+            messageset, { uid: true, source: { start: 0, maxLength: cap } }, { uid: byUid },
+          )) {
+            if (!m.source) continue;
+            if (m.source.byteLength >= cap) return "over";
+            return { uid: m.uid, source: m.source };
+          }
+          return null;
+        };
+
+        /**
          * The uids of every settings record in the folder, newest last, or `null` when the
          * connection cannot be asked or the server REFUSED — which is not the same answer as
          * "there are none" and must never be read as one.
@@ -829,96 +870,59 @@ export function makeProfileIo(
           const order = chosen.slice().reverse();
           const win: Array<{ rec: RawProfileMessage; size: number }> = [];
           let held = 0;
-          for (let i = 0; i < order.length; i += PROFILE_FETCH_BATCH) {
-            const batch = order.slice(i, i + PROFILE_FETCH_BATCH);
-            const got = new Map<number, Buffer>();
-            /* ── A RECORD WHOSE SIZE THE SERVER WOULD NOT NAME IS FETCHED WITH A BYTE RANGE ──
-             *
-             * The size pass is what keeps a hostile literal off the wire, and it only works for a
-             * server that answers `RFC822.SIZE`. For one that declines, the previous version asked
-             * for the whole source and measured it afterwards — which bounds what is RETAINED and
-             * nothing at all about what is TRANSFERRED. That was round nine's finding 5 reported
-             * as closed and round ten's finding 5 reopening it, correctly: the backstop below runs
-             * after the bytes have already arrived.
-             *
-             * So an unmeasured record is asked for as `BODY.PEEK[]<0.N>` — the server sends at
-             * most N bytes, whatever the message weighs. N is the budget PLUS ONE, which is what
-             * makes the answer exact rather than merely conservative: a reply SHORTER than N is
-             * the whole document and is safe to parse; a reply of exactly N means the message did
-             * not fit, so it is refused and never parsed. Asking for exactly the budget could not
-             * tell a document that fits precisely from one that overruns.
-             *
-             * Unmeasured records are asked for one at a time. They are the exception — a server
-             * that answers sizes never reaches here — and a per-message range cannot be expressed
-             * for a batch. */
-            const unmeasured = batch.filter((uid) => !sizes.has(uid));
-            const measured = batch.filter((uid) => sizes.has(uid));
-            if (measured.length > 0) {
-              for await (const m of client.fetch(
-                measured.join(","), { uid: true, source: true }, { uid: true },
-              )) {
-                if (m.source) got.set(m.uid, m.source);
+          let oversized = 0;
+          for (const uid of order) {
+            const got = await fetchSourceBounded(String(uid), true, maxBytes - held);
+            if (got === null) continue;   // expunged in the gap; not evidence about any other
+            if (got === "over") {
+              if (complete) {
+                throw new ProfileUnavailableError(
+                  `a settings record in ${META_FOLDER} is larger than the ${maxBytes}-byte budget `
+                  + "this read may spend, and a write must see every document whole before it may "
+                  + "replace any",
+                  { op: "list_profiles" },
+                );
               }
+            /* ── SKIPPED, BUT NEVER SILENTLY: SEE THE REFUSAL AFTER THE LOOP ──────────────
+             *
+             * An over-budget record cannot be parsed, because it was never fully transferred —
+             * that is the point of the range. On a READ, skipping one is right when there is
+             * something else to answer with: an old enormous document would have been evicted by
+             * the ceiling anyway, and the newest one is what a read wants.
+             *
+             * What must not happen is a read that skips the ONLY candidate and returns an empty
+             * list, because every caller reads that as "no settings have been published" and
+             * routes a person's mail by local defaults. The old contract kept such a record so the
+             * PARSER could refuse it out loud; once the document is deliberately never transferred
+             * whole, that is no longer available, and the honest equivalent is a refusal from
+             * here. Counted, and acted on below. */
+            oversized += 1;
+              continue;
             }
-            for (const uid of unmeasured) {
-              const budget = maxBytes - held;
-              const cap = Math.max(1, budget) + 1;
-              for await (const m of client.fetch(
-                String(uid), { uid: true, source: { start: 0, maxLength: cap } }, { uid: true },
-              )) {
-                if (!m.source) continue;
-                if (m.source.byteLength >= cap) {
-                  /* It filled the range, so the document is larger than the budget. Refused on a
-                   * complete scan, skipped on a read — never parsed, which is the point: the
-                   * parser is what an oversized document is dangerous to. */
-                  if (complete) {
-                    throw new ProfileUnavailableError(
-                      `a settings record in ${META_FOLDER} is larger than the ${maxBytes}-byte `
-                      + "budget this read may spend, and a write must see every document whole "
-                      + "before it may replace any",
-                      { op: "list_profiles" },
-                    );
-                  }
-                  continue;
-                }
-                got.set(m.uid, m.source);
+            const raw = got.source.toString("utf8");
+            if (!looksLikeProfile(raw)) continue;
+            const size = got.source.byteLength;
+            win.push({ rec: { ref: got.uid, raw }, size });
+            held += size;
+            while (win.length > PROFILE_MESSAGES_MAX_PER_FETCH) {
+              if (complete) {
+                throw new ProfileUnavailableError(
+                  `the settings in ${META_FOLDER} could not be read completely: the folder holds `
+                  + `more than ${PROFILE_MESSAGES_MAX_PER_FETCH} settings records, and a write `
+                  + "must see every one before it may replace any",
+                  { op: "list_profiles" },
+                );
               }
+              held -= win.shift()!.size;
             }
-            for (const uid of batch) {
-              const src = got.get(uid);
-              // A record the search named and the fetch did not return was expunged in the gap.
-              // Its absence is not evidence about any other record, so the read simply goes on.
-              if (src === undefined) continue;
-              const raw = src.toString("utf8");
-              if (!looksLikeProfile(raw)) continue;
-              /* ── THE MEASURED BYTES ARE THE BOUND; THE REPORTED ONES ARE THE OPTIMISATION ──
-               *
-               * The size pass above is what keeps a hostile literal off the wire, and it is worth
-               * having. It is NOT the ceiling, because a server that reports no size at all would
-               * otherwise disable the ceiling entirely: an absent measurement read as zero is the
-               * same defect as a refused search read as an empty folder, and it was in the first
-               * draft of this very function — every record measured 0, both ceilings inert, and
-               * the complete scan's refusal silently unreachable.
-               *
-               * So the bound is applied again here against bytes that actually arrived. On a
-               * complete scan that is a refusal; on a read the oldest are evicted, keeping the
-               * newest even when it alone is over, because a document too large to read is the
-               * parser's refusal to make rather than a silent absence. */
-              const size = src.byteLength;
-              win.push({ rec: { ref: uid, raw }, size });
-              held += size;
-              while (held > maxBytes && (complete || win.length > 1)) {
-                if (complete) {
-                  throw new ProfileUnavailableError(
-                    `the settings in ${META_FOLDER} could not be read completely: the folder holds `
-                    + `more than ${PROFILE_MESSAGES_MAX_PER_FETCH} settings records or ${maxBytes} `
-                    + "bytes of them, and a write must see every one before it may replace any",
-                    { op: "list_profiles" },
-                  );
-                }
-                held -= win.shift()!.size;
-              }
-            }
+          }
+          if (win.length === 0 && oversized > 0) {
+            throw new ProfileUnavailableError(
+              `the only settings record in ${META_FOLDER} is larger than the ${maxBytes}-byte `
+              + "budget this read may spend, so it was not transferred and cannot be parsed — "
+              + "answering with nothing here would say no settings have been published",
+              { op: "list_profiles" },
+            );
           }
           return { win, seen: capped.length };
         };
@@ -929,13 +933,42 @@ export function makeProfileIo(
           const win: Array<{ rec: RawProfileMessage; size: number }> = [];
           let bytes = 0;
           let seen = 0;
-          for await (const m of client.fetch(`${start}:*`, { uid: true, source: true }, { uid: false })) {
-            if (!m.source) continue;
+          /* ── THE FALLBACK RANGES TOO, AND IT USED TO BE THE HOLE ────────────────────────
+           *
+           * This is the path for a connection that cannot SEARCH, and it asked for the whole
+           * source of every message in the range. That made the transport bound conditional on a
+           * capability the server chooses: on a server without SEARCH, one oversized message in
+           * the window exhausted the process before any ceiling was consulted — the same defect
+           * the ranged fetch closed on the other path, still open on this one.
+           *
+           * Two passes now. The first asks only for uids and sequence numbers, which costs
+           * nothing to transfer whatever the folder holds; the second asks for each source
+           * through the one bounded function, charging the budget after every reply. Slower than
+           * one command, and this is the path that runs when the server cannot answer the cheap
+           * question — correctness first, and it is the fallback rather than the common case. */
+          const addrs: Array<{ uid: number; seq: number }> = [];
+          for await (const m of client.fetch(`${start}:*`, { uid: true }, { uid: false })) {
+            addrs.push({ uid: m.uid, seq: m.seq ?? 0 });
+          }
+          for (const at of addrs) {
             seen++;
-            const raw = m.source.toString("utf8");
+            const got = await fetchSourceBounded(String(at.seq || at.uid), false, maxBytes - bytes);
+            if (got === null) continue;
+            if (got === "over") {
+              if (complete) {
+                throw new ProfileUnavailableError(
+                  `a settings record in ${META_FOLDER} is larger than the ${maxBytes}-byte budget `
+                  + "this read may spend, and a write must see every document whole before it may "
+                  + "replace any",
+                  { op: "list_profiles" },
+                );
+              }
+              continue;
+            }
+            const raw = got.source.toString("utf8");
             if (!looksLikeProfile(raw)) continue;
-            const size = m.source.byteLength;
-            win.push({ rec: { ref: m.uid, raw }, size });
+            const size = got.source.byteLength;
+            win.push({ rec: { ref: got.uid, raw }, size });
             bytes += size;
             while (
               win.length > PROFILE_MESSAGES_MAX_PER_FETCH
