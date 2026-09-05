@@ -56,7 +56,7 @@ import type { MailboxDisabledReason } from "@trafficflow/db";
    question — "is the claim on this mailbox ours" — and answering it with the KIND rather than the
    id is what let a release clear a row over another Cloud deployment's claim. Re-exported here so
    every existing importer of this module is unchanged. */
-export { CLOUD_INSTALL_ID_PREFIX, cloudInstallId } from "@trafficflow/core";
+export { CLOUD_INSTALL_ID_PREFIX, cloudInstallId, organizerEnvironment, resolveCloudInstallId } from "@trafficflow/core";
 
 /**
  * How the claim names us to a human who opens `ohmail/_meta` in another mail client.

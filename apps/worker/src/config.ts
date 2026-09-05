@@ -2,7 +2,7 @@ import { hostname } from "node:os";
 import {
   keyProviderFromEnvOptional, kekFingerprint, kekFingerprintFromEnv, kekEnvIdentity,
   makeAnthropicClient, assertAnthropicKey, makeHaikuClassifier, makeSonnetDrafter, makeOpusProposer,
-  callCeilingMs, msDeviceEnv,
+  callCeilingMs, msDeviceEnv, organizerEnvironment,
   type KeyProvider, type ClassifierPort, type DraftPort, type WorkflowPort,
   type KekEnvIdentity, type Logger, type AnthropicCallReport,
 } from "@trafficflow/core";
@@ -863,7 +863,13 @@ function apiCronFrom(env: NodeJS.ProcessEnv): { baseUrl: string; secret: string 
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
-  const environment = env.TF_ENV ?? env.RAILWAY_ENVIRONMENT_NAME ?? "production";
+  /* ONE DEFINITION, IMPORTED. This was a fourth copy of the same three-way fallback, and copies
+     of it had already drifted: two repair commands read `TF_ENVIRONMENT`, a variable spelled
+     nowhere else, so on any deployment that is not production they claimed the lease under a
+     DIFFERENT organizer identity than the worker they were repairing for. `organizerEnvironment`
+     is the only place this chain is written; `no-direct-environment-reads.test.ts` keeps it that
+     way. */
+  const environment = organizerEnvironment(env);
   const { version: buildVersion, source: buildVersionSource } = buildIdentityOf(env);
   const url = req(env, "DATABASE_URL_SESSION");
   // ONE definition, imported — not the same two regexes copied here "verbatim", which is

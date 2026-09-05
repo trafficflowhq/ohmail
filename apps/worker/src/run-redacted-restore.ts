@@ -19,7 +19,7 @@ import { loadMailboxCreds } from "./mailboxes.js";
 import { redactedRestorePass } from "./redacted-restore.js";
 import {
   CLOUD_DISPLAY_NAME, LeaseUnavailableError, OrganizerStandDownError, acquireLeasePermit,
-  assertNoLiveTwin, cloudInstallId, mailboxHasRequestKey,
+  assertNoLiveTwin, mailboxHasRequestKey, resolveCloudInstallId,
 } from "./lease.js";
 
 const argv = process.argv.slice(2);
@@ -136,8 +136,7 @@ try {
     // adopt a live worker's claim as its own and expunge it.
     await assertNoLiveTwin({
       adapter,
-      installId: process.env.TF_ORGANIZER_INSTALL_ID
-        ?? cloudInstallId(process.env.TF_ENVIRONMENT ?? "production"),
+      installId: resolveCloudInstallId(process.env),
       now: new Date(),
     });
 
@@ -148,8 +147,7 @@ try {
       // claim, so a narrower set here would make `requests` blink out for readers mid-repair.
       hasRequestKey: mailboxHasRequestKey({ auth: creds.imap.auth, address: mb.address }),
       self: {
-        installId: process.env.TF_ORGANIZER_INSTALL_ID
-          ?? cloudInstallId(process.env.TF_ENVIRONMENT ?? "production"),
+        installId: resolveCloudInstallId(process.env),
         kind: "cloud",
         displayName: CLOUD_DISPLAY_NAME,
         // Safe only because of the check above — see `run-junk-sweep.ts`'s note at the same seam.

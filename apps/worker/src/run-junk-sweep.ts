@@ -24,7 +24,7 @@ import { loadMailboxCreds } from "./mailboxes.js";
 import { junkSweepPass } from "./junk-sweep.js";
 import {
   CLOUD_DISPLAY_NAME, LeaseUnavailableError, OrganizerStandDownError, acquireLeasePermit,
-  assertNoLiveTwin, cloudInstallId, mailboxHasRequestKey, type LeasePermit,
+  assertNoLiveTwin, mailboxHasRequestKey, resolveCloudInstallId, type LeasePermit,
 } from "./lease.js";
 
 const argv = process.argv.slice(2);
@@ -122,8 +122,7 @@ try {
       // sequence, and why a sentinel nonce is the wrong repair, is on `assertNoLiveTwin`.
       await assertNoLiveTwin({
         adapter,
-        installId: process.env.TF_ORGANIZER_INSTALL_ID
-          ?? cloudInstallId(process.env.TF_ENVIRONMENT ?? "production"),
+        installId: resolveCloudInstallId(process.env),
         now: new Date(),
       });
 
@@ -138,8 +137,7 @@ try {
           // The SAME identity the always-on worker and the reconcile backstop claim with. A
           // per-process id here would read as a new organizer arriving and stand the worker down
           // — see `cloudInstallId`'s own docblock for why this constant is the dangerous one.
-          installId: process.env.TF_ORGANIZER_INSTALL_ID
-            ?? cloudInstallId(process.env.TF_ENVIRONMENT ?? "production"),
+          installId: resolveCloudInstallId(process.env),
           kind: "cloud",
           displayName: CLOUD_DISPLAY_NAME,
           // `null` stands, and it is safe only because of the check above. A fresh process trusts
