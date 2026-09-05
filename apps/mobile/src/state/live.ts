@@ -1064,11 +1064,32 @@ export interface LiveDeps {
   ownAddresses?: () => readonly string[];
 }
 
+/**
+ * THE ENGINE'S ABANDONED-VERB SHAPE, re-exported so the phone's SURFACES do not have to import the
+ * engine package to name it.
+ *
+ * `privacy.test.ts#ENGINE_IMPORTERS` is an allow-list of the files permitted to reach into
+ * `@ohmail/client-engine`, and it is short on purpose: the phone's licence to talk to a server is
+ * meant to be auditable by reading two directories. The chrome needs this TYPE and nothing else, so
+ * widening the allow-list for three more files would have traded a real boundary for a convenience.
+ * This file is already inside the seam and already the phone's one door to the engine's vocabulary
+ * (`WorldActions`, `WorldMail`, `WorldPile` all leave through here), so the type leaves the same way.
+ */
+export type { AbandonedMutation, MutationResult } from "@ohmail/client-engine";
+
 export interface LiveWorldActions {
   /** Opening a message marks it read and asks for its full text + conversation + files. */
   openMessage(id: string): Promise<boolean>;
   /** An explicit re-ask for one message's full text (a card expand, a reopen). */
   hydrateMessage(id: string): void;
+  /**
+   * PUT A GIVEN-UP CHANGE BACK IN THE QUEUE — under its ORIGINAL Idempotency-Key, so an attempt
+   * that committed and only lost its answer replays that answer instead of sending a second copy.
+   * Parity with the browser's "Try again"; the engine owns the rule, this is the phone's door to it.
+   */
+  retryAbandoned(id: string): Promise<MutationResult>;
+  /** Throw a given-up change away for good. The optimistic row reverted when it was abandoned. */
+  discardAbandoned(id: string): Promise<void>;
   /** The sender screen's open: fetch every held body so the decision is over real mail. */
   hydrateHeld(ids: string[]): void;
   /** The scroll-seen sweep: mark what the reader scrolled past, in this stream only. */
@@ -1847,6 +1868,14 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   };
 
   return {
+    async retryAbandoned(id) {
+      // The RESULT is returned, not swallowed: on the phone the sheet row is the only owner of an
+      // owner-settled verb, so a `send_unverified` answer said nowhere is said to nobody.
+      return engine.retryAbandoned(id);
+    },
+    async discardAbandoned(id) {
+      await engine.discardAbandoned(id);
+    },
     openMessage, hydrateMessage, hydrateHeld, sweepFeed, leaveFeed, decide, release, setPile,
     pileToggle, resurfaceToggle, resurfaceAt, resurfaceNow, resurfaceDone, markSeen, move,
     deleteMessage, sendReply, sendForward, cancelSchedule, tagToggle, tagCreate, screenSender,
@@ -1866,6 +1895,13 @@ export interface WorldActions {
   openMessage(id: string): void;
   /** An explicit re-ask for one message's full text (a card expand, a reopen). */
   hydrateMessage(id: string): void;
+  /**
+   * The two verbs on a change the engine gave up on — see {@link LiveWorldActions.retryAbandoned}.
+   * Awaited by the caller (the chrome disables the row while one is in flight), so unlike most of
+   * this facade they return their promise rather than firing and forgetting.
+   */
+  retryAbandoned(id: string): Promise<MutationResult>;
+  discardAbandoned(id: string): Promise<void>;
   /** The sender screen's open: fetch every held body. */
   hydrateHeld(ids: string[]): void;
   decide(row: ScreenerRow, dest: Destination, read: boolean): void;
@@ -1929,6 +1965,8 @@ export function stableActions(current: () => WorldActions): WorldActions {
     leaveFeed: (place) => current().leaveFeed(place),
     openMessage: (id) => current().openMessage(id),
     hydrateMessage: (id) => current().hydrateMessage(id),
+    retryAbandoned: (id) => current().retryAbandoned(id),
+    discardAbandoned: (id) => current().discardAbandoned(id),
     hydrateHeld: (ids) => current().hydrateHeld(ids),
     decide: (row, dest, read) => current().decide(row, dest, read),
     setScope: (row, scope) => current().setScope(row, scope),

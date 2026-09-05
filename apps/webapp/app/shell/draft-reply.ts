@@ -155,11 +155,23 @@ export function useDraftReply(opts: {
     setNotice(t("running"));
 
     void (async () => {
+      /**
+       * WHICH STEP FAILED — because the opaque sentence below is a claim about the draft, and only
+       * the SECOND step can honestly make it.
+       *
+       * One `catch` covers both requests. The failure sentence for an unhandled fault says "the
+       * draft was written but could not be loaded", which is true when the 202 already came back
+       * and the read is what died — and FALSE when the paid POST itself faulted, where no draft
+       * exists and nothing was written. Saying it anyway would be the app inventing a row and
+       * telling somebody their money bought it.
+       */
+      let bought = false;
       try {
         const { draftId } = await api<{ draftId: string }>(`/messages/${id}/draft`, {
           method: "POST",
           headers: { "Idempotency-Key": key },
         });
+        bought = true;
         // `GET /drafts/:id` rather than the mirror — see the header. `cost: read`, spends
         // nothing, and the row was written inside the request that answered above.
         const draft = await api<{ body?: string; html?: string | null }>(`/drafts/${draftId}`);
@@ -183,7 +195,7 @@ export function useDraftReply(opts: {
          * something they have already been told they cannot afford.
          */
         setPhase("offered");
-        setNotice(messageFor(err, t("failed")));
+        setNotice(messageFor(err, t("failed"), bought ? t("failedOpaque") : t("failedOpaqueEarly")));
       }
     })();
   }, [messageId, phase, onDraft, t]);
@@ -199,9 +211,42 @@ export function useDraftReply(opts: {
   };
 }
 
-/** The SERVER's own sentence, or a fallback for something that is not a refusal at all. */
-function messageFor(err: unknown, fallback: string): string {
-  return err instanceof ApiError ? err.message : fallback;
+/**
+ * The SERVER's own sentence — or an honest one when the server did not give one.
+ *
+ * ── WHY A 500 NEEDS ITS OWN ARM ────────────────────────────────────────────────────────────
+ *
+ * Every refusal on this path was written to be read: "no AI actions remain on this account" (402),
+ * "cannot AI-draft a sensitive message" (422), "this deployment has no AI drafter connected" (503).
+ * Passing those through verbatim is right, and it is why this function is a one-liner.
+ *
+ * An unhandled fault is not one of them. The envelope for a 500 is
+ * `{"error":{"code":"internal","message":"internal error"}}`, and quoting that puts the words
+ * "internal error" in front of a person as though the app were explaining itself. That is what this
+ * surface did while `GET /drafts/:id` answered 500 to an id it could not parse: the button failed,
+ * said nothing usable, and re-offered itself — which is a surface that invites pressing again
+ * rather than one that explains. The server half of that defect is fixed (a malformed id is now a
+ * 400 with a real sentence); this arm is for the next unmodelled fault, because there will be one.
+ *
+ * ── THE TEST IS THE `code`, NOT THE STATUS, AND I GOT THAT WRONG FIRST ─────────────────────
+ *
+ * The obvious rule is `status >= 500`. It is wrong, and `draft-reply.test.tsx` said so within a
+ * minute: this route's "this deployment has no AI drafter connected" is a **503**, and it is one of
+ * the most useful sentences on the path — an operator can act on it and a person understands it.
+ * Swallowing it would have replaced a good sentence with a vaguer one and called that an
+ * improvement.
+ *
+ * So the test is the CODE. `errorResponse("internal", …)` is the API's envelope for a throw nobody
+ * modelled — the only case where the message is machine noise — and every deliberate refusal on
+ * this path carries a code of its own. An empty message is caught too, because a blank notice is
+ * the same failure with fewer characters.
+ *
+ * `status === 0` is the transport's own code for "we never reached ohmail", which already carries a
+ * true sentence from `api-client` and is left alone.
+ */
+export function messageFor(err: unknown, fallback: string, opaque: string): string {
+  if (!(err instanceof ApiError)) return fallback;
+  return err.code === "internal" || err.message.trim() === "" ? opaque : err.message;
 }
 
 /** A fresh idempotency key — see `screener-suggest.ts` for why the fallback exists. */

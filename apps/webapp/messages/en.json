@@ -1061,7 +1061,9 @@
     "replaceTitle": "You have already written something",
     "replaceBody": "Replace what you typed with the draft, or add the draft below it?",
     "replace": "Replace",
-    "append": "Add below"
+    "append": "Add below",
+    "failedOpaque": "The draft was written but could not be loaded. Pressing again fetches the same one — it does not buy a second.",
+    "failedOpaqueEarly": "Something went wrong on the server and no draft was made. Nothing was charged."
   },
   "settings": {
     "title": "Settings",
@@ -2610,7 +2612,28 @@
     "pulling": "Checking your mail server…",
     "pullAria": "Pull new mail — check the mail server now",
     "pullQuiet": "Checked — nothing new.",
-    "pullSlow": "Still checking. New mail arrives on its own."
+    "pullSlow": "Still checking. New mail arrives on its own.",
+    "unsavedCount": "{count, plural, one {# change could not be saved} other {# changes could not be saved}}",
+    "unsavedShow": "Show them",
+    "unsavedHide": "Hide",
+    "unsavedRetry": "Try again",
+    "unsavedDiscard": "Discard",
+    "unsavedDismiss": "Dismiss",
+    "unsavedNoReason": "The server refused it and did not say why.",
+    "unsavedSuperseded": "A newer change to the same thing has since been saved, so this one cannot be retried.",
+    "unsavedKindOther": "A change to your mailbox",
+    "unsavedKindMove": "Filing a message",
+    "unsavedKindDelete": "Deleting a message",
+    "unsavedKindTriage": "Setting a message aside",
+    "unsavedKindScreener": "A Screener decision",
+    "unsavedKindRead": "Marking mail read",
+    "unsavedKindSend": "Sending a message",
+    "unsavedKindDraft": "Saving a draft",
+    "unsavedKindDraftDiscard": "Discarding a draft",
+    "unsavedKindSchedule": "Cancelling a scheduled send",
+    "unsavedKindTag": "A tag change",
+    "unsavedKindFolder": "A folder change",
+    "unsavedKindRule": "A rule change"
   },
   "screening": {
     "action": "Screening",

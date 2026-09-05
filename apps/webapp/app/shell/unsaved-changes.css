@@ -1,0 +1,115 @@
+/*
+ * The "could not be saved" strip. Warn tone, never alarm: the work is not lost — it is held, and
+ * the list below says what and offers the two answers. It borrows the sync bar's warn colours
+ * rather than defining new ones, so the shell has one vocabulary for "something needs you".
+ */
+.unsaved {
+  border: 1px solid var(--warn-line, rgba(180, 120, 20, 0.35));
+  background: var(--warn-ground, rgba(180, 120, 20, 0.08));
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+.unsaved-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.unsaved-glyph {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 11px;
+  background: var(--warn-line, rgba(180, 120, 20, 0.35));
+}
+
+.unsaved-toggle {
+  margin-inline-start: auto;
+  background: none;
+  border: 0;
+  padding: 2px 4px;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+  color: inherit;
+}
+
+.unsaved-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.unsaved-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding-top: 6px;
+  border-top: 1px solid var(--warn-line, rgba(180, 120, 20, 0.25));
+}
+
+.unsaved-what {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* The server's sentence can be long and is not ours to shorten — it wraps rather than truncating,
+   because the one thing this row exists to carry is the reason. */
+.unsaved-why {
+  opacity: 0.8;
+  overflow-wrap: anywhere;
+}
+
+.unsaved-acts {
+  margin-inline-start: auto;
+  display: flex;
+  gap: 6px;
+  flex: none;
+}
+
+.unsaved-acts button {
+  font: inherit;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid currentColor;
+  background: none;
+  cursor: pointer;
+  color: inherit;
+}
+
+.unsaved-acts button[disabled] {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.unsaved-discard {
+  opacity: 0.75;
+}
+
+@media (max-width: 520px) {
+  .unsaved-row { flex-wrap: wrap; }
+  .unsaved-acts { margin-inline-start: 0; }
+}
+
+/* THE RAIL COPY NEEDED ITS OWN RULE, and the one above could never give it one: the rail exists
+   only at 901px and up, while that query fires only below 520px, so the two can never both be
+   true. The rail column itself is roughly 200–360px — "Erneut versuchen" beside "Verwerfen" does
+   not fit — and the actions clipped with no breakpoint able to reach them. Keyed on the copy
+   rather than the viewport, which is what the layout actually depends on. */
+.unsaved-rail .unsaved-row {
+  flex-wrap: wrap;
+}
+
+.unsaved-rail .unsaved-acts {
+  margin-inline-start: 0;
+  width: 100%;
+}

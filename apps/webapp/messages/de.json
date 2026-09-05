@@ -1061,7 +1061,9 @@
     "replaceTitle": "Du hast schon etwas geschrieben",
     "replaceBody": "Soll der Entwurf dein Getipptes ersetzen oder darunter dazukommen?",
     "replace": "Ersetzen",
-    "append": "Darunter einfügen"
+    "append": "Darunter einfügen",
+    "failedOpaque": "Der Entwurf wurde geschrieben, lie\u00df sich aber nicht laden. Erneutes Dr\u00fccken holt denselben \u2014 es wird kein zweiter gekauft.",
+    "failedOpaqueEarly": "Auf dem Server ist etwas schiefgegangen, es wurde kein Entwurf erstellt. Es wurde nichts berechnet."
   },
   "settings": {
     "title": "Einstellungen",
@@ -2610,7 +2612,28 @@
     "pulling": "Mailserver wird geprüft…",
     "pullAria": "Neue Mails abrufen — den Mailserver jetzt prüfen",
     "pullQuiet": "Geprüft — nichts Neues.",
-    "pullSlow": "Wird noch geprüft. Neue Mails kommen von selbst an."
+    "pullSlow": "Wird noch geprüft. Neue Mails kommen von selbst an.",
+    "unsavedCount": "{count, plural, one {# \u00c4nderung konnte nicht gespeichert werden} other {# \u00c4nderungen konnten nicht gespeichert werden}}",
+    "unsavedShow": "Anzeigen",
+    "unsavedHide": "Ausblenden",
+    "unsavedRetry": "Erneut versuchen",
+    "unsavedDiscard": "Verwerfen",
+    "unsavedDismiss": "Schlie\u00dfen",
+    "unsavedNoReason": "Der Server hat die \u00c4nderung abgelehnt, ohne einen Grund zu nennen.",
+    "unsavedSuperseded": "Inzwischen wurde eine neuere \u00c4nderung am selben Objekt gespeichert, daher kann diese nicht wiederholt werden.",
+    "unsavedKindOther": "Eine \u00c4nderung an deinem Postfach",
+    "unsavedKindMove": "Eine Nachricht einsortieren",
+    "unsavedKindDelete": "Eine Nachricht l\u00f6schen",
+    "unsavedKindTriage": "Eine Nachricht zur\u00fccklegen",
+    "unsavedKindScreener": "Eine Screener-Entscheidung",
+    "unsavedKindRead": "Post als gelesen markieren",
+    "unsavedKindSend": "Eine Nachricht senden",
+    "unsavedKindDraft": "Einen Entwurf speichern",
+    "unsavedKindDraftDiscard": "Einen Entwurf verwerfen",
+    "unsavedKindSchedule": "Einen geplanten Versand abbrechen",
+    "unsavedKindTag": "Eine Tag-\u00c4nderung",
+    "unsavedKindFolder": "Eine Ordner-\u00c4nderung",
+    "unsavedKindRule": "Eine Regel-\u00c4nderung"
   },
   "screening": {
     "action": "Screening",

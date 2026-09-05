@@ -36,6 +36,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+
 import { Copy } from "../copy";
 import { useConnection } from "../net/connection";
 import {
@@ -75,6 +76,8 @@ import {
   stableActions,
   type FolderEntity,
   type ScreenerRow,
+  type AbandonedMutation,
+  type MutationResult,
   type WorldActions,
   type PhoneOrganizer,
   type WorldMail,
@@ -112,6 +115,18 @@ export interface World {
      */
     staleAsOf: string | null;
   };
+  /**
+   * CHANGES THE SERVER WOULD NOT TAKE — the phone's half of the web's "could not be saved" strip.
+   *
+   * PARITY, and it is a rule rather than a nicety: the engine gives up on a verb after a bounded
+   * number of server-answered failures and moves it out of the replay set, so a phone that did not
+   * render this list would drop the user's work silently while the browser explained it. The engine
+   * is shared; only the surface is per-platform, so the surface has to exist on both.
+   *
+   * Read per derivation from the engine's value-cached `abandoned()`, so it is correct on the
+   * first render after a boot — when nothing has been dispatched and the only evidence is on disk.
+   */
+  abandoned: readonly AbandonedMutation[];
   /**
    * WHICH SESSION this is — the live session's mirror owner key, or `"none"`. The one
    * legitimate effect dependency for "do this again when the world changes": the actions
@@ -303,6 +318,11 @@ const NO_ACTIONS: WorldActions = {
   leaveFeed: () => undefined,
   openMessage: () => undefined,
   hydrateMessage: () => undefined,
+  // The empty world has no engine and nothing queued; the resolved promise keeps the facade's
+  // shape honest for a caller that awaits it.
+  // The empty world has no engine; the shape is kept honest for a caller that reads the result.
+  retryAbandoned: async (id: string) => ({ id, key: id, status: "rolled_back" as const, seq: null }),
+  discardAbandoned: async () => undefined,
   hydrateHeld: () => undefined,
   decide: () => undefined,
   setScope: () => undefined,
@@ -332,10 +352,16 @@ const NO_ACTIONS: WorldActions = {
   folderDismiss: () => undefined,
 };
 
+const EMPTY_ABANDONED: readonly AbandonedMutation[] = Object.freeze([]);
+
 function emptyWorld(actions: WorldActions): World {
   return {
     live: false,
     boot: { settled: false, syncFailure: null, staleAsOf: null },
+    // Nothing is queued on the empty world, so nothing was given up on. `EMPTY_ABANDONED` rather
+    // than a fresh `[]`: this object is compared by identity in places, and a new array per call
+    // is the same re-render trap `useAbandoned` avoids on the web.
+    abandoned: EMPTY_ABANDONED,
     worldKey: "none",
     account: { name: "", email: "" },
     // Nothing has been asked on the empty world, so `known` is false and the banner is withheld
@@ -796,6 +822,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           leaveFeed: (place) => void acts.leaveFeed(place),
           openMessage: (id) => void acts.openMessage(id),
           hydrateMessage: (id) => acts.hydrateMessage(id),
+          retryAbandoned: (id) => acts.retryAbandoned(id),
+          discardAbandoned: (id) => acts.discardAbandoned(id),
           hydrateHeld: (ids) => acts.hydrateHeld(ids),
           decide: (row, dest, read) => void acts.decide(row, dest, read, row.scope),
           setScope: (row, scope) => setScopes((held) => ({ ...held, [row.routeKey]: scope })),
@@ -868,6 +896,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         // `freshBeat` below ticks the memo when the verdict changes by clock.
         staleAsOf: staleAsOf(engine, zone),
       },
+      abandoned: engine.abandoned(),
       worldKey: session.ownerKey,
       account: { name: session.profile.origin, email: session.profile.accountId },
       mailboxes: {

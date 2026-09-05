@@ -646,6 +646,15 @@ body.reading .shell {
   .sync-bar {
     display: none;
   }
+  /* The abandoned-changes strip is mounted in BOTH arrangements exactly as the sync line is, so it
+     joins the same single query rather than getting one of its own. Its rail copy lives inside
+     `.rail-sync-slot` and is already gated by the rule below; without this line the shell copy
+     stayed visible above the breakpoint and the same sentence stood on screen twice, with two
+     `role="status"` regions announcing it in turn — the exact failure the comment above this block
+     describes, reintroduced by a strip that did not know about it. */
+  .unsaved-shell {
+    display: none;
+  }
   .rail-sync-slot {
     display: block;
   }

@@ -16,6 +16,7 @@ import { useWorld, useWorldToast } from "../state/world";
 import { Icon } from "./Icon";
 import { Wordmark } from "./Icon";
 import { Tap, Txt } from "./base";
+import { UnsavedChanges } from "./UnsavedChanges";
 
 /* ----------------------------------------------------------------- top bar */
 
@@ -58,6 +59,10 @@ export function TopBar({ trailing }: { trailing?: React.ReactNode }) {
           {boot.syncFailure !== null ? Copy.staleAsOfIdle(stale) : Copy.staleAsOf(stale)}
         </Txt>
       ) : null}
+      {/* BELOW the freshness label and independent of it: a change can be abandoned while the
+          mirror is perfectly current, which is the state `stale === null` describes. Rendering it
+          inside that branch would hide the notice in the case it is most likely to occur. */}
+      <UnsavedChanges />
     </View>
   );
 }
@@ -73,6 +78,12 @@ export function DetailBar({ title, right }: { title?: string; right?: React.Reac
   const insets = useSafeAreaInsets();
   const canBack = router.canGoBack();
   return (
+    <View>
+    {/* THE PUSHED SCREENS NEED IT TOO. A verb can be abandoned from the message, sender, triage,
+        scheduled, folder, settings and server screens — all of which render `DetailBar`, not
+        `TopBar` — and until this was here the notice appeared nowhere until the reader navigated
+        back to a tab root. A recovery surface reachable only from somewhere else is one a person
+        finds by accident. */}
     <View
       style={{
         paddingTop: insets.top + 6,
@@ -105,6 +116,8 @@ export function DetailBar({ title, right }: { title?: string; right?: React.Reac
       ) : null}
       <View style={{ flex: 1 }} />
       {right}
+    </View>
+    <UnsavedChanges />
     </View>
   );
 }

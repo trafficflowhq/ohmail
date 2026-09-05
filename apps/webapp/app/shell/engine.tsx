@@ -22,7 +22,7 @@ import {
 } from "react";
 import { Spinner } from "@ohmail/ui";
 import { useTranslations } from "next-intl";
-import { OhmailEngine, type EntityReader, type MirrorFreshness } from "@ohmail/client-engine";
+import { OhmailEngine, type AbandonedMutation, type EntityReader, type MirrorFreshness } from "@ohmail/client-engine";
 import { isDemoRequested } from "../demo-mode";
 import { cloudWakeStream, createEngine, EngineUnarmedError, syncsWhileHidden } from "./engine-config";
 import { useLoadingGrace } from "./loading-grace";
@@ -750,6 +750,31 @@ export function useFreshness(): MirrorFreshness {
   const engine = useEngine();
   const subscribe = useCallback((cb: () => void) => engine.subscribe(cb), [engine]);
   return useSyncExternalStore(subscribe, () => engine.freshness(), () => FRESHNESS_UNKNOWN);
+}
+
+/**
+ * The server-snapshot for {@link useAbandoned} — hydration renders nothing, exactly as
+ * {@link FRESHNESS_UNKNOWN} does. One module-level identity because `useSyncExternalStore`
+ * compares snapshots by reference and a fresh `[]` per render is an infinite loop.
+ */
+const NO_ABANDONED: readonly AbandonedMutation[] = Object.freeze([]);
+
+/**
+ * THE CHANGES THIS CLIENT GAVE UP ON — what the "could not be saved" strip and its sheet read.
+ *
+ * The engine value-caches `abandoned()` for exactly this hook (same bargain `freshness()` strikes),
+ * so the snapshot is stable while the set is unchanged and changes identity the moment it is not.
+ *
+ * **Deliberately NOT folded into the sync bar's speech.** `SyncBar` returns null whenever the sync
+ * state has nothing to say, which is the ordinary healthy case — and an abandoned change is most
+ * likely precisely THEN: syncing is fine, one verb the server kept refusing is not. Reusing that
+ * component would have hidden the notice in the state where it matters most, which is the same
+ * shape of defect as a guard that is green because it never ran.
+ */
+export function useAbandoned(): readonly AbandonedMutation[] {
+  const engine = useEngine();
+  const subscribe = useCallback((cb: () => void) => engine.subscribe(cb), [engine]);
+  return useSyncExternalStore(subscribe, () => engine.abandoned(), () => NO_ABANDONED);
 }
 
 /**

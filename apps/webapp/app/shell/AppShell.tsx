@@ -146,6 +146,7 @@ import "./zone-cursor.css";
 import { ColumnHandles } from "./ColumnHandles";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { SyncBar } from "./SyncBar";
+import { UnsavedChanges } from "./UnsavedChanges";
 import { UpdateNotice } from "./UpdateNotice";
 import { MailStateProvider, useMailState, type FreshnessProbe, type MailboxProbe } from "./MailStateProvider";
 /* The ONE stand-down predicate, aggregated over the roster: what may the Screener do here, and
@@ -6340,6 +6341,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
             corner pill are the only way the mailbox can speak, and they keep the job. */}
         <SyncBar />
 
+        {/* CHANGES THE SERVER WOULD NOT TAKE. Beside the sync line rather than inside it, because
+            `SyncBar` renders nothing when sync has nothing to say — which is exactly the state an
+            abandoned change is most likely to be in: the mailbox is fine, one verb is not. Absent
+            from the DOM when there are none, like every other strip the shell mounts once. */}
+        <UnsavedChanges variant="shell" />
+
         {/* A NEWER OHMAIL, IN EVERY VIEW. The strip's sibling and its argument: rendered once by
             the shell so no view can forget it, outside every list's scroller, and absent from the
             DOM whenever there is nothing to say. What is on offer differs by door — a build this
@@ -6437,6 +6444,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
                     base; see `PullNewMail.tsx` for the honest-settle contract. */}
                 <PullNewMail variant="rail" binding={pullBinding} />
                 <SyncBar variant="rail" />
+                {/* Same component at rail width — its own layout collapses under 520px, so the
+                    rail does not need a second variant. */}
+                <UnsavedChanges variant="rail" />
               </>
             }
             /* The account line at the foot of the rail. The "Get ohmail for desktop" prompt

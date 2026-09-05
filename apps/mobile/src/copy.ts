@@ -267,6 +267,30 @@ export const Copy = {
      claim: with the last round failed and nothing scheduled (the runner stops; a pull or the
      next foreground drain retries), the age is stated alone — the failure sentence is the
      skeleton's and the Servers screen's, not this line's to repeat. */
+  // ── CHANGES THE SERVER WOULD NOT TAKE ──────────────────────────────────────────────────
+  // The phone's half of the browser's "could not be saved" strip. Same words on both platforms
+  // deliberately: a person who uses both should not have to learn two names for one state.
+  unsavedCount: (n: number) => (n === 1 ? "1 change could not be saved" : `${n} changes could not be saved`),
+  unsavedShow: "Show them",
+  unsavedHide: "Hide",
+  unsavedRetry: "Try again",
+  unsavedDiscard: "Discard",
+  unsavedDismiss: "Dismiss",
+  unsavedNoReason: "The server refused it and did not say why.",
+  unsavedSuperseded: "A newer change to the same thing has since been saved, so this one cannot be retried.",
+  unsavedKindOther: "A change to your mailbox",
+  unsavedKindMove: "Filing a message",
+  unsavedKindDelete: "Deleting a message",
+  unsavedKindTriage: "Setting a message aside",
+  unsavedKindScreener: "A Screener decision",
+  unsavedKindRead: "Marking mail read",
+  unsavedKindSend: "Sending a message",
+  unsavedKindDraft: "Saving a draft",
+  unsavedKindDraftDiscard: "Discarding a draft",
+  unsavedKindSchedule: "Cancelling a scheduled send",
+  unsavedKindTag: "A tag change",
+  unsavedKindFolder: "A folder change",
+  unsavedKindRule: "A rule change",
   staleAsOf: (time: string) => `As of ${time} · catching up`,
   staleAsOfIdle: (time: string) => `As of ${time}`,
 
