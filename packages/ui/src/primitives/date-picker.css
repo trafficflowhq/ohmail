@@ -34,13 +34,13 @@
   max-width:calc(100vw - 20px);max-height:calc(100vh - 20px);overflow:auto;
   background:var(--float);border-radius:var(--r-card);box-shadow:var(--lift-3);
   animation:rise .2s var(--spring);
-  font-size:12px;color:var(--ink);
+  font-size:calc(12px + var(--type-up));color:var(--ink);
 }
 @supports (max-height: 100dvh){
   .dp{max-width:calc(100dvw - 20px);max-height:calc(100dvh - 20px)}
 }
 .dp-head{display:flex;align-items:center;gap:4px;margin:0 0 6px}
-.dp-month{flex:1;text-align:center;font-size:12.5px;font-weight:600;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dp-month{flex:1;text-align:center;font-size:calc(12.5px + var(--type-up));font-weight:600;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dp-nav{
   width:28px;height:28px;display:inline-grid;place-items:center;flex:none;
   border:0;background:none;cursor:pointer;color:var(--ink2);border-radius:var(--r-pill);
@@ -53,12 +53,12 @@
 .dp-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px}
 .dp-row{display:contents}
 .dp-wd{
-  font-size:10.5px;font-weight:550;color:var(--ink3);text-align:center;
+  font-size:calc(10.5px + var(--type-up));font-weight:550;color:var(--ink3);text-align:center;
   padding:2px 0 4px;white-space:nowrap;overflow:hidden;
 }
 .dp-day{
   position:relative;height:30px;min-width:0;border:0;background:none;cursor:pointer;
-  font:inherit;font-size:12px;font-variant-numeric:tabular-nums;color:var(--ink);
+  font:inherit;font-size:calc(12px + var(--type-up));font-variant-numeric:tabular-nums;color:var(--ink);
   border-radius:var(--r-pill);display:grid;place-items:center;
   transition:background .15s var(--swift),color .15s var(--swift);
 }

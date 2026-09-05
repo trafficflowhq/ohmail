@@ -46,7 +46,7 @@
  * description of what a select looks like, the rule belongs in `app.css` beside the first.
  */
 .search-sort {
-  font-size: 12px;
+  font-size: calc(12px + var(--type-up));
   color: var(--ink3);
 }
 
@@ -61,7 +61,7 @@
    In a view header it sits beside a 20px title, so it takes the label's size and the ink
    one step up from it — the value is the answer, the label is the question. */
 .search-sort select {
-  font-size: 12px;
+  font-size: max(var(--input-floor), calc(12px + var(--type-up)));
   color: var(--ink2);
   background: none;
   border: 0;
