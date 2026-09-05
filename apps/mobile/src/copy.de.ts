@@ -367,11 +367,12 @@ export const DE: Deck = {
   decideReadOn: "Wird als gelesen einsortiert — der Zähler bewegt sich nicht.",
   decideReadOff: "Wird ungelesen einsortiert — sie meldet sich.",
   heldCaption: (n: number, firstContact?: string) => {
-    const head = `${n === 1 ? "1 zurückgehaltene Nachricht" : `${n} zurückgehaltene Nachrichten`} — alle gezeigt`;
+    /* "alle" cannot govern one thing — `vollständig` says the same and takes no number. */
+    const head = `${n === 1 ? "1 zurückgehaltene Nachricht" : `${n} zurückgehaltene Nachrichten`} — vollständig gezeigt`;
     return firstContact ? `${head} · erster Kontakt ${firstContact}` : head;
   },
   screenedNote: (date: string, held: number) =>
-    `Aussortiert ${date} · ${held} zurückgehalten, alle gezeigt. Zulassen gibt jede einzelne davon in die gewählte Ansicht frei.`,
+    `Aussortiert ${date} · ${held} zurückgehalten, vollständig gezeigt. Zulassen gibt jede einzelne davon in die gewählte Ansicht frei.`,
   /* No trailing preposition: the destination is chosen in the control beside this label, and
      "freigeben nach Belege" is not German. The label states the act; the picker states the place. */
   allowLabel: "Zulassen — zurückgehaltene Post freigeben",
@@ -593,7 +594,10 @@ export const DE: Deck = {
   /* -------------------------------------------------------- message actions */
 
   routedBy: "Warum sie hier gelandet ist",
-  earlierInThread: (n: number) => `Früher in diesem Verlauf — alle ${n} gezeigt`,
+  earlierInThread: (n: number) =>
+    n === 1
+      ? "Früher in diesem Verlauf — vollständig gezeigt"
+      : `Früher in diesem Verlauf — alle ${n} gezeigt`,
   openMessage: "Öffnen",
   back: "Zurück",
 
@@ -625,7 +629,15 @@ export const DE: Deck = {
   resurfaceNextWeek: "Nächste Woche",
   resurfacePick: "Datum wählen",
 
-  moveLabel: "verschieben nach",
+  /*
+   * "verschieben nach" sits directly above the destination rows (`→ Belege`, `→ Ohbox`), which
+   * recreates exactly the case problem `toastMoved` was fixed for: "nach" wants a case the place
+   * names cannot carry. The web catalogue says the same thing (`ohbox.moveLabel`) and, by the
+   * ruling that settled `toastMoved`, a matching translation elsewhere is a SHARED DEFECT rather
+   * than evidence. A bare noun heading takes no case and reads correctly above every row; the web
+   * client's twin is filed to be fixed the same way.
+   */
+  moveLabel: "Ziel",
   moveCancel: "Abbrechen",
 
   placeOhbox: "Ohbox",
