@@ -316,18 +316,68 @@ export async function applyMetaRequests(
   try {
     records = await io.listMetaRecords();
   } catch (err) {
-    // Mirrors the lease peek's own rule: an unreadable folder is a look that failed, not evidence
-    // of anything. The next cycle tries again.
-    log("meta_requests_list_failed", {
-      mailboxId: rt.mailboxId, accountId: rt.accountId,
-      err: err instanceof Error ? err.message : String(err),
-      // A FOLDER TOO FULL TO READ IN ONE WINDOW is the one thing that lands here and does not
-      // clear on its own, so its count rides as a field rather than only inside the sentence.
-      // Nothing is expunged on this path — a partial view of the folder is not evidence about
-      // any record in it.
-      records: recordsPresentIn(err),
-    });
-    return EMPTY_RESULT;
+    /* ── A FOLDER TOO FULL TO READ IS DRAINED A PAGE AT A TIME, NOT REFUSED WHOLESALE ────────
+     *
+     * This returned empty for every fault, and for a folder over the ceiling that was the one
+     * outcome with no way back. Records leave this folder only after a drain settles them, the
+     * drain ran only after a whole read succeeded, and the read refuses past the ceiling — so a
+     * folder that crossed it stayed crossed, and every later cycle refused identically. The ack
+     * sweep ahead of this read is not a general answer either: it removes ACKNOWLEDGEMENTS, so it
+     * cannot help a folder that is full of REQUESTS, which is precisely what two readers crossing
+     * the ceiling together produce.
+     *
+     * The bounded read already hands back the newest window on the way out — that window IS a
+     * page. Processing it is what unsticks the mailbox: the decisions in it take effect, which a
+     * wholesale refusal prevented entirely and for ever.
+     *
+     * ── WHAT THIS DOES NOT DO, AND THE FIRST VERSION OF THIS COMMENT CLAIMED IT DID ──────────
+     *
+     * It does not make the folder smaller in the same cycle, and a guard caught the claim: 510
+     * records in, 200 settled, 510 records out. Settling a request APPENDS an acknowledgement in
+     * its place and expunges the request — one out, one in — because the reader has to learn the
+     * outcome. A folder full of requests therefore becomes a folder full of acknowledgements at
+     * the same count.
+     *
+     * That is still the recovery, and the shape of it is worth being exact about, because two
+     * different things were being run together:
+     *
+     *   · the DECISIONS stop being stuck immediately — this cycle, a page at a time, at
+     *     {@link REQUEST_DRAIN_MAX_PER_CYCLE} per pass. That is the part a person feels;
+     *   · the RECORD COUNT comes back under the ceiling when those acknowledgements age past the
+     *     sweep's cutoff and it removes them. The cutoff is floored to a day, so that is a day
+     *     away, not a cycle away.
+     *
+     * Anything that claimed one-cycle recovery for a folder of requests was describing a folder of
+     * acknowledgements. Both halves matter and only one of them is fast.
+     *
+     * WHAT MAKES ACTING ON A PARTIAL VIEW SAFE HERE, and it is not the same argument the ELECTION
+     * refuses on. An election decides who organizes a mailbox, and absence of a claim inside a
+     * window is not absence from the folder — acting on it means two organizers. This pass
+     * decides nothing about the mailbox; it applies decisions that are already signed, under
+     * `meta-request:<id>`, whose whole purpose this file states above: it "stops a second drain
+     * re-applying a record whose expunge did not land". Re-reading a record on a later page is
+     * therefore a claimed key and a no-op, not a double application.
+     *
+     * A read that failed for any OTHER reason is still a look that failed and still yields
+     * nothing: that is a connection or a server fault, and it carries no page to work from. */
+    if (err instanceof MetaFolderTruncatedError && err.records.length > 0) {
+      log("meta_requests_paged", {
+        mailboxId: rt.mailboxId, accountId: rt.accountId,
+        page: err.records.length, records: recordsPresentIn(err),
+        reason: "ohmail/_meta holds more than one read may take, so this cycle drains the newest "
+          + "page and expunges what it settles; the folder is smaller for the next one",
+      });
+      records = [...err.records];
+    } else {
+      // Mirrors the lease peek's own rule: an unreadable folder is a look that failed, not
+      // evidence of anything. The next cycle tries again.
+      log("meta_requests_list_failed", {
+        mailboxId: rt.mailboxId, accountId: rt.accountId,
+        err: err instanceof Error ? err.message : String(err),
+        records: recordsPresentIn(err),
+      });
+      return EMPTY_RESULT;
+    }
   }
 
   const envelopes = requestEnvelopesIn(records);
