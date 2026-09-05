@@ -6,6 +6,7 @@ import {
   type AlertSink, type AttachmentStagingStorage,
 } from "@trafficflow/db/cloud";
 import {
+  resolveCloudInstallId,
   makeAnthropicClient, makeHaikuClassifier, makeSonnetDrafter,
   MicrosoftTokenProvider, UNMETERED_STORAGE_CAP,
   type FetchLike, type Logger, type UpdateSecretPort,
@@ -300,7 +301,11 @@ export function buildServerServices(cfg: ServerConfig, db: Db): ApiServices {
     // Envelope-encrypts mailbox credentials with the SAME provider the organizer decrypts with —
     // the KEK identity on the two /health responses is what proves they agree. The explicit
     // allowance is obligation 1; see SELF_HOST_MAILBOX_ALLOWANCE above.
-    mailbox: makeMailboxService({ keyProvider, allowance: SELF_HOST_MAILBOX_ALLOWANCE }),
+    mailbox: makeMailboxService({
+      keyProvider, allowance: SELF_HOST_MAILBOX_ALLOWANCE,
+      // The same identity the organizer half writes — see `resolveCloudInstallId`.
+      installId: resolveCloudInstallId(process.env),
+    }),
     // NO adapter injected: a screener/approval decision leaves folder_state pending and the
     // ORGANIZER (apps/worker, running beside this process) applies the IMAP move — one organizer
     // per mailbox is the rule, and this server never opens IMAP to apply organization.

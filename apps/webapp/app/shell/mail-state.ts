@@ -285,10 +285,20 @@ export function readerStandDown(m: {
  * Nothing organizes the mailbox, and each side's row says the other one does. A claim seen this way
  * had been sitting for three days.
  *
- * `organizedBy` is written from the claim record itself by the per-cycle peek, so `kind` is what the
- * MAILBOX says, not what this row remembers. On this pane `cloud` IS this install: the pane is the
- * hosted account's and a mailbox has one hosted organizer. A local install's own pane asks the same
- * question about `local` claims, one client over.
+ * ── "OURS" IS AN IDENTITY, AND `kind` CANNOT ANSWER IT ──────────────────────────────────────
+ *
+ * This asked `organizedBy.kind === "cloud"`, on the premise that a mailbox has one hosted
+ * organizer. It does not: the hosted organizer's id is SCOPED BY ENVIRONMENT precisely so that a
+ * staging deployment pointed at a production mailbox is a different organizer, and the claim
+ * removal matches on that id. So `cloud` is what a SECOND Cloud deployment is too, and the
+ * predicate answered "ours" over a claim this install could not remove — the hand-back was offered,
+ * the row was cleared, and the claim stayed in the folder.
+ *
+ * A mailbox has one organizer AT A TIME; another Cloud install is a foreign one, exactly like a
+ * foreign desktop. So the server compares the ids and sends the answer, and this reads it. The id
+ * itself is not on the wire — it is an internal deployment name with no use on a screen — and
+ * re-deriving the comparison here would be the same rule in two vocabularies, which is what went
+ * wrong the first time.
  *
  * The verb this unlocks is the ordinary release — the only thing that takes a claim off a mailbox is
  * the process holding it — so the mechanism is unchanged and only its REACHABILITY moves. The rule
@@ -301,13 +311,14 @@ export function readerStandDown(m: {
 export function claimLeftBehind(m: {
   status?: string;
   organizerRole?: "organizer" | "reader";
-  organizedBy?: { kind: string | null; name: string | null; since: string | null } | null;
   organizeConsentedAt?: string | null;
+  /** The server's own comparison — see the header. Absent reads as NOT ours, the safe direction. */
+  organizedByThisInstall?: boolean;
 }): boolean {
   if (m.status !== "connected") return false;
   if (m.organizerRole !== "reader") return false;
   if (m.organizeConsentedAt === null || m.organizeConsentedAt === undefined) return false;
-  return m.organizedBy?.kind === "cloud";
+  return m.organizedByThisInstall === true;
 }
 
 /**

@@ -1,6 +1,7 @@
 export const CORE_VERSION = "0.0.0";
 
 export * from "./types.js";
+export * from "./organizer-install.js";
 export * from "./identity.js";
 export * from "./mime.js";
 export * from "./ics.js";

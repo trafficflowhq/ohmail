@@ -13,6 +13,7 @@ import {
   type AdminDb, type AlertSink,
 } from "@trafficflow/db/cloud";
 import {
+  resolveCloudInstallId,
   createLogger, makeAnthropicClient, makeHaikuClassifier, makeSonnetDrafter,
   MicrosoftTokenProvider, UNMETERED_STORAGE_CAP,
   type Logger, type FetchLike, type UpdateSecretPort,
@@ -295,7 +296,15 @@ function buildServices(cfg: HostConfig): ApiServices {
   // screening-only, 90-day credit pool in the SAME transaction as the row (cloud 0021,
   // `setup-grant.ts`). Hosted-only by construction — the local tiers construct this service
   // without the hook, exactly as they pass their own `allowance`.
-  lazily(bag, "mailbox", () => makeMailboxService({ keyProvider, onCreated: grantSetupCredits }));
+  lazily(bag, "mailbox", () => makeMailboxService({
+    keyProvider, onCreated: grantSetupCredits,
+    /* WHO THIS DEPLOYMENT IS TO A MAILBOX, resolved through the SAME function the worker
+       resolves it with. The release asks whether a claim is ours, which is an identity
+       question; answering it with the holder's KIND accepted another Cloud deployment's claim.
+       If the two ever derive different ids the hand-back is refused everywhere, which is the
+       safe direction and a visible one. */
+    installId: resolveCloudInstallId(process.env),
+  }));
   // NO adapter injected, so a screener or approval decision leaves
   // `folder_state` pending and the WORKER applies the IMAP move. The serverless host never
   // opens IMAP to apply organization — one organizer per mailbox is the rule.

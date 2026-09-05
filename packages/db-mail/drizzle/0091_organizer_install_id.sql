@@ -1,0 +1,34 @@
+-- THE SIXTH HOLDER COLUMN — WHICH INSTALL HOLDS THE CLAIM, not which KIND of install.
+--
+-- ══ WHY A KIND WAS NOT ENOUGH, MEASURED ════════════════════════════════════════════════════
+--
+-- `organized_by_kind` is one of three words: 'cloud', 'local', 'unknown'. It answers "what sort of
+-- thing holds this mailbox" and it was read as "is this us", which is a different question with
+-- the same answer only when there is one install per kind. There is not, and the design says so:
+-- `apps/worker/src/lease.ts` scopes the Cloud organizer id BY ENVIRONMENT so that "staging pointed
+-- at a production mailbox is a DIFFERENT organizer", and it explains that this is the correct and
+-- quiet outcome — "the newcomer sees a live foreign `cloud` claim and stands down".
+--
+-- So two Cloud deployments over one mailbox is a designed-for state, and a row whose holder is
+-- `cloud` may be this install's claim or another deployment's. The release path read that column
+-- and answered "this is ours, give it up": it cleared the row while the claim it could not match
+-- stayed in `ohmail/_meta` (the removal matches on install id, `lease.ts`), so the row said
+-- released, the folder disagreed, and the next cycle rediscovered the claim. The person was told
+-- Cloud had stopped organizing a mailbox another install was still organizing.
+--
+-- The unit the worker already removes by is the INSTALL ID. This column carries it to the row so
+-- the API tier can decide on the same unit rather than on a category, and so the two halves of
+-- one rule stop being written in two vocabularies.
+--
+-- ══ SHAPE ══════════════════════════════════════════════════════════════════════════════════
+--
+-- Nullable, because a claim written by an install older than this column carries no id we stored,
+-- and because a mailbox nobody holds has no id at all. NULL therefore means "we cannot say it is
+-- ours", and every caller must treat that as NOT ours — the safe direction: refusing a hand-back
+-- that would have worked costs a sentence, and offering one that silently fails costs the trust
+-- of every sentence beside it.
+--
+-- Idempotent (`IF NOT EXISTS`); no breakpoint marker needed — a single statement, nothing to
+-- split. `when` after 0090, because a desktop engine replays this journal at every launch.
+
+ALTER TABLE "mailboxes" ADD COLUMN IF NOT EXISTS "organized_by_install_id" text;

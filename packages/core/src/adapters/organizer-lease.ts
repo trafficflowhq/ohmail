@@ -1528,6 +1528,15 @@ function reasonFor(c: OrganizerClaim): StandDownReason {
  */
 export interface LeaseHolder {
   kind: OrganizerKind | "unknown";
+  /**
+   * `X-Ohmail-Install-Id` — WHICH install wrote this claim, as opposed to which KIND of one.
+   *
+   * On the preview because the row that mirrors it has to answer "is this claim ours", and `kind`
+   * cannot: it is one of three words, and the Cloud id is scoped by environment precisely so that
+   * two Cloud deployments over one mailbox are different organizers. The claim removal already
+   * matches on this id, so exposing it here is what lets the row and the removal use one unit.
+   */
+  installId: string;
   /** `X-Ohmail-Display-Name` — the machine, for a human. May be empty. */
   displayName: string;
   /** Last renew, by the WRITER's clock. */
@@ -1616,6 +1625,7 @@ export function peekLease(input: PeekLeaseInput): LeasePeek {
   const holders: LeaseHolder[] = valid
     .map((c) => ({
       kind: unrankableInstalls.has(c.installId) ? ("unknown" as const) : c.kind,
+      installId: c.installId,
       displayName: c.displayName,
       heartbeat: c.heartbeat,
       claimedAt: c.claimedAt,

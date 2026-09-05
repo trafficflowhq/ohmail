@@ -416,6 +416,18 @@ export interface MailboxDTO {
    */
   organizerState: "held" | "stopped" | null;
   /**
+   * IS THE CLAIM ON THIS MAILBOX THIS INSTALL'S OWN — answered by the server, not inferred here.
+   *
+   * A client asking it from `organizedBy.kind` gets `cloud`, which is what a SECOND Cloud
+   * deployment is too; their ids differ by design, so the category cannot answer an identity
+   * question. The id itself is deliberately NOT on the wire — it is an internal deployment name
+   * that every viewer would receive for no purpose — so the server compares and sends the answer.
+   *
+   * `false` where nobody holds the mailbox, where another install does, and where this deployment
+   * cannot say. Every one of those means "do not offer to give up this claim".
+   */
+  organizedByThisInstall: boolean;
+  /**
    * WHEN somebody agreed to let ohmail organize THIS mailbox, or `null` for "nobody has".
    *
    * ── WHY IT IS ON THE WIRE AT ALL, given `organizerRole` is right above it ─────────────────

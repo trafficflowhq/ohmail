@@ -736,6 +736,21 @@ export type MailboxAllowancePolicy = (
 ) => Promise<unknown>;
 
 export interface MailboxServiceDeps {
+  /**
+   * WHO THIS DEPLOYMENT IS TO A MAILBOX — the id it writes into a claim.
+   *
+   * The release asks "is the claim on this mailbox OURS", and that is an identity question. It was
+   * answered with `organized_by_kind === "cloud"`, which is a CATEGORY: a second Cloud deployment
+   * is also `cloud`, and `resolveCloudInstallId` scopes the id by environment precisely because
+   * two of them over one mailbox is a designed-for state. So the API cleared rows over claims it
+   * could not remove — the removal has always matched on the install id.
+   *
+   * Resolved from the same inputs the worker resolves it from, through the same function, so the
+   * two halves cannot drift. Absent means this deployment does not know who it is, and every
+   * comparison against it is then false — the safe direction, since a refused hand-back costs a
+   * sentence and a silent one costs the trust of every sentence beside it.
+   */
+  installId?: string;
   /** Envelope-encryption provider. REQUIRED for the write methods; the read
    *  methods (list/get/requestResync) never touch it — inject, don't reach global. */
   keyProvider?: KeyProvider;
@@ -2084,8 +2099,21 @@ export class MailboxService {
        * `not_organizing`, which is a success rather than a refusal — the person's intent is
        * already true. */
       const organizing = current.organizerRole === "organizer";
+      /* THE IDENTITY, NOT THE CATEGORY. `organized_by_kind === "cloud"` was the first spelling of
+         this and it is wrong in the one direction that matters: `cloud` is what ANOTHER Cloud
+         deployment is too, and their ids differ by design (`resolveCloudInstallId`). Against a
+         foreign Cloud claim that comparison said "ours", the row was cleared, and the removal —
+         which matches on the install id — found nothing to remove: the row read released while the
+         claim stayed in the folder and was rediscovered on the next cycle.
+
+         A NULL stored id, or a deployment that does not know its own, compares false. That is the
+         safe direction and it is the honest one: we cannot say the claim is ours, so we do not
+         say it. Such a row keeps the takeover ceremony, which is the remedy that works on a claim
+         somebody else holds. */
       const ourStrandedClaim = current.organizerRole === "reader"
-        && current.organizedByKind === "cloud";
+        && this.deps.installId !== undefined
+        && current.organizedByInstallId !== null
+        && current.organizedByInstallId === this.deps.installId;
       if (!organizing && !ourStrandedClaim) return { outcome: "not_organizing" as const };
       await tx.update(mailboxes)
         .set({
@@ -3040,6 +3068,12 @@ export class MailboxService {
         }
         : null,
       organizerState: isOrganizerState(m.organizerState) ? m.organizerState : null,
+      /* THE SAME COMPARISON THE RELEASE MAKES, sent as its answer so the two cannot drift. The
+         client used to re-derive this from the holder's kind and got `cloud` for another Cloud
+         deployment's claim — the defect this column closes, reproduced one tier up. */
+      organizedByThisInstall: this.deps.installId !== undefined
+        && m.organizedByInstallId !== null
+        && m.organizedByInstallId === this.deps.installId,
       // THE CONSENT STAMP, beside the role rather than derived from it — the two are independent
       // and the DTO's own doc carries the argument. Projected UNCONDITIONALLY like its three
       // neighbours, and as a plain instant: no coercion is possible or needed, since the only

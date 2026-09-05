@@ -52,12 +52,11 @@ import type { MailboxDisabledReason } from "@trafficflow/db";
  * `TF_ORGANIZER_INSTALL_ID` overrides it, for the one case the default cannot serve: a
  * self-hosted Cloud organizing the same mailbox as ours.
  */
-export const CLOUD_INSTALL_ID_PREFIX = "ohmail-cloud";
-
-/** The default `X-Ohmail-Install-Id` for a Cloud worker in the given environment. */
-export function cloudInstallId(environment: string): string {
-  return `${CLOUD_INSTALL_ID_PREFIX}:${environment}`;
-}
+/* ONE DEFINITION, in `@trafficflow/core`. It moved there because the API tier decides the same
+   question — "is the claim on this mailbox ours" — and answering it with the KIND rather than the
+   id is what let a release clear a row over another Cloud deployment's claim. Re-exported here so
+   every existing importer of this module is unchanged. */
+export { CLOUD_INSTALL_ID_PREFIX, cloudInstallId } from "@trafficflow/core";
 
 /**
  * How the claim names us to a human who opens `ohmail/_meta` in another mail client.

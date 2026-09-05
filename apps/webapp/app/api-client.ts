@@ -289,6 +289,14 @@ export interface MailboxDTO {
    */
   organizerState?: "held" | "stopped" | null;
   /**
+   * Is the claim on this mailbox this install's own — the SERVER's comparison, not a client's.
+   *
+   * `organizedBy.kind` cannot answer it: `cloud` is what a second Cloud deployment is too, and
+   * their ids differ by design. Optional because a host older than this field sends none, and
+   * absent reads as NOT ours.
+   */
+  organizedByThisInstall?: boolean;
+  /**
    * WHEN somebody agreed to let ohmail organize this mailbox, or `null` for "nobody has".
    *
    * ── ABSENT AND `null` ARE DIFFERENT HERE, AND THE DIFFERENCE IS A CONTROL ────────────────
