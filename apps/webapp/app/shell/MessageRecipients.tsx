@@ -116,6 +116,17 @@ export function MessageRecipients({
    */
   const cap = max === undefined ? undefined : Math.max(0, Math.trunc(max));
   /**
+   * WHAT THE DISCLOSURE WILL ACTUALLY REVEAL — because the accessible name is a CLAIM.
+   *
+   * Both `<dd>`s below are conditional: `fullDateTime` answers "" for a message with no `Date:`
+   * header (a routine production path — spam and scripts omit it, see `format.ts`), and
+   * `physicalFolder` is optional on the wire. The name said "the exact date and where this
+   * message sits" regardless, so on such a message a screen-reader user was promised two things
+   * and given one, or none.
+   */
+  const hasDate = !!abs;
+  const hasFolder = !!message.physicalFolder;
+  /**
    * Folded exactly when a cap was asked for, the reader has not opened the disclosure, and
    * there is genuinely something the cap holds back. A cap at or above the total therefore
    * behaves as no cap at all rather than drawing an honest-looking "+0".
@@ -181,6 +192,37 @@ export function MessageRecipients({
     );
 
   if (rows.empty) return null;
+  /**
+   * A DISCLOSURE WITH NOTHING BEHIND IT IS NOT RENDERED.
+   *
+   * No names held back, no date, no folder — pressing it would open an empty `<dl>`. That is
+   * the dead control the header's own ⋯ menu refuses to be ("degrade by OMISSION, never a menu
+   * of dead controls"), and it is the only state for which no honest name exists. The chips
+   * still render; it is the press that goes away.
+   */
+  const canDisclose = folded || hasDate || hasFolder;
+  /**
+   * The name, chosen from what is genuinely behind the press. Whole strings per combination
+   * rather than glued fragments: a German name is not an English one with its parts swapped,
+   * and `detailsAria`/`moreRecipientsAria` keep their exact wording for the both-present case,
+   * so the common path's copy has not moved.
+   */
+  const ariaKey = details
+    ? "detailsHideAria"
+    : folded
+      ? hasDate && hasFolder
+        ? "moreRecipientsAria"
+        : hasDate
+          ? "moreRecipientsAriaDate"
+          : hasFolder
+            ? "moreRecipientsAriaFolder"
+            : "moreRecipientsAriaOnly"
+      : hasDate && hasFolder
+        ? "detailsAria"
+        : hasDate
+          ? "detailsAriaDate"
+          : "detailsAriaFolder";
+
 
   return (
     <>
@@ -190,6 +232,7 @@ export function MessageRecipients({
         {/* What the chips do not already say: the exact date and where the message physically
             sits — and, where a cap is in force, the recipients it is holding back. One press,
             one disclosure; the label names whichever of the two is the reason to press it. */}
+        {canDisclose ? (
         <button
           type="button"
           className="msg-rcpt-more"
@@ -199,13 +242,7 @@ export function MessageRecipients({
              tells a screen-reader user the opposite of what pressing it does, and it said
              exactly that in every expanded state before. The collapsed names are unchanged:
              `+N more` where a cap is holding names back, `details` where it is not. */
-          aria-label={
-            details
-              ? tm("detailsHideAria")
-              : folded
-                ? tm("moreRecipientsAria")
-                : tm("detailsAria")
-          }
+          aria-label={tm(ariaKey)}
           onClick={(e) => {
             e.stopPropagation();
             setDetails((v) => !v);
@@ -214,6 +251,7 @@ export function MessageRecipients({
           {folded ? tm("moreRecipients", { count: hidden }) : tm("details")}{" "}
           <Icon name="chev" size={10} />
         </button>
+        ) : null}
       </div>
       {details ? (
         <dl className="msg-rcpt-full">
