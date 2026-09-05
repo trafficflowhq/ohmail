@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, sql } from "drizzle-orm";
+import { and, desc, eq, gt, gte, sql } from "drizzle-orm";
 import { platformCosts } from "@trafficflow/db/cloud";
 import type { Tx } from "@trafficflow/db";
 import type { Db } from "./context.js";
@@ -158,9 +158,11 @@ export type PlatformCostFailure =
   | "day_coverage_short"     // a stream that stopped before the window's days were covered
   | "mixed_currency"         // more than one currency in one answer
   | "missing_currency"       // a monetary record that names no currency at all
+  | "currency_unsupported"   // a currency this board cannot render; every figure here is USD
   | "negative_total"         // credits outweighed charges; the column cannot hold it
   | "window_not_started"     // asked about a window that has not begun
   | "empty_response"         // a success carrying no rows
+  | "stale_pass"             // a newer pass already wrote this window; this one is behind
   | "transport"              // the request never produced a status
   | "write"                  // the database refused the rows
   | `http_${number}`;        // a status the vendor returned
@@ -193,37 +195,103 @@ export interface PlatformCostEnv {
 const trimmed = (v: string | undefined): string => (v ?? "").trim();
 
 /**
- * USD DOLLARS → cents, rounded. A float of dollars is never stored; the column is an integer.
+ * ── ONE INTEGER MONEY UNIT: MICRO-CENTS ─────────────────────────────────────────────────
  *
- * **ONLY VERCEL'S FIGURES GO THROUGH THIS.** FOCUS v1.3 reports `BilledCost` in the billing
- * currency's major unit — dollars — so the plan line arrives as `19.0372` meaning $19.04.
- * ANTHROPIC'S `amount` IS ALREADY CENTS and must never be multiplied here; see
- * {@link centsFromAnthropic}. The two vendors disagree about the unit and nothing in either
- * response says so, which is why each conversion is named for the vendor it belongs to.
+ * Every amount either vendor reports is converted to an integer number of MILLIONTHS OF A CENT
+ * on arrival, summed as integers, and rounded to cents exactly once at the end. Integers sum
+ * exactly; a running total of binary floats does not, and neither does rounding each line.
+ *
+ * 1e6 because it is comfortably finer than either vendor's precision (Anthropic reports four
+ * decimal places of a cent) and a month in micro-cents stays far inside `MAX_SAFE_INTEGER`: a
+ * $1,000,000 month is 1e14 against a ceiling near 9e15.
  */
-const dollarsToCents = (usd: number): number => Math.round(usd * 100);
+const MICRO_CENTS_PER_CENT = 1_000_000;
 
 /**
- * Anthropic's `amount` → cents. THE VALUE IS ALREADY IN CENTS; this exists to say so.
+ * A DOLLAR AMOUNT THAT ARRIVED AS A JSON NUMBER → integer micro-cents. Vercel's `BilledCost`.
  *
- * ── THE MOST EXPENSIVE ASSUMPTION IN THIS MODULE ─────────────────────────────────────────
+ * MEASURED before this comment was written, because the version of it that stood here described
+ * what the code should do rather than what it did — which is the defect this round found, in the
+ * commit that claimed to fix it:
  *
- * The cost report's amounts are decimal STRINGS and they look exactly like dollars: a live
- * September day reads `"70.7614"`. They are not dollars. Anthropic's own documentation settles
- * it in one line — *"All costs in USD, reported as decimal strings in lowest units (cents)"* —
- * so `"70.7614"` is 70.7614 CENTS, seventy-one cents, and that day cost about $0.71.
+ *     Math.round(1.005 * 100) === 100          ← a cent lost, every time that value appears
+ *     Math.round(1.005 * 1e8) === 100500000    → 101 cents
  *
- * This adapter multiplied by 100 for its whole life, so every Anthropic row it wrote was
- * INFLATED ABOUT A HUNDREDFOLD: a month that cost $2.75 was published as $275.28, in the same
- * typeface as a measurement, on the board an operator judges margin from. THREE separate live
- * verifications missed it, because the parser and the expectation shared the assumption — the
- * arithmetic was self-consistent and wrong, which is the one shape the three-outcome design
- * cannot catch. Nothing in the response distinguishes the two readings; only the vendor's
- * documentation does.
+ * `1.005 * 100` is `100.49999999999999`, so rounding at the cent scale rounds DOWN a value that
+ * is exactly half. Scaling to micro-cents first puts the binary error six orders of magnitude
+ * below the digit being decided, and the one rounding at the end sees `100.5`.
  *
- * A fractional cent is real, so the rounding happens ONCE on the month's sum, not per bucket.
+ * There is no decimal string to parse here — FOCUS sends a JSON number, so this float IS what
+ * the vendor gave us. Anthropic sends strings, and {@link microCentsFromDecimalString} reads
+ * those with no floating-point step at all.
  */
-const centsFromAnthropic = (amount: number): number => amount;
+function microCentsFromDollars(usd: number): number {
+  return Math.round(usd * MICRO_CENTS_PER_CENT * 100);
+}
+
+/**
+ * A DECIMAL STRING OF CENTS → integer micro-cents, with NO floating-point step.
+ *
+ * Anthropic's `amount` is a string (`"70.7614"`, in cents — see the module header), so the
+ * digits are available exactly and there is no reason to route them through a float. The two
+ * halves are read as digits, the fraction is padded or rounded at the sixth place, and the
+ * result is assembled with integer arithmetic.
+ *
+ * `null` for anything that is not a plain decimal — no exponent, no separator, no `Infinity`.
+ * A number this cannot read EXACTLY is money it cannot account for, and the caller refuses the
+ * whole report rather than guessing at it.
+ */
+function microCentsFromDecimalString(raw: string): number | null {
+  const m = /^\s*(-?)(\d*)(?:\.(\d*))?\s*$/.exec(raw);
+  if (!m || (m[2] === "" && (m[3] ?? "") === "")) return null;
+  const scale = 6;
+  const frac = (m[3] ?? "").padEnd(scale + 1, "0");
+  const kept = `${m[2] || "0"}${frac.slice(0, scale)}`;
+  const magnitude = Number(kept) + (frac.charCodeAt(scale) - 48 >= 5 ? 1 : 0);
+  if (!Number.isSafeInteger(magnitude)) return null;
+  return m[1] === "-" ? -magnitude : magnitude;
+}
+
+/**
+ * Micro-cents → the integer cents the column stores. ONE rounding, at the end of the sum.
+ *
+ * A POSITIVE TOTAL NEVER BECOMES ZERO. A vendor that charged a hundredth of a cent charged
+ * something, and `0` written with `source = 'api'` and a fresh stamp is this module's forbidden
+ * sentence — "the vendor said nothing was spent" — in the one case where the vendor said the
+ * opposite. Rounding up to one cent overstates by under a cent; rounding down asserts something
+ * false. Only an EXACT zero rounds to zero.
+ */
+function centsFromMicroCents(micro: number): number {
+  if (micro === 0) return 0;
+  const cents = Math.round(micro / MICRO_CENTS_PER_CENT);
+  return micro > 0 ? Math.max(1, cents) : cents;
+}
+
+/**
+ * Split a provider's cent total across its services so the parts sum EXACTLY to the whole.
+ *
+ * Largest remainder: each service takes the floor of its exact share and the cents left over go
+ * to the services whose discarded fractions were biggest. Rounding each service separately gave
+ * rows that did not add up to the figure the board renders — three services at $0.004 became
+ * three zeroes against a total of one cent — and the previous fix, handing the difference to the
+ * largest row and clamping at zero, could not represent a NEGATIVE residual and left the rows
+ * summing ABOVE the total. This cannot: the allocation is exact by construction.
+ */
+function allocateCents(total: number, shares: number[]): number[] {
+  const sum = shares.reduce((a, b) => a + b, 0);
+  if (sum <= 0 || total <= 0) return shares.map(() => 0);
+  const exact = shares.map((v) => (v / sum) * total);
+  const out = exact.map((v) => Math.floor(v));
+  let left = total - out.reduce((a, b) => a + b, 0);
+  for (const { i } of exact
+    .map((v, i) => ({ i, frac: v - Math.floor(v) }))
+    .sort((a, b) => b.frac - a.frac)) {
+    if (left <= 0) break;
+    out[i] = out[i]! + 1;
+    left -= 1;
+  }
+  return out;
+}
 
 /** A shape guard that answers `null` rather than throwing — every parser below is built on it. */
 function num(v: unknown): number | null {
@@ -257,8 +325,12 @@ class Currency {
   private seen: string | null = null;
   private conflict = false;
   observe(v: unknown): void {
-    if (typeof v !== "string" || v === "") return;
-    const c = v.toLowerCase();
+    // TRIMMED before the emptiness test. `"   "` used to count as a currency, resolve to
+    // whitespace, and be written on a fresh monetary row that the board still renders with a
+    // dollar sign — the missing-currency refusal defeated by three spaces.
+    const t = typeof v === "string" ? v.trim() : "";
+    if (t === "") return;
+    const c = t.toLowerCase();
     if (this.seen === null) this.seen = c;
     else if (this.seen !== c) this.conflict = true;
   }
@@ -266,7 +338,7 @@ class Currency {
   private missing = false;
   /** Call for every record that carries MONEY. A monetary record must name its currency. */
   observeRequired(v: unknown): void {
-    if (typeof v !== "string" || v === "") { this.missing = true; return; }
+    if (typeof v !== "string" || v.trim() === "") { this.missing = true; return; }
     this.observe(v);
   }
   /**
@@ -279,10 +351,16 @@ class Currency {
    * at all (a genuinely quiet month) never calls `observeRequired`, so it still resolves to the
    * column's default and a real zero is still expressible.
    */
-  resolve(): string | { failed: "mixed_currency" | "missing_currency" } {
+  resolve(): string | { failed: "mixed_currency" | "missing_currency" | "currency_unsupported" } {
     if (this.conflict) return { failed: "mixed_currency" };
     if (this.missing) return { failed: "missing_currency" };
-    return this.seen ?? "usd";
+    const one = this.seen ?? "usd";
+    // A COHERENT FOREIGN CURRENCY IS STILL REFUSED, and this is the half that was missing:
+    // refusing only a MIXED answer let a response entirely in euros through, to be stored fresh,
+    // added to dollar providers by `adminCosts` and rendered with a `$`. Every figure on this
+    // board is dollars and nothing between here and the render carries a unit, so a currency
+    // this board cannot display is a figure it cannot hold.
+    return one === "usd" ? one : { failed: "currency_unsupported" };
   }
 }
 
@@ -588,7 +666,7 @@ export function makePlatformCostPort(
 function parseVercelCharges(
   lines: string[], window: { start: Date; end: Date }, asOf: Date,
 ): PlatformCostFetch {
-  const totals = new Map<string, { usd: number; quantity: number | null; unit: string | null }>();
+  const totals = new Map<string, { micro: number; quantity: number | null; unit: string | null }>();
   // Counted only for records that fall INSIDE the window. Counting every recognised record was
   // the previous shape and it manufactured a zero: minutes after a month starts, the response can
   // hold only the PREVIOUS month's last bucket, which was recognised, then filtered out, and the
@@ -597,8 +675,10 @@ function parseVercelCharges(
   // in-window record does.
   let inWindow = 0;
   const currency = new Currency();
-  // The distinct charge-period starts seen inside the window, for the coverage check below.
+  // The distinct charge-period starts seen inside the window, for the coverage check below, and
+  // the furthest END any of them reached — a period is only evidence for the time it covers.
   const days = new Set<number>();
+  let lastCoveredEnd = 0;
   // Detected on a RECORD rather than on a service's total: a credit that happens to be offset by
   // usage under the SAME service would otherwise keep a per-service breakdown, which is exactly
   // the shape that cannot represent a credit.
@@ -648,11 +728,16 @@ function parseVercelCharges(
     // at the front.
     if (from < window.start.getTime() || from >= window.end.getTime()) continue;
     inWindow += 1;
+    // A FULL DAY, OR IT IS NOT A DAY'S COVERAGE. A final record that starts on the required day
+    // and ends an hour later reaches the edge while carrying an hour of it, which is a partial
+    // day published as a whole one.
+    if (to - from !== CHARGES_DAY_MS) return { failed: "day_coverage_short" };
     days.add(from);
+    if (to > lastCoveredEnd) lastCoveredEnd = to;
     currency.observeRequired(record.BillingCurrency);
     if (billed < 0) credited = true;
-    const acc = totals.get(service) ?? { usd: 0, quantity: null, unit: null };
-    acc.usd += billed;
+    const acc = totals.get(service) ?? { micro: 0, quantity: null, unit: null };
+    acc.micro += microCentsFromDollars(billed);
     const quantity = num(record.ConsumedQuantity);
     if (quantity !== null) acc.quantity = (acc.quantity ?? 0) + quantity;
     if (acc.unit === null && typeof record.ConsumedUnit === "string" && record.ConsumedUnit) {
@@ -672,16 +757,34 @@ function parseVercelCharges(
   // vendor's granularity is one day, so the days it should have covered are computable — and a
   // prefix is exactly what a partial read looks like from here.
   const covered = [...days].sort((a, b) => a - b);
+  // EVERY DAY, NOT JUST THE LAST ONE. Checking only the maximum start accepted a response that
+  // reached the final day while omitting the first, or the fifteenth — a month with a hole in it,
+  // published as the month. The starts must be consecutive, and the run must reach both edges.
+  for (let i = 1; i < covered.length; i += 1) {
+    if (covered[i]! - covered[i - 1]! !== CHARGES_DAY_MS) return { failed: "day_coverage_short" };
+  }
+  // ── THERE IS DELIBERATELY NO LEADING-EDGE CHECK, AND THE LIVE DATA IS WHY ────────────────
+  //
+  // A first version of this required the run to begin within the window's first day, by the same
+  // argument as the trailing edge. Measured 2026-09-05 against the live account, it REFUSED July
+  // outright: the stream begins on 2026-07-14T07:00Z with no interior gap, because the account
+  // did not exist before the 14th. There was nothing wrong with that month and nothing this code
+  // could have done about it — the guard was asking the vendor to report days that never
+  // happened, and would have kept a real month permanently unmeasurable.
+  //
+  // The asymmetry is not arbitrary. A truncated read loses the END of a stream, never the
+  // beginning, so a late first day is evidence about when the account started and a missing last
+  // day is evidence the answer is short. Interior contiguity still catches a hole in the middle.
+  // The trailing edge, compared by the period's own END rather than against UTC midnight — the
+  // comparison that let a closed September ending on the 29th at 07:00Z pass, because
+  // `29th + 24h` is the 30th at 07:00Z and that is after the 30th at 00:00Z. What must hold is
+  // that the last period reported ENDS at or after the last instant that could have been billed:
+  // the window's own end for a month that is over, or the start of today for one in progress.
   const lastBillable = Math.min(
-    window.end.getTime() - CHARGES_DAY_MS,
+    window.end.getTime(),
     Math.floor(asOf.getTime() / CHARGES_DAY_MS) * CHARGES_DAY_MS,
   );
-  // The vendor's day starts at its own billing-timezone offset, so the comparison is by whole
-  // days elapsed rather than by instant: what must hold is that the last day present is not
-  // BEFORE the last day that could already have been billed.
-  if (covered[covered.length - 1]! + CHARGES_DAY_MS <= lastBillable) {
-    return { failed: "day_coverage_short" };
-  }
+  if (lastCoveredEnd < lastBillable) return { failed: "day_coverage_short" };
 
   const resolved = currency.resolve();
   if (typeof resolved !== "string") return resolved;
@@ -695,13 +798,13 @@ function parseVercelCharges(
   // name says which of the two you are looking at — the breakdown is what is given up, because a
   // figure that is wrong is worth less than a figure with no detail.
   if (credited) {
-    const netUsd = [...totals.values()].reduce((sum, t) => sum + t.usd, 0);
+    const netMicro = [...totals.values()].reduce((sum, t) => sum + t.micro, 0);
     // A month whose credits outweigh its charges is REFUSED rather than floored: `$0.00` written
     // as a measurement would say the vendor charged nothing, and the vendor said it owed us. The
     // sign is tested on the UNROUNDED total, because `Math.round(-0.004 * 100)` is negative zero
     // and `-0 < 0` is false — rounding first would let a small credit through as a measured zero.
-    if (netUsd < 0) return { failed: "negative_total" };
-    const net = dollarsToCents(netUsd);
+    if (netMicro < 0) return { failed: "negative_total" };
+    const net = centsFromMicroCents(netMicro);
     return {
       rows: [{
         provider: "vercel", metric: "charges (net of credits)",
@@ -720,11 +823,14 @@ function parseVercelCharges(
   // lost. The arithmetic runs in INTEGER TENTHS-OF-A-CENT rather than on the dollar floats:
   // `Math.round(1.005 * 100)` is 100 because the float is really 1.00499…, which silently
   // shortchanges a legitimate charge by a cent every time it appears.
-  const providerCents = dollarsToCents([...totals.values()].reduce((sum, t) => sum + t.usd, 0));
+  const providerCents = centsFromMicroCents(
+    [...totals.values()].reduce((sum, t) => sum + t.micro, 0),
+  );
+  // The services that were actually used, in one order, so the allocation below can be indexed.
+  const used = [...totals.entries()].filter(([, acc]) => acc.micro !== 0);
+  const allocation = allocateCents(providerCents, used.map(([, acc]) => acc.micro));
   const rows: PlatformCostRow[] = [];
-  let allocated = 0;
-  let largest: PlatformCostRow | null = null;
-  for (const [metric, acc] of totals) {
+  for (const [i, [metric, acc]] of used.entries()) {
     // A service the account has never touched contributes an exact 0 on every day in the range —
     // fifty-five of the sixty-five service names in a live response are that. Writing them would
     // fill the table with rows that say nothing. A SUB-CENT service (`0.0001` USD) is NOT this
@@ -734,23 +840,16 @@ function parseVercelCharges(
     // and the column is integer cents, so three separate $0.004 services are three zero-cent
     // rows. The alternative is to stop storing a breakdown at all, which costs more than the
     // half-cent it saves.
-    if (acc.usd === 0) continue;
-    const row: PlatformCostRow = {
+    rows.push({
       provider: "vercel", metric,
       periodStart: window.start, periodEnd: window.end,
       value: acc.quantity, unit: acc.unit,
-      costCents: dollarsToCents(acc.usd),
+      // From the allocation, never from this service's own rounding: the rows must sum to
+      // `providerCents` exactly, which per-service rounding could not promise in either
+      // direction. See `allocateCents`.
+      costCents: allocation[i] ?? 0,
       currency: resolved,
-    };
-    allocated += row.costCents;
-    if (largest === null || row.costCents > largest.costCents) largest = row;
-    rows.push(row);
-  }
-  // The residual: what rounding each service separately lost or gained against the month's own
-  // rounded total. It goes to the largest row, where it is proportionally smallest — and never
-  // below zero, because the column cannot hold that.
-  if (largest !== null && allocated !== providerCents) {
-    largest.costCents = Math.max(0, largest.costCents + (providerCents - allocated));
+    });
   }
 
   // In-window records, and every one of them zero: a real month in which nothing was charged.
@@ -783,10 +882,11 @@ function parseVercelCharges(
 function parseAnthropic(
   buckets: unknown[], window: { start: Date; end: Date }, asOf: Date,
 ): PlatformCostFetch {
-  // CENTS — see `centsFromAnthropic` for why this is not dollars, and what it cost to find out.
-  // Summed at full precision and rounded ONCE at the end, because the vendor reports fractional
-  // cents: the recorded live month is 70.7614 + 10.3029 + 4.812 = 85.8763 cents → 86.
-  let cents = 0;
+  // MICRO-CENTS, parsed from the decimal strings with no floating-point step — see the module
+  // header for why these are cents and not dollars, and what that assumption cost. Summed as
+  // integers and rounded ONCE at the end: the recorded live month is
+  // 70.7614 + 10.3029 + 4.812 = 85.8763 cents → 86.
+  let micro = 0;
   const currency = new Currency();
   // The bucket STARTS that landed inside the window, for the continuity check below.
   const starts: number[] = [];
@@ -802,21 +902,27 @@ function parseAnthropic(
     if (!bucket || typeof bucket !== "object") return { failed: "unrecognised_shape" };
     const from = instantMs(bucket.starting_at);
     const to = instantMs(bucket.ending_at);
-    if (from === null || to === null || to <= from || !Array.isArray(bucket.results)) {
+    if (from === null || to === null || !Array.isArray(bucket.results)) {
       return { failed: "unrecognised_shape" };
     }
+    // `bucket_width=1d` was asked for, so a bucket that spans anything else is not the answer to
+    // the question. `to > from` alone let a one-hour bucket satisfy a day of coverage.
+    if (to - from !== ANTHROPIC_BUCKET_MS) return { failed: "unrecognised_shape" };
     // A bucket the caller did not ask about is not summed into the month it did ask about. The
     // timestamps were decorative before this line: a report that answered with a neighbouring
     // month's day would have had it added to the total.
     if (from < window.start.getTime() || from >= window.end.getTime()) continue;
     starts.push(from);
     for (const r of bucket.results as Array<Record<string, unknown>>) {
-      const amount = typeof r?.amount === "string" && r.amount.trim() !== ""
-        ? Number(r.amount) : num(r?.amount);
+      // The vendor sends a STRING, so it is parsed exactly. A number is accepted too and scaled
+      // the same way, for a response shape that has not been seen but would be readable.
+      const amount = typeof r?.amount === "string"
+        ? microCentsFromDecimalString(r.amount)
+        : (num(r?.amount) === null ? null : Math.round(num(r?.amount)! * MICRO_CENTS_PER_CENT));
       // Same rule one level down: a result this parser cannot read is money it cannot account
       // for, so the report is refused rather than summed around.
-      if (amount === null || !Number.isFinite(amount)) return { failed: "unrecognised_shape" };
-      cents += centsFromAnthropic(amount);
+      if (amount === null) return { failed: "unrecognised_shape" };
+      micro += amount;
       currency.observeRequired(r?.currency);
     }
   }
@@ -838,7 +944,10 @@ function parseAnthropic(
   for (let i = 1; i < starts.length; i += 1) {
     if (starts[i]! - starts[i - 1]! !== ANTHROPIC_BUCKET_MS) return { failed: "bucket_gap" };
   }
-  if (starts[0]! !== window.start.getTime()) return { failed: "bucket_gap" };
+  // No leading-edge check here either, for the reason `parseVercelCharges` gives at length: an
+  // organization created mid-month has no buckets before it existed, and requiring them would
+  // make that month permanently unmeasurable. Interior contiguity and the trailing edge are what
+  // a short answer actually looks like.
   // The last day the vendor can be REQUIRED to have reported: the last day that has fully
   // CLOSED, or the window's own last day for a month that has ended — whichever is earlier.
   //
@@ -858,8 +967,8 @@ function parseAnthropic(
   // `Math.round(-0.4)` is NEGATIVE ZERO and `-0 < 0` is false, so a small credit balance rounded
   // first slips past the refusal below and is written as a measured $0.00 — the false zero this
   // check exists to prevent, reintroduced by the rounding meant to satisfy the column.
-  if (cents < 0) return { failed: "negative_total" };
-  const rounded = Math.round(cents);
+  if (micro < 0) return { failed: "negative_total" };
+  const rounded = centsFromMicroCents(micro);
   // A NET-NEGATIVE MONTH IS REFUSED, not floored. Flooring was the previous answer and it
   // publishes `$0.00` as a MEASUREMENT for a month in which the vendor said it owed us money —
   // "a zero on this board is only ever a row that says zero, written because a vendor said
@@ -918,7 +1027,8 @@ export async function runPlatformCostPass(
   const at = now();
   const report: PlatformCostPassReport = { ranAt: at, providers: [] };
 
-  for (const window of passWindows(at)) {
+  const windows = await passWindows(tx, at, opts.providers ?? API_COST_PROVIDERS);
+  for (const window of windows) {
     const { start, end } = window;
   for (const provider of opts.providers ?? API_COST_PROVIDERS) {
     let result: PlatformCostFetch;
@@ -990,6 +1100,22 @@ export async function runPlatformCostPass(
         // with the transaction, so a crash cannot strand it.
         await t.execute(sql`select pg_advisory_xact_lock(
           hashtext(${`platform_costs:${provider}:${start.toISOString()}`}))`);
+        // THE FENCE. The lock serializes writers and says nothing about WHICH of them is newer.
+        // Pass A starts at 12:00 and stalls on a slow vendor; pass B starts at 12:01, finishes,
+        // and commits. A then takes the lock, deletes B's rows and writes its own older snapshot
+        // with an older `fetched_at` — a regression that looks exactly like a measurement. A pass
+        // may only replace rows it is not behind.
+        const newer = await t.select({ at: platformCosts.fetchedAt })
+          .from(platformCosts)
+          .where(and(
+            eq(platformCosts.provider, provider),
+            eq(platformCosts.periodStart, start),
+            eq(platformCosts.periodEnd, end),
+            eq(platformCosts.source, "api"),
+            gt(platformCosts.fetchedAt, at),
+          ))
+          .limit(1);
+        if (newer.length > 0) throw new StalePass();
         await t.delete(platformCosts).where(and(
           eq(platformCosts.provider, provider),
           eq(platformCosts.periodStart, start),
@@ -1029,9 +1155,13 @@ export async function runPlatformCostPass(
       });
       report.providers.push({ provider, outcome: "written", rows: result.rows.length });
     } catch (err) {
+      // A pass that found a newer one had already written this window is not a write FAILURE —
+      // nothing is wrong, and the row standing is the better of the two. It is reported as its
+      // own outcome so an operator reading the log can tell "we were overtaken" from "the
+      // database refused the rows".
       report.providers.push({
         provider, outcome: "failed", rows: 0,
-        code: "write",
+        code: err instanceof StalePass ? "stale_pass" : "write",
       });
     }
   }
@@ -1061,27 +1191,49 @@ export async function runPlatformCostPass(
  * and the invocation has a platform deadline; if only one of the two can finish, it must be the
  * one somebody is looking at.
  */
-export const CLOSED_MONTH_GRACE_MS = 2 * 24 * 60 * 60 * 1000;
+/**
+ * How long a closed month may go unsettled before the pass gives up asking.
+ *
+ * A CEILING, not the schedule: the re-ask stops when the month is SETTLED, and this only stops
+ * it asking for ever when a vendor never answers. Seven days is far past any billing lag either
+ * vendor has shown and still bounded.
+ */
+export const CLOSED_MONTH_CATCH_UP_MS = 7 * 24 * 60 * 60 * 1000;
 
-function passWindows(at: Date): Array<{ start: Date; end: Date }> {
+async function passWindows(
+  tx: Tx, at: Date, providers: readonly CostProvider[],
+): Promise<Array<{ start: Date; end: Date }>> {
   const start = new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), 1));
   const end = new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth() + 1, 1));
-  // THE CLOSED MONTH GOES FIRST, and this reverses what stood here. The open month was asked
-  // first on the reasoning that it is what the board projects from — but the open month is asked
-  // again in six hours and the closed one has only these two days to be finished in. Both
-  // providers' open-month requests can spend the whole 60-second invocation between them (each
-  // GET may take 15 s and the cost report may page), so ordering the settling month last is
-  // ordering it to be dropped: the pass would report success, the closed month would keep its
-  // part-accrued total, and the grace window would expire with nothing having re-read it.
-  // Whichever half is cut short, the one that can still recover is the open month.
-  if (at.getTime() - start.getTime() < CLOSED_MONTH_GRACE_MS) {
-    return [
-      { start: new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth() - 1, 1)), end: start },
-      { start, end },
-    ];
-  }
-  return [{ start, end }];
+  const open = { start, end };
+  if (at.getTime() - start.getTime() >= CLOSED_MONTH_CATCH_UP_MS) return [open];
+
+  const prev = {
+    start: new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth() - 1, 1)),
+    end: start,
+  };
+  // SETTLED MEANS RE-READ AFTER IT ENDED, not "two days have gone by". The stop used to be the
+  // clock alone, so a vendor that failed for the whole grace window left the month holding its
+  // part-accrued total for ever, with every pass reporting success and nothing left to notice.
+  // A month is finished when every provider has an API row for it whose `fetched_at` is AFTER
+  // the month's own end — which is exactly the read that proves the closing days were included.
+  const settled = await tx
+    .select({ provider: platformCosts.provider })
+    .from(platformCosts)
+    .where(and(
+      eq(platformCosts.periodStart, prev.start),
+      eq(platformCosts.periodEnd, prev.end),
+      eq(platformCosts.source, "api"),
+      gte(platformCosts.fetchedAt, prev.end),
+    ));
+  const done = new Set(settled.map((r) => r.provider));
+  if (providers.every((p) => done.has(p))) return [open];
+  // Closed month FIRST — see below.
+  return [prev, open];
 }
+
+/** Thrown inside the replacement transaction when a NEWER pass has already written the window. */
+class StalePass extends Error {}
 
 /** A note shorter than this is refused — the migration's CHECK, in the service. */
 export const MANUAL_COST_MIN_NOTE = 8;
