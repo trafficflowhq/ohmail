@@ -153,6 +153,7 @@ import {
 import { wipeLocalMirror } from "./local-mirror.js";
 import { stampSynced } from "./sync-stamp.js";
 import type { Diagnostic } from "./log.js";
+import { startEngineVitals } from "./vitals.js";
 
 /**
  * THE LOCAL ENGINE — `createApp(apiRoutes)` over on-disk PGlite, an `ImapAdapter` against the
@@ -264,6 +265,13 @@ export interface SidecarConfig {
    * before this existed — the shell passes the password on every launch.
    */
   keks?: Record<number, Buffer>;
+  /**
+   * HOW OFTEN THE ENGINE SAMPLES ITS OWN MEMORY. Default {@link ENGINE_VITALS_INTERVAL_MS}.
+   *
+   * A TEST SEAM and nothing else: the shipped interval is five minutes, and a guard that proved
+   * the timer by waiting for it would take five minutes to fail. Production passes nothing.
+   */
+  vitalsIntervalMs?: number;
   /**
    * Injected for tests; production dials a real server.
    *
@@ -4904,6 +4912,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       worldMs,
       totalReadyMs: Date.now() - tBoot,
     });
+    /* BESIDE `boot_phases`, and for the same reason it is beside it: that line answers "where did
+       the seconds go", and this one answers the question nobody could ask at all until now — how
+       much memory this engine holds, and whether it settles. The first sample lands here so a
+       launch killed before the first interval still leaves a floor on the record. See
+       `startEngineVitals`; no threshold is attached to any of it. */
+    const stopVitals = startEngineVitals(log, {
+      ...(config.vitalsIntervalMs === undefined ? {} : { intervalMs: config.vitalsIntervalMs }),
+    });
 
     return {
       app,
@@ -5906,6 +5922,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         // mailbox's own timer, in-flight cycle and login go with its runtime; the STORE is the
         // install's and is closed once, here, after every mailbox has let go of it.
         stopping = true;
+        // FIRST, and it is the only ordering that is correct: the readings are about a running
+        // engine, and one taken between the last detach and the store close would describe a
+        // process mid-teardown as though it were serving.
+        stopVitals();
         await Promise.allSettled(runtimes.all().map((r) => r.detach()));
         await opened.close();
       },

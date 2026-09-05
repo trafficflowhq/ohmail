@@ -507,6 +507,20 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // NAMED rather than folded into `totalMs`, on this file's own rule — five durations under one
   // key is not a claim a reviewer can check.
   "pgliteOpenMs", "adoptBaselineMs", "migrateMs", "worldMs", "totalReadyMs",
+  // ── THE ENGINE'S OWN MEMORY, added WITH the line that emits it ──
+  //
+  // `process.memoryUsage()`'s three numbers, as `engine_vitals` reports them on a timer beside
+  // `boot_phases`. Structurally integers from the runtime: they name no mailbox, no address, no
+  // path and nothing a person wrote. `external` is the one that matters most on this door and is
+  // the reason all three are named rather than folded into one — a WASM database keeps its heap
+  // OUTSIDE the JavaScript heap, so `heapUsed` alone would describe a fraction of the process
+  // and `rss` alone could not say which half was growing.
+  //
+  // Added because the question has no answer anywhere: nothing in this repository has ever called
+  // `memoryUsage`, so the only figure that exists for the desktop engine came from a throwaway
+  // spike build. There is deliberately NO threshold attached to any of them — a bar set before
+  // the first measurement would be a number somebody invented, and the measurement is the point.
+  "rss", "heapUsed", "external", "uptimeMs",
   // ── retry, failure and circuit accounting ──
   "attempt", "attempts", "consecutiveFailures", "maxSyncFailures", "consecutiveFaults",
   "opens", "open", "threshold", "circuit", "cooldownMs", "retryAt", "retryInMs",

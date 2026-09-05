@@ -34,6 +34,7 @@ import {
   OPERATOR_CA_FILE,
 } from "./cloud-origin.js";
 import type { Diagnostic } from "./log.js";
+import { startEngineVitals } from "./vitals.js";
 
 /**
  * THE CLOUD ENGINE — a read-only mirror of a hosted account, assembled into the same stdio process
@@ -1388,6 +1389,12 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       worldMs,
       totalReadyMs: Date.now() - tBoot,
     });
+    /* THE SAME INSTRUMENT ON THIS DOOR, for the reason the line above it is on both: the two
+       constructors share `openLocalDb` and nothing else, so a figure that shows up on one and not
+       the other is the difference between a database cost and an engine one. This door runs a
+       mirror rather than a mail pipeline, which makes it the closest thing to a control the
+       measurement has. No-op when this install was given no logger. */
+    const stopVitals = log ? startEngineVitals(log) : () => { /* nothing to write to */ };
 
     return {
       db,
@@ -1406,6 +1413,9 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         // The wake first, for `signOut`'s reason: no frame may kick a pull into a mirror that
         // is leaving — and the abort inside also frees a reader that would otherwise sit on an
         // idle stream past the shell's grace period.
+        // FIRST: a reading taken during teardown would describe a process that has stopped
+        // serving as though it were.
+        stopVitals();
         authed?.wake.stop();
         // THE AWAIT IS THE FIX. `opened.close()` hands PGlite a close that queues behind whatever
         // the mirror has already asked it to do, so closing while a drain was still enqueuing pages
