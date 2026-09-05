@@ -101,13 +101,28 @@ export function MessageRecipients({
 
   const total = rows.to.length + rows.cc.length;
   /**
+   * THE CAP, NORMALISED AT THE BOUNDARY — because `slice` reads a negative as "from the end".
+   *
+   * `max` is a `number`, so a negative is type-valid, and `rows.to.slice(0, -1)` would then
+   * drop the LAST recipient and keep the rest — the exact inverse of "the first N", and it
+   * would render a plausible-looking block rather than fail. Review found this; nothing in the
+   * product passes a negative, which is precisely why it would have gone unnoticed.
+   *
+   * Clamped rather than thrown: this runs in render, and taking down a message header over a
+   * caller's bad constant is a worse failure than showing every recipient. `Math.trunc` folds
+   * a fractional cap onto the same rail, since `slice` would truncate it anyway and the fold
+   * arithmetic below must agree with what `slice` actually did. `0` is a legitimate cap — every
+   * name behind the count — and renders no chip rows rather than an empty one.
+   */
+  const cap = max === undefined ? undefined : Math.max(0, Math.trunc(max));
+  /**
    * Folded exactly when a cap was asked for, the reader has not opened the disclosure, and
-   * there is genuinely something the cap holds back. `max` at or above the total therefore
+   * there is genuinely something the cap holds back. A cap at or above the total therefore
    * behaves as no cap at all rather than drawing an honest-looking "+0".
    */
-  const folded = max !== undefined && !details && total > max;
-  const shownTo = folded ? rows.to.slice(0, max) : rows.to;
-  const shownCc = folded ? rows.cc.slice(0, Math.max(0, max! - rows.to.length)) : rows.cc;
+  const folded = cap !== undefined && !details && total > cap;
+  const shownTo = folded ? rows.to.slice(0, cap) : rows.to;
+  const shownCc = folded ? rows.cc.slice(0, Math.max(0, cap! - rows.to.length)) : rows.cc;
   const hidden = total - (shownTo.length + shownCc.length);
 
   const chipRow = (label: string, group: "to" | "cc", chips: RecipientRowChip[]): ReactNode =>
@@ -179,7 +194,18 @@ export function MessageRecipients({
           type="button"
           className="msg-rcpt-more"
           aria-expanded={details}
-          aria-label={folded ? tm("moreRecipientsAria") : tm("detailsAria")}
+          /* THE ACCESSIBLE NAME FOLLOWS THE STATE, because the next press is what it describes.
+             Expanded, this control COLLAPSES — an accessible name reading "Show …" there
+             tells a screen-reader user the opposite of what pressing it does, and it said
+             exactly that in every expanded state before. The collapsed names are unchanged:
+             `+N more` where a cap is holding names back, `details` where it is not. */
+          aria-label={
+            details
+              ? tm("detailsHideAria")
+              : folded
+                ? tm("moreRecipientsAria")
+                : tm("detailsAria")
+          }
           onClick={(e) => {
             e.stopPropagation();
             setDetails((v) => !v);

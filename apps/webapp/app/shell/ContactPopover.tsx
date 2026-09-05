@@ -114,6 +114,13 @@ export function ContactPopover({
       role="dialog"
       aria-label={t("contactAria", { who })}
       style={style}
+      /* THE PRESS STOPS AT THE POPOVER. On the reading pane nothing sits under this; in a
+         reading-stream card the popover is a DOM descendant of an `<article>` that selects
+         and EXPANDS on any click it receives (`StreamCard.expandOnClick`), so pressing Copy
+         would also open the card underneath the popover. One handler on the root rather than
+         three on the items: it covers the head, and it covers whatever item is added next.
+         Same rule, same reason, as `.sc-actions` in `StreamCard`. */
+      onClick={(e) => e.stopPropagation()}
     >
       <div className="cpop-head">
         <b>{label}</b>
