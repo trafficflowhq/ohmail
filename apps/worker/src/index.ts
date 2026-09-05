@@ -407,6 +407,9 @@ interface MailboxRuntime {
     kind: string | null; name: string | null; since: Date | null; state: string | null;
     /** Mail 0089 — the fifth holder column, tracked beside the other four for the same reason. */
     capabilities: string | null;
+    /** Mail 0091 — the sixth. Tracked here because the compare, not the write, is what decides
+        whether a stale id is ever corrected; see the note on the compare in `refreshReaderHolder`. */
+    installId: string | null;
   };
   /**
    * Mail 0083. What this process IS to this mailbox right now — and it is MUTABLE, unlike almost
@@ -1430,7 +1433,7 @@ export async function startWorkerWithLock(
       adapter: MailboxAdapter,
       current: {
         kind: string | null; name: string | null; since: Date | null; state: string | null;
-        capabilities: string | null;
+        capabilities: string | null; installId: string | null;
       },
     ): Promise<void> {
       const peek = (adapter as Partial<LeasePeekCapableAdapter>).leasePeekIo;
@@ -1458,8 +1461,15 @@ export async function startWorkerWithLock(
         // it just never stamps `organizer_event_at`, on the same argument `organizedSince` shifting
         // under a renewed tenure already makes below.
         const capabilities = top ? capabilitiesColumn(top.capabilities) : null;
+        /* THE ID IS PART OF THE COMPARE, not just part of the write. This compare decides whether
+           the row is already what the folder says, and a column missing from it is a column that
+           can never be found stale: 0091 shipped with the id written but not compared, so every
+           row that predated the migration kept a NULL id for ever — the five older columns already
+           agreed, so this returned before the write on every cycle. NULL fails closed in the
+           release arm, so the hand-back stayed refused on precisely the mailboxes it was for.
+           Any holder column added after this one belongs on the roster and in this line. */
         if (current.kind === kind && current.name === name && current.state === state
-          && current.capabilities === capabilities
+          && current.capabilities === capabilities && current.installId === installId
           && (current.since ? current.since.getTime() : null) === (since ? since.getTime() : null)) return;
         /* ── ONLY AN OCCUPANCY FLIP IS AN EVENT (0.14.1) ──────────────────────────────────
          *
@@ -1485,7 +1495,7 @@ export async function startWorkerWithLock(
             + "client's banner is a row read rather than an IMAP dial per viewer",
         });
         current.kind = kind; current.name = name; current.since = since; current.state = state;
-        current.capabilities = capabilities;
+        current.capabilities = capabilities; current.installId = installId;
       } catch (err) {
         // Deliberately swallowed — see the header. A reader that cannot read the lease keeps
         // reading mail.
@@ -2350,6 +2360,7 @@ export async function startWorkerWithLock(
           kind: mb.organizedByKind, name: mb.organizedByName,
           since: mb.organizedSince, state: mb.organizerState,
           capabilities: mb.organizedByCapabilities,
+          installId: mb.organizedByInstallId,
         };
         const tLease = Date.now();
         /* -- A STAND-DOWN NO LONGER ENDS THE ATTACH  --------------------------------

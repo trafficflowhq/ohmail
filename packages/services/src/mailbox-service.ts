@@ -2088,16 +2088,11 @@ export class MailboxService {
        * pane and inert here: the stamp was never written, the worker never reached
        * `releaseOrganizerClaim`, and the stale claim stayed for ever.
        *
-       * `organized_by_kind = 'cloud'` on a hosted row IS this install: the holder columns are
-       * written from the claim record itself by the per-cycle peek, and a mailbox has one hosted
-       * organizer. So a reader whose holder is Cloud is this install looking at its own abandoned
-       * claim, and giving it up is exactly what the release does.
-       *
-       * WHAT STAYS REFUSED, and this is the half that must not widen: a holder of `local` or
-       * `unknown` is ANOTHER install's claim, which this process cannot remove and must not
-       * pretend to; a NULL holder is nobody's, so there is nothing to give up. Both keep answering
-       * `not_organizing`, which is a success rather than a refusal — the person's intent is
-       * already true. */
+       * WHAT STAYS REFUSED, and this is the half that must not widen: a claim whose install id is
+       * not this one is ANOTHER install's, which this process cannot remove and must not pretend
+       * to — whatever its KIND, another hosted deployment included; and a row with no holder has
+       * nothing to give up. Both keep answering `not_organizing`, which is a success rather than
+       * a refusal — the person's intent is already true. */
       const organizing = current.organizerRole === "organizer";
       /* THE IDENTITY, NOT THE CATEGORY. `organized_by_kind === "cloud"` was the first spelling of
          this and it is wrong in the one direction that matters: `cloud` is what ANOTHER Cloud

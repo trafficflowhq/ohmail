@@ -98,6 +98,19 @@ export interface EnabledMailbox {
    */
   organizedByCapabilities: string | null;
   /**
+   * Mail 0091. WHICH install holds it — the sixth holder column, and it is on the roster for a
+   * reason the other five are not: the reader peek writes only on a CHANGE, and the change is
+   * detected by comparing this snapshot against what the folder says. A column the snapshot does
+   * not carry cannot be compared, so it cannot be found stale, so it is never written.
+   *
+   * That is not hypothetical — it is how this column shipped. Every row that existed before 0091
+   * ran had a NULL id and five holder columns that already agreed with the folder, so the compare
+   * returned early on every cycle and the id stayed NULL for ever. NULL fails closed in the
+   * release arm, so the hand-back was refused permanently on exactly the mailboxes the feature
+   * was built for, while a freshly claimed row worked and every guard built from one stayed green.
+   */
+  organizedByInstallId: string | null;
+  /**
    * Mail 0083. When a human asked THIS install to organize this mailbox. NULL means nobody has —
    * a consent-less reader, which is what `POST /mailboxes` now creates. Read by the attach so a
    * mailbox nobody has consented to organize is never promoted by an empty `ohmail/_meta`.
@@ -269,6 +282,7 @@ export async function loadEnabledMailboxes(
       organizedSince: mailboxes.organizedSince,
       organizerState: mailboxes.organizerState,
       organizedByCapabilities: mailboxes.organizedByCapabilities,
+      organizedByInstallId: mailboxes.organizedByInstallId,
       organizeConsentedAt: mailboxes.organizeConsentedAt,
       releaseRequestedAt: mailboxes.releaseRequestedAt,
       syncBlockedReason: mailboxes.syncBlockedReason,
@@ -294,6 +308,7 @@ export async function loadEnabledMailboxes(
       organizedSince: r.organizedSince ?? null,
       organizerState: r.organizerState ?? null,
       organizedByCapabilities: r.organizedByCapabilities ?? null,
+      organizedByInstallId: r.organizedByInstallId ?? null,
       organizeConsentedAt: r.organizeConsentedAt ?? null,
       releaseRequestedAt: r.releaseRequestedAt ?? null,
       syncBlockedReason: r.syncBlockedReason ?? null,
