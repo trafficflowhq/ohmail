@@ -147,10 +147,8 @@ function firstMisshapenParam(route: Route, params: RouteParams): string | null {
 }
 
 /**
- * **THE ACCOUNT THIS RESPONSE'S CONTENTS BELONG TO** — and on the sign-in and token routes that
- * is the account the CREDENTIAL resolved to, not the session that carried the request.
- *
- * Present on every response that has a subject; absent on every response that does not.
+ * **THE ACCOUNT THIS RESPONSE WAS ISSUED FOR.** Present on every response whose request
+ * resolved a session; absent on every response that did not.
  *
  * ── THE SEQUENCE NO CLIENT-SIDE CHECK CAN SEE ────────────────────────────────────────────────
  *
@@ -187,75 +185,13 @@ function firstMisshapenParam(route: Route, params: RouteParams): string | null {
  * sidecar, which builds its own `createApp([...])` from a different route list and shares no
  * middleware list with any of them.
  *
- * ── THE SIGN-IN AND TOKEN ROUTES ANSWER FOR SOMEBODY ELSE ────────────────────────────────────
- *
- * `/auth/login`, `/auth/refresh`, `/auth/verify-email`, `/auth/desktop-claim` and `/oauth/token`
- * are `public`: `withSession` resolves whatever credential happens to be ambient, and then the
- * handler resolves a SECOND one out of the body. Those two need not name the same account, and
- * taking the header from the session was wrong on exactly the requests where it matters most —
- * the account switches. A caller holding a live session for A who posted B's refresh token was
- * answered `X-Ohmail-Account: A` over a body containing B's tokens.
- *
- * Two changes, and they are different in kind. The header on these routes now names
- * `deps.credentialAccount`, reported by the seam that actually minted or rotated the session
- * (`establish`, `mintRotation`) on its success path only — so a response that established nothing
- * names nobody. And the ambiguous request itself is REFUSED rather than described:
- * `refuseCrossAccountCredential` answers 409 before anything is rotated or issued, because no
- * legitimate client presents a session for one account and a credential for another. The header
- * cannot be made honest while the request underneath it is ambiguous.
- *
  * ── ABSENT IS NOT PERMISSION ─────────────────────────────────────────────────────────────────
  *
- * Absence means the response has no account subject: an anonymous route, a public route reached
- * without a credential, a 401, a 404/405/400 answered before any pipeline ran, or a credential
- * route that established nothing (a refused sign-in, a `twofa_required` challenge that carries no
- * tokens). A client that has bound itself to an account must treat a MISSING header on an
- * authenticated read as a refusal rather than as silence — the failure this closes is precisely
- * one where nothing looks wrong.
- *
- * **The STAFF-AUTHORIZED ADMIN READS are the exception, and they are not a bypass.** `/admin/*`
- * is `anonymous`, so no session is resolved and none can be named; authority there is the
- * operator's shared secret plus a `staff_sessions` row (`routes/admin.ts`). Several of those reads
- * return mailbox metadata — counts and tallies, `AccountDetail.mailboxes`, mailbox ids and
- * addresses as option labels, worker lag. That is metadata for a staff reader, not mail for an
- * account holder.
- *
- * **THE COUNT IS NOT WRITTEN DOWN HERE, and that is the third revision of this sentence.** It
- * named one such read; a review found three; the next review found a fourth (`/admin/worker`). A
- * number in this comment is a fact about how hard somebody looked, so the claim is now about the
- * CLASS. And the class is NOT "every anonymous route" — that equation was the fourth revision's
- * own error: `/health` and `/hello` are anonymous and carry no account data at all. It is the
- * `/admin/*` reads, which are anonymous AND separately authorized by the operator's shared secret
- * plus a `staff_sessions` row. `spend-gate.test.ts` asserts what it actually asserts — that every
- * anonymous route is `cost: "unauthenticated"` and every such route is `public` — which is a fence
- * around spending, not a statement about who may read mailbox metadata. The authority for THAT is
- * `routes/admin.ts`'s own secret-plus-staff-session check — and `admin-routes.test.ts` is the
- * census that holds it, over EVERY `GET /admin/*` derived from the route table rather than a list.
- * That mattered: the list was six long while the surface was eight, so `/admin/costs` and the
- * account ledger were never exercised against "a logged-in customer is refused exactly as a
- * stranger is". Pointing at code alone would have left this sentence true and unenforced.
- *
- * No CUSTOMER-FACING route reaches mail bytes or mailbox metadata without a session.
- *
- * ── WHAT A CLIENT MAY CONCLUDE, STATED HERE RATHER THAN CITED ────────────────────────────────
- *
- * **Present:** this response's contents belong to the named account. On the sign-in and token
- * routes that is the account the CREDENTIAL resolved to, which can differ from any session the
- * request also carried; everywhere else it is the session's account.
- *
- * **Absent:** the response has no account subject — an anonymous route, a public one reached
- * without a credential, a 401, a 404/405/400 answered before authentication, or a sign-in route
- * that established nothing (a refused sign-in, a challenge carrying no tokens). A client holding
- * per-account state must read absence on an authenticated read as a REFUSAL, not as assent.
- *
- * **Only against a server that advertises it.** `GET /hello` reports `features.accountHeader`.
- * A server built before this header existed does not carry that key at all, and a client must not
- * require the header from such a server — otherwise pointing at an older self-hosted install would
- * make every ordinary response look like a refusal.
- *
- * That is the whole contract. It is written out rather than pointed at because the design note it
- * used to cite is not part of the published repository, so a reader of that repository could not
- * follow the reference — and a comment whose reference nobody can follow is worse than no comment.
+ * Absence means no session was resolved: an anonymous route, a public route reached without a
+ * credential, a 401, or a 404/405/400 answered before any pipeline ran. None of those carry mail
+ * bytes or metadata for anybody. A client that has bound itself to an account must therefore
+ * treat a MISSING header on an authenticated read as a refusal rather than as silence — the
+ * failure this closes is precisely one where nothing looks wrong.
  */
 export const ACCOUNT_HEADER = "X-Ohmail-Account";
 
@@ -274,14 +210,8 @@ export const ACCOUNT_HEADER = "X-Ohmail-Account";
  * absence as a refusal is then refused, rather than being handed a value that is not what it
  * looks like. Account ids are UUIDs and comfortably inside the set.
  */
-function nameTheAccount(res: Response, deps: ApiDeps, route: Route | null): Response {
-  // ON A CREDENTIAL ROUTE THE AMBIENT SESSION IS NOT THE SUBJECT, and it is not consulted at all.
-  // A refused sign-in made while holding somebody's session would otherwise be labelled with that
-  // session's account — a response that established nothing, named as if it had.
-  const subject = route?.options?.credentialSubject
-    ? deps.credentialAccount
-    : deps.session?.accountId;
-  const account = ownerCookieValue(subject);
+function nameTheAccount(res: Response, deps: ApiDeps): Response {
+  const account = ownerCookieValue(deps.session?.accountId);
   if (!account) return res;
   const headers = new Headers(res.headers);
   headers.set(ACCOUNT_HEADER, account);
@@ -298,8 +228,7 @@ function nameTheAccount(res: Response, deps: ApiDeps, route: Route | null): Resp
 export function createApp(routes: Route[]): App {
   return {
     async handle(req: Request, deps: ApiDeps): Promise<Response> {
-      const { res, route } = await dispatch(routes, req, deps);
-      return nameTheAccount(res, deps, route);
+      return nameTheAccount(await dispatch(routes, req, deps), deps);
     },
   };
 }
@@ -311,29 +240,23 @@ export function createApp(routes: Route[]): App {
  * They name nobody, because they are answered before `withSession` runs — but they are answered
  * BY the same rule rather than by falling outside it, and a reader does not have to check.
  */
-async function dispatch(
-  routes: Route[], req: Request, deps: ApiDeps,
-): Promise<{ res: Response; route: Route | null }> {
+async function dispatch(routes: Route[], req: Request, deps: ApiDeps): Promise<Response> {
   const { pathname } = new URL(req.url);
   const m = matchRoute(routes, req.method, pathname);
   if (!m.matched) {
-    return {
-      res: m.methodNotAllowed
-        ? errorResponse("method_not_allowed", 405, "method not allowed")
-        : errorResponse("not_found", 404, "not found"),
-      route: null,
-    };
+    return m.methodNotAllowed
+      ? errorResponse("method_not_allowed", 405, "method not allowed")
+      : errorResponse("not_found", 404, "not found");
   }
   const badParam = firstMisshapenParam(m.route, m.params);
   if (badParam) {
-    return {
-      res: errorResponse("validation_failed", 400, `${badParam} must be an id`, undefined, false),
-      route: m.route,
-    };
+    return errorResponse(
+      "validation_failed", 400, `${badParam} must be an id`, undefined, false,
+    );
   }
   const chain = m.route.options?.anonymous
     ? ANONYMOUS_PIPELINE
     : m.route.options?.raw ? RAW_PIPELINE : FULL_PIPELINE;
   const composed = chain.reduceRight<Handler>((next, mw) => mw(next, m.route), m.route.handler);
-  return { res: await composed(req, deps, m.params), route: m.route };
+  return composed(req, deps, m.params);
 }
