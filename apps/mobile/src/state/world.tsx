@@ -899,11 +899,20 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       boot: {
         settled: mirrorSettled(session.store),
         syncFailure: conn.syncError,
-        // Re-read per derivation, like `settled`: a drain's settle bumps `version` (the stamp
-        // write) and flips `conn.syncing`, both in this memo's deps, so the label CLEARS in the
-        // same pass the mirror becomes current. The APPEARING direction is time's alone — a
-        // phone sitting open crosses the threshold with no store write anywhere — so
-        // `freshBeat` below ticks the memo when the verdict changes by clock.
+        // Re-read per derivation, like `settled`: a drain's settle flips `conn.syncing`, which is
+        // in this memo's deps, so the label CLEARS in the same pass the mirror becomes current.
+        //
+        // THIS USED TO REST ON TWO TRIGGERS AND NOW RESTS ON ONE. The completion stamp is written
+        // through `setMeta`, and that used to bump the mirror `version` — also in these deps — so
+        // either one would have re-run this memo. `setMeta` no longer touches the version
+        // (`packages/client-engine/src/store.ts`; an idle client was rebuilding its whole view once
+        // per poll to record a timestamp), which leaves `conn.syncing` carrying it alone. Removing
+        // `conn.syncing` from the dependency array below would now silently stop the label
+        // clearing, where before it would only have made it late.
+        //
+        // The APPEARING direction is time's alone — a phone sitting open crosses the threshold with
+        // no store write anywhere — so `freshBeat` below ticks the memo when the verdict changes by
+        // clock.
         staleAsOf: staleAsOf(engine, zone),
       },
       abandoned: engine.abandoned(),
