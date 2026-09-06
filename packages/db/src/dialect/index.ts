@@ -84,6 +84,25 @@ export function assertDistinct(names: readonly string[]): void {
 }
 
 /**
+ * Refuse a comparison of fewer than two values.
+ *
+ * The device store spells {@link Dialect.greatest} as `max`, and `max` with one argument there is
+ * the AGGREGATE rather than the row-wise comparison — so a single-argument call runs, returns one
+ * row where the caller expected many, and reports nothing. The server cannot produce that
+ * mistake, which is exactly why it has to be refused in the shared contract rather than on the
+ * arm that suffers it.
+ */
+export function assertComparable(count: number): void {
+  if (count < 2) {
+    throw new Error(
+      `a largest-of comparison needs at least two values and was given ${count}. On the device ` +
+      "store this member is spelled `max`, where one argument is the AGGREGATE — it would " +
+      "collapse the result set instead of comparing within a row, and answer without failing.",
+    );
+  }
+}
+
+/**
  * Give a handle the dialect of the handle it came from.
  *
  * A driver's transaction object is not the connection it was opened on — it is a fresh object, and
@@ -216,6 +235,36 @@ export interface Dialect {
 
   /** A duration, as the timestamp columns can be offset by it. */
   interval(ms: number): SQL;
+
+  /**
+   * The largest of two or more values, in each store's own name for it.
+   *
+   * TWO ARGUMENTS AT LEAST, and the refusal is not tidiness. The device store spells this `max`,
+   * and `max` with ONE argument there is the AGGREGATE — it collapses a result set to a single
+   * row instead of comparing values in one. That is not an error anybody would see: the statement
+   * runs and answers a different question. The server has no such collision (`greatest` and `max`
+   * are different names), so a one-argument call is a defect that only appears on a device, in a
+   * query that returns the wrong number of rows.
+   */
+  greatest(...values: readonly (SQL | unknown)[]): SQL;
+
+  /**
+   * Where `needle` first occurs in `hay` — 1-based, and 0 when it does not occur.
+   *
+   * Both stores answer that, and neither spells it the way the other does: the server's is SQL
+   * syntax with a KEYWORD separator, the device's an ordinary two-argument function whose
+   * arguments are in the opposite order to the server's. This member takes them in one order and
+   * hands each store its own.
+   */
+  strpos(hay: SQL | unknown, needle: SQL | unknown): SQL;
+
+  /**
+   * `length` characters of `x` from `from`, 1-based; to the end when `length` is omitted.
+   *
+   * The server's is syntax with `FROM`/`FOR` keywords, the device's a plain function. Same
+   * meaning, same 1-based index, on both.
+   */
+  substr(x: SQL | unknown, from: SQL | unknown, length?: SQL | unknown): SQL;
 
   /** Does this JSON object hold any of these keys at its top level? */
   jsonHasAny(column: SQL | unknown, keys: readonly string[]): Promise<SQL> | SQL;

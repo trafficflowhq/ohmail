@@ -8,7 +8,7 @@
  * being written.
  */
 import { sql, type SQL } from "drizzle-orm";
-import { assertDistinct, type Dialect, type LockOptions, type SearchArm, type SearchCorpus } from "./index.js";
+import { assertComparable, assertDistinct, type Dialect, type LockOptions, type SearchArm, type SearchCorpus } from "./index.js";
 
 // Re-exported because it was defined here first and the server arm's tests import it by this
 // path; the refusal itself belongs to both arms and now lives in the contract.
@@ -66,6 +66,19 @@ export function pgDialect(): Dialect {
     ilike: (column, pattern) => sql`${column} ilike ${pattern}`,
 
     interval: (ms: number) => sql`(${`${Math.trunc(ms)} milliseconds`}::interval)`,
+
+    greatest: (...values) => {
+      assertComparable(values.length);
+      return sql`greatest(${sql.join(values.map((v) => sql`${v}`), sql`, `)})`;
+    },
+
+    // SQL syntax, not a function: the separator is a keyword, which is why no list of function
+    // names ever caught this construct.
+    strpos: (hay, needle) => sql`position(${needle} in ${hay})`,
+
+    substr: (x, from, length) => (length === undefined
+      ? sql`substring(${x} from ${from})`
+      : sql`substring(${x} from ${from} for ${length})`),
 
     /**
      * `?|` takes a text ARRAY, and an array handed to the builder as one parameter is rendered as

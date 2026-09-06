@@ -1,6 +1,7 @@
-import { sql } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 import { DEFAULT_DORMANCY_DAYS, type ScreeningScope } from "@trafficflow/core/mail";
 import type { ServiceContext } from "./context.js";
+import { dialect, type Dialect } from "@trafficflow/db/dialect";
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
    THE CUTLINE, SERVER-SIDE — how many senders are still owed a decision.
@@ -165,40 +166,51 @@ export async function cutlineCounts(
    */
   const unreadTerm = baselined ? sql`i.any_unread_in_window` : sql`i.any_unread`;
 
-  const rows = await ctx.db.execute<{
-    decided: string; active_undecided: string; dormant_undecided: string;
-  }>(sql`
+  /**
+   * FOUR CONSTRUCTS HERE SPELL DIFFERENTLY ON THE TWO STORES, and three of them were invisible to
+   * the construct census until this file was read: `bool_or`, `position(x IN y)` and
+   * `substring(x FROM n)` are SQL SYNTAX whose separator is a keyword, so no list of function
+   * names could ever have matched them.
+   *
+   * `bool_or` needs no member — `max(case when … then 1 else 0 end) = 1` is the same question in
+   * a spelling both stores accept, and a member for something already expressible on both would
+   * be a third dialect nobody tests. The other two do: the server's take keywords where this
+   * store takes commas, and `strpos` puts its arguments in the opposite order.
+   */
+  const d = dialect(ctx.db);
+  const anyOf = (cond: SQL): SQL => sql`(max(case when ${cond} then 1 else 0 end) = 1)`;
+  const rows = await d.exec(ctx.db, sql`
     with own as (
-      select lower(address) a from mailboxes where account_id = ${ctx.accountId}::uuid
+      select lower(address) a from mailboxes where account_id = ${d.castUuid(ctx.accountId)}
     ),
     decided_sender as (
       select lower(match) m from rules
-       where account_id = ${ctx.accountId}::uuid and enabled
+       where account_id = ${d.castUuid(ctx.accountId)} and enabled
          and kind = 'sender' and destination <> 'ohmail/Screener'
     ),
     decided_domain as (
       select lower(match) m from rules
-       where account_id = ${ctx.accountId}::uuid and enabled
+       where account_id = ${d.castUuid(ctx.accountId)} and enabled
          and kind = 'domain' and destination <> 'ohmail/Screener'
     ),
     inbound as (
       select lower(m.from_address) addr,
-             bool_or(m.unread) any_unread,
+             ${anyOf(sql`m.unread`)} any_unread,
              -- The BASELINED unread term: unread AND inside the window. The null test is explicit
              -- because a message with no Date header must not count as recent here, exactly as
              -- the client's messageMs answers null for one. (NO BACKTICKS anywhere in this
              -- template literal: one of them ends the tagged template and the file stops
              -- compiling, with the error pointing at a line some distance away.)
-             bool_or(m.unread and m.date is not null and m.date >= ${cutoff.toISOString()}::timestamptz)
+             ${anyOf(sql`m.unread and m.date is not null and m.date >= ${d.ts(cutoff)}`)}
                as any_unread_in_window,
              max(m.date) newest,
              -- Does this sender have ANY mail still sitting where no decision has been made?
              -- Activity is measured over all six presented folders (above); membership in the
              -- undecided counts is not. See UNDECIDED_RESIDENCES.
-             bool_or(fs.desired_folder in ${undecidedResidences}) as undecided_residence
+             ${anyOf(sql`fs.desired_folder in ${undecidedResidences}`)} as undecided_residence
         from messages m
         join folder_state fs on fs.message_id = m.id
-       where m.account_id = ${ctx.accountId}::uuid
+       where m.account_id = ${d.castUuid(ctx.accountId)}
          and fs.desired_folder in ${folders}
          and lower(m.from_address) not in (select a from own)
        group by 1
@@ -206,10 +218,10 @@ export async function cutlineCounts(
     classified as (
       select i.addr, i.undecided_residence,
              (exists (select 1 from decided_sender r where r.m = i.addr)
-              or (position('@' in i.addr) > 0
-                  and exists (select 1 from decided_domain d
-                               where d.m = substring(i.addr from position('@' in i.addr) + 1)))) as decided,
-             ${allTime ? sql`true` : sql`(${unreadTerm} or (i.newest is not null and i.newest >= ${cutoff.toISOString()}::timestamptz))`} as active
+              or (${d.strpos(sql`i.addr`, sql`'@'`)} > 0
+                  and exists (select 1 from decided_domain dd
+                               where dd.m = ${d.substr(sql`i.addr`, sql`${d.strpos(sql`i.addr`, sql`'@'`)} + 1`)}))) as decided,
+             ${allTime ? sql`true` : sql`(${unreadTerm} or (i.newest is not null and i.newest >= ${d.ts(cutoff)}))`} as active
         from inbound i
     )
     select count(*) filter (where decided)                        as decided,
@@ -220,17 +232,14 @@ export async function cutlineCounts(
       from classified
   `);
 
-  // The two drivers behind `Db` disagree about what `execute` returns: the Postgres one hands
-  // back an array subclass, PGlite an object with a `rows` property. Neither is iterable in a
-  // way that covers the other, so the shape is read rather than spread.
-  const list = Array.isArray(rows)
-    ? (rows as Array<Record<string, unknown>>)
-    : ((rows as { rows?: Array<Record<string, unknown>> }).rows ?? []);
-  const r = list[0] as { decided?: unknown; active_undecided?: unknown; dormant_undecided?: unknown } | undefined;
+  // The driver split this used to carry is gone: `d.exec` returns rows POSITIONALLY on both
+  // stores, so there is no array-or-`{rows}` shape left to decide between. The three positions
+  // are the three counts the statement selects, in that order.
+  const r = rows[0] ?? [];
   return {
-    decidedSenders: Number(r?.decided ?? 0),
-    activeUndecidedSenders: Number(r?.active_undecided ?? 0),
-    dormantUndecidedSenders: Number(r?.dormant_undecided ?? 0),
+    decidedSenders: Number(r[0] ?? 0),
+    activeUndecidedSenders: Number(r[1] ?? 0),
+    dormantUndecidedSenders: Number(r[2] ?? 0),
   };
 }
 

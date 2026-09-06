@@ -1,5 +1,6 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { drafts, mailboxes, messages, recordChanges, threadNotes, threads, type LedgerTx, type Tx } from "@trafficflow/db";
+import { dialect } from "@trafficflow/db/dialect";
 import {
   conversationJoinVerdict, counterpartyEvidence, mergeCounterpartyEvidence, silentLogger,
   type ConversationJoinFacts, type CounterpartyEvidence, type EmailAddress, type Logger,
@@ -172,12 +173,13 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
     // back an array-like RowList rather than a plain array.
     const cursorAccountId: string | null = cursor?.accountId ?? null;
     const cursorSubject: string | null = cursor?.subject ?? null;
+    const d = dialect(db);
     const executed: unknown = await db.execute(sql`
       select account_id, subject
       from ${threads}
       where ${deps.accountId ? sql`account_id = ${deps.accountId}` : sql`true`}
         and ${cursorAccountId !== null
-          ? sql`(account_id, subject) > (${cursorAccountId}::uuid, ${cursorSubject})`
+          ? sql`(account_id, subject) > (${d.castUuid(cursorAccountId)}, ${cursorSubject})`
           : sql`true`}
       group by account_id, subject
       having count(*) > 1
@@ -393,7 +395,13 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
             // untyped sql-fragment param reaches postgres-js's Bind as-is, which wants
             // string/Buffer (ERR_INVALID_ARG_TYPE) — the column encoder only runs for plain
             // column values.
-            lastMessageAt: sql`greatest(coalesce(${threads.lastMessageAt}, 'epoch'::timestamptz), ${(newest ?? new Date(0)).toISOString()}::timestamptz)`,
+            // Through the seam on both counts: the server and the device store give this
+            // comparison different NAMES, and they keep an instant as different literals. The
+            // epoch floor is a date rather than a literal for the same reason.
+            lastMessageAt: dialect(db).greatest(
+              sql`coalesce(${threads.lastMessageAt}, ${dialect(db).ts(new Date(0))})`,
+              dialect(db).ts(newest ?? new Date(0)),
+            ),
             updatedAt: now(),
           }).where(and(eq(threads.id, target.id), eq(threads.accountId, group.account_id)));
 

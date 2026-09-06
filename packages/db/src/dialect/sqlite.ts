@@ -13,6 +13,7 @@
  * is folded explicitly because this dialect's own `like` folds ASCII only.
  */
 import { sql, type SQL } from "drizzle-orm";
+import { assertComparable } from "./index.js";
 import type { Dialect, LockOptions, SearchArm, SearchCorpus } from "./index.js";
 
 /**
@@ -135,6 +136,27 @@ export function sqliteDialect(): Dialect {
     ilike: (column, pattern) => sql`lower(${column}) like lower(${pattern})`,
 
     interval: (ms: number) => sql`${Math.trunc(ms)}`,
+
+    /**
+     * `max`, and the argument count is load-bearing.
+     *
+     * This store gives ONE name to two different things: `max(a, b)` compares values within a
+     * row, `max(a)` is the aggregate over a result set. A single-argument call would therefore
+     * run and answer a different question — collapsing the rows instead of comparing — with no
+     * error anywhere. The contract refuses it, and this is the arm that would have suffered.
+     */
+    greatest: (...values) => {
+      assertComparable(values.length);
+      return sql`max(${sql.join(values.map((v) => sql`${v}`), sql`, `)})`;
+    },
+
+    // Arguments in the opposite order to the server's syntax, which is the whole reason this is
+    // a member rather than a shared spelling.
+    strpos: (hay, needle) => sql`instr(${hay}, ${needle})`,
+
+    substr: (x, from, length) => (length === undefined
+      ? sql`substr(${x}, ${from})`
+      : sql`substr(${x}, ${from}, ${length})`),
 
     /** As the server's, and for the same reason: an array is one parameter, not a list. */
     jsonHasAny: (column, keys) => {
