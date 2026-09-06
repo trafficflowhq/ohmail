@@ -15,10 +15,13 @@ import { classifyDedup, type DedupOutcome } from "./dedup.js";
 import { isMessageGone } from "./gone.js";
 import { reconcile, type ReconcileAction } from "./reconciler.js";
 import { resolveThread } from "./threading.js";
-// The ROOT barrel, not `/cloud`: this module runs inside the desktop engine, and `/cloud` is
-// billing, the credit ledger, the staff handle and the whole hosted schema. `classifyLedgerSource`
-// is a pure template over its two arguments and lives on a leaf both halves can name.
-import { classifyLedgerSource } from "@trafficflow/db";
+// The LEAF, not `/cloud` and not the root barrel: this module runs inside the desktop engine, and
+// `/cloud` is billing, the credit ledger, the staff handle and the whole hosted schema.
+// `classifyLedgerSource` is a pure template over its two arguments and lives on a leaf both halves
+// can name — this line used to say exactly that while naming the root BARREL, which only avoided
+// the hosted half for as long as the barrel happened not to reach it. Naming the leaf itself is
+// what makes that a property instead of a coincidence.
+import { classifyLedgerSource } from "@trafficflow/db/ledger-source";
 import type {
   Change, CreditGate, MoveEvidence, PipelineDeps, RepoPort, RoutingPort, FolderStateRow,
   MessageBodyInput, NativeLocator, StoredMessage,

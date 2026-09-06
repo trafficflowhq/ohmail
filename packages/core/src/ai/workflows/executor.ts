@@ -9,7 +9,21 @@ import {
   workflowRuns,
   type Tx,
 } from "@trafficflow/db";
-import { ledgerSources, type AiCreditGate } from "@trafficflow/db/cloud";
+/* THE LEAF, NOT `/cloud` — and the split below is load-bearing rather than tidy.
+ *
+ * This module is compiled into the desktop engine. `ledgerSources` is a VALUE, so its import edge
+ * survives bundling: absent a `sideEffects` declaration a bundler must assume the named module has
+ * work to do at load, and keeps its bytes. While that value was named through `@trafficflow/db/cloud`
+ * the barrel came with it, and the barrel is billing, the credit ledger, the staff directory, the
+ * hosted schema and the postgres SERVER DRIVER — 26 extra workspace modules in an artifact a
+ * stranger downloads. `ledger-source.ts` imports `node:crypto` and nothing else, which is what makes
+ * it nameable from here; its own header states the rule this line now keeps.
+ *
+ * `AiCreditGate` stays on `/cloud` because a TYPE-only import is erased at compile time and creates
+ * no edge — `import type` rather than a bare `import` is the whole difference, so it must not be
+ * collapsed back into one statement. */
+import { ledgerSources } from "@trafficflow/db/ledger-source";
+import type { AiCreditGate } from "@trafficflow/db/cloud";
 import { makeDrizzleRepo, type DrizzleRepo } from "../../adapters/drizzle-repo.js";
 import type { NativeLocator } from "../../ports.js";
 import type { DraftPort, DraftInput, DraftResult } from "../draft.js";

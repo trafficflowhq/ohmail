@@ -55,8 +55,17 @@ import type { MailboxDisabledReason } from "@trafficflow/db";
 /* ONE DEFINITION, in `@trafficflow/core`. It moved there because the API tier decides the same
    question — "is the claim on this mailbox ours" — and answering it with the KIND rather than the
    id is what let a release clear a row over another Cloud deployment's claim. Re-exported here so
-   every existing importer of this module is unchanged. */
-export { CLOUD_INSTALL_ID_PREFIX, cloudInstallId, organizerEnvironment, resolveCloudInstallId } from "@trafficflow/core";
+   every existing importer of this module is unchanged.
+
+   NAMED AT ITS LEAF (`/organizer-install`) RATHER THAN AT THE PACKAGE ROOT, and that is not a
+   style choice: this module is bundled into the desktop engine, and a VALUE re-export is a runtime
+   edge the bundler must keep. Spelled `from "@trafficflow/core"` it pulled that package's index,
+   whose `export *` lines convey the whole AI runtime — classification, the model client, drafting
+   and the three workflow modules — and from the one that runs a workflow's steps onward the hosted
+   database half and the PostgreSQL server driver with it: 37 extra modules in a public download,
+   and the engine build refuses over exactly that. The leaf named here imports nothing at all,
+   which is what makes it safe to reach from a module the engine carries. */
+export { CLOUD_INSTALL_ID_PREFIX, cloudInstallId, organizerEnvironment, resolveCloudInstallId } from "@trafficflow/core/organizer-install";
 
 /**
  * How the claim names us to a human who opens `ohmail/_meta` in another mail client.
