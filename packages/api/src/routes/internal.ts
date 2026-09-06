@@ -818,13 +818,27 @@ async function invoiceReconcilePass(req: Request, deps: ApiDeps): Promise<Respon
  */
 async function platformCostPass(req: Request, deps: ApiDeps): Promise<Response> {
   const log = (deps.logger ?? silentLogger).child({ route: PLATFORM_COSTS_CRON_PATH });
-  const cfg = deps.alerts;
-  if (!cfg || cfg.secret.trim().length === 0) {
+  // ── THIS ROUTE'S GATE IS ITS OWN, NOT THE ALERTING BLOCK'S ──────────────────────────────
+  //
+  // It used to read `deps.alerts` and 404 when that was absent — before looking at the cost port
+  // at all. `TF_ALERT_SECRET` is optional, so a deployment with perfectly good vendor
+  // credentials and no alerting answered 404 to every scheduled invocation: no vendor was ever
+  // asked, nothing was ever written, and the board went on rendering a fully configured provider
+  // as "not configured". An unrelated optional feature decided whether costs existed, and the
+  // comment above this function claimed the opposite — that the pass runs on a deployment with
+  // no provider keys at all, deliberately. That is now true.
+  //
+  // Either credential opens it: the platform's own `CRON_SECRET`, held at the host's top level,
+  // or the alerting secret when that block IS configured (the scheduler already holds it, and
+  // removing it would have broken every existing deployment). 404 only when the host has
+  // NEITHER, which is the honest "this deployment cannot authenticate a scheduled call".
+  const alertSecret = deps.alerts?.secret.trim() ?? "";
+  const cron = (deps.cronSecret ?? deps.alerts?.cronSecret ?? "").trim();
+  if (alertSecret.length === 0 && cron.length === 0) {
     return json(404, { error: { code: "not_found" } });
   }
-  const cron = cfg.cronSecret?.trim();
-  const authorized = presentsSecret(req, cfg.secret)
-    || (cron !== undefined && cron.length > 0 && presentsSecret(req, cron));
+  const authorized = (alertSecret.length > 0 && presentsSecret(req, alertSecret))
+    || (cron.length > 0 && presentsSecret(req, cron));
   if (!authorized) {
     log.warn("platform_costs_unauthorized", {});
     return json(401, { error: { code: "unauthorized" } });

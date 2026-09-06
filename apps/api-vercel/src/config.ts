@@ -290,6 +290,21 @@ export interface HostConfig {
    */
   platformCosts: PlatformCostEnv;
   /**
+   * `CRON_SECRET` — the platform's own scheduler credential, held at the TOP LEVEL and not
+   * inside {@link alerts}.
+   *
+   * It lives here because the cost pass is a scheduled route that has nothing to do with
+   * alerting, and reading the credential off the alerting block made an unrelated optional
+   * feature decide whether costs were ever collected: with `TF_ALERT_SECRET` unset the pass
+   * answered 404 to every invocation, no vendor was ever asked, and the board went on calling a
+   * fully configured vendor "not configured". `alerts.cronSecret` is the same value and is kept
+   * for the alerting routes; this one is what a route may use without depending on that block.
+   *
+   * `null` when unset or shorter than 24 characters — same rule as everywhere else, because
+   * there is no rate limit behind the compare on a public URL.
+   */
+  cronSecret: string | null;
+  /**
    * WHERE THIS DEPLOYMENT'S APP LIVES — the absolute origin the OAuth bounce redirects a browser to.
    *
    * `TF_APP_URL`, through {@link assertAppUrl}, which already validates exactly this: a bare
@@ -1106,6 +1121,10 @@ export function loadHostConfig(env: NodeJS.ProcessEnv): HostConfig {
     // The vendor cost credentials, resolved ONCE here like every other block. Always an object,
     // possibly with every member absent — see the field's own note.
     platformCosts: loadPlatformCostCredentials(env),
+    cronSecret: ((): string | null => {
+      const raw = env.CRON_SECRET?.trim();
+      return raw && raw.length >= 24 ? raw : null;
+    })(),
     // Validated by assertAppUrl (a redirect target). A value it REFUSES falls back to
     // `defaultOrigin(authConfig)` rather than failing boot: this is not a new reason for a host to
     // refuse to start, and the fallback is itself a boot-validated first-party origin.

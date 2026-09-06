@@ -803,6 +803,7 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
     // id the client also got back in `x-request-id`. Built per request because the binding is
     // per request; the underlying sink is `console.log`, so this costs three closures.
     logger: hostLogger(cfg),
+    cronSecret: cfg.cronSecret,
     alerts: cfg.alerts
       ? {
         secret: cfg.alerts.secret,

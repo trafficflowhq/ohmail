@@ -777,6 +777,12 @@ export interface ApiDeps {
   oauth?: OAuthTokenProvider;
   /** Set by `withIdempotency`; consumed by the handler's service. */
   idempotency?: IdempotencyContext | null;
+  /**
+   * The platform scheduler's own credential (`CRON_SECRET`), independent of the alerting block.
+   * Absent or `null` ⇒ this host has no cron credential; a scheduled route then falls back to
+   * whatever gate it has of its own, and answers 404 only when it has none at all.
+   */
+  cronSecret?: string | null;
   /** Typed service bag; populated as services land. */
   services?: ApiServices;
   /** SSE timings for `GET /events`; falls back to {@link DEFAULT_SSE}. */

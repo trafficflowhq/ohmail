@@ -170,6 +170,7 @@ export type PlatformCostFailure =
   | "too_many_pages"         // the page budget could not finish the walk
   | "bucket_gap"             // a day missing between pages, or at a window boundary
   | "day_coverage_short"     // a stream that stopped before the window's days were covered
+  | "period_conflict"        // two records at the vendor's own grain disagree about a period
   | "mixed_currency"         // more than one currency in one answer
   | "missing_currency"       // a monetary record that names no currency at all
   | "currency_unsupported"   // a currency this board cannot render; every figure here is USD
@@ -420,6 +421,15 @@ const ANTHROPIC_PAGE_LIMIT = 31;
  */
 const ANTHROPIC_MAX_PAGES = 12;
 
+/**
+ * And the same ceiling in wall-clock terms, because the page count never bounded the time.
+ *
+ * Twelve pages at the 15-second request timeout is 180 seconds inside a 60-second route. Held
+ * well under the pass budget so one provider's paging cannot consume the whole invocation and
+ * leave the other provider unasked with nothing recorded about why.
+ */
+const ANTHROPIC_WALK_BUDGET_MS = 25_000;
+
 /** `bucket_width=1d`, in milliseconds — what the continuity check in `parseAnthropic` steps by. */
 const ANTHROPIC_BUCKET_MS = 24 * 60 * 60 * 1000;
 
@@ -610,7 +620,19 @@ export function makePlatformCostPort(
           const buckets = new Map<string, unknown>();
           let page: string | null = null;
           const walked = new Set<string>();
+          // ── THE WALK IS BOUNDED IN TIME AS WELL AS IN PAGES ─────────────────────────────
+          //
+          // Twelve pages at fifteen seconds each is three minutes, inside a route the platform
+          // kills at sixty seconds. The page count alone never bounded the wall clock, so the
+          // arithmetic that mattered was never the one being checked. A walk that runs out of
+          // time REFUSES — `has_more` is still true, nothing partial is returned, and the
+          // caller records a failure rather than a short month. Reported as the same budget
+          // code as the page ceiling because it is the same fact: the walk did not finish.
+          const walkStartedAt = Date.now();
           for (let asked = 0; asked < ANTHROPIC_MAX_PAGES; asked += 1) {
+            if (asked > 0 && Date.now() - walkStartedAt >= ANTHROPIC_WALK_BUDGET_MS) {
+              return { failed: "too_many_pages" };
+            }
             const url = page === null ? base : `${base}&page=${encodeURIComponent(page)}`;
             const res = await get(url, headers);
             if (!res.ok) return { failed: res.code };
@@ -717,23 +739,28 @@ function parseVercelCharges(
   // which is already rounded per record — so a positive amount below half a micro-cent became
   // `charged: false` and `writeMeasuredRows` accepted a fresh API zero for it. The provenance
   // has to come from what the vendor said, not from what the arithmetic made of it.
+  //
+  // THIS IS OBSERVABLE, and it was worth checking rather than asserting: replacing the raw test
+  // with a rounded one (`microCentsFromDollars(billed) >= MICRO_CENTS_PER_CENT`) turns
+  // `THREE SUB-CENT SERVICES...` and `A REAL BREAKDOWN SURVIVES...` red. A review round read
+  // this derivation as output-equivalent because a micro-zero line is filtered by `used` before
+  // the drop rule sees it; that is true only of the vanishing case where the amount rounds to no
+  // micro-cents at all. A sub-cent service has micro > 0, survives `used`, reaches the drop rule,
+  // and is dropped or written according to exactly this flag.
   let vendorCharged = false;
   const currency = new Currency();
   // The distinct charge-period starts seen inside the window, for the coverage check below, and
   // the furthest END any of them reached — a period is only evidence for the time it covers.
-  // ── KEYED BY THE VENDOR'S OWN GRAIN, WHICH IS DAY × SERVICE × REGION ────────────────────
+  // ── KEYED BY DAY × SERVICE × REGION, WHICH IS THE SERIES THAT RUNS DAY AFTER DAY ────────
   //
   // `periods` was keyed by START ALONE, so two records sharing a start overwrote each other and
   // whichever survived decided the contiguity join — reversing the line order changed the
   // verdict, and a record covering 23 hours could be hidden behind one covering 24.
   //
-  // The per-service coverage map was keyed by SERVICE alone, when the documented response grain
-  // is day × service × region. A missing `iad1` line for one day passed because the `fra1` line
-  // for the same service and day was present, and the region-short sum was written as the month.
-  //
-  // Both are keyed by the full grain now, and contiguity is checked PER SERIES rather than over
-  // a merged set — a series being one (service, region), which is the thing that actually runs
-  // day after day.
+  // Contiguity is now checked PER SERIES rather than over a merged set. The project is NOT part
+  // of this key: the vendor reports one service-day once per project, and adding the project
+  // changed no input's verdict because this same grouping re-collapses them. What the repeats
+  // do require is the disagreement refusal below.
   const periods = new Map<string, { from: number; to: number }>();
   let lastCoveredEnd = 0;
   // Detected on a RECORD rather than on a service's total: a credit that happens to be offset by
@@ -820,6 +847,29 @@ function parseVercelCharges(
     }
     const region = typeof record.RegionId === "string" ? record.RegionId : "";
     const series = `${service}\u0000${region}`;
+    // ── ONE SERVICE-DAY ARRIVES MANY TIMES, AND THAT IS THE ORDINARY SHAPE ─────────────────
+    //
+    // Measured over the live account's August: 3,534 of 20,615 (day, service, region) keys carry
+    // MORE THAN ONE record, in groups of up to eleven, and 224 of those groups carry a non-zero
+    // amount. A group of eight differs only in `EffectiveCost`, `ConsumedQuantity`,
+    // `PricingQuantity` and `Tags` — and `Tags` names the project (`ohmail-api`, `ohmail-admin`,
+    // `ohmail-landing`, …). They are per-PROJECT line items of one service's day. Summing them
+    // is right, and the code has always summed them.
+    //
+    // So REFUSING the response on a repeated key would refuse every real month. What was wrong
+    // was narrower: repeats overwrote each other here while both amounts were counted, so when
+    // two of them disagreed about the period END, whichever arrived last silently decided
+    // contiguity for the whole month. That is the order-dependence, and it is what is refused.
+    // Measured: 0 of those 3,534 groups disagree, so this fires on nothing the vendor sends
+    // today and guards a change in what it sends. The verdict no longer depends on record order
+    // either way.
+    //
+    // The project deliberately does NOT enter this key. It was tried: the per-series pass below
+    // re-groups by (service, region) and applies the same rule, so adding the project changed no
+    // input's verdict — an unfalsifiable elaboration, which is worse than nothing because it
+    // reads as protection.
+    const prior = periods.get(`${from}\u0000${series}`);
+    if (prior !== undefined && prior.to !== to) return { failed: "period_conflict" };
     periods.set(`${from}\u0000${series}`, { from, to });
     if (to > lastCoveredEnd) lastCoveredEnd = to;
     currency.observeRequired(record.BillingCurrency);
@@ -854,15 +904,40 @@ function parseVercelCharges(
   // Contiguity PER SERIES. A merged set hid a short record behind a full-length one from another
   // series that happened to share its start; each series is now walked on its own, so a 23-hour
   // record leaves a gap in its own run and is caught wherever the other series sit.
-  const bySeries = new Map<string, Array<{ from: number; to: number }>>();
+  // Contiguity PER SERIES, a series being one (service, region). A merged set hid a short record
+  // behind a full-length one from another series that happened to share its start.
+  //
+  // ── WHY THERE IS NO SECOND, PER-SERVICE PASS OVER THE UNION OF ITS REGIONS ────────────────
+  //
+  // There was one once; it was deleted in an earlier round for a BAD REASON — that mutating it
+  // away left every test green — and a review then produced the case it was supposed to catch:
+  // `Build/fra1` on day 1, no Build on day 2, `Build/iad1` on day 3, where both region series
+  // are trivially contiguous and only the union over the service sees the hole. Green under
+  // mutation had meant NO FIXTURE COVERED THE PROPERTY, not that no property was there.
+  //
+  // It is not being restored, and this time the reason is an argument rather than an absence.
+  // With the per-series TRAILING EDGE below in place, every series must be contiguous AND must
+  // reach `lastBillable`. Intervals that are each contiguous and all end at the same instant
+  // have a union that is a single interval: it cannot contain a hole. So no input can
+  // distinguish the two checks — the union pass could not be made to fail while the trailing
+  // edge holds, and a guard nobody can make fail is not a guard.
+  //
+  // That claim is falsifiable, which is the difference: delete the trailing-edge loop and the
+  // region-migration case below goes red. The fixture is kept for exactly that reason.
+  const bySeries = new Map<string, Map<number, number>>();
   for (const [key, period] of periods) {
     const series = key.slice(key.indexOf("\u0000") + 1);
-    (bySeries.get(series) ?? bySeries.set(series, []).get(series)!).push(period);
+    let run = bySeries.get(series);
+    if (run === undefined) {
+      run = new Map<number, number>();
+      bySeries.set(series, run);
+    }
+    run.set(period.from, period.to);
   }
   for (const run of bySeries.values()) {
-    run.sort((a, b) => a.from - b.from);
-    for (let i = 1; i < run.length; i += 1) {
-      if (run[i - 1]!.to !== run[i]!.from) return { failed: "day_coverage_short" };
+    const days = [...run.entries()].sort((a, b) => a[0] - b[0]);
+    for (let d = 1; d < days.length; d += 1) {
+      if (days[d - 1]![1] !== days[d]![0]) return { failed: "day_coverage_short" };
     }
   }
   const covered = [...periods.values()].sort((a, b) => a.from - b.from);
@@ -893,17 +968,30 @@ function parseVercelCharges(
   );
   if (lastCoveredEnd < lastBillable) return { failed: "day_coverage_short" };
 
-  // EVERY SERVICE ON EVERY DAY IT APPEARS AT ALL. A service that shows up once has a line for the
-  // whole period; a stream that carries it for twenty-nine days and drops it on the thirtieth is
-  // missing that service's last day, and the day-level check cannot see it because other services
-  // covered the day. A service that legitimately started or stopped mid-month is not this: its
-  // days are contiguous, and that is what is required rather than a full house.
-  // The per-service pass that used to sit here is GONE, and its removal is the point. It walked
-  // a per-service map and checked the same property the per-series contiguity above
-  // already checks over a strictly finer key — so mutating it away left every test green, which
-  // is not "well covered", it is a second mechanism covering for the first. A guard nobody can
-  // make fail is not a guard; keeping it would have left something that reads as protection and
-  // rots quietly the next time the grain changes.
+  // ── AND THE TRAILING EDGE PER SERIES, BECAUSE A GLOBAL ONE IS SATISFIED BY ANY SERIES ─────
+  //
+  // `lastCoveredEnd` is the maximum over every series, so one series reaching the end of the
+  // month satisfied it for all of them. `Build/iad1` present through the 29th and absent on the
+  // 30th, while `Pro/fra1` reaches month end: every run internally contiguous, the global edge
+  // met, and the parser returned a total missing Build's last day — written fresh, with
+  // `source = 'api'`, which says the vendor was asked and this is the answer. That is the one
+  // thing this module may never do.
+  //
+  // Each series must therefore reach the last billable instant on its own.
+  //
+  // THIS IS THE CHECK THAT LOOKS LIKE THE LEADING-EDGE MISTAKE, so it was measured before it was
+  // written. The leading-edge version of this argument refused all of July, because the account
+  // did not exist before the 14th and the guard was demanding days that never happened. Here,
+  // over 39,773 live August records: 665 (service, region) series, ALL present on all 31 days —
+  // zero terminating early, zero interior gaps. The guard refuses nothing the vendor really
+  // sends. A service that genuinely stops mid-month WOULD be refused, and that is the residual
+  // cost of the rule: the month is then reported unmeasured with a reason, which is a state the
+  // board can render, rather than published short, which is a number nobody can tell is wrong.
+  for (const run of bySeries.values()) {
+    let seriesEnd = 0;
+    for (const to of run.values()) if (to > seriesEnd) seriesEnd = to;
+    if (seriesEnd < lastBillable) return { failed: "day_coverage_short" };
+  }
 
   const resolved = currency.resolve();
   if (typeof resolved !== "string") return resolved;
@@ -1254,17 +1342,41 @@ export interface PlatformCostPassReport {
   ranAt: Date;
   providers: Array<{
     provider: CostProvider;
-    outcome: "written" | "unconfigured" | "failed";
+    /**
+     * `deferred` is work the pass did not START, because the budget ran out. It is not a
+     * failure: nobody asked the vendor, so nothing is known and nothing is written. The next
+     * invocation begins with the window this one ran out on.
+     */
+    outcome: "written" | "unconfigured" | "failed" | "deferred";
     rows: number;
     /** A closed code on `failed` — see {@link PlatformCostFailure}. Never a vendor's own text. */
     code?: PlatformCostFailure;
   }>;
 }
 
+/**
+ * How long one pass may spend before it stops STARTING work.
+ *
+ * The catch-all route this runs behind allows 60 seconds. One fetch is allowed 15, a paged
+ * Anthropic walk up to twelve of them, and windows and providers are sequential — so the
+ * arithmetic reached 180 seconds for a single provider/window and the platform would kill the
+ * invocation mid-pass. A killed invocation reports nothing at all: no rows, no failure, no
+ * record that the vendor was asked, which is the state this module exists to make impossible.
+ *
+ * Below 60 with room for the database work on either side. The budget stops the pass from
+ * BEGINNING another request, never from finishing one — a half-read response is exactly the
+ * thing the coverage rules refuse, and cutting one short to save time would be self-defeating.
+ */
+const PASS_BUDGET_MS = 45_000;
+
 export interface PlatformCostPassOptions {
   port: PlatformCostPort;
   now?: () => Date;
-  /** Which providers to ask. Defaults to the three with adapters. */
+  /** Overrides {@link PASS_BUDGET_MS}; a test uses it to make the deadline observable. */
+  budgetMs?: number;
+  /** Monotonic clock for the budget only. Injected so a test need not sleep. */
+  elapsed?: () => number;
+  /** Which providers to ask. Defaults to {@link API_COST_PROVIDERS}, the two with adapters. */
   providers?: readonly CostProvider[];
 }
 
@@ -1292,10 +1404,28 @@ export async function runPlatformCostPass(
   const at = now();
   const report: PlatformCostPassReport = { ranAt: at, providers: [] };
 
+  const budgetMs = opts.budgetMs ?? PASS_BUDGET_MS;
+  // A MONOTONIC clock, not `opts.now`. `now` is the pass's business clock and tests move it by
+  // whole days; a budget measured on it would expire instantly in every fixture that does.
+  const startedAt = opts.elapsed ? opts.elapsed() : Date.now();
+  const elapsed = (): number => (opts.elapsed ? opts.elapsed() : Date.now()) - startedAt;
   const windows = await passWindows(tx, at, opts.providers ?? API_COST_PROVIDERS);
   for (const window of windows) {
     const { start, end } = window;
   for (const provider of opts.providers ?? API_COST_PROVIDERS) {
+    // THE BUDGET IS CHECKED BEFORE ASKING, NEVER AFTER. Past it, the remaining providers and
+    // windows are reported as deferred and the invocation returns while it still can: a report
+    // that names what was not attempted is worth more than a process killed mid-request, which
+    // names nothing. The open month is first in `windows`, so what gets deferred under pressure
+    // is the closed month being re-asked for settlement, which has all month to settle.
+    // RESERVING WHAT THE NEXT REQUEST COULD COST, not merely counting what is spent. "Am I past
+    // the budget?" still allows a request to BEGIN at 44.9 seconds and run for another 25, which
+    // is the same overrun with an extra check in front of it. The reserve is the longest a
+    // single provider's turn can take — the paged walk's own ceiling.
+    if (elapsed() + ANTHROPIC_WALK_BUDGET_MS > budgetMs) {
+      report.providers.push({ provider, outcome: "deferred", rows: 0 });
+      continue;
+    }
     let result: PlatformCostFetch;
     try {
       // The flag is resolved for THIS provider — see `PassWindow`.
@@ -1333,7 +1463,7 @@ export async function runPlatformCostPass(
     // THE WRITE IS ITS OWN TRY/CATCH, and it is what keeps this loop's outer promise: "one
     // vendor's outage must not cost the board the other two". A row can reach here with a shape
     // the parser accepted but the database refuses — the `cost_cents >= 0` CHECK is the reachable
-    // case, since `parseVercel`/`parseSupabase` accept any finite line amount and a discount or
+    // case, since `parseVercelCharges` accepts any finite line amount and a discount or
     // credit line in a vendor's response is a negative one — and before this guard existed, that
     // one bad row aborted the WHOLE PASS: the insert threw, nothing caught it, and every provider
     // later in this loop was never asked, while any providers already written this run stayed
@@ -1563,13 +1693,17 @@ async function passWindows(
   if (!eager && !dailySlot) return [openWindow];
 
   const prevEstablished = establishedFor(prev.start);
+  // THE OPEN MONTH FIRST. The comment on SETTLE_LAG_MS has always said the closed month is
+  // asked second so that a deadline cannot take the window somebody is looking at — and the
+  // code returned the closed month first, so under a deadline it took exactly that window. The
+  // comment described a safety property the code inverted; this is the code catching up.
   return [
+    openWindow,
     {
       ...prev,
       // A month earlier than the one being RE-ASKED is the proof here, per provider.
       requireFullStart: (p: CostProvider): boolean => prevEstablished.has(p),
     },
-    openWindow,
   ];
 }
 
@@ -1640,7 +1774,7 @@ export interface ManualCostEntry {
  * would be a lie in the column the audit trail is keyed by.
  */
 export async function recordManualPlatformCost(db: Db, entry: ManualCostEntry): Promise<void> {
-  const tx = db as unknown as Tx;
+  const outer = db as unknown as Tx;
   // ── THE FAMILY GUARD APPLIES HERE TOO, AND A DROPPED WRITE MUST NOT ANSWER OK ───────────
   //
   // The guard lived only on the measured path, so the manual one could produce both defects it
@@ -1655,61 +1789,77 @@ export async function recordManualPlatformCost(db: Db, entry: ManualCostEntry): 
   // operator can then do the thing that works — correct the line, or replace the whole month —
   // instead of believing a figure that was never going to appear.
   const metricNormalized = isTotalMetric(entry.metric) ? TOTAL_METRIC : entry.metric;
-  const siblings = await tx
-    .select({ metric: platformCosts.metric, source: platformCosts.source })
-    .from(platformCosts)
-    .where(and(
-      eq(platformCosts.provider, entry.provider),
-      eq(platformCosts.periodStart, entry.periodStart),
-      eq(platformCosts.periodEnd, entry.periodEnd),
-    ));
-  const wantsTotal = isTotalMetric(metricNormalized);
-  // What shape is this provider-month already in? The newest API rows decide the family; with no
-  // API rows at all, the manual rows themselves do.
-  const apiRows = siblings.filter((r) => r.source === "api");
-  const deciding = apiRows.length > 0 ? apiRows : siblings;
-  const familyIsTotal = deciding.length > 0 && deciding.some((r) => isTotalMetric(r.metric));
-  const familyIsBreakdown = deciding.length > 0 && deciding.some((r) => !isTotalMetric(r.metric));
-  if (deciding.length > 0 && wantsTotal !== familyIsTotal && !(wantsTotal && !familyIsBreakdown)) {
-    throw new ManualCostShapeConflict(
-      wantsTotal
-        ? "this month is recorded as a per-service breakdown; correct a line, or clear it first"
-        : "this month is recorded as a single total; replace the total, or clear it first",
-    );
-  }
-  // NORMALIZED TO THE ONE TOTAL NAME. An operator typing a provider's whole month used to store
-  // it under whichever word they were given, so a hand-entered `charges` sat beside an API
-  // `charges (net of credits)` and the two were SUMMED — a $23 month rendered as $46. They are
-  // one figure and they now share one key, which is what makes the manual row REPLACE the API's
-  // total rather than add to it.
-  await tx.insert(platformCosts).values({
-    provider: entry.provider,
-    metric: metricNormalized,
-    periodStart: entry.periodStart,
-    periodEnd: entry.periodEnd,
-    value: entry.value === null || entry.value === undefined ? null : String(entry.value),
-    unit: entry.unit ?? null,
-    costCents: entry.costCents,
-    currency: entry.currency ?? "usd",
-    source: "manual",
-    enteredBy: entry.enteredBy,
-    note: entry.note,
-  }).onConflictDoUpdate({
-    target: [
-      platformCosts.provider, platformCosts.metric,
-      platformCosts.periodStart, platformCosts.periodEnd, platformCosts.source,
-    ],
-    set: {
-      value: sql`excluded.value`,
-      unit: sql`excluded.unit`,
-      costCents: sql`excluded.cost_cents`,
-      currency: sql`excluded.currency`,
-      // A correction is a new entry by a new person: both move, so the row always names whoever
-      // stands behind the number that is on it.
-      enteredBy: sql`excluded.entered_by`,
-      note: sql`excluded.note`,
-      fetchedAt: sql`now()`,
-    },
+  // ── CHECK AND WRITE IN ONE TRANSACTION, UNDER THE MEASURED WRITER'S OWN LOCK ───────────
+  //
+  // The guard below reads the month's existing rows and then writes; those were two
+  // statements on a bare connection, with `const tx = db as unknown as Tx` — a CAST, which
+  // is not a transaction and was easy to read as one. Two entries arriving together both saw
+  // an empty month, one inserted a `compute` line and the other a `charges` total, both
+  // answered 200, and `costsForMonth` summed them: exactly the shape the guard refuses when
+  // it can see it. An API pass changing a provider's shape could race a manual correction the
+  // same way and leave the accepted correction filtered out of the read.
+  //
+  // The lock is the SAME key the measured writer takes, per provider and period, because the
+  // two paths write the same rows and a lock only serializes writers that agree on the name.
+  await outer.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(
+      hashtext(${`platform_costs:${entry.provider}:${entry.periodStart.toISOString()}`}))`);
+    const siblings = await tx
+      .select({ metric: platformCosts.metric, source: platformCosts.source })
+      .from(platformCosts)
+      .where(and(
+        eq(platformCosts.provider, entry.provider),
+        eq(platformCosts.periodStart, entry.periodStart),
+        eq(platformCosts.periodEnd, entry.periodEnd),
+      ));
+    const wantsTotal = isTotalMetric(metricNormalized);
+    // What shape is this provider-month already in? The newest API rows decide the family; with no
+    // API rows at all, the manual rows themselves do.
+    const apiRows = siblings.filter((r) => r.source === "api");
+    const deciding = apiRows.length > 0 ? apiRows : siblings;
+    const familyIsTotal = deciding.length > 0 && deciding.some((r) => isTotalMetric(r.metric));
+    const familyIsBreakdown = deciding.length > 0 && deciding.some((r) => !isTotalMetric(r.metric));
+    if (deciding.length > 0 && wantsTotal !== familyIsTotal && !(wantsTotal && !familyIsBreakdown)) {
+      throw new ManualCostShapeConflict(
+        wantsTotal
+          ? "this month is recorded as a per-service breakdown; correct a line, or clear it first"
+          : "this month is recorded as a single total; replace the total, or clear it first",
+      );
+    }
+    // NORMALIZED TO THE ONE TOTAL NAME. An operator typing a provider's whole month used to store
+    // it under whichever word they were given, so a hand-entered `charges` sat beside an API
+    // `charges (net of credits)` and the two were SUMMED — a $23 month rendered as $46. They are
+    // one figure and they now share one key, which is what makes the manual row REPLACE the API's
+    // total rather than add to it.
+    await tx.insert(platformCosts).values({
+      provider: entry.provider,
+      metric: metricNormalized,
+      periodStart: entry.periodStart,
+      periodEnd: entry.periodEnd,
+      value: entry.value === null || entry.value === undefined ? null : String(entry.value),
+      unit: entry.unit ?? null,
+      costCents: entry.costCents,
+      currency: entry.currency ?? "usd",
+      source: "manual",
+      enteredBy: entry.enteredBy,
+      note: entry.note,
+    }).onConflictDoUpdate({
+      target: [
+        platformCosts.provider, platformCosts.metric,
+        platformCosts.periodStart, platformCosts.periodEnd, platformCosts.source,
+      ],
+      set: {
+        value: sql`excluded.value`,
+        unit: sql`excluded.unit`,
+        costCents: sql`excluded.cost_cents`,
+        currency: sql`excluded.currency`,
+        // A correction is a new entry by a new person: both move, so the row always names whoever
+        // stands behind the number that is on it.
+        enteredBy: sql`excluded.entered_by`,
+        note: sql`excluded.note`,
+        fetchedAt: sql`now()`,
+      },
+    });
   });
 }
 
