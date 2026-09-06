@@ -87,7 +87,10 @@ import { useTranslations } from "next-intl";
 import type { EngineMessage, MutationResult, OhmailEngine } from "@ohmail/client-engine";
 import type { ToastFn } from "@ohmail/ui";
 import { clearComposeDraft, type MailSend } from "./compose";
-import { claimSendLock, readSendLock, releaseSendLock, sendFingerprint } from "./send-lock";
+import {
+  claimSendLock, markSendLockUnverified, readSendLock, releaseSendLock, sendFingerprint,
+  unverifiedSendLock,
+} from "./send-lock";
 import { storageOwner } from "./storage-owner";
 import { scheduleLabel } from "./format";
 import { EMPTY_RICH, parseRichValue, serializeRichValue, type RichValue } from "./rich-text";
@@ -770,6 +773,10 @@ export function useMailSend(
          * check instead of quietly going twice.
          */
         if (next.phase !== "unverified") releaseSendLock(key, owner.current);
+        // DURABLY, because the phase below is component state: reopening the draft, a reload or
+        // another tab all start from `idle`, and each of those is a way back to a send that may
+        // already have gone. The lock is the only thing that survives them.
+        else markSendLockUnverified(key, owner.current);
       }
       // A confirmation is the only outcome that does anything beyond the phase, and `settle`
       // is where all of it lives — so a confirmation from a flush minutes later clears the
@@ -918,7 +925,22 @@ export function useMailSend(
   );
 
   return useMemo(
-    () => ({ stateOf: (key: string) => states[key] ?? IDLE, send }),
+    () => ({
+      /**
+       * THE DURABLE UNVERIFIED FACT OUTRANKS THE COMPONENT'S OWN PHASE.
+       *
+       * `states` is React state and starts empty on every mount. Reopening the draft therefore
+       * presented a fresh `idle` composer for a send that had come back unverified — Send live,
+       * and the next press a new key for a message that may already be in somebody's inbox. The
+       * lock is consulted so the parked state survives the remount that used to clear it.
+       */
+      stateOf: (key: string) => {
+        const held = states[key];
+        if (held !== undefined && held.phase !== "idle") return held;
+        return unverifiedSendLock(key, owner.current) ? { phase: "unverified" } : (held ?? IDLE);
+      },
+      send,
+    }),
     [states, send],
   );
 }

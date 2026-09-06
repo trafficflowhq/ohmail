@@ -62,6 +62,16 @@ export interface SendLock {
   draftId: string | null;
   /** {@link sendFingerprint} of the message this key was minted for. */
   fp: string;
+  /**
+   * TRUE once this lane's send came back UNVERIFIED — issued, answer lost, nobody knows.
+   *
+   * It changes what the record means. An ordinary lock is a convenience: it lets a resumed press
+   * reuse a key instead of minting one. An unverified lock is the ONLY durable evidence that a
+   * message may already be out there, so it outlives both of the things that discard an ordinary
+   * one — the age limit, and a change of content — because discarding it is precisely how the
+   * next press comes to mint a fresh key for a message that has already gone.
+   */
+  unverified?: boolean;
 }
 
 /**
@@ -135,7 +145,8 @@ function isLock(x: unknown): x is SendLock {
     && typeof r.lane === "string" && r.lane.length > 0
     && typeof r.key === "string" && r.key.length > 0
     && typeof r.at === "number"
-    && typeof r.fp === "string";
+    && typeof r.fp === "string"
+    && (r.unverified === undefined || typeof r.unverified === "boolean");
 }
 
 function load(owner: string | null = storageOwner()): SendLock[] {
@@ -174,11 +185,17 @@ function save(rows: SendLock[], owner: string | null = storageOwner()): void {
 export function readSendLock(lane: string, fp: string, nowMs: number, owner: string | null = storageOwner()): string | null {
   const rows = load(owner);
   if (rows.length === 0) return null;
-  const live = rows.filter((r) => nowMs - r.at <= SEND_LOCK_TTL_MS);
+  // AN UNVERIFIED LOCK DOES NOT AGE OUT. Seven days is the right limit for wreckage — a lane
+  // nobody settled — but an unverified send is not wreckage: it is a message that may be sitting
+  // in somebody's inbox, and the key is the only thing that can still be recognised as naming it.
+  const live = rows.filter((r) => r.unverified === true || nowMs - r.at <= SEND_LOCK_TTL_MS);
   const found = live.find((r) => r.lane === lane);
   if (found && found.fp !== fp) {
-    const kept = live.filter((r) => r !== found);
-    save(kept, owner);
+    // A different fingerprint means this key does not name THIS content, so it cannot be resumed
+    // — but an unverified record is kept regardless. Deleting it is how reopening a draft and
+    // editing it turned into a fresh key for a message that may already have been delivered.
+    if (found.unverified !== true) save(live.filter((r) => r !== found), owner);
+    else if (live.length !== rows.length) save(live, owner);
     return null;
   }
   if (live.length !== rows.length) save(live, owner);
@@ -212,4 +229,23 @@ export function allSendLocks(nowMs: number, owner: string | null = storageOwner(
   const live = rows.filter((r) => nowMs - r.at <= SEND_LOCK_TTL_MS);
   if (live.length !== rows.length) save(live, owner);
   return live.slice().sort((a, b) => a.at - b.at);
+}
+
+/**
+ * Is this lane's send in the terminal-unknown state, according to DURABLE storage?
+ *
+ * The composer's own phase is component state and does not survive reopening the draft, a reload,
+ * or another tab — and those are exactly the paths by which a person arrives back at a send that
+ * may already have gone. This is the fact that outlives all of them.
+ */
+export function unverifiedSendLock(lane: string, owner: string | null = storageOwner()): boolean {
+  return load(owner).some((r) => r.lane === lane && r.unverified === true);
+}
+
+/** Record that this lane's send came back unverified. See {@link SendLock.unverified}. */
+export function markSendLockUnverified(lane: string, owner: string | null = storageOwner()): void {
+  const rows = load(owner);
+  const found = rows.find((r) => r.lane === lane);
+  if (!found || found.unverified === true) return;
+  save(rows.map((r) => (r === found ? { ...r, unverified: true } : r)), owner);
 }
