@@ -312,7 +312,7 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
           // thread rows, then message rows, then the seq lock: ingest's mergeThreadMessage
           // and the user's own thread merge (whose ownership gate locks its thread rows)
           // both take it, so concurrent writers queue instead of deadlocking.
-          const lockedRows = await tx.select({
+          const lockedRows = await dialect(db).forUpdate(tx.select({
             id: threads.id, participants: threads.participants, lastMessageAt: threads.lastMessageAt,
           }).from(threads)
             .where(and(
@@ -320,9 +320,10 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
               eq(threads.accountId, group.account_id),
             ))
             // ORDER BY id: every taker of multi-row thread locks acquires them in one stable
-            // order, or two overlapping merges deadlock thread-to-thread.
-            .orderBy(asc(threads.id))
-            .for("update");
+            // order, or two overlapping merges deadlock thread-to-thread. The order still holds
+            // on the store that takes no lock — one serialized writer means there is nothing to
+            // deadlock against, and the ordering is then simply the read's.
+            .orderBy(asc(threads.id)));
           const lockedById = new Map(lockedRows.map((r) => [r.id, r]));
           const lockedTarget = lockedById.get(target.id);
           if (!lockedTarget) throw new Error("survivor thread vanished before the merge locked it");

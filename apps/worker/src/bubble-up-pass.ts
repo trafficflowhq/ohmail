@@ -1,5 +1,6 @@
 import { and, eq, lte, type SQL } from "drizzle-orm";
 import { messages, messageStates, recordChange, type Tx } from "@trafficflow/db";
+import { dialect } from "@trafficflow/db/dialect";
 
 /**
  * Bubble-up resurfacing pass. A `message_state` set to
@@ -116,8 +117,8 @@ export async function bubbleUpPass(
       // message row), so a due flip overlapping a user transition on one message QUEUES
       // instead of deadlocking (found in the re-homing: opposing first locks were a
       // Postgres deadlock, aborting whichever side lost).
-      await tx.select({ id: messages.id }).from(messages)
-        .where(eq(messages.id, row.messageId)).for("update");
+      await dialect(db).forUpdate(tx.select({ id: messages.id }).from(messages)
+        .where(eq(messages.id, row.messageId)));
       const updated = await tx
         .update(messageStates)
         // `setAt` refreshes here too: it is "when the CURRENT state was set", and this flip

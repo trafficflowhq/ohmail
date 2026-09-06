@@ -3,6 +3,7 @@ import {
   applyBodyBytesDelta, bodyBytesOf, messageBodies, messages, recordChange, reserveBodyBytes,
   type Tx,
 } from "@trafficflow/db";
+import { dialect } from "@trafficflow/db/dialect";
 import { fingerprintDedupKey, messageFingerprint, normalizeMessageId } from "./identity.js";
 import { prepareHtmlForStorage } from "./html-storage.js";
 import type { NormalizedMessage } from "./types.js";
@@ -89,12 +90,11 @@ export async function unhuskJunkFiledBody(db: Tx, args: {
   if (!isHuskSameMessage(husk, fresh)) return "identity_mismatch";
 
   return db.transaction(async (tx) => {
-    const [live] = await tx
+    const [live] = await dialect(db).forUpdate(tx
       .select({ text: messageBodies.text, html: messageBodies.html, withheld: messageBodies.withheldReason })
       .from(messageBodies)
       .where(eq(messageBodies.messageId, husk.id))
-      .limit(1)
-      .for("update");
+      .limit(1));
     if (live?.withheld !== "junk_filed") return "not_husked"; // restored already, or another policy's husk
     const storedHtml = prepareHtmlForStorage(fresh.htmlBody);
     const oldBytes = bodyBytesOf({ text: live.text ?? "", html: live.html ?? null });
