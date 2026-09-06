@@ -669,6 +669,12 @@ const TABLE = {
       case "wake_still_owed": return "this phone still records a wake removal owed for that registration";
       case "index_unreadable": return "this phone's list of pairings could not be read";
       case "purge_refused": return "the keystore would not give up the earlier installation's pairings";
+      case "mirror_not_deleted":
+        return "this phone could not delete the mail it had stored for that account";
+      case "sync_held_pre_identity":
+        return "ohmail is still checking which account this server opens";
+      case "account_mismatch":
+        return "that server is syncing a different account than the one this pairing names";
       case "index_not_removed": return "the keystore would not remove the list of pairings";
       /* A code this build does not know is a newer store talking to an older deck. Saying the code
          is better than saying nothing, and it is the one arm that can reach a screen unworded. */
@@ -720,6 +726,19 @@ const TABLE = {
    */
   folderNew: "New folder",
   folderNewSub: "New subfolder",
+  /* ── SCREEN-READER LABELS ASSEMBLED FROM PARTS ──────────────────────────────────────────
+     Each of these was a template in the markup — `${label}, ${count}`, `${name}. ${say}` — which
+     fixes one language's separator and one language's order for both. The joins are small and
+     that is exactly why they were invisible: the census only saw punctuation typed between JSX
+     children, and a template span is not that. Each language owns its own now. */
+  /** A tab or folder, with the number waiting in it. */
+  ariaLabelCount: (label: string, count: number): string => `${label}, ${count}`,
+  /** A row and the second fact about it — a server's address and what kind of server it is. */
+  ariaLabelDetail: (label: string, detail: string): string => `${label}, ${detail}`,
+  /** A choice's name and the sentence that IS the choice — see `Doors.tsx`. */
+  ariaNameThenSentence: (name: string, say: string): string => `${name}. ${say}`,
+  /** The new-subfolder sheet's subtitle, naming the folder it would go inside. */
+  folderNewSubIn: (parent: string): string => `New subfolder — ${parent}/`,
   folderRename: "Rename",
   folderDelete: "Delete…",
   folderMenuAria: (name: string) => `Folder menu for ${name}`,

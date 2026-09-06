@@ -40,6 +40,7 @@ import {
    this file are not: nobody but a developer reads a stack trace. */
 import { Copy } from "../copy";
 import { faultDetail, refuse, type Refusal } from "../refusal";
+import { StoreFault } from "../state/servers";
 
 /** What the platform must provide — expo modules in the app, node modules in tests. */
 export interface MobileEngineDeps {
@@ -274,7 +275,12 @@ export async function forgetMirror(deps: MobileEngineDeps, ownerKey: string): Pr
   await deps.deleteDatabase(dbName).catch(() => undefined);
 
   if (survivors.length > 0) {
-    throw new Error(
+    /* A CODE, not a sentence. `forgetProfile` catches this and hands it to `faultDetail`, which
+       words OUR failures and quotes everyone else's — so an English `Error` message here ended
+       up frozen inside a German refusal. The detail a developer needs stays in `message`, which
+       is what a stack trace shows and what `String(err)` yields if a caller forgets the mapping. */
+    throw new StoreFault(
+      "mirror_not_deleted",
       `the mail this phone held for ${ownerKey} is still on the device — ` +
         `the mirror database "${dbName}" survived being deleted ` +
         `(${survivors.map((r) => String(r.name)).sort().join(", ")})`,
@@ -376,7 +382,8 @@ function accountGuarded(
     for (const ch of changes) {
       const entityAccount = (ch.entity as { accountId?: unknown } | undefined)?.accountId;
       if (typeof entityAccount === "string" && entityAccount !== accountId) {
-        throw new Error(
+        throw new StoreFault(
+          "account_mismatch",
           `this server is syncing mail for account "${entityAccount}", not "${accountId}" — check the account id you entered`,
         );
       }
@@ -384,7 +391,7 @@ function accountGuarded(
   };
   return {
     sync: async (params) => {
-      if (!cleared()) throw new Error(HELD);
+      if (!cleared()) throw new StoreFault("sync_held_pre_identity", HELD);
       const resp = await adapter.sync(params);
       check(flattenResponse(resp));
       return resp;
@@ -393,7 +400,7 @@ function accountGuarded(
     // on page 1 latches the engine's snapshot-unavailable fallback and the `since=0` drain
     // that follows is guarded above, so nothing merges through either path.
     snapshot: async (params = {}) => {
-      if (!cleared()) throw new Error(HELD);
+      if (!cleared()) throw new StoreFault("sync_held_pre_identity", HELD);
       const page = await adapter.snapshot(params);
       check(page.changes);
       return page;

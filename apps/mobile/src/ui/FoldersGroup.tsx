@@ -48,6 +48,7 @@
 import { useRef, useState } from "react";
 import { TextInput, View } from "react-native";
 import { Copy } from "../copy";
+import { refuse, sayRefusal, type Refusal } from "../refusal";
 import { useTheme } from "../theme";
 import {
   FOLDER_FILTER_AT,
@@ -128,7 +129,7 @@ export function FoldersGroup({
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   /** The verb chrome: which sheet is up, and the name sheet's honest problem sentence. */
   const [open, setOpen] = useState<Open>(null);
-  const [problem, setProblem] = useState<string | null>(null);
+  const [problem, setProblem] = useState<Refusal | null>(null);
   /** The delete confirm's generation mint — see the confirm variant's `seq`. */
   const confirmSeq = useRef(0);
   const close = () => {
@@ -155,25 +156,36 @@ export function FoldersGroup({
       return next;
     });
 
-  /** The pre-wire honest sentence, or null when the name may go out — the server's own rules. */
-  const nameProblem = (own: readonly FolderEntity[], path: string): string | null => {
+  /**
+   * The pre-wire honest REFUSAL, or null when the name may go out — the server's own rules.
+   *
+   * A refusal, not a sentence. This returned `Copy.folderNameSpaces` and the caller put it in
+   * React state, so it froze in the language it was produced in: type an invalid name on an
+   * English phone, change the phone's language, come back, and the heading is German with an
+   * English line under it. Same defect as every other refusal in this app, one screen over.
+   */
+  const nameProblem = (own: readonly FolderEntity[], path: string): Refusal | null => {
     const err = folderNameError(path);
+    /* SPELLED OUT, not table-driven. `refuse(TABLE[err])` reads fine and the refusal census
+       cannot see the key through the index — it reports an unreadable key, which is the right
+       answer to give and the wrong thing to make it give. A switch is exhaustive at compile
+       time and every key is a literal the census can read. */
     if (err !== null) {
-      return {
-        empty: Copy.folderNameEmpty,
-        spaces: Copy.folderNameSpaces,
-        control: Copy.folderNameChars,
-        wildcard: Copy.folderNameChars,
-        long: Copy.folderNameLong,
-        reserved: Copy.folderNameReserved,
-      }[err];
+      switch (err) {
+        case "empty": return refuse("folderNameEmpty");
+        case "spaces": return refuse("folderNameSpaces");
+        case "control": return refuse("folderNameChars");
+        case "wildcard": return refuse("folderNameChars");
+        case "long": return refuse("folderNameLong");
+        case "reserved": return refuse("folderNameReserved");
+      }
     }
     // A FAILED create's row STILL holds the name: the server retains the command row until
     // the user dismisses it, and `assertNoOpOverlap` answers 409 for any overlapping path —
     // offering the spelling here would promise a create the server deterministically refuses
     // (codex round 1). Dismissing the refusal is what frees the name.
     if (own.some((x) => x.name === path)) {
-      return Copy.folderNameTaken;
+      return refuse("folderNameTaken");
     }
     return null;
   };
@@ -293,7 +305,7 @@ export function FoldersGroup({
           <TapRow
             onPress={() => onOpen(f.id)}
             accessibilityRole="link"
-            accessibilityLabel={count > 0 ? `${f.name}, ${count}` : f.name}
+            accessibilityLabel={count > 0 ? Copy.ariaLabelCount(f.name, count) : f.name}
             style={{
               flex: 1,
               paddingHorizontal: 8,
@@ -603,7 +615,7 @@ export function FoldersGroup({
             {open.renaming
               ? Copy.folderRename
               : open.parent
-                ? `${Copy.folderNewSub} — ${open.parent}/`
+                ? Copy.folderNewSubIn(open.parent)
                 : Copy.folderNew}
           </Txt>
           <TextInput
@@ -635,7 +647,7 @@ export function FoldersGroup({
           />
           {problem !== null ? (
             <Txt variant="caption" tone="ink3" style={{ paddingHorizontal: 14, paddingBottom: 8 }}>
-              {problem}
+              {sayRefusal(problem)}
             </Txt>
           ) : null}
           <SheetRow

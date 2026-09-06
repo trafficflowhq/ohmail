@@ -359,7 +359,7 @@ function Door({ name, say, onPress }: { name: string; say: string; onPress: () =
        * One label with both, rather than a `hint`: a hint is spoken after a pause and can be turned
        * off entirely, and this sentence is not supplementary to the choice — it IS the choice.
        */
-      accessibilityLabel={`${name}. ${say}`}
+      accessibilityLabel={Copy.ariaNameThenSentence(name, say)}
       style={{ marginHorizontal: 8, paddingHorizontal: 12, paddingVertical: 12, gap: 3 }}
     >
       <Txt variant="navLabel">{name}</Txt>

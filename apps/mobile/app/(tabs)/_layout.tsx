@@ -154,7 +154,7 @@ function Dock({ state, navigation }: DockProps) {
               key={route.key}
               accessibilityRole="tab"
               accessibilityState={{ selected: active }}
-              accessibilityLabel={count ? `${tab.label}, ${count}` : tab.label}
+              accessibilityLabel={count ? Copy.ariaLabelCount(tab.label, count) : tab.label}
               onPress={() => {
                 const event = navigation.emit({ type: "tabPress", target: route.key, canPreventDefault: true });
                 if (!active && !event.defaultPrevented) navigation.navigate(route.name);

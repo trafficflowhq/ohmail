@@ -58,7 +58,10 @@ export type StoreFaultCode =
   | "pairing_not_recorded" | "pairing_still_held" | "pairing_still_listed" | "no_such_profile"
   | "wipe_queue_full" | "wipe_not_recorded" | "wipe_still_owed"
   | "wake_queue_full" | "wake_not_recorded" | "wake_still_owed"
-  | "index_unreadable" | "purge_refused" | "index_not_removed";
+  | "index_unreadable" | "purge_refused" | "index_not_removed"
+  /* The engine's own failures. They used to be bare `Error`s with English messages, and
+     `faultDetail` embedded those frozen sentences in German refusals — see `engine/boot.ts`. */
+  | "mirror_not_deleted" | "sync_held_pre_identity" | "account_mismatch";
 
 export class StoreFault extends Error {
   constructor(readonly code: StoreFaultCode, message: string) {

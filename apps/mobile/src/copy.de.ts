@@ -417,6 +417,12 @@ export const DE: Deck = {
       case "wake_still_owed": return "dieses Telefon führt für diese Registrierung noch eine ausstehende Abmeldung";
       case "index_unreadable": return "die Kopplungsliste dieses Telefons ließ sich nicht lesen";
       case "purge_refused": return "der Schlüsselspeicher wollte die Kopplungen der früheren Installation nicht hergeben";
+      case "mirror_not_deleted":
+        return "dieses Telefon konnte die gespeicherte Post dieses Kontos nicht löschen";
+      case "sync_held_pre_identity":
+        return "ohmail prüft noch, welches Konto dieser Server öffnet";
+      case "account_mismatch":
+        return "dieser Server synchronisiert ein anderes Konto als das, auf das diese Kopplung lautet";
       case "index_not_removed": return "der Schlüsselspeicher wollte die Kopplungsliste nicht entfernen";
       default: return code;
     }
@@ -442,6 +448,10 @@ export const DE: Deck = {
 
   folderNew: "Neuer Ordner",
   folderNewSub: "Neuer Unterordner",
+  ariaLabelCount: (label: string, count: number): string => `${label}, ${count}`,
+  ariaLabelDetail: (label: string, detail: string): string => `${label}, ${detail}`,
+  ariaNameThenSentence: (name: string, say: string): string => `${name}. ${say}`,
+  folderNewSubIn: (parent: string): string => `Neuer Unterordner — ${parent}/`,
   folderRename: "Umbenennen",
   folderDelete: "Löschen…",
   folderMenuAria: (name: string) => `Ordnermenü für ${name}`,

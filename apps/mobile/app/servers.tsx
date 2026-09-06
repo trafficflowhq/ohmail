@@ -207,7 +207,7 @@ function ProfileRow({ profile, active, onForgetFailed }: {
           else void conn.switchTo(profile.id);
         }}
         accessibilityRole="button"
-        accessibilityLabel={`${profile.origin}, ${profile.flavor}`}
+        accessibilityLabel={Copy.ariaLabelDetail(profile.origin, profile.flavor)}
         style={{ paddingHorizontal: 12, paddingVertical: 10, gap: 2 }}
       >
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>

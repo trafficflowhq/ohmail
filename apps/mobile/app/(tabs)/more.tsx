@@ -154,7 +154,7 @@ function Nav({
     <TapRow
       onPress={onPress}
       accessibilityRole="link"
-      accessibilityLabel={count === undefined ? label : `${label}, ${count}`}
+      accessibilityLabel={count === undefined ? label : Copy.ariaLabelCount(label, count)}
       style={{
         marginHorizontal: 8,
         paddingHorizontal: 12,
