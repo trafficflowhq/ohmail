@@ -1,5 +1,6 @@
 import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { mailboxes, messages, type Tx } from "@trafficflow/db";
+import { dialect } from "@trafficflow/db/dialect";
 
 /**
  * THE INBOUND-QUIET PASS — the forwarding-detection heuristic (mail 0078), and the single owner
@@ -188,17 +189,25 @@ export async function inboundQuietPass(
   // sender's) answers "what does the history claim", bounded above by `now` so a future-dated
   // header cannot pass for recency. The row bound is the LOOSER of the two windows on each
   // clock, so both filters see every row they may count.
+  // An instant is a different LITERAL on each store — an ISO string the server parses, a count of
+  // milliseconds the device stores — and a comparison against the wrong one does not fail: it
+  // compares text with a number and quietly matches nothing. Every bound below goes through the
+  // seam for that reason, including the two that are only ever read.
+  const d = dialect(db);
+  const windowAt = d.ts(windowStart);
+  const absoluteAt = d.ts(absoluteStart);
+  const nowAt = d.ts(now);
   const counted = await db.select({
     mailboxId: messages.mailboxId,
-    recentIngested: sql<number>`count(*) filter (where ${messages.createdAt} > ${windowStart.toISOString()}::timestamptz)::int`,
-    recentPostImport: sql<number>`count(*) filter (where ${messages.createdAt} > ${windowStart.toISOString()}::timestamptz and ${mailboxes.initialImportCompletedAt} is not null and ${messages.createdAt} > ${mailboxes.initialImportCompletedAt})::int`,
-    absoluteDated: sql<number>`count(*) filter (where ${messages.date} > ${absoluteStart.toISOString()}::timestamptz and ${messages.date} <= ${now.toISOString()}::timestamptz)::int`,
-    newestBounded: sql<Date | null>`max(${messages.date}) filter (where ${messages.date} > ${absoluteStart.toISOString()}::timestamptz and ${messages.date} <= ${now.toISOString()}::timestamptz)`,
+    recentIngested: sql<number>`${d.castInt(sql`count(*) filter (where ${messages.createdAt} > ${windowAt})`)}`,
+    recentPostImport: sql<number>`${d.castInt(sql`count(*) filter (where ${messages.createdAt} > ${windowAt} and ${mailboxes.initialImportCompletedAt} is not null and ${messages.createdAt} > ${mailboxes.initialImportCompletedAt})`)}`,
+    absoluteDated: sql<number>`${d.castInt(sql`count(*) filter (where ${messages.date} > ${absoluteAt} and ${messages.date} <= ${nowAt})`)}`,
+    newestBounded: sql<Date | null>`max(${messages.date}) filter (where ${messages.date} > ${absoluteAt} and ${messages.date} <= ${nowAt})`,
   }).from(messages)
     .innerJoin(mailboxes, eq(mailboxes.id, messages.mailboxId))
     .where(and(
       eq(messages.accountId, accountId),
-      sql`(${messages.createdAt} > ${windowStart.toISOString()}::timestamptz or (${messages.date} is not null and ${messages.date} > ${absoluteStart.toISOString()}::timestamptz))`,
+      sql`(${messages.createdAt} > ${windowAt} or (${messages.date} is not null and ${messages.date} > ${absoluteAt}))`,
       sql`lower(${messages.fromAddress}) <> lower(${mailboxes.address})`,
     ))
     .groupBy(messages.mailboxId);
@@ -279,7 +288,7 @@ export async function inboundQuietPass(
           isNotNull(messages.date),
           // The same upper bound as the windowed aggregate: a future-dated header is not
           // history, and stamping one would put the episode's "since" ahead of the clock.
-          sql`${messages.date} <= ${now.toISOString()}::timestamptz`,
+          sql`${messages.date} <= ${d.ts(now)}`,
           sql`lower(${messages.fromAddress}) <> lower(${mailboxes.address})`,
         ));
       newestEver = probe?.newest == null ? null : asDate(probe.newest);

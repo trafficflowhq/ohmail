@@ -1,5 +1,6 @@
 import { and, eq, ne, sql } from "drizzle-orm";
 import { accountSettings, mailboxes, standDownMemory } from "@trafficflow/db";
+import { dialect, type Dialect } from "@trafficflow/db/dialect";
 // The product default and the scope union, from the ONE place that owns them — never a second
 // literal `60` and never a hand-written string union. `consent-cutline.ts` re-exports these from
 // core for the same reason and its header says so.
@@ -203,11 +204,13 @@ export async function authorizeOrganizerTakeover(
     .update(mailboxes)
     .set({
       disabledReason: null,
-      // `.toISOString()` plus the cast: a bare `Date` inside a raw `sql` fragment has no column
-      // type to coerce against, and postgres-js binds it as TEXT and throws. This store is PGlite,
-      // which accepts it — so the guard here is inherited from the hosted door rather than
-      // observed on this one, and it is spelled the same way on purpose.
-      organizeConsentedAt: sql`coalesce(${mailboxes.organizeConsentedAt}, ${input.now.toISOString()}::timestamptz)`,
+      // The instant goes through the seam, which answers the ORIGINAL reason and a second one.
+      // The original: a bare `Date` inside a raw `sql` fragment has no column type to coerce
+      // against, so postgres-js binds it as TEXT and throws. The second: the two stores keep an
+      // instant as different literals — an ISO string here, a count of milliseconds on a device —
+      // and a `coalesce` handed the wrong one does not fail, it stores a value the column's own
+      // reader cannot turn back into a date.
+      organizeConsentedAt: sql`coalesce(${mailboxes.organizeConsentedAt}, ${dialect(db).ts(input.now)})`,
       takeoverAuthorizedAt: input.now,
       /* AND THE REQUEST IS CANCELLED IN THE SAME WRITE, which is the half that makes the press a
          countermand rather than a second instruction beside the first. Left standing, the poll's
@@ -321,6 +324,10 @@ type LocalTx = Parameters<Parameters<LocalDb["transaction"]>[0]>[0];
  */
 async function upsertScreeningAnswer(
   tx: LocalTx,
+  /* HANDED IN, never looked up from `tx`. A transaction object is built by the query builder and
+     carries no dialect brand of its own, so resolving it here would throw inside the one block
+     where the write must succeed. The caller has the handle that knows. */
+  d: Dialect,
   o: { accountId: string; days: number | undefined; scope: ScreeningScope; now: Date },
 ): Promise<void> {
   // NEVER STORE THE DEFAULT for the dial — `setDormancyDays`' rule and the hosted door's,
@@ -355,7 +362,7 @@ async function upsertScreeningAnswer(
          * and a Settings press, or two windows of the same install) produce ONE baseline
          * without this transaction having to read the row first.
          */
-        screeningBaselineAt: sql`coalesce(${accountSettings.screeningBaselineAt}, ${o.now.toISOString()}::timestamptz)`,
+        screeningBaselineAt: sql`coalesce(${accountSettings.screeningBaselineAt}, ${d.ts(o.now)})`,
         updatedAt: o.now,
       },
     });
@@ -475,7 +482,7 @@ export async function requestOrganizerTakeover(
      */
     if (input.screening) {
       await db.transaction(async (tx) => {
-        await upsertScreeningAnswer(tx, {
+        await upsertScreeningAnswer(tx, dialect(db), {
           accountId: input.accountId!, days, scope, now: input.now,
         });
       });
@@ -493,18 +500,16 @@ export async function requestOrganizerTakeover(
    */
   await db.transaction(async (tx) => {
     if (input.screening) {
-      await upsertScreeningAnswer(tx, {
+      await upsertScreeningAnswer(tx, dialect(db), {
         accountId: input.accountId!, days, scope, now: input.now,
       });
     }
     await tx
       .update(mailboxes)
       .set({
-        // `.toISOString()` plus the cast: a bare `Date` inside a raw `sql` fragment has no column
-        // type to coerce against, and postgres-js binds it as TEXT and throws. This store is PGlite,
-        // which accepts it — so the guard here is inherited from the hosted door rather than
-        // observed on this one, and it is spelled the same way on purpose.
-        organizeConsentedAt: sql`coalesce(${mailboxes.organizeConsentedAt}, ${input.now.toISOString()}::timestamptz)`,
+        // Through the seam, for the two reasons the sibling write above spells out: the bare
+        // `Date` postgres-js refuses, and the instant literal the two stores disagree about.
+        organizeConsentedAt: sql`coalesce(${mailboxes.organizeConsentedAt}, ${dialect(db).ts(input.now)})`,
         takeoverAuthorizedAt: input.now,
         /* Cancelled here for the reason its twin in the CLI arm gives: a request left standing is
            spent by the very next release pass, which destroys the press one poll later. */

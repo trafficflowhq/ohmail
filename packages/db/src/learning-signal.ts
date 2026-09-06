@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { graduations, learningSignals } from "./schema-mail.js";
 import type { Tx } from "./change-log.js";
+import { dialect } from "./dialect/index.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -72,6 +73,10 @@ export function patternKeyFor(
  * an increment.
  */
 async function bumpCounter(tx: Tx, accountId: string, patternKey: string, label: LearningLabel): Promise<void> {
+  // The current instant is spelled by the store, not by this module: the server has `now()` and
+  // the device store has no such function at all — a statement carrying it there fails to parse,
+  // in the middle of a write that is otherwise correct.
+  const d = dialect(tx);
   const pos = label === "positive" ? 1 : 0;
   const neg = label === "negative" ? 1 : 0;
   const net = sql`(${graduations.positives} + ${pos}) - (${graduations.negatives} + ${neg})`;
@@ -84,8 +89,8 @@ async function bumpCounter(tx: Tx, accountId: string, patternKey: string, label:
         positives: sql`${graduations.positives} + ${pos}`,
         negatives: sql`${graduations.negatives} + ${neg}`,
         graduated: sql`(${graduations.graduated} OR ${net} >= ${GRADUATION_THRESHOLD})`,
-        graduatedAt: sql`CASE WHEN ${graduations.graduatedAt} IS NULL AND ${net} >= ${GRADUATION_THRESHOLD} THEN now() ELSE ${graduations.graduatedAt} END`,
-        updatedAt: sql`now()`,
+        graduatedAt: sql`CASE WHEN ${graduations.graduatedAt} IS NULL AND ${net} >= ${GRADUATION_THRESHOLD} THEN ${d.now()} ELSE ${graduations.graduatedAt} END`,
+        updatedAt: d.now(),
       },
     });
 }

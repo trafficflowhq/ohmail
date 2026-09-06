@@ -217,6 +217,13 @@ export const mailboxes = sqliteTable("mailboxes", {
   // {@link organizerState}.
   organizedByKind: text("organized_by_kind"),
   organizedByName: text("organized_by_name"),
+  /* WHICH INSTALL, not which kind. `organized_by_kind` is one of three words and answers "what
+     sort of thing holds this", which is only the same question as "is this us" when there is one
+     install per kind — and the Cloud id is scoped by environment precisely so that two Cloud
+     deployments over one mailbox is a designed-for state. NULL means "we cannot say it is ours",
+     and every caller must read it as NOT ours: the release matches on this id, so a category
+     comparison cleared rows over claims it could not remove. */
+  organizedByInstallId: text("organized_by_install_id"),
   organizedSince: integer("organized_since", { mode: "timestamp_ms" }),
   /**
    * The lease's `LeaseOccupancyState` — `'held'` (somebody is renewing) or `'stopped'` (somebody

@@ -5,6 +5,7 @@ import {
   GRADUATION_THRESHOLD, DEMOTION_THRESHOLD,
   type LearningSignalInput, type LearningKind, type LearningLabel,
 } from "@trafficflow/db";
+import { dialect, type Dialect } from "@trafficflow/db/dialect";
 import type { ServiceContext } from "./context.js";
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
@@ -70,6 +71,10 @@ export class LearningService {
    */
   async promoteOrDemote(ctx: ServiceContext, patternKey: string): Promise<void> {
     const tx = asTx(ctx);
+    // Read from the handle and threaded down rather than resolved again in each helper: the two
+    // writes below belong to one decision, and a store that answered them differently would be a
+    // program running against two databases.
+    const d = dialect(ctx.db);
     const [g] = await tx
       .select()
       .from(graduations)
@@ -86,17 +91,17 @@ export class LearningService {
 
     const net = g.positives - g.negatives;
     if (g.graduated && net >= GRADUATION_THRESHOLD) {
-      await this.ensurePromotedRule(tx, ctx.accountId, parsed);
+      await this.ensurePromotedRule(tx, d, ctx.accountId, parsed);
     } else if (net <= -DEMOTION_THRESHOLD) {
-      await this.demotePromotedRule(tx, ctx.accountId, parsed);
+      await this.demotePromotedRule(tx, d, ctx.accountId, parsed);
       await tx
         .update(graduations)
-        .set({ graduated: false, updatedAt: sql`now()` })
+        .set({ graduated: false, updatedAt: d.now() })
         .where(eq(graduations.id, g.id));
     }
   }
 
-  private async ensurePromotedRule(tx: Tx, accountId: string, p: ParsedPattern): Promise<void> {
+  private async ensurePromotedRule(tx: Tx, d: Dialect, accountId: string, p: ParsedPattern): Promise<void> {
     const existing = await tx
       .select({ id: rulesTbl.id })
       .from(rulesTbl)
@@ -108,7 +113,7 @@ export class LearningService {
       ))
       .limit(1);
     if (existing.length > 0) {
-      await tx.update(rulesTbl).set({ enabled: true, updatedAt: sql`now()` }).where(eq(rulesTbl.id, existing[0]!.id));
+      await tx.update(rulesTbl).set({ enabled: true, updatedAt: d.now() }).where(eq(rulesTbl.id, existing[0]!.id));
       return;
     }
     await tx.insert(rulesTbl).values({
@@ -117,10 +122,10 @@ export class LearningService {
     });
   }
 
-  private async demotePromotedRule(tx: Tx, accountId: string, p: ParsedPattern): Promise<void> {
+  private async demotePromotedRule(tx: Tx, d: Dialect, accountId: string, p: ParsedPattern): Promise<void> {
     await tx
       .update(rulesTbl)
-      .set({ enabled: false, demotions: sql`${rulesTbl.demotions} + 1`, updatedAt: sql`now()` })
+      .set({ enabled: false, demotions: sql`${rulesTbl.demotions} + 1`, updatedAt: d.now() })
       .where(and(
         eq(rulesTbl.accountId, accountId),
         eq(rulesTbl.kind, p.kind),

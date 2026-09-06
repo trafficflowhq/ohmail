@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { and, eq, isNotNull, isNull, lt, sql, type SQL } from "drizzle-orm";
-import { PgColumn, type PgTable } from "drizzle-orm/pg-core";
+import { and, eq, is, isNotNull, isNull, lt, sql, Column, type SQL } from "drizzle-orm";
+import { type PgColumn, type PgTable } from "drizzle-orm/pg-core";
 import type { Tx, LedgerTx } from "./change-log.js";
 import { mailboxCredentials } from "./schema-mail.js";
 import {
@@ -236,13 +236,27 @@ export const WRAPPED_SECRET_SITES: readonly WrappedSecretSite[] = [
   },
 ];
 
-/** Resolve a declared property to its drizzle column, or throw at import time. */
+/**
+ * Resolve a declared property to its drizzle column, or throw at import time.
+ *
+ * The question is about the DECLARATION — does this property name a column at all — and it is
+ * asked of a table whose declaration is compiled into two twins, one per store. Asking it as
+ * `instanceof PgColumn` answered a second question nobody meant to ask: which STORE the table
+ * belongs to. That made this line throw at module load in the test run that substitutes the
+ * device twin, for a module a device never loads at all, and the failure named a column instead
+ * of naming the substitution.
+ *
+ * `Column` is the class both twins descend from, so a typo, a missing column and a property that
+ * is not a column are all still refused here, at import, exactly as before. The cast is safe on
+ * the only store this module runs against: every deployment that has a KEK to rotate has
+ * Postgres, and the sites above are Cloud tables.
+ */
 function resolveColumn(site: WrappedSecretSite, prop: string): PgColumn {
   const c = (site.table as unknown as Record<string, unknown>)[prop];
-  if (!(c instanceof PgColumn)) {
+  if (!is(c, Column)) {
     throw new Error(`${site.site}: "${prop}" is not a column on this table`);
   }
-  return c;
+  return c as PgColumn;
 }
 
 interface ResolvedSite extends WrappedSecretSite {
