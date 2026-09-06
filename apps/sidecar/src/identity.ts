@@ -86,8 +86,20 @@ export interface LocalWorld {
 }
 
 export interface EnsureLocalWorldInput {
-  /** The mailbox this install organizes. Doubles as the local user's address. */
-  address: string;
+  /**
+   * The mailbox this install organizes. Doubles as the local user's address.
+   *
+   * **`null` ONLY on a paired door**, and the absence is a fact rather than a gap. An install set
+   * up from a pairing link names a COMPUTER; which mailboxes it reads is the host's answer, and
+   * nothing knows it at the moment the world is built. So there is no seed to mint and no address
+   * to name a user row after — `shouldSeedMailbox` already answers `false` for an absent address,
+   * which is the whole of what "no seed" needs, and the mirror fills the roster from the host.
+   *
+   * It is `null` and never `""`. An empty string reads as an address that was configured and is
+   * blank, which is a different and wrong claim: `sameOwner("")` matches nothing, so a mirror
+   * whose owner was recorded that way would be discarded on every launch.
+   */
+  address: string | null;
   displayName?: string;
   now: Date;
 }
@@ -144,7 +156,10 @@ export async function ensureLocalWorld(db: LocalDb, input: EnsureLocalWorldInput
         .insert(users)
         .values({
           accountId,
-          email: input.address.toLowerCase(),
+          /* EMPTY WHEN THERE IS NO ADDRESS YET — the local user row is an artifact of this
+             install, not a claim about a mailbox, and a paired door has not been told one. The
+             mirror carries the real addresses on the mailbox rows it pulls. */
+          email: input.address?.toLowerCase() ?? "",
           displayName: input.displayName ?? "",
           // See the header: the gate's question is answered by the tier, not skipped.
           emailVerifiedAt: input.now,
@@ -200,7 +215,7 @@ export async function ensureLocalWorld(db: LocalDb, input: EnsureLocalWorldInput
     ))
     .orderBy(sql`(${mailboxes.status} <> 'disabled') desc`, mailboxes.createdAt, mailboxes.id);
 
-  const wanted = input.address.trim().toLowerCase();
+  const wanted = (input.address ?? "").trim().toLowerCase();
   const seedRow = wanted
     ? nonTombstoned.find((r) => r.address.trim().toLowerCase() === wanted) ?? null
     : null;
@@ -223,7 +238,7 @@ export async function ensureLocalWorld(db: LocalDb, input: EnsureLocalWorldInput
     : false;
 
   const seed = shouldSeedMailbox({
-    seedAddress: input.address,
+    seedAddress: input.address ?? "",
     activeSeedRow: seedRow !== null,
     tombstonedSeed,
     rosterEmpty: nonTombstoned.length === 0,
@@ -258,7 +273,11 @@ export async function ensureLocalWorld(db: LocalDb, input: EnsureLocalWorldInput
       .values({
         accountId,
         provider: "imap",
-        address: input.address,
+        /* NON-NULL BY CONSTRUCTION: `shouldSeedMailbox` returns false for an absent address, and
+           this line is only reached when it returned true. Asserted rather than defaulted, because
+           a `?? ""` here would mint a mailbox row named after nothing — the row this branch exists
+           to create is the one the address names. */
+        address: input.address!,
         ...(input.displayName ? { displayName: input.displayName } : {}),
         status: "connected",
         /* -- THE PRE-CONSENT STATE IS A READER, ON THIS DOOR TOO ----------------------------

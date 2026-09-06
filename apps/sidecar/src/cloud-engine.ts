@@ -147,8 +147,15 @@ export interface CloudSidecarConfig {
   handoffBase?: string;
   /** The bearer/refresh pair the shell passes on FIRST launch. Absent on later launches (sealed). */
   tokens?: CloudTokens;
-  /** The mailbox address this account mirrors — the local identity's address. */
-  address: string;
+  /**
+   * The mailbox address this account mirrors — the local identity's address.
+   *
+   * **`null` ONLY on a paired door.** A pairing link names a computer, not a mailbox, so there is
+   * nothing to configure: the roster arrives from the host. It is `null` and never `""`, because
+   * an empty string is an address that was configured and is blank — `sameOwner("")` matches
+   * nothing, and a mirror recorded that way is thrown away on every launch.
+   */
+  address: string | null;
   displayName?: string;
   /** The per-install key ring, for the token seal. Absent ⇒ tokens live in memory for this launch. */
   keks?: Record<number, Buffer>;
@@ -387,12 +394,21 @@ function readMirrorRecordRaw(dataDir: string): string | null {
  */
 export function enforceMirrorOwner(
   dataDir: string,
-  address: string,
+  /** `null` on a paired door, which is configured with no mailbox address — see below. */
+  address: string | null,
   /** The base this launch is configured to dial — `CloudSidecarConfig.cloudUrl`. */
   cloudUrl: string,
   log?: Diagnostic,
 ): boolean {
-  const served = sameOwner(address);
+  /* ── THE ADDRESS IS COMPARED ONLY WHEN BOTH SIDES CARRY ONE ─────────────────────────────
+     A paired door is configured with no address at all: a pairing link names a computer, and which
+     mailboxes this install reads is the host's answer. So `null` here is not an owner that fails to
+     match — it is the absence of a claim, and a comparison against it would discard a healthy
+     mirror on every single launch. The SERVER half is untouched and is what protects this door:
+     `cloudUrl` is the host's own origin, unique per machine, and re-pointing at a different one
+     still discards. The ACCOUNT recorded by the pairing redeem is the third, and it is the only
+     one that can see a host reinstalled at the same address. */
+  const served = address === null ? null : sameOwner(address);
   /* NULL WHEN IT DOES NOT PARSE, never the raw value. A base that is not a URL cannot be compared
      with anything, so recording it would be recording a fact this file's own predicate must then
      ignore — and it would put an arbitrary string into the record for no reader. `null` says
@@ -402,8 +418,8 @@ export function enforceMirrorOwner(
   const ownerPath = join(dataDir, MIRROR_OWNER_FILE);
   const priorRaw = readMirrorRecordRaw(dataDir);
   const priorRecord = priorRaw === null ? null : decodeMirrorRecord(priorRaw);
-  const prior = priorRecord === null ? null : sameOwner(priorRecord.address);
-  const addressChanged = prior !== null && prior !== served;
+  const prior = priorRecord?.address == null ? null : sameOwner(priorRecord.address);
+  const addressChanged = prior !== null && served !== null && prior !== served;
   /**
    * ── WHICH SERVER THE STATE ALREADY IN THIS DIRECTORY BELONGS TO ────────────────────────────
    *
@@ -428,12 +444,31 @@ export function enforceMirrorOwner(
     existsSync(join(dataDir, f)),
   );
   const serverChanged = mirrorIsForeign(priorRecord, holdsCloudState, servedBase ?? cloudUrl.trim());
-  const foreign = addressChanged || serverChanged;
+  /* ── A DISCARD THE LAST RUN ASKED FOR, EXPLICITLY ────────────────────────────────────────────
+     A pairing told to start over cannot throw the mirror away itself: at redeem time `pgdata` is an
+     OPEN database, and removing it under the process holding it corrupts that process. So it stages
+     the discard here, where the constructor already does one correctly, before anything is opened.
+     It is a POSITIVE flag written by one route on one explicit instruction — never inferred, and
+     never a default. */
+  const askedToStartOver = priorRecord?.discardPending === true;
+  const foreign = addressChanged || serverChanged || askedToStartOver;
   if (foreign) {
-    // The database, its cursor and the previous account's sealed session are all stale. Remove
-    // them so the new account bootstraps from empty rather than inheriting a stranger's mail.
-    for (const stale of ["pgdata", "cloud-cursor.json", "cloud-tokens.seal"]) {
-      rmSync(join(dataDir, stale), { recursive: true, force: true });
+    /* THE SEAL SURVIVES A STAGED DISCARD, and this is the one asymmetry in this function. A
+       start-over pairing has ALREADY sealed the new world's session — that is what it was for —
+       and it is sitting in this directory waiting for this launch. Removing it here would spend
+       somebody's single-use pairing code and then throw away the session it bought, leaving them
+       at a sign-in screen with a code that no longer works. The mirror and cursor are the previous
+       world's and go; the credential is the NEW world's and stays.
+
+       On the other two paths nothing has been sealed for the world being arrived at, so the seal
+       there belongs to the world being left and must go — which is what it has always done. */
+    const stale = askedToStartOver && !addressChanged && !serverChanged
+      ? ["pgdata", "cloud-cursor.json"]
+      : ["pgdata", "cloud-cursor.json", "cloud-tokens.seal"];
+    // The database, its cursor and (usually) the previous account's sealed session are all stale.
+    // Remove them so the new account bootstraps from empty rather than inheriting a stranger's mail.
+    for (const name of stale) {
+      rmSync(join(dataDir, name), { recursive: true, force: true });
     }
     // Never the addresses, and never the two SERVERS either. Which mailbox was served before and
     // which is served now are the exact identifying signal the sidecar log census exists to keep
@@ -449,8 +484,11 @@ export function enforceMirrorOwner(
       changed: true,
       reason: addressChanged
         ? "the mailbox address this mirror was bootstrapped for is not the one being served"
-        : "this install has been pointed at a different server than the mirror was bootstrapped " +
-          "against, so the mirror and the session sealed for the previous server are discarded",
+        : serverChanged
+          ? "this install has been pointed at a different server than the mirror was bootstrapped " +
+            "against, so the mirror and the session sealed for the previous server are discarded"
+          : "the last pairing was told to start over, so the mail this install held for the " +
+            "previous account is discarded and the newly paired session keeps its place",
     });
   }
   mkdirSync(dataDir, { recursive: true });
@@ -459,9 +497,20 @@ export function enforceMirrorOwner(
      redeem wrote and silently un-bind the directory. Carried only when the mirror SURVIVED: a
      discard is a new world, and keeping the previous world's account would then refuse the very
      re-pairing the discard exists to allow. */
+  /* THE FLAG IS CLEARED BY BEING REWRITTEN WITHOUT IT — a staged discard that survived its own
+     launch would throw the mirror away on every launch afterwards, which is a mailbox that never
+     finishes syncing and no message anywhere saying why.
+
+     AND THE ACCOUNT SURVIVES A STAGED DISCARD, unlike the other two: a start-over pairing wrote the
+     NEW world's account id in the same breath as the flag, so it is not the discarded world's and
+     clearing it would un-bind the directory the pairing had just bound. */
   writeFileSync(
     ownerPath,
-    encodeMirrorRecord(served, servedBase, foreign ? null : priorRecord?.account ?? null),
+    encodeMirrorRecord(
+      served,
+      servedBase,
+      addressChanged || serverChanged ? null : priorRecord?.account ?? null,
+    ),
     { mode: 0o600 },
   );
   return foreign;
@@ -923,6 +972,27 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
      */
     let sessionExpired = false;
     /**
+     * A PAIRING FINISHED HERE AND CANNOT TAKE EFFECT UNTIL THIS PROCESS IS REPLACED.
+     *
+     * Set by a `startOver` redeem, which seals the new world's session and stages the discard of
+     * the old world's mirror — a discard only the constructor can perform, because `pgdata` is an
+     * open database in this process. Between that answer and the relaunch there is a state the
+     * shell has no other way to name, and every reading it could otherwise reach is a LIE:
+     *
+     *  · `signedIn: false` alone is the pre-auth state, and a window renders the hosted PASSWORD
+     *    FORM for it — asking for an ohmail Cloud password, for an account that does not exist, at
+     *    the exact moment the pairing succeeded;
+     *  · `sessionExpired: true` is worse and is deliberately NOT set here: it means the server
+     *    ended the session, and the surface for it says this machine is no longer paired — the
+     *    precise opposite of what just happened.
+     *
+     * So the state says what it is. PROCESS-LOCAL and never read back from the record: the flag on
+     * disk is cleared by the very launch that acts on it, and a fresh process is by definition one
+     * where this window has passed. Raised by the window lane, which found both wrong renderings
+     * before either shipped.
+     */
+    let restartRequired = false;
+    /**
      * The in-flight session-death teardown, retained so a shutdown that races it can wait.
      * `onSessionRefused` fires from inside a pull's own refresh and cannot await the teardown
      * (its stop() resolves only after that pull fails out — awaiting there is the deadlock),
@@ -1100,6 +1170,10 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           // The reason `signedIn` is false, when the reason is the server ending the session
           // rather than nobody having signed in yet. The shell words its sign-in surface off it.
           sessionExpired,
+          // …and the OTHER reason it can be false: a pairing that has succeeded and is waiting for
+          // a relaunch. See the declaration — without this the shell shows a password form or a
+          // "no longer paired" card, and both are false statements about a pairing that worked.
+          restartRequired,
         });
       }
 
@@ -1474,7 +1548,15 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           throw err;
         }
         const recordedOwner = readMirrorOwner(config.dataDir) ?? config.address;
-        if (sameOwner(hostedAddress) !== sameOwner(recordedOwner)) {
+        /* ── AN OWNER THAT CANNOT BE ESTABLISHED IS A REFUSAL, NOT AN ADOPTION ────────────────
+           `null` here means neither the marker nor the configuration names an address, which is
+           the PAIRED door's ordinary state — and a password sign-in is not that door's ceremony at
+           all: it gets in with a pairing code, and its mailboxes are the host's answer. Letting an
+           unestablishable owner fall through as a match would activate a hosted session over a
+           directory holding a paired host's mail, which is the exact mixing this check exists to
+           refuse. Every hosted and self-hosted door is unaffected: `config.address` is a string
+           there, so the fallback always establishes one and this arm is unreachable. */
+        if (recordedOwner === null || sameOwner(hostedAddress) !== sameOwner(recordedOwner)) {
           // REFUSED, AND NOTHING IS KEPT. The pair is not sealed and `activate` is not called, so
           // `authed` stays null and every read below this stays a `409 not_signed_in` — there is
           // no window in which this session can reach the previous account's rows.
@@ -1565,8 +1647,14 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           );
         }
         let token: unknown;
+        let startOver = false;
         try {
-          token = ((await req.json()) as { token?: unknown }).token;
+          const parsed = (await req.json()) as { token?: unknown; startOver?: unknown };
+          token = parsed.token;
+          /* THE EXACT BOOLEAN AND NOTHING ELSE. This flag DELETES somebody's mail, so a truthy
+             value that nobody deliberately wrote — a string, a number, the word "false" — must not
+             select it. Absent is the ordinary pairing, which is the safe branch. */
+          startOver = parsed.startOver === true;
         } catch {
           return json({ error: { code: "invalid_request", message: "the pairing body is not JSON" } }, 400);
         }
@@ -1612,6 +1700,39 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         }
 
         const recordedAccount = readMirrorAccount(config.dataDir);
+        if (startOver && accountIsForeign(recordedAccount, redeemed.accountId)) {
+          /* ── THE WAY OUT OF THE REFUSAL BELOW, AND IT IS ONLY EVER TAKEN ON PURPOSE ─────────
+             Without this the mismatch is a dead end: the constructor discards on a change of
+             ADDRESS or of SERVER, and a host reinstalled at the same address changes neither — so
+             an install refused here would go on being refused, with nothing a person could press.
+             This is that press, and it is the caller's explicit `startOver`, never an inference
+             from the mismatch itself.
+
+             THE DISCARD IS STAGED, NOT DONE. `pgdata` is an open database at this moment and
+             removing it under the process holding it corrupts that process; `enforceMirrorOwner`
+             already does the discard correctly, before anything is opened, so the record is
+             stamped and the next launch performs it. The pair sealed below is deliberately spared
+             by that discard — see the seal note there — because it belongs to the world being
+             arrived at rather than the one being left.
+
+             NOTHING IS ACTIVATED. Reads stay `409 not_signed_in` until the relaunch, so there is
+             no window in which this session can reach the previous world's rows — which is the
+             whole reason the refusal exists and is not weakened by giving it a way out. */
+          if (keyProvider) await sealTokens(sealPath, keyProvider, redeemed.tokens);
+          writeFileSync(
+            join(config.dataDir, MIRROR_OWNER_FILE),
+            encodeMirrorRecord(config.address, cloudBase, redeemed.accountId, true),
+            { mode: 0o600 },
+          );
+          restartRequired = true;
+          log?.("cloud_pair_started_over", { changed: true });
+          return json({
+            status: "paired",
+            restartRequired: true,
+            mailboxId: world.mailboxId,
+            address: config.address,
+          });
+        }
         if (accountIsForeign(recordedAccount, redeemed.accountId)) {
           // REFUSED, AND NOTHING KEPT. The pair is not sealed and `activate` is not called, so
           // every read below stays `409 not_signed_in` — there is no window in which this session

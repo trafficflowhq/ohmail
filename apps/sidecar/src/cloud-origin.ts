@@ -324,11 +324,14 @@ export function baseIsForeign(recorded: string | null | undefined, configured: s
  * bare address, no server, adopted.
  */
 export function encodeMirrorRecord(
-  address: string,
+  address: string | null,
   base: string | null,
   account: string | null = null,
+  discardPending = false,
 ): string {
-  return JSON.stringify({ address, base, account });
+  /* THE FLAG IS OMITTED WHEN FALSE, so an ordinary record is byte-identical to what every build
+     before this wrote and a reader that has never heard of it is unaffected. */
+  return JSON.stringify(discardPending ? { address, base, account, discardPending } : { address, base, account });
 }
 
 /**
@@ -343,23 +346,43 @@ export function decodeMirrorRecord(raw: string): MirrorRecord {
   const text = raw.trim();
   if (text.startsWith("{")) {
     try {
-      const parsed = JSON.parse(text) as { address?: unknown; base?: unknown; account?: unknown };
-      const address = typeof parsed.address === "string" ? parsed.address.trim() : "";
+      const parsed = JSON.parse(text) as {
+        address?: unknown; base?: unknown; account?: unknown; discardPending?: unknown;
+      };
+      /* `null` AND NOT `""`, and the difference decides whether a mirror survives. An empty
+         string is an address that WAS configured and is blank, which `sameOwner` matches against
+         nothing — a record written that way is discarded on every launch. `null` says the record
+         names no address, which is the paired door's ordinary state and is compared with nothing.
+         A non-string (a number, an object, a JSON `null`) is the same absence and reads the same. */
+      const address = typeof parsed.address === "string" && parsed.address.trim() !== ""
+        ? parsed.address.trim()
+        : null;
       const base = typeof parsed.base === "string" && parsed.base.trim() !== "" ? parsed.base.trim() : null;
       const account = typeof parsed.account === "string" && parsed.account.trim() !== ""
         ? parsed.account.trim()
         : null;
-      return { address, base, account, legacy: false };
+      /* TRUE ONLY FOR THE EXACT BOOLEAN. Anything else — absent, a string, a number — is the
+         ordinary state, because this flag causes a DELETION and a value nobody deliberately wrote
+         must never select that branch. */
+      return { address, base, account, discardPending: parsed.discardPending === true, legacy: false };
     } catch {
       /* A torn or truncated write. Falls through to the legacy read, which yields an address that
          matches nothing — the same answer an empty file gives, and the safe one. */
     }
   }
-  return { address: text, base: null, account: null, legacy: true };
+  return { address: text, base: null, account: null, discardPending: false, legacy: true };
 }
 
 export interface MirrorRecord {
-  address: string;
+  /**
+   * The mailbox this directory's mirror was bootstrapped for, or `null` when the record names
+   * none — a paired door, whose mailboxes are the host's answer rather than a configured value.
+   *
+   * On a LEGACY record (not JSON) this is the file's whole trimmed content, which may be the empty
+   * string: that shape is a torn write, and an owner that cannot be established must match nothing
+   * rather than be adopted. The distinction is the reason this is not simply "falsy means absent".
+   */
+  address: string | null;
   /** The server, or null when the record does not establish one. */
   base: string | null;
   /**
@@ -380,6 +403,21 @@ export interface MirrorRecord {
    * refuses only on a positive disagreement — `baseIsForeign`'s rule, for the same reason.
    */
   account: string | null;
+  /**
+   * THE PREVIOUS WORLD'S MAIL IS STILL HERE AND MUST GO BEFORE ANYTHING READS IT.
+   *
+   * Written by a pairing that was told, explicitly, to start over — a host reinstalled at the same
+   * address is a different world, and merging it into this one is the worst thing this program can
+   * do with somebody's mail.
+   *
+   * IT IS STAGED RATHER THAN DONE ON THE SPOT, and that is a fact about the database rather than a
+   * preference: at the moment a redeem runs, `pgdata` is an OPEN embedded database, and removing
+   * those files under it corrupts the process that is holding them. The constructor already does
+   * the discard correctly, before anything is opened, and this flag is how a redeem asks it to.
+   *
+   * The SEAL is deliberately not part of what a pending discard removes — see `enforceMirrorOwner`.
+   */
+  discardPending: boolean;
   /**
    * TRUE when this record is the ONE-ADDRESS SHAPE an earlier build wrote, and that distinction is
    * load-bearing rather than informational.

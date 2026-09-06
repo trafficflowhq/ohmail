@@ -285,10 +285,29 @@ export function cloudConfigFromEnv(env: NodeJS.ProcessEnv = process.env): CloudS
   const access = env.OHMAIL_CLOUD_ACCESS_TOKEN;
   const refresh = env.OHMAIL_CLOUD_REFRESH_TOKEN;
   const keks = keksFromEnv(env);
+  // ── WHICH DOOR THIS IS, AND IT IS THE PIN THAT SAYS SO ──────────────────────────────────────
+  //
+  // A paired door is configured with NO mailbox address: a pairing link names a computer, and
+  // which mailboxes this install reads is the host's answer to the redeem. Every other cloud door
+  // is entered by naming a mailbox, and an absent address there is a mirror belonging to nobody —
+  // which stays a hard refusal, because the whole of `enforceMirrorOwner` rests on that value.
+  //
+  // THE DISCRIMINATOR IS `OHMAIL_HOST_PIN` AND NOT THE ABSENCE OF THE ADDRESS, which is the
+  // difference between a rule and a hole. Reading "no address" as "this must be the paired door"
+  // would turn a hosted launch that lost its address — a truncated settings file, a launcher that
+  // dropped a variable — into a silently address-less mirror instead of the refusal it has always
+  // been. The pin is a POSITIVE fact the shell writes only for this door and refuses to write for
+  // any other (`config.rs` refuses the flavor without the pin and the pin without the flavor), so
+  // a door that carries one is a paired door by construction rather than by inference.
+  const pairedDoor = (env.OHMAIL_HOST_PIN ?? "").trim() !== "";
+  const address = env.OHMAIL_MAILBOX_ADDRESS?.trim();
   return {
     dataDir: env.OHMAIL_DATA_DIR ?? required("OHMAIL_DATA_DIR"),
     cloudUrl: env.OHMAIL_CLOUD_URL ?? required("OHMAIL_CLOUD_URL"),
-    address: env.OHMAIL_MAILBOX_ADDRESS ?? required("OHMAIL_MAILBOX_ADDRESS"),
+    /* `null` AND NEVER `""`. An empty string is an address that was configured and is blank, which
+       `sameOwner` matches against nothing — a mirror recorded that way is discarded on every
+       launch, which is the failure this whole change exists to avoid. */
+    address: pairedDoor ? address ?? null : address || required("OHMAIL_MAILBOX_ADDRESS"),
     ...(env.OHMAIL_MAILBOX_DISPLAY_NAME ? { displayName: env.OHMAIL_MAILBOX_DISPLAY_NAME } : {}),
     ...(access && refresh ? { tokens: { accessToken: access, refreshToken: refresh } } : {}),
     ...(env.OHMAIL_POLL_MS ? { pollIntervalMs: Number(env.OHMAIL_POLL_MS) } : {}),
