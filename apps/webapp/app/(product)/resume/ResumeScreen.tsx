@@ -51,6 +51,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { REFRESH_ENDPOINT, resumeSession } from "../../session-refresh";
+import { readOwner } from "../../shell/owner-cookie";
 
 /** Survives the reload a successful resume performs; scoped to this tab. */
 const ONCE_KEY = "ohmail.resume-attempted";
@@ -66,7 +67,7 @@ const ONCE_KEY = "ohmail.resume-attempted";
  */
 const LOOP_WINDOW_MS = 10_000;
 
-export function ResumeScreen() {
+export function ResumeScreen({ initialOwner = null }: { initialOwner?: string | null }) {
   const t = useTranslations("resume");
   const [failed, setFailed] = useState(false);
   /** React 18 StrictMode double-invokes effects in dev; the refresh must fire once. */
@@ -91,9 +92,38 @@ export function ResumeScreen() {
       return;
     }
 
+    /*
+     * ── THE ACCOUNT THIS SPLASH WAS CHOSEN FOR ────────────────────────────────────────────
+     *
+     * `initialOwner` is the marker as the EDGE saw it, when it decided to serve this page. The
+     * jar can have changed hands since — this effect runs after the document was delivered and
+     * hydrated, and the lock inside the refresh adds a second wait. A refresh under a jar that
+     * has become somebody else's rotates THEIR session from a window that is not theirs.
+     *
+     * `null` means the edge saw no marker, which is the ordinary shape of a cross-site
+     * navigation that withheld the cookies (the case this splash exists for). There is nothing
+     * to compare then, so nothing is refused — the predicate answers true and the resume runs
+     * exactly as it always has.
+     */
+    const stillMine = (): boolean => initialOwner === null || readOwner() === initialOwner;
+
     void (async () => {
-      const ok = await resumeSession();
+      /*
+       * NO SECOND CHECK BEFORE THIS CALL, and its absence is deliberate. One stood here and was
+       * removed when its mutation could not be made to bite: `resumeSession` consults the same
+       * predicate inside the lock, so an early copy changed no outcome in any reachable
+       * sequence — it only made the guard look like two guards. A check nothing can watch fail
+       * is not defence in depth, it is decoration that a later reader will trust.
+       *
+       * The one gap the predicate does NOT cover is `resumeSession`'s own `inFlight` dedupe: a
+       * refresh already running when this effect starts is returned as-is, predicate and all
+       * skipped. An early check would not have helped there either — the request has left.
+       */
+      const ok = await resumeSession({ mayProceed: stillMine });
       if (!ok) {
+        // The predicate refused: the jar changed while this waited for the lock. Same answer as
+        // above, and NOT `/login` — that would send a signed-in person to the front door.
+        if (!stillMine()) { window.location.reload(); return; }
         // NOT the marketing page. This browser was signed in a moment ago; showing it the
         // pitch would be answering "let me back in" with "here is what ohmail is". The server
         // has already cleared the jar, so `/` would render marketing — so go where the person

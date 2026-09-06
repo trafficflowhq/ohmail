@@ -347,6 +347,25 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
 
     const tick = async (): Promise<void> => {
       if (cancelled) return;
+      /*
+       * ── A POLL IS A READ, AND A READ IS AN ACTION HERE ──────────────────────────────────
+       *
+       * Every button on this wizard asks whose browser this is before it acts. This loop did
+       * not, and it is the one thing on the screen that runs WITHOUT a press — repeatedly, for
+       * up to a minute, after a return from checkout. A sign-in in another tab between two
+       * ticks and the next one reads that account's subscription: if they have one, the line
+       * below advances this wizard to the mailbox step on the strength of somebody else's
+       * plan; if they do not, their plan state is rendered here.
+       *
+       * Distinct from the disclosed preflight-to-write window, which is about the gap between
+       * an ask and a write. This had no ask at all.
+       *
+       * A refusal ENDS the loop rather than retrying: `sameAccount` has already put the
+       * account-changed sentence on screen, and a poll that kept running behind it would
+       * eventually overwrite that with a plan state for whoever is signed in now.
+       */
+      if (!await sameAccount()) return;
+      if (cancelled) return;
       const status = await billing.subscription().catch(() => null);
       if (cancelled) return;
       setSub(status);

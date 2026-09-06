@@ -403,7 +403,7 @@ export function apiOwnerHolds(path: string, opts: { ceremony?: boolean } = {}): 
  *
  * ── AND ON THE SIGN-IN ROUTES A DISAGREEMENT IS THE NEW OWNER ────────────────────────────────
  *
- * The same header on {@link CREDENTIAL_ROUTES} names whoever the credential resolved to, which
+ * The same header on {@link credentialRoutes} names whoever the credential resolved to, which
  * during a sign-in is precisely NOT the account the cookie still names. Refusing there would
  * refuse every sign-in that follows a different account's session. It is safe to adopt because
  * the server has already refused — `409 session_conflict` — any request whose live session and
@@ -467,22 +467,33 @@ export function accountHeaderCapability(): boolean | null {
  * prefix would silently enrol every route added below it into "a disagreement here is the new
  * owner", which is the one conclusion that must never be reached by default.
  */
-const CREDENTIAL_ROUTES = [
-  "/auth/login",
-  "/auth/refresh",
-  "/auth/verify-email",
-  "/auth/register",
-  "/auth/desktop-claim",
-  "/oauth/token",
-  "/auth/2fa/totp/verify",
-  "/auth/2fa/webauthn/assert/verify",
-  "/auth/2fa/recovery-codes/verify",
-  "/pair/redeem",
-] as const;
+/**
+ * The two census paths that only ever CLEAR the jar. A cleared session establishes nothing, so a
+ * header on one of these names an account that is on its way out — never a new owner.
+ */
+const CLEARS_ONLY = ["/auth/logout", "/account"] as const;
+
+/**
+ * DERIVED FROM THE CENSUS, not remembered — and the derivation is the correction.
+ *
+ * The first version of this list was the set of routes that RESOLVE A CREDENTIAL, taken as given.
+ * Review measured it against the server and three of them write no browser cookie at all:
+ * `/auth/desktop-claim` and `/oauth/token` answer with native tokens, and `/pair/redeem` returns
+ * none by design. A header adopted from one of those rewrites the browser's marker to name an
+ * account whose session this browser does not hold — after which every ordinary request passes
+ * the boundary and goes out under whatever session IS there.
+ *
+ * So the question is not "did this route resolve a credential" but "did this response ESTABLISH
+ * a session in this browser", and the client already derives exactly that set: the cookie-writer
+ * census, minus the two paths that only clear. `cookie-writer-census.test.ts` holds both halves
+ * to the server's own routes, so a route that stops writing cookies leaves this list by itself.
+ */
+const credentialRouteSet = (): readonly string[] =>
+  COOKIE_WRITING_PATHS.filter((p) => !(CLEARS_ONLY as readonly string[]).includes(p));
 
 /** The routes on which a header disagreeing with the cookie is a sign-in, for the guard to read. */
 export function credentialRoutes(): readonly string[] {
-  return CREDENTIAL_ROUTES;
+  return credentialRouteSet();
 }
 
 /**
@@ -522,7 +533,7 @@ export function reResolveApiOwner(): void {
 function checkAnswerOwner(path: string, seen: string | null | undefined, ceremony: boolean): void {
   if (seen === undefined) return;
 
-  if ((CREDENTIAL_ROUTES as readonly string[]).includes(path)) {
+  if (credentialRouteSet().includes(path)) {
     if (seen === null) return;              // established nothing — never "still you"
     bindApiOwner(seen);
     rememberOwner(seen);                    // the pair, and it must be a pair: see `rememberOwner`

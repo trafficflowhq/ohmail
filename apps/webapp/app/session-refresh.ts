@@ -318,10 +318,44 @@ export async function refreshSettled(): Promise<void> {
  * Never throws and never rejects: every caller is on an error path already, and a refresh that
  * blew up would turn a recoverable 401 into an unhandled rejection.
  */
-export async function resumeSession(): Promise<boolean> {
+/** What a caller may add to a resume. See {@link resumeSession}. */
+export interface ResumeOptions {
+  /**
+   * MAY THIS STILL RUN? Consulted inside the cross-tab lock, immediately before the request.
+   *
+   * `false` answers the resume as "did not happen" — deliberately not as a failure, because the
+   * caller that asked for the predicate is the one that knows what a refusal means for it. The
+   * splash reloads (the browser now holds somebody else's live session, so there is nothing to
+   * resume and the server will serve them); `api()` does not pass one at all.
+   */
+  mayProceed?: () => boolean;
+}
+
+export async function resumeSession(opts: ResumeOptions = {}): Promise<boolean> {
   if (inFlight) return inFlight;
   inFlight = withCrossTabLock(async () => {
+    /*
+     * ── STILL THE SAME BROWSER? ASKED INSIDE THE LOCK, NOT BEFORE IT ─────────────────────
+     *
+     * A refresh ROTATES whatever session the jar holds, and this function's caller may have
+     * decided to call it a long time ago — the resume splash is chosen by the edge, under the
+     * cookies of that request, and its effect does not run until the page has hydrated. The
+     * lock adds a second wait on top of that. Either gap is enough for another tab to sign in,
+     * and the rotation would then spend that account's refresh token from a window that was
+     * never theirs — which their own tab can then present as a consumed one and be read as
+     * reuse.
+     *
+     * Here rather than at the call site for the same reason `csrfToken()` is read here: what
+     * matters is the jar as it is when the request LEAVES, not as it was when somebody decided
+     * to make one.
+     */
+
     try {
+      // INSIDE the `try`, so the `finally` below clears `inFlight`. Outside it, one refusal
+      // left the module's dedupe holding a settled promise for the life of the page and every
+      // later resume — including `api()`'s recovery — answered `false` without asking anything.
+      // Found by running the cases in file order rather than one at a time.
+      if (opts.mayProceed && !opts.mayProceed()) return false;
       /*
        * THE CSRF HEADER IS REQUIRED HERE, and the comment that used to stand in its place was
        * wrong in production.
@@ -411,11 +445,32 @@ export async function resumeSession(): Promise<boolean> {
     } catch {
       lastOutcome = "unavailable";
       return false;                    // offline, aborted, DNS — not resumable right now
-    } finally {
-      inFlight = null;
     }
   });
-  return inFlight;
+  /*
+   * ── CLEARED AFTER THE ASSIGNMENT, AND ONLY IF IT IS STILL OURS ──────────────────────────
+   *
+   * This used to be a `finally` inside the callback, and that is a race with its own assignment:
+   * a callback that settles before `withCrossTabLock` has returned — which an account predicate's
+   * early refusal makes ordinary rather than exotic — runs the `finally` FIRST, and the line
+   * below then stores a settled promise that nothing will ever clear. Every later resume,
+   * including `api()`'s recovery path, returns that cached answer without asking anything.
+   *
+   * Found by running this file's cases in order instead of one at a time: alone each passed, and
+   * together the second one wedged the third.
+   *
+   * NO IDENTITY CHECK ON THE CLEAR. One stood here — `if (inFlight === started)` — against "a
+   * newer resume having replaced it in the meantime", and there is no such sequence: the guard at
+   * the top of this function returns the live promise rather than starting a second, so while
+   * `started` IS `inFlight` nothing can replace it. Removed rather than kept as defence in depth,
+   * because a condition whose contrary state is unreachable cannot be watched fail — and this
+   * lane has twice now had such a line read by a later reviewer as a guarantee. What fixes the
+   * race is the PLACEMENT, after the assignment rather than inside the callback, and that is the
+   * whole of it.
+   */
+  const started = inFlight;
+  void started.finally(() => { inFlight = null; });
+  return started;
 }
 
 /** Did this refusal come from OUR envelope — `{error: {code}}` — rather than from a platform? */
