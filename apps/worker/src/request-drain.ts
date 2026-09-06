@@ -396,6 +396,17 @@ export async function applyMetaRequests(
    * that finished work, and every ordinary step of the walk forgot where it had got to. A guard
    * written for that very property caught it. */
   let pageAdvance: { bottom: true } | { bottom: false; lo: number } | null = null;
+  /* ── ONE WRITER FOR THE RESUME POINT ────────────────────────────────────────────────────
+   *
+   * The walk used to write `drainCursors` directly as it stepped, while ALSO leaving
+   * `pageAdvance` holding the bound from an earlier page. Whichever ran last won, and the exits
+   * below run last: eight steps across empty windows advanced the cursor eight times and then
+   * `keepPlace` put back the bound from before the first of them. Every cycle re-walked the same
+   * gaps and the requests beneath them were never reached — the defect the gap step was added to
+   * fix, reintroduced by the fix for it.
+   *
+   * Nothing in the walk touches `drainCursors` now; it records where it got to in `pageAdvance`
+   * and this is the only thing that writes. */
   const keepPlace = (capBit: boolean): void => {
     if (pageAdvance === null || capBit) return;
     if (pageAdvance.bottom) drainCursors.delete(rt.mailboxId);
@@ -535,7 +546,7 @@ export async function applyMetaRequests(
         if (hasRequestRecord(records)) break;
         if (cursor === null || cursor <= 1) {
           // The bottom: nothing older to resume into, so the next cycle starts fresh.
-          drainCursors.delete(rt.mailboxId);
+          pageAdvance = { bottom: true };
           break;
         }
         let older: RawMetaMessage[];
@@ -556,9 +567,9 @@ export async function applyMetaRequests(
            * arithmetic says where this window began, so the walk can continue beneath it
            * without a record to take a bound from. */
           const gap = metaPageBounds(cursor);
-          if (gap.bottom) { drainCursors.delete(rt.mailboxId); break; }
+          if (gap.bottom) { pageAdvance = { bottom: true }; break; }
           cursor = gap.lo;
-          drainCursors.set(rt.mailboxId, gap.lo);
+          pageAdvance = { bottom: false, lo: gap.lo };
           continue;
         }
         const next = lowestRef(older);
@@ -698,7 +709,6 @@ export async function applyMetaRequests(
    * pending here at all, and treating it as such is what pinned the walk above every older
    * request. So the page's own bound is taken whenever the slice consumed everything it was
    * offered, and held only when the cap truly bit. */
-  keepPlace(malformed.length > takeMalformed.length || wellFormed.length > takeWellFormed.length);
   let deferred = budget - takeMalformed.length - takeWellFormed.length;
 
   let applied = 0;
@@ -1033,6 +1043,22 @@ export async function applyMetaRequests(
       applied, refused, deferred, standing, ackFailures,
     });
   }
+
+  /* ── UNFINISHED IS UNFINISHED, WHETHER THE COUNT OR THE CLOCK STOPPED IT ────────────────
+   *
+   * This asked only whether the per-cycle COUNT had truncated the slice. The slice is also cut
+   * short by the time budget — a pass that takes two hundred records and gets through eighty
+   * before its clock runs out defers the rest, and with a count-only test the resume point moved
+   * below all two hundred. The hundred and twenty deferred ones then waited for the walk to reach
+   * the bottom and come round again, which on a deep folder is a long time and, with the gap step
+   * broken as it was, never.
+   *
+   * Deferred means taken and not settled, which is exactly the state that must hold the bound. */
+  keepPlace(
+    malformed.length > takeMalformed.length
+    || wellFormed.length > takeWellFormed.length
+    || deferred > 0,
+  );
 
   return { applied, refused, deferred, standing };
 }
