@@ -584,6 +584,10 @@ async function readCandidates(
       eq(messages.accountId, responder.accountId),
       gt(messages.createdAt, responder.floor),
       gte(messages.date, responder.floor),
+      // `ne 'external'`, so `'us'` AND `'peer'` are both candidates — deliberately. This asks
+      // "did mail arrive for me", not "may I move it": a message a READER adopted at the gate
+      // (`'peer'`, `pipeline.ts#readerAdoption`) is still an arrival somebody sent, and the one
+      // thing that must not earn an auto-reply is a message the user themselves filed.
       or(isNull(folderState.lastSetBy), ne(folderState.lastSetBy, "external")),
       // A DECIDED CANDIDATE IS OUT, FOR EVER. The anti-join, and the reason the pass converges.
       isNull(awayReplies.id),

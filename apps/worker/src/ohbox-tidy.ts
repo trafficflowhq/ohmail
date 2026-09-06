@@ -643,7 +643,11 @@ function isOwed(
  *    a row this pass has already demoted is desired into Reads/Receipts and drops out, so a second
  *    run writes nothing whether or not the marker is set.
  *  · `folder_state.last_set_by = 'us'` — a row set `'external'` is a placement the USER made in their
- *    own mail client, which the reconciler already refuses to revert.
+ *    own mail client, which the reconciler already refuses to revert. **`'peer'` is excluded here
+ *    too, and that is a decision rather than an omission:** it is another install of this account's
+ *    placement, seen by a reader, and this pass runs unbidden — admitting it would make a promotion
+ *    re-file the other install's mail in bulk, which is the shape the import hold refuses.
+ *    `rule-retro` is the only pass that admits `'peer'`, because a person has to press for it.
  *  · the mailbox is not `disabled` — a disabled mailbox is one Cloud no longer organizes (the lease
  *    was lost, or the user left), and nothing will ever reconcile a `pending` row written for it.
  *  · NO move-to-Ohbox change row — the "user always wins" guard (see the file header). An in-app drag

@@ -271,10 +271,29 @@ export interface InsertMessageInput {
   authVerdict?: AuthVerdict;
 }
 
+/**
+ * WHO put this message where it is — the value every pass that could move it again consults.
+ *
+ *  · `"us"`       — THIS install decided. Required by every unpressed mover, and the durable record
+ *                   of which install was the organizer.
+ *  · `"external"` — the USER placed it by hand, in a folder of their own. `reconcileFolders` and
+ *                   all four retro passes leave it alone, permanently.
+ *  · `"peer"`     — ANOTHER install of this account placed it, in a folder ohmail organizes, and a
+ *                   READER observed that. Out of every UNPRESSED mover's reach exactly as
+ *                   `"external"` is; reachable only by `rule-retro`, and only for a rule whose owner
+ *                   asked for it to be applied to mail already on disk. See
+ *                   `pipeline.ts#readerAdoption`.
+ *
+ * No migration and no CHECK constraint: the column is `text NOT NULL`. That is also the reason a
+ * consumer must never map an unrecognised value onto `"us"` — the fail-safe direction is to leave
+ * a row alone, not to hand it to a mover.
+ */
+export type FolderAttribution = "us" | "external" | "peer";
+
 export interface FolderStateRow {
   desiredFolder: string;
   observedFolder: string;
-  lastSetBy: "us" | "external";
+  lastSetBy: FolderAttribution;
   /**
    * The PHYSICAL folder that SATISFIES `desiredFolder` for this row, when the two legitimately
    * differ — the spam verdict's shape (imap-types.ts, the 2026-08-22 amendment): the user's

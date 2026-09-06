@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import {
   approvals, drafts, folderState, mailboxes, messageBodies, messageStates, messages,
   recordChange, rules as rulesTbl, type Tx,
@@ -229,6 +229,37 @@ export async function ruleRetroPass(
     eq(rulesTbl.enabled, true),
     ...(deps.force ? [] : [isNull(rulesTbl.retroDoneAt)]),
     ...(deps.accountId ? [eq(rulesTbl.accountId, deps.accountId)] : []),
+    /* ── A RULE THIS INSTALL CANNOT ACT ON STAYS OWED. IT IS NOT "DONE" ──────────────────────
+     *
+     * The owed probe is per ACCOUNT and the candidate query below is per MAILBOX. Without this
+     * clause, an account whose mailbox this install does not organize selected the rule, walked
+     * ZERO candidates (the `organizer_role` gate excluded every one), read a short page as the end
+     * of the backlog, and stamped `retro_done_at`. Promoting the install afterwards honoured
+     * nothing, because nothing was owed any more.
+     *
+     * What that costs is a PRESS. `retro_requested_at` is set only because a person ticked "apply
+     * to existing mail"; consuming it while we could not look is a completion claim about work
+     * that never happened, and the person is told nothing. It swallowed presses for `'us'` rows
+     * long before `'peer'` existed — but `'peer'` is what makes it load-bearing, because this pass
+     * is the only route back for mail a READER adopted, so a consumed press is the difference
+     * between recoverable and not.
+     *
+     * **This corrects a stated expectation, and the correction is written here so the next reader
+     * does not re-derive it:** an owed rule was believed to "stay owed because the
+     * `organizer_role` gate holds it and fire on promotion". The gate holds the CANDIDATES; it
+     * never held the rule. Now the rule stays owed because it is never SELECTED — and being
+     * unselected is the only state from which a later promotion can still honour it.
+     *
+     * EXISTS over the account's mailboxes, not NOT EXISTS over one: an account can hold several,
+     * and one organized mailbox is enough to make the walk meaningful. The per-mailbox gate below
+     * is unchanged and still decides, row by row, which of them may actually be touched.
+     */
+    sql`exists (
+      select 1 from ${mailboxes} mb
+       where mb.account_id = ${rulesTbl.accountId}
+         and mb.status <> 'disabled'
+         and mb.organizer_role = 'organizer'
+    )`,
   ];
   const owed = await db.select({ id: rulesTbl.id, accountId: rulesTbl.accountId })
     .from(rulesTbl).where(and(...owedFilters))
@@ -467,9 +498,12 @@ export async function ruleRetroPass(
  * One rule, stated when this pass was designed: **a message the user has already
  * acted on is not ours to move.**
  *
- *  1. `folder_state.last_set_by = 'us'` — a row set `external` is a placement the user made in
- *     their own mail client. This is not a preference: `reconcileFolders` SKIPS
+ *  1. `folder_state.last_set_by` is `'us'` or `'peer'` — a row set `external` is a placement the
+ *     user made in their own mail client. This is not a preference: `reconcileFolders` SKIPS
  *     `lastSetBy !== "us"`, so writing over it would be us reverting their hand-filing.
+ *     **`'peer'` is admitted here and in no other pass** — another install of this account placed
+ *     it and a reader recorded that, and this pass is the only one a person has to press for. The
+ *     argument is written out at the candidate predicate below.
  *  2. no `message_states` row in a state other than `none` — reply-later, set-aside, bubbled-up
  *     and muted are the four ways the product lets someone triage, and yanking a message out of a
  *     pile they built is the failure this prevents.
@@ -525,13 +559,36 @@ async function selectCandidates(
     // list from a module that carries `imapflow` is how that guard gets weakened by accident, and it
     // is how this line was first written.
     //
-    // The `last_set_by = 'us'` line below is the second, independent gate — a passive row is written
-    // `'external'` — and either one alone is sufficient. Both are here because they fail differently:
-    // this one is a property of the FOLDER and holds even for a row some future path writes `'us'`.
+    // The `last_set_by` line below is the second, independent gate, and either one alone is
+    // sufficient. Both are here because they fail differently: this one is a property of the FOLDER
+    // and holds even for a row some future path writes `'us'`.
     sql`${folderState.desiredFolder} in ${sql`(${sql.join(
       DESTINATIONS.map((f) => sql`${f}`), sql`, `,
     )})`}`,
-    eq(folderState.lastSetBy, "us"),
+    /* -- THIS IS THE ONE PASS THAT ADMITS `'peer'`, AND ONLY BECAUSE A PERSON PRESSED ---------
+     *
+     * `'peer'` is a placement made by ANOTHER install of this same account, in a folder ohmail
+     * organizes, recorded by a READER that watched it happen (`pipeline.ts#readerAdoption`). It
+     * used to be written `'external'`, which says the person filed it by hand and means "hands
+     * off, for ever" — so mail sitting at the gate behind a decision they had already made could
+     * never be reached again by the rule they wrote. That is the defect this admits.
+     *
+     * It is safe HERE and nowhere else because this pass is the only one gated on a PRESS: a rule
+     * only becomes owed when its owner asked for it to be applied to mail already on disk
+     * (`retro_requested_at`). `ohbox-tidy` and `screener-auto` run unbidden, and admitting `peer`
+     * there would make a promotion re-file the other install's placements in bulk — the exact
+     * shape the import hold refuses. They stay `'us'`-only, deliberately.
+     *
+     * `'external'` is still excluded, and that distinction is the whole reason a third value
+     * exists rather than a widened `!= 'external'`: a person dragging a message into `INBOX` in
+     * Apple Mail arrives at this table looking identical, and their hand still wins.
+     *
+     * ONE NAMED CONSEQUENCE, unchanged in kind: a rule created WITH retro during a reader window
+     * stays owed (the `organizer_role` gate below holds it) and fires on promotion. That is what
+     * already happened for `'us'` rows and now also happens for `'peer'` ones. The press was the
+     * user's, and the five user-intent exclusions below still apply to every row it touches.
+     */
+    inArray(folderState.lastSetBy, ["us", "peer"]),
     /* -- THE MAILBOX IS ONE THIS INSTALL STILL ORGANIZES — BOTH HALVES (mail 0083) ----------
      *
      * `status = 'disabled'` was the whole test, and it stopped being sufficient the moment the
@@ -540,9 +597,10 @@ async function selectCandidates(
      * `desired_folder` with `last_set_by: 'us'` on a mailbox another install is arranging.
      *
      * The rows are REACHABLE, which is why this is a defect rather than a theoretical one. A
-     * reader's own ingest writes `'external'`, so its NEW mail is out of reach by data — but a
-     * demoted organizer keeps its store, and every row it filed while it WAS the organizer is
-     * still `'us'`. Those are exactly the rows a new rule's retro pass would re-file.
+     * reader's own ingest writes `'peer'` (`'external'` before the third value existed), which
+     * this pass now admits — but a demoted organizer also keeps its store, and every row it filed
+     * while it WAS the organizer is still `'us'`. Both are exactly the rows a new rule's retro
+     * pass would re-file, and this clause is what stops it while the install is a reader.
      *
      * The consequence is not merely a queued move. `reconcileFolders` is skipped for a reader, so
      * nothing executes it today — and that is the trap: the intent sits in `folder_state` waiting,

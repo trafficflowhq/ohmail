@@ -335,7 +335,10 @@ export async function screenerAutoApplyPass(
  *  · `folder_state.desired_folder = 'ohmail/Screener'` — it is held at the gate. Also the whole of
  *    the idempotency: a row this pass has moved is desired into Reads/Receipts and drops out.
  *  · `folder_state.last_set_by = 'us'` — a row set `external` is a placement the USER made in their
- *    own mail client, which the reconciler already refuses to revert.
+ *    own mail client, which the reconciler already refuses to revert. **`'peer'` is excluded here
+ *    too, deliberately:** a graduated pattern auto-applying to mail nobody on this install decided
+ *    about is precisely what this pass may not do. Only `rule-retro` admits `'peer'`, and only
+ *    behind a press.
  *  · the mailbox is not `disabled` — nothing will ever reconcile a `pending` row written for one.
  *
  * ── AND THE USER-INTENT EXCLUSIONS — a message the user has acted on is not ours to move ────────

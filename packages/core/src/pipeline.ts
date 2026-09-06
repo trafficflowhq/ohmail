@@ -25,6 +25,10 @@ import type {
 } from "./ports.js";
 import type { ClassifierPort, ClassifierResult } from "./classifier-port.js";
 import type { NormalizedMessage } from "./types.js";
+// A VALUE import, and from `types.js` rather than `adapters/imap-types.js` which re-exports it:
+// that module's entry point carries `imapflow`, and this predicate is deliberately kept in a module
+// with no imports at all so every caller can reach it. See {@link isOrganizedFolder}.
+import { isOrganizedFolder } from "./types.js";
 
 /** Confidence a graduated pattern must meet before the AI branch auto-applies. */
 export const AUTO_APPLY_CONFIDENCE_BAR = 0.7;
@@ -158,6 +162,10 @@ export async function applyReconcileAction(
       return { locator: newLocator, state: next };
     }
     case "adopt_external": {
+      // `'external'` unconditionally, and NOT `action.attribution`: this is the reconcile runner,
+      // which carries an organizer's intent to the server. A reader issues no moves and never
+      // reaches it, so an adoption arriving here is a person's own hand by construction. The
+      // reader's adopt is committed in `commitChange` instead, which does read `attribution`.
       const next: FolderStateRow = {
         desiredFolder: action.newDesired,
         observedFolder: action.newDesired,
@@ -226,7 +234,8 @@ export interface NewPlan {
    */
   authVerdict: AuthVerdict;
   /**
-   * THIS ARRIVAL IS IN A FOLDER THE CUSTOMER MADE — carried from {@link Change.passive}.
+   * THIS PLACEMENT WAS MADE BY SOMEBODY OTHER THAN THIS ORGANIZER — the customer's own hand, or the
+   * previous organizer whose folders an import hold has not yet asked about.
    *
    * It decides ONE thing at commit, and it is the third of the three structural gates listed on
    * `imap-types.ts#PASSIVE_EXCLUDED_SPECIAL_USE`: the `folder_state` row is written
@@ -236,10 +245,27 @@ export interface NewPlan {
    * mail client"*, which is exactly what an archive folder is, and **every pass that moves mail
    * requires `'us'`** — `reconcileFolders` skips a non-`'us'` row outright, and `rule-retro`,
    * `ohbox-tidy`, `screener-auto` and `read-retro` all carry `eq(folderState.lastSetBy, "us")` in
-   * their candidate predicates. So a passive row is out of every mover's reach by DATA, not only by
-   * the early return in `planChange` that put it there. Two independent gates, either sufficient.
+   * their candidate predicates — `rule-retro` the widest, at `["us", "peer"]`. So a passive row is
+   * out of every UNPRESSED mover's reach by DATA, not only by the early return in `planChange` that
+   * put it there. Two independent gates, either sufficient.
+   *
+   * **WHAT IT NO LONGER DECIDES IS *WHICH* NON-`us` VALUE.** `passive` says only "this install did
+   * not decide this placement". {@link NewPlan.adoption} says whose it was, and the commit reads
+   * `p.passive ? (p.adoption ?? "external") : "us"`. A reader in a folder ohmail ORGANIZES is the
+   * one case where `'external'` would be a false claim — see {@link readerAdoption}.
    */
   passive?: boolean;
+  /**
+   * WHOSE placement this is, when {@link NewPlan.passive} says it is not ours — `'peer'`, meaning
+   * another install of this same account, or absent, meaning the user's own hand.
+   *
+   * Written ONLY by the reader arm, and only for a folder `isOrganizedFolder` answers true for.
+   * `change.passive` and the import hold leave it absent on purpose and so keep `'external'`; the
+   * reasoning for each is in {@link readerAdoption}. Absent is therefore the default that BOTH
+   * untouched callers take, which is why it is pinned by its own control rather than left to the
+   * `??`.
+   */
+  adoption?: "peer";
   ai?: AiPlan;
 }
 
@@ -390,8 +416,17 @@ export interface PlanDeps {
    * pinned by a test:
    *
    *  · a NEW message keeps `change.locator.folder` — where the server already had it — and is
-   *    committed with {@link NewPlan.passive}, i.e. `last_set_by: 'external'`. That is what the
-   *    placement IS: the standing state of the user's own mailbox, made by whoever organizes it.
+   *    committed with {@link NewPlan.passive}. WHICH non-`us` value that becomes depends on the
+   *    FOLDER, not on this mode: `'external'` in one of the customer's own folders, where the
+   *    placement really is theirs, and `'peer'` in a folder ohmail ORGANIZES (`INBOX` and the
+   *    `ohmail/*` destinations), where it was made by another install of this account. See
+   *    {@link readerAdoption} for why calling the second one `'external'` froze the message past
+   *    the reach of every mover. A reader never writes `'us'`. Either way it ADOPTS: `desired` is
+   *    the arrival folder and no move is ever issued.
+   *  · an EXISTING message the reader finds somewhere new is adopted the same way, and carries the
+   *    same distinction through `ReconcileAction`'s `attribution`. BOTH seams, or the shape a
+   *    demoted organizer leaves behind depends on whether the message was first seen at the gate
+   *    or moved there afterwards.
    *  · NO rules are read, NO known-sender set is read, NO classifier is constructed, NO credit is
    *    debited, NO `routing_decisions` row is written and NO learning signal is recorded. Not
    *    "the classifier happens to be undefined" — the branch is never entered, which is why the
@@ -400,9 +435,15 @@ export interface PlanDeps {
    *  · an EXISTING message never yields a `move`. The reconciler's answer is forced to
    *    `adopt_external` (or `none`), which is exactly a reader following the organizer's hand.
    *
-   * `passive` and `external` are not new machinery invented for this: every retro pass already
-   * requires `last_set_by = 'us'`, so a reader's rows are out of every mover's reach by DATA as
-   * well as by the branch that put them there. Two independent gates, either sufficient.
+   * `passive` is not new machinery invented for this: every retro pass already required
+   * `last_set_by = 'us'`, so a reader's rows are out of every mover's reach by DATA as well as by
+   * the branch that put them there. Two independent gates, either sufficient.
+   *
+   * `'peer'` narrows the first gate by exactly one pass and no more. `rule-retro` admits it,
+   * because that pass only ever runs for a rule whose owner asked for it to reach mail already on
+   * disk; `ohbox-tidy`, `screener-auto`, `sensitive-rescreen` and `reconcileFolders` do not, so
+   * being promoted back to organizer still moves nothing on its own. That is the property to
+   * preserve if a fifth pass is ever written: a reader's rows wait for a press, they do not queue.
    */
   readerMode: boolean;
   classifier?: ClassifierPort;
@@ -688,6 +729,70 @@ function bodySnippet(normalized: NormalizedMessage): string {
   return normalized.textBody.replace(/\s+/g, " ").trim().slice(0, 200);
 }
 
+/**
+ * WHOSE PLACEMENT IS THIS — for a READER, which is the one install that can meet all three answers.
+ *
+ * `folder_state.last_set_by` answers "who put this message where it is", and the answer decides
+ * which passes may ever move it again. It has three values, and a reader is the only writer that
+ * has to choose between the last two:
+ *
+ *  · `'us'` — THIS install decided. Every unpressed mover requires it, and it is also the durable
+ *    record of which install was the organizer, which is how a demoted organizer that got one
+ *    organizing cycle in is told apart from an install that only ever mirrored. A reader must
+ *    never write it: it would be a false claim in that record, and it would hand the row to
+ *    `ohbox-tidy` and `screener-auto`, so a promotion would become a bulk re-filing of somebody
+ *    else's placements — which is exactly what the import hold above exists to refuse.
+ *  · `'external'` — the USER placed it, by hand, in a folder of their own. True of `Archive` and
+ *    `Private/Editor`; false of the folders ohmail itself files into, because nobody hand-files
+ *    mail into ohmail's own consent queue.
+ *  · `'peer'` — ANOTHER install of this account placed it, in a folder ohmail organizes. This is
+ *    what a reader actually observes, and before it existed the reader wrote `'external'` for it:
+ *    a message first seen at the gate while this install held no lease was recorded as the
+ *    person's own filing, and `'external'` means "hands off, for ever" to `rule-retro`,
+ *    `ohbox-tidy`, `screener-auto` and `reconcileFolders` alike. So mail behind a decision the
+ *    person had already made stayed at the gate and nothing could reach it again.
+ *
+ * `peer` is out of every UNPRESSED mover's reach, exactly as `external` was — only
+ * `rule-retro.ts` admits it, and only for a rule whose owner asked for it to be applied to mail
+ * already on disk. Promotion therefore moves nothing on its own.
+ *
+ * ── WHY THE WRITER AND NOT THE READERS ──────────────────────────────────────────────────────
+ *
+ * The four movers cannot tell a reader's adoption from a person dragging a message into `INBOX`
+ * in Apple Mail: both arrive as an observation in a folder we did not choose. Only the code that
+ * knows it is running as a reader can say which happened, so the distinction is made once, here,
+ * and recorded.
+ *
+ * ── WHO DOES NOT CALL THIS ──────────────────────────────────────────────────────────────────
+ *
+ * `change.passive` keeps `'external'` unconditionally: its premise is guaranteed upstream by
+ * `imap-types.ts#passiveFolderExclusion`, which refuses any path inside the ohmail namespace, so
+ * the folder really is one the customer made. The import hold keeps `'external'` too, and there
+ * it is the point — read its docblock: *"without this one word the hold would only postpone the
+ * re-screen it exists to prevent."*
+ *
+ * The `?? "external"` default at the commit is therefore the branch BOTH of those take. It is the
+ * untested-by-default direction, so it is pinned by a control of its own: a plan with `passive`
+ * and no `adoption` must still write `'external'`.
+ */
+function readerAdoption(arrivalFolder: string): { adoption?: "peer" } {
+  return isOrganizedFolder(arrivalFolder) ? { adoption: "peer" } : {};
+}
+
+/**
+ * The same question for an EXISTING message — see {@link readerAdoption} for the whole argument.
+ *
+ * Two spellings because the answer rides two different shapes: {@link NewPlan.adoption} on a plan
+ * for mail we are ingesting, and `ReconcileAction`'s `attribution` on the adopt action for mail we
+ * already hold. Both delegate to the one predicate, so the two seams cannot drift apart — and both
+ * MUST exist: a demoted organizer meets a message either as new-in-`ohmail/Screener` or as one it
+ * already held that has since moved there, and with only one seam changed the row it leaves behind
+ * would depend on which of those happened first.
+ */
+function readerAttribution(arrivalFolder: string): { attribution?: "peer" } {
+  return isOrganizedFolder(arrivalFolder) ? { attribution: "peer" } : {};
+}
+
 /** A tiny, sensitivity-safe digest of routing-relevant headers (never the body). */
 function headersDigest(normalized: NormalizedMessage): string {
   const h = normalized.headers;
@@ -925,6 +1030,7 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
           seen: change.seen ?? false,
           authVerdict,
           passive: true,
+          ...readerAdoption(arrivalLocator.folder),
         },
       };
     }
@@ -1328,7 +1434,11 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
   const action: ReconcileAction = deps.readerMode === true
     ? (change.locator.folder === state.desiredFolder
       ? { type: "none" }
-      : { type: "adopt_external", newDesired: change.locator.folder })
+      : {
+        type: "adopt_external",
+        newDesired: change.locator.folder,
+        ...readerAttribution(change.locator.folder),
+      })
     : unexpungedSource
       ? { type: "move", to: state.desiredFolder }
       : reconcile(state, change.locator.folder, evidence);
@@ -1589,9 +1699,12 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
     const initial: FolderStateRow = {
       desiredFolder: p.desired,
       observedFolder: p.arrivalLocator.folder,
-      // `'external'` for a folder the CUSTOMER made — see {@link NewPlan.passive} for why this one
-      // word is a structural gate rather than a label.
-      lastSetBy: p.passive ? "external" : "us",
+      // NOT a label — a structural gate. See {@link NewPlan.passive} and {@link readerAdoption}:
+      // `'us'` is "this install decided", `'external'` is "the user filed it by hand in a folder of
+      // their own", `'peer'` is "another install of this account placed it in a folder we organize".
+      // The `?? "external"` is the branch `change.passive` and the import hold take, and it is
+      // pinned by a control of its own rather than left to this operator.
+      lastSetBy: p.passive ? (p.adoption ?? "external") : "us",
     };
     await repo.upsertFolderState(stored.id, initial);
 
@@ -1819,7 +1932,12 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
     }
     case "adopt_external": {
       const to = e.action.newDesired;
-      await repo.upsertFolderState(e.messageId, { desiredFolder: to, observedFolder: to, lastSetBy: "external" });
+      // `?? "external"` — the ORGANIZER's adoption, which is a person moving their own mail in
+      // their own client and is exactly what `'external'` is for. Only the reader seam supplies
+      // `attribution`, and only for a folder ohmail organizes; see {@link readerAdoption}.
+      await repo.upsertFolderState(e.messageId, {
+        desiredFolder: to, observedFolder: to, lastSetBy: e.action.attribution ?? "external",
+      });
       // The tombstone was already cleared before the switch (every arrival shape clears it, not
       // only this arm — see the block above); the `move` change below carries the live entity,
       // so this arm needs no separate resurrection delta.

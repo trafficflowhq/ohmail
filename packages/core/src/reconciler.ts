@@ -3,7 +3,21 @@ import { permitsAdoption, type FolderStateRow, type MoveEvidence } from "./ports
 export type ReconcileAction =
   | { type: "none" }
   | { type: "move"; to: string }
-  | { type: "adopt_external"; newDesired: string };
+  | {
+      type: "adopt_external";
+      newDesired: string;
+      /**
+       * WHOSE placement is being adopted — `'peer'` when a READER observed another install of this
+       * account file the message into a folder ohmail organizes; absent for everything else, which
+       * is the user's own hand and commits `'external'`.
+       *
+       * Absent by default on purpose: `reconcile()` below never sets it, so every ORGANIZER path
+       * keeps the behaviour it had. Only the reader seam in `pipeline.ts` supplies it. See
+       * `pipeline.ts#readerAdoption` for why calling a reader's adoption `'external'` froze the
+       * message past the reach of every mover.
+       */
+      attribution?: "peer";
+    };
 
 /**
  * Pure desired-vs-observed decision.

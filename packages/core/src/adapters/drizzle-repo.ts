@@ -3,6 +3,7 @@ import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { accountStorage, changeLog, messages, messageInstances, messageFailures, folderOps, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordChange as recordChangeTx, recordChanges as recordChangesTx, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS } from "@trafficflow/db";
 import type {
   RepoPort, RoutingPort, StoredMessage, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
+  FolderAttribution,
   Rule, NativeLocator, EmailAddress,
   MessageBodyInput, BodyStorageContext, BodyStorageOutcome, RepoChangeInput, RoutingDecisionInput, ApprovalInput, AttachmentMeta,
   ThreadParent, ThreadUpsertInput, ThreadUpsertResult, ThreadMergeInput,
@@ -48,7 +49,7 @@ export interface KnownLocator {
 }
 export interface PendingFolderState {
   messageId: string; desiredFolder: string; observedFolder: string;
-  lastSetBy: "us" | "external"; nativeLocator: NativeLocator | null;
+  lastSetBy: FolderAttribution; nativeLocator: NativeLocator | null;
   /**
    * Refusals already on record for this move (mail 0058), which the reconciler's bounded backoff
    * reads to decide how long to defer the next attempt.
@@ -105,7 +106,7 @@ export interface JunkFiledHuskRow {
 /** A `flag_state` row still owed an IMAP write, joined to the locator the write needs. */
 export interface PendingFlagState {
   messageId: string; desiredSeen: boolean; observedSeen: boolean;
-  lastSetBy: "us" | "external"; nativeLocator: NativeLocator | null;
+  lastSetBy: FolderAttribution; nativeLocator: NativeLocator | null;
   /** Refusals on record for this `\Seen` write — see {@link PendingFolderState.attempts}. */
   attempts?: number;
 }
@@ -197,7 +198,7 @@ export interface FolderCompletion {
    * write a stale echo here with `physicalObservation: true`; see that flag's own doc.
    */
   observedFolder: string;
-  lastSetBy: "us" | "external";
+  lastSetBy: FolderAttribution;
   /**
    * See {@link FolderStateRow.satisfiedBy} — derives the status, never stored (there is no
    * column), and only ever credited when {@link expectDesiredFolder} still matches the row's live
@@ -297,7 +298,9 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    *    `subject_contains`/`body_contains` is a CONJUNCTION about a subset of that sender's mail
    *    (mail 0050, 0052), so it rules on nothing else. See the statement itself.
    *  · `last_set_by = 'us'`. A row set `external` is a placement the user performed in their own
-   *    mail client, and the folder reconciler already refuses to revert those.
+   *    mail client, and the folder reconciler already refuses to revert those. `'peer'` — another
+   *    install of this account's placement, recorded by a reader — is excluded here as well; see
+   *    `pipeline.ts#readerAdoption` for why only `rule-retro` admits it.
    *
    * `FOR UPDATE OF folder_state` is the concurrency half: two workers mid-leader-handover both
    * running this pass block on the same rows, and the loser re-evaluates the predicate against
@@ -1412,7 +1415,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     return {
       desiredFolder: r.desiredFolder,
       observedFolder: r.observedFolder,
-      lastSetBy: r.lastSetBy as "us" | "external",
+      lastSetBy: r.lastSetBy as FolderAttribution,
     };
   }
 
@@ -2637,7 +2640,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     const rows = await (limit != null ? base.limit(limit) : base);
     return rows.map((r) => ({
       messageId: r.messageId, desiredFolder: r.desiredFolder, observedFolder: r.observedFolder,
-      lastSetBy: r.lastSetBy as "us" | "external", nativeLocator: (r.nativeLocator as NativeLocator | null) ?? null,
+      lastSetBy: r.lastSetBy as FolderAttribution, nativeLocator: (r.nativeLocator as NativeLocator | null) ?? null,
       attempts: r.attempts,
     }));
   }
@@ -2654,7 +2657,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       ));
     return rows.map((r) => ({
       messageId: r.messageId, desiredSeen: r.desiredSeen, observedSeen: r.observedSeen,
-      lastSetBy: r.lastSetBy as "us" | "external", nativeLocator: (r.nativeLocator as NativeLocator | null) ?? null,
+      lastSetBy: r.lastSetBy as FolderAttribution, nativeLocator: (r.nativeLocator as NativeLocator | null) ?? null,
       attempts: r.attempts,
     }));
   }

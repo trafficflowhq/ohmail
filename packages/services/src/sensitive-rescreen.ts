@@ -883,7 +883,9 @@ async function moveDestinations(
  * six entries, `4b` included.)
  *
  *  1. `folder_state.last_set_by = 'us'` — a row set `external` is a placement the USER performed
- *     in their own mail client, and the folder reconciler already refuses to revert those.
+ *     in their own mail client, and the folder reconciler already refuses to revert those. A row
+ *     set `'peer'` is another install of this account's placement, recorded by a reader, and it is
+ *     excluded here for the same reason: this pass runs unbidden. Only `rule-retro` admits it.
  *  2. no enabled, UN-NARROWED `rules` row for the sender or its domain — `POST /screener/:id`
  *     writes one per decide, so a sender carrying one has been ruled on and is not ours to
  *     re-route.

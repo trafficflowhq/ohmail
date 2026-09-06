@@ -248,7 +248,9 @@ export class HeyMigrationService {
       const state = {
         desiredFolder: dest,
         observedFolder: r.observedFolder,
-        lastSetBy: (r.lastSetBy as "us" | "external") ?? "us",
+        // `?? "us"` fires only on NULL, never on an unrecognised string — a `"peer"` row passes
+        // through untouched, which is the fail-safe direction (see `FolderAttribution`).
+        lastSetBy: (r.lastSetBy as "us" | "external" | "peer") ?? "us",
       };
       // Reconciler decides: already-there → none (no move); otherwise move toward the migrated
       // destination.
