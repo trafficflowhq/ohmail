@@ -75,12 +75,28 @@ import { offLinkCode, onLinkCode, openWeb } from "./native.js";
  * because it asks a question `cloud` does not: which server. Everything after that question is the
  * same engine, the same sign-in and the same mirror — see `self-host.ts`.
  */
-type Step = "doors" | "local" | "host" | "server" | "cloud";
+type Step = "doors" | "takeover" | "local" | "host" | "server" | "cloud";
 
 export function DoorChooser({
   onEntered,
   /** Where the chooser opens. The Settings pane sends somebody straight to one door. */
   start = "doors",
+  /**
+   * THE MAILBOXES THE OTHER COMPUTER HELD, for the takeover's first step.
+   *
+   * Three states and they are three different sentences, which is the whole reason this is not
+   * `string[]`: `undefined` is "still reading", `null` is "the read failed", and an array is the
+   * answer — including the empty array, which means that computer was organizing nothing.
+   *
+   * `null` may NEVER be rendered as an empty list. The read happens against a mirror that the
+   * next step is about to discard, so a failure there and a host that genuinely held nothing look
+   * identical afterwards, and telling somebody "there is nothing to take over" about a machine
+   * that was organizing three mailboxes is the failure-looks-healthy shape this window has met
+   * before. The gate captures it BEFORE the door moves; see `DesktopGate`.
+   */
+  roster,
+  /** What to call the computer being left. Null falls back to sentences that name no machine. */
+  host,
   /**
    * WHETHER THE CLOUD FORM CHOOSES A DOOR OR ONLY SIGNS IN AGAIN.
    *
@@ -97,6 +113,8 @@ export function DoorChooser({
   onEntered: (result: DoorResult) => void;
   start?: Step;
   cloudAction?: "configure" | "signIn";
+  roster?: { address: string; id: string }[] | null | undefined;
+  host?: string | null;
   onCancel?: () => void;
 }) {
   const [step, setStep] = useState<Step>(start);
@@ -266,6 +284,13 @@ export function DoorChooser({
             onSubmit={(address, password, totp) =>
               attempt(() => signInToSelfHost(address, password, totp))
             }
+          />
+        ) : step === "takeover" ? (
+          <TakeoverCard
+            roster={roster}
+            host={host ?? null}
+            onContinue={() => setStep("local")}
+            onCancel={onCancel}
           />
         ) : step === "host" ? (
           <HostDoor
@@ -451,6 +476,85 @@ function Doors({ onPick, onCancel }: { onPick: (step: Step) => void; onCancel?: 
           <Button variant="ghost" onClick={onCancel}>{DOOR_COPY.cancel}</Button>
         </div>
       ) : null}
+    </>
+  );
+}
+
+/**
+ * SETTING THIS MACHINE UP ON ITS OWN — step one: what it costs, and what the other computer held.
+ *
+ * ── WHY THERE IS A STEP BEFORE THE FORM ──────────────────────────────────────────────────────
+ *
+ * The next screen asks for a mailbox password, which reads as an ordinary setup form. It is not:
+ * pressing through it discards the copy of the mail on this machine, reads the mailbox again from
+ * the server, and makes this computer the one that organizes it. Every one of those is
+ * recoverable, none is free, and a person who meets them as consequences of a form they filled in
+ * has been told afterwards.
+ *
+ * So the consequences are stated first, in the order they happen, and the last sentence is the
+ * reassurance that is actually true: nothing on the mail server changes until somebody agrees to
+ * organize, one mailbox at a time. That is not a promise about intentions — it is the consent arm
+ * the Mailboxes pane already gates every claim behind.
+ *
+ * ── AND THE ROSTER IS THE USEFUL HALF ────────────────────────────────────────────────────────
+ *
+ * Which mailboxes the other computer was organizing is a fact that exists only in the copy this
+ * step is about to discard. Read afterwards it is an empty list. So it is captured before the
+ * door moves and shown here — not as a form to fill in (the mirror carries addresses and no
+ * servers, so nothing could be pre-filled), but as the LIST: these are the mailboxes to set up
+ * again, and here is what they are called.
+ *
+ * A read that FAILED says so. It is not spelled the same as a host that held nothing, because
+ * "there is nothing to take over" about a machine that was organizing three mailboxes is exactly
+ * the kind of confident wrong answer this window is written to avoid.
+ */
+function TakeoverCard({
+  roster,
+  host,
+  onContinue,
+  onCancel,
+}: {
+  roster: { address: string; id: string }[] | null | undefined;
+  host: string | null;
+  onContinue: () => void;
+  onCancel?: () => void;
+}) {
+  const machine = machineWord();
+  const named = host ?? DOOR_COPY.doorHostName;
+  return (
+    <>
+      <h1>{DOOR_COPY.takeoverLabel(machine)}</h1>
+      <p>{DOOR_COPY.takeoverLead(machine, named)}</p>
+
+      <h2 className="join-subhead">{DOOR_COPY.takeoverRoster(named)}</h2>
+      {roster === undefined ? (
+        <p className="join-hint">{DOOR_COPY.hostChecking}</p>
+      ) : roster === null ? (
+        /* THE READ FAILED. Its own sentence, and it points at the way forward rather than at the
+           failure: the server can still be entered by hand, which is the next screen anyway. */
+        <p className="join-error">{DOOR_COPY.takeoverRosterUnknown(named)}</p>
+      ) : (
+        <>
+          <ul className="join-roster">
+            {roster.map((m) => (
+              <li key={m.id}>{m.address}</li>
+            ))}
+          </ul>
+          {/* ONLY WHEN THERE IS A REST. The next screen opens ONE mailbox, so a list of three says
+              nothing about the other two unless this line does — and with one mailbox there is no
+              "other" and the sentence would be about nothing. */}
+          {roster.length > 1 ? (
+            <p className="join-hint">{DOOR_COPY.takeoverRest(roster.length - 1)}</p>
+          ) : null}
+        </>
+      )}
+
+      <div className="join-actions">
+        <Button variant="primary" onClick={onContinue}>{DOOR_COPY.serverContinue}</Button>
+        {onCancel ? (
+          <Button variant="ghost" onClick={onCancel}>{DOOR_COPY.cancel}</Button>
+        ) : null}
+      </div>
     </>
   );
 }

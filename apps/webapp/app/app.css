@@ -3114,6 +3114,36 @@ input.set-tag-input {
   line-height: 1.55;
   margin: 16px 0 0;
 }
+/* ── THE TAKEOVER CARD'S SUBHEAD AND ITS LIST ─────────────────────────────────
+   A heading inside a setup card, quieter than the card's own `h1` and louder
+   than a hint — the register the settings subhead uses, since it is doing the
+   same job: naming what the rows under it are.
+
+   The list is addresses, one per line, with no bullet and no control. It is not
+   a form and not a choice: nothing here is pressed, and a checkbox or a radio
+   would offer a decision the next screen makes. `overflow-wrap` because an
+   address has no space in it to break at and a long one would widen the card. */
+.join-subhead {
+  font-size:calc(11.5px + var(--type-up));
+  font-weight: 600;
+  color: var(--ink2);
+  letter-spacing: 0.01em;
+  margin: 18px 0 6px;
+}
+.join-roster {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.join-roster li {
+  font-size:calc(12.5px + var(--type-up));
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
 /* ── THE PAIRING KEY, WHERE TWO SCREENS ARE COMPARED ──────────────────────────
    Mono and unbreakable. The twelve characters here are read against the twelve
    the other computer shows, so a line break through the middle of them turns a

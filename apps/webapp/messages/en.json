@@ -3378,7 +3378,7 @@
     "takeoverWhy": "If {host} will not come back. This {machine} then opens your mail server itself and takes over the organizing. The copy from {host} is discarded and read again from the server; the mailboxes {host} held are listed first.",
     "takeoverLead": "This {machine} will open your mail server itself and organize it, as {host} did. The copy from {host} is discarded and read again from the server. Nothing on the server changes until you agree to organize, one mailbox at a time.",
     "takeoverRoster": "Mailboxes {host} held",
-    "takeoverRest": "{count, plural, one {The other mailbox: add it afterwards under Settings → Mailboxes; the servers are filled in.} other {The other # mailboxes: add them afterwards under Settings → Mailboxes; the servers are filled in.}}",
+    "takeoverRest": "{count, plural, one {The other mailbox: add it afterwards under Settings → Mailboxes.} other {The other # mailboxes: add them afterwards under Settings → Mailboxes.}}",
     "takeoverRosterUnknown": "Could not read which mailboxes {host} held; enter the server by hand.",
     "installSwitchWhyHost": "Open a different door: your own mail server, another computer, or a hosted account. The copy from {host} on this {machine} is discarded; your mailbox itself is untouched.",
     "installSignOutWhyHost": "Ends the pairing with {host} and forgets which mailbox this is. Your mail stays on this {machine} and on your server.",

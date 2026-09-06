@@ -175,7 +175,7 @@ export function DesktopGate() {
   const [shell, setShell] = useState<Shell | null>(null);
   /* The door chooser, opened from Settings over a working install. Distinct from the chooser a
      fresh install lands on: this one is cancellable, because there is something to go back to. */
-  const [overlay, setOverlay] = useState<null | "doors" | "cloud" | "host" | "local">(null);
+  const [overlay, setOverlay] = useState<null | "doors" | "cloud" | "host" | "takeover">(null);
 
   const refresh = useCallback(async () => {
     setShell(await readShell());
@@ -533,7 +533,7 @@ export function DesktopGate() {
     /* `undefined` while the read is in flight, so the card can say it is looking rather than
        claiming an answer it has not got. */
     setTakeoverRoster(undefined);
-    setOverlay("local");
+    setOverlay("takeover");
     void readMailboxFacts().then(
       (facts) => {
         setTakeoverRoster(
@@ -712,6 +712,35 @@ export function DesktopGate() {
   }
 
   if (hostedSessionGone) {
+    /**
+     * ── A PAIRED INSTALL WHOSE PAIRING WAS REVOKED — a different fact and a different card ──
+     *
+     * `gateSessionGone` reads *"You were signed out of your hosted account"*, which on this door
+     * names an account that has never existed. What happened is that somebody pressed Remove on
+     * the OTHER computer's Devices list, and the mail on this machine has stopped arriving.
+     *
+     * TWO ACTIONS, because the two remedies are opposites and the second one is the product's own
+     * argument: pair with that computer again, or stop depending on it and open the mailbox from
+     * here. A card with only the first is a dead end for anybody whose other machine is gone for
+     * good — which is the case this sentence most often describes.
+     *
+     * "The copy of your mail here is kept" is a claim about what re-pairing DOES, not a
+     * reassurance: signing out freezes the mirror rather than discarding it, and the redeem that
+     * follows is refused outright if the computer at that address turns out to be a different
+     * one. If either of those changed, this sentence would be the first false thing on screen.
+     */
+    const revokedHost = hostLabelOf(status?.baseUrl);
+    if (paired && revokedHost !== null && !signInAfterExpiry) {
+      return (
+        <GateNotice
+          reason={DOOR_COPY.gateUnpaired(machineWord(), revokedHost)}
+          actionLabel={DOOR_COPY.gatePairAgain}
+          onAction={() => setOverlay("host")}
+          secondaryLabel={DOOR_COPY.gateOwn}
+          onSecondary={beginTakeover}
+        />
+      );
+    }
     if (signInAfterExpiry) {
       /* Straight to the CLOUD sign-in, in place — the same `start`/`cloudAction` pair the
          Settings reauthentication overlay passes. The chooser's defaults would ask the person
@@ -1273,6 +1302,10 @@ export function DesktopGate() {
              running engine; the chooser's default would reconfigure and give `enforceMirrorOwner`
              grounds to discard the copy the Settings row promises is kept. */
           cloudAction={overlay === "cloud" || overlay === "host" ? "signIn" : "configure"}
+          /* THE MAILBOXES THE OTHER COMPUTER HELD, captured at the press and BEFORE this overlay
+             changes anything — see `beginTakeover`. Three states, three sentences; `null` is a
+             read that failed and must never render as an empty list. */
+          {...(overlay === "takeover" ? { roster: takeoverRoster, host: hostLabel } : {})}
           onCancel={() => {
             /* CANCEL IS NOT "NOTHING HAPPENED". A door attempt inside this overlay may have
                already REPLACED the engine (`engine_configure` runs before the credential step —
@@ -1297,8 +1330,16 @@ export function DesktopGate() {
           onEntered={(r) => {
             /* THE SETTINGS OVERLAY, which is where a mailbox is CONNECTED AGAIN after a removal
                — the same act as the first launch's connect, so it opens setup on the same rule.
-               A cloud entry here answers `null` at the door rule and navigates nowhere. */
-            openSetupOnStandalone(r.status ?? null);
+               A cloud entry here answers `null` at the door rule and navigates nowhere.
+
+               EXCEPT AFTER A TAKEOVER. The guided setup walks somebody through consenting to
+               organize a mailbox as if it were new, and this one is not: its rules and its
+               consent travel in the mailbox itself, the profile-import card is what asks about
+               them, and the peek that names who held it last is on the Mailboxes pane rather
+               than on that stage. Sending somebody through the from-scratch walk here would ask
+               them to answer questions they already answered on the other computer. */
+            if (overlay === "takeover") goSettings("mailboxes");
+            else openSetupOnStandalone(r.status ?? null);
             if (r.status) onStatus(r.status);
             else void refresh();
           }}

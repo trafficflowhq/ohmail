@@ -21,14 +21,35 @@ import { DOOR_COPY } from "./door-copy.js";
 export interface GateNoticeProps {
   /** What went wrong, as one sentence. The only thing the three callers disagree about. */
   reason: string;
-  /** The label on the single action — `desktopDoor.gateTryAgain` or `…reload`. */
+  /** The label on the primary action — `desktopDoor.gateTryAgain` or `…reload`. */
   actionLabel: string;
   onAction: () => void;
+  /**
+   * A SECOND WAY OUT, when the state genuinely has two — and only then.
+   *
+   * Three of the four callers have exactly one honest remedy and pass nothing here: an engine
+   * that will not start is retried, a render that threw is reloaded. The fourth is a paired
+   * install whose pairing was revoked, where the two remedies are opposites and the product's
+   * whole argument is that the second one exists: pair with that computer again, OR stop
+   * depending on it and open the mailbox from here.
+   *
+   * Offering only the first would make the notice a dead end for anybody whose other machine is
+   * gone for good — which is the case the sentence above it is most likely describing.
+   */
+  secondaryLabel?: string;
+  onSecondary?: () => void;
   /** Anything the caller wants under the action — used for nothing today. */
   children?: ReactNode;
 }
 
-export function GateNotice({ reason, actionLabel, onAction, children }: GateNoticeProps) {
+export function GateNotice({
+  reason,
+  actionLabel,
+  onAction,
+  secondaryLabel,
+  onSecondary,
+  children,
+}: GateNoticeProps) {
   return (
     <div className="gate">
       <div className="gate-card">
@@ -37,6 +58,13 @@ export function GateNotice({ reason, actionLabel, onAction, children }: GateNoti
         <p>{reason}</p>
         <div className="gate-actions">
           <Button onClick={onAction}>{actionLabel}</Button>
+          {/* GHOST, so the two do not read as equals. Re-pairing is what most people want and
+              keeps everything as it is; setting this machine up on its own discards the copy and
+              takes over the organizing, which is a bigger decision and should not be one press
+              away from looking like the default. */}
+          {secondaryLabel && onSecondary ? (
+            <Button variant="ghost" onClick={onSecondary}>{secondaryLabel}</Button>
+          ) : null}
         </div>
         {children}
         <p className="gate-foot">{DOOR_COPY.gateFoot}</p>

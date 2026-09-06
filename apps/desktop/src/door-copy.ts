@@ -438,11 +438,15 @@ const EN = {
     + `from ${host} is discarded and read again from the server. Nothing on the server changes `
     + "until you agree to organize, one mailbox at a time.",
   takeoverRoster: (host: string) => `Mailboxes ${host} held`,
+  /* "THE SERVERS ARE FILLED IN" WAS HERE AND IT WAS FALSE. The roster is read from the mirrored
+     `GET /mailboxes` rows, and that answer carries an address and no IMAP or SMTP host at all —
+     so nothing could have been pre-filled and the sentence promised a convenience the next screen
+     would not deliver. What the roster genuinely gives somebody is the LIST: which mailboxes the
+     other computer was organizing, and what they are called. That is what it now says. */
   takeoverRest: (count: number) =>
     count === 1
-      ? "The other mailbox: add it afterwards under Settings → Mailboxes; the servers are filled in."
-      : `The other ${count} mailboxes: add them afterwards under Settings → Mailboxes; the servers `
-        + "are filled in.",
+      ? "The other mailbox: add it afterwards under Settings → Mailboxes."
+      : `The other ${count} mailboxes: add them afterwards under Settings → Mailboxes.`,
   /* THE ROSTER COULD NOT BE READ — never an empty list presented as "none". A takeover started
      from the revoked notice runs outside the mail client, where the shared facts hook does not
      exist, and a read that fails there must not be spelled the same as a host that held nothing.
