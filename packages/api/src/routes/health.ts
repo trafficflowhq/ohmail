@@ -1014,6 +1014,20 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // The widened `state` CHECK gets no marker of its own — `organizer_requests.state` is already
   // probed above, and a CHECK that gained a member cannot be detected by reading a column name.
   ["organizer_requests", "refused_reason"],
+  // mail 0091_organizer_install_id — ONE column, because the migration adds one.
+  //
+  // `mailboxes.organized_by_install_id` is WHICH install holds the claim, beside the four columns
+  // above that say what sort of thing holds it. It is probed for the same reason
+  // `organized_by_capabilities` is: the row is selected WHOLE by the mailbox panel and by the
+  // reader's own cycle, so an API ahead of the migration raises Postgres 42703 on the panel and a
+  // worker ahead of it cannot write the holder at all.
+  //
+  // The consequence is worse than a 42703, and it is why this marker exists rather than being
+  // waved off as "one nullable column": the release arm compares this column against the install
+  // asking, and a NULL reads as "we cannot say it is ours", which REFUSES the hand-back. A
+  // database certified healthy while missing it therefore serves a mailbox whose owner is told,
+  // truthfully as far as the row knows, that they cannot stop Cloud organizing it.
+  ["mailboxes", "organized_by_install_id"],
 ] as const;
 
 /* THE CLOUD HALF OF THE MARKER CENSUS MOVED TO `./health-cloud.js`.
