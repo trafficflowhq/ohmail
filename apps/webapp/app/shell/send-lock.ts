@@ -182,13 +182,24 @@ function save(rows: SendLock[], owner: string | null = storageOwner()): void {
  * journal: the caller's clock is the engine's clock, and a guard that reads its own is a guard
  * nobody can drive.
  */
+/**
+ * IS THIS RECORD STILL WORTH KEEPING? One answer, shared by every reader.
+ *
+ * Seven days is the right limit for wreckage — a lane nobody ever settled. An unverified send is
+ * not wreckage: it is a message that may be sitting in somebody's inbox, and this record is the
+ * only thing that still names the key it went under. So it does not age out.
+ *
+ * Shared rather than repeated because it WAS repeated, and the two copies disagreed: one exempted
+ * unverified locks and the other did not, and the one that did not also persisted its own answer.
+ */
+function isLive(r: SendLock, nowMs: number): boolean {
+  return r.unverified === true || nowMs - r.at <= SEND_LOCK_TTL_MS;
+}
+
 export function readSendLock(lane: string, fp: string, nowMs: number, owner: string | null = storageOwner()): string | null {
   const rows = load(owner);
   if (rows.length === 0) return null;
-  // AN UNVERIFIED LOCK DOES NOT AGE OUT. Seven days is the right limit for wreckage — a lane
-  // nobody settled — but an unverified send is not wreckage: it is a message that may be sitting
-  // in somebody's inbox, and the key is the only thing that can still be recognised as naming it.
-  const live = rows.filter((r) => r.unverified === true || nowMs - r.at <= SEND_LOCK_TTL_MS);
+  const live = rows.filter((r) => isLive(r, nowMs));
   const found = live.find((r) => r.lane === lane);
   if (found && found.fp !== fp) {
     // A different fingerprint means this key does not name THIS content, so it cannot be resumed
@@ -222,11 +233,23 @@ export function releaseSendLock(lane: string, owner: string | null = storageOwne
   if (kept.length !== rows.length) save(kept, owner);
 }
 
-/** Every live claim, oldest first — the restart's adoption pass reads this. */
+/**
+ * Every live claim, oldest first — for a restart's adoption pass.
+ *
+ * IT SHARES `isLive` WITH `readSendLock`, and that is the point of the helper. This filtered on
+ * the age limit ALONE while its sibling exempted unverified locks from it, and it PERSISTS what
+ * it filters — so the first caller anybody wrote would, seven days on, delete the one record
+ * saying a message may already have been delivered. `unverifiedSendLock` would then answer false,
+ * the composer would come back live, and the next press would mint a fresh key.
+ *
+ * There is no such caller today, which is exactly what makes it worth fixing rather than leaving:
+ * an unreachable half of a pair is a trap for whoever reaches it, and this one had a docblock
+ * inviting them to.
+ */
 export function allSendLocks(nowMs: number, owner: string | null = storageOwner()): SendLock[] {
   const rows = load(owner);
   if (rows.length === 0) return [];
-  const live = rows.filter((r) => nowMs - r.at <= SEND_LOCK_TTL_MS);
+  const live = rows.filter((r) => isLive(r, nowMs));
   if (live.length !== rows.length) save(live, owner);
   return live.slice().sort((a, b) => a.at - b.at);
 }
