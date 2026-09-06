@@ -427,11 +427,17 @@ describe("the gate hands the stage its door", () => {
       // consent group in `withoutFoldersFlag`, so a standalone install can read and write the
       // screening window and cannot store the folders flag at all. Sharing the constant is how
       // the Folders pane came to be drawn on that door over a switch that snapped back.
+      // ONE RULE NOW, NOT TWO CONDITIONS. This read `accountDoor ? … : firstRunDoorFor === "local"
+      // ? …`, and that pair had a hole exactly where a third door appeared: a desktop paired to
+      // another computer of the person's own is NEITHER, so it would have got no consent
+      // transport at all — no screening window, and nothing on screen saying why — on a door
+      // where the far side serves the row perfectly well. `consentDoorFor` is the rule, and it
+      // answers "standalone" for the paired door because the far side IS a standalone install.
       expect(gate).toMatch(
-        /accountDoor\s*\n?\s*\?\s*\{ consentTransport: consentOverBridge \}/,
+        /consentDoorFor\(status, hostedSession\) === "cloud"\s*\n?\s*\?\s*\{ consentTransport: consentOverBridge \}/,
       );
       expect(gate).toMatch(
-        /firstRunDoorFor\(status\) === "local"\s*\n?\s*\?\s*\{ consentTransport: consentOverBridgeStandalone \}/,
+        /consentDoorFor\(status, hostedSession\) === "standalone"\s*\n?\s*\?\s*\{ consentTransport: consentOverBridgeStandalone \}/,
       );
       // And the half of the old rule that survived: a spend control needs a ledger, and a
       // standalone engine has none.

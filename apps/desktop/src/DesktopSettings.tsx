@@ -28,6 +28,8 @@ import { Button, SettingsNote, SettingsRow, SettingsSection, SettingsSubhead } f
 import { engineLogout, type EngineStatus } from "./bridge-fetch.js";
 import type { HostedSession } from "./doors.js";
 import { DOOR_COPY, machineWord } from "./door-copy.js";
+import { hostLabelOf, hostViaOf, isDesktopHost } from "./doors.js";
+import { agoStamp } from "../../webapp/app/shell/format";
 import { DesktopAiSettings } from "./DesktopAiSettings.js";
 import type { LocalAiStatus } from "./local-ai.js";
 
@@ -88,8 +90,41 @@ export function desktopPaneLabel(): string {
 function credentialLine(
   status: EngineStatus,
   session: HostedSession,
+  host: string | null,
 ): { label: string; value: string; description: string } {
   const cloud = status.mode === "cloud";
+  /* ── THE PAIRED DOOR IS ITS OWN ROW, ABOVE THE CLOUD ARM ─────────────────────────────────
+   *
+   * "Account session · Signed in · This install holds a session for your hosted account" says
+   * the wrong thing twice on a paired desktop: there is no account, and what would end this is
+   * somebody pressing Remove on the OTHER computer. So the row names the thing that can actually
+   * be taken away and where — which is also the only remedy, since nothing on THIS machine can
+   * restore a pairing the other one revoked.
+   *
+   * `host === null` falls through to the cloud arm rather than rendering a sentence with a hole
+   * in it. That is reachable only for an engine reporting `desktop-host` with no readable
+   * `baseUrl`, which is a broken frame rather than a state — and the cloud arm's wording is at
+   * least true about a session. */
+  if (isDesktopHost(status) && host !== null) {
+    const label = DOOR_COPY.credHostLabel;
+    return session === "live"
+      ? {
+          label,
+          value: DOOR_COPY.credHostLiveValue,
+          description: DOOR_COPY.credHostLiveWhy(machineWord(), host),
+        }
+      : session === "out"
+        ? {
+            label,
+            value: DOOR_COPY.credHostOutValue,
+            description: DOOR_COPY.credHostOutWhy(host, machineWord()),
+          }
+        : {
+            label,
+            value: DOOR_COPY.credCloudCheckingValue,
+            description: DOOR_COPY.credHostCheckingWhy,
+          };
+  }
   const label = cloud ? DOOR_COPY.credCloudLabel : DOOR_COPY.localPassword;
   /* ── THE TWO NON-LIVE ARMS ARE DEFENSIVE, AND SAYING SO IS THE POINT ──────────────────────
    *
@@ -230,12 +265,29 @@ export function DesktopSettings({
    * install is signed in. Only the cloud door reads it; see {@link credentialLine}.
    */
   session,
+  /**
+   * HOW OLD THE COPY FROM THE OTHER COMPUTER IS — the paired door's Connection row, handed down
+   * from the gate rather than read again here.
+   *
+   * The gate already polls `GET /mirror/freshness` on this door to decide whether the rail says
+   * anything; a second read here would be a second clock for one fact, and the row and the rail
+   * would disagree for up to twenty seconds at a time about whether the other machine is
+   * answering. `null` on every other door, and before the first answer.
+   */
+  connection,
+  /** Open the pairing card over the app, for an install whose pairing has ended. */
+  onPairAgain,
+  /** Begin setting this machine up on its own — the gate owns that flow. */
+  onTakeOver,
 }: {
   status: EngineStatus;
   session: HostedSession;
+  connection?: { state: "unknown" | "stale" | "current"; asOf: string | null } | null;
   onStatus: (next: EngineStatus) => void;
   onSwitchDoor: () => void;
   onSignIn: () => void;
+  onPairAgain?: () => void;
+  onTakeOver?: () => void;
   onAiStatus?: (next: LocalAiStatus | null) => void;
 }) {
   /* Two states, held as one value rather than two booleans: "resting" and "asked whether you
@@ -252,8 +304,14 @@ export function DesktopSettings({
     local: DOOR_COPY.doorLocalName(machineWord()),
     cloud: DOOR_COPY.doorCloudName,
   };
-  const door = status.mode ? (doorName[status.mode] ?? status.mode) : DOOR_COPY.doorNotChosen;
-  const credential = credentialLine(status, session);
+  /* THE OTHER COMPUTER'S NAME, or null. Every paired sentence below interpolates it, and each one
+     falls back to the door's older wording rather than rendering a hole — see `credentialLine`. */
+  const host = hostLabelOf(status.baseUrl);
+  const paired = isDesktopHost(status) && host !== null;
+  const door = paired
+    ? host
+    : status.mode ? (doorName[status.mode] ?? status.mode) : DOOR_COPY.doorNotChosen;
+  const credential = credentialLine(status, session, host);
   /* "organizes" or "reads" — see `install-role.ts`. This pane said the first on an install that
      did the second, beside a Mailboxes pane saying the truth on the same machine. */
   const readOnly = readerHolder(screenerMode(useMailboxFacts()));
@@ -276,12 +334,12 @@ export function DesktopSettings({
     <SettingsSection>
       <SettingsRow
         label={DOOR_COPY.mailboxLabel}
-        description={mailboxRowWhy(readOnly)}
+        description={mailboxRowWhy(readOnly, paired ? host : null)}
         value={status.address ?? "—"}
       />
       <SettingsRow
         label={DOOR_COPY.installConnectedThrough}
-        description={doorDescription(status.mode)}
+        description={doorDescription(status, host)}
         value={door}
       />
       <SettingsRow
@@ -289,6 +347,21 @@ export function DesktopSettings({
         description={credential.description}
         value={credential.value}
       />
+      {/* ── IS THE OTHER COMPUTER REACHABLE — a PERMANENT row on this door ─────────────────
+          Present in every state, `Reachable` included, unlike the Mail engine row below it. The
+          engine row is about a fault and says nothing on a healthy install by design; this one
+          answers a standing question about somebody else's machine, which a person may want to
+          check at any time and cannot check any other way from here. */}
+      {paired ? (() => {
+        const line = connectionLine(connection ?? null, hostViaOf(status.baseUrl));
+        return (
+          <SettingsRow
+            label={DOOR_COPY.connLabel}
+            description={line.description}
+            value={line.value}
+          />
+        );
+      })() : null}
       {/* Only when it is NOT serving — see `engineWhy`. A row that says "Running" on every healthy
           install is a row nobody reads, including on the day it stops saying it. */}
       {status.state === "serving" ? null : (
@@ -303,11 +376,40 @@ export function DesktopSettings({
 
       {problem ? <p className="join-error">{problem}</p> : null}
 
-      {status.mode === "cloud" && session === "out" ? (
+      {/* SIGN IN AGAIN is the HOSTED door's remedy and only its own. A paired install has no
+          session to renew — what ended was a pairing, and the way back is a new link from the
+          other computer's Devices pane, which is the row directly below. */}
+      {status.mode === "cloud" && session === "out" && !paired ? (
         <SettingsRow
           label={DOOR_COPY.installSignInAgain}
           description={DOOR_COPY.installSignInAgainWhy}
           control={<Button onClick={onSignIn}>{DOOR_COPY.signIn}</Button>}
+        />
+      ) : null}
+
+      {/* PAIR AGAIN — only when the pairing has actually ended. Offered while it stands it would
+          invite somebody to spend a link for nothing; withheld when it has ended, the pane would
+          state a problem and no remedy. */}
+      {paired && session === "out" && onPairAgain ? (
+        <SettingsRow
+          label={DOOR_COPY.installPairAgain}
+          description={DOOR_COPY.installPairAgainWhy(host!, machineWord())}
+          control={<Button onClick={onPairAgain} disabled={busy}>{DOOR_COPY.hostPair}</Button>}
+        />
+      ) : null}
+
+      {/* ── SET THIS MACHINE UP ON ITS OWN — in EVERY connection state ─────────────────────
+          Not only while the other computer is away. Leaving a host is something a person may do
+          on purpose, and a control that exists only during a failure is one nobody can plan
+          with. Its description leads with the condition ("If {host} will not come back.") so
+          that reading the pane on an ordinary day does not read as a recommendation. */}
+      {paired && onTakeOver ? (
+        <SettingsRow
+          label={DOOR_COPY.takeoverLabel(machineWord())}
+          description={DOOR_COPY.takeoverWhy(host!, machineWord())}
+          control={
+            <Button onClick={onTakeOver} disabled={busy}>{DOOR_COPY.takeoverAction}</Button>
+          }
         />
       ) : null}
 
@@ -320,9 +422,15 @@ export function DesktopSettings({
           nobody looking for their password would think to open. Everything below this line is about
           the install: which mailbox, which door, and how to change either. */}
 
+      {/* THE SWITCH SAYS "DISCARDED" ON THIS DOOR AND "FROZEN" ON THE OTHERS, because that is
+          what the code does: `enforceMirrorOwner` discards a mirror whose owner has changed, and
+          leaving a paired door for any other door changes the owner. Borrowing the hosted
+          sentence here would promise a copy that comes back, and it does not. */}
       <SettingsRow
         label={DOOR_COPY.installSwitch}
-        description={DOOR_COPY.installSwitchWhy(machineWord())}
+        description={paired
+          ? DOOR_COPY.installSwitchWhyHost(host!, machineWord())
+          : DOOR_COPY.installSwitchWhy(machineWord())}
         control={
           <Button onClick={onSwitchDoor} disabled={busy}>{DOOR_COPY.installSwitchAction}</Button>
         }
@@ -331,7 +439,9 @@ export function DesktopSettings({
       {mode === "confirm" ? (
         <SettingsRow
           label={DOOR_COPY.installSignOutConfirm}
-          description={DOOR_COPY.installSignOutConfirmWhy(machineWord())}
+          description={paired
+            ? DOOR_COPY.installSignOutConfirmWhyHost(machineWord(), host!)
+            : DOOR_COPY.installSignOutConfirmWhy(machineWord())}
           control={
             <span className="set-tag-acts">
               <Button variant="primary" className="danger" onClick={() => void signOut()} disabled={busy}>
@@ -346,7 +456,9 @@ export function DesktopSettings({
       ) : (
         <SettingsRow
           label={DOOR_COPY.signOut}
-          description={DOOR_COPY.installSignOutWhy(machineWord())}
+          description={paired
+            ? DOOR_COPY.installSignOutWhyHost(host!, machineWord())
+            : DOOR_COPY.installSignOutWhy(machineWord())}
           control={
             <Button onClick={() => setMode("confirm")} disabled={busy}>{DOOR_COPY.signOut}</Button>
           }
@@ -368,8 +480,54 @@ export function DesktopSettings({
   );
 }
 
-function doorDescription(mode: EngineStatus["mode"]): string {
-  if (mode === "cloud") return DOOR_COPY.doorCloudWhy;
-  if (mode === "local") return DOOR_COPY.doorLocalWhy;
+/**
+ * WHAT THE "CONNECTED THROUGH" ROW SAYS, per door.
+ *
+ * The paired arm is the one that needs an argument beyond the mode: it names the other computer,
+ * and on a Tailscale origin it also carries the FULL origin. That origin appears exactly once in
+ * the whole interface, here, and it is here rather than in the rail because two laptops with the
+ * same machine name on two tailnets read alike everywhere else — this is the row somebody opens
+ * to tell them apart.
+ */
+function doorDescription(status: EngineStatus, host: string | null): string {
+  if (isDesktopHost(status) && host !== null) {
+    return hostViaOf(status.baseUrl) === "lan"
+      ? DOOR_COPY.doorHostWhyLan(host, machineWord())
+      : DOOR_COPY.doorHostWhyTs(host, machineWord(), status.baseUrl ?? host);
+  }
+  if (status.mode === "cloud") return DOOR_COPY.doorCloudWhy;
+  if (status.mode === "local") return DOOR_COPY.doorLocalWhy;
   return DOOR_COPY.doorNoneWhy;
+}
+
+/**
+ * THE CONNECTION ROW — present in EVERY state, `current` included.
+ *
+ * A row that appears only when something is wrong is a row nobody knows to look for on the day it
+ * is missing, and this one answers a question ("is the other machine reachable?") that people ask
+ * before anything has gone wrong as often as after. `null` means the engine has not been asked
+ * yet, which is its own value rather than an absence.
+ *
+ * The stamp is the ABSOLUTE form here and the relative one in the rail, from the same call. The
+ * rail is glanced at, where "3 days ago" reads as "since"; this is the row somebody opens when
+ * they want to know exactly when, and "3 Sep 2026, 18:40" is that answer.
+ */
+function connectionLine(
+  freshness: { state: "unknown" | "stale" | "current"; asOf: string | null } | null,
+  via: "lan" | "ts" | null,
+): { value: string; description: string } {
+  const when = freshness?.asOf ? agoStamp(freshness.asOf, Date.now()).abs : "—";
+  const check = via === "lan" ? DOOR_COPY.hostCheckLan(machineWord()) : DOOR_COPY.hostCheckTs;
+  if (freshness?.state === "current") {
+    return { value: DOOR_COPY.connCurrentValue, description: DOOR_COPY.connCurrentWhy(when) };
+  }
+  if (freshness?.state === "stale") {
+    return {
+      value: DOOR_COPY.connStaleValue,
+      description: DOOR_COPY.connStaleWhy(when, machineWord()),
+    };
+  }
+  /* `unknown` AND "not asked yet" render alike, and that is the honest reading of both: no pull
+     has completed, so there is nothing to report but what to check. */
+  return { value: DOOR_COPY.connUnknownValue, description: check };
 }

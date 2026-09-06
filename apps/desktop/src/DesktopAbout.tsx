@@ -18,7 +18,8 @@
 import { SettingsNote, SettingsRow, SettingsSection, SettingsSubhead } from "@ohmail/ui";
 
 import type { EngineStatus } from "./bridge-fetch.js";
-import { DOOR_COPY } from "./door-copy.js";
+import { DOOR_COPY, machineWord } from "./door-copy.js";
+import { hostLabelOf, isDesktopHost } from "./doors.js";
 import { DesktopUpdate } from "./DesktopUpdate.js";
 
 /* WHAT THIS INSTALL DOES WITH THE MAILBOX BELOW — "organizes" or "reads". One rule, two
@@ -39,6 +40,11 @@ export function DesktopAbout({ status }: { status: EngineStatus }) {
     local: DOOR_COPY.aboutDoorLocalValue,
     cloud: DOOR_COPY.aboutDoorCloudValue,
   };
+  /* THE OTHER COMPUTER, when this install reads through one. Both the value and its sentence
+     change: "An ohmail Cloud account · the organizing happens on our servers" names a service
+     that has nothing to do with this install. */
+  const host = hostLabelOf(status.baseUrl);
+  const paired = isDesktopHost(status) && host !== null;
   return (
     <SettingsSection>
       <SettingsRow
@@ -69,19 +75,30 @@ export function DesktopAbout({ status }: { status: EngineStatus }) {
 
       <SettingsRow
         label={DOOR_COPY.mailboxLabel}
-        description={mailboxRowWhy(readOnly)}
+        description={mailboxRowWhy(readOnly, paired ? host : null)}
         value={status.address ?? "—"}
       />
       <SettingsRow
         label={DOOR_COPY.aboutOpenedThrough}
         description={
-          status.mode === "cloud"
-            ? DOOR_COPY.aboutDoorCloudWhy
-            : status.mode === "local"
-              ? DOOR_COPY.aboutDoorLocalWhy
-              : DOOR_COPY.doorNoneWhy
+          paired
+            /* "Nothing about your mail is sent to us" IS THE CONTROL for the privacy invariant on
+               this door, and it is stated on the pane rather than only in a test: a paired
+               install's engine dials one origin — the one on the pairing link — and never the
+               hosted service. If that stops being true this sentence is the first false thing
+               here, which is why it is said where somebody looks for it. */
+            ? DOOR_COPY.aboutDoorHostWhy(host, machineWord())
+            : status.mode === "cloud"
+              ? DOOR_COPY.aboutDoorCloudWhy
+              : status.mode === "local"
+                ? DOOR_COPY.aboutDoorLocalWhy
+                : DOOR_COPY.doorNoneWhy
         }
-        value={status.mode ? (door[status.mode] ?? status.mode) : DOOR_COPY.doorNotChosen}
+        value={
+          paired
+            ? DOOR_COPY.aboutDoorHostValue
+            : status.mode ? (door[status.mode] ?? status.mode) : DOOR_COPY.doorNotChosen
+        }
       />
 
       {/* THE CLAIM THE WHOLE PRODUCT RESTS ON, said where somebody looks for it. It is true on
@@ -96,7 +113,11 @@ export function DesktopAbout({ status }: { status: EngineStatus }) {
           and the source stay on both doors: the first governs the app itself, the second is what
           lets anyone check either claim. */}
       <SettingsNote>
-        {status.mode === "cloud" ? DOOR_COPY.aboutLinksCloud : DOOR_COPY.aboutLinksLocal}
+        {/* THE SUBPROCESSOR LIST GOES WITH THE HOSTED DOOR AND NOT WITH THIS ONE, on exactly the
+            argument the local door already makes: there is no company in a paired install's mail
+            path for that list to describe, so pointing at it would offer to explain a policy that
+            does not govern the install being read. */}
+        {status.mode === "cloud" && !paired ? DOOR_COPY.aboutLinksCloud : DOOR_COPY.aboutLinksLocal}
       </SettingsNote>
     </SettingsSection>
   );

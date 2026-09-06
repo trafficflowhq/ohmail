@@ -707,6 +707,12 @@ export const HOST_REFUSAL_KINDS = [
   "no_pin",
   "pin_mismatch",
   "not_ohmail",
+  /* A DESKTOP RUNNING OHMAIL THAT HAS NOT BEEN SET UP TO SERVE ITS OTHER DEVICES — the single
+     most likely wrong-link case, and the one where a translated sentence is worth the most: the
+     remedy is a switch on the OTHER machine, under its Settings → Devices. Left to fall back on
+     the engine's own words it would be the one common failure that reads in English inside a
+     German window. */
+  "local",
   "managed",
   "selfhost",
   "pairing_invalid",
@@ -817,9 +823,10 @@ async function refusalOf(res: Response): Promise<HostRefusal | null> {
  * The window cannot dial — its content policy forbids it — so the engine is the process that
  * looks, and this hands it the origin and the pin as a CANDIDATE.
  */
-export async function proveHostLink(link: PairLink): Promise<HostRefusal | null> {
+export async function proveHostLink(link: PairLink): Promise<HostProof> {
+  let res: Response;
   try {
-    const res = await bridgeFetch("/cloud/probe", {
+    res = await bridgeFetch("/cloud/probe", {
       method: "POST",
       headers: { "content-type": "application/json" },
       /* THE TOKEN IS NOT SENT. Proving what is at an address needs the address and the key; the
@@ -827,10 +834,42 @@ export async function proveHostLink(link: PairLink): Promise<HostRefusal | null>
          step the person has not agreed to yet. */
       body: JSON.stringify({ origin: link.origin, flavor: "desktop-host", hostPin: link.pin }),
     });
-    return await refusalOf(res);
   } catch (err) {
-    return { kind: "unreachable", message: sentence(err), status: null };
+    return { base: null, refusal: { kind: "unreachable", message: sentence(err), status: null } };
   }
+  const refusal = await refusalOf(res);
+  if (refusal !== null) return { base: null, refusal };
+
+  /**
+   * THE BASE THE ENGINE SAYS ANSWERED, and this window does not recompose it.
+   *
+   * A desktop host serves its API at the ROOT; a self-hosted stack serves it under `/api`. The
+   * door composed `/api` unconditionally, which made a desktop host unreachable from a desktop by
+   * construction — a 404 reported as "that is not an ohmail server" about a machine that was
+   * running one. The engine discovers which shape actually answered, so the base it reports is a
+   * measurement; deriving it again here would be a second opinion about the thing just measured,
+   * and the two would part company the day a third shape exists.
+   *
+   * The ORIGIN is the fallback, not a default: an engine that predates the field has, by that
+   * same fact, not learned to serve this door either, so the fallback is only ever exercised on a
+   * build where the redeem below is going to refuse anyway.
+   */
+  try {
+    const body = (await res.json()) as { base?: unknown };
+    return {
+      base: typeof body.base === "string" && body.base !== "" ? body.base : link.origin,
+      refusal: null,
+    };
+  } catch {
+    return { base: link.origin, refusal: null };
+  }
+}
+
+/** What {@link proveHostLink} ended as: the base to configure, or why it was refused. */
+export interface HostProof {
+  /** The base the ENGINE says answered — handed to `engine_configure` verbatim. */
+  base: string | null;
+  refusal: HostRefusal | null;
 }
 
 /**
@@ -849,25 +888,85 @@ export async function proveHostLink(link: PairLink): Promise<HostRefusal | null>
  */
 export async function enterHostDoor(
   link: PairLink,
-): Promise<{ status: EngineStatus | null; refusal: HostRefusal | null; problem: string | null }> {
-  let status: EngineStatus;
+  /** The base {@link proveHostLink} reported. The link's origin only where none was measured. */
+  base: string = link.origin,
+): Promise<HostDoorResult> {
   try {
-    status = await engineConfigure({
+    await engineConfigure({
       mode: "cloud",
       flavor: "desktop-host",
-      cloudUrl: link.origin,
+      /* THE MEASURED BASE, not the typed origin — see {@link proveHostLink}. */
+      cloudUrl: base,
       hostPin: link.pin,
     });
   } catch (err) {
     return { status: null, refusal: null, problem: sentence(err) };
   }
-  void status;
 
   const settled = await settle();
   if (settled.state !== "serving") {
     return { status: settled, refusal: null, problem: stalled(settled) };
   }
+  return redeemPairing(link, settled);
+}
 
+/**
+ * PAIR AGAIN, IN PLACE — for an install whose pairing ended and whose mirror is still here.
+ *
+ * ── WHY THIS IS NOT `enterHostDoor` WITH THE SAME ARGUMENTS ──────────────────────────────────
+ *
+ * The same distinction the cloud door draws between choosing a door and signing in again, and it
+ * is a restarted engine. Choosing the door writes the settings and REPLACES the engine, which
+ * takes somebody's mail off the screen for the length of a restart to change nothing — and worse,
+ * a reconfigure is a door change, so `enforceMirrorOwner` would have grounds to discard the very
+ * copy the pane promises is kept. Re-pairing against the same host is two requests against the
+ * running engine and nothing else.
+ *
+ * THE SIGN-OUT COMES FIRST, and it is not optional: a redeem while a session is still held is
+ * refused `409 already_signed_in`. It is also safe — signing out FREEZES the mirror, the cursor
+ * and the owner record rather than discarding them, which is what makes "the copy of your mail
+ * here is kept" a true sentence rather than a hopeful one.
+ *
+ * A host that was REINSTALLED is a different account behind the same address, and the engine
+ * refuses that (`409 pair_account_mismatch`) with nothing sealed and nothing discarded — so this
+ * path cannot quietly merge two accounts into one database. The remedy there is the takeover or a
+ * fresh door, both of which say what they discard.
+ */
+export async function pairAgainWithHost(link: PairLink): Promise<HostDoorResult> {
+  try {
+    await bridgeFetch("/cloud/session", { method: "DELETE" });
+  } catch (err) {
+    return {
+      status: null,
+      refusal: { kind: "unreachable", message: sentence(err), status: null },
+      problem: null,
+    };
+  }
+  return redeemPairing(link, null);
+}
+
+/** What either pairing path ended as. */
+export interface HostDoorResult {
+  status: EngineStatus | null;
+  /** A refusal with a kind the card can translate. */
+  refusal: HostRefusal | null;
+  /** A sentence with no kind behind it — a shell throw, or an engine that never settled. */
+  problem: string | null;
+}
+
+/**
+ * SPEND THE TOKEN. Shared by both paths so "what a redeem is" has one definition.
+ *
+ * `kind` is sent even though the engine composes its own from `process.platform` and ignores what
+ * arrives — it is the same machine, so the two agree by construction. It stays on the wire because
+ * the field is part of the request's meaning: a reader of this call should see that this install
+ * declares what it is, and the day the engine stops composing it, the absence would be a silent
+ * "web" on somebody's Devices pane rather than a compile error.
+ */
+async function redeemPairing(
+  link: PairLink,
+  settled: EngineStatus | null,
+): Promise<HostDoorResult> {
   let res: Response;
   try {
     res = await bridgeFetch("/cloud/pair-redeem", {
@@ -876,7 +975,11 @@ export async function enterHostDoor(
       body: JSON.stringify({ token: link.token, kind: desktopDeviceKind() }),
     });
   } catch (err) {
-    return { status: settled, refusal: { kind: "unreachable", message: sentence(err), status: null }, problem: null };
+    return {
+      status: settled,
+      refusal: { kind: "unreachable", message: sentence(err), status: null },
+      problem: null,
+    };
   }
   const refusal = await refusalOf(res);
   if (refusal !== null) return { status: settled, refusal, problem: null };
@@ -894,7 +997,15 @@ export async function enterHostDoor(
  */
 export function desktopDeviceKind(platform: string = BUILD_PLATFORM): string {
   switch (platform) {
-    case "darwin": return "desktop-mac";
+    /* `desktop-macos`, NOT `desktop-mac`. The server admits a CLOSED set
+       (`PAIRED_DEVICE_KINDS`, `packages/services/src/auth/session-lifecycle.ts`) and refuses
+       anything outside it with a 400 — so the shorter spelling would have failed every pairing
+       from a Mac, at the redeem, after the token had been spent. The engine's own
+       `desktopDeviceKind(process.platform)` (`apps/sidecar/src/cloud-signin.ts`) has said
+       `desktop-macos` all along; this is the same vocabulary and it has to be the same word.
+       `desktop-host-door.test.ts` holds all three against the shared set rather than against
+       literals, so a rename there reddens here instead of failing in front of somebody. */
+    case "darwin": return "desktop-macos";
     case "win32": return "desktop-windows";
     /* Linux AND anything this app has no word for. `machineWord()` is deliberately NOT the route:
        it collapses those two cases into "computer" and it goes through the CATALOGUE, so the kind

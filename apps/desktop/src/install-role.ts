@@ -33,9 +33,26 @@
  * read `desktopDoor` now, and so does this module — through `DOOR_COPY`, the non-hook route,
  * because there is no React here and the table test below drives the function directly.
  */
-import { DOOR_COPY } from "./door-copy.js";
+import { DOOR_COPY, machineWord } from "./door-copy.js";
 
-export function mailboxRowWhy(readOnly: { name: string | null } | null): string {
+/**
+ * ── AND A THIRD ANSWER, FOR AN INSTALL THAT READS THROUGH ANOTHER COMPUTER ──────────────────
+ *
+ * The predicate above cannot reach this one, and that is the whole reason the parameter exists.
+ * `readerHolder` looks at the mailbox rows this install can see and asks whether THEY say
+ * somebody else organizes. On a paired desktop those rows are mirrored from the host — and the
+ * host IS the organizer, so its own rows carry no holder and the predicate correctly answers
+ * `null`, meaning "this install organizes". Correct about the rows, false about the install: the
+ * machine reading them organizes nothing.
+ *
+ * So the door is asked separately, and it wins. `host` is null on every other door, and null
+ * falls through to the two answers this function has always given.
+ */
+export function mailboxRowWhy(
+  readOnly: { name: string | null } | null,
+  host?: string | null,
+): string {
+  if (host) return DOOR_COPY.mailboxWhyViaHost(machineWord(), host);
   if (readOnly === null) return DOOR_COPY.mailboxWhyOrganizes;
   return readOnly.name
     ? DOOR_COPY.mailboxWhyReadsNamed(readOnly.name)

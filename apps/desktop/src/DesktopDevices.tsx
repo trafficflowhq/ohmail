@@ -74,6 +74,9 @@ import { useFormatter, useTranslations } from "next-intl";
 import { Button, SettingsRow, SettingsSection, SettingsSubhead, Switch, useToast } from "@ohmail/ui";
 
 import { isPairPin, pairLink } from "@ohmail/client-engine";
+/* THE SAME TWELVE CHARACTERS THE JOINING MACHINE SHOWS — one function, or the two ends of
+   the comparison would be comparing different substrings of the same key. */
+import { shortPin } from "./DoorChooser.js";
 
 import { bridgeFetch } from "./bridge-fetch.js";
 import { DOOR_COPY } from "./door-copy.js";
@@ -283,6 +286,25 @@ export function DesktopDevices() {
   const [lanCandidates, setLanCandidates] =
     useState<Array<{ address: string; name: string }> | null | undefined>(undefined);
   const [lanChoice, setLanChoice] = useState<string | null>(null);
+  /**
+   * THIS COMPUTER'S OWN KEY, as the twelve characters a person compares — or null.
+   *
+   * ── WHY IT IS SHOWN AT ALL ───────────────────────────────────────────────────────────────
+   *
+   * The same-network door serves TLS with a key nobody vouches for, so the pairing carries the
+   * trust: the link names the key, and the joining machine accepts that key and nothing else.
+   * That is sound as long as the link came from here. If something on the network hands somebody
+   * a link naming ITS key, the ceremony authenticates the wrong machine perfectly.
+   *
+   * The defence is a value the person can read on both screens. The joining machine shows twelve
+   * characters before it pairs; this row is where the same twelve are read from. Without it the
+   * comparison has only one side and the sentence over there ("the same characters as under
+   * Settings → Devices") names a row that does not exist.
+   *
+   * `null` while unread or on a build with no same-network door — the row simply does not render
+   * rather than showing a placeholder somebody might compare against.
+   */
+  const [lanKey, setLanKey] = useState<string | null>(null);
 
   /** The one appearance of a raw token, dressed as the link it is scanned as. */
   const [minted, setMinted] = useState<{ link: string; label: string } | null>(null);
@@ -421,6 +443,48 @@ export function DesktopDevices() {
    * exact silent-retry loop `desktop-devices.test.tsx` already guards. Off is driven by explicit
    * acts; there is nothing here to discover between them.
    */
+  /**
+   * READ THIS COMPUTER'S KEY once the same-network door is up, and forget it when it goes down.
+   *
+   * `GET /local/lan/pin` is the same route the mint already reads, and it is read here for the
+   * same reason the mint reads it late rather than at mount: the key belongs to the engine, the
+   * engine can be respawned, and a fingerprint held from an earlier process is a value somebody
+   * would compare against a link that no longer matches it — a mismatch reported as an attack.
+   *
+   * Keyed on `lanState`, so arming or disarming the door re-reads or clears it. A failed read
+   * leaves `null` and the row does not render: a placeholder in a row whose whole purpose is
+   * comparison is worse than no row.
+   */
+  useEffect(() => {
+    /* `host` is null until the opening read lands, and "not read yet" is not "not armed" — but
+       both mean there is no key to show, so they render alike here. */
+    const armed = host?.lanState === "serving" || host?.lanState === "blocked";
+    if (!armed) {
+      setLanKey(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await bridgeFetch("/local/lan/pin");
+        if (cancelled || !res.ok) return;
+        const body = (await res.json()) as { fingerprint?: unknown };
+        if (cancelled) return;
+        setLanKey(
+          typeof body.fingerprint === "string" && isPairPin(body.fingerprint)
+            ? body.fingerprint
+            : null,
+        );
+      } catch {
+        /* The engine did not answer. The row stays absent rather than showing a value nobody
+           could have compared against anything. */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [host?.lanState]);
+
   useEffect(() => {
     if (!pollHostState) return undefined;
     const tick = setInterval(() => {
@@ -1108,6 +1172,19 @@ export function DesktopDevices() {
                 </Button>
               </div>
             </>
+          ) : null}
+          {/* ── THE OTHER HALF OF THE COMPARISON ────────────────────────────────────────
+              A device pairing over this network shows twelve characters of this key before it
+              pairs, and the whole value of that step is that somebody can check them against
+              something. This is that something. It is only rendered where a pin is actually in
+              play — a tailnet origin carries a real certificate and no pin at all, so a key row
+              there would invite a comparison against a value nothing shows. */}
+          {lanKey !== null ? (
+            <SettingsRow
+              label={t("keyLabel")}
+              description={t("keyWhy")}
+              value={<span className="host-key">{shortPin(lanKey)}</span>}
+            />
           ) : null}
           {lanUp && host.port !== null ? (
             <>

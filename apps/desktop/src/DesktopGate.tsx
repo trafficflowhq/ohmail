@@ -175,7 +175,7 @@ export function DesktopGate() {
   const [shell, setShell] = useState<Shell | null>(null);
   /* The door chooser, opened from Settings over a working install. Distinct from the chooser a
      fresh install lands on: this one is cancellable, because there is something to go back to. */
-  const [overlay, setOverlay] = useState<null | "doors" | "cloud">(null);
+  const [overlay, setOverlay] = useState<null | "doors" | "cloud" | "host" | "local">(null);
 
   const refresh = useCallback(async () => {
     setShell(await readShell());
@@ -495,6 +495,61 @@ export function DesktopGate() {
     /* `authKey` is in the list so a REPLACED engine restarts the grace and drops the previous
        engine's verdict — the same re-keying the hosted probe above does, for the same reason. */
   }, [paired, authKey]);
+
+  /**
+   * ═══ SETTING THIS MACHINE UP ON ITS OWN — the roster, captured BEFORE the door moves ══════
+   *
+   * THE STATE IS UP HERE WITH EVERY OTHER HOOK, and the trigger below is a PLAIN FUNCTION rather
+   * than a `useCallback`. This component returns early five times, and a hook after any of them
+   * is skipped on exactly the renders that take it — React reports "rendered more hooks than
+   * during the previous render" and the window goes white. Not memoising the trigger costs one
+   * function allocation per render and takes the whole class of mistake off the table for it.
+   *
+   * ── THE ORDERING IS THE WHOLE OF THIS ────────────────────────────────────────────────────
+   *
+   * Leaving a paired door for the standalone one is a door CHANGE, and `enforceMirrorOwner` runs
+   * before the replacement engine opens its database and DISCARDS a mirror whose owner has
+   * changed. Which mailboxes the other computer held is a fact that lives only in that mirror.
+   * Read afterwards it is an empty list — and an empty list is not an error: the flow would open
+   * with "no mailboxes to take over" and a person would conclude the host had none, which is the
+   * failure-looks-healthy shape this repository has measured before. So the roster is captured
+   * here, at the press, while the mirror is still this window's.
+   *
+   * ── AND AN UNREADABLE ROSTER IS NOT AN EMPTY ONE ─────────────────────────────────────────
+   *
+   * `null` means the read failed and is rendered as its own sentence ("Could not read which
+   * mailboxes {host} held; enter the server by hand"), never as "none". That is the
+   * `MailboxProbe` rule this window already follows everywhere else, and it is the reason this
+   * holds `MailboxFacts[] | null` rather than defaulting to `[]`.
+   *
+   * The rows kept are the ORGANIZER ones. On a paired install the mirrored rows are the host's,
+   * and an organizer's own row carries no holder columns — so `organizerRole === "organizer"` is
+   * what "the other computer was organizing this" looks like from here.
+   */
+  const [takeoverRoster, setTakeoverRoster] = useState<
+    { address: string; id: string }[] | null | undefined
+  >(undefined);
+  const beginTakeover = (): void => {
+    /* `undefined` while the read is in flight, so the card can say it is looking rather than
+       claiming an answer it has not got. */
+    setTakeoverRoster(undefined);
+    setOverlay("local");
+    void readMailboxFacts().then(
+      (facts) => {
+        setTakeoverRoster(
+          facts
+            .filter((m) => m.organizerRole === "organizer")
+            .map((m) => ({ address: m.address, id: m.id })),
+        );
+      },
+      () => {
+        /* NOT `[]`. See the block above: an unreadable roster and a host that held nothing are
+           different facts and only one of them is a reason to say "there is nothing to take
+           over". */
+        setTakeoverRoster(null);
+      },
+    );
+  };
 
   useEffect(() => {
     if (door !== "local") {
@@ -863,7 +918,14 @@ export function DesktopGate() {
            for a mailbox it no longer has, so the pane runs the shell's sign-out afterwards and
            this gate re-reads its routing from the engine state that comes back. */
         {...(engine ? { mailboxSection: (
-          <DesktopMailboxes door={status?.mode ?? null} onShellStatus={onStatus} />
+          <DesktopMailboxes
+            door={status?.mode ?? null}
+            /* NAMED ONLY WHEN THERE IS A NAME. The pane's paired arm falls back to the hosted
+               wording without it, which is wrong but not broken; a sentence with a hole in it
+               would be both. */
+            host={paired ? hostLabel : null}
+            onShellStatus={onStatus}
+          />
         ) } : {})}
         /* SETTINGS → SCREENER. The shared shell's own section reaches an API client that is not
            in this build, so it drew nothing and the pane was blank. This is the same three
@@ -890,9 +952,19 @@ export function DesktopGate() {
                   <DesktopSettings
                     status={status}
                     session={hostedSession}
+                    /* THE SAME READ THE RAIL LINE USES, handed down rather than taken again: two
+                       clocks for one fact would let the pane and the rail disagree for up to a
+                       poll about whether the other machine is answering. */
+                    connection={paired ? freshness : null}
                     onStatus={onStatus}
                     onSwitchDoor={() => setOverlay("doors")}
                     onSignIn={() => setOverlay("cloud")}
+                    /* PAIR AGAIN opens the pairing card over the running app, exactly as "Sign in
+                       again" opens the cloud form: the door is already chosen, and reconfiguring
+                       would replace the engine and take the mail off the screen to change
+                       nothing. */
+                    onPairAgain={() => setOverlay("host")}
+                    onTakeOver={beginTakeover}
                     onAiStatus={setAi}
                   />
                 ),
@@ -1196,7 +1268,11 @@ export function DesktopGate() {
           /* "Sign in again" is not "choose the cloud door again": the door is already chosen, and
              re-configuring it would replace the engine — taking somebody's mail off the screen
              for the length of a restart to change nothing. */
-          cloudAction={overlay === "cloud" ? "signIn" : "configure"}
+          /* THE SAME DISTINCTION FOR THE PAIRED DOOR. `"host"` here means "pair again with the
+             computer this install already reads through", which is two requests against the
+             running engine; the chooser's default would reconfigure and give `enforceMirrorOwner`
+             grounds to discard the copy the Settings row promises is kept. */
+          cloudAction={overlay === "cloud" || overlay === "host" ? "signIn" : "configure"}
           onCancel={() => {
             /* CANCEL IS NOT "NOTHING HAPPENED". A door attempt inside this overlay may have
                already REPLACED the engine (`engine_configure` runs before the credential step —

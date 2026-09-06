@@ -1,4 +1,5 @@
 export * from "./types.js";
+export { SLOP } from "./slop.js";
 export {
   bannedTerms,
   fictionalNames,

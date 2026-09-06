@@ -2305,7 +2305,7 @@
     "sendingUnsettledReason_timeout": "der Postausgangsserver hat nicht rechtzeitig geantwortet",
     "sendingUnsettledReason_unknown": "der Postausgangsserver hat die Verbindung abgelehnt",
     "desktopManageOnHost": "Postfächer werden auf {host} verwaltet",
-    "desktopManageOnHostWhy": "Ein Postfach verbinden oder sein Passwort ändern passiert in ohmail auf {host}. Dieser {machine} zeigt, was {host} hat.",
+    "desktopManageOnHostWhy": "Ein Postfach verbinden oder sein Passwort ändern passiert in ohmail auf {host}. Dieser Computer zeigt, was {host} hat.",
     "desktopHoldsCountHost": "Dieser Computer hat {count} der {total} Nachrichten, die {host} für dich hat. Der Rest wird von {host} geladen, sobald du ihn abrufst."
   },
   "onboarding": {
@@ -3342,6 +3342,7 @@
     "hostRefuseNoPin": "Dieser Link trägt den Schlüssel des anderen Computers nicht, ohmail kann seine Verbindung also nicht von irgendetwas anderem in deinem Netzwerk unterscheiden. Erstelle unter Einstellungen → Geräte dort einen neuen Link.",
     "hostRefusePinChanged": "Der Schlüssel des anderen Computers hat sich geändert, seit dieser Link erstellt wurde; ohmail hat deshalb angehalten, statt ihm zu vertrauen. Wurde ohmail dort neu installiert oder aus einem Backup wiederhergestellt, erstelle unter Einstellungen → Geräte einen neuen Link. Wenn nicht, antwortet etwas in deinem Netzwerk an seiner Stelle.",
     "hostRefuseNotOhmail": "Unter {host} hat etwas geantwortet, aber es ist nicht ohmail. Prüfe, ob der Link aus Einstellungen → Geräte auf dem anderen Computer stammt.",
+    "hostRefuseNotServing": "ohmail läuft auf {host}, ist dort aber nicht dafür eingerichtet, dass deine anderen Geräte es mitbenutzen. Schalte das dort unter Einstellungen → Geräte ein und erstelle einen neuen Link.",
     "hostRefuseManaged": "Dieser Link kommt von ohmail Cloud, nicht von einem Computer von dir. Geh zurück und wähle „ohmail Cloud“.",
     "hostRefuseServer": "{host} ist ein Server, den du betreibst, kein Computer, der seine Post teilt. Geh zurück und wähle „Dein eigener Server“.",
     "hostRefuseSpent": "Dieser Link wurde schon benutzt oder ist abgelaufen. Erstelle unter Einstellungen → Geräte auf dem anderen Computer einen neuen.",

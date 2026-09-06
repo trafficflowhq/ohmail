@@ -2305,7 +2305,7 @@
     "sendingUnsettledReason_timeout": "the outgoing server did not answer in time",
     "sendingUnsettledReason_unknown": "the outgoing server refused the connection",
     "desktopManageOnHost": "Mailboxes are managed on {host}",
-    "desktopManageOnHostWhy": "Connecting a mailbox or changing its password happens in ohmail on {host}. This {machine} shows what {host} holds.",
+    "desktopManageOnHostWhy": "Connecting a mailbox or changing its password happens in ohmail on {host}. This computer shows what {host} holds.",
     "desktopHoldsCountHost": "This computer holds {count} of the {total} messages {host} holds for you. The rest loads from {host} when you reach it."
   },
   "onboarding": {
@@ -3342,6 +3342,7 @@
     "hostRefuseNoPin": "That link does not carry that computer's key, so ohmail cannot tell its connection apart from anything else on your network. Make a new link from its Settings → Devices.",
     "hostRefusePinChanged": "That computer's key has changed since this link was made, so ohmail stopped rather than trusting it. If ohmail was reinstalled there or restored from a backup, make a new link from its Settings → Devices. If not, something on your network is answering for it.",
     "hostRefuseNotOhmail": "Something answered at {host}, but it is not ohmail. Check the link came from Settings → Devices on that computer.",
+    "hostRefuseNotServing": "ohmail is running on {host}, and it has not been set up to let your other devices use it. Turn that on there, under Settings → Devices, and make a new link.",
     "hostRefuseManaged": "That link is from ohmail Cloud, not from a computer of yours. Go back and choose “ohmail Cloud”.",
     "hostRefuseServer": "{host} is a server you run, not a computer sharing its mail. Go back and choose “Your own server”.",
     "hostRefuseSpent": "That link has already been used or has expired. Make a new one from Settings → Devices on that computer.",

@@ -816,8 +816,18 @@ function statusOf(door?: string | null): EngineStatus | null {
  * true.
  */
 export function DesktopMailboxes(
-  { door, onShellStatus }: {
+  { door, host, onShellStatus }: {
     door?: string | null;
+    /**
+     * THE OTHER COMPUTER THIS INSTALL READS THROUGH, when it reads through one.
+     *
+     * A separate parameter rather than a fourth `door` value, because the two answer different
+     * questions and this pane needs both: `door` decides what the ENGINE will serve (the paired
+     * door is a cloud door and every route behaves as one), and this decides what the pane may
+     * SAY. Folded into `door` the first would have changed with the second, and the resync verb —
+     * which works perfectly well through a host — would have gone with the wording.
+     */
+    host?: string | null;
     onShellStatus?: (next: EngineStatus) => void;
   },
 ) {
@@ -997,6 +1007,9 @@ export function DesktopMailboxes(
   /** True while the DELETE is in flight, so the destructive button cannot be pressed twice. */
   const [removeBusy, setRemoveBusy] = useState(false);
   const cloud = door === "cloud";
+  /* PAIRED: a cloud door whose far side is a computer of the person's own. Everything the ENGINE
+     does is the cloud door's; what changes is what this pane may claim. */
+  const paired = cloud && !!host;
   const heading = cloud ? t("modeCloud") : t("desktopModeLocal");
 
   /**
@@ -2234,7 +2247,28 @@ export function DesktopMailboxes(
           it will store a mailbox password, and this install cannot assert one. The browser can,
           and is already signed in. A standalone install edits its mailbox on this machine through
           the door chooser and needs none of this. */}
-      {cloud ? (
+      {/* ── WHERE A MAILBOX IS ACTUALLY MANAGED, per door ─────────────────────────────────
+          The hosted door sends somebody to a browser, because the account asks for a fresh second
+          factor before it will store a mailbox password and this window cannot assert one.
+
+          THE PAIRED DOOR HAS NOWHERE TO SEND THEM, and saying so is the whole row. "Open
+          ohmail.app" here would be a door out to a service this install has no account with, over
+          a mailbox that lives on the person's own server — the wrong place twice. There is no
+          button because this window cannot open another computer's window; what it can do is name
+          the machine and the pane. */}
+      {/* NO `{machine}` IN THESE TWO SENTENCES, and the reason is a payload boundary rather than
+          a style choice: this pane is in the SERVED host client's import graph
+          (`desktop-messages.test.ts` proves it), and the machine's own word — "Mac" / "PC" /
+          "computer" — lives in `desktopDoor`, which is window-only. Reading it here would ship
+          that whole namespace to a phone loading the served client, or draw raw keys there. The
+          plain noun is the honest substitute; every other paired sentence in the WINDOW's own
+          panes still says "this Mac". */}
+      {paired ? (
+        <SettingsRow
+          label={t("desktopManageOnHost", { host: host! })}
+          description={t("desktopManageOnHostWhy", { host: host! })}
+        />
+      ) : cloud ? (
         <SettingsRow
           label={t("desktopManageOnWeb")}
           description={t("desktopManageOnWebWhy")}
@@ -2294,9 +2328,14 @@ export function DesktopMailboxes(
         const held = cloud && holdingsSpeak(mailState, freshness)
           ? deviceHoldings(facts, mirrored)
           : null;
+        /* THE SENTENCE NAMES WHERE THE REST COMES FROM, and on this door that is not "your
+           account" — it is the other computer. The promise is the same and it is still true: the
+           reach-past doors are served by whatever is on the far side, which here is a host. */
         return held === null ? null : (
           <p className="set-note-inline">
-            {t("desktopHoldsCount", { count: held.count, total: held.total })}
+            {paired
+              ? t("desktopHoldsCountHost", { count: held.count, total: held.total, host: host! })
+              : t("desktopHoldsCount", { count: held.count, total: held.total })}
           </p>
         );
       })()}

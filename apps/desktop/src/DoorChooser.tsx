@@ -48,6 +48,7 @@ import {
   enterHostDoor,
   enterLocalDoor,
   hostLinkProblem,
+  pairAgainWithHost,
   proveHostLink,
   signInToCloud,
   signInToCloudWithCode,
@@ -166,7 +167,7 @@ export function DoorChooser({
    * spent are all read out of this one value, so a later edit of the field cannot change which
    * computer the card was describing. The field is read-only from the moment this is set.
    */
-  const [provedLink, setProvedLink] = useState<HostLinkStep | null>(null);
+  const [provedLink, setProvedLink] = useState<(HostLinkStep & { base: string }) | null>(null);
 
   /* One attempt at a time, and the result travels up whole. A door attempt restarts the engine
      and can take tens of seconds on a first run, so a second press while the first is in flight
@@ -297,12 +298,14 @@ export function DoorChooser({
               setBusy(true);
               setProblem(null);
               void proveHostLink(link)
-                .then((refusal) => {
-                  if (refusal !== null) {
-                    setProblem(refusalSentence(refusal, label));
+                .then((proof) => {
+                  if (proof.refusal !== null) {
+                    setProblem(refusalSentence(proof.refusal, label));
                     return;
                   }
-                  setProvedLink(step);
+                  /* THE BASE THE ENGINE MEASURED travels with the proved link, so the configure
+                     below uses the shape that actually answered rather than recomposing one. */
+                  setProvedLink({ ...step, base: proof.base ?? link.origin });
                 })
                 .finally(() => setBusy(false));
             }}
@@ -312,7 +315,13 @@ export function DoorChooser({
               const link = proved.link;
               const label = proved.host ?? link.origin;
               void attempt(async () => {
-                const result = await enterHostDoor(link);
+                /* PAIR AGAIN IS NOT CHOOSING THE DOOR AGAIN. The door is already chosen and the
+                   mirror is still here; reconfiguring would replace the engine and give
+                   `enforceMirrorOwner` grounds to discard the copy the pane promises is kept.
+                   The same distinction `cloudAction` draws for the hosted door. */
+                const result = cloudAction === "signIn"
+                  ? await pairAgainWithHost(link)
+                  : await enterHostDoor(link, proved.base);
                 /* THE REDEEM'S REFUSAL BECOMES A SENTENCE HERE, for the reason the map above
                    gives: `doors.ts` may not read this window's catalogue, so it hands back the
                    kind and the card is what has the words. */
@@ -790,7 +799,7 @@ function HostDoor({
   busy: boolean;
   problem: string | null;
   /** The link the first step proved, or null while it has not been proved yet. */
-  proved: HostLinkStep | null;
+  proved: (HostLinkStep & { base: string }) | null;
   onBack: () => void;
   onCancel?: () => void;
   onProve: (text: string) => void;
@@ -908,6 +917,7 @@ export function sentenceForKind(kind: HostLinkRefusal | string, host: string): s
     case "no_pin": return DOOR_COPY.hostRefuseNoPin;
     case "pin_mismatch": return DOOR_COPY.hostRefusePinChanged;
     case "not_ohmail": return DOOR_COPY.hostRefuseNotOhmail(host);
+    case "local": return DOOR_COPY.hostRefuseNotServing(host);
     case "managed": return DOOR_COPY.hostRefuseManaged;
     case "selfhost": return DOOR_COPY.hostRefuseServer(host);
     case "pairing_invalid": return DOOR_COPY.hostRefuseSpent;

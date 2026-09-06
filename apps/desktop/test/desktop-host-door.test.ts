@@ -25,6 +25,10 @@ import { sentenceForKind, shortPin } from "../src/DoorChooser.js";
 import { readFileSync } from "node:fs";
 import type { EngineStatus } from "../src/bridge-fetch.js";
 import { parsePairLink } from "@ohmail/client-engine";
+/* The SHARED set, by relative path — the package subpath is not resolvable from this test
+   runner, and reading the source would be a fourth spelling of the same list. */
+import { PAIRED_DEVICE_KINDS } from "@trafficflow/services/auth";
+import { desktopDeviceKind as engineDeviceKind } from "../../sidecar/src/cloud-signin.js";
 
 /**
  * ═══ A PAIRED DESKTOP IS NOT A HOSTED ACCOUNT ══════════════════════════════════════════════
@@ -335,10 +339,39 @@ describe("what this install calls itself on the other computer's Devices list", 
      laptop appears on the host's Devices pane as a browser session — beside a Remove button
      somebody is meant to use to tell their machines apart. */
   it("names the platform the build was made for, never the translated word", () => {
-    expect(desktopDeviceKind("darwin")).toBe("desktop-mac");
+    expect(desktopDeviceKind("darwin")).toBe("desktop-macos");
     expect(desktopDeviceKind("win32")).toBe("desktop-windows");
     expect(desktopDeviceKind("linux")).toBe("desktop-linux");
     expect(desktopDeviceKind("freebsd")).toBe("desktop-linux");
+  });
+
+  /**
+   * AND THE WORD IS ONE THE SERVER ACTUALLY ADMITS.
+   *
+   * `PAIRED_DEVICE_KINDS` is a closed set and the redeem answers 400 for anything outside it —
+   * AFTER the single-use token has been spent, so the failure costs the person a second trip to
+   * the other computer for a new link. This was `desktop-mac` and would have refused every
+   * pairing from a Mac; the case above was green throughout, because it compared a literal with
+   * a literal.
+   *
+   * Held against the SHARED SET rather than against three strings, so a rename on the server
+   * reddens here instead of shipping.
+   */
+  it("and every one of them is a kind the server admits", () => {
+    for (const platform of ["darwin", "win32", "linux", "freebsd"]) {
+      expect(
+        PAIRED_DEVICE_KINDS.has(desktopDeviceKind(platform)),
+        `${platform} declares "${desktopDeviceKind(platform)}", which the redeem refuses`,
+      ).toBe(true);
+    }
+  });
+
+  /* The engine's own declaration for the same platform is the same word. Two vocabularies for
+     one fact is how a phone and a laptop come to disagree about what a laptop is called. */
+  it("and it agrees with the mail engine's own declaration", () => {
+    for (const platform of ["darwin", "win32", "linux"]) {
+      expect(engineDeviceKind(platform), platform).toBe(desktopDeviceKind(platform));
+    }
   });
 });
 
@@ -369,7 +402,8 @@ describe("the two engine steps", () => {
 
   it("the probe hands over the origin and the key, and NEVER the token", async () => {
     const asked = shell(() => encode(200, '{"ok":true}'));
-    expect(await proveHostLink(link)).toBeNull();
+    const proof = await proveHostLink(link);
+    expect(proof.refusal).toBeNull();
     const probe = asked.find((a) => (a.payload as { url?: string })?.url === "/cloud/probe");
     expect(probe, "the probe was not made").toBeTruthy();
     const body = sentBody(probe!.payload);
@@ -390,7 +424,7 @@ describe("the two engine steps", () => {
 
   it("an engine refusal with a kind reads in the reader's language", async () => {
     shell(() => encode(409, '{"error":{"message":"pin mismatch","details":{"kind":"pin_mismatch"}}}', "Conflict"));
-    const refusal = (await proveHostLink(link))!;
+    const refusal = (await proveHostLink(link)).refusal!;
     expect(refusal.kind).toBe("pin_mismatch");
     /* AND THE CARD TURNS IT INTO THE TRANSLATED SENTENCE — the two halves of the seam, driven
        together, so neither can be correct while the pair is broken. */
@@ -399,7 +433,7 @@ describe("the two engine steps", () => {
 
   it("an unknown kind falls back to the engine's own sentence", async () => {
     shell(() => encode(409, '{"error":{"message":"the door was bolted","details":{"kind":"bolted"}}}', "Conflict"));
-    const refusal = (await proveHostLink(link))!;
+    const refusal = (await proveHostLink(link)).refusal!;
     expect(sentenceForKind(refusal.kind!, "kestrel")).toBeNull();
     expect(refusal.message).toBe("the door was bolted");
   });
@@ -422,7 +456,13 @@ describe("the two engine steps", () => {
     expect(redeem, "the redeem was not made").toBeTruthy();
     const body = sentBody(redeem!.payload);
     expect(body.token).toBe("tok_xyz");
-    expect(body.kind).toMatch(/^desktop-/);
+    /* `kind` IS NO LONGER ON THE WIRE. The engine composes the device kind from its own
+       `process.platform` and ignores whatever arrives, deliberately: what platform an install
+       runs on is that process's own fact, not something a caller over the bridge may assert.
+       Sending it too was harmless and misleading. The vocabulary parity it used to stand for is
+       kept as a census below, where it belongs — the window and the engine must still agree about
+       the words even though only one of them speaks them. */
+    expect(Object.keys(body)).not.toContain("kind");
   });
 
   it("the configure runs BEFORE the redeem — a token is spent once", async () => {

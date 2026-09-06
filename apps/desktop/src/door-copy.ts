@@ -219,6 +219,11 @@ const EN = {
   hostRefuseNotOhmail: (host: string) =>
     `Something answered at ${host}, but it is not ohmail. Check the link came from Settings → `
     + "Devices on that computer.",
+  /* A DESKTOP RUNNING OHMAIL THAT IS NOT SHARING. The remedy is a switch on the OTHER machine,
+     which is why this sentence names the pane rather than suggesting a different link. */
+  hostRefuseNotServing: (host: string) =>
+    `ohmail is running on ${host}, and it has not been set up to let your other devices use it. `
+    + "Turn that on there, under Settings → Devices, and make a new link.",
   hostRefuseManaged:
     "That link is from ohmail Cloud, not from a computer of yours. Go back and choose “ohmail "
     + "Cloud”.",
@@ -546,6 +551,7 @@ export const DOOR_COPY: typeof EN = liveCopy("desktopDoor", EN, {
   hostReachedTs: ["machine"],
   hostPairLead: ["machine"],
   hostRefuseNotOhmail: ["host"],
+  hostRefuseNotServing: ["host"],
   hostRefuseServer: ["host"],
   hostRefuseUnreachable: ["host"],
   hostFootStale: ["host"],
