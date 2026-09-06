@@ -312,6 +312,14 @@ Now the newest records are the ones that are read, and a folder too full to read
 treated as a folder nobody could look at rather than as an empty one, so no decision is reported as
 taken, refused or dropped on the strength of a look that did not finish.
 
+### A rule you apply to existing mail reaches what another install filed
+
+Mail that arrived while this install was only reading the mailbox — because another install was
+organizing it — is no longer recorded as a placement you made by hand, so a rule you later ask to
+apply to existing mail can reach it. And a request to apply a rule to existing mail, made while the
+install was not organizing, is now kept until it is, instead of being marked done with nothing
+moved.
+
 ### Screener decisions from a reader no longer buy advice nobody can use
 
 Asking for an AI suggestion on a mailbox you only read used to spend credits whatever the state of
