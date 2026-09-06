@@ -474,9 +474,12 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
  * definitions and cannot grow when a migration adds a column to a base table.
  *
  * `alert_state` is the one table this role writes, and `DELETE` is the ONLY table-level verb it
- * may hold on it. `runAlertPass` resolves an alert by deleting its row — without `DELETE` every
- * clearing alert raises 42501 and the pass 503s exactly as the incident ends — and Postgres has
- * no column-scoped DELETE, so that verb has nowhere narrower to go.
+ * may hold on it. THE VERB'S USER CHANGED AND THIS PARAGRAPH DID NOT, so it is worth being exact:
+ * resolution no longer deletes — it marks `resolved_at`, which is an UPDATE — and the single
+ * remaining user of DELETE is the TOMBSTONE PRUNE, which drops resolved rows once they are older
+ * than any live pass could need and outside the newest few. Without `DELETE` that prune raises
+ * 42501 and the table grows without limit; Postgres has no column-scoped DELETE, so the verb has
+ * nowhere narrower to go.
  *
  * INSERT and UPDATE moved to {@link STAFF_SELECT_GRANTS}'s eight columns and are therefore
  * ABSENT here on purpose. The table-level pair granted nothing extra today (the SELECT list

@@ -395,8 +395,22 @@ export function makePlatformSignalPort(
         // Set when any page hands back a row whose request id cannot be read: the counts below
         // become a floor rather than a population, and the row says so. See the mixed-page note.
         let sampled: SampleCause | null = null;
+        /**
+         * THE ONE WAY A SHORTENED WALK LEAVES THIS FUNCTION. Two paths end one early — the
+         * budget/deadline check at the top of the loop and the fetch timeout below it — and they
+         * used to answer differently, one persisting what it had counted and the other throwing
+         * it away. A shared constructor is what stops that happening a third time.
+         */
+        const partial = (cause: SampleCause) => ({
+          row: {
+            provider: "vercel" as const, project, windowStart: window.start,
+            requests, errors5xx, truncated: true, sampleCause: cause,
+          },
+        });
         let cursor = window.end.getTime();
         let pages = 0;
+        /** Pages whose rows were actually read and counted — see the note at the increment. */
+        let completed = 0;
         // ── WHY THE CURSOR STAYS INCLUSIVE AND THE DE-DUPLICATION IS THE ANSWER ──────────
         //
         // Each lap asks for everything up to and including the previous lap's OLDEST timestamp,
@@ -428,11 +442,7 @@ export function makePlatformSignalPort(
             // failure and the pages already read went with it, so a slow endpoint left the
             // bucket MISSING and the rule dark despite real, if partial, measurement. The
             // declared end of a walk is not what happened during it.
-            return { row: {
-              provider: "vercel", project, windowStart: window.start, requests, errors5xx,
-              truncated: true,
-              sampleCause: pages >= budget ? "page_budget" : "deadline",
-            } };
+            return partial(pages >= budget ? "page_budget" : "deadline");
           }
           pages++;
           const q = new URLSearchParams({
@@ -482,9 +492,25 @@ export function makePlatformSignalPort(
               signal: AbortSignal.timeout(budgetFor()),
             });
           } catch (err) {
+            // ── A TIMEOUT AFTER A COMPLETED PAGE IS A PARTIAL WALK, NOT A FAILED ONE ──────
+            //
+            // Two paths end a walk early and they had two different answers. The budget/deadline
+            // check above persisted what it had counted; this catch — reached when the NEXT
+            // fetch times out — returned a failure and discarded it. A slow endpoint that
+            // answers one page and then stalls therefore wrote no row at all, and the rule went
+            // dark on a window it had partly measured.
+            //
+            // ONE EXIT for both, so they cannot diverge again: `partial()` is the only way a
+            // shortened walk leaves this function, and the only decision left here is which
+            // cause to name. A timeout with NOTHING counted is still a failure — an unread
+            // window must never be written as a zero.
+            const name = String((err as Error)?.name ?? "unknown");
+            if (completed > 0 && (name === "TimeoutError" || name === "AbortError")) {
+              return partial("deadline");
+            }
             // The NAME only, never the message: a fetch error's message carries the URL, and this
             // string reaches a log line and an operator's screen.
-            return { failed: `transport:${String((err as Error)?.name ?? "unknown")}` };
+            return { failed: `transport:${name}` };
           }
           if (!res.ok) return { failed: `http_${res.status}` };
           let body: unknown;
@@ -602,6 +628,13 @@ export function makePlatformSignalPort(
             if (ts < oldest) oldest = ts;
           }
 
+          // A PAGE IS COUNTED, NOT MERELY ATTEMPTED. `pages` is incremented before the request
+          // — it bounds the number of laps — so it is 1 while the FIRST fetch is still in
+          // flight, and using it to decide "have we measured anything" turned a timeout on the
+          // very first request into a partial sample over zero rows. That is the unread window
+          // written as a zero, which is the thing this file exists to make unrepresentable.
+          completed++;
+
           if (data.hasMoreRows === false) break;
           // A lap that advanced the cursor by NOTHING is a hard stop rather than an infinite
           // loop — fifty requests inside one millisecond would otherwise spin until the
@@ -615,10 +648,7 @@ export function makePlatformSignalPort(
           // count would be the actual defect: it would put a confident total on a board for a
           // window the poll never finished reading.
           if (oldest >= cursor) {
-            return { row: {
-              provider: "vercel", project, windowStart: window.start, requests, errors5xx,
-              truncated: true, sampleCause: "stalled_cursor",
-            } };
+            return partial("stalled_cursor");
           }
           cursor = oldest;
         }

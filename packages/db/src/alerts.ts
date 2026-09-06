@@ -3120,11 +3120,35 @@ export function selectOpenAlerts<T extends Record<string, AnyPgColumn>>(
  */
 export const ALERT_TOMBSTONE_MAX = 64;
 
-/** Keep the newest {@link ALERT_TOMBSTONE_MAX} resolved rows; drop the rest. */
-async function pruneAlertTombstones(db: Tx): Promise<void> {
+/**
+ * HOW LONG A TOMBSTONE MUST SURVIVE BEFORE IT MAY BE PRUNED.
+ *
+ * The tombstone exists so the observation write's INSERT branch has something to fence against.
+ * A count-only prune therefore reintroduced the defect it was added to prevent: past the cap,
+ * the oldest resolved row is deleted, and a pass that evaluated that key BEFORE its resolution
+ * and resumes after the prune finds an empty table, takes the insert branch, and re-opens — and
+ * can page — an incident that was already resolved.
+ *
+ * A cap alone cannot know that. What bounds the danger is TIME: a pass in flight is bounded by
+ * its own claim lease, so a tombstone older than the longest pass horizon cannot be the fence
+ * any live pass still needs. Thirty minutes is that horizon with room to spare — the claim TTL
+ * is minutes, and the wall clock of a whole pass is under a minute.
+ *
+ * Both bounds apply, and they answer different questions: the age says "no live pass can need
+ * this any more", the count says "and the table still may not grow without limit".
+ */
+export const ALERT_TOMBSTONE_MIN_AGE_MS = 30 * 60 * 1000;
+
+/**
+ * Drop resolved rows that are BOTH older than {@link ALERT_TOMBSTONE_MIN_AGE_MS} and outside the
+ * newest {@link ALERT_TOMBSTONE_MAX}. Either condition alone is unsafe or unbounded.
+ */
+async function pruneAlertTombstones(db: Tx, now: Date): Promise<void> {
+  const cut = new Date(now.getTime() - ALERT_TOMBSTONE_MIN_AGE_MS).toISOString();
   await db.delete(alertState).where(sql`${alertState.alertKey} in (
     select alert_key from ${alertState}
     where resolved_at is not null
+      and resolved_at < ${cut}::timestamptz
     order by resolved_at desc
     offset ${ALERT_TOMBSTONE_MAX}
   )`);
@@ -3559,11 +3583,22 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
   // read it, the rule fires, the key is in `firingKeys`, and this exemption never applies —
   // so the narrower rule costs nothing there.
   if (opts.driver === "worker") evaluatedScopedKeys.add("imap_admission_refused");
-  const resolved = existing
+  // ── WHAT THIS PASS *INTENDS* TO RESOLVE, WHICH IS NOT YET WHAT IT DID ────────────────
+  //
+  // The list below is computed before the writes and used to be returned as `resolved`. Every
+  // one of those writes is fenced, so an older pass whose update matches zero rows — because a
+  // newer pass has since seen the condition again — still reported the key as resolved. Both
+  // callers log `alert_resolved` from that array, so the log said a condition had cleared while
+  // the row was open and may have just paged a human about it.
+  //
+  // The fence was doing its job silently and the report was speaking for it. `resolved` is now
+  // built from the rows the database actually marked.
+  const candidates = existing
     .filter((r) => !firingKeys.has(r.alertKey))
     .filter((r) => !SCOPED_ALERT_KINDS.has(r.kind) || evaluatedScopedKeys.has(r.alertKey))
     .map((r) => r.alertKey);
-  for (const key of resolved) {
+  const resolved: string[] = [];
+  for (const key of candidates) {
     // ── RESOLUTION MARKS; IT DOES NOT DELETE ─────────────────────────────────────────
     //
     // Deleting made `alert_state` a live list of what is wrong, which is what the console wants
@@ -3595,9 +3630,13 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
         title: null,
         affectedAccounts: null,
       })
-      .where(and(eq(alertState.alertKey, key), notWrittenByANewerPass(now)));
+      .where(and(eq(alertState.alertKey, key), notWrittenByANewerPass(now)))
+      // RETURNING is the whole point: it is the difference between "I asked" and "it happened",
+      // and this pass may only report the second.
+      .returning({ alertKey: alertState.alertKey })
+      .then((rows) => { if (rows.length > 0) resolved.push(key); });
   }
-  await pruneAlertTombstones(db);
+  await pruneAlertTombstones(db, now);
 
   const streak = opts.deliveryStreak;
   if (toNotify.length === 0) {

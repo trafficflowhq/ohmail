@@ -597,8 +597,10 @@ export const workerHeartbeats = pgTable("worker_heartbeats", {
  * `alertKey` is the rule's stable identity (`worker_down:0`, `billing_events_failed`,
  * `sends_stuck`, `sync_lag`), never per-occurrence: an alert is a condition, and "3 events
  * failed" is `detail`, not three rows. `notified_at` + `notify_count` are what make the
- * repeat interval enforceable; the row is DELETED when the condition clears, so the table
- * is a live list of what is currently wrong and can be rendered as such.
+ * repeat interval enforceable; the row is MARKED `resolved_at` when the condition clears — see
+ * that column — so what a reader gets through `selectOpenAlerts` is a live list of what is
+ * currently wrong. The rows themselves are kept for a bounded time because the observation
+ * write's INSERT branch has nothing to fence against without them.
  *
  * Nothing here can carry mail content — every field is a count, an age, or a rule name
  * produced by `alerts.ts` itself.
