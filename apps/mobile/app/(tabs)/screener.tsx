@@ -108,7 +108,7 @@ export default function ScreenerScreen() {
                       <Txt variant="rowSubject" numberOfLines={1}>
                         {row.address}
                       </Txt>
-                      <Txt variant="caption" tone="ink3" style={{ marginTop: 4, lineHeight: 16 }}>
+                      <Txt variant="hint" tone="ink3" style={{ marginTop: 4 }}>
                         {Copy.screenedNote(row.screenedOn, row.held.length)}
                       </Txt>
                     </TapRow>

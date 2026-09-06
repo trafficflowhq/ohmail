@@ -107,4 +107,13 @@
      and no wrap changes. */
   .scn-bulk{row-gap:11px}
   .scn-suggest{row-gap:10px}
+  /* LABELS WRAP AT PHONE WIDTH RATHER THAN CROSSING THE PANEL. `nowrap` is right on a wide
+     screen, where a verb on one line reads as one verb; at 390 it makes the capsule as wide as
+     its whole label, and German labels run 18–108% longer than the English they were laid out
+     against — “Alle Vorschläge übernehmen” crosses the Screener panel's right edge.
+     A wrapped label is TALLER, not free: `.btn` is line-height 1.5 with 7px of vertical padding,
+     so a second line adds ~19px and the capsule passes the 44px floor rather than sitting in it.
+     That is the trade being made — a taller control inside its panel beats a shorter one that
+     leaves it — and it grows the row it is in, which is why this is scoped to phone width. */
+  .scn-bulk .btn{white-space:normal}
 }

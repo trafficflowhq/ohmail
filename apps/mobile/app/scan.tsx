@@ -84,7 +84,7 @@ export default function ScanScreen() {
             onBarcodeScanned={phase.k === "scanning" ? onScanned : undefined}
           />
           <View style={{ paddingHorizontal: 20, paddingVertical: 14, gap: 10 }}>
-            <Txt variant="caption" tone="ink3" style={{ lineHeight: 16 }}>
+            <Txt variant="hint" tone="ink3">
               {phase.k === "pairing"
                 ? Copy.pairingBusy
                 : phase.badCode
@@ -99,7 +99,7 @@ export default function ScanScreen() {
       {permission && !permission.granted ? (
         <Panel style={{ margin: 12, paddingVertical: 16 }}>
           <View style={{ paddingHorizontal: 20, gap: 10 }}>
-            <Txt variant="caption" tone="ink2" style={{ lineHeight: 16 }}>
+            <Txt variant="hint" tone="ink2">
               {Copy.scanCameraOff}
             </Txt>
             <Button label={Copy.scanAllow} variant="solid" onPress={() => void requestPermission()} />
@@ -112,7 +112,7 @@ export default function ScanScreen() {
         <Panel style={{ margin: 12, paddingVertical: 16 }}>
           <View style={{ paddingHorizontal: 20, gap: 10 }}>
             <Txt variant="settingsLabel" tone="accent">{Copy.connectRefusedTitle}</Txt>
-            <Txt variant="caption" tone="ink2" style={{ lineHeight: 16 }}>{sayRefusal(phase.reason)}</Txt>
+            <Txt variant="hint" tone="ink2">{sayRefusal(phase.reason)}</Txt>
             <Button
               label={Copy.scanAgain}
               variant="solid"

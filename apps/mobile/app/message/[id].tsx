@@ -143,7 +143,11 @@ function MessageBody() {
                   {bodyNote}
                 </Txt>
               ) : null}
-              <Txt variant="msgBody" style={{ maxWidth: t.layout.proseMax }}>
+              {/* THE READER'S SIZE, NOT THE PANE'S. On a phone the web has no reading column
+                  (`AppShell.tsx`: below 900 it is hidden) — opening a message opens the READER
+                  sheet at 16.5/1.78 (`reader.css:16`). This screen is that reader, so it reads
+                  at `readerBody`. `msgBody` is the desktop pane's role and stays with it. */}
+              <Txt variant="readerBody" style={{ maxWidth: t.layout.proseMax }}>
                 {m.body}
               </Txt>
             </>

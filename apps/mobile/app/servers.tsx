@@ -42,7 +42,7 @@ export default function ServersScreen() {
       <Scroller>
         <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 14 }}>
           <Txt variant="h1">{Copy.serversTitle}</Txt>
-          <Txt variant="caption" tone="ink3" style={{ marginTop: 6, lineHeight: 16 }}>
+          <Txt variant="hint" tone="ink3" style={{ marginTop: 6 }}>
             {Copy.serversNote}
           </Txt>
         </View>
@@ -61,7 +61,7 @@ export default function ServersScreen() {
               />
             ))}
             <View style={{ paddingHorizontal: 20, paddingTop: 6 }}>
-              <Txt variant="caption" tone="ink3" style={{ lineHeight: 16 }}>
+              <Txt variant="hint" tone="ink3">
                 {Copy.serversForgetNote}
               </Txt>
             </View>
@@ -79,7 +79,7 @@ export default function ServersScreen() {
         {forgetFailure === null ? null : (
           <Panel style={{ marginTop: 14, paddingVertical: 14 }}>
             <View style={{ paddingHorizontal: 20 }}>
-              <Txt variant="caption" tone="ink2" style={{ lineHeight: 16 }}>
+              <Txt variant="hint" tone="ink2">
                 {Copy.serversForgetFailed(sayRefusal(forgetFailure))}
               </Txt>
             </View>
@@ -102,7 +102,7 @@ function StatusPanel() {
     return conn.profiles.length === 0 ? (
       <Panel style={{ paddingVertical: 16 }}>
         <View style={{ paddingHorizontal: 20 }}>
-          <Txt variant="caption" tone="ink3" style={{ lineHeight: 16 }}>
+          <Txt variant="hint" tone="ink3">
             {Copy.serversEmpty}
           </Txt>
         </View>
@@ -121,7 +121,7 @@ function StatusPanel() {
         {s.k === "refused" || s.k === "ended" ? (
           <>
             <Txt variant="settingsLabel" tone="accent">{Copy.connectRefusedTitle}</Txt>
-            <Txt variant="caption" tone="ink2" style={{ lineHeight: 16 }}>{sayRefusal(s.reason)}</Txt>
+            <Txt variant="hint" tone="ink2">{sayRefusal(s.reason)}</Txt>
           </>
         ) : null}
         {s.k === "live" ? <LiveFacts /> : null}
@@ -155,7 +155,7 @@ function LiveFacts() {
         {conn.syncing ? Copy.connectSyncing : Copy.connectMirrored(total, s.session.store.getCursor())}
       </Txt>
       {conn.syncError ? (
-        <Txt variant="caption" tone="ink2" style={{ lineHeight: 16 }}>
+        <Txt variant="hint" tone="ink2">
           {/* WHETHER THIS PAIRING HOLDS A PIN decides which sentence a handshake failure gets.
               A pinned pairing is a computer whose key this phone agreed to, so a failure there
               means that key changed. An unpinned one — the hosted service, a self-hosted server

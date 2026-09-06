@@ -21,7 +21,7 @@ import { router } from "expo-router";
 import { Copy } from "../src/copy";
 import { useConnection } from "../src/net/connection";
 import { parsePairLink, pendingPairOrigin } from "../src/net/pairing";
-import { leading, size, useTheme } from "../src/theme";
+import { useTheme } from "../src/theme";
 import { Button, Panel, Screen, Scroller, Section, Txt } from "../src/ui/base";
 import { DetailBar } from "../src/ui/chrome";
 import { useLocale } from "../src/i18n/LocaleProvider";
@@ -67,7 +67,7 @@ export default function ConnectScreen() {
       <Scroller>
         <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 14 }}>
           <Txt variant="h1">{Copy.connectTitle}</Txt>
-          <Txt variant="caption" tone="ink3" style={{ marginTop: 6, lineHeight: size.caption * leading.base }}>
+          <Txt variant="hint" tone="ink3" style={{ marginTop: 6 }}>
             {Copy.connectNote}
           </Txt>
         </View>
@@ -92,7 +92,7 @@ export default function ConnectScreen() {
               <Txt variant="settingsLabel" tone="accent">
                 {Copy.connectRefusedTitle}
               </Txt>
-              <Txt variant="caption" tone="ink2" style={{ lineHeight: size.caption * leading.base }}>
+              <Txt variant="hint" tone="ink2">
                 {sayRefusal(phase.reason)}
               </Txt>
             </View>

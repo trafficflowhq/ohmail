@@ -111,7 +111,7 @@ function TriageBody() {
                 <View style={{ flex: 1 }} />
                 {settled || p.items.length > 0 ? <Badge>{p.items.length}</Badge> : null}
               </View>
-              <Txt variant="caption" tone="ink3" style={{ paddingHorizontal: 18, lineHeight: 16 }}>
+              <Txt variant="hint" tone="ink3" style={{ paddingHorizontal: 18 }}>
                 {p.note}
               </Txt>
 

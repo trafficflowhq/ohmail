@@ -81,7 +81,7 @@ function ScheduledBody() {
               {rows.some((r) => r.cancellable) ? (
                 <>
                   <Rule inset={18} />
-                  <Txt variant="caption" tone="ink3" style={{ paddingHorizontal: 18, paddingTop: 10, lineHeight: 16 }}>
+                  <Txt variant="hint" tone="ink3" style={{ paddingHorizontal: 18, paddingTop: 10 }}>
                     {Copy.scheduledEditNote}
                   </Txt>
                 </>

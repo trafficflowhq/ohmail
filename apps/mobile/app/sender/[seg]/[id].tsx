@@ -291,7 +291,7 @@ function DecisionBar({
         ]}
       />
 
-      <Txt variant="caption" tone="ink3" style={{ marginTop: 10, lineHeight: 16 }}>
+      <Txt variant="hint" tone="ink3" style={{ marginTop: 10 }}>
         {Copy.decideRule(target)}
       </Txt>
     </View>
@@ -349,9 +349,8 @@ function DecisionCapsule({
         }}
       >
         <Txt
-          variant={ai ? "pileTitle" : "decision"}
+          variant={ai ? "decisionAi" : "decision"}
           tone={ai ? "accent" : quiet ? "ink2" : "ink"}
-          style={ai ? { fontSize: 12 } : undefined}
         >
           {destLabel(dest)}
         </Txt>

@@ -203,7 +203,7 @@ export function Doors({
     <>
       {lead ? (
         <View style={{ paddingHorizontal: 12, paddingBottom: 10 }}>
-          <Txt variant="caption" tone="ink3" style={{ lineHeight: 17 }}>
+          <Txt variant="hint" tone="ink3">
             {Copy.doorsLead}
           </Txt>
         </View>
@@ -240,7 +240,7 @@ export function Doors({
         />
         {open === "self" ? (
           <View style={{ paddingHorizontal: 16, paddingTop: 6, gap: 10 }}>
-            <Txt variant="caption" tone="ink3" style={{ lineHeight: 16 }}>
+            <Txt variant="hint" tone="ink3">
               {Copy.doorSelfLead}
             </Txt>
             <AddressField
@@ -253,7 +253,7 @@ export function Doors({
                  Editable only in the two states where nothing is in flight and nothing is proved. */
               locked={probe.k === "asking" || probe.k === "probed"}
             />
-            <Txt variant="caption" tone="ink3" style={{ lineHeight: 16 }}>
+            <Txt variant="hint" tone="ink3">
               {Copy.doorSelfCert}
             </Txt>
             <Button
@@ -276,7 +276,7 @@ export function Doors({
             `doorDesktopNoPin`: the remedy that works, named where it is needed and nowhere else. */}
         {canPin() ? null : (
           <View style={{ paddingHorizontal: 20, paddingTop: 2 }}>
-            <Txt variant="caption" tone="ink2" style={{ lineHeight: 16 }}>
+            <Txt variant="hint" tone="ink2">
               {Copy.doorDesktopNoPin}
             </Txt>
           </View>
@@ -289,7 +289,7 @@ export function Doors({
         ) : null}
 
         <View style={{ paddingHorizontal: 20, paddingTop: 14 }}>
-          <Txt variant="caption" tone="ink3" style={{ lineHeight: 17 }}>
+          <Txt variant="hint" tone="ink3">
             {Copy.doorsTravel}
           </Txt>
         </View>
@@ -310,7 +310,7 @@ function Result({
 }) {
   if (probe.k === "failed") {
     return (
-      <Txt variant="caption" tone="ink2" style={{ lineHeight: 16, paddingHorizontal: 4 }}>
+      <Txt variant="hint" tone="ink2" style={{ paddingHorizontal: 4 }}>
         {sayRefusal(probe.sentence)}
       </Txt>
     );
@@ -318,7 +318,7 @@ function Result({
   if (probe.k !== "probed") return null;
   return (
     <View style={{ gap: 10 }}>
-      <Txt variant="caption" tone="ink3" style={{ lineHeight: 16, paddingHorizontal: 4 }}>
+      <Txt variant="hint" tone="ink3" style={{ paddingHorizontal: 4 }}>
         {Copy.doorSelfReached(probe.origin, probe.flavor)}
         {/* SAID ONLY WHEN IT IS A FACT WORTH SAYING. A server whose API is at its own root has
             nothing to report here, and a line stating the obvious on every door would train
@@ -363,7 +363,7 @@ function Door({ name, say, onPress }: { name: string; say: string; onPress: () =
       style={{ marginHorizontal: 8, paddingHorizontal: 12, paddingVertical: 12, gap: 3 }}
     >
       <Txt variant="navLabel">{name}</Txt>
-      <Txt variant="caption" tone="ink3" style={{ lineHeight: 16 }}>{say}</Txt>
+      <Txt variant="hint" tone="ink3">{say}</Txt>
     </TapRow>
   );
 }

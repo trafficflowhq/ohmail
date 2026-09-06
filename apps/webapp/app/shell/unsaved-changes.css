@@ -8,7 +8,8 @@
   background: var(--warn-ground, rgba(180, 120, 20, 0.08));
   border-radius: 8px;
   padding: 8px 10px;
-  font-size: 13px;
+  /* the strip's own copy, so it takes the phone step like every other reading size */
+  font-size: calc(13px + var(--type-up));
 }
 
 .unsaved-line {

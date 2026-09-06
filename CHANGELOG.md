@@ -18,6 +18,18 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+### Two more text fixes at phone width
+
+**On the phone a message body reads at the reader's size.** Opening a message on a phone opens the
+reader, and the reader sets its body a point larger than the pane the wide layout reads in, with
+more air between the lines. The phone app was setting the pane's size; it now sets the reader's,
+which is what the browser has always done at that width.
+
+**A button label that does not fit wraps instead of crossing the panel.** Labelled buttons in the
+Screener strip and in settings kept their text on one line at any width, so a label longer than the
+space — German runs longer than the English these were laid out against — pushed past the edge of
+the panel around it. Below 640px they wrap onto a second line, and the button grows taller to hold it.
+
 ## [0.14.2] — 2026-09-08
 
 ### Settings → Mailboxes says what it knows, and stops naming what it does not

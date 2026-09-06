@@ -208,6 +208,18 @@ export const type = {
   badge: t({ size: size.micro, weight: weight.medium }),
   button: t({ size: size.control, weight: weight.semibold }),
   decision: t({ size: size.bodyS, weight: weight.semibold }),
+  /* THE AI'S SUGGESTED DESTINATION IS `decision` IN THE HEAVY GRADE, NOT A SMALLER ROLE.
+     The web marks the suggestion by ring, accent and weight 650 at the SAME size as the
+     siblings it sits beside (`split-button.css:6,14,16`) — the mark is the emphasis, and the
+     size is what keeps the row one row. This site used to reach that emphasis by borrowing
+     `pileTitle` and pulling it back down with an inline `fontSize: 12`, which left it one
+     point UNDER the neighbouring `decision` at 13 and carried `pileTitle`'s tracking. */
+  decisionAi: t({ size: size.bodyS, weight: weight.heavy }),
+  /* A HINT IS A CAPTION THAT WRAPS. `caption` carries no leading because the roles it was
+     drawn for — a row's timestamp, a tab label — are single lines, and a multi-line caption
+     then falls back to the platform's own line box (~1.33 at 12). The web's hints run 1.5
+     (`settings.css:65`), so the explanatory captions under a control take that here. */
+  hint: t({ size: size.caption, weight: weight.regular, leading: leading.base }),
   pileTitle: t({ size: size.bodyL, weight: weight.heavy, tracking: tracking.heading }),
   settingsLabel: t({ size: size.body, weight: weight.bold }),
   sectionLabel: t({ size: size.bodyS, weight: weight.bold, tracking: tracking.name }),

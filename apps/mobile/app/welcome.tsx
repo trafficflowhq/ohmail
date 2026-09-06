@@ -43,10 +43,10 @@ export default function WelcomeScreen() {
         <View style={{ paddingHorizontal: 16, paddingTop: 28, paddingBottom: 14, gap: 12 }}>
           <Wordmark color={t.c.ink} dot={t.c.accent} size={30} />
           <Txt variant="h2">{Copy.welcomeTitle}</Txt>
-          <Txt variant="note" tone="ink2" style={{ lineHeight: 21 }}>
+          <Txt variant="note" tone="ink2">
             {Copy.welcomeLead}
           </Txt>
-          <Txt variant="caption" tone="ink3" style={{ lineHeight: 17 }}>
+          <Txt variant="hint" tone="ink3">
             {Copy.welcomeHow}
           </Txt>
         </View>
