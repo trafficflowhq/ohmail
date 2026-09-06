@@ -414,7 +414,7 @@
     "folderNamePlaceholder": "Ordnername",
     "folderRenamePlaceholder": "Neuer Name",
     "folderCreating": "Wird auf deinem Mailserver angelegt…",
-    "folderRenaming": "Wird auf deinem Mailserver zu {name} umbenannt…",
+    "folderRenaming": "Wird auf deinem Mailserver in {name} umbenannt…",
     "folderDeleting": "Wird gelöscht — die Nachrichten wandern zuerst in den Papierkorb deines Servers…",
     "folderDismiss": "OK",
     "folderErrRefused": "Dein Mailserver hat diese Änderung abgelehnt.",
