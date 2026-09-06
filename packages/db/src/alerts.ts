@@ -4048,14 +4048,28 @@ export async function writeHeartbeat(db: Tx, input: HeartbeatInput, now: Date = 
         // so the next beat from that same new process satisfied the condition and cleared an
         // outage nobody had observed to end. It postponed the defect by one beat. A guess about
         // WHO is beating cannot answer a question about WHAT the provider did.
+        // ── AN INTERVENING SUCCESS ENDS THE OUTAGE THE ROW IS HOLDING ───────────────────
+        //
+        // The success arm has to be tested BEFORE the `least()` arm, and it was not. One beat can
+        // carry both a new trip and the success that preceded it: opened at t0, the provider
+        // answers at t20, the circuit trips again at t21, and the next heartbeat reports the t21
+        // stamp together with an `aiProviderOkAt` of t20. Taking `least(t0, t21)` there ages a
+        // SECOND, distinct outage from the first one's start — so a rule that waits ten minutes
+        // fires immediately, on a condition seconds old.
+        //
+        // `least()` is right only while the outage is CONTINUOUS. A recorded success is the proof
+        // that it was not, so it is asked first.
         aiCircuitOpenSince: sql`case
-          when ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz is not null
-           and ${workerHeartbeats.aiCircuitOpenSince} is not null
-            then least(${workerHeartbeats.aiCircuitOpenSince}, ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz)
-          when ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz is not null
+          when ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz is null and ${input.aiProviderOkAt ? input.aiProviderOkAt.toISOString() : null}::timestamptz is not null
+            then null
+          when ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz is null
+            then ${workerHeartbeats.aiCircuitOpenSince}
+          when ${workerHeartbeats.aiCircuitOpenSince} is null
             then ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz
-          when ${input.aiProviderOkAt ? input.aiProviderOkAt.toISOString() : null}::timestamptz is not null then null
-          else ${workerHeartbeats.aiCircuitOpenSince} end`,
+          when ${input.aiProviderOkAt ? input.aiProviderOkAt.toISOString() : null}::timestamptz is not null
+           and ${input.aiProviderOkAt ? input.aiProviderOkAt.toISOString() : null}::timestamptz > ${workerHeartbeats.aiCircuitOpenSince}
+            then ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz
+          else least(${workerHeartbeats.aiCircuitOpenSince}, ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz) end`,
         lastCycleAt: input.lastCycleAt,
         startedAt: input.startedAt,
         beatAt: now,
@@ -4126,13 +4140,19 @@ export async function refreshHeartbeat(
       // one long first sync refreshes for minutes without reaching that path. Being pinned to one
       // instance is NOT enough to read a null as recovery — the instance a takeover installed is
       // pinned too, and it may never have called the provider. Only `aiProviderOkAt` clears.
+      // The same five arms as the claiming write, in the same order and for the same reason: a
+      // recorded success ends the outage the row is holding, so it is tested before `least()`.
       aiCircuitOpenSince: sql`case
-        when ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz is not null
-         and ${workerHeartbeats.aiCircuitOpenSince} is not null
-          then least(${workerHeartbeats.aiCircuitOpenSince}, ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz)
-        when ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz is not null then ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz
-        when ${input.aiProviderOkAt ? input.aiProviderOkAt.toISOString() : null}::timestamptz is not null then null
-        else ${workerHeartbeats.aiCircuitOpenSince} end`,
+        when ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz is null and ${input.aiProviderOkAt ? input.aiProviderOkAt.toISOString() : null}::timestamptz is not null
+          then null
+        when ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz is null
+          then ${workerHeartbeats.aiCircuitOpenSince}
+        when ${workerHeartbeats.aiCircuitOpenSince} is null
+          then ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz
+        when ${input.aiProviderOkAt ? input.aiProviderOkAt.toISOString() : null}::timestamptz is not null
+         and ${input.aiProviderOkAt ? input.aiProviderOkAt.toISOString() : null}::timestamptz > ${workerHeartbeats.aiCircuitOpenSince}
+          then ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz
+        else least(${workerHeartbeats.aiCircuitOpenSince}, ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz) end`,
       lastCycleAt: input.lastCycleAt,
       beatAt: now,
     })

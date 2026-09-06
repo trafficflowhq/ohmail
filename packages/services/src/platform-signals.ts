@@ -85,6 +85,8 @@ export const SAMPLE_CAUSES = [
   "deadline",
   /** The cursor stopped advancing — the endpoint said more rows exist and returned none. */
   "stalled_cursor",
+  /** More rows exist but they share the window's first instant, so there is nowhere to page to. */
+  "boundary_unread",
 ] as const;
 
 export type SampleCause = (typeof SAMPLE_CAUSES)[number];
@@ -537,7 +539,11 @@ export function makePlatformSignalPort(
           // ("they cannot be de-duplicated"), and skipping individual blank ids remains right:
           // an approximate count over five minutes is still a usable rate. What is not right is
           // treating a page NONE of whose rows are usable as evidence of a quiet deployment.
-          const usable = batch.filter((r) => typeof r.requestId === "string" && r.requestId !== "");
+          // TRIMMED, because `" " !== ""`. A whitespace-only id passes an empty-string check,
+          // cannot de-duplicate anything, and would be counted as a distinct request on every
+          // lap that re-reads the boundary — inflating the denominator with one row seen twice.
+          const usable = batch.filter(
+            (r) => typeof r.requestId === "string" && r.requestId.trim() !== "");
           if (batch.length > 0 && usable.length === 0) {
             return { failed: "page_without_request_ids" };
           }
@@ -598,7 +604,7 @@ export function makePlatformSignalPort(
               if (skipTs !== null && skipTs < oldest) oldest = skipTs;
               continue;
             }
-            const id = typeof r.requestId === "string" ? r.requestId : "";
+            const id = typeof r.requestId === "string" ? r.requestId.trim() : "";
             // A blank id cannot be de-duplicated, so counting it would inflate the boundary. It is
             // skipped rather than refused: unlike the census script, an approximate count over a
             // five-minute window is still a usable rate, and refusing the whole poll over one
@@ -647,6 +653,19 @@ export function makePlatformSignalPort(
           // very first request into a partial sample over zero rows. That is the unread window
           // written as a zero, which is the thing this file exists to make unrepresentable.
           completed++;
+
+          // ── UNREAD ROWS AT THE WINDOW'S START ARE NOT A COMPLETE BUCKET ─────────────
+          //
+          // The loop's condition is `cursor > window.start`, so when a page's oldest row is
+          // stamped exactly at the start — which happens when more than one page of requests
+          // shares the boundary millisecond — the next lap is not taken. That is correct as far
+          // as it goes: there is nowhere left to page to. What was wrong is that the endpoint had
+          // just said `hasMoreRows: true`, and the bucket was persisted as COMPLETE anyway. The
+          // rows it admits to withholding are as likely to be successes as errors, so the
+          // surviving quotient can cross the rate floor and manufacture a critical page.
+          if (data.hasMoreRows !== false && oldest <= window.start.getTime()) {
+            return partial("boundary_unread");
+          }
 
           if (data.hasMoreRows === false) break;
           // A lap that advanced the cursor by NOTHING is a hard stop rather than an infinite

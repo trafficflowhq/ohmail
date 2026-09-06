@@ -1036,7 +1036,12 @@ GRANT INSERT (alert_key, kind, severity, opened_at, last_seen_at, notified_at, n
   ON public.alert_state TO ohmail_admin;
 GRANT UPDATE (alert_key, kind, severity, opened_at, last_seen_at, notified_at, notify_count, detail, notified_signature, claimed_until, cls, affected_accounts, fix_href, title, "count", resolved_at)
   ON public.alert_state TO ohmail_admin;
-GRANT DELETE ON public.alert_state TO ohmail_admin;
+-- NO `DELETE` ON `alert_state`, DELIBERATELY, AND THE REVOKE ABOVE IS WHAT ENFORCES IT.
+-- Nothing in this bundle deletes from the table: resolution marks, and the tombstone prune that
+-- once needed the verb has been removed because the row it deleted is the one a delayed pass
+-- fences against. Keeping the grant would leave a PRE-0030 driver — which 0030 permits to keep
+-- running during a rolling deploy — able to execute its old DELETE resolution path over this
+-- role and erase that fence underneath the new build.
 
 -- `alert_pass_runs` (cloud 0030) — the pulse of the thing that takes everyone else's pulse.
 --

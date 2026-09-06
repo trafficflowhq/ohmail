@@ -110,10 +110,11 @@ import { learnMissingSmtpSizes } from "../smtp-size.js";
  * grants the database actually carries. Naming the tables here instead is how this paragraph
  * came to describe a rule set several times smaller than the one that shipped.
  *
- * It writes exactly two: `alert_state`, which it may INSERT, UPDATE and DELETE because the pass
- * opens a row, claims the notification, MARKS the row resolved when the condition clears, and
- * prunes old resolved rows — resolution stopped deleting in cloud 0030, but the DELETE grant is
- * still required for that prune; and
+ * It writes exactly two: `alert_state`, which it may INSERT and UPDATE — the pass opens a row,
+ * claims the notification, and MARKS the row resolved when the condition clears. It may NOT
+ * delete: resolution stopped deleting in cloud 0030, the prune that briefly needed the verb is
+ * gone, and the grant went with it so that an older bundle cannot delete the row a delayed pass
+ * fences against; and
  * `alert_pass_runs`, one row per arm, because the arm that is hardest to observe from anywhere
  * else must be able to record that it ran.
  *

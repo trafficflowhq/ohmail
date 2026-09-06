@@ -489,7 +489,22 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
  * public.alert_state` now FAILS rather than being silently permitted.
  */
 export const STAFF_TABLE_GRANTS: Readonly<Record<string, readonly string[]>> = {
-  "public.alert_state": ["DELETE"],
+  // ── NOTHING. `alert_state` HELD `DELETE` AND NO LONGER DOES ──────────────────────────
+  //
+  // The verb was granted for one caller — resolution, when resolution deleted the row — and then
+  // for the tombstone prune that replaced it. There is no prune any more: the row a delayed pass
+  // fences against is never removed, so nothing in this bundle deletes from this table.
+  //
+  // REVOKING IT IS NOT TIDYING. It is the only thing that stops a PRE-0030 DRIVER, which
+  // migration 0030 explicitly permits to keep running through a rolling deploy, from executing
+  // its old DELETE resolution path over this same role: that delete removes the row a delayed
+  // new-build observation fences on, the observation takes the unfenced INSERT branch, and the
+  // resolved incident pages again. A capability nobody uses is still a capability an old bundle
+  // — or a compromised session — can use.
+  //
+  // The cost is stated plainly: an old driver's resolution now raises 42501 and its pass fails
+  // loudly at that step. That is the safe direction. A pass that fails while being replaced is
+  // visible; a fence quietly deleted underneath a running deploy is not.
   "admin.audit_log": ["SELECT"],
   "admin.credit_ledger": ["SELECT"],
 };
