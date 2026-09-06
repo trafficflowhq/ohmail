@@ -1446,6 +1446,17 @@ export class OhmailEngine {
    * synchronously first, and queues the verb rather than joining at all.
    */
   private outboxHold: Promise<void> | null = null;
+  /**
+   * Retries refused THIS SESSION whose durable marker could not be written — id to reason.
+   *
+   * Not a cache and not an optimisation: it is the only place the refusal exists when storage
+   * would not take it. `abandoned()` merges it, so the control is disabled for the rest of the
+   * session even though a reboot will offer it again — which is honest, because after a reboot
+   * the store genuinely does not know.
+   */
+  private readonly refusedLocally = new Map<string, string>();
+  /** Bumped whenever {@link refusedLocally} changes, so the snapshot below cannot serve a stale row. */
+  private localRefusalRev = 0;
   /** {@link EngineOptions.outboxAutoReplay}, resolved once. */
   private readonly autoReplayOn: boolean;
   /** Session-monotonic outbox tiebreak; seeded past every restored entry's `n`. */
@@ -4229,7 +4240,10 @@ export class OhmailEngine {
      * /sync page — which bumps `ver` without touching this collection — does not re-render the
      * strip.
      */
-    const v = this.store.version();
+    // The store's version AND the session-local refusals: a refusal the store would not accept
+    // changes no row and no version, so keying on `ver` alone would serve the pre-refusal row for
+    // ever. See {@link refusedLocally}.
+    const v = this.store.version() * 1_000_003 + this.localRefusalRev;
     if (this.abandonedCache !== null && this.abandonedCache.v === v) return this.abandonedCache.out;
     const out: AbandonedMutation[] = [];
     for (const row of this.store.entries<unknown>(OUTBOX_ABANDONED_TYPE)) {
@@ -4240,8 +4254,12 @@ export class OhmailEngine {
         attempts: e.attempts ?? OUTBOX_MAX_SERVER_FAILURES,
         error: e.lastError ?? { message: "the server did not accept this change", code: null, status: null },
         superseded: e.superseded === true,
-        retryable: e.superseded !== true && e.retryRefused === undefined,
-        refusedCode: e.retryRefused ?? (e.superseded === true ? "outbox_superseded" : null),
+        retryable: e.superseded !== true
+          && e.retryRefused === undefined
+          && !this.refusedLocally.has(row.id),
+        refusedCode: e.retryRefused
+          ?? this.refusedLocally.get(row.id)
+          ?? (e.superseded === true ? "outbox_superseded" : null),
       });
     }
     const next = out.sort((a, b) => b.at - a.at);
@@ -4296,7 +4314,21 @@ export class OhmailEngine {
           await this.store.commitLocal(
             [{ type: OUTBOX_ABANDONED_TYPE, id: e.id, entity: { ...e, retryRefused: code } }], []);
           this.notify();
-        } catch { /* the in-memory refusal below still stands for this session */ }
+        } catch {
+          /**
+           * THE DURABLE MARKER WAS REFUSED, SO HOLD IT IN MEMORY INSTEAD.
+           *
+           * This catch used to say "the in-memory refusal below still stands for this session"
+           * and there was no such thing: `abandoned()` derives from the store's version, a
+           * refused commit changes neither the record nor the version, and the next read returned
+           * the same cached row with `retryable: true`. The control the refusal exists to disable
+           * stayed enabled, and every press was another silent no-op — the exact thing the line
+           * above calls worse than no button. A comment is a claim, and this one was false.
+           */
+          this.refusedLocally.set(e.id, code);
+          this.localRefusalRev++;
+          this.notify();
+        }
       }
       return {
         id, key: e?.key ?? id, status: "rolled_back", seq: null,
@@ -4321,11 +4353,35 @@ export class OhmailEngine {
       restored: true, attempts: 0,
     };
 
-    // The overlay, rebuilt AT THE INSTANT THE VERB WAS EXPRESSED — not now — so a re-applied
-    // triage or read state carries its original stamp rather than pretending to be fresh.
-    const effects = mutationEffects(this.read(), e.mutation, {
-      now: () => new Date(e.at), uuid: this.uuid,
-    });
+    /**
+     * The overlay, rebuilt AT THE INSTANT THE VERB WAS EXPRESSED — not now — so a re-applied
+     * triage or read state carries its original stamp rather than pretending to be fresh.
+     *
+     * WRAPPED, BECAUSE A KIND THIS BUILD DOES NOT KNOW REACHES HERE. The persisted-shape gate
+     * accepts any string as a kind — deliberately, so a row written by a NEWER build survives
+     * rather than being discarded — and `mutationEffects` has no runtime default, so it answers
+     * `undefined` and the next line reads `.length` off it. The row is then unretryable by
+     * crashing rather than by saying so, which is the one outcome the coded refusal exists to
+     * prevent. The version guard nearby only covers unknown VERSIONS; this is a known version
+     * carrying an unknown verb, and nothing was checking it.
+     */
+    let built: MutationEffect[] | undefined;
+    try {
+      // The cast is the point: the signature promises an array because the switch is exhaustive
+      // over the KNOWN union, and a persisted row's kind is a plain string that need not be in it.
+      built = mutationEffects(this.read(), e.mutation, {
+        now: () => new Date(e.at), uuid: this.uuid,
+      }) as MutationEffect[] | undefined;
+    } catch {
+      return refuse(e, "outbox_unknown_kind", "This change cannot be retried by this version.");
+    }
+    // BEFORE any default. Writing `?? []` here — which the first cut did — masks the exact
+    // condition being detected: the verb then produces no overlay, no refusal and no crash, and
+    // goes to the wire as though it were an ordinary no-effect mutation.
+    if (built === undefined) {
+      return refuse(e, "outbox_unknown_kind", "This change cannot be retried by this version.");
+    }
+    const effects = built;
     if (effects.length > 0) this.overlays.set(p.id, effects);
     this.overlayRev++;
     this.notify();
