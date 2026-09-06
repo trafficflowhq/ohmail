@@ -549,6 +549,19 @@ export type ProfileOp = "ensure_meta" | "list_profiles" | "append_profile" | "re
  * on — a mailbox whose profile cannot be written is a mailbox whose settings do not travel this
  * cycle, and the next cycle tries again.
  */
+/**
+ * THE ANSWER TO "WHICH RECORDS ARE THERE", INCLUDING THE ANSWER "I COULD NOT ASK".
+ *
+ * These are two different facts and they were one value. A search that could not be issued, was
+ * refused, had no ceiling to walk down from, or ran out of window budget all came back as `null`,
+ * and so did nothing at all; the caller could not tell them apart and treated the failure as a
+ * reason to read the folder another way. An empty folder is `{ kind: "uids", uids: [] }` and it is
+ * the ONLY value that may be read as "there is no profile here".
+ */
+export type ProfileUidAsk =
+  | { readonly kind: "uids"; readonly uids: number[] }
+  | { readonly kind: "unknown"; readonly why: string };
+
 export class ProfileUnavailableError extends Error {
   readonly op: ProfileOp;
   constructor(message: string, options: { op: ProfileOp; cause?: unknown }) {
@@ -764,12 +777,6 @@ export function makeProfileIo(
         if (probed === 0) return out;
         if (probed === undefined && cached === 0) return out;
         const total = probed;
-        /* `lastSequence` is imported rather than reimplemented. One folder should not have two
-         * answers to "how many messages are in it", and a copy here with a comment pointing at the
-         * original is exactly how the two come to disagree. */
-        const from = typeof total === "number" && total > PROFILE_MESSAGES_MAX_PER_FETCH
-          ? total - PROFILE_MESSAGES_MAX_PER_FETCH + 1
-          : 1;
         /* ── BOTH AXES, AND BOTH EVICT FROM THE FRONT ──────────────────────────────────────
          *
          * `bytes` is not a second thought about the same bound: the count ceiling stops many small
@@ -874,13 +881,22 @@ export function makeProfileIo(
          * every window below the records that matter, and here that renders as a mailbox whose
          * published settings have vanished.
          *
-         * `null` for every way of not knowing — no search, a refused search, no ceiling to walk
-         * down from, or a folder too sparse to finish inside the window budget. The caller reads
-         * that as "could not ask" and falls back to the bounded range read, which is honest about
-         * being a window.
+         * ── "COULD NOT ASK" IS NOT "THERE IS NOTHING" ──────────────────────────────────────
+         *
+         * No search, a refused search, no ceiling to walk down from, or a folder too sparse to
+         * finish inside the window budget all used to return the same `null` an empty folder
+         * would, and the caller answered it by reading the folder a different, unbounded way.
+         * That path could return nothing for a folder that plainly holds a document, and nothing
+         * is what erases: the read reported no profile at all, and a mailbox's published settings
+         * stopped applying without one thing logging a fault.
+         *
+         * So the ask reports which of the two happened. `unknown` refuses this mailbox's cycle
+         * and says why; only `uids` — including an empty one — is allowed to decide anything.
          */
-        const profileUids = async (c: ProfileImapClient): Promise<number[] | null> => {
-          if (typeof c.search !== "function" || typeof c.status !== "function") return null;
+        const profileUids = async (c: ProfileImapClient): Promise<ProfileUidAsk> => {
+          if (typeof c.search !== "function" || typeof c.status !== "function") {
+            return { kind: "unknown", why: "this server offers no way to search the folder" };
+          }
 
           const top = await (async (): Promise<number | null> => {
             try {
@@ -891,7 +907,9 @@ export function makeProfileIo(
               return null;
             }
           })();
-          if (top === null) return null;
+          if (top === null) {
+            return { kind: "unknown", why: "the folder reported no usable UIDNEXT to walk down from" };
+          }
 
           const out: number[] = [];
           let hi = top;
@@ -900,14 +918,22 @@ export function makeProfileIo(
             const found = await c.search(
               { header: { [H.profile]: true }, uid: `${lo}:${hi}` }, { uid: true },
             );
-            if (!Array.isArray(found)) return null;
+            if (!Array.isArray(found)) {
+              return { kind: "unknown", why: `the search of UIDs ${lo}:${hi} was refused` };
+            }
             out.push(...found);
-            if (lo === 1) return out.sort((a, b) => a - b);
-            if (out.length > PROFILE_MESSAGES_MAX_PER_FETCH) return out.sort((a, b) => a - b);
+            if (lo === 1) return { kind: "uids", uids: out.sort((a, b) => a - b) };
+            if (out.length > PROFILE_MESSAGES_MAX_PER_FETCH) {
+              return { kind: "uids", uids: out.sort((a, b) => a - b) };
+            }
             hi = lo - 1;
           }
           // The budget ran out with folder unexamined: not an answer, and not reported as one.
-          return null;
+          return {
+            kind: "unknown",
+            why: `the newest ${PROFILE_SEARCH_WINDOW_BUDGET * PROFILE_SEARCH_UID_WINDOW} UIDs did `
+              + "not reach the bottom of the folder",
+          };
         };
 
         /** Sizes first, then source for the survivors only — see the note at the call site. */
@@ -1033,133 +1059,6 @@ export function makeProfileIo(
           return { win, seen: capped.length };
         };
 
-        const readFrom = async (start: number): Promise<{
-          win: Array<{ rec: RawProfileMessage; size: number }>; seen: number;
-        }> => {
-          const win: Array<{ rec: RawProfileMessage; size: number }> = [];
-          /** What this window is KEEPING. Falls when a record is evicted. */
-          let held = 0;
-          /** What the connection has DELIVERED. Never falls — see the eviction below. */
-          let spent = 0;
-          let seen = 0;
-          /* ── THE FALLBACK RANGES TOO, AND IT USED TO BE THE HOLE ────────────────────────
-           *
-           * This is the path for a connection that cannot SEARCH, and it asked for the whole
-           * source of every message in the range. That made the transport bound conditional on a
-           * capability the server chooses: on a server without SEARCH, one oversized message in
-           * the window exhausted the process before any ceiling was consulted — the same defect
-           * the ranged fetch closed on the other path, still open on this one.
-           *
-           * Two passes now. The first asks only for uids and sequence numbers, which costs
-           * nothing to transfer whatever the folder holds; the second asks for each source
-           * through the one bounded function, charging the budget after every reply. Slower than
-           * one command, and this is the path that runs when the server cannot answer the cheap
-           * question — correctness first, and it is the fallback rather than the common case. */
-          /* ── ADDRESSED BY UID, NEVER BY SEQUENCE NUMBER ────────────────────────────────────
-           *
-           * The first pass takes a sequence RANGE, which is the only way to say "the newest so
-           * many" — but what it collects are UIDs, and the second pass asks for those. Sequence
-           * numbers are positions in the folder as it stood when the range was answered, and an
-           * expunge on another connection renumbers every one above it downward without touching
-           * UIDVALIDITY. Walking them one at a time means each later fetch can land on a different
-           * message than the one enumerated: a document silently skipped, a stranger's message
-           * read in its place, and no error anywhere. UIDs do not move. */
-          /* ── ENUMERATED BY UID RANGE, SO NO SEQUENCE NUMBER IS USED ANYWHERE HERE ────────
-           *
-           * The uids are what the second pass asks for, and they were already stable. What was
-           * left was this range itself: `start:*` with `{ uid: false }` is a POSITION range, so
-           * the set of messages it names depends on the folder not having moved since the count
-           * that produced `start`. Addressing the range by uid removes the last place a position
-           * decides anything in this adapter — the ceiling below still keeps the newest, which is
-           * the property `start` was there to approximate. */
-          const addrs: number[] = [];
-          for await (const m of client.fetch("1:*", { uid: true }, { uid: true })) {
-            addrs.push(m.uid);
-          }
-          addrs.sort((a, b) => a - b);
-          /* ── NEWEST FIRST, FOR THE REASON THE SEARCH PATH ALREADY HAS ────────────────────
-           *
-           * This walked in folder order, so an enormous OLD record — or merely enough small ones —
-           * could spend the whole transfer budget before the current document was asked for, and
-           * the read would answer with nothing about a mailbox that has settings. The document a
-           * read wants is the newest one; it should be paid for first. The result is put back in
-           * folder order at the end, which is what every caller reads. */
-          for (const uid of [...addrs].reverse()) {
-            seen++;
-            const got = await fetchSourceBounded(String(uid), true, maxBytes - spent);
-            if (got === null) continue;
-            if ("over" in got) {
-              spent += got.over;   // it crossed the connection; it is spent
-              if (complete) {
-                throw new ProfileUnavailableError(
-                  `a settings record in ${META_FOLDER} is larger than the ${maxBytes}-byte budget `
-                  + "this read may spend, and a write must see every document whole before it may "
-                  + "replace any",
-                  { op: "list_profiles" },
-                );
-              }
-              continue;
-            }
-            // Charged whether kept or discarded — see the note on the search path.
-            const size = got.source.byteLength;
-            spent += size;
-            held += size;
-            const raw = got.source.toString("utf8");
-            if (!looksLikeProfile(raw)) continue;
-            win.push({ rec: { ref: got.uid, raw }, size });
-            while (
-              win.length > PROFILE_MESSAGES_MAX_PER_FETCH
-              // `win.length > 1` keeps the newest record even when it ALONE is over the ceiling, so
-              // a document too large to read is the PARSER's refusal to make rather than a silent
-              // absence. On a COMPLETE scan that exemption is a hole: the write path parses this
-              // list directly, without the reader's per-document guard in front of it, so a single
-              // oversized profile-shaped message becomes an unbounded parse on the settings-write
-              // path. A complete scan refuses on either ceiling, singleton included.
-              || (spent > maxBytes && (complete || win.length > 1))
-            ) {
-              /* ── ON A COMPLETE SCAN, EVICTING IS NOT AN OPTION — REFUSE INSTEAD ───────────
-               *
-               * Reading the whole folder fixed the RANGE; this is the other half. The ceilings
-               * still evict, and on the complete path evicting is the same defect wearing the
-               * fix's clothes: enough profile-looking records — 500 of them, or 128 MiB of
-               * retained source — and the protected document is dropped from the very list the
-               * refusal is computed from, so the write proceeds and appends over it. Anyone able
-               * to add messages to the folder can produce that, and it costs them only the
-               * discriminator header.
-               *
-               * A caller that must not be wrong is given an ERROR rather than a short list. This
-               * is the reader-asymmetry rule at its sharpest: what the write does with "I could
-               * not see all of it" is refuse, and a refusal it can act on is worth incomparably
-               * more than a plausible answer it cannot check. The read path keeps evicting,
-               * because for a read the newest document IS the answer.
-               */
-              if (complete) {
-                throw new ProfileUnavailableError(
-                  `the settings in ${META_FOLDER} could not be read completely: the folder holds more `
-                  + `than ${PROFILE_MESSAGES_MAX_PER_FETCH} settings records or ${maxBytes} `
-                  + "bytes of them, and a write must see every one before it may replace any",
-                  { op: "list_profiles" },
-                );
-              }
-              /* ── EVICTION GIVES BACK RETENTION, NEVER TRANSFER ────────────────────────────
-               *
-               * `bytes` was doing two jobs and could only be right about one. Dropping a record
-               * from the window frees the MEMORY it held, and that is what lets a long folder of
-               * small documents be read at all. It does not un-send the bytes: they crossed the
-               * connection, which is the cost the ceiling exists to bound, and refunding them made
-               * the transfer budget reusable — walk long enough and the same budget pays for the
-               * folder several times over.
-               *
-               * Two counters now. `held` is what this window is keeping and moves both ways;
-               * `spent` is what the connection has delivered and only ever rises. The bound below
-               * is on `spent`. */
-              held -= win.shift()!.size;
-            }
-          }
-          win.sort((a, b) => Number(a.rec.ref ?? 0) - Number(b.rec.ref ?? 0));
-          return { win, seen };
-        };
-
         /* ── A REFUSAL CANNOT BE MADE FROM A WINDOW ───────────────────────────────────────────
          *
          * Filtering the ceilings to profile records keeps a flood from EVICTING the document, but
@@ -1206,22 +1105,26 @@ export function makeProfileIo(
          * both ceilings.
          */
         const searched = await profileUids(client);
-        let read = searched !== null
-          ? await readByUid(searched)
-          : await readFrom(complete ? 1 : from);
-
-        /* ── AND THE SEQUENCE WINDOW CAN SLIDE OUT FROM UNDER THE RANGE ───────────────────────
+        /* ── A FAILED ASK REFUSES THE CYCLE; IT DOES NOT PICK A DIFFERENT WAY TO LOOK ────────
          *
-         * The same hazard as the lease's read, for the same reason: `from` is a SEQUENCE number
-         * from a count taken a round trip ago, and an EXPUNGE on another connection renumbers
-         * everything above it downward without touching UIDVALIDITY. A capped window asks for
-         * exactly the ceiling's worth of MESSAGES, so `seen` short of it means the folder moved
-         * while it was being read — and far enough, `from` lands past the end and the unordered
-         * range returns a single message. Throw that away and read the folder whole; `1:*` is
-         * anchored at both ends and cannot slide. */
-        if (searched === null && !complete && from > 1 && read.seen < PROFILE_MESSAGES_MAX_PER_FETCH) {
-          read = await readFrom(1);
+         * The fallback here read the folder by sequence range, unbounded, and returned whatever
+         * survived two ceilings. For a folder holding a valid document below a flood of ordinary
+         * mail that is an EMPTY result — and an empty result is indistinguishable from a mailbox
+         * that never published settings, so the effective profile lapsed silently and no fault
+         * was recorded anywhere. A read that cannot be bounded is not a cheaper read; it is a
+         * different question, and its answer was being used for this one.
+         *
+         * Settings failing is a logged mailbox fault and the next cycle tries again — the class
+         * below says so in as many words. That is the correct outcome for "could not ask", and
+         * it costs a cycle rather than a person's rules. */
+        if (searched.kind === "unknown") {
+          throw new ProfileUnavailableError(
+            `the profile records in ${META_FOLDER} could not be enumerated: ${searched.why}`,
+            { op: "list_profiles" },
+          );
         }
+        const read = await readByUid(searched.uids);
+
 
         for (const w of read.win) out.push(w.rec);
         return out;

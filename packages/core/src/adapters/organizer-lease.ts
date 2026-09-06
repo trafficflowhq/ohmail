@@ -2266,6 +2266,29 @@ export class MetaFolderTruncatedError extends Error {
  * "the window runs from the END of the folder" asserted nowhere, and a ceiling that quietly went
  * back to keeping the oldest records would pass every guard above it.
  */
+/**
+ * WHERE THE PAGE BELOW A BOUND STARTS AND ENDS, and whether it reaches the bottom of the folder.
+ *
+ * ── AN EMPTY WINDOW AND AN EMPTY FOLDER ARE NOT THE SAME ANSWER ─────────────────────────────
+ *
+ * A walk that pages downward needs to know two things a list of records cannot tell it: where the
+ * window it just asked for began, and whether anything remains beneath it. Without them an empty
+ * reply is ambiguous, and the drain resolved that ambiguity the wrong way — it treated a window
+ * that happened to fall in a UID GAP as "the folder read whole", cleared its resume point, and
+ * started again from the newest page next cycle. Append-and-expunge churn leaves gaps wider than
+ * one window routinely, so the walk could oscillate between the top and the gap for ever while
+ * the requests below it were never reached.
+ *
+ * This is arithmetic, not a reply, so it answers for an EMPTY page exactly as well as a full one.
+ * It lives here because the read uses it too: two copies of a window calculation is how a caller
+ * comes to walk in steps the reader does not take.
+ */
+export function metaPageBounds(beforeUid: number): { lo: number; hi: number; bottom: boolean } {
+  const hi = Math.max(1, beforeUid - 1);
+  const lo = Math.max(1, hi - META_RECORDS_MAX_PER_FETCH + 1);
+  return { lo, hi, bottom: lo <= 1 };
+}
+
 export async function readMetaFolderWindow(
   client: LeaseImapClient,
   path?: string,
@@ -2350,8 +2373,7 @@ export async function readMetaFolderWindow(
    * The window is a uid RANGE now — one ceiling's worth below the cursor — so each page costs the
    * same as the first. A record whose uid falls in a gap simply is not there; uid space is sparse
    * by nature and the walk's budget is what bounds the number of steps, not the density. */
-  const pageHi = beforeUid !== undefined ? Math.max(1, beforeUid - 1) : 0;
-  const pageLo = Math.max(1, pageHi - META_RECORDS_MAX_PER_FETCH + 1);
+  const { lo: pageLo, hi: pageHi } = metaPageBounds(beforeUid ?? 1);
   const range = beforeUid !== undefined ? `${pageLo}:${pageHi}` : `${start}:*`;
   const byUid = beforeUid !== undefined;
   if (beforeUid !== undefined && beforeUid <= 1) return { records, evicted };
@@ -2528,6 +2550,24 @@ const SEARCH_WINDOW_BUDGET = 20;
 const SWEEP_DELETE_BATCH = 200;
 
 /**
+ * HOW MANY EXPUNGES ONE CYCLE MAY RUN, and how far down the folder it may look to fill them.
+ *
+ * Batching the deletes bounded each COMMAND and left the CYCLE unbounded: the loop ran a batch
+ * for every uid the search returned, so a folder holding a hundred thousand stale
+ * acknowledgements was one cycle's work and the drain behind it waited for all of it. The search
+ * ahead of it was worse — no `uid` term at all, the one read in this module that still asked a
+ * server to name an unbounded set, with the whole reply in memory before any batching happened.
+ *
+ * Both are bounded here, and the sweep can afford it in a way the election cannot: DELETION IS
+ * DURABLE PROGRESS. A cycle that removes a thousand records leaves a thousand fewer for the next
+ * one, so a partial sweep is not a partial answer — it is the same answer, later, and the folder
+ * is smaller either way. That is why a window budget which would be a refusal in the claim search
+ * is simply a smaller day's work here.
+ */
+const SWEEP_BATCHES_MAX_PER_CYCLE = 5;
+const SWEEP_SEARCH_WINDOW_BUDGET = 12;
+
+/**
  * THE CUTOFF THE ACK SWEEP ACTUALLY DELETES BY — floored to the start of its UTC day.
  *
  * EXPORTED because a test double that answers `before` with the raw instant is MORE PERMISSIVE
@@ -2609,16 +2649,7 @@ async function searchDescending(
    * here is what every caller already treats as could-not-ask: the election refuses, the release
    * reports a partial, the peek renders unreadable. None of them organize on it.
    */
-  const top = await (async (): Promise<number | null> => {
-    if (typeof client.status !== "function") return null;
-    try {
-      const st = await client.status(path, { uidNext: true });
-      const next = typeof st === "object" && st !== null ? st.uidNext : undefined;
-      return typeof next === "number" && next > 1 ? next - 1 : null;
-    } catch {
-      return null;
-    }
-  })();
+  const top = await highestUid(client, path);
 
   /* ONE CALL SITE, and the census in `organizer-lease-meta-window.test.ts` counts on it: two ways
    * of asking this server about this folder, no more. The windowed walk and the unbounded fallback
@@ -2651,6 +2682,32 @@ async function searchDescending(
    * one would be the "could not look" / "there are none" confusion this module refuses everywhere
    * else. */
   return null;
+}
+
+/**
+ * THE HIGHEST UID THE FOLDER COULD HOLD, asked of the SERVER — or `null` for every way of not
+ * knowing.
+ *
+ * One function because there is one question. Both descending walks in this module need a ceiling
+ * to start from, and each had grown its own copy of this block; a second copy is how the two come
+ * to disagree about what an unusable answer looks like, and the census below counts call sites
+ * precisely so a third cannot appear unnoticed.
+ *
+ * Never `client.mailbox.uidNext`: that is whatever the last untagged response left on the
+ * connection, and a stale-low ceiling puts every window below the newest records — which renders
+ * as a claim that cannot be found or settings that have vanished, depending on which walk asked.
+ */
+async function highestUid(
+  client: Pick<LeaseImapClient, "status">, path: string,
+): Promise<number | null> {
+  if (typeof client.status !== "function") return null;
+  try {
+    const st = await client.status(path, { uidNext: true });
+    const next = typeof st === "object" && st !== null ? st.uidNext : undefined;
+    return typeof next === "number" && next > 1 ? next - 1 : null;
+  } catch {
+    return null;
+  }
 }
 
 async function searchHeaders(
@@ -4798,21 +4855,51 @@ export function makeRequestOrganizerIo(
          * costs one row in a folder that gets swept again next cycle; removing a live one loses
          * an answer somebody is waiting for. */
         const floored = ackSweepCutoff(before);
-        const found = await client.search(
-          { header: { [AH.ack]: true }, before: floored }, { uid: true },
-        );
+        /* ── WINDOWED, LIKE EVERY OTHER READ HERE ────────────────────────────────────────────
+         *
+         * The ceiling comes from the server rather than the connection's cached mailbox object,
+         * for the reason the claim search states: a stale ceiling puts every window below the
+         * records that matter. Without one there is no window to ask in, and this module has one
+         * answer for "I cannot ask in a way I can bound". */
+        const top = await highestUid(client, metaPath);
+        if (top === null) {
+          throw new RequestUnavailableError(
+            `${META_FOLDER} reported no usable UIDNEXT, so stale acknowledgements could not be `
+            + "searched for within a bounded window and none were removed",
+            { op: "sweep_acks" },
+          );
+        }
+        /* Enough uids to fill this cycle's expunges and no more: looking further down costs
+         * round trips for records the budget below cannot delete this time round anyway. */
+        const wanted = SWEEP_DELETE_BATCH * SWEEP_BATCHES_MAX_PER_CYCLE;
+        const found: number[] = [];
+        let hi = top;
+        for (let w = 0; w < SWEEP_SEARCH_WINDOW_BUDGET; w++) {
+          const lo = Math.max(1, hi - SEARCH_UID_WINDOW + 1);
+          const page = await client.search(
+            { header: { [AH.ack]: true }, before: floored, uid: `${lo}:${hi}` }, { uid: true },
+          );
+          /* A REFUSED SEARCH IS NOT AN EXHAUSTED BUDGET. The library resolves `false` rather
+           * than rejecting, and treating that as "stop looking" reports a sweep that never ran —
+           * the caller reads 0 stale and concludes there is nothing to compact, which is the one
+           * conclusion that keeps a full folder full. Running out of WINDOWS is a smaller day's
+           * work and breaks; being refused is a fault and throws. */
+          if (!Array.isArray(page)) {
+            throw new RequestUnavailableError(
+              `the search for stale acknowledgements in ${META_FOLDER} was refused, so none were `
+              + "removed and the folder was not compacted",
+              { op: "sweep_acks" },
+            );
+          }
+          found.push(...page);
+          if (lo === 1 || found.length >= wanted) break;
+          hi = lo - 1;
+        }
         /* A REFUSED SEARCH IS NOT AN EMPTY FOLDER — the library resolves `false` rather than
          * rejecting. Returning 0 for it reported a sweep that had not happened, and the sweep is
          * the only thing that ever makes this folder smaller: a caller told "0 stale" concludes
          * there is nothing to compact. The drain already logs a failed sweep and carries on, which
          * is what it should do with this. */
-        if (!Array.isArray(found)) {
-          throw new RequestUnavailableError(
-            `the search for stale acknowledgements in ${META_FOLDER} was refused, so none were `
-            + "removed and the folder was not compacted",
-            { op: "sweep_acks" },
-          );
-        }
         if (found.length === 0) return 0;
         /* ── SWEPT IN BOUNDED BATCHES, BECAUSE THE SET IS AS LARGE AS THE FOLDER GOT ─────────
          *
@@ -4829,6 +4916,16 @@ export function makeRequestOrganizerIo(
          * refusal part-way through still leaves the folder smaller than it was and the next cycle
          * resumes on a shorter set. Progress that survives a failure is the property this needs;
          * an all-or-nothing sweep has none. */
+        /* ── THE CYCLE IS BOUNDED ONCE, WHERE IT IS ASKED FOR ────────────────────────────────
+         *
+         * The bound lives in `wanted` above: the walk stops as soon as it holds a cycle's worth,
+         * so this loop deletes what was asked for and nothing more. A second cap here — clamping
+         * the loop to the same product — was written first and it could never fire, because no
+         * reply can exceed a limit the request already carried. It measured nothing and would have
+         * read as protection.
+         *
+         * That is worth stating rather than deleting quietly: a guard that cannot fail is how a
+         * bound comes to look like it exists twice and hold once. One mechanism, named here. */
         let swept = 0;
         for (let i = 0; i < found.length; i += SWEEP_DELETE_BATCH) {
           const batch = found.slice(i, i + SWEEP_DELETE_BATCH);

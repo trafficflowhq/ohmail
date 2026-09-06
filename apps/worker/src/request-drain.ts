@@ -9,7 +9,7 @@ import {
 import {
   parseRequestEnvelope, isMalformedRequest, formatRequest, formatAck, canonicalRequest,
   requestEnvelopesIn, acksIn, verifyRequestEnvelope, decodeRequestPayload,
-  REQUEST_PROTOCOL, MetaFolderTruncatedError, META_RECORDS_MAX_PER_FETCH,
+  REQUEST_PROTOCOL, MetaFolderTruncatedError, META_RECORDS_MAX_PER_FETCH, metaPageBounds,
   type RequestReaderIo, type RequestOrganizerIo, type RawMetaMessage,
   type RequestEnvelope, type RequestRecord, type AckRecord, type OrganizerKind,
   type RequestRefusalReason,
@@ -295,17 +295,32 @@ class AlreadyAppliedError extends Error {
 }
 
 /**
- * HOW FULL THE FOLDER WAS, when that is why a read failed — and `null` when it is not.
+ * THE TRUNCATION BEHIND A FAILED READ, or `null` when the read failed for any other reason.
  *
- * The truncation is raised by the shared bounded read and reaches a drain WRAPPED in a
- * `RequestUnavailableError`, so the count lives one level down in `cause`. Reading only the outer
- * error found it never, which is worse than not logging it: a field that is always `null` reads as
- * "this was never a full folder" on exactly the incident where it always is.
+ * ── EVERY DECISION THAT TURNS ON TRUNCATION GOES THROUGH HERE ──────────────────────────────
+ *
+ * The bounded read raises the truncation, and the adapter re-throws it WRAPPED in a
+ * `RequestUnavailableError`, so what reaches this file always carries the page one level down in
+ * `cause` and is never the bare class. That fact was known here and applied to the log field
+ * alone: the branch deciding whether to page at all still asked `err instanceof
+ * MetaFolderTruncatedError`, which against the real adapter is false every time. A full folder
+ * therefore took the "unreadable" path, logged a fault, and returned the ordinary all-zero
+ * result — no page processed, nothing settled, and no exception for a host to notice. The next
+ * cycle read the same folder and did the same thing, so the one state paging exists to unstick
+ * stayed stuck while every surface reported a healthy idle drain.
+ *
+ * Knowing the shape in one place and not the other is what made it survive: the fix is that
+ * there is now ONE place to know it. Nothing in this file may test for the bare class.
  */
-function recordsPresentIn(err: unknown): number | null {
-  if (err instanceof MetaFolderTruncatedError) return err.total;
+function truncationIn(err: unknown): MetaFolderTruncatedError | null {
+  if (err instanceof MetaFolderTruncatedError) return err;
   const cause = err instanceof Error ? (err as { cause?: unknown }).cause : undefined;
-  return cause instanceof MetaFolderTruncatedError ? cause.total : null;
+  return cause instanceof MetaFolderTruncatedError ? cause : null;
+}
+
+/** HOW FULL THE FOLDER WAS, when that is why a read failed — and `null` when it is not. */
+function recordsPresentIn(err: unknown): number | null {
+  return truncationIn(err)?.total ?? null;
 }
 
 /**
@@ -376,9 +391,30 @@ export async function applyMetaRequests(
   try {
     /* RESUME WHERE THIS MAILBOX'S WALK STOPPED. Absent, this is the newest page, which is where a
      * folder with no backlog should always be read from. */
-    records = await io.listMetaRecords(drainCursors.get(rt.mailboxId));
-    // The folder read whole: no backlog to resume into, so the cursor goes.
-    drainCursors.delete(rt.mailboxId);
+    const resumeAt = drainCursors.get(rt.mailboxId);
+    records = await io.listMetaRecords(resumeAt);
+    /* ── WHAT AN EMPTY ANSWER MEANS DEPENDS ON WHETHER A WINDOW WAS ASKED FOR ──────────────
+     *
+     * With no resume point this read covers the folder from its newest end, so an empty answer
+     * is an empty folder and there is no backlog to come back to. With one it covers a WINDOW,
+     * and an empty answer means only that this window held nothing — which append-and-expunge
+     * churn produces routinely, since a gap wider than one window is ordinary.
+     *
+     * Both used to clear the cursor. The walk therefore gave up at the first gap, restarted from
+     * the newest page next cycle, walked down to the same gap, and gave up again, while the
+     * requests underneath it were never reached and every counter reported an idle drain. */
+    if (resumeAt === undefined) {
+      drainCursors.delete(rt.mailboxId);
+    } else {
+      const here = metaPageBounds(resumeAt);
+      /* A page holding work keeps its bound: settling is capped per cycle, so moving below a
+       * page this pass could not finish would strand the remainder until the walk came round
+       * again. Re-reading a settled record is a claimed key and a no-op. */
+      if (!hasRequestRecord(records)) {
+        if (here.bottom) drainCursors.delete(rt.mailboxId);
+        else drainCursors.set(rt.mailboxId, here.lo);
+      }
+    }
   } catch (err) {
     /* ── A FOLDER TOO FULL TO READ IS DRAINED A PAGE AT A TIME, NOT REFUSED WHOLESALE ────────
      *
@@ -424,10 +460,18 @@ export async function applyMetaRequests(
      *
      * A read that failed for any OTHER reason is still a look that failed and still yields
      * nothing: that is a connection or a server fault, and it carries no page to work from. */
-    if (err instanceof MetaFolderTruncatedError && err.records.length > 0) {
+    const truncated = truncationIn(err);
+    /* ── A TRUNCATION MAY CARRY NO PAGE, AND THAT IS A FAILED LOOK LIKE ANY OTHER ────────────
+     *
+     * `records` is optional on the truncation: the bounded read attaches the window it did cover,
+     * but a refusal raised before any of it was read has nothing to attach. Reaching for `.length`
+     * on that is a crash inside the error handler, which turns a bad cycle into a thrown
+     * `TypeError` from a path whose entire job is to fail softly. Nothing to page from means the
+     * else-branch below, which is what a look that failed has always meant here. */
+    if (truncated !== null && (truncated.records?.length ?? 0) > 0) {
       log("meta_requests_paged", {
         mailboxId: rt.mailboxId, accountId: rt.accountId,
-        page: err.records.length, records: recordsPresentIn(err),
+        page: truncated.records.length, records: recordsPresentIn(err),
         /* The same two speeds the block comment above sets out, and this line said only the
          * fast one — it claimed the folder is smaller for the next cycle, which is what settling
          * a request does NOT do: the acknowledgement written in its place holds the count. The
@@ -437,7 +481,7 @@ export async function applyMetaRequests(
           + "page: those decisions stop waiting now, and the record count comes back under the "
           + "ceiling once the acknowledgements written in their place age past the sweep's cutoff",
       });
-      records = [...err.records];
+      records = [...truncated.records];
       /* ── AND THE CURSOR ADVANCES EVEN WHEN A PAGE HOLDS NO WORK ─────────────────────────────
        *
        * The newest page is the same page every cycle. A folder over the ceiling whose newest
@@ -456,9 +500,14 @@ export async function applyMetaRequests(
        * takes a record out of the folder. Acknowledgements are the sweep's business and it has
        * already run, ahead of this read, for exactly that reason. */
       let cursor = lowestRef(records);
-      /* The page this cycle actually read becomes the resume point, so even a cycle that finds
-       * work at once leaves the walk somewhere useful rather than back at the top. */
-      if (cursor !== null) drainCursors.set(rt.mailboxId, cursor);
+      /* ── A RESUME POINT BELOW A PAGE CLAIMS THE PAGE IS FINISHED ─────────────────────────
+       *
+       * This persisted below the page unconditionally, and settling is capped per cycle: a page
+       * of five hundred requests had two hundred settled and the resume point moved below all
+       * five hundred, so the other three hundred waited for the walk to bottom out and start
+       * over. A page with work keeps the bound that produced it, and the next cycle reads it
+       * again — shorter, because what was settled has left the folder. */
+      if (cursor !== null && !hasRequestRecord(records)) drainCursors.set(rt.mailboxId, cursor);
       for (let page = 1; page < REQUEST_DRAIN_MAX_PAGES; page++) {
         if (hasRequestRecord(records)) break;
         if (cursor === null || cursor <= 1) {
@@ -475,16 +524,26 @@ export async function applyMetaRequests(
            * folder is every page but the last. Treating that as unreadable stopped the walk on its
            * first step and made the whole thing a no-op; the refusal carries the page, and the
            * page is what the walk wanted. Anything else really is a look that failed. */
-          if (!(pageErr instanceof MetaFolderTruncatedError) || pageErr.records.length === 0) break;
-          older = [...pageErr.records];
+          const pageTruncation = truncationIn(pageErr);
+          if (pageTruncation === null || (pageTruncation.records?.length ?? 0) === 0) break;
+          older = [...pageTruncation.records];
         }
-        if (older.length === 0) break;
+        if (older.length === 0) {
+          /* AN EMPTY WINDOW IS A GAP, NOT THE BOTTOM. Step past it rather than stopping: the
+           * arithmetic says where this window began, so the walk can continue beneath it
+           * without a record to take a bound from. */
+          const gap = metaPageBounds(cursor);
+          if (gap.bottom) { drainCursors.delete(rt.mailboxId); break; }
+          cursor = gap.lo;
+          drainCursors.set(rt.mailboxId, gap.lo);
+          continue;
+        }
         const next = lowestRef(older);
         // The cursor must STRICTLY advance, or the walk is a loop with extra steps.
         if (next === null || cursor !== null && next >= cursor) break;
         records = older;
         cursor = next;
-        drainCursors.set(rt.mailboxId, next);
+        if (!hasRequestRecord(older)) drainCursors.set(rt.mailboxId, next);
         log("meta_requests_page_advanced", {
           mailboxId: rt.mailboxId, accountId: rt.accountId, page, cursor,
           reason: "the page above held nothing this pass can settle, so the walk moved older "
