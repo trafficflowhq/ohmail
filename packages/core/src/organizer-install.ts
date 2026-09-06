@@ -51,7 +51,25 @@ export type OrganizerInstallEnv = Readonly<Record<string, string | undefined>>;
  * disagree about who they are, and the whole point of this module is that they must not.
  */
 export function organizerEnvironment(env: OrganizerInstallEnv): string {
-  return env.TF_ENV ?? env.RAILWAY_ENVIRONMENT_NAME ?? "production";
+  return headerSafeIdentity(env.TF_ENV ?? env.RAILWAY_ENVIRONMENT_NAME ?? "production") || "production";
+}
+
+/**
+ * THE BYTES THE MAILBOX WILL HOLD.
+ *
+ * `formatClaim` writes the id through `headerSafe`, which collapses CR/LF to a space and trims —
+ * a claim is an IMAP message, so a newline in a header would be a header injection. Anything that
+ * normalises differently produces an identity that cannot match its own claim, and the comparison
+ * is exact.
+ *
+ * The trim alone was not enough: an override with an interior newline, or an environment name with
+ * one, still differed after serialization. This applies the SAME transformation at the source, so
+ * config, row and folder carry one value. It is deliberately a copy of `headerSafe`'s rule rather
+ * than an import — `organizer-lease` imports from here, not the other way round — and the two are
+ * held together by `organizer-identity-bytes.test.ts`, which fails if they ever diverge.
+ */
+export function headerSafeIdentity(v: string): string {
+  return v.replace(/[\r\n]+/g, " ").trim();
 }
 
 /**
@@ -68,7 +86,9 @@ export function resolveCloudInstallId(env: OrganizerInstallEnv): string {
      config: the claim and the identity comparing against it differed by two spaces, and the
      comparison is exact. The mailbox is the master, so the bytes it will hold are the bytes this
      returns — one value, from one place, all the way through. */
-  const override = env.TF_ORGANIZER_INSTALL_ID?.trim();
+  const override = env.TF_ORGANIZER_INSTALL_ID === undefined
+    ? undefined
+    : headerSafeIdentity(env.TF_ORGANIZER_INSTALL_ID);
   return override !== undefined && override !== ""
     ? override
     : cloudInstallId(organizerEnvironment(env));
