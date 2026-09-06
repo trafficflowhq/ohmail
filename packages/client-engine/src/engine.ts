@@ -111,6 +111,16 @@ interface PendingMutation {
    * wait on stay with `flushPending()` — see {@link OhmailEngine.ownerSettled}.
    */
   restored?: boolean;
+  /**
+   * Rows this verb SUPERSEDES and has not yet managed to retire.
+   *
+   * Carried on the verb rather than passed once, because the first write is not the only write: a
+   * retryable failure re-asserts the durable entry, and a re-assert that omitted these left the
+   * newer row on disk beside the stale one it was supposed to replace — the next boot then
+   * replays the stale verb over newer state, with the newer verb's own row sitting beside it.
+   * Cleared only by a commit that actually carried them.
+   */
+  retire?: string[];
   /** Server-answered failures so far. See {@link OUTBOX_MAX_SERVER_FAILURES} for what counts. */
   attempts?: number;
   /** Epoch ms before which no drive may dispatch this verb. */
@@ -3673,7 +3683,7 @@ export class OhmailEngine {
       });
       return { id, key, status: "rolled_back", seq: null, error };
     }
-    this.supersedeQueued(enriched);
+    const retired = this.supersedeQueued(enriched);
     this.overlays.set(id, effects);
     this.overlayRev++;
     this.notify();
@@ -3702,7 +3712,10 @@ export class OhmailEngine {
      */
     const pending: PendingMutation = {
       id, key, mutation: enriched, at: this.now().getTime(), n: this.outboxSeq++,
+      ...(retired.length > 0 ? { retire: retired } : {}),
     };
+    // ONE TRANSACTION: the newer row in, the rows it supersedes out. See `supersedeQueued` for
+    // why the removal may not be a separate best-effort delete.
     const persisted = await this.putOutbox(pending);
     if (!persisted && enriched.kind === "mail_send") {
       this.overlays.delete(id);
@@ -3942,7 +3955,13 @@ export class OhmailEngine {
       ...(p.lastError !== undefined ? { lastError: p.lastError } : {}),
     };
     try {
-      await this.store.commitLocal([{ type: OUTBOX_TYPE, id: p.id, entity: entry }], []);
+      await this.store.commitLocal(
+        [{ type: OUTBOX_TYPE, id: p.id, entity: entry }],
+        (p.retire ?? []).map((id) => ({ type: OUTBOX_TYPE, id })),
+      );
+      // Only now: a commit that did not happen has retired nothing, and the next write of this
+      // verb must carry them again.
+      delete p.retire;
       return true;
     } catch {
       return false; // storage refused — what that costs depends on the verb; see `mutate`.
@@ -3957,10 +3976,16 @@ export class OhmailEngine {
    * `commitLocal` is write-then-publish: memory changes only once the storage transaction has
    * resolved. That is the whole point of it for the PAIRED writes — `abandon` must never be
    * observable with the verb in both collections or in neither. But three callers of this method
-   * are synchronous `void` functions that cannot await anything: `sweepAwaitingEcho`, and the two
-   * retirement arms of `supersedeQueued`. They call it as `void this.dropOutbox(id)` and their own
-   * caller reads the store immediately afterwards, which worked only because `prune` evicts from
-   * `records` BEFORE its first await. Moving this line to `commitLocal` pushed the eviction two
+   * are synchronous `void` functions that cannot await anything: `sweepAwaitingEcho` and
+   * `restoreOutboxOnce`'s expired-create arm. They call it as `void this.dropOutbox(id)` and read
+   * the store immediately afterwards, which works only because `prune` evicts from `records`
+   * BEFORE its first await.
+   *
+   * SUPERSESSION USED TO BE HERE AND IS NOT ANY MORE. Its delete is one half of a replacement, so
+   * the direction that fails safe for a terminal delete — gone from memory, still on disk, replayed
+   * under the same key — is exactly the wrong one there: the replay puts the stale verb back over
+   * newer state. It now rides the newer verb's own transaction. The exception below is for
+   * genuinely terminal deletes and nothing else. Moving this line to `commitLocal` pushed the eviction two
    * microtasks later and the row was still readable after the sweep that retired it — measured as
    * seven kill-restart failures in `durable-outbox.test.ts`, none of which is about storage.
    *
@@ -4405,9 +4430,29 @@ export class OhmailEngine {
     }
   }
 
-  private supersedeQueued(m: EngineMutation): void {
+  /**
+   * ── THE STALE ROWS ARE RETIRED BY THE NEWER VERB'S OWN TRANSACTION ─────────────────────────
+   *
+   * This used to call `dropOutbox` per retired entry — a memory-first `prune` whose failure is
+   * swallowed. Round four found what that costs: memory drops the older verb, the newer verb goes
+   * on the wire, the purge fails, the newer row's own write fails too, the process dies, and disk
+   * holds ONLY the stale verb. The next boot replays it over the state the newer one established,
+   * and both requests reported success.
+   *
+   * The carve-out that let `dropOutbox` stay on `prune` was argued for a LONE TERMINAL DELETE,
+   * where memory-first fails safe: gone from memory, still on disk, replayed under the same key.
+   * Supersession is not that. Its delete is one half of a replacement, and the direction that
+   * fails safe for a terminal delete is exactly the wrong one here.
+   *
+   * So the ids are returned instead, and the caller retires them in the SAME transaction that
+   * writes the newer row — the durable set holds both, or the newer one, and never the stale one
+   * alone. If that transaction is refused, nothing was removed and the stale rows simply replay,
+   * which is the behaviour a storage-refused verb already has.
+   */
+  private supersedeQueued(m: EngineMutation): string[] {
+    const retired: string[] = [];
     void this.supersedeAbandoned(m);
-    if (this.queue.length === 0) return;
+    if (this.queue.length === 0) return retired;
     const key = supersedeKey(m);
     const readIds = m.kind === "mark_seen" || m.kind === "feed_mark_seen"
       ? new Set(m.messageIds ?? [])
@@ -4420,7 +4465,7 @@ export class OhmailEngine {
       if (key !== null && supersedeKey(qm) === key) {
         this.queue.splice(i, 1);
         this.overlays.delete(q.id);
-        void this.dropOutbox(q.id);
+        retired.push(q.id);
         changed = true;
         continue;
       }
@@ -4451,7 +4496,7 @@ export class OhmailEngine {
         if (remaining.length === 0 && !keepsLine) {
           this.queue.splice(i, 1);
           this.overlays.delete(q.id);
-          void this.dropOutbox(q.id);
+          retired.push(q.id);
         } else {
           const narrowed = { ...qm, messageIds: remaining } as EngineMutation;
           if (lineSuperseded && narrowed.kind === "feed_mark_seen") delete narrowed.upToId;
@@ -4472,6 +4517,7 @@ export class OhmailEngine {
       this.overlayRev++;
       this.notify();
     }
+    return retired;
   }
 
   /**
