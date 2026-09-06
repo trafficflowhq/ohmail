@@ -37,11 +37,15 @@
  * shown a spinner for.
  */
 
+import { originNeedsPin, parsePairLink, type PairLink } from "@ohmail/client-engine";
+
+import { BUILD_PLATFORM } from "./platform.js";
 import {
   bridgeAvailable,
   bridgeFetch,
   engineConfigure,
   engineStatus,
+  type DoorFlavorWire,
   type EngineConfig,
   type EngineStatus,
 } from "./bridge-fetch.js";
@@ -179,6 +183,117 @@ export function mailMount(shell: Shell, mounted: string | null): MailMount {
 }
 
 /**
+ * ═══ WHAT IS ON THE FAR SIDE OF THIS INSTALL'S DOOR — the ONE seam every branch reads ═══════
+ *
+ * ── THE DEFECT THIS CLOSES ──────────────────────────────────────────────────────────────────
+ *
+ * `status.mode === "cloud"` was asked in eleven places, and each one wrote a sentence or opened a
+ * pane on the answer: "The organizing happens on our servers", "your hosted account", Settings →
+ * Subscription, Settings → Security, Settings → Account, a price quote against an account's
+ * ledger, a door out to ohmail.app, "Replies are sent while ohmail is open on this computer".
+ * Every one of those is true of a HOSTED account and false of a desktop paired to another
+ * computer of the person's own — the same `mode`, a completely different far side. Four of them
+ * are panes about an account that does not exist, and one is a spend control with no ledger
+ * behind it.
+ *
+ * So the eleven read this instead. One function, one place to correct, and a table test that can
+ * drive every branch — the reason `gateFor` and `accountDoorFor` are functions rather than
+ * conditions inside a render.
+ *
+ * ── `"unknown"` IS A STATE, NOT A DEFAULT, AND THE DISTINCTION IS THE WHOLE CARE HERE ────────
+ *
+ * An engine that predates `EngineStatus.flavor` sends nothing. That is "this shell has no such
+ * thing", which is a different fact from "the far side is a hosted account" — and collapsing the
+ * two is the failure this repository has measured from both ends: read absent as `desktop-host`
+ * and every shipped Cloud install loses four panes and gains sentences about a computer it has
+ * never heard of; read absent as `managed` and the field stops being able to say anything a
+ * surface does not already assume. It is named, and the surfaces decide.
+ *
+ * WHAT THEY DECIDE, uniformly: every branch that changed for the paired door tests POSITIVELY
+ * for `"desktop-host"`. So `"unknown"` keeps exactly the behaviour the shipped build has, which
+ * is not merely the safe direction but the CORRECT one — the paired door does not exist in an
+ * engine old enough to omit the field, so an absent flavor cannot be concealing one. There is no
+ * install anywhere for which `"unknown"` is a paired desktop.
+ *
+ * ── AND IT IS NOT A STRING COMPARISON AT THE CALL SITES ──────────────────────────────────────
+ *
+ * The wire value is narrowed HERE, against the closed set, and anything else — a flavor a newer
+ * engine invented, a value the shell mangled — becomes `"unknown"` rather than travelling on. A
+ * call site comparing `status.flavor === "desktop-host"` for itself would be a second, quieter
+ * copy of that narrowing, and the first one to be forgotten on the day a fourth flavor exists.
+ */
+export type DoorFlavor = "local" | "managed" | "selfhost" | "desktop-host" | "unknown";
+
+const CLOUD_FLAVORS: readonly DoorFlavorWire[] = ["managed", "selfhost", "desktop-host"];
+
+export function flavorOf(status: EngineStatus | null): DoorFlavor {
+  if (status?.mode === "local") return "local";
+  if (status?.mode !== "cloud") return "unknown";
+  const wire = status.flavor;
+  return wire != null && CLOUD_FLAVORS.includes(wire) ? wire : "unknown";
+}
+
+/**
+ * IS THIS INSTALL PAIRED TO ANOTHER COMPUTER OF THE PERSON'S OWN?
+ *
+ * The positive test the eleven branches take, named so the rule reads the same way in each of
+ * them and so `"unknown"` can never be mistaken for it by a stray `!==`. A negation would invert
+ * exactly the care {@link flavorOf} takes: `flavor !== "managed"` is true of an engine that said
+ * nothing, and that is every shipped install.
+ */
+export function isDesktopHost(status: EngineStatus | null): boolean {
+  return flavorOf(status) === "desktop-host";
+}
+
+/**
+ * WHAT TO CALL THE OTHER COMPUTER ON SCREEN — the URL's hostname, and for a tailnet name its
+ * first label.
+ *
+ * `/hello` is not widened with a machine name (the architecture ruling says so, and a name
+ * volunteered by whatever answered would be worth less than the address the person typed), so
+ * the label is derived from the origin this install was configured for. A `*.ts.net` host is
+ * `machine.tailnet.ts.net`, whose first label is the machine's own tailnet name — the same fact
+ * the host's own pane prints when it starts serving. An IP literal stays an IP: there is nothing
+ * to shorten and a truncated address is a wrong address.
+ *
+ * TWO MACHINES WITH THE SAME NAME ON TWO TAILNETS WOULD READ ALIKE, which is why Settings →
+ * Desktop carries the full origin beside this and the rail does not: the rail names the computer
+ * a person is looking at, and Settings is where they go to tell two of them apart.
+ *
+ * An unparseable or absent base is `null`, never a guess and never the empty string — every
+ * sentence built on this interpolates it, and "Can't reach ." is worse than not saying it.
+ */
+export function hostLabelOf(baseUrl: string | null | undefined): string | null {
+  if (!baseUrl) return null;
+  const m = /^https?:\/\/([^/?#\s:]+)/i.exec(baseUrl.trim());
+  const host = m?.[1]?.toLowerCase();
+  if (!host) return null;
+  return host.endsWith(".ts.net") ? (host.split(".")[0] ?? host) : host;
+}
+
+/**
+ * WHICH NETWORK THE OTHER COMPUTER IS REACHED OVER — decided from the origin's SHAPE, because
+ * that is the only thing this window is told and it is a sound reading of it.
+ *
+ * The same-network door binds one interface and hands out its address as an IP literal
+ * (`host-lan.ts`), and no authority issues a certificate for one — which is exactly why that
+ * door's link carries a pin. A NAME is the other case: a tailnet MagicDNS name with a
+ * certificate the platform can check. So an IP literal is `"lan"` and anything else is `"ts"`.
+ *
+ * It selects one sentence — "check it is on the same network" against "check it is signed in to
+ * your Tailscale" — and getting it wrong costs a person one wrong thing to check, which is why
+ * it is allowed to be a derivation rather than a field. `null` when there is no origin to read.
+ */
+export function hostViaOf(baseUrl: string | null | undefined): "lan" | "ts" | null {
+  if (!baseUrl) return null;
+  const m = /^https?:\/\/([^/?#\s:]+)/i.exec(baseUrl.trim());
+  const host = m?.[1];
+  if (!host) return null;
+  /* IPv4 literal, or a bracketed IPv6 one. Neither can carry a certificate anybody checks. */
+  return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) || host.startsWith("[") ? "lan" : "ts";
+}
+
+/**
  * WHICH SUGGEST CONTROL THE SCREENER GETS, if any — a decision, so it is a function and not a
  * condition buried in a render.
  *
@@ -232,6 +347,15 @@ export type HostedSession = "live" | "out" | "unknown";
 
 export function suggestDoorFor(status: EngineStatus | null, session: HostedSession): SuggestDoor {
   if (status?.mode === "local") return "local";
+  /* PAIRED TO ANOTHER COMPUTER — `null`, and it is `null` rather than `"cloud"` for the reason
+     the whole of this function's `null` arm exists. `CloudSuggest` prices a batch against an
+     ACCOUNT's ledger and watermark, and a host has neither: it is a standalone install with a
+     model of its own or with none. Rendering the hosted ladder there would quote a price against
+     a ledger that does not exist, which is precisely the "spend control with nothing behind it"
+     this rule forbids — and it would be the worse kind, because the quote would look real.
+     Offering the host's own model through the proxy is a real control and a later slice's; until
+     something serves it, nothing is offered and nothing lies. */
+  if (isDesktopHost(status)) return null;
   // LIVE, not merely configured: a purchase control offered on a maybe is a purchase control
   // that refuses. See {@link HostedSession} for why this is the engine's live answer and not the
   // launch frame's `credentialState`.
@@ -275,8 +399,16 @@ export function suggestDoorFor(status: EngineStatus | null, session: HostedSessi
 export function awayDoorFor(
   status: EngineStatus | null,
   session: HostedSession,
-): "local" | "cloud" | null {
+): "local" | "cloud" | "host" | null {
   if (status?.mode === "local") return "local";
+  /* PAIRED TO ANOTHER COMPUTER — a THIRD arm, because the wire works and only the promise is
+     different. The engine forwards `GET/PUT /away-responder` to the host with the bearer exactly
+     as it forwards them to an account, so the row that is written is the host's own and the
+     host's drain sends from it. What may not be borrowed is either of the other two sentences:
+     Cloud's is always-on and false here, and the standalone one names THIS computer while the
+     replies go out from the other one. It is the standalone promise about a different machine —
+     "while ohmail is open on {host}" — and that is what the third arm selects. */
+  if (isDesktopHost(status)) return session === "live" ? "host" : null;
   return status?.mode === "cloud" && session === "live" ? "cloud" : null;
 }
 
@@ -308,6 +440,12 @@ export function profileImportDoorFor(
   session: HostedSession,
 ): "local" | "cloud" | null {
   if (status?.mode === "local") return "local";
+  /* PAIRED TO ANOTHER COMPUTER — the CLOUD shape, and this is the one branch in the family where
+     the paired door is not a third thing. The three routes are forwarded to the host with the
+     bearer exactly as they are forwarded to an account, the durable answer is the host's, and the
+     question the card asks — "this mailbox arrived carrying settings; shall I apply them?" — is
+     asked once for the mailbox rather than once per machine reading it. A person answering here
+     answers for the install that organizes, which is what the host is. */
   if (status?.mode === "cloud" && session === "live") return "cloud";
   return null;
 }
@@ -359,6 +497,48 @@ export function accountDoorFor(
   status: EngineStatus | null,
   session: HostedSession,
 ): "cloud" | null {
+  /* PAIRED TO ANOTHER COMPUTER — `null`, and it is the standalone door's answer for the standalone
+     door's reason: there is no HOSTED account behind this window. The far side is a computer of
+     the person's own running the same app, with no subscription, no second factor, no ledger and
+     no billing history. Left as `"cloud"` this one expression would have opened FOUR panes onto an
+     account that does not exist — Subscription quoting a plan, Security and Account offering doors
+     out to ohmail.app for a machine that has never had an account there, and the consent row's
+     spend quote pricing a batch against no ledger at all. That is why the eleven read one seam.
+
+     It is `null` rather than a third arm because there is nothing to put in these panes. A host's
+     own subscription, if it has one, belongs to the host's window; this install administers
+     nothing. */
+  if (isDesktopHost(status)) return null;
+  return status?.mode === "cloud" && session === "live" ? "cloud" : null;
+}
+
+/**
+ * WHICH CONSENT ROW THIS INSTALL WRITES INTO, and which SHAPE of it — a pure function here for
+ * the reason {@link accountDoorFor} is, and a separate one from it because the questions parted
+ * company the moment a cloud door stopped meaning a hosted account.
+ *
+ *  · `"cloud"`      — a HOSTED account. The row is the account's own, shared with every browser
+ *                     tab, and folders are storable there.
+ *  · `"standalone"` — this machine's own `account_settings`, or a paired host's. Same ten calls,
+ *                     one field short: neither engine mounts a folder verb, so the transport
+ *                     declares the folders flag unstorable and the shared shell withholds that
+ *                     pane rather than drawing a switch that snaps back.
+ *  · `null`         — no door, or a hosted door with no session. Every call would be refused.
+ *
+ * THE PAIRED DOOR IS `"standalone"` AND THAT IS THE FINDING. It reads `accountDoorFor` as false
+ * (there is no account) and `firstRunDoorFor` as null (the mode is not local), so with no rule of
+ * its own it would fall between the two and get NO consent transport at all — which is not a
+ * withheld feature but a silently missing screening window, on the door where the row is served
+ * perfectly well by the host one hop away. The far side of a paired door IS a standalone install;
+ * `"standalone"` is a statement about what is there rather than about which mode this install is
+ * in.
+ */
+export function consentDoorFor(
+  status: EngineStatus | null,
+  session: HostedSession,
+): "cloud" | "standalone" | null {
+  if (status?.mode === "local") return "standalone";
+  if (isDesktopHost(status)) return session === "live" ? "standalone" : null;
   return status?.mode === "cloud" && session === "live" ? "cloud" : null;
 }
 
@@ -491,6 +671,236 @@ export function handoffProblem(address: string, code: string): string | null {
   if (!address.includes("@")) return "That does not look like a mailbox address.";
   if (!code.trim()) return "Paste the code the browser showed you.";
   return null;
+}
+
+/**
+ * ═══ DOOR TWO: ANOTHER COMPUTER OF THE PERSON'S OWN ════════════════════════════════════════
+ *
+ * Two steps, the self-hosted door's shape and for its reason: the link is PROVED before anything
+ * is committed, so a mistyped or spent link is a sentence about the link rather than a pairing
+ * that half-happened. What differs is that this door's first step also has to establish WHOSE key
+ * to trust, and that fact comes off the link rather than off the network.
+ */
+
+/**
+ * WHY A LINK WAS REFUSED, as a closed set of KINDS — never as a sentence.
+ *
+ * ── THE SEAM, AND WHY IT IS A KIND AND NOT PROSE ────────────────────────────────────────────
+ *
+ * This module is a DECISION module and the words for these refusals live in `desktopDoor`, which
+ * is a window-only namespace (`vite.config.ts`'s `WINDOW_ONLY_NAMESPACES`): the served host client
+ * does not carry it, so a catalogue read from here would either ship the whole namespace to a
+ * phone loading that client or draw raw dotted keys there. So the decisions answer kinds and
+ * `DoorChooser`'s `sentenceForKind` — which is window-only by construction — owns the sentences.
+ *
+ * The set is CLOSED with an explicit escape, because the alternative was measured elsewhere in
+ * this window: an unrecognised code composing a catalogue key that does not exist and throwing
+ * inside a render. An unknown kind maps to no sentence and the card shows the ENGINE's own words,
+ * which are English but true and about something that actually happened.
+ *
+ * `not_sharing` is deliberately absent. A desktop without host mode composes no listener at all,
+ * so it is `unreachable`; and `/hello` never answers `local` over a network, so there is no state
+ * in which something ohmail-shaped answers and declines to share.
+ */
+export const HOST_REFUSAL_KINDS = [
+  "cleartext",
+  "no_pin",
+  "pin_mismatch",
+  "not_ohmail",
+  "managed",
+  "selfhost",
+  "pairing_invalid",
+  "unreachable",
+] as const;
+export type HostRefusalKind = (typeof HOST_REFUSAL_KINDS)[number];
+
+/**
+ * The three the WINDOW decides on its own, before anything is dialled, plus "nothing pasted".
+ * Two of them are also engine kinds — a cleartext origin and a missing pin are facts about the
+ * link, and the engine would reach the same verdict after opening a connection this app has
+ * already decided not to use.
+ */
+export type HostLinkRefusal = "missing" | "shape" | "cleartext" | "no_pin";
+
+/** What a refused engine step answers: what it was, and what the engine itself said. */
+export interface HostRefusal {
+  /** A {@link HostRefusalKind}, or any other string the engine named — the card maps it. */
+  kind: string;
+  /** The engine's own sentence, when it gave one. The fallback for an unmapped kind. */
+  message: string | null;
+  /**
+   * The HTTP status, when there was an answer to read one from — `null` for a throw.
+   *
+   * The card's last resort, and it exists because the two above can both be empty: an engine that
+   * refuses with a body this window cannot parse has said something, and "(409)" is a worse
+   * sentence than a real one and a better one than a blank card.
+   */
+  status: number | null;
+}
+
+/** What the link step ended as: the parsed link and what to call it, or why it was refused. */
+export interface HostLinkStep {
+  link: PairLink | null;
+  /** The label the card names — {@link hostLabelOf} of the link's origin. */
+  host: string | null;
+  /** Which network, for the "check this" sentence. */
+  via: "lan" | "ts" | null;
+  refusal: HostLinkRefusal | null;
+}
+
+/**
+ * THE FIRST THING WRONG WITH THE LINK, decided in the WINDOW, before the engine is asked.
+ *
+ * Three refusals happen here rather than at the engine, and the reason is that all three are
+ * facts about the LINK ITSELF — no dial can change the answer, and dialling first would mean
+ * opening a connection this app has already decided it will not use. They are the phone's three
+ * (`apps/mobile/src/net/pairing.ts`), which is not a coincidence: it is the same ceremony, so the
+ * refusals are the same refusals, and a second set of rules for the desktop would be a second
+ * opinion about which links are safe to pair with.
+ *
+ *  · NOT A PAIRING LINK — `parsePairLink` refuses a query string, a path that is not `/pair`, a
+ *    foreign scheme, an empty fragment and a `k2` fragment this build cannot read. ONE kind for
+ *    all of them, and the sentence names the SHAPE that is wanted: somebody who pasted the wrong
+ *    thing has not made five different mistakes.
+ *  · CLEARTEXT — `http://`. Refused before anything is sent, because the whole of what a pin buys
+ *    is undone by a connection nobody encrypted.
+ *  · NO PIN ON AN ORIGIN THAT NEEDS ONE — an IP literal, which no authority issues a certificate
+ *    for. `originNeedsPin` is the shared rule (loopback exempt, DNS names verified by the trust
+ *    store), asked rather than restated so the desktop and the phone cannot disagree.
+ *
+ * A refused link is returned as `link: null` even where it parsed, so no caller can reach past
+ * the refusal to a token this function has already declined to use.
+ */
+export function hostLinkProblem(text: string): HostLinkStep {
+  const none = { link: null, host: null, via: null };
+  if (!text.trim()) return { ...none, refusal: "missing" };
+  const link = parsePairLink(text);
+  if (link === null) return { ...none, refusal: "shape" };
+
+  const host = hostLabelOf(link.origin);
+  const via = hostViaOf(link.origin);
+  if (link.origin.startsWith("http://")) return { link: null, host, via, refusal: "cleartext" };
+  if (link.pin === null && originNeedsPin(link.origin)) {
+    return { link: null, host, via, refusal: "no_pin" };
+  }
+  return { link, host, via, refusal: null };
+}
+
+/** The refusal a bridge answer carries, or null when it succeeded. */
+async function refusalOf(res: Response): Promise<HostRefusal | null> {
+  if (res.ok) return null;
+  try {
+    const parsed = (await res.json()) as {
+      error?: { message?: string; details?: { kind?: string } };
+    };
+    return {
+      kind: parsed.error?.details?.kind ?? "",
+      message: parsed.error?.message ?? null,
+      status: res.status,
+    };
+  } catch {
+    /* Not JSON. The status is all there is to say, and saying it beats inventing a reason. */
+    return { kind: "", message: null, status: res.status };
+  }
+}
+
+/**
+ * STEP ONE: ask the ENGINE what is at the link's origin, and whether its key is the one the link
+ * names. Null when there is a computer running ohmail there.
+ *
+ * NOTHING IS CONFIGURED HERE, and that ordering is the self-hosted door's finding applied to this
+ * one: `enforceMirrorOwner` discards the previous mirror when the door changes, so configuring
+ * for a candidate would cost somebody their whole copy for a typo, before anything had been
+ * proved. A refusal at this step leaves the settings file, the previous door, its mirror and its
+ * session exactly where they were.
+ *
+ * The window cannot dial — its content policy forbids it — so the engine is the process that
+ * looks, and this hands it the origin and the pin as a CANDIDATE.
+ */
+export async function proveHostLink(link: PairLink): Promise<HostRefusal | null> {
+  try {
+    const res = await bridgeFetch("/cloud/probe", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      /* THE TOKEN IS NOT SENT. Proving what is at an address needs the address and the key; the
+         credential is spent once, at the redeem, and a probe that carried it would spend it on a
+         step the person has not agreed to yet. */
+      body: JSON.stringify({ origin: link.origin, flavor: "desktop-host", hostPin: link.pin }),
+    });
+    return await refusalOf(res);
+  } catch (err) {
+    return { kind: "unreachable", message: sentence(err), status: null };
+  }
+}
+
+/**
+ * STEP TWO: configure the door and redeem the link.
+ *
+ * The ORIGIN and the PIN go to the shell, which writes them into the settings file and rebuilds
+ * the engine behind them. The TOKEN does not: it goes down the bridge to the engine at
+ * `POST /cloud/pair-redeem`, which exchanges it for the bearer pair and seals that under this
+ * install's key — the same rule the two older doors follow and for the same two reasons (the
+ * shell refuses a payload carrying a secret, and a command argument is process state in the
+ * shell).
+ *
+ * THE ORDER IS CONFIGURE-THEN-REDEEM and it cannot be the other way round. The token is spent
+ * once; redeeming it against an engine still pointed at the previous door would seal a session
+ * into a mirror that is about to be discarded, and there would be no second link to try with.
+ */
+export async function enterHostDoor(
+  link: PairLink,
+): Promise<{ status: EngineStatus | null; refusal: HostRefusal | null; problem: string | null }> {
+  let status: EngineStatus;
+  try {
+    status = await engineConfigure({
+      mode: "cloud",
+      flavor: "desktop-host",
+      cloudUrl: link.origin,
+      hostPin: link.pin,
+    });
+  } catch (err) {
+    return { status: null, refusal: null, problem: sentence(err) };
+  }
+  void status;
+
+  const settled = await settle();
+  if (settled.state !== "serving") {
+    return { status: settled, refusal: null, problem: stalled(settled) };
+  }
+
+  let res: Response;
+  try {
+    res = await bridgeFetch("/cloud/pair-redeem", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: link.token, kind: desktopDeviceKind() }),
+    });
+  } catch (err) {
+    return { status: settled, refusal: { kind: "unreachable", message: sentence(err), status: null }, problem: null };
+  }
+  const refusal = await refusalOf(res);
+  if (refusal !== null) return { status: settled, refusal, problem: null };
+
+  return { status: await engineStatus(), refusal: null, problem: null };
+}
+
+/**
+ * WHAT THIS INSTALL CALLS ITSELF ON THE HOST'S DEVICES LIST.
+ *
+ * REQUIRED on the redeem, and the reason is that the host's pane lies without it: the server
+ * defaults an absent kind to `"web"`, so a paired laptop would appear there as a browser session
+ * — beside a Remove button somebody is meant to use to tell their machines apart. The three
+ * values are the ones the server already admits for a desktop.
+ */
+export function desktopDeviceKind(platform: string = BUILD_PLATFORM): string {
+  switch (platform) {
+    case "darwin": return "desktop-mac";
+    case "win32": return "desktop-windows";
+    /* Linux AND anything this app has no word for. `machineWord()` is deliberately NOT the route:
+       it collapses those two cases into "computer" and it goes through the CATALOGUE, so the kind
+       a German install declared would depend on a translation. This is a fact about the build. */
+    default: return "desktop-linux";
+  }
 }
 
 /**

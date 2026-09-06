@@ -58,6 +58,10 @@ import { setStorageOwner } from "../../webapp/app/shell/storage-owner";
 import { BootSkeleton } from "../../webapp/app/shell/BootSkeleton";
 import { go, goFirstRun, goSettings, useHashRoute } from "../../webapp/app/shell/routing";
 import { setMailtoSink } from "../../webapp/app/shell/open-external";
+import { agoStamp } from "../../webapp/app/shell/format";
+import {
+  unknownSpeaks, type HostConnection,
+} from "../../webapp/app/shell/host-connection";
 import { BootStatus } from "./BootStatus.js";
 import { bridgeAvailable, bridgeFetch } from "./bridge-fetch.js";
 import { DoorChooser } from "./DoorChooser.js";
@@ -67,14 +71,14 @@ import { DesktopMailboxes, readMailboxFacts, readMirrorFreshness } from "./Deskt
 import { desktopNotificationHost } from "./notify-host.js";
 import { DesktopScreening } from "./DesktopScreening.js";
 import { GateNotice } from "./GateNotice.js";
-import { DOOR_COPY } from "./door-copy.js";
+import { DOOR_COPY, machineWord } from "./door-copy.js";
 import { desktopPaneLabel, DesktopSettings } from "./DesktopSettings.js";
 import { DesktopBilling } from "./DesktopBilling.js";
 import { DesktopWebSection } from "./DesktopWebSection.js";
 import {
-  accountDoorFor, awayDoorFor, firstRunDoorFor, gateFor, hostDoorFor, mailMount,
-  profileImportDoorFor, readShell, suggestDoorFor,
-  type HostedSession, type Shell,
+  accountDoorFor, awayDoorFor, consentDoorFor, firstRunDoorFor, gateFor, hostLabelOf,
+  hostDoorFor, hostViaOf, isDesktopHost, mailMount, profileImportDoorFor, readShell,
+  suggestDoorFor, type HostedSession, type Shell,
 } from "./doors.js";
 import { DesktopDevices } from "./DesktopDevices.js";
 import { awayOverBridge } from "./local-away.js";
@@ -119,6 +123,21 @@ const SETTLING_POLL_MS = 250;
  * and only on the cloud door — the standalone door has no hosted session to lose.
  */
 const HOSTED_SESSION_PROBE_MS = 60_000;
+
+/**
+ * How often a PAIRED window re-asks the engine how old its copy of the other computer's mail is.
+ *
+ * The mirror pulls every twenty seconds, so asking on the same beat is the finest granularity
+ * there is anything new to learn at. This is NOT a second poller in the sense ruling 4 forbids:
+ * it dials nothing and reaches no network — `GET /mirror/freshness` is a local stdio call into
+ * the engine on this machine, answered out of a stamp the engine already keeps for its own drain.
+ * A poller would be a second opinion about whether the other computer is reachable; this reads
+ * the one opinion that exists.
+ *
+ * Only on the paired door. The hosted door has the shared strip's own arm for the same fact, and
+ * the standalone door has no mirror to be behind.
+ */
+const HOST_FRESHNESS_PROBE_MS = 20_000;
 
 /**
  * THE STANDALONE DOOR'S ENTRY POINT INTO GUIDED SETUP — the one thing that opens the stage here.
@@ -400,6 +419,83 @@ export function DesktopGate() {
       clearInterval(fast);
     };
   }, [authKey, hostedAuthKnown]);
+  /**
+   * ═══ IS THE OTHER COMPUTER ANSWERING? — the paired door's standing fact ══════════════════
+   *
+   * AT THE TOP, WITH THE OTHER HOOKS, and not beside the derivation that reads it. Three of the
+   * four statements below are hooks, and this component returns early five times — the boot
+   * frame, the notice card, the chooser, the pre-auth sign-in and the expiry notice. A hook after
+   * any of those is skipped on exactly the renders that take them, which React reports as a change
+   * in hook order and then as "rendered fewer hooks than expected" on whichever render follows.
+   * Measured here: the settings census caught it before this reached a window.
+   *
+   * Read here rather than inside the shell for the reason every other desktop-only fact is: the
+   * shared shell is compiled into a browser tab, and a browser tab is never paired to anybody's
+   * laptop. What the shell gets is the finished sentence.
+   *
+   * ── WHY THE VERDICT IS READ TWICE ────────────────────────────────────────────────────────
+   *
+   * `mirrorFreshness` is already handed to `AppShell` below, and the provider that holds it lives
+   * UNDER this component — so its answer is not reachable from here without lifting the provider
+   * above the gate, which would put a mail-state concern above the routing that decides whether
+   * there is any mail at all. One extra local stdio call every twenty seconds is the cheaper
+   * trade, and the two reads cannot disagree about anything that matters: they ask the same route
+   * and the same engine, and both are describing a stamp that moves on the mirror's own beat.
+   */
+  const [freshness, setFreshness] = useState<
+    { state: "unknown" | "stale" | "current"; asOf: string | null } | null
+  >(null);
+  /**
+   * WHEN THIS ENGINE FIRST SAID `unknown`, or null while it never has.
+   *
+   * A ref and not state: it is read only when a verdict arrives, and holding it in state would
+   * re-render the whole gate on the first probe of every launch to change nothing on screen.
+   * KEYED BY THE ENGINE through the effect's own reset — a door change or a restart clears it, so
+   * the sixty-second grace is always measured against the engine currently behind the bridge and
+   * never inherited from one that no longer exists.
+   */
+  const firstUnknownAt = useRef<number | null>(null);
+  /* `shell` and not the narrowed `status` below, because that one is derived AFTER the early
+     returns and this has to be a hook — see the block comment on the first-run door for the
+     "rendered fewer hooks than expected" crash that placement causes. Same value either way. */
+  const paired = isDesktopHost(shell?.kind === "status" ? shell.status : null);
+  useEffect(() => {
+    if (!paired || !bridgeAvailable()) {
+      setFreshness(null);
+      firstUnknownAt.current = null;
+      return;
+    }
+    let cancelled = false;
+    const probe = async (): Promise<void> => {
+      try {
+        const next = await readMirrorFreshness();
+        if (cancelled) return;
+        /* THE FIRST `unknown` OF THIS ENGINE, stamped once and never moved while the verdict
+           stays `unknown`. Re-stamping on every probe would restart the grace on every tick and
+           the line would never appear at all — the quiet failure this ref exists to avoid. */
+        if (next.state === "unknown") {
+          firstUnknownAt.current ??= Date.now();
+        } else {
+          firstUnknownAt.current = null;
+        }
+        setFreshness(next);
+      } catch {
+        /* The engine is still coming up, or the route is not there. Left as the last answer seen,
+           per the freshness probe's own contract: an unanswerable question must not be dressed as
+           "current" (which would silently unlabel an old copy) or as "stale" (which would put a
+           sentence about an unreachable computer on a window whose engine is merely starting). */
+      }
+    };
+    void probe();
+    const timer = setInterval(() => void probe(), HOST_FRESHNESS_PROBE_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+    /* `authKey` is in the list so a REPLACED engine restarts the grace and drops the previous
+       engine's verdict — the same re-keying the hosted probe above does, for the same reason. */
+  }, [paired, authKey]);
+
   useEffect(() => {
     if (door !== "local") {
       setAi(null);
@@ -588,6 +684,50 @@ export function DesktopGate() {
     );
   }
 
+  /**
+   * THE FINISHED SENTENCE, or `undefined` when there is nothing wrong to say.
+   *
+   * `undefined` covers three situations on purpose — not paired, not asked yet, and answering
+   * normally — because a line that said "reachable" would stand in the rail for ever and make the
+   * one state worth noticing a change of wording rather than the arrival of a warning.
+   */
+  const hostLabel = hostLabelOf(status?.baseUrl);
+  const hostConnection: HostConnection | undefined = ((): HostConnection | undefined => {
+    if (!paired || freshness === null || hostLabel === null) return undefined;
+    const settingsLink = { href: "#/settings/desktop", label: DOOR_COPY.hostFootSettings };
+    const check = hostViaOf(status?.baseUrl) === "lan"
+      ? DOOR_COPY.hostCheckLan(machineWord())
+      : DOOR_COPY.hostCheckTs;
+    if (freshness.state === "stale") {
+      return {
+        state: "stale",
+        words: {
+          title: DOOR_COPY.hostFootStale(hostLabel),
+          /* THE AGE, AS "3 days ago" AND NOT AS A CLOCK TIME. `waterlineStamp`'s "Mon 18:40" goes
+             ambiguous after six days, which is exactly the span a machine somebody has stopped
+             using sits in; and a DURATION ("for 3 days") says nothing about when it last worked.
+             `asOf` is non-null on this arm by the freshness contract; the fallback is unreachable
+             rather than load-bearing. */
+          detail: DOOR_COPY.hostFootStaleWhy(
+            freshness.asOf ? agoStamp(freshness.asOf, Date.now()).rel : "",
+            machineWord(),
+          ),
+          link: settingsLink,
+        },
+      };
+    }
+    /* `unknown`, and only once it has been unknown long enough to mean something. Below the grace
+       this returns `undefined` and the window says nothing — which is right for the first seconds
+       of every successful pairing, when `unknown` is simply "the first pull has not landed yet". */
+    if (freshness.state === "unknown" && unknownSpeaks(firstUnknownAt.current, Date.now())) {
+      return {
+        state: "unknown",
+        words: { title: DOOR_COPY.hostFootUnknown(hostLabel), detail: check, link: settingsLink },
+      };
+    }
+    return undefined;
+  })();
+
   const suggestDoor = suggestDoorFor(status, hostedSession);
   /**
    * IS THERE A HOSTED ACCOUNT BEHIND THIS WINDOW — the one gate every account-shaped surface below
@@ -696,6 +836,12 @@ export function DesktopGate() {
            provider also resets its held answer when the engine or probe changes; this gate is
            the first line, that reset the second. */
         {...(engine && status?.mode === "cloud" ? { mirrorFreshness: readMirrorFreshness } : {})}
+        /* THE OTHER COMPUTER IS NOT ANSWERING — the one standing state this window can be in that
+           the shared shell has no way to learn for itself. Present only on the paired door and
+           only when there is something wrong to say; it also silences the sync strip's "catching
+           up" arm, which would otherwise claim activity that is not happening. See the derivation
+           above and `host-connection.ts` for the grace. */
+        {...(hostConnection ? { hostConnection } : {})}
         /* WHAT A SEND FROM THIS WINDOW RIDES. On the STANDALONE door the compose form, the
            send handler and the SMTP dial are one process — the mail engine's own service bag
            makes the same declaration, `sendSurfaceMaxTotalBytes: null` — so the attach
@@ -839,7 +985,25 @@ export function DesktopGate() {
            standalone door the replies go out only while this window is open, and the pane says so
            rather than borrowing Cloud's always-on copy. */
         {...(awayDoorFor(status, hostedSession) !== null
-          ? { awayTransport: awayOverBridge, awayIsLocal: awayDoorFor(status, hostedSession) === "local" }
+          ? {
+              awayTransport: awayOverBridge,
+              awayIsLocal: awayDoorFor(status, hostedSession) === "local",
+              /* THE THIRD PROMISE. On a paired desktop the row and the drain are the OTHER
+                 computer's, so neither of the two sentences the shell already had is true here:
+                 Cloud's promises an always-on service, and the standalone one names THIS machine
+                 while the machine that has to be awake is the other one. Passing the label is the
+                 whole of the difference, and `AwayResponderRow` prefers it over `awayIsLocal` —
+                 which `awayDoorFor` makes unreachable in this window, since it answers exactly
+                 one arm. WITHOUT this the paired door would have rendered Cloud's copy, which is
+                 the same class of false state the flavor seam exists to end. */
+              /* WITHHELD RATHER THAN EMPTY when there is no label to give. `hostLabelOf` answers
+                 null for an absent or unparseable base, and `?? ""` would have rendered "…while
+                 ohmail is open on ." — a sentence with a hole in it, which is worse than the
+                 standalone one this then falls back to. */
+              ...(awayDoorFor(status, hostedSession) === "host" && hostLabelOf(status?.baseUrl)
+                ? { awayOnHost: hostLabelOf(status?.baseUrl) }
+                : {}),
+            }
           : {})}
         /* ACKNOWLEDGING THE ORGANIZER NOTICE — on BOTH doors, and with no door rule of its
            own, unlike the two seams around it. Those need one because what the route DOES
@@ -887,9 +1051,14 @@ export function DesktopGate() {
            storable and the shared shell withholds that pane instead of drawing a switch that
            snaps back. Everything else about the two objects is the same ten calls against the
            same paths — see `local-consent.ts`. */
-        {...(accountDoor
+        /* ONE RULE, NOT TWO CONDITIONS. This was `accountDoor ? … : firstRunDoorFor === "local" ? …`,
+           and the pair had a hole exactly where a third door appeared: a paired desktop is
+           neither, so it would have got NO consent transport — no screening window, and nothing
+           on screen saying why — on a door where the host serves the row perfectly well one hop
+           away. `consentDoorFor` is the rule, a pure function a test can drive. */
+        {...(consentDoorFor(status, hostedSession) === "cloud"
           ? { consentTransport: consentOverBridge }
-          : firstRunDoorFor(status) === "local"
+          : consentDoorFor(status, hostedSession) === "standalone"
             ? { consentTransport: consentOverBridgeStandalone }
             : {})}
         {...(accountDoor ? { suggestWire: cloudSuggestWire } : {})}

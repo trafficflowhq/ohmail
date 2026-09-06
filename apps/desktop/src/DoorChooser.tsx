@@ -45,11 +45,17 @@ import {
   beginBrowserSignIn,
   enterCloudDoor,
   enterCloudDoorWithCode,
+  enterHostDoor,
   enterLocalDoor,
+  hostLinkProblem,
+  proveHostLink,
   signInToCloud,
   signInToCloudWithCode,
   standingEngine,
   type DoorResult,
+  type HostLinkRefusal,
+  type HostLinkStep,
+  type HostRefusal,
   type LocalDoorFields,
 } from "./doors.js";
 import {
@@ -68,7 +74,7 @@ import { offLinkCode, onLinkCode, openWeb } from "./native.js";
  * because it asks a question `cloud` does not: which server. Everything after that question is the
  * same engine, the same sign-in and the same mirror — see `self-host.ts`.
  */
-type Step = "doors" | "local" | "server" | "cloud";
+type Step = "doors" | "local" | "host" | "server" | "cloud";
 
 export function DoorChooser({
   onEntered,
@@ -149,6 +155,18 @@ export function DoorChooser({
    * the moment this is set, so the two can never disagree.
    */
   const [reachedServer, setReachedServer] = useState<string | null>(null);
+
+  /**
+   * THE PAIRING LINK THIS INSTALL HAS PROVED, or null while the card is still asking for one.
+   *
+   * `reachedServer`'s shape and for its reason: it selects what the next submit IS. Null means
+   * the field is live and the submit PROVES; set means the engine has said what is at that origin
+   * and the submit REDEEMS. Holding the parsed LINK rather than a flag is what keeps the two from
+   * disagreeing — the fingerprint on screen, the origin in the sentence and the token that will be
+   * spent are all read out of this one value, so a later edit of the field cannot change which
+   * computer the card was describing. The field is read-only from the moment this is set.
+   */
+  const [provedLink, setProvedLink] = useState<HostLinkStep | null>(null);
 
   /* One attempt at a time, and the result travels up whole. A door attempt restarts the engine
      and can take tens of seconds on a first run, so a second press while the first is in flight
@@ -248,6 +266,62 @@ export function DoorChooser({
               attempt(() => signInToSelfHost(address, password, totp))
             }
           />
+        ) : step === "host" ? (
+          <HostDoor
+            busy={busy}
+            problem={problem}
+            proved={provedLink}
+            onBack={() => { setProblem(null); setProvedLink(null); setStep("doors"); }}
+            onCancel={onCancel}
+            /* THE LINK STEP. Not routed through `attempt`, for `ServerDoor.onProve`'s reason: it
+               does not end in a `DoorResult` and must not call `onEntered`. Proving that a
+               computer is there is not being paired with it, and a window that closed the door
+               here would leave somebody looking at a mail client with no session behind it. */
+            onProve={(text) => {
+              if (busy) return;
+              const step = hostLinkProblem(text);
+              /* THE WINDOW'S OWN THREE REFUSALS FIRST, and they cost no connection at all: a
+                 malformed link, a cleartext origin and an unpinned address are facts about the
+                 link, and dialling to learn them would mean opening the connection this app has
+                 already decided not to use. */
+              if (step.refusal !== null || step.link === null) {
+                setProblem(
+                  step.refusal === null
+                    ? DOOR_COPY.hostLinkShape
+                    : sentenceForKind(step.refusal, step.host ?? "") ?? DOOR_COPY.hostLinkShape,
+                );
+                return;
+              }
+              const link = step.link;
+              const label = step.host ?? link.origin;
+              setBusy(true);
+              setProblem(null);
+              void proveHostLink(link)
+                .then((refusal) => {
+                  if (refusal !== null) {
+                    setProblem(refusalSentence(refusal, label));
+                    return;
+                  }
+                  setProvedLink(step);
+                })
+                .finally(() => setBusy(false));
+            }}
+            onSubmit={() => {
+              const proved = provedLink;
+              if (!proved?.link) return;
+              const link = proved.link;
+              const label = proved.host ?? link.origin;
+              void attempt(async () => {
+                const result = await enterHostDoor(link);
+                /* THE REDEEM'S REFUSAL BECOMES A SENTENCE HERE, for the reason the map above
+                   gives: `doors.ts` may not read this window's catalogue, so it hands back the
+                   kind and the card is what has the words. */
+                return result.refusal === null
+                  ? result
+                  : { ...result, problem: refusalSentence(result.refusal, label) };
+              });
+            }}
+          />
         ) : step === "local" ? (
           <LocalDoor
             busy={busy}
@@ -343,6 +417,13 @@ function Doors({ onPick, onCancel }: { onPick: (step: Step) => void; onCancel?: 
         <button type="button" className="door-tile" autoFocus onClick={() => onPick("local")}>
           <span className="door-name">{DOOR_COPY.doorLocalName(machineWord())}</span>
           <span className="door-say">{DOOR_COPY.doorLocalSay}</span>
+        </button>
+        {/* SECOND, and the order is still "nearest first": this computer, then another of yours,
+            then a server you run, then ours. A paired desktop is nearer than a server — it is a
+            machine in the same house — and it is the door somebody arrives at holding a link. */}
+        <button type="button" className="door-tile" onClick={() => onPick("host")}>
+          <span className="door-name">{DOOR_COPY.doorHostName}</span>
+          <span className="door-say">{DOOR_COPY.doorHostSay(machineWord())}</span>
         </button>
         <button type="button" className="door-tile" onClick={() => onPick("server")}>
           <span className="door-name">{DOOR_COPY.doorServerName}</span>
@@ -666,6 +747,191 @@ function ServerDoor({
       </div>
     </form>
   );
+}
+
+/**
+ * DOOR TWO: ANOTHER COMPUTER OF THE PERSON'S OWN, reached over their network or their Tailscale.
+ *
+ * ── TWO PHASES IN ONE CARD, `ServerDoor`'s SHAPE ──────────────────────────────────────────────
+ *
+ * The link is PROVED before the token is spent, and the reason is sharper here than on the
+ * self-hosted door: a pairing link works ONCE. Redeeming first and finding out afterwards that
+ * the address was wrong, or that the key had changed, would consume the one thing the person
+ * carried across from the other machine and leave them to go and make another.
+ *
+ * ── PHASE B SHOWS THE KEY, AND SHOWING IT IS THE WHOLE OF WHAT IT IS FOR ──────────────────────
+ *
+ * Twelve characters of the fingerprint, mono, beside the sentence saying where to find the same
+ * twelve on the other computer. That comparison is the only thing standing between "we reached
+ * something" and "we reached the machine you meant" on a network where no authority vouches for
+ * anybody. The full forty-three are deliberately not shown: a credential-shaped string nobody
+ * actually compares is a ceremony rather than a check.
+ *
+ * A TAILSCALE ORIGIN CARRIES NO PIN (the link's two forms), so there is no key line there and the
+ * sentence says what did the checking instead — the certificate, which the platform verified.
+ * Silence would read as a check that was skipped.
+ *
+ * ── AND THERE IS NO "PAIRED" SCREEN AFTERWARDS ────────────────────────────────────────────────
+ *
+ * The gate does what it does after every other door: the shell reports a session, `AppShell`
+ * mounts, and the sync line says the first sync has not finished yet and then counts. The Ohbox
+ * filling is the confirmation; an interstitial announcing something the next frame shows is a
+ * sentence in the way.
+ */
+function HostDoor({
+  busy,
+  problem,
+  proved,
+  onBack,
+  onCancel,
+  onProve,
+  onSubmit,
+}: {
+  busy: boolean;
+  problem: string | null;
+  /** The link the first step proved, or null while it has not been proved yet. */
+  proved: HostLinkStep | null;
+  onBack: () => void;
+  onCancel?: () => void;
+  onProve: (text: string) => void;
+  onSubmit: () => void;
+}) {
+  const [text, setText] = useState("");
+
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (proved === null) onProve(text);
+        else onSubmit();
+      }}
+    >
+      <h1>{DOOR_COPY.doorHostName}</h1>
+      <p>{proved === null ? DOOR_COPY.hostAskLead : DOOR_COPY.hostPairLead(machineWord())}</p>
+
+      {problem ? <p className="join-error">{problem}</p> : null}
+
+      <label className="join-label" htmlFor="host-link">{DOOR_COPY.hostLink}</label>
+      {/* `type="text"`, for `ServerDoor`'s reason exactly: a url-typed field is
+          constraint-validated by the browser, which BLOCKS the submit and replaces this card's own
+          sentence with a bubble — on precisely the inputs the sentences were written for. */}
+      <input
+        id="host-link"
+        className="join-input join-code"
+        type="text"
+        spellCheck={false}
+        autoComplete="off"
+        placeholder={DOOR_COPY.hostLinkPlaceholder}
+        /* LOCKED once the link has been proved. What is on screen from that moment — the origin,
+           the key — describes THAT link, and a field that could still be edited would let somebody
+           read one computer's fingerprint while pairing with another. Changing it is Back. */
+        readOnly={proved !== null}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+      />
+
+      {proved === null ? (
+        <p className="join-hint">{DOOR_COPY.hostLinkHint}</p>
+      ) : (
+        <p className="join-hint">
+          {DOOR_COPY.hostReached(proved.host ?? "")}{" "}
+          {proved.link?.pin
+            ? (
+              <>
+                {DOOR_COPY.hostReachedLanBefore}{" "}
+                <span className="host-key">{shortPin(proved.link.pin)}</span>{" "}
+                {DOOR_COPY.hostReachedLanAfter}
+              </>
+            )
+            : DOOR_COPY.hostReachedTs(machineWord())}
+        </p>
+      )}
+
+      <div className="join-actions">
+        <Button variant="primary" type="submit" disabled={busy}>
+          {busy
+            ? proved === null ? DOOR_COPY.hostChecking : DOOR_COPY.hostPairing
+            : proved === null ? DOOR_COPY.hostCheck : DOOR_COPY.hostPair}
+        </Button>
+        <Button variant="ghost" type="button" onClick={onBack} disabled={busy}>
+          {DOOR_COPY.back}
+        </Button>
+        {onCancel ? (
+          <Button variant="ghost" type="button" onClick={onCancel} disabled={busy}>
+            {DOOR_COPY.cancel}
+          </Button>
+        ) : null}
+      </div>
+    </form>
+  );
+}
+
+/**
+ * A REFUSAL KIND, AS THE SENTENCE THE READER'S LANGUAGE HAS FOR IT.
+ *
+ * ── WHY THE MAP IS HERE AND THE DECISION IS IN `doors.ts` ─────────────────────────────────────
+ *
+ * `doors.ts` is reachable from the SERVED host client's import graph, and `desktopDoor` is a
+ * window-only namespace — so a catalogue read there ships the whole namespace to a phone loading
+ * that client over the network, where every one of these surfaces would draw a raw dotted key.
+ * `desktop-messages.test.ts` caught exactly that. This file is the window's alone, so the words
+ * live here and the decision lives there.
+ *
+ * ── AND AN UNKNOWN KIND IS NOT SILENCE ────────────────────────────────────────────────────────
+ *
+ * The eight kinds the engine can name get a translated sentence; anything else gets the ENGINE's
+ * own words, which are English and true. That is the `guideKey` bargain the Devices pane already
+ * strikes, and it matters here because the desktop's update flow makes "the engine is newer than
+ * this window" an ordinary state. Composing a catalogue key from an unrecognised code is what
+ * throws inside a render; falling back to prose is what does not.
+ *
+ * The last resort is the status line. A refusal with no kind, no message and no throw behind it
+ * still has to say something, and "(409)" is a worse sentence than the others and a better one
+ * than a blank card.
+ */
+function refusalSentence(refusal: HostRefusal, host: string): string {
+  const known = sentenceForKind(refusal.kind, host);
+  if (known !== null) return known;
+  if (refusal.message) return refusal.message;
+  /* THE LAST RESORT IS THE STATUS LINE. A refusal with no kind, no message and no throw behind
+     it still has to say something, and "(409)" is a worse sentence than the others and a better
+     one than a blank card. */
+  return DOOR_COPY.errorRefused(String(refusal.status ?? ""));
+}
+
+/** The window's own three refusals plus the engine's eight, as one table. */
+export function sentenceForKind(kind: HostLinkRefusal | string, host: string): string | null {
+  switch (kind) {
+    case "missing": return DOOR_COPY.hostLinkMissing;
+    case "shape": return DOOR_COPY.hostLinkShape;
+    case "cleartext": return DOOR_COPY.hostRefuseCleartext;
+    case "no_pin": return DOOR_COPY.hostRefuseNoPin;
+    case "pin_mismatch": return DOOR_COPY.hostRefusePinChanged;
+    case "not_ohmail": return DOOR_COPY.hostRefuseNotOhmail(host);
+    case "managed": return DOOR_COPY.hostRefuseManaged;
+    case "selfhost": return DOOR_COPY.hostRefuseServer(host);
+    case "pairing_invalid": return DOOR_COPY.hostRefuseSpent;
+    case "unreachable": return DOOR_COPY.hostRefuseUnreachable(host);
+    /* NOT A DEFAULT SENTENCE. `null` is what sends the caller to the engine's own words; a
+       catchall here would replace a true, specific refusal with a vague one. */
+    default: return null;
+  }
+}
+
+/**
+ * THE TWELVE CHARACTERS A PERSON ACTUALLY COMPARES — first six, an ellipsis, last six.
+ *
+ * The fingerprint is forty-three base64url characters. Shown whole it is a credential-shaped
+ * string that nobody reads to the end, and a check nobody performs is worse than no check,
+ * because it looks like one. Twelve is what fits in one glance across two screens, and the host's
+ * own Devices pane shows exactly the same twelve from the same rule — the two ends of the
+ * comparison have to be one function or the ceremony compares nothing.
+ *
+ * A value SHORTER than the twelve it would elide is returned whole rather than padded with an
+ * ellipsis that hides nothing.
+ */
+export function shortPin(pin: string): string {
+  return pin.length <= 13 ? pin : `${pin.slice(0, 6)}…${pin.slice(-6)}`;
 }
 
 /**

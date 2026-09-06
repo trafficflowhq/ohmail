@@ -130,6 +130,38 @@ input.ritem-new-input{flex:1 1 auto;min-width:0;
 .rail-dock + .rail-mail{margin-top:0}
 .rail-mail{margin-top:auto;padding:14px 8px 0;font-size:calc(10.5px + var(--type-up));color:var(--ink3)}
 
+/* ── THE OTHER COMPUTER IS NOT ANSWERING — a STANDING FACT in the account-line slot ─────────
+ *
+ * WHY HERE AND NOT IN THE SYNC SLOT. The two slots have different grammars and this is the whole
+ * of the placement argument. Every state of the sync slot CLEARS ITSELF and wears a box, a
+ * spinner or a warning mark; the notice slot says what changed, once, and can be dismissed. This
+ * slot is where the rail states WHOSE MAIL THIS IS — the browser puts the account address here —
+ * and on a paired desktop whose mail this is is "that computer's copy", so whether that computer
+ * is answering belongs to the same line. Put in the sync slot it would read as one more thing
+ * about to fix itself; put in the notice slot it could be dismissed, and this one may not be.
+ *
+ * SO IT WEARS THE RAIL'S TEXT REGISTER AND A STATIC MARK: no box, no fill, no tone class, no
+ * spinner, no travelling track. A hollow ring at the sync glyph's size, in `--ink3` — present,
+ * and not doing anything. The rule is asserted from the DOM by `desktop-host-line.test.tsx`
+ * rather than described only here, because "it must not look transient" is the kind of claim a
+ * later tone class quietly breaks.
+ *
+ * `display:none` AT REST: the shell form (`.host-strip`, `app.css`) is what shows below 901px,
+ * and the one `min-width: 901px` query in `app.css` swaps the two together. */
+.rail-host{display:none;flex-direction:column;gap:3px;color:var(--ink3);
+  font-size:calc(10.5px + var(--type-up));line-height:1.5}
+.rail-host .rh-line{display:flex;align-items:flex-start;gap:7px}
+.rail-host .rh-mark{flex:none;width:8px;height:8px;margin-top:4px;border-radius:var(--r-avatar);
+  box-shadow:inset 0 0 0 1.5px var(--ink3)}
+/* `overflow-wrap:anywhere` on both text runs: a tailnet label or an IP address has no space in
+   it to break at, and a 224px column would otherwise be widened by one unbreakable word. */
+.rail-host .rh-line b{font-size:calc(11.5px + var(--type-up));font-weight:600;color:var(--ink);
+  min-width:0;overflow-wrap:anywhere}
+.rail-host .rh-detail{overflow-wrap:anywhere}
+.rail-host a{white-space:nowrap;color:var(--ink2);font-weight:600;text-decoration:underline;
+  text-decoration-color:var(--hair);text-underline-offset:2px}
+.rail-host a:hover{color:var(--ink);text-decoration-color:var(--ink2)}
+
 /* ── FOLDER TREE ROWS — the rail's Folders group (FOLDERS-SPEC.md §14/§15) ─────────────────
  *
  * Transcribed from the feature's clickable prototype, which is the interaction reference.

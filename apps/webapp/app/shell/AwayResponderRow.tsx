@@ -122,6 +122,7 @@ export const AWAY_COPY = {
     "Never sent to mailing lists, no-reply addresses, security mail, receipts, spam, senders "
     + "you've screened out, your own addresses, or an address that bounced.",
   localNote: "Replies are sent while ohmail is open on this computer.",
+  hostNote: "Replies are sent while ohmail is open on {host}.",
   save: "Save",
   saving: "Saving…",
   saved: "Saved.",
@@ -187,7 +188,7 @@ const RESTING: Draft = {
   audience: "screened_in", throttle: "per_day", piles: [...AWAY_PILES_DEFAULT],
 };
 
-export function AwayResponderRow({ onChanged, transport, local = false }: {
+export function AwayResponderRow({ onChanged, transport, local = false, host = null }: {
   /**
    * THE SHELL'S ECHO — how the Ohbox notice (`AwayNotice.tsx`) learns of a same-tab edit
    * without a refetch. Called with what the SERVER answered — the mount load and every save
@@ -217,6 +218,21 @@ export function AwayResponderRow({ onChanged, transport, local = false }: {
    * and the caller that would have to get it wrong (`DesktopGate`) reads it from `awayDoorFor`.
    */
   local?: boolean;
+  /**
+   * THE OTHER COMPUTER THIS INSTALL IS PAIRED TO, when it is — the THIRD promise, and it is a
+   * name rather than a third boolean for the reason the sentence needs one.
+   *
+   * A paired desktop's responder is the HOST's row and the host's drain sends from it. So neither
+   * of the two sentences above is true here: the hosted one promises an always-on service, and
+   * `localNote` names THIS computer while the machine that has to be awake is the other one.
+   * Naming it is the whole content of the difference — "while ohmail is open on {host}" tells
+   * somebody which machine to leave running, and "on this computer" tells them the wrong one.
+   *
+   * `null` is the resting state and covers both other doors. When it is set it WINS over `local`:
+   * `awayDoorFor` answers exactly one arm, so the two can never both be true in this app, and a
+   * caller that got that wrong would be showing two promises about one responder.
+   */
+  host?: string | null;
 } = {}) {
   const t = useTranslations("away");
   /**
@@ -466,7 +482,9 @@ export function AwayResponderRow({ onChanged, transport, local = false }: {
           on" would be a promise the app cannot keep overnight. The hosted door keeps it, and says
           nothing extra. `localNote` is rendered on the strength of the transport the host passed,
           not on a guess about the environment — see `AwayTransport`. */}
-      {local ? <p className="set-note-inline">{t("localNote")}</p> : null}
+      {host !== null
+        ? <p className="set-note-inline">{t("hostNote", { host })}</p>
+        : local ? <p className="set-note-inline">{t("localNote")}</p> : null}
       {/* THE VERB AND ITS ANSWER, TOGETHER. The outcome used to render as a bare `<span>` after a
           `gate-actions` div — the sign-in gate's container, borrowed on a settings pane — so the
           one press in Settings that starts an enablement episode reported into loose text below

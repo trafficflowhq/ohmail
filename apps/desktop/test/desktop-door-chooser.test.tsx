@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 
 import en from "../../webapp/messages/en.json";
-import { CLOUD_URL } from "../src/doors.js";
+import { CLOUD_URL, hostDoorFor } from "../src/doors.js";
 import { selfHostBase, selfHostProblem } from "../src/self-host.js";
 /* THE ENGINE'S OWN RULE, imported rather than restated — `desktop-door-reconfigure.test.tsx` does
    the same with `credentialIsForeign` and for the same reason. Two programs have to agree on this
@@ -285,25 +285,51 @@ describe("the door chooser", () => {
   const tiles = (el: HTMLElement): HTMLButtonElement[] =>
     [...el.querySelectorAll<HTMLButtonElement>(".door-tile")];
 
-  /* ── THE THREE DOORS, IN THE OWNER'S ORDER AND WORDS ──────────────────────────────────── */
+  /* ── THE FOUR DOORS, IN THE OWNER'S ORDER AND WORDS ───────────────────────────────────── */
 
-  it("offers exactly three doors, nearest machine first", async () => {
+  it("offers exactly four doors, nearest machine first", async () => {
     const el = await render();
     const names = tiles(el).map((t) => t.querySelector(".door-name")!.textContent);
-    expect(names).toHaveLength(3);
-    // The order is the argument: what a person can verify themselves, first.
+    /* FOUR, and the count is asserted rather than the presence of each: a door that appears
+       without anybody deciding it should is the failure this number catches. The fourth is
+       "Another computer" — a desktop of the person's own that organizes on their behalf. */
+    expect(names).toHaveLength(4);
+    // The order is the argument: what a person can verify themselves, first. A computer in the
+    // same house is nearer than a server, so it sits second.
     expect(names[0]).toMatch(/^On this /);
-    expect(names[1]).toBe("Your own server");
-    expect(names[2]).toBe("ohmail Cloud");
+    expect(names[1]).toBe("Another computer");
+    expect(names[2]).toBe("Your own server");
+    expect(names[3]).toBe("ohmail Cloud");
   });
 
   it("says what each door does with the mail, and names the self-hosted one for what it is", async () => {
     const el = await render();
-    const [local, server, cloud] = tiles(el).map((t) => t.querySelector(".door-say")!.textContent!);
+    const [local, host, server, cloud] =
+      tiles(el).map((t) => t.querySelector(".door-say")!.textContent!);
     expect(local).toContain("Your own IMAP mailbox, organized right here.");
+    /* THE PAIRED DOOR SAYS WHAT IT COSTS, on the tile, before anybody chooses it. Reads come
+       from the copy and every write is refused while the other computer is away — the one thing
+       about this door that is not obvious from its name, so it may not be dropped for brevity. */
+    expect(host).toContain("ohmail on another computer of yours organizes;");
+    expect(host).toContain("While that computer is off, this one shows its copy and can change nothing.");
     expect(server).toContain("Self-hosted ohmail Cloud.");
     expect(server).toContain("A server you run does the organizing; this app keeps a copy.");
     expect(cloud).toContain("Our hosted service does the organizing; this app keeps a copy.");
+  });
+
+  /**
+   * THE LOCAL TILE NOW POINTS AT THE OTHER END OF THE SAME ARRANGEMENT, and the sentence is a
+   * claim about `hostDoorFor` rather than a plan: that rule offers the Devices pane on the local
+   * door and nowhere else, so "other devices of yours can use it later" is true exactly where it
+   * is said. A change that withdrew host mode from the standalone door would leave this sentence
+   * promising something no pane delivers.
+   */
+  it("the local tile says the other devices can join later, which is where host mode lives", async () => {
+    const el = await render();
+    expect(tiles(el)[0]!.textContent)
+      .toContain("Other devices of yours can use it later, under Settings → Devices.");
+    expect(hostDoorFor({ state: "serving", mode: "local" })).toBe("local");
+    expect(hostDoorFor({ state: "serving", mode: "cloud" })).toBeNull();
   });
 
   /**

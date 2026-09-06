@@ -153,7 +153,28 @@ import { stripSpeaks, type MailState } from "./mail-state";
 /* No default VALUE on the parameter, only on the field. A `= {}` there types the component as
    `(props?: …)`, which is not a `FunctionComponent<P>`, and `createElement(SyncBar, { variant })`
    then resolves to the propless overload and rejects the prop it was given. */
-export function SyncBar({ variant = "shell" }: { variant?: "shell" | "rail" }) {
+export function SyncBar({ variant = "shell", hostOffline = false }: {
+  variant?: "shell" | "rail";
+  /**
+   * IS THIS WINDOW PAIRED TO A COMPUTER THAT IS NOT ANSWERING? — and if so, the `stale` arm below
+   * YIELDS.
+   *
+   * `staleAsOf` reads *"As of {time} · catching up"*, with a spinner and a travelling track. That
+   * is an ACTIVITY CLAIM, and on a paired desktop whose host is off nothing is catching up: there
+   * is no pull in flight, nothing converging, and no reason to expect the number to move. The
+   * sentence would be false for as long as the other machine stayed away — which is exactly the
+   * period a person is trying to understand.
+   *
+   * So the strip says nothing and `HostConnectionLine` says the true thing in its place. What is
+   * NOT suppressed is the state itself: the ladder still derives `stale` (`mail-state.ts`), so the
+   * settled clock, the holdings sentence and the mail beat go on working — this withholds one
+   * sentence, not a fact.
+   *
+   * The other six arms are untouched, and deliberately: a paired desktop can still be signed out,
+   * blocked on a mailbox or importing, and every one of those is as true here as anywhere.
+   */
+  hostOffline?: boolean;
+}) {
   const t = useTranslations("sync");
   // The error TAXONOMY lives with the Settings rows that already own it (`mailboxes.err_*`,
   // mail 0023). Two copies of seven sentences is how they drift, and one of them then describes
@@ -162,6 +183,11 @@ export function SyncBar({ variant = "shell" }: { variant?: "shell" | "rail" }) {
   const { state } = useMailState();
 
   if (!stripSpeaks(state.key)) return null;
+  /* THE ONE ARM THAT YIELDS. Placed before `speech()` rather than inside it so the suppression is
+     visible at the top of the render — a seventh `speech()` arm returning a null title would have
+     to be handled by both shapes below and would read as a state rather than as a withheld
+     sentence. See the `hostOffline` prop. */
+  if (hostOffline && state.key === "stale") return null;
   // WHICH DOOR this install came in by. `apiConfigured()` is false exactly on the build with no
   // Cloud behind it — the standalone desktop, which folds `NEXT_PUBLIC_API_BASE` away at build
   // time — so it is the seam the `stopped` sentence branches on. See `speech()`'s `stopped` arm.

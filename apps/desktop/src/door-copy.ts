@@ -61,7 +61,30 @@ const EN = {
   chooserTitle: "Which mailbox is this?",
   chooserGroupAria: "Which machine does the organizing",
   doorLocalName: (machine: string) => `On this ${machine}`,
-  doorLocalSay: "Your own IMAP mailbox, organized right here. Nothing is sent anywhere.",
+  /* "Nothing is sent anywhere." IS BYTE-IDENTICAL AND STAYS THAT WAY — `desktop-door-chooser`
+     pins it against the fact that makes it true (`connect-src 'none'`). The third sentence is
+     new and is also a fact about the code rather than a plan: `hostDoorFor` offers the Devices
+     pane on this door and nowhere else, so a person choosing it can indeed let their other
+     machines in later. It is said HERE because the door beneath it now offers the other side of
+     the same arrangement, and somebody has to be able to tell which end they are standing at. */
+  doorLocalSay:
+    "Your own IMAP mailbox, organized right here. Nothing is sent anywhere. Other devices of "
+    + "yours can use it later, under Settings → Devices.",
+  /* ── DOOR TWO: ANOTHER COMPUTER OF THE PERSON'S OWN ──────────────────────────────────────
+     THE PRODUCT NEVER SAYS "HOST" TO A PERSON, and this is where that rule is easiest to break.
+     The other machine is "another computer", and inside a sentence it is "that computer" or the
+     name this window derives from the address. The host's own pane already speaks that way
+     ("Turn this computer into your own mail server") and so does the phone's door ("Your own
+     computer"); a fourth vocabulary for the same machine, on the screen where somebody first
+     meets it, would be the product explaining its own internals.
+
+     The second sentence is the offline rule stated before anybody commits to it, in the person's
+     terms rather than the protocol's: reads come from the copy, every write is refused. It is the
+     one thing about this door that is not obvious from the tile above it. */
+  doorHostName: "Another computer",
+  doorHostSay: (machine: string) =>
+    `ohmail on another computer of yours organizes; this ${machine} works through it. While that `
+    + "computer is off, this one shows its copy and can change nothing.",
   doorServerName: "Your own server",
   doorServerLead: "Self-hosted ohmail Cloud.",
   doorServerSay: "A server you run does the organizing; this app keeps a copy.",
@@ -134,6 +157,78 @@ const EN = {
     `This ${machine} would not open a browser. The page is at ohmail.app/link-desktop.`,
   browserSignInFailed: "The browser sign-in could not be started.",
 
+  /* ── THE HOST-JOIN CARD: paste the link, see what answered, then pair ────────────────────
+     Two phases in one card, the self-hosted door's shape and for its reason: everything that can
+     go wrong with a link goes wrong before anybody has committed to anything, and each failure
+     becomes a sentence about the LINK rather than about a pairing that did not take.
+
+     "Only the desktop app gives one out; the phone app cannot" is said in the lead rather than on
+     the tile, because this is the moment somebody goes looking for the link — and looking on the
+     wrong device is the mistake the sentence exists to prevent. */
+  hostAskLead:
+    "Paste the pairing link from ohmail on that computer — Settings → Devices → Add a device. "
+    + "Only the desktop app gives one out; the phone app cannot.",
+  hostLink: "Pairing link",
+  /* A URL SHAPE, so it is deliberately identical in both catalogues — `serverOriginPlaceholder`
+     is the precedent and the reason is the same: it is not a sentence, and translating the
+     example would make it stop matching what the other computer actually hands out. It is a
+     key rather than a literal because the copy census reads every rendered string, and a
+     placeholder is rendered. */
+  hostLinkPlaceholder: "https://…/pair#…",
+  hostLinkHint: "It works once and expires five minutes after it was made.",
+  hostCheck: "Check the link",
+  hostChecking: "Reaching that computer…",
+  hostReached: (host: string) => `Reached ${host}.`,
+  /* SPLIT AROUND THE KEY, which is a value and not a word — it is rendered mono, in its own
+     element, and must never wrap. Two keys rather than one placeholder for `serverCaHint`'s
+     reason: a placeholder would render the characters as ordinary prose. */
+  hostReachedLanBefore: "Over your network. Its key:",
+  hostReachedLanAfter: "— the same characters as under Settings → Devices there.",
+  hostReachedTs: (machine: string) =>
+    `Over your Tailscale, with a certificate this ${machine} could verify.`,
+  hostPairLead: (machine: string) =>
+    `Pairing adds this ${machine} to that computer's Devices list, where it can be removed at any `
+    + "time. Your mail then comes from that computer and a copy is kept here.",
+  hostPair: "Pair",
+  hostPairing: "Pairing…",
+  hostLinkMissing: "Paste the pairing link first.",
+  hostLinkShape:
+    "That is not a pairing link. It looks like https://…/pair#… and comes from Settings → Devices "
+    + "on that computer.",
+  /* ── THE REFUSALS, ONE SENTENCE PER `kind` ───────────────────────────────────────────────
+     The engine names WHAT it refused and this names what to do about it — the `guideKey`
+     arrangement the Devices pane already uses. An engine sentence is English for ever (its prose
+     is literals in another process), and a German install reading a German card should not drop
+     into English at the one moment something went wrong. A kind this build has never heard of
+     still gets the engine's own words rather than silence.
+
+     Three of these are the phone's, ported with "phone" replaced by this machine's word. They are
+     the same three refusals because they are refusals about the same ceremony, and two spellings
+     of "that computer's key has changed" is how two surfaces come to disagree about what somebody
+     should do next. */
+  hostRefuseCleartext:
+    "That link is a plain, unencrypted address, and ohmail will not send your mail over one. A "
+    + "computer running ohmail gives out a secure link — take it from Settings → Devices there.",
+  hostRefuseNoPin:
+    "That link does not carry that computer's key, so ohmail cannot tell its connection apart "
+    + "from anything else on your network. Make a new link from its Settings → Devices.",
+  hostRefusePinChanged:
+    "That computer's key has changed since this link was made, so ohmail stopped rather than "
+    + "trusting it. If ohmail was reinstalled there or restored from a backup, make a new link "
+    + "from its Settings → Devices. If not, something on your network is answering for it.",
+  hostRefuseNotOhmail: (host: string) =>
+    `Something answered at ${host}, but it is not ohmail. Check the link came from Settings → `
+    + "Devices on that computer.",
+  hostRefuseManaged:
+    "That link is from ohmail Cloud, not from a computer of yours. Go back and choose “ohmail "
+    + "Cloud”.",
+  hostRefuseServer: (host: string) =>
+    `${host} is a server you run, not a computer sharing its mail. Go back and choose “Your own `
+    + "server”.",
+  hostRefuseSpent:
+    "That link has already been used or has expired. Make a new one from Settings → Devices on "
+    + "that computer.",
+  hostRefuseUnreachable: (host: string) => `Could not reach ${host}.`,
   /* ── SHARED BY MORE THAN ONE CARD ────────────────────────────────────────────────────────── */
   password: "Password",
   totpLabel: "Code from your authenticator app",
@@ -147,6 +242,30 @@ const EN = {
   doorNotChosen: "Not chosen",
   doorNoneWhy: "No mailbox has been chosen on this install yet.",
 
+  /* ── THE OTHER COMPUTER IS NOT ANSWERING — a STANDING FACT, not a transient ──────────────
+     These six sentences travel to the shared shell as strings on a prop rather than as catalogue
+     keys, because the line renders in the rail — shared code that the browser also compiles, and
+     the browser has no paired desktop and never will. Keeping the words in this window's own
+     namespace is what keeps them out of a payload that can never render them.
+
+     WHAT MAY NOT BE CUT FROM `hostFootStaleWhy`: "nothing can be changed until that computer is
+     back". The age says how stale the copy is and the link says where to go, but that clause is
+     the only thing on screen telling somebody why their next press will be refused. If the line
+     ever has to be shorter, the middle clause goes and that one stays.
+
+     AND THERE IS NO RETRY CONTROL, deliberately. The mirror already asks every twenty seconds; a
+     button that does what is already happening is a claim about agency nobody has. */
+  hostFootStale: (host: string) => `Can't reach ${host}.`,
+  hostFootStaleWhy: (when: string, machine: string) =>
+    `Last answered ${when}. This ${machine} shows the copy it holds; nothing can be changed until `
+    + "that computer is back. If it will not be:",
+  hostFootUnknown: (host: string) => `Can't reach ${host} yet.`,
+  /* WHICH ONE THING TO CHECK, chosen from the origin's shape (`hostViaOf`). Getting it wrong
+     costs one wrong thing to check, which is why it is allowed to be a derivation. */
+  hostCheckLan: (machine: string) =>
+    `Check that computer is on and that this ${machine} is on the same network.`,
+  hostCheckTs: "Check that computer is on and signed in to your Tailscale.",
+  hostFootSettings: "Settings → Desktop",
   /* ── SETTINGS → ABOUT ────────────────────────────────────────────────────────────────────── */
   aboutAppLabel: "ohmail for desktop",
   aboutAppWhy: "The build running in this window.",
@@ -161,6 +280,15 @@ const EN = {
   aboutDoorCloudValue: "An ohmail Cloud account",
   aboutDoorCloudWhy:
     "A hosted account. The organizing happens on our servers and this app keeps a copy.",
+  aboutDoorHostValue: "Another computer of yours",
+  /* THE LAST SENTENCE IS INVARIANT #5's CONTROL, and it is pinned here rather than merely
+     written: a paired install never dials the hosted service — its engine talks to one origin,
+     the one on the pairing link. If that ever stopped being true this sentence would be the
+     first false thing on the pane, which is why it is stated on the pane rather than in a
+     comment. */
+  aboutDoorHostWhy: (host: string, machine: string) =>
+    `ohmail on ${host} opens your mailbox and organizes it; this ${machine} reads and acts `
+    + "through it. Nothing about your mail is sent to us.",
   aboutDoorLocalWhy:
     "This computer opens your mailbox directly. Nothing about your mail is sent to us.",
   aboutMailNote:
@@ -178,6 +306,12 @@ const EN = {
   mailboxWhyReadsNamed: (name: string) =>
     `The mailbox this copy of ohmail reads. ${name} organizes it.`,
   mailboxWhyReads: "The mailbox this copy of ohmail reads. Another ohmail organizer organizes it.",
+  /* THE PAIRED DOOR'S OWN ROW. `mailboxWhyOrganizes` would be the answer here today and it is
+     false: the rows this install mirrors are the HOST's organizer rows, so the reader predicate
+     sees nothing to object to and the pane claims this machine organizes a mailbox it only
+     reads. Naming the computer is what makes the sentence checkable by the person reading it. */
+  mailboxWhyViaHost: (machine: string, host: string) =>
+    `The mailbox this ${machine} reads through ${host}, which organizes it.`,
 
   /* ── SETTINGS → DESKTOP ──────────────────────────────────────────────────────────────────── */
   paneLabel: "Desktop",
@@ -186,6 +320,39 @@ const EN = {
     "A hosted ohmail account. The organizing happens on our servers and this app keeps a copy.",
   doorLocalWhy:
     "Your own mail server, opened by this computer. Nothing about your mail is sent to us.",
+  /* ── THE PAIRED DOOR'S "CONNECTED THROUGH" ROW ──────────────────────────────────────────
+     The origin appears HERE and nowhere else on screen. The rail names the computer, which is
+     what somebody is looking at; this is where they go to tell two machines apart, and two
+     laptops with the same name on two tailnets read alike everywhere else. */
+  doorHostWhyLan: (host: string, machine: string) =>
+    `ohmail on ${host} organizes; this ${machine} reads and acts through it, over your network.`,
+  doorHostWhyTs: (host: string, machine: string, origin: string) =>
+    `ohmail on ${host} organizes; this ${machine} reads and acts through it, over your Tailscale `
+    + `(${origin}).`,
+  /* ── AND ITS CREDENTIAL ROW ──────────────────────────────────────────────────────────────
+     "Account session · Signed in" is the hosted door's row and says the wrong thing twice here:
+     there is no account, and what would end this is somebody pressing Remove on the OTHER
+     computer. The row names the thing that can actually be taken away, and where. */
+  credHostLabel: "Pairing",
+  credHostLiveValue: "Paired",
+  credHostLiveWhy: (machine: string, host: string) =>
+    `This ${machine} is on ${host}'s Devices list. Removing it there ends the pairing.`,
+  credHostOutValue: "Not paired",
+  credHostOutWhy: (host: string, machine: string) =>
+    `The pairing with ${host} has ended. Pair again below, or set this ${machine} up on its own.`,
+  credHostCheckingWhy: "The mail engine has not answered about the pairing yet.",
+  /* ── THE CONNECTION ROW — PERMANENT, IN EVERY STATE ──────────────────────────────────────
+     Including `current`. A row that appears only when something is wrong is a row nobody knows
+     to look for on the day it is missing, and this one answers a question ("is the other machine
+     reachable?") that a person asks BEFORE anything has gone wrong as often as after. */
+  connLabel: "Connection",
+  connCurrentValue: "Reachable",
+  connCurrentWhy: (when: string) => `Last answered ${when}.`,
+  connStaleValue: "Unreachable",
+  connStaleWhy: (when: string, machine: string) =>
+    `Last answered ${when}. This ${machine} shows the copy it holds; nothing can be changed until `
+    + "that computer is back.",
+  connUnknownValue: "Not reached yet",
   credCloudLabel: "Account session",
   credCloudLiveValue: "Signed in",
   credCloudLiveWhy: "This install holds a session for your hosted account.",
@@ -237,12 +404,67 @@ const EN = {
   installSignInAgain: "Sign in again",
   installSignInAgainWhy:
     "Your hosted session has gone. Signing in happens in the mail engine on this machine.",
+  /* ── PAIR AGAIN, offered only when the pairing has ended ────────────────────────────────
+     "The copy here is kept" is a claim about `enforceMirrorOwner`: a redeem against the SAME
+     account over the running engine keeps the mirror, and only a door CHANGE discards it. If the
+     re-pair ever went through a reconfigure this sentence becomes false and goes with it. */
+  installPairAgain: "Pair again",
+  installPairAgainWhy: (host: string, machine: string) =>
+    `The pairing with ${host} has ended. A new link from its Settings → Devices pairs this `
+    + `${machine} again; the copy here is kept.`,
+  /* ── SETTING THIS MACHINE UP ON ITS OWN ──────────────────────────────────────────────────
+     The description LEADS with the condition — "If {host} will not come back." — so that a person
+     reading the pane in the ordinary case does not read the row as a recommendation. It is on the
+     pane in every connection state, because leaving a host is a thing somebody may do on purpose
+     and a control that appears only during a failure is one nobody can plan with.
+
+     "The copy from {host} is discarded and read again from the server" is the switch's real
+     behaviour, not a softer version of it: `enforceMirrorOwner` discards a mirror whose owner
+     changed, and the door change here is exactly that. Saying "frozen" would be the hosted
+     door's sentence borrowed for a path that does not freeze anything. */
+  takeoverLabel: (machine: string) => `Set this ${machine} up on its own`,
+  takeoverAction: "Set up on its own…",
+  takeoverWhy: (host: string, machine: string) =>
+    `If ${host} will not come back. This ${machine} then opens your mail server itself and takes `
+    + `over the organizing. The copy from ${host} is discarded and read again from the server; the `
+    + `mailboxes ${host} held are listed first.`,
+  takeoverLead: (machine: string, host: string) =>
+    `This ${machine} will open your mail server itself and organize it, as ${host} did. The copy `
+    + `from ${host} is discarded and read again from the server. Nothing on the server changes `
+    + "until you agree to organize, one mailbox at a time.",
+  takeoverRoster: (host: string) => `Mailboxes ${host} held`,
+  takeoverRest: (count: number) =>
+    count === 1
+      ? "The other mailbox: add it afterwards under Settings → Mailboxes; the servers are filled in."
+      : `The other ${count} mailboxes: add them afterwards under Settings → Mailboxes; the servers `
+        + "are filled in.",
+  /* THE ROSTER COULD NOT BE READ — never an empty list presented as "none". A takeover started
+     from the revoked notice runs outside the mail client, where the shared facts hook does not
+     exist, and a read that fails there must not be spelled the same as a host that held nothing.
+     The `MailboxProbe` null-versus-empty rule, said on screen. */
+  takeoverRosterUnknown: (host: string) =>
+    `Could not read which mailboxes ${host} held; enter the server by hand.`,
   installSwitch: "Switch mailbox",
   installSwitchWhy: (machine: string) =>
     `Open a different mail server, or move between this ${machine} and your hosted account. The `
     + "copy of your mail from this one is frozen where it is rather than deleted, so coming back "
     + "does not cost a full re-sync.",
   installSwitchAction: "Switch…",
+  /* ── THE PAIRED DOOR'S THREE VARIANTS OF ROWS THAT ALREADY EXIST ─────────────────────────
+     Each differs from the sentence above it in the one way that matters: the hosted wording says
+     "the login — the stored password, or the session for your hosted account", and a paired
+     install has neither. What it has is a pairing with a named computer, and what a person needs
+     to know is that ending it takes nothing off either machine's disk. */
+  installSwitchWhyHost: (host: string, machine: string) =>
+    `Open a different door: your own mail server, another computer, or a hosted account. The copy `
+    + `from ${host} on this ${machine} is discarded; your mailbox itself is untouched.`,
+  installSignOutWhyHost: (host: string, machine: string) =>
+    `Ends the pairing with ${host} and forgets which mailbox this is. Your mail stays on this `
+    + `${machine} and on your server.`,
+  installSignOutConfirmWhyHost: (machine: string, host: string) =>
+    `The copy of your mail already on this ${machine} stays where it is. What is cleared is the `
+    + `pairing with ${host} and which door this install came in by. Nothing is removed from your `
+    + "mail server.",
   installSignOutConfirm: "Sign out of this mailbox?",
   installSignOutConfirmWhy: (machine: string) =>
     `The copy of your mail already on this ${machine} stays where it is. What is cleared is the `
@@ -287,6 +509,17 @@ const EN = {
   gateSessionGone:
     "You were signed out of your hosted account, so this install stopped receiving new mail. "
     + "What was already here is kept; sign in again to reconnect.",
+  /* ── NO LONGER PAIRED — its own sentence and its own two actions ─────────────────────────
+     `gateSessionGone` says "You were signed out of your hosted account", which on this door names
+     an account that has never existed. And one action is not enough here: a person whose pairing
+     was revoked either wants it back or wants to stop depending on the other machine, and the
+     second of those is the whole point of the product. `gateFoot` below still holds — the mail is
+     on the person's own server either way. */
+  gateUnpaired: (machine: string, host: string) =>
+    `This ${machine} is no longer paired with ${host}. Pair again from its Settings → Devices, or `
+    + `set this ${machine} up on its own. The copy of your mail here is kept.`,
+  gatePairAgain: "Pair again",
+  gateOwn: "Set up on its own",
   gateOpening: "Opening…",
   bootCreatingStore: "Setting up your local mail store…",
   bootOpeningStore: "Opening your local mail store…",
@@ -308,6 +541,41 @@ const EN = {
  */
 export const DOOR_COPY: typeof EN = liveCopy("desktopDoor", EN, {
   doorLocalName: ["machine"],
+  doorHostSay: ["machine"],
+  hostReached: ["host"],
+  hostReachedTs: ["machine"],
+  hostPairLead: ["machine"],
+  hostRefuseNotOhmail: ["host"],
+  hostRefuseServer: ["host"],
+  hostRefuseUnreachable: ["host"],
+  hostFootStale: ["host"],
+  /* TWO VALUES, and the ORDER here is the argument order of the formatter above, never the
+     order the placeholders happen to appear in the German sentence — German puts `machine`
+     first in several of these. `liveCopy` maps positional arguments onto named ICU values, so a
+     translation may reorder the words freely and this list is what keeps the values attached to
+     the right holes. */
+  hostFootStaleWhy: ["when", "machine"],
+  hostFootUnknown: ["host"],
+  hostCheckLan: ["machine"],
+  mailboxWhyViaHost: ["machine", "host"],
+  doorHostWhyLan: ["host", "machine"],
+  doorHostWhyTs: ["host", "machine", "origin"],
+  credHostLiveWhy: ["machine", "host"],
+  credHostOutWhy: ["host", "machine"],
+  connCurrentWhy: ["when"],
+  connStaleWhy: ["when", "machine"],
+  installPairAgainWhy: ["host", "machine"],
+  takeoverLabel: ["machine"],
+  takeoverWhy: ["host", "machine"],
+  takeoverLead: ["machine", "host"],
+  takeoverRoster: ["host"],
+  takeoverRest: ["count"],
+  takeoverRosterUnknown: ["host"],
+  installSwitchWhyHost: ["host", "machine"],
+  installSignOutWhyHost: ["host", "machine"],
+  installSignOutConfirmWhyHost: ["machine", "host"],
+  gateUnpaired: ["machine", "host"],
+  aboutDoorHostWhy: ["host", "machine"],
   localLead: ["machine"],
   serverSignInLead: ["machine"],
   serverReached: ["server", "address"],

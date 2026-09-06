@@ -697,6 +697,14 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 .rail-sync-slot {
   display: none;
 }
+/* THE PAIRED DESKTOP'S STANDING LINE, resting state, beside the sync pair's and for its reason:
+   the two declarations that decide which copy is on screen sit together, directly above the one
+   query that swaps them, so the source order that resolves them is visible in one screenful.
+   `.rail-host`'s resting `display: none` is in `rail.css` with the rest of the rail's furniture;
+   that sheet loads first, so this query still wins at width. */
+.host-strip {
+  display: flex;
+}
 @media (min-width: 901px) {
   .sync-bar {
     display: none;
@@ -709,6 +717,18 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
      describes, reintroduced by a strip that did not know about it. */
   .unsaved-shell {
     display: none;
+  }
+  /* THE PAIRED DESKTOP'S STANDING LINE joins the SAME query, for the reason the strip above it
+     does: two complementary queries are not the same thing as one rule, and the gap between two
+     numbers once put a sentence on screen twice with two live regions reading it out. Its rail
+     copy is hidden at rest (`rail.css`) and revealed here, so exactly one is painted at every
+     width — including inside an OPEN drawer under 901px, where the rail exists but this query
+     does not match and the shell form is the visible one. */
+  .host-strip {
+    display: none;
+  }
+  .rail-host {
+    display: flex;
   }
   .rail-sync-slot {
     display: block;
@@ -3080,12 +3100,91 @@ input.set-tag-input {
 /* The travel sentence. It is beneath ALL THREE tiles because it is true of all
    three, so it sits outside the grid and is spaced away from it — a hint tucked
    under the last tile would read as being about that tile. */
-.door-travel {
+/* ONE CLASS LOSES TO ONE CLASS PLUS AN ELEMENT, and this rule lost for its whole life.
+   `.gate-card p` above (13px, `--ink2`, `margin: 0 0 20px`) is the more specific selector, so the
+   travel sentence rendered a size and a weight louder than the tiles' own say lines and carried
+   20px of dead space below it — measured on both faces. The declarations here were never wrong;
+   they were never applied. `.gate-card p.door-travel` is the same specificity plus this class, so
+   the intended treatment wins wherever the sentence actually renders. The bare `.door-travel` stays
+   for any future placement outside a gate card. */
+.door-travel,
+.gate-card p.door-travel {
   font-size:calc(11.5px + var(--type-up));
   color: var(--ink3);
   line-height: 1.55;
   margin: 16px 0 0;
 }
+/* ── THE PAIRING KEY, WHERE TWO SCREENS ARE COMPARED ──────────────────────────
+   Mono and unbreakable. The twelve characters here are read against the twelve
+   the other computer shows, so a line break through the middle of them turns a
+   comparison into a puzzle. It is a chip rather than bare text because it is a
+   VALUE inside a sentence — the same register `join-code` gives a typed code. */
+.host-key {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  padding: 1px 6px;
+  border-radius: calc(var(--r-ctl) * 6 / 8);
+  background: var(--tint);
+  color: var(--ink);
+}
+
+/* ── THE OTHER COMPUTER IS NOT ANSWERING — the narrow arrangement ─────────────
+   The rail's twin (`.rail-host`, `rail.css`), for the widths where the rail is a
+   closed drawer. It joins the SAME single `min-width: 901px` query the sync line
+   and the unsaved strip already swap on — one rule, both halves, so "exactly one
+   copy is on screen" holds at every width by construction. Two complementary
+   queries left a fractional gap once and printed the sentence twice; see the
+   block above `.rail-sync-slot`.
+
+   IT IS NOT THE SYNC BAR AND MUST NOT LOOK LIKE IT. The sync bar is centred and
+   tinted and every one of its states clears itself. This is a standing fact: ink
+   on the canvas, a hairline under it, left-aligned, and a static hollow mark. No
+   tone class, no spinner, no travelling track — `desktop-host-line.test.tsx`
+   asserts their absence, because the moment this wears a transient's clothes it
+   starts reading as something that is about to fix itself. */
+/* NO `display` HERE. It is declared beside `.rail-sync-slot`, immediately above the one
+   `min-width: 901px` query, because the cascade resolves equal specificity by SOURCE ORDER and
+   this block sits two thousand lines BELOW that query — so a `display: flex` here would beat the
+   query's `display: none` and paint both copies at desktop widths. Measured by
+   `sync-notice-one-copy.test.ts`'s sweep, which is exactly the defect it was written for on the
+   sync pair. */
+.host-strip {
+  flex: none;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  padding: 8px 16px;
+  font-size:calc(11.5px + var(--type-up));
+  color: var(--ink2);
+  box-shadow: inset 0 -1px 0 var(--hair-soft);
+  background: var(--canvas);
+}
+.host-strip .rh-mark {
+  align-self: center;
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: var(--r-avatar);
+  box-shadow: inset 0 0 0 1.5px var(--ink3);
+}
+.host-strip b {
+  color: var(--ink);
+  font-weight: 600;
+}
+.host-strip a {
+  color: var(--ink2);
+  font-weight: 600;
+  white-space: nowrap;
+  text-decoration: underline;
+  text-decoration-color: var(--hair);
+  text-underline-offset: 2px;
+}
+.host-strip a:hover {
+  color: var(--ink);
+  text-decoration-color: var(--ink2);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .door-tile {
     transition: none;

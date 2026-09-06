@@ -156,6 +156,35 @@
   :root[data-layout="zero"] .deck > .rail:not(.open) .ritem .cnt {
     display: none;
   }
+  /* ── EXCEPT WHEN THE ACCOUNT LINE CARRIES A STANDING STATE ──────────────────
+     `.rail-mail` above hides the whole slot at 52px, which is right for an
+     address — a string that cannot be read in that column and is repeated in
+     Settings anyway. It is wrong for "the computer that organizes your mail is
+     not answering": a permanent condition that disappears at one layout is a
+     condition somebody in that layout is never told about, and this rail cannot
+     be widened without a click.
+
+     So the MARK stays and the words go. The mark is the whole affordance at this
+     width — the same bargain every place-row here strikes, where the face is a
+     key and the label rides the drawer — and its `title` carries the sentence,
+     so a pointer answers the question without opening anything. Opening the rail
+     shows the words; Settings -> Desktop keeps the row either way.
+
+     `:has()` scopes it to the one case: a slot holding only an address is still
+     hidden, so nothing about the browser's rail changes. */
+  :root[data-layout="zero"] .deck > .rail:not(.open) .rail-mail:has(.rail-host) {
+    display: block;
+    padding: 10px 0 0;
+  }
+  :root[data-layout="zero"] .deck > .rail:not(.open) .rail-host {
+    display: flex;
+    align-items: center;
+  }
+  :root[data-layout="zero"] .deck > .rail:not(.open) .rail-host .rh-line b,
+  :root[data-layout="zero"] .deck > .rail:not(.open) .rail-host .rh-detail,
+  :root[data-layout="zero"] .deck > .rail:not(.open) .rail-host a {
+    display: none;
+  }
   /* a place-row's face is its key (data-nav-key — see the header). The key
      also carries the row's state: ink3 at rest, ink while the count is
      live, accent and bold while the count is HOT — the demo's corner dots,

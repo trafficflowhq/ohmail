@@ -253,6 +253,26 @@ function abortError(): Error {
 /** Which door this install came in by. `null` means none has been chosen yet. */
 export type EngineMode = "local" | "cloud";
 
+/**
+ * WHAT IS ON THE FAR SIDE OF A CLOUD DOOR, as the engine spells it on the wire.
+ *
+ * Three things, and they were one `mode: "cloud"` until a desktop could be the far side:
+ *
+ *  · `managed`     — a hosted ohmail account, `api.ohmail.app`.
+ *  · `selfhost`    — a server the person runs. Already a distinct door in the chooser
+ *                    (`self-host.ts`) and already indistinguishable from `managed` on this field,
+ *                    which is a smaller defect than the one below and not this slice's to fix.
+ *  · `desktop-host` — ohmail on another computer of the person's own, reached over their network
+ *                    or their Tailscale. No account, no ledger, no second factor, no
+ *                    subscription — and no browser tab to send anybody to.
+ *
+ * The union is OPEN on the read side by construction: {@link EngineStatus.flavor} is typed to
+ * this, and `flavorOf` refuses anything that is not a member rather than passing it through, so
+ * a fourth flavor from a newer engine lands in `"unknown"` and every surface keeps the behaviour
+ * it has for an engine that said nothing.
+ */
+export type DoorFlavorWire = "managed" | "selfhost" | "desktop-host";
+
 /** What the shell says about the engine. A tagged object; `state` is always there. */
 export interface EngineStatus {
   state:
@@ -272,6 +292,27 @@ export interface EngineStatus {
    * door picker.
    */
   mode?: EngineMode | null;
+  /**
+   * WHICH KIND OF CLOUD DOOR — the field that tells a hosted account, a server the person runs
+   * and another computer of theirs apart, and the reason it exists.
+   *
+   * `mode` answers "local or not", which was the whole question while there was one thing on the
+   * far side of a cloud door. There are three now, and every sentence the window writes about a
+   * cloud door — "The organizing happens on our servers", "your hosted account", the Subscription
+   * and Security panes, the price quote behind the Screener's suggest control — is true of
+   * exactly one of them. Rendered on a paired desktop those sentences are not merely vague, they
+   * are false, and four of the panes are about an account that does not exist.
+   *
+   * ABSENT IS NOT `"managed"`, AND IT IS NOT `"desktop-host"` EITHER. It is an engine that
+   * predates the field, and {@link EngineStatus} is full of fields a window must not read a
+   * default into — `credentialState`'s `unknown` arm is the same lesson. The window reads this
+   * through `flavorOf` in `doors.ts`, which names the absent case `"unknown"` and lets each
+   * surface say what it does with it; the surfaces that changed for the paired desktop test
+   * POSITIVELY for `"desktop-host"`, so an engine that says nothing keeps the behaviour it has
+   * always had. That is sound rather than merely safe: the paired door does not exist in an
+   * engine old enough to omit the field, so absent cannot be hiding one.
+   */
+  flavor?: DoorFlavorWire | null;
   /** The mailbox this install is for, as a person would recognise it. */
   address?: string;
   mailboxId?: string;
@@ -331,6 +372,45 @@ export interface CloudDoorConfig {
 }
 
 /**
+ * The paired door: ohmail on another computer of the person's own, reached over their network or
+ * their Tailscale.
+ *
+ * ── WHY IT IS ITS OWN CONFIG AND NOT A FLAG ON THE ONE ABOVE ────────────────────────────────
+ *
+ * Two of its three fields have no counterpart there. `hostPin` is a key this install will accept
+ * and nothing else — a self-signed leaf on a DHCP address that no authority vouches for — so it
+ * is not optional decoration on a hosted URL, it is the whole of what makes the connection worth
+ * anything. And `address` is genuinely ABSENT here, not empty: a pairing link names a computer,
+ * not a mailbox, and which mailbox this install ends up reading is the host's answer to the
+ * redeem. Declaring it optional on the shared shape would have made it optional for the hosted
+ * door too, where an absent address is a mirror belonging to nobody.
+ *
+ * ── AND THE SECRET STILL DOES NOT TRAVEL THIS WAY ───────────────────────────────────────────
+ *
+ * The pairing TOKEN is not here and must never be. It is a credential, and this file's whole rule
+ * is that a credential is never an argument to a shell command: the shell refuses a payload
+ * carrying one, and the token goes to the engine over {@link bridgeFetch} at
+ * `POST /cloud/pair-redeem`, which exchanges it for the bearer pair and seals that under this
+ * install's key. What the shell stores is the origin, the pin and the account the redeem named —
+ * enough to rebuild the door at the next launch, and nothing anyone could sign in with.
+ */
+export interface HostDoorConfig {
+  mode: "cloud";
+  /** `desktop-host`, and the field that keeps this door's sentences off the hosted door. */
+  flavor: "desktop-host";
+  /** The host's own origin, verbatim from the pairing link. Never widened with a path. */
+  cloudUrl: string;
+  /**
+   * base64url `SHA-256(SubjectPublicKeyInfo)` of the host's key, from the pairing link's `k1`
+   * fragment — or `null` for an origin whose certificate the platform can check on its own (a
+   * Tailscale MagicDNS name). Never a fingerprint this window computed: the pin is a fact the
+   * person carried across from the other computer, and inventing one here would authenticate
+   * whatever answered.
+   */
+  hostPin: string | null;
+}
+
+/**
  * What `engineConfigure` takes — SETTINGS ONLY.
  *
  * There is deliberately no password field and no token field on either door, and the shell refuses
@@ -340,7 +420,7 @@ export interface CloudDoorConfig {
  * shell's memory, and never written to the shell's settings file. The engine seals it under this
  * install's key, which is the one thing the shell does hold.
  */
-export type EngineConfig = LocalDoorConfig | CloudDoorConfig;
+export type EngineConfig = LocalDoorConfig | CloudDoorConfig | HostDoorConfig;
 
 /** Ask the shell what the engine is doing. Carries no credential — see the Rust `status_json`. */
 export async function engineStatus(): Promise<EngineStatus> {

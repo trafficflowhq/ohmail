@@ -87,12 +87,17 @@ describe("the desktop window's copy table and the catalogue say the same thing",
         return german === value;
       })
       .map(([key]) => key);
-    /* Four keys are DELIBERATELY identical, and each is a name rather than a sentence: two
-       platform words that are proper nouns, the product's own name, and a URL. Everything else
-       being different is what makes this case worth running — a namespace copy-pasted from
-       English into de.json would light up every row. */
+    /* SIX keys are DELIBERATELY identical, and each is a name or a shape rather than a sentence:
+       two platform words that are proper nouns, the product's own name, the pane's label, and TWO
+       URL examples — a self-hosted address and a pairing link. Translating an example URL would
+       make it stop matching the thing it is an example of. Everything else being different is
+       what makes this case worth running: a namespace copy-pasted from English into de.json would
+       light up every row. */
     expect(untranslated.sort()).toEqual(
-      ["doorCloudName", "machineMac", "machinePc", "paneLabel", "serverOriginPlaceholder"].sort(),
+      [
+        "doorCloudName", "machineMac", "machinePc", "paneLabel",
+        "serverOriginPlaceholder", "hostLinkPlaceholder",
+      ].sort(),
     );
   });
 });

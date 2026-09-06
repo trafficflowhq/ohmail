@@ -155,6 +155,8 @@ import "./zone-cursor.css";
 import { ColumnHandles } from "./ColumnHandles";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { SyncBar } from "./SyncBar";
+import { HostConnectionLine } from "./HostConnectionLine";
+import type { HostConnection } from "./host-connection";
 import { UnsavedChanges } from "./UnsavedChanges";
 import { UpdateNotice } from "./UpdateNotice";
 import { MailStateProvider, useMailState, type FreshnessProbe, type MailboxProbe } from "./MailStateProvider";
@@ -667,7 +669,22 @@ export function DesktopCta({ href, label, dismissLabel, onDismiss }: {
   );
 }
 
-function ShellRail({ groups, footer, offerDesktopCta, ...rest }: RailNavProps & {
+function ShellRail({ groups, footer, offerDesktopCta, hostConnection, ...rest }: RailNavProps & {
+  /**
+   * THE PAIRED DESKTOP'S STANDING LINE — the THIRD member of the footer slot, beside the account
+   * address and the desktop prompt.
+   *
+   * It is in this slot and not the sync slot because of what the two slots MEAN. The sync slot's
+   * every state clears itself; this one is where the rail says whose mail this is, and on a paired
+   * desktop whose mail this is is "that computer's copy" — so whether that computer is answering
+   * belongs to the same line. `rail.css` carries the full argument beside `.rail-host`.
+   *
+   * It also makes the slot non-empty on its own: `RailNav` keeps a padded `.rail-mail` box around
+   * any truthy footer, so the decision about whether the slot exists has to be made where the last
+   * of its contents is known — which is here, and is why `fullFooter` counts three things now
+   * rather than two.
+   */
+  hostConnection?: HostConnection;
   /**
    * Is the "Get ohmail for desktop" prompt on offer at all (the pure platform branch —
    * `showDesktopCta`)? The DISMISSAL is this component's own state, held HERE for `tagsOpen`'s
@@ -700,9 +717,11 @@ function ShellRail({ groups, footer, offerDesktopCta, ...rest }: RailNavProps & 
       onDismiss={() => dismissCta(true)}
     />
   ) : null;
-  const fullFooter = footer || cta ? (
+  const host = hostConnection ? <HostConnectionLine connection={hostConnection} /> : null;
+  const fullFooter = footer || cta || host ? (
     <>
       {footer}
+      {host}
       {cta}
     </>
   ) : undefined;
@@ -723,6 +742,7 @@ export function AppShell({
   mailboxFacts,
   organizerNoticeTransport,
   mirrorFreshness,
+  hostConnection,
   sendSurfaceMaxTotalBytes,
   accountSection,
   mailboxSection,
@@ -738,6 +758,7 @@ export function AppShell({
   screenerSuggest,
   awayTransport,
   awayIsLocal,
+  awayOnHost,
   profileImportTransport,
   consentTransport,
   olderBodyWire,
@@ -798,6 +819,25 @@ export function AppShell({
    * engine's own verdict. See `MailStateProvider`'s `FreshnessProbe` for the failure contract.
    */
   mirrorFreshness?: FreshnessProbe;
+  /**
+   * "IS THE COMPUTER THIS WINDOW READS THROUGH ANSWERING?" — the desktop's seam and nobody
+   * else's, on `mirrorFreshness`'s rule and for its reason: this shell is compiled into a browser
+   * tab too, and a browser tab is never paired to anybody's laptop.
+   *
+   * PRESENT MEANS THERE IS SOMETHING WRONG TO SAY. Absent covers a browser tab, a desktop on
+   * either of the other doors, AND a paired desktop whose host is answering normally — three
+   * different situations that must render identically, because a line permanently in the rail
+   * saying "reachable" would make the one state worth noticing a change of wording rather than
+   * the arrival of a warning. The window decides; see `host-connection.ts` for the shape and for
+   * the sixty-second grace that keeps a fresh pairing quiet.
+   *
+   * IT ALSO SILENCES THE SYNC STRIP'S `stale` ARM. That arm says "As of {time} · catching up",
+   * with a spinner and a travelling track — an activity claim, and on a paired desktop with the
+   * other machine off nothing is catching up. The ladder still DERIVES `stale` (the settled
+   * clock, the holdings sentence and the beat all depend on it); only the sentence is withheld,
+   * and this line says the true thing in its place.
+   */
+  hostConnection?: HostConnection;
   /**
    * THE HOST'S OWN CEILING ON ATTACHMENT BYTES IN ONE SEND — what the pipeline a send from this
    * window rides can carry, declared by the host because only the host knows its transport.
@@ -1009,6 +1049,18 @@ export function AppShell({
    */
   awayIsLocal?: boolean;
   /**
+   * THE OTHER COMPUTER THIS INSTALL READS THROUGH, when it is a paired desktop — the away
+   * responder's third promise, on `awayIsLocal`'s seam and for its reason.
+   *
+   * `awayIsLocal` says WHICH MACHINE has to be awake for a reply to go out, as a boolean, which
+   * had exactly two answers while there were two doors. A paired desktop is a third: the row and
+   * the drain are the HOST's, so the machine to leave running is neither ours nor "the service".
+   * Naming it is the content of the sentence. Absent everywhere else — the browser and the two
+   * older doors — and `AwayResponderRow` prefers it over `awayIsLocal` when both arrive, which
+   * `awayDoorFor` makes unreachable in this app.
+   */
+  awayOnHost?: string | null;
+  /**
    * THE PROFILE IMPORT'S THREE CALLS, WHEN THE HOST HAS ITS OWN WIRE — the desktop, on BOTH of
    * its doors, and nobody else.
    *
@@ -1176,6 +1228,7 @@ export function AppShell({
           <ShellInner
             mailboxFacts={mailboxFacts}
             organizerNoticeTransport={organizerNoticeTransport}
+            hostConnection={hostConnection}
             sendSurfaceMaxTotalBytes={sendSurfaceMaxTotalBytes}
             accountSection={accountSection}
             mailboxSection={mailboxSection}
@@ -1191,6 +1244,7 @@ export function AppShell({
             screenerSuggest={screenerSuggest}
             awayTransport={awayTransport}
             awayIsLocal={awayIsLocal}
+            awayOnHost={awayOnHost}
             profileImportTransport={profileImportTransport}
             consentTransport={consentTransport}
             olderBodyWire={olderBodyWire}
@@ -1244,11 +1298,13 @@ function MailStateHost({ probe, freshnessProbe, children }: { probe?: MailboxPro
   );
 }
 
-function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, billingSection, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, notificationHost, screeningSection, screenerSuggest, awayTransport, awayIsLocal, profileImportTransport, consentTransport, olderBodyWire, junkWire, suggestWire, aiCredits, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
+function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, billingSection, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, notificationHost, screeningSection, screenerSuggest, awayTransport, awayIsLocal, awayOnHost, profileImportTransport, consentTransport, olderBodyWire, junkWire, suggestWire, aiCredits, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
   /** The pull settle watch's read — the same probe `MailStateHost` above provides the strip. */
   mailboxFacts?: MailboxProbe;
   /** See `AppShell`'s prop of this name — absent withholds the organizer notice. */
   organizerNoticeTransport?: OrganizerNoticeTransport;
+  /** See `AppShell`'s prop of this name — present only on a paired desktop with something wrong. */
+  hostConnection?: HostConnection;
   /** The host's surface declaration for the attach ceiling — see `AppShell`'s prop of this name. */
   sendSurfaceMaxTotalBytes?: number | null;
   accountSection?: ReactNode;
@@ -1270,6 +1326,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
   }) => ReactNode;
   awayTransport?: AwayTransport;
   awayIsLocal?: boolean;
+  awayOnHost?: string | null;
   profileImportTransport?: ProfileImportTransport;
   consentTransport?: ConsentTransport;
   /** The reach-past body wire — see the outer prop of the same name. */
@@ -6915,7 +6972,16 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
             itself (`sync` on the rail below); this one is hidden there by `app.css`. Under
             900px the rail is a drawer that is closed most of the time, so the strip and the
             corner pill are the only way the mailbox can speak, and they keep the job. */}
-        <SyncBar />
+        <SyncBar hostOffline={hostConnection != null} />
+
+        {/* THE COMPUTER THIS WINDOW READS THROUGH, when it is not answering — the narrow-width
+            copy, on `SyncBar`'s rule and hidden above 901px by the same single query. It sits
+            BELOW the sync strip deliberately: the strip is chrome about a process, this is a
+            statement about what the window can do, and a standing fact under a transient reads
+            in the right order. Absent from the DOM in every other case. */}
+        {hostConnection ? (
+          <HostConnectionLine connection={hostConnection} variant="shell" />
+        ) : null}
 
         {/* CHANGES THE SERVER WOULD NOT TAKE. Beside the sync line rather than inside it, because
             `SyncBar` renders nothing when sync has nothing to say — which is exactly the state an
@@ -7019,7 +7085,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
                     status it acts on. Renders nothing in the demo and on builds with no Cloud
                     base; see `PullNewMail.tsx` for the honest-settle contract. */}
                 <PullNewMail variant="rail" binding={pullBinding} />
-                <SyncBar variant="rail" />
+                <SyncBar variant="rail" hostOffline={hostConnection != null} />
                 {/* Same component at rail width — its own layout collapses under 520px, so the
                     rail does not need a second variant. */}
                 <UnsavedChanges variant="rail" />
@@ -7039,6 +7105,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
             footer={
               account?.email ? <span className="rail-mail-addr">{account.email}</span> : undefined
             }
+            {...(hostConnection ? { hostConnection } : {})}
             offerDesktopCta={showDesktopCta({ demo, desktop: desktopSection != null })}
             ariaLabel={t("rail.ariaMain")}
           />
@@ -7919,7 +7986,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
                    without a refetch — the row reports what the SERVER answered, never what a
                    click asked for, into the one `useAwayNotice` state the shell holds. */
                 awaySection={demo || !awaySupported ? undefined : (
-                  <AwayResponderRow onChanged={awayNotice.update} transport={awayTransport} local={awayIsLocal ?? false} />
+                  <AwayResponderRow onChanged={awayNotice.update} transport={awayTransport} local={awayIsLocal ?? false} host={awayOnHost ?? null} />
                 )}
                 billingSection={demo ? undefined : billingSection}
                 /* ABOUT — the one injected pane the demo also gets, because the demo has
