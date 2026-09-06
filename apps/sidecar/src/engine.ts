@@ -4870,7 +4870,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           if (stopped) {
             if (permitted) {
               try {
-                await releaseMailboxClaim(conn, installId);
+                await releaseMailboxClaim(conn, installId, mb.id);
                 log("organizer_claim_released_on_detach", {
                   mailboxId: mb.id,
                   reason: "the mailbox was removed or the engine stopped while the organizer " +
