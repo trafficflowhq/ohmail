@@ -13,6 +13,8 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+A mailbox that cannot send no longer reports a send in progress; the refusal is shown as what it is.
+
 ### Signing in, signing out, and a browser that two people share
 
 A browser holds one set of cookies for everything open in it. Sign into a second account in another

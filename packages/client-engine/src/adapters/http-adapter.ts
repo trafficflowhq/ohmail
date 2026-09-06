@@ -1975,8 +1975,33 @@ export class HttpAdapter implements EngineAdapter {
      *
      * `send_queued` at 202 and `send_in_flight` otherwise, so it lands in the vocabulary the
      * ceiling already exempts as a modelled wait rather than spending a life on ambiguity.
+     *
+     * ── AND A TYPED REFUSAL IS NOT AMBIGUITY, WHICH THIS GUARD COULD NOT SEE ─────────────────
+     *
+     * The condition below asked only whether `wire.status` is one of the five, and a `ServiceError`
+     * from `reserve` has no `status` field at all — it rides the ordinary `{error:{code,message}}`
+     * envelope. So every typed 409 landed here and was rewritten into a retryable
+     * `send_in_flight`, which is wrong twice over: the surface says "a send is already in progress"
+     * about a request the server refused outright, and `retryable: true` puts a refusal that is
+     * terminal BY CONSTRUCTION back on the outbox, to be replayed under the same key and refused
+     * identically for as long as the condition holds.
+     *
+     * It is not hypothetical: `mailbox_disabled` is thrown at 409 by `SendService.reserve`, and
+     * `SendStatus` has its own sentence keyed on that code precisely because the screen showing it
+     * also holds the control that fixes it. That code could not arrive — so a mailbox that cannot
+     * send reported a send in progress, and the outbox kept asking.
+     *
+     * An envelope with a `code` is a READ answer, not an unread one, so it belongs to the branch
+     * below. The guard keeps its whole original case — a truncated body, a proxy rewrite, a 200
+     * that never finished writing carry no `error.code` — and stops claiming the ones the server
+     * named.
      */
-    if ((res.ok || res.status === 409) && !SEND_WIRE_STATUSES.has(wire.status ?? "")) {
+    const envelopeCode = (wire as WireError).error?.code;
+    if (
+      (res.ok || res.status === 409)
+      && !SEND_WIRE_STATUSES.has(wire.status ?? "")
+      && typeof envelopeCode !== "string"
+    ) {
       throw new MutationRejectedError(
         "We could not read the server's answer to this send. It may already be on its way — "
         + "ohmail will ask again under the same key.",
