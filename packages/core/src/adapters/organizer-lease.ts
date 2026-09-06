@@ -3316,6 +3316,24 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
 
     const set = await io.listClaimRecords?.();
     if (set === null || set === undefined) {
+      /* ── WHY IT COULD NOT BE READ, WHERE SOMEBODY WILL SEE IT ────────────────────────────
+       *
+       * The refusal below says "the folder holds more than one read may take", which is the
+       * common cause and not always the real one. A read can also refuse because the folder has
+       * been renumbered under a remembered uid, or because the stretch below that uid is itself
+       * past the budget — and those do not heal by waiting, unlike a full folder, which the sweep
+       * eventually trims. Reporting them all as one thing is how a mailbox that is stuck for good
+       * looks like a mailbox that is merely busy.
+       *
+       * The adapter records which it was; this is the only place that reads it, and it exists so
+       * that a fact with no consumer does not sit here being a claim about diagnosis nobody can
+       * check. */
+      const why = io.claimReadFact?.();
+      if (why) {
+        log("lease_claim_read_refused", {
+          fact: why.fact, depth: why.depth, floor: why.floor, ownUid: why.ownUid,
+        });
+      }
       throw new LeaseUnavailableError(
         `${META_FOLDER} holds more records than one read may take, and the claims in it could not `
         + "be asked for by header — this install cannot prove no other organizer holds this mailbox",
@@ -5106,6 +5124,8 @@ export function makeRequestOrganizerIo(
          * round trips for records the budget below cannot delete this time round anyway. */
         const wanted = SWEEP_DELETE_BATCH * SWEEP_BATCHES_MAX_PER_CYCLE;
         const found: number[] = [];
+        let reachedBottom = false;
+        let resumeBelow: number | null = null;
         /* Resume beneath the last pass's stopping point. A cursor above the current ceiling is
          * meaningless — the folder has been renumbered or replaced — so the top wins. */
         const resumeAt = sweepCursor.get(client);
@@ -5128,26 +5148,36 @@ export function makeRequestOrganizerIo(
             );
           }
           found.push(...page);
-          if (lo === 1) {
-            // The bottom: nothing older to come back to, so the next pass starts at the top.
-            sweepCursor.delete(client);
-            break;
-          }
-          if (found.length >= wanted) {
-            // Enough for this pass. Carry on from just below this window next time.
-            sweepCursor.set(client, lo - 1);
-            break;
-          }
+          /* ── WHERE THIS PASS WOULD RESUME, DECIDED NOW AND WRITTEN LATER ────────────────
+           *
+           * Moving the mark here — before a single record has been removed — claims the stretch
+           * above it is dealt with while it demonstrably is not. Two ways that goes wrong, and the
+           * first happens on an ordinary pass: the walk may return up to a window more than the
+           * delete budget, so the surplus is left ABOVE a mark that says not to look there again.
+           * The second is worse: an expunge the server refuses throws, and the mark would already
+           * have moved past everything the pass had merely LOOKED at. */
+          if (lo === 1) { reachedBottom = true; break; }
+          if (found.length >= wanted) { resumeBelow = lo - 1; break; }
           hi = lo - 1;
-          // The budget may run out here; `hi` is where the next pass resumes.
-          if (w === SWEEP_SEARCH_WINDOW_BUDGET - 1) sweepCursor.set(client, hi);
+          resumeBelow = hi;
         }
         /* A REFUSED SEARCH IS NOT AN EMPTY FOLDER — the library resolves `false` rather than
          * rejecting. Returning 0 for it reported a sweep that had not happened, and the sweep is
          * the only thing that ever makes this folder smaller: a caller told "0 stale" concludes
          * there is nothing to compact. The drain already logs a failed sweep and carries on, which
          * is what it should do with this. */
-        if (found.length === 0) return 0;
+        /* ── A PASS THAT FOUND NOTHING STILL COVERED ITS STRETCH ────────────────────────────
+         *
+         * Nothing to remove is the vacuous case of "everything found was removed", so the mark
+         * moves and the next pass goes deeper. Returning here without moving it was how the
+         * deferral broke the walk: a folder whose stale acknowledgements all sit below a long run
+         * of ordinary mail produces empty pass after empty pass, and each one would have started
+         * from the same place. A guard written for exactly that walk caught it. */
+        const markProgress = (): void => {
+          if (reachedBottom) sweepCursor.delete(client);
+          else if (resumeBelow !== null) sweepCursor.set(client, resumeBelow);
+        };
+        if (found.length === 0) { markProgress(); return 0; }
         /* ── SWEPT IN BOUNDED BATCHES, BECAUSE THE SET IS AS LARGE AS THE FOLDER GOT ─────────
          *
          * The whole matching set used to go into ONE expunge and one custody read. That makes the
@@ -5194,6 +5224,14 @@ export function makeRequestOrganizerIo(
           await proveGone(client, batch, "stale acknowledgement(s)", "sweep_acks");
           swept += batch.length;
         }
+        /* ── ONLY NOW, AND ONLY OVER WHAT WAS ACTUALLY REMOVED ──────────────────────────────
+         *
+         * Every batch above is proved gone before the next is attempted, so reaching here means
+         * the whole of `budget` really left the folder. If the walk found MORE than the budget
+         * could delete, the surplus is still up there and the mark must not move past it — the
+         * next pass re-covers the same stretch and finds it shorter, which is what durable
+         * progress looks like. A throw anywhere above leaves the mark exactly where it was. */
+        if (swept >= found.length) markProgress();
         return swept;
       } finally {
         lock.release();
