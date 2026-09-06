@@ -506,7 +506,14 @@ function responseNotOurs(): ApiError {
   return new ApiError(
     0,
     "response_not_owner_bound",
-    "That answer was not for this account. Checking who is signed in.",
+    /*
+     * SAYS WHAT HAPPENED, NOT WHAT IS HAPPENING NEXT. This read "Checking who is signed in",
+     * which described work nothing starts: {@link reResolveApiOwner} withdraws the confirmation
+     * and that is all — the next confirm comes from the shell's own ladder, on its own schedule,
+     * and on a surface that has none it never comes at all. A sentence promising a check that is
+     * not running is the same kind of claim as a comment describing code that is not there.
+     */
+    "That answer was not for this account, so it was discarded. This window is no longer confirmed for it.",
     undefined,
     { coded: false },
   );
@@ -2866,8 +2873,30 @@ export async function assertPasskey(options: PublicKeyCredentialRequestOptionsJS
  * refusal taxonomy — so it is used verbatim. A `NotAllowedError` from the WebAuthn API means
  * the user dismissed the prompt (or it timed out), which is not a failure to apologise for.
  */
+/** `session_busy` without importing the class — see {@link messageOf}. */
+function isSessionBusy(err: unknown): boolean {
+  return err instanceof Error
+    && (err as { code?: unknown }).code === "session_busy"
+    && typeof err.message === "string" && err.message.length > 0;
+}
+
 export function messageOf(err: unknown): string {
   if (err instanceof ApiError) return err.message;
+  /*
+   * ── THE ONE REFUSAL THIS CLIENT RAISES THAT IS NOT AN `ApiError` ──────────────────────────
+   *
+   * `SessionBusyError` is thrown when another tab has held the origin-wide session lock past the
+   * deadline. Its own message says what happened and what to do — "another tab is finishing a
+   * sign-in or sign-out, try that again in a moment" — and every surface renders refusals through
+   * this function, which dropped it to "Something went wrong. Please try again."
+   *
+   * That is worse than losing detail. The person is looking at a form that refused for a reason
+   * that clears by itself in seconds, and the generic sentence gives them no way to know that;
+   * the published note for the lock change promised them this sentence, so the claim was false as
+   * well as unhelpful. Matched by CODE rather than by class, because importing the class here
+   * would make `api-client` depend on `session-refresh`, which depends on it.
+   */
+  if (isSessionBusy(err)) return (err as Error).message;
   if (err instanceof DOMException && (err.name === "NotAllowedError" || err.name === "AbortError")) {
     return "The passkey prompt was dismissed. You can try again, or use an authenticator app instead.";
   }
