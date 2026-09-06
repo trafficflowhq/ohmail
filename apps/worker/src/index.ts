@@ -1577,11 +1577,63 @@ export async function startWorkerWithLock(
        * scheduled send (the appointments). None of them is a reason to keep organizing.
        */
       if (lease.releaseRequestedAt !== null) {
-        await releaseOrganizerClaim(
+        const removed = await releaseOrganizerClaim(
           { mailboxId: mb.mailboxId, accountId: mb.accountId, adapter },
           "the person asked this install to stop organizing this mailbox and keep reading it",
         );
-        try {
+        /* ══ ZERO CLAIMS REMOVED IS NOT A RELEASE ═════════════════════════════════════════════
+         *
+         * The release is authorized from the row as it stood when the person pressed, and carried
+         * out here a cycle later. The mailbox can change hands in between — another install takes
+         * the lease and expunges this one's claim — and the removal above matches on OUR install
+         * id, so it removes nothing and used to say nothing about that.
+         *
+         * `markMailboxReleased` then ran anyway, and it nulls all SIX holder columns. The row said
+         * nobody organizes this mailbox while another install actively did, and every client's
+         * banner is a row read. That is the same defect the install-id column was added to close,
+         * one layer down: an answer about ownership derived from something other than who holds
+         * the claim.
+         *
+         * So the row is only stamped released when this install's claim was actually taken out, or
+         * when the folder holds NOBODY — which is a genuine release, just one somebody else's
+         * cleanup got to first. A foreign claim, or a folder we could not read, leaves the request
+         * standing: the ask is re-honoured next cycle, costing one attempt per poll, and it heals
+         * itself the moment the foreign claim goes. The holder columns keep naming the real holder,
+         * so the person is told who has it rather than that nobody does.
+         */
+        let mayMark = removed !== null && removed > 0;
+        if (removed === 0) {
+          const peek = (adapter as Partial<LeasePeekCapableAdapter>).leasePeekIo;
+          if (typeof peek === "function") {
+            try {
+              const seen = await readLeasePeek({ io: peek.call(adapter), now: new Date() });
+              const foreign = seen.holders.find((h) => h.installId !== organizerInstallId);
+              mayMark = foreign === undefined;
+              if (foreign !== undefined) {
+                log.info("organizer_release_withheld_foreign_claim", {
+                  mailboxId: mb.mailboxId, accountId: mb.accountId, holder: foreign.installId,
+                  reason: "another install holds this mailbox now, so this install has nothing to "
+                    + "release and must not report the mailbox as free",
+                });
+              }
+            } catch (err) {
+              // Could not look. "We did not see a foreign claim" and "there is none" must not be
+              // reachable from one another — the lease's own rule — so the request stands.
+              mayMark = false;
+              log.warn("organizer_release_peek_failed", {
+                mailboxId: mb.mailboxId, accountId: mb.accountId, err,
+                reason: "the release is left pending rather than certified against a folder we "
+                  + "could not read",
+              });
+            }
+          } else {
+            mayMark = false;
+          }
+        }
+        /* GUARDED, NOT RETURNED. An early return here would skip the appointments stand-down
+           below, which has to happen either way: this install has stopped organizing whichever
+           way the writes went. Only the ROW WRITE is withheld. */
+        if (mayMark) try {
           const written = await markMailboxReleased(db, mb.mailboxId, { fence });
           if (written) {
             // The in-memory mirror of what the row now holds, on the same discipline the
@@ -1935,19 +1987,31 @@ export async function startWorkerWithLock(
        */
       rt: { mailboxId: string; accountId: string; adapter: MailboxAdapter },
       why: string,
-    ): Promise<void> {
+    ): Promise<number | null> {
+      /* IT RETURNS THE COUNT NOW, and `null` for "could not look". This returned `void` and
+         swallowed a removal of ZERO — see the caller for what that cost. The three answers are
+         genuinely different: we removed our claim, our claim was not there, and we could not
+         reach the folder. Collapsing the last two into the first is how a release got certified
+         over somebody else's live claim. */
       try {
+        /* BOTH SIDES OF THIS HUNK ARE LOAD-BEARING. Upstream widened `releaseMailboxClaim` to
+           take the mailbox id; this lane changed the control flow so the COUNT is returned and a
+           zero no longer returns early — the caller has to tell "removed our claim" from "our
+           claim was not there". Keeping either alone silently loses the other. */
         const released = await releaseMailboxClaim(rt.adapter, organizerInstallId, rt.mailboxId);
-        if (released === 0) return;
-        log.info("organizer_claim_released", {
-          mailboxId: rt.mailboxId, accountId: rt.accountId, claims: released, reason: why,
-        });
+        if (released > 0) {
+          log.info("organizer_claim_released", {
+            mailboxId: rt.mailboxId, accountId: rt.accountId, claims: released, reason: why,
+          });
+        }
+        return released;
       } catch (err) {
         log.warn("organizer_claim_release_failed", {
           mailboxId: rt.mailboxId, accountId: rt.accountId, err,
           reason: "the claim will age out of ohmail/_meta on its own; until it does, a LOCAL " +
             "install that tries to take this mailbox over stands itself down again",
         });
+        return null;
       }
     }
 
