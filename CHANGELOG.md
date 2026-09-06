@@ -540,6 +540,13 @@ reappeared a moment later with nothing on screen saying why.
 Keyboard hints no longer draw on touch screens, or in windows too narrow to hold both the hint and
 the verb it belongs to.
 
+Backspace and Delete no longer reach a selection through something opened over it. With rows
+selected and the shortcut sheet, a menu or a popover standing on top, pressing either key filed
+the selection anyway. The keys now ask what is actually on screen before they act, so anything
+standing over the list holds them off — and they work again the moment it closes. The reading
+sheet is deliberately not one of those things: deleting the message you are reading is exactly
+what the key means there.
+
 Holding Shift no longer runs a shortcut that did not ask for it. Shift-Backspace and
 Shift-Delete were reaching the ordinary delete — on Windows that combination means "delete
 permanently", and in several editors it kills a line, so anyone pressing it meant something

@@ -37,6 +37,7 @@ import { useMailState } from "../shell/MailStateProvider";
 import type { OlderMail } from "../shell/older-mail";
 import { Key, MessagePane, MOVE_TARGETS, type BulkAction, type MessageAction, type MoveTarget } from "../shell/MessagePane";
 import { MoreMenu, type MoreMenuItem } from "../shell/MoreMenu";
+import { isModalOpen } from "../shell/modal-gate";
 import { useBarDensity } from "../shell/bar-density";
 import { DRAG_SLOP_PX, useDragToFile, type DragSource, type RailDropTarget } from "../shell/drag-file";
 import type { ScreeningDest } from "../shell/sender-screening";
@@ -100,6 +101,16 @@ const DWELL_MS = 2000;
  * a knob here would be a knob about whether a tap means what it says.
  */
 const LONG_PRESS_MS = 450;
+
+/**
+ * The document the press landed in — `e.view` first, so a press inside a portal or a second
+ * window is judged against the tree it actually happened in rather than this module's global.
+ *
+ * Module scope: it closes over nothing in the view, and rebuilding it per render would put a
+ * fresh function into a binding's `when` on every keystroke anywhere in the app.
+ */
+const deleteDoc = (e: KeyboardEvent): Document =>
+  (e.view as (Window & typeof globalThis) | null)?.document ?? document;
 
 /**
  * How long a row slides before it re-files under "Earlier".
@@ -1676,16 +1687,31 @@ export function OhboxView({
       chord: "Backspace",
       group: "message",
       label: t("keySelDelete"),
-      /* A HELD KEY IS ONE PRESS — item 10's guard, and it matters more over a set: Backspace
-         auto-repeats, and a finger resting on it would open window after window. */
-      when: (e: KeyboardEvent) => !e.repeat,
+      /**
+       * TWO CONDITIONS ON THE EVENT, and neither can be a `disabled` flag.
+       *
+       *  · A HELD KEY IS ONE PRESS. Backspace auto-repeats, and a finger resting on it would
+       *    open window after window over a whole pile.
+       *  · NOTHING IS STANDING OVER THE DECK. Measured before this line existed: three rows
+       *    picked, the `?` sheet OPEN, one press of ⌫ — and all three were filed, because the
+       *    selection's delete chords never received a modal gate at all. The shell's own delete
+       *    keys had one; these were not on the list, and could not have been, since the list
+       *    enumerated what the SHELL owns and the More menu's open state lives below it.
+       *
+       * `isModalOpen` asks the DOM instead of a list, which is why it is a `when` and not a
+       * `disabled`: `disabled` is computed while React renders, and the menu this is meant to
+       * catch opens without the shell re-rendering. A `false` here does not consume the key —
+       * it falls through, and the `?` sheet keeps listing the verb, which is right: the key is
+       * bound, it is simply not the innermost thing being asked.
+       */
+      when: (e: KeyboardEvent) => !e.repeat && !isModalOpen(deleteDoc(e)),
       run: deletePicked,
     },
     {
       chord: "Delete",
       group: "message",
       label: t("keySelDelete"),
-      when: (e: KeyboardEvent) => !e.repeat,
+      when: (e: KeyboardEvent) => !e.repeat && !isModalOpen(deleteDoc(e)),
       run: deletePicked,
     },
         ] satisfies KeyBinding[])
