@@ -1042,6 +1042,27 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // itself names in its `ON CONFLICT` target, so a database missing it fails loudly on the first
   // duplicate rather than quietly admitting one.
   ["outbound_send_fingerprints", "fingerprint"],
+  // mail 0094_request_kinds_moves_profile — ONE column, on the NEW table.
+  //
+  // `mailbox_profile_mirror.doc` is the configuration document an install that only READS a
+  // mailbox caches from `ohmail/_meta`. Probing a column on a new table probes the table: a
+  // missing relation and a missing column both raise 42P01/42703, and this list's whole job is to
+  // make an API ahead of its database say `503 schema_incomplete` and name the file instead.
+  //
+  // WHY THE TABLE IS WORTH A MARKER even though its absence degrades quietly. A reader's settings
+  // pane reads this table to render the holder's configuration, and a database missing it does
+  // not fail loudly — the pane would render "no profile from <holder> yet", which is a REAL state
+  // it must also render when the reader simply has not read a document. So the two are
+  // indistinguishable to a person, and an operator would be looking at a mailbox reporting a
+  // healthy schema and a settings screen that stays permanently empty. That is precisely the
+  // "certified healthy while a thing is missing" shape the marker census exists for.
+  //
+  // The WIDENED `kind` CHECK gets no marker of its own, on `organizer_requests.state`'s rule
+  // stated a few lines above: `organizer_requests.kind` is already probed, and a CHECK that
+  // gained a member cannot be detected by reading a column name. Its absence surfaces as a
+  // refused INSERT at the write site rather than as a silent read, which is the failure mode
+  // that reports itself.
+  ["mailbox_profile_mirror", "doc"],
 ] as const;
 
 /* THE CLOUD HALF OF THE MARKER CENSUS MOVED TO `./health-cloud.js`.
@@ -1835,7 +1856,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0093_outbound_send_fingerprints";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0094_request_kinds_moves_profile";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */
