@@ -6,6 +6,7 @@ import type { AdapterPort, Destination, NativeLocator } from "@trafficflow/core/
 import { applyReconcileAction } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { Db, ServiceContext } from "./context.js";
+import { carryDialect } from "@trafficflow/db/dialect";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import {
   moveDestinationWord, routeMailboxWrite, writeReaderRequest, type PendingRequest,
@@ -130,7 +131,13 @@ export class ApprovalService {
     const label = approve ? "positive" : "negative";
 
     // ── DB tx: flip status, (approve) re-route folder-state, emit change_log, feed learning (step 2) ──
-    const dto = await asTx(ctx).transaction(async (tx) => {
+    const dto = await asTx(ctx).transaction(async (txRaw) => {
+      /* CARRIED. The seam refuses a handle with no dialect brand, a transaction object has
+         none of its own, and something inside this block composes a statement through it —
+         `learning.recordOn` reaches the signal write, which resolves a dialect. Handed the
+         parent's, which is the only reading that is correct: a transaction cannot be on a
+         different store from the connection that opened it. */
+      const tx = carryDialect(ctx.db, txRaw as object) as typeof txRaw;
       /**
        * THE STATUS FLIP IS A CLAIM, NOT A WRITE — and the read above is only a fast refusal.
        *

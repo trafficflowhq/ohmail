@@ -397,11 +397,23 @@ export function watchKnownSet<T extends object>(repo: T, cache: KnownSetCache): 
   });
 }
 
-/** The repo methods that are NOT neutral — the classification, exported so a guard can assert it. */
+/**
+ * The repo methods that are NOT neutral — the classification, exported so a guard can assert it.
+ *
+ * READ THROUGH THE DESCRIPTOR, never by indexing the prototype. `typeof proto[n]` INVOKES an
+ * accessor, with `this` bound to the prototype rather than to an instance — and the repository
+ * has one (`d`, which resolves the dialect from the handle it was constructed with). Reading it
+ * off the prototype therefore ran that resolution against a `db` that does not exist and threw,
+ * so this classification could not be computed at all and the guard over it failed with a message
+ * about dialect brands in a test about the known-set memo.
+ *
+ * A descriptor also gives the right ANSWER, not merely a safe one: an accessor is not a method,
+ * so it has no business in a list of methods that might move the projection.
+ */
 export function dirtyMethodsOf(proto: object): string[] {
   return Object.getOwnPropertyNames(proto)
     .filter((n) => n !== "constructor")
-    .filter((n) => typeof (proto as Record<string, unknown>)[n] === "function")
+    .filter((n) => typeof Object.getOwnPropertyDescriptor(proto, n)?.value === "function")
     .filter((n) => !KNOWN_SET_NEUTRAL.has(n))
     .sort();
 }

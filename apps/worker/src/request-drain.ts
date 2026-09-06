@@ -9,6 +9,7 @@ import {
   listStaleSentRequests, markRequestsExpired, markRequestsRefused,
   type Tx,
 } from "@trafficflow/db";
+import { carryDialect } from "@trafficflow/db/dialect";
 import {
   parseRequestEnvelope, isMalformedRequest, formatRequest, formatAck, canonicalRequest,
   requestEnvelopesIn, acksIn, verifyRequestEnvelope, decodeRequestPayload,
@@ -1170,7 +1171,12 @@ export async function applyMetaRequests(
     const hash = requestContentHash(e);
     const idemKey = `meta-request:${e.requestId}`;
     try {
-      await db.transaction(async (tx) => {
+      await db.transaction(async (txRaw) => {
+        /* CARRIED. A transaction object has no dialect brand of its own, and
+           `applyScreenerDecision` below reaches the learning-signal write, which resolves
+           one. Handed the parent's — a transaction cannot be on a different store from the
+           connection that opened it. */
+        const tx = carryDialect(db, txRaw as object) as typeof txRaw;
         // FENCE FIRST, as the FIRST statement of this transaction — `erasure-fence.ts`'s own rule,
         // and NOT redundant with `applyScreenerDecision`'s own internal fence: a write before the
         // fence is exactly the lock order `deleteAccount` depends on to close its own race
