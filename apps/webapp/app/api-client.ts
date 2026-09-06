@@ -383,10 +383,10 @@ export function apiOwnerHolds(path: string, opts: { ceremony?: boolean } = {}): 
  * is applied. The client cannot observe a state it was never asked about, which is why the
  * warm-identity ruling filed the remainder rather than leaving a weaker guard in place.
  *
- * The server answers the question directly — WHERE IT SPEAKS THIS CONTRACT, which no server in
- * this repository's range does yet: the half that sends the header is on another branch, and until
- * it merges every server here answers "not advertised" and the negotiation below admits absence.
- * `X-Ohmail-Account` names the account a response was produced for — the session's, or on the sign-in and token routes the account the CREDENTIAL
+ * The server answers the question directly, where it speaks this contract — and since the release
+ * stack it does: `packages/api/src/app.ts` sets the header and `GET /hello` advertises
+ * `features.accountHeader`. The negotiation below still exists for every OTHER server, which is
+ * the point of it. `X-Ohmail-Account` names the account a response was produced for — the session's, or on the sign-in and token routes the account the CREDENTIAL
  * resolved to — and the value is always server-derived: the session row or the resolved
  * credential, never a query parameter, a body field, or an inbound header of the same name, which
  * is ignored.
