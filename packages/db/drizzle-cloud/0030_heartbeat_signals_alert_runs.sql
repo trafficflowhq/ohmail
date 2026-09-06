@@ -283,7 +283,35 @@ ALTER TABLE "alert_state" ADD COLUMN IF NOT EXISTS "resolved_at"
 -- so a cause with no sentence fails a test rather than rendering an empty line. NULL means the
 -- row is not a sample at all, which is the only state `truncated = false` may have.
 --
--- THIS IS THE LAST STATEMENT OF 0030, so it carries the schema marker: `alerts.ts`'s
--- SCHEMA_BEHIND_MARKER and the `/health` marker both name this column, because the last column
--- of the last statement is the only one whose presence implies every object above it.
+-- THIS COLUMN CARRIES THE SCHEMA MARKER: `alerts.ts`'s SCHEMA_BEHIND_MARKER and the `/health`
+-- marker both name it, because it is the last column 0030 adds and its presence therefore
+-- implies every object above it. The CHECK below is the only statement that follows, it adds
+-- no column, and a journal pass applies inside ONE transaction — so there is no state in which
+-- this column exists and anything above it does not.
 ALTER TABLE "platform_signals" ADD COLUMN IF NOT EXISTS "sample_cause" text;
+--> statement-breakpoint
+
+-- ── AND THE SET IS CLOSED IN THE DATABASE, NOT ONLY IN THE READER ────────────────────────
+--
+-- `sample_cause` began as free text with the closed set living in one TypeScript array, and
+-- that is a weaker thing than it looks. The column is the reason a window is not counted, so a
+-- value outside the set is not a cosmetic defect: the panel keys its sentence on this value,
+-- and a cause nobody wrote a sentence for renders an operator an empty line under a number
+-- they are about to act on. A closed set the database enforces cannot drift from the reader's
+-- — `SAMPLE_CAUSES` in `platform-signals.ts`, which a test now compares against this list
+-- rather than trusting the two to be maintained together.
+--
+-- It also settles what the column IS: a status this repository chose from its own literals,
+-- decided by the poller from timestamps and counts, never a place a hosting log's text can
+-- land. That is the same argument `cls` two hundred lines up makes.
+--
+-- The DROP/ADD pair rather than an inline constraint, deliberately: a deployment that already
+-- applied an earlier draft of 0030 holds the column WITHOUT the constraint, and `ADD COLUMN IF
+-- NOT EXISTS` would skip silently and leave it that way. `ADD CONSTRAINT` runs regardless.
+ALTER TABLE "platform_signals" DROP CONSTRAINT IF EXISTS "platform_signals_sample_cause_check";
+--> statement-breakpoint
+
+ALTER TABLE "platform_signals" ADD CONSTRAINT "platform_signals_sample_cause_check"
+  CHECK ("sample_cause" IS NULL OR "sample_cause" IN (
+    'page_budget', 'settle_margin', 'missing_provenance', 'unreadable_request_id',
+    'deadline', 'stalled_cursor', 'boundary_unread'));

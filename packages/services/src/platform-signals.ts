@@ -65,12 +65,17 @@ export type SignalProvider = "vercel";
 
 /** One window's traffic for one project, as counted. */
 /**
- * WHY a bucket is a sample. Six values, closed, and the panel's sentence table is keyed on this
- * exact set — a cause with no sentence fails a test rather than rendering an empty line.
+ * WHY a bucket is a sample. Seven values, closed, and the panel's sentence table is keyed on
+ * this exact set — a cause with no sentence fails a test rather than rendering an empty line.
  *
- * `truncated` began meaning one of these (`page_budget`) and grew the other five while the
- * console went on describing the first, so five of six samples were reported to an operator as
- * page-budget exhaustion and sent them to a limit that was not involved.
+ * `truncated` began meaning one of these (`page_budget`) and grew the others while the console
+ * went on describing the first, so every other sample was reported to an operator as page-budget
+ * exhaustion and sent them to a limit that was not involved.
+ *
+ * THE SET IS ALSO CLOSED IN THE DATABASE — cloud 0030 CHECK-constrains `sample_cause` to exactly
+ * these words, and a test reads that migration and compares it to this array rather than
+ * trusting the two to be edited together. Add a cause here without adding it there and the poll
+ * throws at the write, losing the window and reporting nothing that names the cause.
  */
 export const SAMPLE_CAUSES = [
   /** The walk stopped after its maximum number of pages. */

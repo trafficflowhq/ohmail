@@ -760,12 +760,13 @@ export const platformSignals = pgTable("platform_signals", {
    */
   truncated: boolean("truncated").notNull().default(false),
   /**
-   * WHICH of the six causes made this bucket a sample, or NULL when it is not one (cloud 0030).
+   * WHICH of the seven causes made this bucket a sample, or NULL when it is not one (cloud 0030).
    *
    * `truncated` began meaning "the walk hit its page budget" and grew five more causes, while
    * the console went on naming the first — so an operator was sent to a limit that was not
    * involved. The panel's sentence is keyed on this value, and a cause with no sentence fails a
-   * test rather than rendering blank. Constrained to the app-level set of six.
+   * test rather than rendering blank. CHECK-constrained by 0030 to the same closed set the
+   * reader names in `SAMPLE_CAUSES`, which a test compares against the migration itself.
    */
   sampleCause: text("sample_cause"),
   fetchedAt: timestamp("fetched_at", { withTimezone: true }).defaultNow().notNull(),
