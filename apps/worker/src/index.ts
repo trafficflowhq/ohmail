@@ -1601,41 +1601,63 @@ export async function startWorkerWithLock(
          * itself the moment the foreign claim goes. The holder columns keep naming the real holder,
          * so the person is told who has it rather than that nobody does.
          */
-        let mayMark = removed !== null && removed > 0;
-        if (removed === 0) {
+        /* ══ THE FOLDER DECIDES, NOT THE COUNT ════════════════════════════════════════════════
+         *
+         * The first cut of this asked the peek only when the removal returned ZERO, and that left
+         * the same defect standing one case over: if another install appends its claim while ours
+         * is still there, removing ours returns ONE, the count looks like success, and the row is
+         * cleared over a claim that is still in the folder. A positive count says our claim went,
+         * not that the mailbox is free.
+         *
+         * So the folder is read after every removal, and the row is stamped only when nothing
+         * else is holding it. Four things withhold, and each is a different kind of "we cannot
+         * say the mailbox is free":
+         *
+         *  · a LIVE foreign claim — somebody else has it, which is the whole point;
+         *  · UNREADABLE claims — the lease contract is explicit that evidence which says it is a
+         *    claim and cannot be parsed is EVIDENCE, not nothing (`MalformedClaim`), and a folder
+         *    holding only unreadable claims is `stopped`, never `none`;
+         *  · a folder we could not read at all — "we did not see a foreign claim" and "there is
+         *    none" must not be reachable from one another;
+         *  · an adapter with no read side. Unreachable in production (`ImapAdapter.leasePeekIo`
+         *    always exists); withheld rather than assumed, because the assumption is the bug.
+         *
+         * A STALE foreign claim does not withhold. It is the corpse of an install that stopped
+         * renewing, the takeover path exists to step over it, and blocking on one would leave the
+         * request re-honoured every cycle for ever with nothing able to clear it.
+         */
+        let mayMark = false;
+        if (removed !== null) {
           const peek = (adapter as Partial<LeasePeekCapableAdapter>).leasePeekIo;
           if (typeof peek === "function") {
             try {
               const seen = await readLeasePeek({ io: peek.call(adapter), now: new Date() });
-              const foreign = seen.holders.find((h) => h.installId !== organizerInstallId);
-              mayMark = foreign === undefined;
-              if (foreign !== undefined) {
-                log.info("organizer_release_withheld_foreign_claim", {
-                  mailboxId: mb.mailboxId, accountId: mb.accountId, holder: foreign.installId,
-                  reason: "another install holds this mailbox now, so this install has nothing to "
-                    + "release and must not report the mailbox as free",
+              const foreign = seen.holders.find(
+                (h) => h.installId !== organizerInstallId && h.fresh,
+              );
+              mayMark = foreign === undefined && seen.unreadable === 0;
+              if (!mayMark) {
+                log.info("organizer_release_withheld", {
+                  mailboxId: mb.mailboxId, accountId: mb.accountId,
+                  holder: foreign?.installId ?? null, unreadable: seen.unreadable,
+                  reason: "the mailbox is not free, so this install must not report it as free; "
+                    + "the request stands and is honoured again when the folder says otherwise",
                 });
               }
             } catch (err) {
-              // Could not look. "We did not see a foreign claim" and "there is none" must not be
-              // reachable from one another — the lease's own rule — so the request stands.
-              mayMark = false;
               log.warn("organizer_release_peek_failed", {
                 mailboxId: mb.mailboxId, accountId: mb.accountId, err,
-                reason: "the release is left pending rather than certified against a folder we "
-                  + "could not read",
+                reason: "the release is left pending rather than certified against a folder that "
+                  + "could not be read",
               });
             }
-          } else {
-            mayMark = false;
           }
         }
-        /* GUARDED, NOT RETURNED. An early return here would skip the appointments stand-down
-           below, which has to happen either way: this install has stopped organizing whichever
-           way the writes went. Only the ROW WRITE is withheld. */
+        let stamped = false;
         if (mayMark) try {
           const written = await markMailboxReleased(db, mb.mailboxId, { fence });
           if (written) {
+            stamped = true;
             // The in-memory mirror of what the row now holds, on the same discipline the
             // stand-down arm keeps: this pass's own later reads must not act on a value the write
             // has just replaced, and the next cycle must not re-honour a request that is spent.
@@ -1661,11 +1683,23 @@ export async function startWorkerWithLock(
         await standDownAppointments(
           mb, "organized_elsewhere:unknown", RELEASED_ORGANIZER_SEND_SENTENCE,
         );
-        log.info("organizer_released", {
-          mailboxId: mb.mailboxId, accountId: mb.accountId, phase,
-          reason: "the person stopped organizing this mailbox here; the row keeps its credentials, "
-            + "its consent and its mirror, and this install reads it from now on",
-        });
+        /* THE SENTENCE ONLY GOES IN THE LOG IF IT IS TRUE. This fired unconditionally — after a
+           withheld write, after a fenced write, after a write that threw — so the log said the
+           person had stopped organizing the mailbox in exactly the cases where the row still said
+           otherwise. A log line that reports an outcome has to read the outcome. */
+        if (stamped) {
+          log.info("organizer_released", {
+            mailboxId: mb.mailboxId, accountId: mb.accountId, phase,
+            reason: "the person stopped organizing this mailbox here; the row keeps its "
+              + "credentials, its consent and its mirror, and this install reads it from now on",
+          });
+        } else {
+          log.info("organizer_release_pending", {
+            mailboxId: mb.mailboxId, accountId: mb.accountId, phase,
+            reason: "this install has stopped organizing, and the row does not yet record the "
+              + "release; the request stands and is honoured again next cycle",
+          });
+        }
         return false;
       }
       /* -- A CONSENT-LESS MAILBOX IS NEVER PROMOTED BY AN EMPTY FOLDER  -----------
