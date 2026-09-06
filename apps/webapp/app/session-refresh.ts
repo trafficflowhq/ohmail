@@ -457,11 +457,19 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<boolean> 
    * including `api()`'s recovery path, returns that cached answer without asking anything.
    *
    * Found by running this file's cases in order instead of one at a time: alone each passed, and
-   * together the second one wedged the third. The identity check is what makes the clear safe
-   * against a newer resume having replaced it in the meantime.
+   * together the second one wedged the third.
+   *
+   * NO IDENTITY CHECK ON THE CLEAR. One stood here — `if (inFlight === started)` — against "a
+   * newer resume having replaced it in the meantime", and there is no such sequence: the guard at
+   * the top of this function returns the live promise rather than starting a second, so while
+   * `started` IS `inFlight` nothing can replace it. Removed rather than kept as defence in depth,
+   * because a condition whose contrary state is unreachable cannot be watched fail — and this
+   * lane has twice now had such a line read by a later reviewer as a guarantee. What fixes the
+   * race is the PLACEMENT, after the assignment rather than inside the callback, and that is the
+   * whole of it.
    */
   const started = inFlight;
-  void started.finally(() => { if (inFlight === started) inFlight = null; });
+  void started.finally(() => { inFlight = null; });
   return started;
 }
 
