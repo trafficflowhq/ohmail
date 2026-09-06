@@ -213,12 +213,49 @@ function firstMisshapenParam(route: Route, params: RouteParams): string | null {
  * authenticated read as a refusal rather than as silence — the failure this closes is precisely
  * one where nothing looks wrong.
  *
- * **One documented exception carries mailbox metadata with no header, and it is not a bypass:**
- * `GET /admin/accounts/:id` is `anonymous`, so no session is resolved and none can be named, and
- * it is authorized separately by the operator's shared secret plus a `staff_sessions` row
- * (`routes/admin.ts`). Its `AccountDetail.mailboxes` projection is mailbox metadata for a staff
- * reader, not mail for an account holder. No customer-facing route reaches mail bytes or mailbox
- * metadata without a session.
+ * **The STAFF-AUTHORIZED ADMIN READS are the exception, and they are not a bypass.** `/admin/*`
+ * is `anonymous`, so no session is resolved and none can be named; authority there is the
+ * operator's shared secret plus a `staff_sessions` row (`routes/admin.ts`). Several of those reads
+ * return mailbox metadata — counts and tallies, `AccountDetail.mailboxes`, mailbox ids and
+ * addresses as option labels, worker lag. That is metadata for a staff reader, not mail for an
+ * account holder.
+ *
+ * **THE COUNT IS NOT WRITTEN DOWN HERE, and that is the third revision of this sentence.** It
+ * named one such read; a review found three; the next review found a fourth (`/admin/worker`). A
+ * number in this comment is a fact about how hard somebody looked, so the claim is now about the
+ * CLASS. And the class is NOT "every anonymous route" — that equation was the fourth revision's
+ * own error: `/health` and `/hello` are anonymous and carry no account data at all. It is the
+ * `/admin/*` reads, which are anonymous AND separately authorized by the operator's shared secret
+ * plus a `staff_sessions` row. `spend-gate.test.ts` asserts what it actually asserts — that every
+ * anonymous route is `cost: "unauthenticated"` and every such route is `public` — which is a fence
+ * around spending, not a statement about who may read mailbox metadata. The authority for THAT is
+ * `routes/admin.ts`'s own secret-plus-staff-session check — and `admin-routes.test.ts` is the
+ * census that holds it, over EVERY `GET /admin/*` derived from the route table rather than a list.
+ * That mattered: the list was six long while the surface was eight, so `/admin/costs` and the
+ * account ledger were never exercised against "a logged-in customer is refused exactly as a
+ * stranger is". Pointing at code alone would have left this sentence true and unenforced.
+ *
+ * No CUSTOMER-FACING route reaches mail bytes or mailbox metadata without a session.
+ *
+ * ── WHAT A CLIENT MAY CONCLUDE, STATED HERE RATHER THAN CITED ────────────────────────────────
+ *
+ * **Present:** this response's contents belong to the named account. On the sign-in and token
+ * routes that is the account the CREDENTIAL resolved to, which can differ from any session the
+ * request also carried; everywhere else it is the session's account.
+ *
+ * **Absent:** the response has no account subject — an anonymous route, a public one reached
+ * without a credential, a 401, a 404/405/400 answered before authentication, or a sign-in route
+ * that established nothing (a refused sign-in, a challenge carrying no tokens). A client holding
+ * per-account state must read absence on an authenticated read as a REFUSAL, not as assent.
+ *
+ * **Only against a server that advertises it.** `GET /hello` reports `features.accountHeader`.
+ * A server built before this header existed does not carry that key at all, and a client must not
+ * require the header from such a server — otherwise pointing at an older self-hosted install would
+ * make every ordinary response look like a refusal.
+ *
+ * That is the whole contract. It is written out rather than pointed at because the design note it
+ * used to cite is not part of the published repository, so a reader of that repository could not
+ * follow the reference — and a comment whose reference nobody can follow is worse than no comment.
  */
 export const ACCOUNT_HEADER = "X-Ohmail-Account";
 

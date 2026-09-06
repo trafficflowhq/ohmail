@@ -34,7 +34,7 @@ export const coreRoutes: Route[] = [
     method: "POST",
     pattern: "/auth/register",
     cost: "ceremony",
-    options: { public: true },
+    options: { public: true, credentialSubject: true },
     handler: async (req, deps) => {
       const body = await readBody<{ email: string; password: string; displayName: string; inviteCode: string }>(req);
       const result = await auth(deps).register(serviceContext(deps, req), body);

@@ -161,7 +161,7 @@ export const pairRedeemRoutes: Route[] = [
     method: "POST",
     pattern: "/pair/redeem",
     cost: "unauthenticated",
-    options: { public: true, anonymous: true },
+    options: { public: true, anonymous: true, credentialSubject: true },
     handler: async (req, deps) => {
       try {
         const b = await readObjectBody<{ grant?: unknown; token?: unknown; email?: unknown; kind?: unknown }>(req);

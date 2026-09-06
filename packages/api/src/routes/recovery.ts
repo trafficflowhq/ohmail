@@ -29,7 +29,7 @@ export const recoveryRoutes: Route[] = [
     method: "POST",
     pattern: "/auth/2fa/recovery-codes/verify",
     cost: "ceremony",
-    options: { public: true },
+    options: { public: true, credentialSubject: true },
     handler: async (req, deps) => {
       const body = await readBody<{ loginToken: string; code: string }>(req);
       return webSession(deps, await auth(deps).recoveryVerify(serviceContext(deps, req), body));

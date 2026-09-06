@@ -130,10 +130,35 @@ export class SessionLifecycle {
    * alongside it. The cast mirrors {@link asTx}: `Tx` and `Db` are the same runtime
    * object with different static shapes.
    */
+  /**
+   * ── AND IT IS WHERE `noteCredentialAccount` BECOMES COMMIT-SIDE ──────────────────────────────
+   *
+   * The reporting seam labels the response with the account a credential resolved to, and the
+   * seams that call it (`establish`, `mintRotation`) run inside transactions here. Reporting
+   * straight through meant a mutation of REQUEST state performed before the transaction that
+   * justified it had committed — and the lost-rotation recovery arm converts a commit failure to
+   * `null` and answers an error, so a rolled-back mint left the response labelled as though the
+   * session it rolled back existed.
+   *
+   * So a `txCtx` reports into a BUFFER, and the buffer is forwarded only after `transaction()`
+   * resolves. A rollback, a throw, or a swallowed commit failure discards it and the response
+   * names nobody, which is what the header's comment claims and did not do.
+   *
+   * Nesting composes: an inner transaction forwards into the outer's buffer on its own commit,
+   * and the outer forwards to the real context on its. Reporting OUTSIDE any transaction is
+   * unaffected and still goes straight through.
+   */
   protected async inTransaction<T>(
     ctx: ServiceContext, fn: (txCtx: ServiceContext) => Promise<T>,
   ): Promise<T> {
-    return asTx(ctx).transaction(async (tx) => fn({ ...ctx, db: tx as unknown as ServiceContext["db"] }));
+    let pending: string | null = null;
+    const result = await asTx(ctx).transaction(async (tx) => fn({
+      ...ctx,
+      db: tx as unknown as ServiceContext["db"],
+      noteCredentialAccount: (accountId: string) => { pending = accountId; },
+    }));
+    if (pending !== null) ctx.noteCredentialAccount?.(pending);
+    return result;
   }
 
   async logout(ctx: ServiceContext, b: { allDevices?: boolean } = {}): Promise<void> {
@@ -576,9 +601,11 @@ export class SessionLifecycle {
     await this.throttleReset(db, `user:${user.id}`);
     await this.throttleReset(db, `email:${user.email}`);
 
-    // Reported here and not at the top, so a ceremony that THROWS after the guard — or a
-    // transaction that rolls back — never leaves the response labelled with an account whose
-    // session was not in the end established. See ACCOUNT_HEADER in `packages/api/src/app.ts`.
+    // Reported here and not at the top, so a ceremony that THROWS after the guard never leaves
+    // the response labelled with an account whose session was not in the end established. The
+    // ROLLBACK half is not this line's doing and was once wrongly claimed here: it belongs to
+    // `inTransaction`, which buffers a report made inside a transaction and forwards it only on
+    // commit. See ACCOUNT_HEADER in `packages/api/src/app.ts`.
     ctx.noteCredentialAccount?.(user.accountId);
     return {
       status: "authenticated",
@@ -891,6 +918,11 @@ export class SessionLifecycle {
     // THE ROTATION'S SUCCESS TAIL — every one of `rotateRefresh`'s return paths (the hot path,
     // the concurrent-rotation grace, and the recovery arm) funnels through here, so the account
     // the presented credential belongs to is reported once rather than at five returns.
+    //
+    // Reporting here is not the same as reporting it to the REQUEST: the recovery arm runs inside
+    // `inTransaction`, which buffers this and forwards it only once the transaction commits. A
+    // rolled-back mint therefore names nobody. That indirection is the whole reason the buffer
+    // exists — see `inTransaction`.
     ctx.noteCredentialAccount?.(base.accountId);
     return {
       accessToken: newAccess, refreshToken: newRefresh, tokenType: "Bearer",

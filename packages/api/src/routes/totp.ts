@@ -43,7 +43,7 @@ export const totpRoutes: Route[] = [
     method: "POST",
     pattern: "/auth/2fa/totp/verify",
     cost: "ceremony",
-    options: { public: true },
+    options: { public: true, credentialSubject: true },
     handler: async (req, deps) => {
       // `kind` is the caller's own device declaration — the desktop's cloud-door sign-in names
       // its platform here so the session gets a device row the staleness alarm can attribute.

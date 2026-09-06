@@ -53,7 +53,7 @@ export const webauthnRoutes: Route[] = [
     method: "POST",
     pattern: "/auth/2fa/webauthn/assert/verify",
     cost: "ceremony",
-    options: { public: true },
+    options: { public: true, credentialSubject: true },
     handler: async (req, deps) => {
       const body = await readBody<{ loginToken: string; credential: unknown }>(req);
       return webSession(deps, await auth(deps).webauthnAssertVerify(serviceContext(deps, req), body));

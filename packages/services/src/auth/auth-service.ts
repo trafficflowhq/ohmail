@@ -47,7 +47,7 @@ import {
   allowedOrigins, assertOriginConfig, resolveCeremonyOrigin, tryNormalizeOrigin,
 } from "./origins.js";
 import { newTotpSecret, totpUri, verifyTotp } from "./totp.js";
-import { SessionLifecycle } from "./session-lifecycle.js";
+import { SessionLifecycle, refuseCrossAccountCredential } from "./session-lifecycle.js";
 
 type Method = "webauthn" | "totp" | "recovery_code";
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
@@ -1434,6 +1434,25 @@ export class AuthService extends SessionLifecycle {
       ? eq(loginTokens.challengeHash, hashToken(verifier))
       : isNull(loginTokens.challengeHash);
 
+    // BEFORE THE BURN, and only when there is something to compare. This door consumes its code
+    // in the same statement that resolves it, so the cross-account refusal cannot live at
+    // `establish` — by the time that runs the code is spent, and a 409 would leave the claimant
+    // unable to retry after signing out. The extra read costs a lookup on the token hash and
+    // happens only for a caller who already holds a session; the sessionless claim, which is
+    // every shipped desktop's, is untouched. A row consumed between this read and the write
+    // below still loses there, on `consumed_at IS NULL`.
+    if (ctx.accountId) {
+      const [peek] = await db.select({ userId: loginTokens.userId }).from(loginTokens)
+        .where(and(
+          eq(loginTokens.tokenHash, hashToken(raw)),
+          eq(loginTokens.purpose, DESKTOP_LINK_PURPOSE),
+          isNull(loginTokens.consumedAt),
+          gt(loginTokens.expiresAt, now),
+          binding,
+        )).limit(1);
+      if (peek) refuseCrossAccountCredential(ctx, (await this.loadUser(db, peek.userId)).accountId);
+    }
+
     const [row] = await db.update(loginTokens)
       .set({ consumedAt: now })
       .where(and(
@@ -1569,6 +1588,12 @@ export class AuthService extends SessionLifecycle {
     if (b.credential == null) throw new ServiceError("validation_failed", 400, "credential is required");
     const lt = await this.peekLoginToken(db, ctx, b.loginToken);
     const user = await this.loadUser(db, lt.userId);
+    // BEFORE THE CREDENTIAL IS SPENT. `peekLoginToken` reads without consuming, so refusing here
+    // burns nothing: the login token, the factor's replay window and the recovery code are all
+    // still intact, and clearing the ambient session and retrying succeeds. Placed at the peek
+    // rather than inside `establish` because `establish` runs after the consume — a 409 from
+    // there answered correctly and destroyed the credential on the way out.
+    refuseCrossAccountCredential(ctx, user.accountId);
     // RESERVED, not read — see {@link throttleReserve}. `peekLoginToken` deliberately does not
     // consume, so one live login token can be presented arbitrarily many times at once; with a
     // pure read in front of the verify the second factor had the same concurrency bound the
@@ -1687,6 +1712,12 @@ export class AuthService extends SessionLifecycle {
     }
     const lt = await this.peekLoginToken(db, ctx, b.loginToken);
     const user = await this.loadUser(db, lt.userId);
+    // BEFORE THE CREDENTIAL IS SPENT. `peekLoginToken` reads without consuming, so refusing here
+    // burns nothing: the login token, the factor's replay window and the recovery code are all
+    // still intact, and clearing the ambient session and retrying succeeds. Placed at the peek
+    // rather than inside `establish` because `establish` runs after the consume — a 409 from
+    // there answered correctly and destroyed the credential on the way out.
+    refuseCrossAccountCredential(ctx, user.accountId);
     // RESERVED, not read: six digits behind a pure-read gate is a code an attacker can spray as
     // wide as their connection count. See {@link throttleReserve}.
     await this.throttleReserve(db, `user:${user.id}`);
@@ -2012,6 +2043,12 @@ export class AuthService extends SessionLifecycle {
     requireField(b.code, "code");
     const lt = await this.peekLoginToken(db, ctx, b.loginToken);
     const user = await this.loadUser(db, lt.userId);
+    // BEFORE THE CREDENTIAL IS SPENT. `peekLoginToken` reads without consuming, so refusing here
+    // burns nothing: the login token, the factor's replay window and the recovery code are all
+    // still intact, and clearing the ambient session and retrying succeeds. Placed at the peek
+    // rather than inside `establish` because `establish` runs after the consume — a 409 from
+    // there answered correctly and destroyed the credential on the way out.
+    refuseCrossAccountCredential(ctx, user.accountId);
     // RESERVED, not read — {@link throttleReserve}.
     await this.throttleReserve(db, `user:${user.id}`);
 
@@ -2181,6 +2218,12 @@ export class AuthService extends SessionLifecycle {
     if (computed !== row.codeChallenge) {
       throw new ServiceError("invalid_grant", 400, "PKCE verification failed");
     }
+    // BEFORE THE BURN, for the reason the verify ceremonies give: a cross-account exchange must
+    // not spend the code on its way to a 409. The row is already read above, so this costs one
+    // user lookup and only for a caller who holds a session — a native exchange, which is every
+    // real one, carries none.
+    if (ctx.accountId) refuseCrossAccountCredential(ctx, (await this.loadUser(db, row.userId)).accountId);
+
     // Single-use, and the predicate is the enforcement. The `row.consumedAt` check
     // twenty lines up is a READ; without repeating the condition in the write, two token
     // exchanges carrying one authorization code both pass it and both get a full native
@@ -2306,6 +2349,12 @@ export class AuthService extends SessionLifecycle {
     await this.throttleReset(db, `user:${user.id}`);
     await this.throttleReset(db, `email:${user.email}`);
 
+    // AN ENROLLMENT SESSION IS STILL A SESSION. This mint does not go through `establish` — it
+    // writes its own row — so it needs its own report, and without one the zero-factor arms of
+    // `/auth/login`, `/auth/verify-email` and `/auth/register` answered with an enrollment
+    // credential and named nobody. Success tail, and inside a transaction the report is buffered
+    // to the commit by `inTransaction`.
+    ctx.noteCredentialAccount?.(user.accountId);
     return {
       status: "enrollment",
       user: await this.sessionUser(db, user.id),
