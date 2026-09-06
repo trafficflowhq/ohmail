@@ -84,6 +84,7 @@ import {
   type TagDTO,
 } from "@ohmail/client-engine";
 import { Copy } from "../copy";
+import { refuse, type RefusalArg } from "../refusal";
 import { folderLeafOf, folderUnreadCounts } from "./folders";
 import {
   destDone,
@@ -1062,7 +1063,12 @@ export async function flushQueued(engine: OhmailEngine): Promise<Map<string, Flu
 export interface LiveDeps {
   engine: OhmailEngine;
   /** One plain sentence to the reader — the screens' toast. */
-  toast: (sentence: string) => void;
+  /**
+   * A REFUSAL, not a sentence. A toast held in the queue used to be words chosen when it was
+   * raised, so one already on screen kept the language it was raised in while everything around
+   * it followed a switch. The screen writes it out with `sayArg`.
+   */
+  toast: (say: RefusalArg) => void;
   now?: () => Date;
   /**
    * RFC 4122 v4 — the id a NEW tag is minted under (`tag_assign.createName`: the server uses the
@@ -1288,7 +1294,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     // sheet's Done, Mark as read — remain the acts that spend the pin.
     // `via: "glance"` — the involuntary read, so the server's pin semantics see it as such.
     const ok = await watched(engine.mutate({ kind: "mark_seen", messageIds: [id], unread: false, via: "glance" }));
-    if (!ok) toast(Copy.liveSaveFailed);
+    if (!ok) toast(refuse("liveSaveFailed"));
     return ok;
   };
 
@@ -1317,7 +1323,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         // on a row that is still unread. The rows stay sweepable: the
         // next scroll event re-attempts them.
         for (const id of fresh) seen.delete(id);
-        toast(Copy.liveSaveFailed);
+        toast(refuse("liveSaveFailed"));
       }
       return ok;
     })();
@@ -1373,7 +1379,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const ok = await watched(
       engine.mutate({ kind: "feed_mark_seen", view, messageIds: [], upToId: anchor.id }),
     );
-    if (!ok) toast(Copy.liveSaveFailed);
+    if (!ok) toast(refuse("liveSaveFailed"));
     return ok;
   };
 
@@ -1383,7 +1389,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     if (!rep) {
       // The representative left the mirror between the render and the press (a drain, an
       // eviction). The one silent branch the webapp's commit named — never dispatch nothing.
-      toast(Copy.liveDecideFailed(row.address));
+      toast(refuse("liveDecideFailed", row.address));
       return false;
     }
     // Demote-stays-unread: filing to Screen out or Spam never carries a read verb.
@@ -1454,16 +1460,12 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
        press that already blocks on nothing else. */
     const ok = await landed;
     if (!ok) {
-      toast(Copy.liveDecideFailed(row.address));
+      toast(refuse("liveDecideFailed", row.address));
       return ok;
     }
     const queued = queuedWith as { name: string | null } | null;
     toast(
-      queued === null
-        ? Copy.liveDecided(destDone(dest), target)
-        : queued.name
-          ? Copy.liveDecidedElsewhere(queued.name, target)
-          : Copy.liveDecidedElsewhereUnknown(target),
+      queued === null ? refuse("liveDecided", destDone(dest), target) : queued.name ? refuse("liveDecidedElsewhere", queued.name, target) : refuse("liveDecidedElsewhereUnknown", target),
     );
     return ok;
   };
@@ -1488,7 +1490,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     if (retargets.length === 0 && moveIds.length === 0) {
       // Nothing to dispatch cannot change what the reader is looking at; saying "released"
       // over it would drop the row under a toast about a release that never happened.
-      toast(Copy.liveReleaseFailed(row.address));
+      toast(refuse("liveReleaseFailed", row.address));
       return false;
     }
     const parts = [
@@ -1497,12 +1499,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     ];
     // Two sentences, one true at a time: the retarget IS a statement about future mail.
     toast(
-      retargets.length > 0
-        ? Copy.liveReleasedRuled(row.held.length, destDone(dest))
-        : Copy.liveReleased(row.held.length, destDone(dest)),
+      retargets.length > 0 ? refuse("liveReleasedRuled", row.held.length, destDone(dest)) : refuse("liveReleased", row.held.length, destDone(dest)),
     );
     const ok = (await Promise.all(parts)).every(Boolean);
-    if (!ok) toast(Copy.liveReleaseFailed(row.address));
+    if (!ok) toast(refuse("liveReleaseFailed", row.address));
     return ok;
   };
 
@@ -1516,7 +1516,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         ...(kind === "resurface" ? { bubbleUpAt: nextMorning(now()).toISOString() } : {}),
       }),
     );
-    toast(ok ? Copy.livePileAdded(pileTitle(kind)) : Copy.livePileFailed(pileTitle(kind)));
+    toast(ok ? refuse("livePileAdded", pileTitle(kind)) : refuse("livePileFailed", pileTitle(kind)));
     return ok;
   };
 
@@ -1534,14 +1534,14 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   const triage = async (
     messageId: string,
     state: "none" | "reply_later" | "set_aside" | "bubbled_up" | "resurfaced",
-    sentence: string,
+    say: RefusalArg,
     bubbleUpAt?: string,
   ): Promise<boolean> => {
-    toast(sentence);
+    toast(say);
     const ok = await watched(
       engine.mutate({ kind: "triage_set", messageId, state, ...(bubbleUpAt ? { bubbleUpAt } : {}) }),
     );
-    if (!ok) toast(Copy.liveSaveFailed);
+    if (!ok) toast(refuse("liveSaveFailed"));
     return ok;
   };
 
@@ -1551,34 +1551,34 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const held = triageStateOf(engine.read(), m);
     if (kind === "replyLater") {
       return held === "reply_later"
-        ? triage(messageId, "none", Copy.toastUnqueued)
-        : triage(messageId, "reply_later", Copy.toastQueued);
+        ? triage(messageId, "none", refuse("toastUnqueued"))
+        : triage(messageId, "reply_later", refuse("toastQueued"));
     }
     return held === "set_aside"
-      ? triage(messageId, "none", Copy.toastUnparked)
-      : triage(messageId, "set_aside", Copy.toastAside);
+      ? triage(messageId, "none", refuse("toastUnparked"))
+      : triage(messageId, "set_aside", refuse("toastAside"));
   };
 
   const resurfaceAt = (messageId: string, iso: string): Promise<boolean> =>
-    triage(messageId, "bubbled_up", Copy.toastResurface(whenLabel(iso, zone)), iso);
+    triage(messageId, "bubbled_up", refuse("toastResurface", whenLabel(iso, zone)), iso);
 
   const resurfaceToggle = async (messageId: string): Promise<boolean> => {
     const m = messageOf(messageId);
     if (!m) return false;
     // A message already scheduled: the horizon-less verb CLEARS the booking rather than
     // silently re-dating it — the webapp's `resurface` arm, verbatim in intent.
-    if (triageStateOf(engine.read(), m) === "bubbled_up") return triage(messageId, "none", Copy.toastResurfaceCleared);
+    if (triageStateOf(engine.read(), m) === "bubbled_up") return triage(messageId, "none", refuse("toastResurfaceCleared"));
     return resurfaceAt(messageId, tomorrowNine(now()).toISOString());
   };
 
   const resurfaceNow = (messageId: string): Promise<boolean> =>
-    triage(messageId, "resurfaced", Copy.toastResurfaceNow);
+    triage(messageId, "resurfaced", refuse("toastResurfaceNow"));
 
   const markSeen = async (messageId: string, unread: boolean): Promise<boolean> => {
     // No `via`: this is the deliberate read, the one that spends a resurface pin on both sides
     // of the wire — the opposite of the open's glance and the streams' sweep.
     const ok = await watched(engine.mutate({ kind: "mark_seen", messageIds: [messageId], unread }));
-    if (!ok) toast(Copy.liveSaveFailed);
+    if (!ok) toast(refuse("liveSaveFailed"));
     return ok;
   };
 
@@ -1592,9 +1592,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       parts.push(watched(engine.mutate({ kind: "triage_set", messageId, state: "none" })));
     }
     parts.push(watched(engine.mutate({ kind: "mark_seen", messageIds: [messageId], unread: false })));
-    toast(Copy.toastResurfaceDone);
+    toast(refuse("toastResurfaceDone"));
     const ok = (await Promise.all(parts)).every(Boolean);
-    if (!ok) toast(Copy.liveSaveFailed);
+    if (!ok) toast(refuse("liveSaveFailed"));
     return ok;
   };
 
@@ -1602,9 +1602,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const m = messageOf(messageId);
     const folder = FOLDER_OF_VIEW[dest];
     if (!m || !folder || folder === m.folder) return false;
-    toast(Copy.toastMoved(moveTargetLabel(dest)));
+    toast(refuse("toastMoved", moveTargetLabel(dest)));
     const ok = await watched(engine.mutate({ kind: "move", messageId, folder }));
-    if (!ok) toast(Copy.liveSaveFailed);
+    if (!ok) toast(refuse("liveSaveFailed"));
     return ok;
   };
 
@@ -1618,9 +1618,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   const deleteMessage = async (messageId: string): Promise<boolean> => {
     const m = messageOf(messageId);
     if (!m) return false;
-    toast(Copy.toastDeleted);
+    toast(refuse("toastDeleted"));
     const ok = await watched(engine.mutate({ kind: "message_delete", messageId }));
-    if (!ok) toast(Copy.deleteFailed);
+    if (!ok) toast(refuse("deleteFailed"));
     return ok;
   };
 
@@ -1638,7 +1638,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * locked Send is what keeps a fresh-key duplicate impossible while the reconnect flush
    * (`connection.tsx`'s drain) keeps retrying the original.
    */
-  const sent = async (p: Promise<MutationResult>, sentToast: string): Promise<SendResult> => {
+  const sent = async (p: Promise<MutationResult>, sentToast: RefusalArg): Promise<SendResult> => {
     const first = await p.then((r) => r, () => null);
     let settled: MutationResult | null = first;
     if (first && first.status === "queued") {
@@ -1651,9 +1651,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const outcome = sendOutcomeOfResult(settled);
     toast(
       outcome === "sent" ? sentToast
-        : outcome === "queued" ? Copy.replyQueued
-          : outcome === "unverified" ? Copy.replyUnverified
-            : Copy.replyFailed,
+        : outcome === "queued" ? refuse("replyQueued")
+          : outcome === "unverified" ? refuse("replyUnverified")
+            : refuse("replyFailed"),
     );
     return { outcome, ...(outcome === "queued" && first ? { key: first.key } : {}) };
   };
@@ -1729,10 +1729,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
      */
     const conflict = r?.error?.code === "conflict" || r?.error?.status === 409;
     toast(
-      status === "confirmed" ? Copy.scheduleCancelled
-        : status === "queued" ? Copy.scheduleCancelQueued
-          : conflict ? Copy.scheduleCancelTooLate
-            : Copy.liveSaveFailed,
+      status === "confirmed" ? refuse("scheduleCancelled") : status === "queued" ? refuse("scheduleCancelQueued") : conflict ? refuse("scheduleCancelTooLate") : refuse("liveSaveFailed"),
     );
     return status === "confirmed";
   };
@@ -1759,9 +1756,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   };
 
   const tagToggle = async (messageId: string, tag: WorldTag, assigned: boolean): Promise<boolean> => {
-    toast(assigned ? Copy.tagTagged(tag.name) : Copy.tagUntagged(tag.name));
+    toast(assigned ? refuse("tagTagged", tag.name) : refuse("tagUntagged", tag.name));
     const ok = await watched(engine.mutate({ kind: "tag_assign", messageId, tagId: tag.id, assigned }));
-    if (!ok) toast(Copy.liveSaveFailed);
+    if (!ok) toast(refuse("liveSaveFailed"));
     return ok;
   };
 
@@ -1772,11 +1769,11 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     // "Invoices" beside "invoices" is the existing tag, toggled on, not a 409.
     const existing = liveTags(engine.read()).find((t) => t.name.toLowerCase() === typed.toLowerCase());
     if (existing) return tagToggle(messageId, existing, true);
-    toast(Copy.tagTagged(typed));
+    toast(refuse("tagTagged", typed));
     const ok = await watched(
       engine.mutate({ kind: "tag_assign", messageId, tagId: deps.uuid(), assigned: true, createName: typed }),
     );
-    if (!ok) toast(Copy.liveSaveFailed);
+    if (!ok) toast(refuse("liveSaveFailed"));
     return ok;
   };
 
@@ -1855,9 +1852,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         .slice(0, 50)
         .forEach((x) => void engine.mutate({ kind: "move", messageId: x.id, folder: wanted }));
     }
-    toast(Copy.liveDecided(destDone(dest), target));
+    toast(refuse("liveDecided", destDone(dest), target));
     const ok = await ruled;
-    if (!ok) toast(Copy.liveDecideFailed(m.from.address));
+    if (!ok) toast(refuse("liveDecideFailed", m.from.address));
     return ok;
   };
 
@@ -1866,7 +1863,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   /** One folder command, spoken about ONLY on rollback — success's feedback is the pending row. */
   const folderVerb = async (m: EngineMutation): Promise<boolean> => {
     const ok = await watched(engine.mutate(m));
-    if (!ok) toast(Copy.folderVerbFailed);
+    if (!ok) toast(refuse("folderVerbFailed"));
     return ok;
   };
 

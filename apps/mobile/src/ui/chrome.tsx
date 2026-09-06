@@ -11,6 +11,7 @@ import { Animated, Easing, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { Copy } from "../copy";
+import { sayArg } from "../refusal";
 import { useTheme } from "../theme";
 import { useWorld, useWorldToast } from "../state/world";
 import { Icon } from "./Icon";
@@ -202,7 +203,7 @@ export function Toast() {
   const insets = useSafeAreaInsets();
   const { toast, dismiss } = useWorldToast();
   const anim = useRef(new Animated.Value(0)).current;
-  const message = toast?.message;
+  const message = toast === null ? undefined : sayArg(toast.say);
   // The ID, not the text: the queue can hold two ADJACENT identical sentences (two replies
   // confirmed by one flush), and an effect keyed on the string would never re-arm the
   // dismiss timer for the second — a toast that stands forever and blocks the queue.

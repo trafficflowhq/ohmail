@@ -38,7 +38,7 @@ import {
 } from "react";
 
 import { Copy } from "../copy";
-import { type RefusalArg } from "../refusal";
+import { refuse, type RefusalArg } from "../refusal";
 import { useLocale } from "../i18n/LocaleProvider";
 import { useConnection } from "../net/connection";
 import {
@@ -302,7 +302,7 @@ export function useWorld(): World {
 
 /** The world's toast — one sentence, no undo (the engine already rolled the act back). */
 export interface WorldToast {
-  toast: { id: number; message: string } | null;
+  toast: { id: number; say: RefusalArg } | null;
   dismiss(): void;
 }
 
@@ -425,12 +425,12 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    * move rendered only the rollback. Each sentence now takes its turn (the Toast's own
    * dismiss timer advances the queue), capped so a burst cannot backlog the screen.
    */
-  const [toastQueue, setToastQueue] = useState<{ id: number; message: string }[]>([]);
+  const [toastQueue, setToastQueue] = useState<{ id: number; say: RefusalArg }[]>([]);
   const toastSeq = useRef(0);
-  const showToast = useCallback((message: string) => {
+  const showToast = useCallback((say: RefusalArg) => {
     toastSeq.current += 1;
     const id = toastSeq.current;
-    setToastQueue((q) => (q.length >= 4 ? q : [...q, { id, message }]));
+    setToastQueue((q) => (q.length >= 4 ? q : [...q, { id, say }]));
   }, []);
   const dismissToast = useCallback(() => setToastQueue((q) => q.slice(1)), []);
   const worldToast = useMemo<WorldToast>(
@@ -794,15 +794,13 @@ export function WorldProvider({ children }: { children: ReactNode }) {
             // sentence the foreground press would have spoken.
             if (o.status === "confirmed") {
               showToast(
-                o.sendAt !== null ? Copy.scheduledFor(scheduleLabel(o.sendAt, new Date(), zone))
-                  : o.forward ? Copy.forwarded
-                    : Copy.replySent,
+                o.sendAt !== null ? refuse("scheduledFor", scheduleLabel(o.sendAt, new Date(), zone)) : o.forward ? refuse("forwarded") : refuse("replySent"),
               );
             }
-            else if (o.status === "unverified") showToast(Copy.replyUnverified);
-            else showToast(Copy.replyFailed);
+            else if (o.status === "unverified") showToast(refuse("replyUnverified"));
+            else showToast(refuse("replyFailed"));
           } else if (o.status === "rolled_back") {
-            showToast(Copy.liveSaveFailed);
+            showToast(refuse("liveSaveFailed"));
           }
         }
         if (settled.size > 0) setOutcomeSeq((n) => n + 1);
