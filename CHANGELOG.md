@@ -13,6 +13,14 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### The phone chooser says what a phone can be
+
+The chooser offers three answers — ohmail Cloud, a server you run, or your own computer — and left
+the obvious next question unanswered: what if you have none of those? A phone does not organize a
+mailbox on its own, and the chooser now says so in one sentence, in English and German, under the
+three doors. It appears at first run and on the "Add a server" panel, which is where somebody who
+has already connected one server goes looking.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

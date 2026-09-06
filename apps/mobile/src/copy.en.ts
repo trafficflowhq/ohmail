@@ -128,6 +128,47 @@ const TABLE = {
     "On this phone, use the Tailscale address that pane also shows — ohmail cannot yet verify a computer reached over your own network here.",
 
   /**
+   * ═══ THE SENTENCE WHERE A PERSON LOOKS FOR THE FOURTH DOOR ═══════════════════════════════
+   *
+   * Three tiles, and every one of them names somebody else's machine. The question that leaves
+   * behind is the one this sentence answers: *and if I have none of those?* Nothing on this
+   * screen said it before — the absence was left to be inferred from three doors that happened
+   * not to include a fourth, which is not the same as being told.
+   *
+   * ── WHY IT IS ONE SENTENCE AND NOT A PARAGRAPH ─────────────────────────────────────────────
+   *
+   * A person reading a chooser is deciding, not studying. The whole fact is: this phone is a
+   * client, of one of three things, and organizing is not among them. A second sentence would
+   * have to be about mechanism (no IMAP client here, no engine dialling a mail server) and
+   * mechanism is not what the decision turns on.
+   *
+   * ── AND IT IS IN THE PRESENT TENSE, WHICH IS THE WHOLE CARE IN IT ─────────────────────────
+   *
+   * Two words would each make this false in a different direction and both were considered:
+   *
+   *  · **"cannot", or "never"** — a permanent claim. It would outlive the code the moment the
+   *    phone gains an engine of its own, and a sentence that has to be hunted down later is a
+   *    sentence that gets left in place.
+   *  · **"yet", or "for now"** — a promise. It commits the product to a thing no released build
+   *    does, in the one place a person is making a decision about what to buy into, and it is
+   *    exactly the reassurance nobody asked for.
+   *
+   * So: *does not*. What is true of the build in the reader's hand, stated without a claim about
+   * any other build. If that ever changes, this key changes with the code that changes it and
+   * the census below (`test/no-host-census.test.ts`) is what makes that impossible to forget:
+   * the sentence and the absent door are held by one guard.
+   *
+   * ── AND IT RENDERS ON BOTH SURFACES, NOT ONLY AT FIRST RUN ────────────────────────────────
+   *
+   * {@link doorsLead} is the first-run screen's alone (`lead`), because a lead sentence earns its
+   * room once. This one is not a lead: the question it answers is asked just as hard on the
+   * Servers screen's "Add a server" panel — arguably harder, by somebody who has already
+   * connected one server and is now looking for what else this phone can be.
+   */
+  doorsNoFourthDoor:
+    "This phone does not organize a mailbox on its own: it always works through ohmail Cloud, your own server, or a computer that organizes.",
+
+  /**
    * THE TRAVEL SENTENCE, IN THE ONE FORM THAT IS TRUE FOR A PHONE.
    *
    * The desktop's is *"Your rules and settings live in your own mailbox and travel with you — the

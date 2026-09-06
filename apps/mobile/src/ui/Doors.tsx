@@ -288,7 +288,20 @@ export function Doors({
           </View>
         ) : null}
 
+        {/* WHERE A PERSON LOOKS FOR THE FOURTH DOOR — under the third one, and unconditional.
+            Three tiles that all name somebody else's machine leave one question behind, and until
+            this line the screen answered it by omission. It is not inside the `lead` block: the
+            "Add a server" panel asks the same question of somebody who has already connected one
+            server, which is if anything the likelier place to go looking for a door that is not
+            there. `no-host-census.test.ts` holds it and the absent door together — the sentence
+            is only true while nothing in this app offers to organize. */}
         <View style={{ paddingHorizontal: 20, paddingTop: 14 }}>
+          <Txt variant="hint" tone="ink2">
+            {Copy.doorsNoFourthDoor}
+          </Txt>
+        </View>
+
+        <View style={{ paddingHorizontal: 20, paddingTop: 10 }}>
           <Txt variant="hint" tone="ink3">
             {Copy.doorsTravel}
           </Txt>

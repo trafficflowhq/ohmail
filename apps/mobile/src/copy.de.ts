@@ -79,6 +79,18 @@ export const DE: Deck = {
   doorDesktopNoPin:
     "Nimm auf diesem Telefon die Tailscale-Adresse, die dieselbe Ansicht zeigt — ohmail kann einen Computer, der über dein eigenes Netz erreicht wird, hier noch nicht prüfen.",
 
+  /**
+   * DIE PRÄSENS-FORM IST DIE GANZE SORGFALT — see the English deck's note for the argument.
+   *
+   * "kann nicht" would be a permanent claim about a build nobody has shipped yet; "noch nicht"
+   * would be a promise. German makes the trap slightly worse than English does, because "noch
+   * nicht" is the idiomatic filler a translator reaches for and it is precisely the word that
+   * turns a fact into a commitment. `organisiert … nicht von selbst` is the plain present tense:
+   * true of this build, silent about any other.
+   */
+  doorsNoFourthDoor:
+    "Dieses Telefon organisiert ein Postfach nicht von selbst: Es arbeitet immer über ohmail Cloud, deinen eigenen Server oder einen Computer, der organisiert.",
+
   doorsTravel:
     "Du kannst jederzeit wechseln. Deine aussortierten Absender, deine Regeln und deine Benachrichtigungs­einstellungen liegen in deinem eigenen Postfach und sind hinter jeder Tür dieselben — das Postfach ist immer das Original. Dieses Telefon hält davon immer nur eine Kopie.",
 
