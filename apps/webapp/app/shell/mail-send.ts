@@ -446,9 +446,23 @@ export function sendVerb(
  * `forward-send.test.ts` walks all three.
  */
 export function canSend(state: SendState, m: MailSend): boolean {
-  // `sent` joins the two locked phases: it is the beat between the confirmation and the surface
-  // closing, and a press landing inside it would mint a second key for a message already gone.
-  if (state.phase === "sending" || state.phase === "queued" || state.phase === "sent") return false;
+  /**
+   * `sent` joins the two locked phases: it is the beat between the confirmation and the surface
+   * closing, and a press landing inside it would mint a second key for a message already gone.
+   *
+   * `unverified` IS LOCKED TOO, and it used not to be. An unverified send is a TERMINAL-UNKNOWN
+   * state, not a failure: the reservation may already have delivered, and the only thing that
+   * makes a retry safe is reusing the key it went under. Leaving Send enabled here let the next
+   * press mint a fresh key — and the compose had shed the draft id by then, so the server saw a
+   * different draft under a different key and had nothing to collide with. Server uniqueness is
+   * `(account_id, idempotency_key)`, so two reservations for one message is not a race: it is the
+   * documented behaviour of pressing the button twice. A second copy in somebody's inbox cannot
+   * be taken back, which is why this is a lock rather than a warning.
+   */
+  if (
+    state.phase === "sending" || state.phase === "queued" || state.phase === "sent"
+    || state.phase === "unverified"
+  ) return false;
   const isForward = typeof m.forwardOf === "string" && m.forwardOf.length > 0;
   if (!isForward && m.body.trim().length === 0) return false;
   if (m.inReplyTo === null) {
@@ -740,14 +754,22 @@ export function useMailSend(
         // Terminal: the reservation this named is settled, so the fact it was accepted is spent
         // with it. Cleared beside the lock because the two have the same lifetime.
         accepted.current.delete(key);
-        // TERMINAL — `confirmed`, `failed` or `unverified`. The key is spent: whatever it named
-        // on the server is now that key's permanent answer, and the next press is a NEW send that
-        // must get a new key. Resuming a spent one would replay the old outcome for ever, which
-        // is a wedged Send button rather than a duplicate mail — still wrong, and this is the line
-        // that stops it. `unverified` is included deliberately, matching `canSend`, which does not
-        // lock it: the server refuses every further send of that draft, so the user's next press
-        // has to be able to be a genuinely fresh one.
-        releaseSendLock(key, owner.current);
+        /**
+         * TERMINAL — and `unverified` is NOT one of the terminals that spends the key.
+         *
+         * For `confirmed` and `failed` the key is spent: whatever it named on the server is that
+         * key's permanent answer, and the next press is a genuinely new send. Resuming a spent key
+         * would replay the old outcome for ever — a wedged Send button rather than a duplicate.
+         *
+         * `unverified` means nobody knows whether it delivered. The lock is what carries the key
+         * across a reload, so releasing it is exactly how the next press gets a FRESH key for a
+         * message that may already be gone. This branch used to release it, on the reasoning that
+         * "the server refuses every further send of that draft" — which stopped being true the
+         * moment the compose shed the draft id before re-sending. The key is kept, so any retry
+         * reuses it and the server can recognise the reservation; the send parks as needing a
+         * check instead of quietly going twice.
+         */
+        if (next.phase !== "unverified") releaseSendLock(key, owner.current);
       }
       // A confirmation is the only outcome that does anything beyond the phase, and `settle`
       // is where all of it lives — so a confirmation from a flush minutes later clears the

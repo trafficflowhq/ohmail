@@ -3762,13 +3762,19 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
     );
     const withWhen = (m: MailSendMutation): MailSendMutation =>
       sendAt ? { ...m, sendAt } : m;
-    if (mailSend.stateOf(COMPOSE_SEND_KEY).phase === "unverified" && autosave.draftId) {
-      recoverySeed.current = autosave.draftId;
-      autosave.release();
-      const { draftId: _stranded, ...fresh } = plan.mutation;
-      mailSend.send(withWhen(withSignature(fresh, sigText)));
-      return;
-    }
+    /**
+     * NO FRESH-KEY RESEND AFTER AN UNVERIFIED SEND.
+     *
+     * This used to shed the draft id and send again. Every part of that was the duplicate: a send
+     * with no draft id creates a NEW draft, `useMailSend` mints a NEW key for it, and the server's
+     * uniqueness is `(account_id, idempotency_key)` — so the second reservation collides with
+     * nothing and both can deliver the same message.
+     *
+     * `unverified` is terminal-UNKNOWN, not failed. The reservation may already have gone. The
+     * send therefore parks: `canSend` refuses while the phase stands, the durable lock keeps the
+     * original key rather than releasing it, and the person is shown that it needs checking. A
+     * retry that reuses the key is safe; nothing here may invent a new one.
+     */
     mailSend.send(withWhen(withSignature(plan.mutation, sigText)));
   }, [mailSend, plan, autosave, compose.sig, composeFrom.mailboxId, consent.signatures, consent.signaturesKnown]);
 
