@@ -323,8 +323,12 @@ export function baseIsForeign(recorded: string | null | undefined, configured: s
  * anything that is not a JSON object is a marker written before the server joined the record — one
  * bare address, no server, adopted.
  */
-export function encodeMirrorRecord(address: string, base: string | null): string {
-  return JSON.stringify({ address, base });
+export function encodeMirrorRecord(
+  address: string,
+  base: string | null,
+  account: string | null = null,
+): string {
+  return JSON.stringify({ address, base, account });
 }
 
 /**
@@ -339,22 +343,43 @@ export function decodeMirrorRecord(raw: string): MirrorRecord {
   const text = raw.trim();
   if (text.startsWith("{")) {
     try {
-      const parsed = JSON.parse(text) as { address?: unknown; base?: unknown };
+      const parsed = JSON.parse(text) as { address?: unknown; base?: unknown; account?: unknown };
       const address = typeof parsed.address === "string" ? parsed.address.trim() : "";
       const base = typeof parsed.base === "string" && parsed.base.trim() !== "" ? parsed.base.trim() : null;
-      return { address, base, legacy: false };
+      const account = typeof parsed.account === "string" && parsed.account.trim() !== ""
+        ? parsed.account.trim()
+        : null;
+      return { address, base, account, legacy: false };
     } catch {
       /* A torn or truncated write. Falls through to the legacy read, which yields an address that
          matches nothing — the same answer an empty file gives, and the safe one. */
     }
   }
-  return { address: text, base: null, legacy: true };
+  return { address: text, base: null, account: null, legacy: true };
 }
 
 export interface MirrorRecord {
   address: string;
   /** The server, or null when the record does not establish one. */
   base: string | null;
+  /**
+   * THE ACCOUNT THIS DIRECTORY'S MAIL BELONGS TO, as the server itself named it — or null when no
+   * server has ever named one.
+   *
+   * Written by the pairing redeem from the account header the host answers with, and compared on
+   * every later redeem so that a host REINSTALLED at the same address cannot have its mail merged
+   * into this one. Same address, same key possibly, and a different world: two accounts in one
+   * database is the failure `enforceMirrorOwner`'s header calls the worst this product has, and
+   * an address comparison cannot see it because the address did not change.
+   *
+   * NULL IS A DISTINCT STATE, not a missing value to be filled in by whatever arrives. It means
+   * "no server has named an account for this directory" — every record written before this field
+   * existed, and every composition that does not name accounts. Collapsing it into "matches
+   * anything" would read "never told" as agreement; collapsing it into "matches nothing" would
+   * refuse every pairing against such a composition. So it is kept, and {@link accountIsForeign}
+   * refuses only on a positive disagreement — `baseIsForeign`'s rule, for the same reason.
+   */
+  account: string | null;
   /**
    * TRUE when this record is the ONE-ADDRESS SHAPE an earlier build wrote, and that distinction is
    * load-bearing rather than informational.
@@ -409,4 +434,29 @@ export function mirrorIsForeign(
   const owner = record.base === null ? null : normalizeBase(record.base);
   if (owner === null) return true;
   return baseIsForeign(owner, configuredBase);
+}
+
+/**
+ * IS THIS A DIFFERENT ACCOUNT THAN THE ONE THIS DIRECTORY'S MAIL BELONGS TO?
+ *
+ * `true` ONLY on a positive disagreement: both sides named an account and the two are not the
+ * same. Every other combination is `false`, and each for its own reason rather than by a blanket
+ * default:
+ *
+ *  · **NOTHING RECORDED.** No server has ever named an account for this directory — a record
+ *    written before the field existed, or a host that does not name accounts. There is nothing to
+ *    disagree with, and refusing would make this install unpairable with a composition that is
+ *    perfectly correct.
+ *  · **NOTHING NAMED NOW.** The answer carried no account header. That is a fact about this
+ *    response, not evidence about whose mail is here, and reading it as a change would discard a
+ *    working mirror because one header was absent.
+ *
+ * Ids are compared verbatim. They are opaque server-side identifiers, and folding case or
+ * whitespace into them would be inventing an equivalence between two values a server considers
+ * distinct — the mistake `normalizeHost`'s header names, in the one place it would be silent.
+ */
+export function accountIsForeign(recorded: string | null | undefined, named: string | null | undefined): boolean {
+  if (typeof recorded !== "string" || recorded === "") return false;
+  if (typeof named !== "string" || named === "") return false;
+  return recorded !== named;
 }

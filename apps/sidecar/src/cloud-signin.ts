@@ -461,3 +461,136 @@ export async function cloudSignIn(
   }
   return tokens;
 }
+
+/**
+ * REDEEMING A PAIRING CODE PRINTED BY ANOTHER MACHINE'S DESKTOP.
+ *
+ * The third way in, beside the password and the browser hand-off, and structurally the simplest:
+ * one request, one single-use token, a bearer pair back. What makes it worth its own function
+ * rather than a branch of {@link cloudSignIn} is that the two facts it must get right are not the
+ * sign-in's facts.
+ *
+ * ── `kind` IS REQUIRED HERE, AND THE SIGN-IN PATHS ONLY PREFER IT ─────────────────────────────
+ *
+ * On the sign-in paths an unrecognised platform omits the field and the account keeps its legacy
+ * reading — an honest silence about a device that is otherwise fully described. Here the silence
+ * is not honest: the host defaults an absent kind to `"web"`, so a desktop that omitted it appears
+ * in somebody's Devices pane as a browser. That pane is where a person decides what to revoke, and
+ * a row naming the wrong kind of thing is a false state shown at exactly the moment accuracy
+ * matters. A platform this build has no word for is therefore REFUSED by name rather than
+ * mislabelled — a refusal names a machine nobody can pair yet, which is a smaller wrong than a
+ * device list that lies about what is on it.
+ *
+ * ── THE ACCOUNT IS ASKED OF THE HOST, AND `null` IS ITS OWN ANSWER ────────────────────────────
+ *
+ * The response names the account the pair belongs to in {@link ACCOUNT_HEADER}. A freshly paired
+ * install has no other way to learn it: the bearer opens an account whose id is not in the body,
+ * and asking afterwards means already trusting whatever answers. It is recorded so that a LATER
+ * answer naming a different account can be refused — a host reinstalled at the same address is a
+ * different world, and merging its mirror into this one would be two accounts in one database.
+ *
+ * `null` — the host named nobody — is kept DISTINCT from a recorded id, and that distinction is
+ * load-bearing rather than tidy. Collapsing them means either refusing every pairing with a
+ * composition that does not name accounts, or treating "never told" as agreement with whatever
+ * arrives next. Neither is right, so the value says which state it is in and the comparison that
+ * uses it refuses only on a POSITIVE disagreement — `baseIsForeign`'s rule, for the same reason.
+ */
+export interface PairRedeemResult {
+  tokens: CloudTokens;
+  /** The account the host named, or null when it named none. Never a guess. */
+  accountId: string | null;
+}
+
+/** The header a host names the account in. One spelling, matching `packages/api/src/app.ts`. */
+export const ACCOUNT_HEADER = "x-ohmail-account";
+
+export interface PairRedeemOptions extends CloudSignInOptions {
+  /** REQUIRED, unlike on the sign-in paths — see the header. */
+  deviceKind: DesktopDeviceKind;
+}
+
+export async function redeemPairingToken(
+  opts: PairRedeemOptions,
+  token: string,
+): Promise<PairRedeemResult> {
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const base = opts.baseUrl.replace(/\/+$/, "");
+  const code = trimmed(token);
+  if (!code) {
+    throw new CloudSignInError("invalid_request", 400, "that pairing code is empty");
+  }
+  /* PRESENT AND A KNOWN KIND. The type says so and a type is not a validation: this arrives from
+     an engine that composed it from `process.platform`, and a platform the vocabulary has no word
+     for produces `null` there. Refused here rather than sent, for the header's reason. */
+  if (!opts.deviceKind) {
+    throw new CloudSignInError(
+      "unsupported_platform",
+      409,
+      "this build cannot tell the other computer what kind of machine this is, and pairing " +
+        "without that would list it there as a browser",
+    );
+  }
+
+  let res: Response;
+  try {
+    res = await fetchImpl(`${base}/pair/redeem`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ grant: "device-pair", token: code, kind: opts.deviceKind }),
+    });
+  } catch (err) {
+    opts.log?.("cloud_pair_redeem_failed", {
+      err,
+      reason: "the paired computer could not be reached while redeeming the code",
+    });
+    throw new CloudSignInError("host_unreachable", 502, "that computer could not be reached");
+  }
+
+  const body = await readJson(res);
+  if (!res.ok) {
+    // The STATUS and nothing else. Which code was presented and whose account refused it are the
+    // identifying facts the sidecar log census keeps off the line.
+    opts.log?.("cloud_pair_redeem_refused", { status: res.status, reason: "the paired computer refused the code" });
+    /* 409 IS ITS OWN ANSWER AND NOT A BAD CODE. The host refuses a credential belonging to
+       another account with `session_conflict`, and telling somebody to ask for a fresh code would
+       send them round a loop that cannot end. */
+    if (res.status === 409) {
+      throw new CloudSignInError(
+        "pair_refused",
+        409,
+        "that computer refused the code because it belongs to a different account",
+      );
+    }
+    if (res.status === 429) {
+      throw new CloudSignInError(
+        "rate_limited", 429,
+        "too many attempts from this connection; give it a few minutes and try again",
+      );
+    }
+    throw new CloudSignInError(
+      res.status === 400 || res.status === 401 ? "invalid_pair_code" : "host_refused",
+      res.status === 400 || res.status === 401 ? 401 : 502,
+      res.status === 400 || res.status === 401
+        ? "that pairing code was not accepted; codes work once, so print a fresh one from that " +
+          "computer's Settings → Devices"
+        : `that computer answered HTTP ${res.status} to the code`,
+    );
+  }
+
+  /* THE BODY ONLY. A pairing redeem answers `{grant, tokens}` and never a cookie — the host's door
+     is composed `allowCookieAuth: false` — so the cookie fallback the sign-in paths need would be
+     reading for a transport this door does not have. Asking for it anyway would quietly accept a
+     session established the one way this ceremony refuses. */
+  const wire = (body as { tokens?: { accessToken?: unknown; refreshToken?: unknown } } | null)?.tokens;
+  if (typeof wire?.accessToken !== "string" || typeof wire?.refreshToken !== "string") {
+    throw new CloudSignInError(
+      "no_session_returned", 502,
+      "that computer accepted the code and returned no session",
+    );
+  }
+  const named = trimmed(res.headers.get(ACCOUNT_HEADER));
+  return {
+    tokens: { accessToken: wire.accessToken, refreshToken: wire.refreshToken },
+    accountId: named === "" ? null : named,
+  };
+}

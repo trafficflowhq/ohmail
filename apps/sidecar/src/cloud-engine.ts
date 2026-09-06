@@ -16,6 +16,7 @@ import {
   CloudSignInError,
   desktopDeviceKind,
   newDesktopLinkPair,
+  redeemPairingToken,
   type CloudSignInRequest,
 } from "./cloud-signin.js";
 import { createCloudMirror, CLOUD_SYNC_TYPES, type CloudMirror } from "./cloud-mirror.js";
@@ -23,6 +24,7 @@ import { startCloudWake, type CloudWake } from "./cloud-wake.js";
 import { matchReadRoute } from "./cloud-read.js";
 import { createWriteThroughProxy, type WriteThroughProxy } from "./cloud-proxy.js";
 import {
+  accountIsForeign,
   apiBaseFor,
   baseIsForeign,
   decodeMirrorRecord,
@@ -284,6 +286,18 @@ export function readMirrorBase(dataDir: string): string | null {
   return raw === null ? null : decodeMirrorRecord(raw).base;
 }
 
+/**
+ * The ACCOUNT this directory's mail belongs to, as a server named it, or null when none has.
+ *
+ * Null is the ordinary answer for every install that predates the pairing door and for every
+ * composition that does not name accounts — see `MirrorRecord.account`, and `accountIsForeign`,
+ * which is the only thing allowed to decide anything from it.
+ */
+export function readMirrorAccount(dataDir: string): string | null {
+  const raw = readMirrorRecordRaw(dataDir);
+  return raw === null ? null : decodeMirrorRecord(raw).account;
+}
+
 function readMirrorRecordRaw(dataDir: string): string | null {
   const ownerPath = join(dataDir, MIRROR_OWNER_FILE);
   if (!existsSync(ownerPath)) return null;
@@ -417,7 +431,16 @@ export function enforceMirrorOwner(
     });
   }
   mkdirSync(dataDir, { recursive: true });
-  writeFileSync(ownerPath, encodeMirrorRecord(served, servedBase), { mode: 0o600 });
+  /* THE ACCOUNT IS CARRIED FORWARD, NOT REWRITTEN — this rewrite happens on EVERY launch, and a
+     record composed from what this launch happens to know would drop the account the pairing
+     redeem wrote and silently un-bind the directory. Carried only when the mirror SURVIVED: a
+     discard is a new world, and keeping the previous world's account would then refuse the very
+     re-pairing the discard exists to allow. */
+  writeFileSync(
+    ownerPath,
+    encodeMirrorRecord(served, servedBase, foreign ? null : priorRecord?.account ?? null),
+    { mode: 0o600 },
+  );
   return foreign;
 }
 
@@ -1340,6 +1363,150 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           });
         });
         return json({ status: "signed_in", mailboxId: world.mailboxId, address: config.address });
+      }
+
+      /**
+       * ── `POST /cloud/pair-redeem` — THE THIRD WAY IN ────────────────────────────────────────
+       *
+       * A pairing code printed by ANOTHER machine's desktop, spent here for a bearer pair. It sits
+       * beside `/cloud/signin` and takes its whole shape from it, because it does the same job:
+       * this is the one process allowed to hold a credential for the configured server, and the
+       * only place a session may be sealed.
+       *
+       * ── WHAT THE BODY CARRIES, AND WHAT IT DELIBERATELY DOES NOT ───────────────────────────
+       *
+       * The TOKEN, and nothing else. The origin is not the caller's to name — this engine dials
+       * exactly what it was configured for, which is `enforceMirrorOwner`'s premise and the reason
+       * `/cloud/probe` takes a candidate but never adopts one. And the KIND is not the caller's
+       * either: what platform this install runs on is this process's own fact, the verifier's
+       * placement rule, applied to the field that decides what somebody else's Devices pane says
+       * this machine is.
+       *
+       * ── ONE MIRROR, ONE ACCOUNT — THE THIRD ENFORCEMENT POINT ──────────────────────────────
+       *
+       * `enforceMirrorOwner` settles the question for a LAUNCH and the sign-in settles it for a
+       * password. Neither can settle it here, and the case is one neither of them can see: a host
+       * REINSTALLED at the same address. The address is unchanged, the base is unchanged, and the
+       * world behind it is new — so the two comparisons that exist both say "same server" while
+       * the mail on the other side belongs to a different account.
+       *
+       * The account the host names is therefore compared with the one this directory recorded, and
+       * a positive disagreement is REFUSED rather than merged. The remedy named is re-pairing from
+       * scratch, which is the shell re-pointing the door — the one code path that has always been
+       * able to discard a mirror, done once, in one place. Merging is never offered: two accounts
+       * in one database is the failure `enforceMirrorOwner`'s own header calls the worst this
+       * product has.
+       */
+      if (req.method === "POST" && path === "/cloud/pair-redeem") {
+        // The expiry teardown's tail removes the seal; sealing a fresh pair before it runs hands
+        // the new session to the old teardown's rmSync. `/cloud/signin`'s wait, for its reason.
+        await sessionTeardown;
+        if (authed) {
+          return json(
+            { error: { code: "already_signed_in", message: "this install already holds a session" } },
+            409,
+          );
+        }
+        let token: unknown;
+        try {
+          token = ((await req.json()) as { token?: unknown }).token;
+        } catch {
+          return json({ error: { code: "invalid_request", message: "the pairing body is not JSON" } }, 400);
+        }
+        if (typeof token !== "string") {
+          return json(
+            { error: { code: "invalid_request", message: "the pairing code must be text" } },
+            400,
+          );
+        }
+        /* REQUIRED, unlike on the sign-in paths. An absent kind is read by the host as "web", so a
+           desktop that omitted it appears in somebody's Devices pane as a browser — a false state
+           shown on the screen where a person decides what to revoke. Refused by name instead. */
+        if (!declaredDeviceKind) {
+          return json(
+            {
+              error: {
+                code: "unsupported_platform",
+                message:
+                  "this build cannot tell the other computer what kind of machine this is, and " +
+                  "pairing without that would list it there as a browser",
+              },
+            },
+            409,
+          );
+        }
+
+        let redeemed: Awaited<ReturnType<typeof redeemPairingToken>>;
+        try {
+          redeemed = await redeemPairingToken(
+            {
+              baseUrl: cloudBase,
+              deviceKind: declaredDeviceKind,
+              ...(config.fetchImpl ? { fetchImpl: config.fetchImpl } : {}),
+              ...(log ? { log } : {}),
+            },
+            token,
+          );
+        } catch (err) {
+          if (err instanceof CloudSignInError) {
+            return json({ error: { code: err.code, message: err.message } }, err.status);
+          }
+          throw err;
+        }
+
+        const recordedAccount = readMirrorAccount(config.dataDir);
+        if (accountIsForeign(recordedAccount, redeemed.accountId)) {
+          // REFUSED, AND NOTHING KEPT. The pair is not sealed and `activate` is not called, so
+          // every read below stays `409 not_signed_in` — there is no window in which this session
+          // reaches the previous world's rows. The DISCARD is deliberately not done here, for the
+          // reason the sign-in's mismatch does not do it either: throwing a mirror away means
+          // removing `pgdata` under an open database, which the constructor already does correctly
+          // before anything is opened.
+          //
+          // The message names neither account. Somebody standing at this machine pairing with
+          // their own computer must not be told whose mail is on it.
+          log?.("cloud_pair_account_mismatch", { changed: true });
+          return json(
+            {
+              error: {
+                code: "pair_account_mismatch",
+                message:
+                  "this install already holds mail from a different account on that computer, so " +
+                  "pairing again has to start over from scratch",
+              },
+            },
+            409,
+          );
+        }
+
+        // SEALED BEFORE THE MIRROR IS TOLD, and after the account check, for `/cloud/signin`'s
+        // reasons exactly: a pair belonging to another world must not be written into this
+        // directory even briefly, and a pair that could not reach the disk is a session that
+        // silently is not there after the next quit.
+        if (keyProvider) await sealTokens(sealPath, keyProvider, redeemed.tokens);
+        /* THE BINDING IS WRITTEN ONLY WHEN THE HOST NAMED ONE. A composition that names no account
+           leaves the field as it was rather than stamping `null` over a recorded id — "this answer
+           carried no header" is not evidence about whose mail is here. */
+        if (redeemed.accountId !== null) {
+          const record = readMirrorRecordRaw(config.dataDir);
+          const prior = record === null ? null : decodeMirrorRecord(record);
+          writeFileSync(
+            join(config.dataDir, MIRROR_OWNER_FILE),
+            encodeMirrorRecord(prior?.address ?? config.address, prior?.base ?? cloudBase, redeemed.accountId),
+            { mode: 0o600 },
+          );
+        }
+        const live = activate(redeemed.tokens);
+        log?.("cloud_paired", { mailboxId: world.mailboxId });
+        // NOT AWAITED — a first pull takes a while and a pairing that appears to hang for it looks
+        // broken. The mirror reports its own progress through `/health.online`.
+        void live.mirror.start().catch((err: unknown) => {
+          log?.("cloud_pull_failed", {
+            err,
+            reason: "the first pull after pairing did not complete; the mirror retries with backoff",
+          });
+        });
+        return json({ status: "paired", mailboxId: world.mailboxId, address: config.address });
       }
 
       if (req.method === "DELETE" && path === "/cloud/session") {
