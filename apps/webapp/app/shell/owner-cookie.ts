@@ -216,3 +216,31 @@ export function markSignedOutPending(write?: (cookie: string) => void): void {
   if (typeof document === "undefined") return;
   document.cookie = cookie;
 }
+
+/**
+ * WRITE THE MARKER FROM WHAT THE SERVER SAID — the one client-side write of an account name, and
+ * it relays a server statement rather than inventing one.
+ *
+ * The marker is otherwise the server's to set, which is what makes it evidence. This exists for
+ * one shape: the sign-in and token routes answer with `X-Ohmail-Account` naming the account THE
+ * CREDENTIAL resolved to, and on those routes a header disagreeing with the cookie is the new
+ * owner rather than a leak — the server refuses (`409 session_conflict`) any request where a live
+ * session and a credential disagree, so a disagreement that came back 2xx is a sign-in that
+ * succeeded. The value written is the header's, never a query parameter, a body field or anything
+ * this client decided.
+ *
+ * Paired with `bindApiOwner` at the one call site, and it has to be: binding without writing
+ * leaves a client that has been told there is an account here and cannot see it named, which
+ * fails closed on every subsequent request — the enrolment session sets no marker of its own.
+ */
+export function rememberOwner(accountId: string, write?: (cookie: string) => void): void {
+  if (!isOwnerShaped(accountId)) return;
+  const secure = typeof location !== "undefined" && location.protocol === "https:" ? "; Secure" : "";
+  const cookie = `${OWNER_COOKIE}=${accountId}; Path=/; SameSite=Strict${secure}`;
+  if (write) {
+    write(cookie);
+    return;
+  }
+  if (typeof document === "undefined") return;
+  document.cookie = cookie;
+}

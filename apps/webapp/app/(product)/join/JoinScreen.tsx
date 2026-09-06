@@ -379,6 +379,21 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
         // whole job is to explain what just happened.
         setFatal(t(needsInvite ? "expired" : "expiredOpen"));
         setFatalAction("signIn");
+      } else if (code === "session_conflict") {
+        /*
+         * ── THE WINDOW BETWEEN THE ASK AND THE WRITE, CLOSED ON THE SERVER ──────────────────
+         *
+         * `sameAccount()` asks who this browser holds and then makes the request, and a session
+         * that changes between those two is not something this side can see. The server refuses
+         * that request outright — a live session and a credential that disagree are a `409
+         * session_conflict` — so what is left here is saying so in the same words the preflight
+         * uses, rather than rendering the raw sentence of an error the person cannot act on.
+         *
+         * No email in this one, deliberately: the refusal happened on the server and this client
+         * was never told whose session it collided with. Naming an account we did not read would
+         * be inventing the most load-bearing word in the sentence.
+         */
+        setError(t("accountConflict"));
       } else if (code === "step_up_required") {
         // The step-up window (5 minutes since the last second factor) closed while the user
         // was off fetching an app password from their provider — which realistically takes

@@ -108,11 +108,28 @@ export const apiOwnerBinding: () => { kind: "public" } = () => ({ kind: "public"
 export const apiOwnerHolds: (path: string, opts?: { ceremony?: boolean }) => boolean = () => true;
 
 /**
+ * WITHDRAW THE CONFIRMATION — a no-op, for the same reason the four above are.
+ *
+ * The hosted client calls this when a response could not name the account it was for. This door
+ * has no cookie jar, no session and no account to be wrong about: its mail arrives from a process
+ * on the same machine over a channel that is not `fetch`, and there is no confirmation to
+ * withdraw.
+ */
+export const reResolveApiOwner: () => void = () => {};
+
+/**
  * The hosted client's cookie-writer census, for the test that derives it from the server's route
  * table. Empty here: this door writes no browser cookies at all, so there is nothing to lock and
  * nothing to compare — see the note above these five.
  */
 export const cookieWritingPaths: () => readonly string[] = () => [];
+
+/**
+ * The routes on which a response header naming another account is a SIGN-IN rather than a leak.
+ * Empty here for `cookieWritingPaths`' reason: no session is established through this door, so no
+ * response through it can name an account the credential resolved to.
+ */
+export const credentialRoutes: () => readonly string[] = () => [];
 
 export interface SessionUser {
     userId: string;
