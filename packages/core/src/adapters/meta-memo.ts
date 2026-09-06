@@ -103,6 +103,16 @@ interface Entry {
 export type MemoRead =
   | { readonly kind: "memo"; readonly memo: MetaMemo }
   | { readonly kind: "empty" }
+  /**
+   * THE CALLER COULD NOT LEARN THE FOLDER'S GENERATION, so nothing here may be used — and
+   * nothing here is thrown away either.
+   *
+   * These are not the same as a mismatch and treating them as one was destructive: this entry is
+   * SHARED by four positions, so one caller that cannot see the generation would have cleared the
+   * claim anchor, the settings anchor and the sweep's place along with its own. A reader that
+   * cannot check a position simply does without it.
+   */
+  | { readonly kind: "unusable" }
   | { readonly kind: "invalidated"; readonly was: Generation; readonly now: Generation };
 
 const store = new Map<string, Entry>();
@@ -136,6 +146,10 @@ export function readMemo(id: MetaIdentity, generation: Generation): MemoRead {
   assertMetaIdentity("the meta memory", id);
   const entry = store.get(keyOf(id));
   if (entry === undefined) return { kind: "empty" };
+  /* Asked without a generation: the caller cannot check anything, which is a fact about the
+   * CALLER and not about this entry. Deleting here would let one blind reader wipe three other
+   * readers' positions. */
+  if (generation === null) return { kind: "unusable" };
   if (!sameGeneration(entry.generation, generation)) {
     store.delete(keyOf(id));
     return { kind: "invalidated", was: entry.generation, now: generation };
@@ -158,6 +172,21 @@ export function writeMemo(id: MetaIdentity, generation: Generation, patch: MetaM
     ? existing.memo
     : {};
   store.set(keyOf(id), { generation, memo: { ...base, ...patch } });
+}
+
+/**
+ * THE STORED ENTRY AND THE GENERATION IT BELONGS TO, WITHOUT CHECKING IT.
+ *
+ * For the one caller that cannot check first: the request drain must pass its resume point INTO
+ * the read that would tell it the folder's generation, so the check has to happen after. It uses
+ * this, then compares and discards. Nothing else should: `readMemo` is the door, and a position
+ * used without a check is only safe where using a stale one costs a wasted window and never a
+ * wrong decision — which is true of a walk's resume point and of nothing else here.
+ */
+export function peekMemo(id: MetaIdentity): { generation: Generation; memo: MetaMemo } | null {
+  assertMetaIdentity("the meta memory", id);
+  const entry = store.get(keyOf(id));
+  return entry === undefined ? null : { generation: entry.generation, memo: entry.memo };
 }
 
 /** Forget one field without disturbing the others. */

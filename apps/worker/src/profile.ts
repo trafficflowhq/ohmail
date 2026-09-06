@@ -74,7 +74,12 @@ export { PROFILE_FOUND_AUDIT_ACTION };
  * the probe's `false` is acted on by doing nothing rather than by throwing.
  */
 export interface ProfileCapableAdapter {
-  profileIo(): ProfileIo;
+  /* The identity this io's memory is keyed by. Required for the reason the lease's is: what an
+   * install remembers about a mailbox must not be reachable by another install or another
+   * mailbox. Declared here as well as on the adapter because THIS interface is what the
+   * compiler checks at the call sites below — the concrete adapter's own signature is
+   * invisible to them, which is how these five calls came to pass nothing at all. */
+  profileIo(identity: { installId: string; mailboxId: string }): ProfileIo;
 }
 
 /** Does this adapter expose the profile's IO? */
@@ -303,7 +308,7 @@ export class OrganizerProfileSync {
         ? (deps.flushIntervalMs ?? DEFAULT_PROFILE_FLUSH_INTERVAL_MS)
         : Math.min(EVAL_TAKEOVER_TTL_MS, deps.flushIntervalMs ?? EVAL_TAKEOVER_TTL_MS);
       if (this.evalCache === null || now - this.evalCache.at >= ttl) {
-        const read: ProfileReadResult = await readOrganizerProfile(deps.adapter.profileIo());
+        const read: ProfileReadResult = await readOrganizerProfile(deps.adapter.profileIo({ installId: deps.self.installId, mailboxId: deps.mailboxId }));
         // A fresh read that shows the newer-format document GONE drops the write wall its
         // presence raised (round 18): the wall's referent vanished, and holding it would keep
         // the write-behind — and the held-marker surfacing a replacement document needs — off
@@ -394,7 +399,7 @@ export class OrganizerProfileSync {
         // than stranding the mailbox released with B's question open and nothing re-deriving.
         let next: Awaited<ReturnType<OrganizerProfileSync["deriveNextHold"]>> = { kind: "lapse" };
         if (hasProfileIo(deps.adapter)) {
-          const still = await readOrganizerProfile(deps.adapter.profileIo());
+          const still = await readOrganizerProfile(deps.adapter.profileIo({ installId: deps.self.installId, mailboxId: deps.mailboxId }));
           const localFp = profileFingerprint(await serializeOrganizerProfile(deps.db, deps.accountId));
           next = await this.deriveNextHold(still, localFp);
         }
@@ -424,7 +429,7 @@ export class OrganizerProfileSync {
           let next: Awaited<ReturnType<OrganizerProfileSync["deriveNextHold"]>> | null = null;
           let stillConverged = true;
           if (hasProfileIo(deps.adapter)) {
-            const still = await readOrganizerProfile(deps.adapter.profileIo());
+            const still = await readOrganizerProfile(deps.adapter.profileIo({ installId: deps.self.installId, mailboxId: deps.mailboxId }));
             stillConverged = still.state === "found" && profileFingerprint(still.doc) === this.holdFingerprint;
             if (!stillConverged) next = await this.deriveNextHold(still, localFp);
           }
@@ -495,7 +500,7 @@ export class OrganizerProfileSync {
       this.lastPreflightAt = nowMs;
     }
     try {
-      const io = deps.adapter.profileIo();
+      const io = deps.adapter.profileIo({ installId: deps.self.installId, mailboxId: deps.mailboxId });
       const read: ProfileReadResult = await readOrganizerProfile(io);
       // A NEWER format's document is an open question too — "update ohmail, or organize with
       // what you have" — and until it is answered (the `newerV` resolution the dismiss writes),
@@ -708,7 +713,7 @@ export class OrganizerProfileSync {
     this.inFlight = true;
     try {
       this.lastAttemptAt = now.getTime();
-      const io = deps.adapter.profileIo();
+      const io = deps.adapter.profileIo({ installId: deps.self.installId, mailboxId: deps.mailboxId });
       const payload = await serializeOrganizerProfile(deps.db, deps.accountId);
       const fp = profileFingerprint(payload);
 

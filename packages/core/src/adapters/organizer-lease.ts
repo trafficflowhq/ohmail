@@ -9,7 +9,7 @@ import {
  * from a second path — the drain keeps a position here too, and a second import path is how two
  * callers come to disagree about which store they are writing to. */
 export {
-  readMemo, writeMemo, forgetMemo, assertMetaIdentity,
+  readMemo, writeMemo, forgetMemo, peekMemo, assertMetaIdentity,
   type MetaIdentity, type Generation, type MetaMemo, type MemoRead, MetaIdentityError,
 } from "./meta-memo.js";
 
@@ -4997,6 +4997,16 @@ function makeMetaRecordsList(
   client: LeaseImapClient,
   meta: MetaFolderRef,
   op: RequestOp,
+  /**
+   * REPORTS THE GENERATION OF THE FOLDER THIS READ ACTUALLY OPENED, sampled while it is still
+   * selected.
+   *
+   * A caller that samples `client.mailbox` on its own gets whatever folder the surrounding cycle
+   * last selected — the INBOX, in the worker's case — and pairs its position with a number
+   * belonging to a different mailbox entirely. That is not a stale generation, it is somebody
+   * else's, and it made every comparison meaningless in both directions.
+   */
+  onGeneration?: (generation: Generation) => void,
 ): (beforeUid?: number) => Promise<RawMetaMessage[]> {
   return async (beforeUid?: number): Promise<RawMetaMessage[]> => {
     let at: MetaFolderLocation;
@@ -5019,6 +5029,9 @@ function makeMetaRecordsList(
         // answer and comes back as one; a folder too full for a single window is not, and falls
         // into the refusal below for the same reason an ABSENT folder does.
         const read = await readMetaFolderWindow(client, at.path, beforeUid);
+        // Inside the lock, with `_meta` open: this is the only place the right folder is
+        // guaranteed to be the selected one.
+        onGeneration?.(generationOf(client));
         if (read.truncated) throw new MetaFolderTruncatedError(read.records.length, read.total, read.records);
         return read.records;
       } finally {
@@ -5089,15 +5102,21 @@ export function makeRequestOrganizerIo(
 ): RequestOrganizerIo {
   assertMetaIdentity("makeRequestOrganizerIo", identity);
   const meta = makeMetaFolderRef(client, toServerPath);
+  let metaGeneration: Generation = null;
   return {
-    listMetaRecords: makeMetaRecordsList(client, meta, "list_requests"),
+    listMetaRecords: makeMetaRecordsList(client, meta, "list_requests", (g) => { metaGeneration = g; }),
 
     /**
-     * THE FOLDER'S CURRENT GENERATION, so a caller's remembered position can be checked against
-     * it. The drain keeps a resume point and that point is meaningless in a renumbered folder.
+     * THE GENERATION OF THE META FOLDER THIS IO HAS ACTUALLY READ — `null` until it has read one.
+     *
+     * Not `client.mailbox` at the moment of asking: that describes whatever folder the surrounding
+     * cycle last selected, which for the worker is the mailbox being synced. Pairing a position in
+     * `ohmail/_meta` with the INBOX's generation is not a stale check, it is a check against
+     * another folder, and it answers wrongly in both directions — it will call a good position
+     * stale, and a stale one good.
      */
     uidValidity(): Generation {
-      return generationOf(client);
+      return metaGeneration;
     },
 
     /**

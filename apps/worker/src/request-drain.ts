@@ -10,7 +10,7 @@ import {
   parseRequestEnvelope, isMalformedRequest, formatRequest, formatAck, canonicalRequest,
   requestEnvelopesIn, acksIn, verifyRequestEnvelope, decodeRequestPayload,
   REQUEST_PROTOCOL, MetaFolderTruncatedError, META_RECORDS_MAX_PER_FETCH, metaPageBounds,
-  readMemo, writeMemo, forgetMemo, type Generation,
+  readMemo, writeMemo, forgetMemo, peekMemo, type Generation,
   type RequestReaderIo, type RequestOrganizerIo, type RawMetaMessage,
   type RequestEnvelope, type RequestRecord, type AckRecord, type OrganizerKind,
   type RequestRefusalReason,
@@ -406,10 +406,23 @@ export async function applyMetaRequests(
     return EMPTY_RESULT;
   }
 
-  /* The numbering this cycle's positions belong to. A folder deleted and recreated numbers from
-   * one again under a new generation, and a resume point from the old one would start the walk
-   * below every record now present. */
-  const generation: Generation = io.uidValidity?.() ?? null;
+  /* ── THE GENERATION IS LEARNED FROM THE READ, NOT ASKED FOR BEFOREHAND ────────────────────
+   *
+   * This asked the io for a generation before anything had been read, and the io answered with
+   * whatever folder the surrounding cycle had selected — the mailbox being synced, not
+   * `ohmail/_meta`. A position in one folder checked against another folder's numbering is not a
+   * stale check; it answers wrongly in both directions and, through the shared entry, took the
+   * claim and settings anchors down with it.
+   *
+   * The io now reports the generation of the folder it actually opened, which means it is known
+   * only AFTER the first read. So the resume point is taken unchecked, used, and then validated:
+   * a stale one costs this cycle one window that settles nothing real, and the entry is dropped
+   * so the next cycle starts from the top. That is the one position where using a value before
+   * checking it is safe, because being wrong costs a wasted read and never a wrong decision. */
+  const remembered = peekMemo({ installId: rt.installId, mailboxId: rt.mailboxId });
+  /** Set when the read proves the resume point belonged to another numbering. */
+  let staleStart = false;
+  const generationNow = (): Generation => io.uidValidity?.() ?? null;
 
   // ── NO KEY, NO CHANNEL ──────────────────────────────────────────────────────────────────────
   //
@@ -470,16 +483,38 @@ export async function applyMetaRequests(
    * Nothing in the walk touches the resume point now; it records where it got to in `pageAdvance`
    * and this is the only thing that writes. */
   const keepPlace = (capBit: boolean): void => {
-    if (pageAdvance === null || capBit) return;
+    if (staleStart || pageAdvance === null || capBit) return;
     if (pageAdvance.bottom) drainMemo.clear(rt);
-    else drainMemo.set(rt, generation, pageAdvance.lo);
+    else drainMemo.set(rt, generationNow(), pageAdvance.lo);
   };
   let records: RawMetaMessage[];
   try {
     /* RESUME WHERE THIS MAILBOX'S WALK STOPPED. Absent, this is the newest page, which is where a
      * folder with no backlog should always be read from. */
-    const resumeAt = drainMemo.read(rt, generation);
+    const resumeAt = remembered?.memo.drainCursor;
     records = await io.listMetaRecords(resumeAt);
+    /* NOW the folder's own generation is known. If the position we just used belonged to a
+     * different numbering, this window was arbitrary — it settles whatever real records happen to
+     * be in it, which is harmless — and the entry goes, so the next cycle starts from the top. */
+    if (remembered !== null) {
+      const seen = generationNow();
+      const same = seen !== null && remembered.generation !== null
+        && BigInt(seen) === BigInt(remembered.generation);
+      if (!same) {
+        /* ── AND THIS CYCLE RECORDS NOTHING ────────────────────────────────────────────────
+         *
+         * Clearing the entry is not enough on its own, and the guard below caught it: the walk
+         * that started from the stale position goes on to record where IT got to, under the
+         * folder's new generation — laundering a position derived from a window in the old
+         * numbering into one that now looks checkable. Every later cycle then resumes there,
+         * finds the same nothing, and agrees with itself for ever.
+         *
+         * A cycle that discovers its own starting point was stale has learned one thing only:
+         * where NOT to start. It settles whatever this window really held and leaves no mark. */
+        drainMemo.clear(rt);
+        staleStart = true;
+      }
+    }
     /* ── WHAT AN EMPTY ANSWER MEANS DEPENDS ON WHETHER A WINDOW WAS ASKED FOR ──────────────
      *
      * With no resume point this read covers the folder from its newest end, so an empty answer
