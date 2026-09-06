@@ -30,7 +30,7 @@
  * The obvious claim to make here — that inlining it as `stable.current ??= (...args) =>
  * latest.current(...args)` would pin `fn`, the first render's implementation, because it sits in
  * the same scope — IS FALSE, and it was measured rather than assumed: with the factory inlined,
- * `stable-callback.test.ts`'s reachability census still finds the first implementation collected.
+ * this module's reachability census still finds the first implementation collected.
  * The engine context-allocates only the variables an inner closure actually REFERENCES, and that closure
  * references `latest` alone, so `fn` is never promoted out of the frame.
  *
@@ -61,8 +61,8 @@
  * the reason it must), so by the time the binding exists the ref already holds THIS render's
  * implementation, and a call after it reads exactly the values the render is using. Calling it
  * before its own hook call is not a hazard but an impossibility — the binding is not in scope yet.
- * `stable-callback.test.tsx` pins this with a render-time read, and the assignment moved into an
- * effect makes that test red.
+ * This module's tests pin it with a render-time read, and moving the assignment into an effect
+ * makes that test red.
  *
  * What the stable identity does NOT license: treating the function as a reactive value. It never
  * changes, so it can never tell a consumer that anything changed, and listing it in a dependency
