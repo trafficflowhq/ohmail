@@ -3,7 +3,7 @@ import { type Tx } from "@trafficflow/db";
 import { pairingTokens } from "@trafficflow/db";
 import { generateToken, hashToken } from "./auth/crypto.js";
 import { PAIRED_DEVICE_KINDS, type PairedDeviceKind } from "./auth/session-lifecycle.js";
-import type { ServiceContext } from "./context.js";
+import { runInTransaction, type ServiceContext } from "./context.js";
 import type { OAuthTokens } from "./auth/types.js";
 import { ServiceError } from "./errors.js";
 
@@ -138,10 +138,6 @@ export function pairingInvalid(): ServiceError {
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 
-const inTransaction = async <T>(
-  ctx: ServiceContext, fn: (txCtx: ServiceContext) => Promise<T>,
-): Promise<T> =>
-  asTx(ctx).transaction(async (tx) => fn({ ...ctx, db: tx as unknown as ServiceContext["db"] }));
 
 export interface PairingTokenMinted {
   id: string;
@@ -405,7 +401,7 @@ export async function redeemDevicePair(
     throw new ServiceError("validation_failed", 400,
       `device kind must be one of ${[...PAIRED_DEVICE_KINDS].map((k) => `"${k}"`).join(", ")}`);
   }
-  return inTransaction(ctx, async (txCtx) => {
+  return runInTransaction(ctx, async (txCtx) => {
     const consumed = await consumePairingToken(txCtx, { token: input.token, grant: "device-pair" });
     if (!consumed || consumed.createdByUserId === null) throw pairingInvalid();
     return auth.establishPairedDevice(txCtx, {

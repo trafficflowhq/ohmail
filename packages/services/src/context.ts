@@ -80,3 +80,35 @@ export interface ServiceContext {
    */
   origin?: string;
 }
+
+/**
+ * **RUN `fn` IN A TRANSACTION, AND RELEASE ITS CREDENTIAL REPORT ONLY ON COMMIT.**
+ *
+ * The single implementation, and it is single on purpose. There were two — one on
+ * `SessionLifecycle`, one private to `pairing.ts` — and only the first was taught to buffer
+ * {@link ServiceContext.noteCredentialAccount}. Paired-device redemption therefore went on
+ * reporting before its transaction committed, so a mint that rolled back still labelled the
+ * response with the account it had failed to create. Two copies of a rule is one copy of the rule
+ * and one copy of the bug.
+ *
+ * The buffering itself: the `txCtx` handed to `fn` reports into a local slot, and the slot is
+ * forwarded to the real context only after `transaction()` resolves. A rollback, a throw, or a
+ * swallowed commit failure discards it, and the response then names nobody — which is what the
+ * account header's contract claims. Nesting composes: an inner commit forwards into the outer's
+ * slot, and an outer rollback discards that too.
+ *
+ * Reporting made OUTSIDE any transaction is unaffected and goes straight through.
+ */
+export async function runInTransaction<T>(
+  ctx: ServiceContext, fn: (txCtx: ServiceContext) => Promise<T>,
+): Promise<T> {
+  let pending: string | null = null;
+  const tx = ctx.db as unknown as { transaction: <R>(f: (t: unknown) => Promise<R>) => Promise<R> };
+  const result = await tx.transaction(async (handle) => fn({
+    ...ctx,
+    db: handle as ServiceContext["db"],
+    noteCredentialAccount: (accountId: string) => { pending = accountId; },
+  }));
+  if (pending !== null) ctx.noteCredentialAccount?.(pending);
+  return result;
+}

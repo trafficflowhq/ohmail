@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, gt, gte, inArray, isNotNull, isNull, ne, or } from "drizzle-orm";
 import { devices, refreshTokens, sessions, users, type Tx } from "@trafficflow/db";
-import type { ServiceContext } from "../context.js";
+import { runInTransaction, type ServiceContext } from "../context.js";
 import { ServiceError } from "../errors.js";
 import { generateToken, hashToken } from "./crypto.js";
 import { surfaceTtls, type SurfaceTtls } from "./config.js";
@@ -151,14 +151,10 @@ export class SessionLifecycle {
   protected async inTransaction<T>(
     ctx: ServiceContext, fn: (txCtx: ServiceContext) => Promise<T>,
   ): Promise<T> {
-    let pending: string | null = null;
-    const result = await asTx(ctx).transaction(async (tx) => fn({
-      ...ctx,
-      db: tx as unknown as ServiceContext["db"],
-      noteCredentialAccount: (accountId: string) => { pending = accountId; },
-    }));
-    if (pending !== null) ctx.noteCredentialAccount?.(pending);
-    return result;
+    // Delegates, and does not re-implement: `runInTransaction` is the ONE buffered wrapper, and
+    // the reason it is shared is that the second copy of this rule — private to `pairing.ts` —
+    // never learned to buffer at all.
+    return runInTransaction(ctx, fn);
   }
 
   async logout(ctx: ServiceContext, b: { allDevices?: boolean } = {}): Promise<void> {
@@ -691,9 +687,30 @@ export class SessionLifecycle {
     // empty and this branch never runs — the sessionless cookie path is untouched, which is the
     // condition this whole change was ruled under.
     if (ctx.accountId) {
+      // THE SAME PREDICATES AS THE CONSUMING UPDATE, and that coupling is the point: this refuses
+      // only what would otherwise have been ROTATED. Selecting on the hash alone was a hole in the
+      // opposite direction from the one this check closes.
+      //
+      // A CONSUMED TOKEN IS NOT A CONFLICT, IT IS EVIDENCE. Presenting a spent refresh token is
+      // how theft announces itself, and the classification below answers it by revoking the whole
+      // family. A hash-only lookup answered 409 first and returned — so anyone holding a stolen,
+      // already-spent token of B's could SUPPRESS B's theft detection indefinitely by also holding
+      // a session for any account of their own. The narrower reading protected nobody and cost B
+      // the one mechanism that protects them.
+      //
+      // Falling through costs nothing that was not already available: presenting B's spent token
+      // with NO session reaches the same sweep, so this grants a cross-account caller no power a
+      // sessionless one lacks.
       const [presentedRow] = await db.select({ accountId: refreshTokens.accountId })
-        .from(refreshTokens).where(eq(refreshTokens.tokenHash, tokenHash)).limit(1);
-      // An UNKNOWN token is not a conflict — it falls through to the 401 below, which is the
+        .from(refreshTokens)
+        .where(and(
+          eq(refreshTokens.tokenHash, tokenHash),
+          isNull(refreshTokens.consumedAt),
+          isNull(refreshTokens.revokedAt),
+          gt(refreshTokens.expiresAt, now),
+        ))
+        .limit(1);
+      // An UNKNOWN token is not a conflict either — it falls through to the 401 below, which is the
       // answer it deserves and the one that says nothing about whether it ever existed.
       if (presentedRow) refuseCrossAccountCredential(ctx, presentedRow.accountId);
     }

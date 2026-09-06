@@ -1,7 +1,7 @@
 import { type Tx } from "@trafficflow/db";
 import { issueInvite } from "./invites.js";
 import { normalizeRecipient } from "./mail/port.js";
-import type { ServiceContext } from "./context.js";
+import { runInTransaction, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { consumePairingToken, pairingInvalid } from "./pairing.js";
 
@@ -18,12 +18,10 @@ import { consumePairingToken, pairingInvalid } from "./pairing.js";
  * bridge on top of that module's `consumePairingToken`.
  */
 
-/** The `asTx`/`inTransaction` pair, `pairing.ts`'s own two lines restated (module-internal there). */
+/** `asTx` only — the transaction wrapper is `runInTransaction` in `context.ts`, shared so that a
+ *  credential report made inside one cannot be released before the commit. There were three
+ *  copies of it here and only one of them buffered. */
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
-const inTransaction = async <T>(
-  ctx: ServiceContext, fn: (txCtx: ServiceContext) => Promise<T>,
-): Promise<T> =>
-  asTx(ctx).transaction(async (tx) => fn({ ...ctx, db: tx as unknown as ServiceContext["db"] }));
 
 /**
  * How long the email-bound invite minted by an invite-grant redeem lives. Deliberately short:
@@ -72,7 +70,7 @@ export async function redeemInviteGrant(
   const email = normalizeRecipient(input.email ?? "");
   if (!email) throw new ServiceError("validation_failed", 400, "a valid email address is required");
 
-  return inTransaction(ctx, async (txCtx) => {
+  return runInTransaction(ctx, async (txCtx) => {
     const consumed = await consumePairingToken(txCtx, { token: input.token, grant: "invite" });
     if (!consumed) throw pairingInvalid();
     const now = txCtx.now();

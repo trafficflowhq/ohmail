@@ -1409,17 +1409,15 @@ export class AuthService extends SessionLifecycle {
       }
       kind = b.kind as DeviceKind;
     }
-    const ip = (ctx.ip ?? "").trim();
-    if (ip.length > 0) {
-      const claimed = await reserveIpSlot(db, {
-        namespace: "desktop_claim:ip",
-        ip,
-        now,
-        max: this.cfg.maxDesktopClaimsPerWindow,
-        windowMs: this.cfg.failureWindowMs,
-      });
-      if (!claimed) throw desktopClaimRateLimited();
-    }
+    // THE CHEAP REFUSALS AND THE CROSS-ACCOUNT CHECK COME BEFORE THE THROTTLE, deliberately.
+    // `reserveIpSlot` MUTATES — it spends one of this address's claims — so a 409 raised after it
+    // charged the caller for a request that did nothing, and with the window nearly full the
+    // advice "sign out and try again" could not be honoured: the retry met a 429. Refusing first
+    // costs the slot to nobody.
+    //
+    // It opens no oracle. The peek matches an exact `generateToken()` hash, so a caller learns the
+    // answer only for a code they already hold, and the length bounds above are string tests that
+    // reach neither the database nor `sha256`.
     // Bounded before it reaches `sha256`, for `requirePassword`'s reason: this value arrives
     // from an anonymous caller and an unbounded body is free work for whoever wants to send a
     // megabyte of it. A real code is `generateToken()`-shaped and nowhere near this.
@@ -1451,6 +1449,18 @@ export class AuthService extends SessionLifecycle {
           binding,
         )).limit(1);
       if (peek) refuseCrossAccountCredential(ctx, (await this.loadUser(db, peek.userId)).accountId);
+    }
+
+    const ip = (ctx.ip ?? "").trim();
+    if (ip.length > 0) {
+      const claimed = await reserveIpSlot(db, {
+        namespace: "desktop_claim:ip",
+        ip,
+        now,
+        max: this.cfg.maxDesktopClaimsPerWindow,
+        windowMs: this.cfg.failureWindowMs,
+      });
+      if (!claimed) throw desktopClaimRateLimited();
     }
 
     const [row] = await db.update(loginTokens)
@@ -2329,6 +2339,12 @@ export class AuthService extends SessionLifecycle {
   private async establishEnrollment(
     ctx: ServiceContext, user: typeof users.$inferSelect,
   ): Promise<EnrollmentSessionEstablished> {
+    // BEFORE ANY WRITE, and `establish`'s guard does not cover this: an enrollment session is
+    // minted here rather than there, so a live session for A submitting B's correct password to
+    // `/auth/login` — with B holding no factor — reached the zero-factor arm and walked out with
+    // B's enrollment session and its bearer token. The two mints needed the same refusal; only one
+    // had it.
+    refuseCrossAccountCredential(ctx, user.accountId);
     const db = asTx(ctx);
     const now = ctx.now();
     const token = generateToken();
