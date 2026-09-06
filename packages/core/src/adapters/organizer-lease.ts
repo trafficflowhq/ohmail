@@ -1697,6 +1697,7 @@ export function makeLeasePeekIo(client: LeaseImapClient, toServerPath: (canonica
          * renders it as an unreadable lease rather than as an empty one. */
         const claims = await searchHeaders(
           client,
+          at.path,
           { header: { [H.lease]: true } },
           { max: META_RECORDS_MAX_PER_FETCH, refuseWhenOver: true },
         );
@@ -1958,8 +1959,13 @@ export interface LeaseImapClient extends MetaFolderClient {
    */
   status?(
     path: string,
-    query: { messages?: boolean },
-  ): Promise<{ messages?: number } | false | undefined>;
+    /**
+     * `uidNext` is asked for the same way the count is: from the SERVER, by name, on the folder.
+     * Never from `client.mailbox`, whose fields are whatever the last untagged response left
+     * behind — see {@link searchDescending} for what a stale one costs.
+     */
+    query: { messages?: boolean; uidNext?: boolean },
+  ): Promise<{ messages?: number; uidNext?: number } | false | undefined>;
   /**
    * SEARCH the selected folder by HEADER. Optional. Not the count probe — that asks STATUS for a
    * scalar; this asks the server WHICH messages carry an id, so a release can find its own records
@@ -2073,8 +2079,13 @@ export interface SequenceProbeClient {
    */
   status?(
     path: string,
-    query: { messages?: boolean },
-  ): Promise<{ messages?: number } | false | undefined>;
+    /**
+     * `uidNext` is asked for the same way the count is: from the SERVER, by name, on the folder.
+     * Never from `client.mailbox`, whose fields are whatever the last untagged response left
+     * behind — see {@link searchDescending} for what a stale one costs.
+     */
+    query: { messages?: boolean; uidNext?: boolean },
+  ): Promise<{ messages?: number; uidNext?: number } | false | undefined>;
 }
 
 /**
@@ -2565,15 +2576,40 @@ const OWN_RECORDS_MAX = 5_000;
  */
 async function searchDescending(
   client: Pick<LeaseImapClient, "search" | "mailbox" | "status">,
+  path: string,
   query: { header: Record<string, string | boolean>; before?: Date },
   max: number,
 ): Promise<number[] | null> {
   if (typeof client.search !== "function") return null;
 
-  const selected = client.mailbox;
-  const top = typeof selected === "object" && selected !== null && typeof selected.uidNext === "number"
-    ? selected.uidNext - 1
-    : null;
+  /* ── THE TOP OF THE UID SPACE IS ASKED FOR, NEVER REMEMBERED ─────────────────────────────
+   *
+   * This read `client.mailbox.uidNext`, which is not a fact about the folder — it is whatever the
+   * last untagged response happened to leave on the connection's cached mailbox object. Holding
+   * the mailbox lock does not refresh it, and this module already learned the same lesson about
+   * the message COUNT: a cached value may end a read and may never be counted back from.
+   *
+   * Counting back from a stale one is worse here than it was there. The windows walk DOWN from
+   * this number, so a stale-low value means every window sits below the newest records and the
+   * walk never sees them — and the caller most affected is the ELECTION, which reads a claim set
+   * with the incumbent's live claim missing from it, takes the "nobody organizes this mailbox"
+   * arm, and appends a second one. Two organizers, out of a cached integer.
+   *
+   * So it is a STATUS on the folder, by name, every time — the same shape the count probe uses —
+   * and an absent or unusable answer is "cannot decide" rather than a reason to guess. `null`
+   * here is what every caller already treats as could-not-ask: the election refuses, the release
+   * reports a partial, the peek renders unreadable. None of them organize on it.
+   */
+  const top = await (async (): Promise<number | null> => {
+    if (typeof client.status !== "function") return null;
+    try {
+      const st = await client.status(path, { uidNext: true });
+      const next = typeof st === "object" && st !== null ? st.uidNext : undefined;
+      return typeof next === "number" && next > 1 ? next - 1 : null;
+    } catch {
+      return null;
+    }
+  })();
 
   /* ONE CALL SITE, and the census in `organizer-lease-meta-window.test.ts` counts on it: two ways
    * of asking this server about this folder, no more. The windowed walk and the unbounded fallback
@@ -2582,20 +2618,22 @@ async function searchDescending(
    *
    * The census matches source TEXT, so spelling the call pattern out in a comment counts as a use
    * of it. That is not a flaw in the census: it is why it can be trusted to notice a real one. */
-  const out: number[] = [];
-  let hi = top !== null && top >= 1 ? top : null;
-  const budget = hi === null ? 1 : SEARCH_WINDOW_BUDGET;
+  /* ── WITHOUT A CEILING THERE IS NO WINDOW, AND ONE UNBOUNDED PASS IS NOT THE ANSWER ──────
+   *
+   * The previous version fell back to a single unbounded search here, which made the bound
+   * conditional on the server choosing to answer: a server that declines STATUS got exactly the
+   * unbounded reply the windows exist to prevent, and nothing said so. "I could not ask in a way
+   * I can bound" is a partial answer, and this module has one word for that. */
+  if (top === null || top < 1) return null;
 
-  for (let window = 0; window < budget; window++) {
-    const lo = hi === null ? null : Math.max(1, hi - SEARCH_UID_WINDOW + 1);
-    const found = await client.search(
-      lo === null || hi === null ? query : { ...query, uid: `${lo}:${hi}` },
-      { uid: true },
-    );
+  const out: number[] = [];
+  let hi = top;
+
+  for (let window = 0; window < SEARCH_WINDOW_BUDGET; window++) {
+    const lo = Math.max(1, hi - SEARCH_UID_WINDOW + 1);
+    const found = await client.search({ ...query, uid: `${lo}:${hi}` }, { uid: true });
     if (!Array.isArray(found)) return null;
     out.push(...found);
-    // No uid ceiling to walk down from: this was the one unbounded pass, and it is the answer.
-    if (lo === null || hi === null) return out;
     if (lo === 1) return out;          // the whole folder has been covered
     if (out.length > max) return out;  // enough in hand, and the caller's ceiling decides the rest
     hi = lo - 1;
@@ -2607,12 +2645,13 @@ async function searchDescending(
 }
 
 async function searchHeaders(
-  client: Pick<LeaseImapClient, "search" | "fetch">,
+  client: Pick<LeaseImapClient, "search" | "fetch" | "mailbox" | "status">,
+  path: string,
   query: { header: Record<string, string | boolean>; before?: Date },
   opts?: { max?: number; refuseWhenOver?: boolean },
 ): Promise<RawClaimMessage[] | null> {
   if (typeof client.search !== "function") return null;
-  const found = await searchDescending(client, query, opts?.max ?? SEARCH_UIDS_MAX);
+  const found = await searchDescending(client, path, query, opts?.max ?? SEARCH_UIDS_MAX);
   if (found === null) return null;
   if (found.length === 0) return [];
   /* ── THE REPLY IS BOUNDED BEFORE IT IS SPENT, NOT AFTER ────────────────────────────────────
@@ -2646,7 +2685,16 @@ async function searchHeaders(
    * release that did not happen rather than one that did. */
   const max = opts?.max ?? SEARCH_UIDS_MAX;
   if (found.length > max && opts?.refuseWhenOver === true) return null;
-  const capped = found.length > max ? found.slice(0, max) : found;
+  /* ── SORTED BEFORE IT IS CAPPED, BECAUSE THE WINDOWS ARRIVE IN WINDOW ORDER ────────────────
+   *
+   * The walk collects one descending window at a time, so the array is ordered by WINDOW and not
+   * by uid — the last window's uids are the oldest in the folder but the last in the list. A cap
+   * applied to that keeps whatever the windows happened to yield first, which is not the newest
+   * and is not anything a caller asked for. Every caller that caps wants the NEWEST records; a
+   * caller that wants them all is not capping. So the set is put in newest-first order and the cap
+   * then means what it says. */
+  const ordered = [...found].sort((a, b) => b - a);
+  const capped = ordered.length > max ? ordered.slice(0, max) : ordered;
   const out: RawClaimMessage[] = [];
   for (let i = 0; i < capped.length; i += SEARCH_FETCH_BATCH) {
     const batch = capped.slice(i, i + SEARCH_FETCH_BATCH);
@@ -2746,7 +2794,8 @@ export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: s
     async findOwnRecords(installId: string): Promise<RawClaimMessage[] | null> {
       // The settings document carries this header too, so these are CANDIDATES: the caller parses
       // each and keeps only claims. Expunging a profile here would delete the mailbox's settings.
-      const lock = await client.getMailboxLock(await meta.path());
+      const metaPath = await meta.path();
+      const lock = await client.getMailboxLock(metaPath);
       try {
         /* EXHAUSTIVE, and refused rather than sliced when it cannot be. The caller deletes what
          * comes back and reports a count, so a short answer here is a claim left holding the
@@ -2755,6 +2804,7 @@ export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: s
          * returns `null` — "could not enumerate" — which the release reports as a refusal. */
         return await searchHeaders(
           client,
+          metaPath,
           { header: { [H.installId]: installId } },
           { max: OWN_RECORDS_MAX, refuseWhenOver: true },
         );
@@ -2773,9 +2823,10 @@ export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: s
      * from "there is evidence here I cannot read", and that evidence must survive the search.
      */
     async listClaimRecords(): Promise<RawClaimMessage[] | null> {
-      const lock = await client.getMailboxLock(await meta.path());
+      const claimPath = await meta.path();
+      const lock = await client.getMailboxLock(claimPath);
       try {
-        return await searchHeaders(client, { header: { [H.lease]: true } });
+        return await searchHeaders(client, claimPath, { header: { [H.lease]: true } });
       } finally {
         lock.release();
       }
