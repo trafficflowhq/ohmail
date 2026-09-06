@@ -747,6 +747,13 @@ export default defineConfig({
          package.json beside it, so Rollup would die at `vite build` on every platform job. A
          browser-safe leaf like the four above — zero imports. */
       { find: "@trafficflow/core/search-rank", replacement: r("../../packages/core/src/search-rank.ts") },
+      /* The pairing link's grammar — the SIXTH admitted leaf. It reaches this bundle through
+         `packages/client-engine/src/pair-link.ts`, which is now a re-export of core's copy: the
+         file moved because a THIRD graph parses these links. `apps/sidecar` pastes one printed
+         by another machine's desktop, and that process may not link the client-engine barrel
+         (the sidecar's own one-pipeline census asserts it). Dependency-free source like the
+         five above — no node builtin, no DOM, no store, no clock. */
+      { find: "@trafficflow/core/pair-link", replacement: r("../../packages/core/src/pair-link.ts") },
     ],
   },
 
