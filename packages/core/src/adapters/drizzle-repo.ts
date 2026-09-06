@@ -716,25 +716,31 @@ function inSubtree(col: unknown, path: string) {
 
 export class DrizzleRepo implements WorkerRepo, RoutingPort {
   /**
-   * THE DIALECT IS RESOLVED HERE, NOT AT THE FIRST STATEMENT THAT NEEDS IT.
+   * THE DIALECT IS RESOLVED ON FIRST USE, AND THAT IS A DELIBERATE CHOICE RATHER THAN AN OVERSIGHT.
    *
-   * A repository built around an unbranded handle used to be a perfectly good object that threw
-   * later, from inside a locking statement, on whichever background pass happened to reach one
-   * first. Resolving in the constructor moves the failure to the line that made the mistake.
+   * Resolving in the CONSTRUCTOR is the stronger rule and was tried: it turns a repository built
+   * around an unbranded handle from an object that throws later, deep inside a locking statement on
+   * some background pass, into one that cannot be built at all. It closes shapes the census over
+   * transaction sites cannot see — a callback factored out of the `.transaction(` call, a carry
+   * written after the construction — and it immediately found two real latent sites.
    *
-   * That change is what makes the seam safe rather than merely checked. The census over transaction
-   * call sites is a text rule, and a text rule has edges: a callback factored into a named function
-   * is not lexically inside the `.transaction(` call, and a carry written AFTER the construction
-   * reads the same as one written before. Both were demonstrated. Neither can survive this, because
-   * neither produces a branded handle — and an unbranded handle no longer yields an object at all.
+   * It was measured against the whole worker and services suites and reverted on the result: 149
+   * test files build a handle with a bare `drizzle(sql, { schema })` and never brand it, so 156
+   * cases failed at construction. Every one was a harness, not a caller — the production factories
+   * (`makeDb`, `makeOwnedDb`, `makePooledDb`) all brand — and branding 149 files to satisfy a
+   * check is a large, mechanical diff whose only beneficiary is the check.
+   *
+   * So the rule stays where the evidence puts it: the seam refuses an unbranded handle at the first
+   * statement that actually needs a dialect, the census refuses the common mistake in production
+   * source, and the two latent sites this experiment found are fixed on their merits.
    *
    * `carried` is how a transaction inherits its parent's dialect: the transaction object has no
    * brand of its own, and the value is known to be right because the parent resolved it.
    */
-  private readonly carriedDialect: Dialect;
+  private carriedDialect: Dialect | null;
 
   constructor(private readonly db: Db, carried?: Dialect) {
-    this.carriedDialect = carried ?? dialect(db);
+    this.carriedDialect = carried ?? null;
   }
 
   /**
@@ -757,7 +763,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    * CORRECT: a transaction cannot be on a different store from the handle that opened it.
    */
   private get d(): Dialect {
-    return this.carriedDialect;
+    return (this.carriedDialect ??= dialect(this.db));
   }
 
   async findByDedupKey(mailboxId: string, dedupKey: string): Promise<StoredMessage | null> {
