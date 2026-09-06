@@ -4,22 +4,54 @@ import { isMailboxDisabledReason, type MailboxDisabledReason } from "./mailbox-e
 import type { Tx } from "./change-log.js";
 
 /**
- * THE ONE CAPABILITY THERE IS TODAY — a SEPARATE LITERAL from
- * `organizer-lease.ts`'s `CAPABILITY_REQUESTS`, and that duplication is a dependency-direction
- * fact rather than an oversight.
+ * WHAT AN ORGANIZER TELLS READERS IT CAN DO — the whole vocabulary, defined HERE and nowhere else.
  *
  * `@trafficflow/core` DEPENDS ON `@trafficflow/db` (`packages/core/package.json`), never the
- * reverse — `packages/db/package.json` names no `@trafficflow/core` dependency, and every
- * apparent mention of it in this package's own comments is prose, not an import (checked before
- * writing this one). So `organizer-role.ts` cannot import the string FROM `organizer-lease.ts`
- * without inverting that edge, and `organizer-lease.ts` cannot be made to import it FROM here
- * without adding a `@trafficflow/db` dependency to a module whose own header prides itself on
- * needing nothing but `imap-types.ts`. Two literals, one spelling, held equal by
- * `organizer-role-capability.test.ts` rather than by the type system — the same trade
- * `flag-intent.ts` and `screener-suggestion.ts` already make for the tables they duplicate no
- * further than a name.
+ * reverse — `packages/db/package.json` names no `@trafficflow/core` dependency. So this package
+ * is the one that cannot reach the other, which makes it the only place a single definition can
+ * live: `organizer-lease.ts` RE-EXPORTS these names rather than spelling them again.
+ *
+ * That last paragraph used to say the opposite — "two literals, one spelling, held equal by
+ * `organizer-role-capability.test.ts`" — and it outlived the arrangement it described by a whole
+ * migration. Mail 0090 deleted the second literal and the equality test with it (a test that
+ * compares a constant to itself is not a guard); the comment stayed, so a reader arriving here
+ * was told to go maintain a duplicate that does not exist. Corrected in the slice that extends
+ * the set, because a comment documenting an invariant is the claim under test rather than
+ * evidence for it.
+ *
+ * ── WHAT A CAPABILITY MEANS, AND WHAT IT DOES NOT ─────────────────────────────────────────
+ *
+ * "This organizer's build contains an applier for that kind of request." It is advisory, and it
+ * is never the gate: a claim is a message anyone with APPEND rights on the mailbox can write, so
+ * an attacker can make a reader BELIEVE an organizer is capable. What that buys them is nothing —
+ * the reader appends a record signed with a key it holds, and the organizer either holds the same
+ * key or refuses it. The header speeds up the honest case; the SIGNATURE makes the dishonest one
+ * harmless.
+ *
+ * So a capability that is ABSENT must fail closed and a capability that is PRESENT must never be
+ * trusted as authority. Both halves matter and they pull in opposite directions.
+ *
+ * ── FOUR MEMBERS, ONE PER FAMILY OF THING A READER CAN ASK FOR ────────────────────────────
+ *
+ * Separate members rather than one "modern build" flag, because they arrive in different releases
+ * and a reader has to be able to ask about the one it needs. An organizer shipped before mail 0093
+ * advertises `requests` alone: it drains Screener decisions and has no applier for a move, a rule
+ * or a profile edit. A reader that read a single flag off such a claim would queue a move nobody
+ * is ever going to take, and the person would watch a message sit in a pending state for ever.
+ * With a member per family the same reader is refused at its own door, immediately, with a
+ * sentence naming what is out of date.
+ *
+ * They are deliberately NOT a version number. A version says "how new is this build" and the
+ * question every reader actually has is "will you take THIS", which stays answerable when builds
+ * gain abilities in an order nobody planned.
  */
 export const CAPABILITY_REQUESTS = "requests";
+/** Moving one message to one destination — `message.move`. Screener release and Quarantine rescue are moves. */
+export const CAPABILITY_MOVES = "moves";
+/** Creating, changing or deleting a rule — `rule.create`, `rule.update`, `rule.delete`. */
+export const CAPABILITY_RULES = "rules";
+/** Editing the per-mailbox configuration — `profile.update`. */
+export const CAPABILITY_PROFILE = "profile";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -572,12 +604,33 @@ export async function assertAccountOrganizes(tx: Tx, accountId: string): Promise
  * the row is the only place it can ask "will the holder ever take this decision".
  *
  * `capable` is TRUE only when the row's role is `organizer` for THIS install (the direct-write
- * case needs no request at all) OR the holder's own claim advertises {@link CAPABILITY_REQUESTS}
- * AND `organizer_state = 'held'` — a `stopped` holder is not coming back to drain anything, and an
- * absent capability means either "we have not looked" or "that build never calls
- * `applyMetaRequests`" (the rule that only the organizer moves mail, "a 0.14 organizer never
- * drains requests"), and both read the same to a person: do not queue a decision nobody will ever
- * take. `status <> 'disabled'` for the SAME reason `assertAccountOrganizes` checks it above: a
+ * case needs no request at all) OR the holder's own claim advertises THE CAPABILITY THE CALLER
+ * NAMED AND `organizer_state = 'held'` — a `stopped` holder is not coming back to drain anything,
+ * and an absent capability means either "we have not looked" or "that build has no applier for
+ * this kind" (the rule that only the organizer moves mail), and both read the same to a person:
+ * do not queue a decision nobody will ever take.
+ *
+ * ── THE CAPABILITY IS A REQUIRED ARGUMENT, AND THAT IS THE POINT (mail 0093) ───────────────
+ *
+ * It used to be the constant {@link CAPABILITY_REQUESTS}, hard-coded here, because there was one
+ * kind of request. There are now three families — moves, rules and profile edits — and they are
+ * NOT interchangeable: an organizer shipped before mail 0093 advertises `requests` and has no
+ * applier for any of them.
+ *
+ * A DEFAULT would have been the quiet failure. A new caller that forgot the argument would ask
+ * "will you take a Screener decision?" while queueing a move, get `capable: true` off a
+ * 0.14.1 organizer, write the record, and the person would watch a message sit pending until it
+ * expired — every guard green, because the read did answer the question it was asked. Required,
+ * so forgetting is a compile error, on the same argument `RequestInput.key` is required rather
+ * than optional: the failure mode of the lax version is a silent downgrade to the old behaviour.
+ *
+ * ── AND IT IS NOT CONSULTED FOR THIS INSTALL'S OWN ORGANIZER ROW ──────────────────────────
+ *
+ * `role === "organizer"` short-circuits before the capability is read, for every kind. That is
+ * correct and not an oversight: the capability column describes a PEER, and an install writing to
+ * a mailbox it organizes itself makes no request and needs no applier on anybody else's side. The
+ * question "can I do this here" is answered by this build's own code, which is present by
+ * construction. `status <> 'disabled'` for the SAME reason `assertAccountOrganizes` checks it above: a
  * tombstoned mailbox keeps whatever `organizer_role` it had at removal (the mailbox-removal design — a removal
  * retires the mailbox, it does not demote it), so without this a decision against a mailbox that
  * no longer exists in any live sense would still read `capable: true` off the stale role column.
@@ -585,7 +638,11 @@ export async function assertAccountOrganizes(tx: Tx, accountId: string): Promise
 export interface RequestEligibility {
   role: OrganizerRole;
   state: OrganizerState | null;
-  /** `organizer_role = 'organizer'`, OR (holder advertises `requests` AND `organizer_state = 'held'`). */
+  /**
+   * `organizer_role = 'organizer'`, OR (the holder advertises THE CAPABILITY THE CALLER ASKED
+   * ABOUT and `organizer_state = 'held'`). It is an answer to one question about one kind of
+   * request, never a general "this holder is modern" — see the function's header.
+   */
   capable: boolean;
   by: OrganizedBy;
   /**
@@ -600,6 +657,11 @@ export interface RequestEligibility {
 
 export async function readRequestEligibility(
   tx: Tx, accountId: string, mailboxId: string,
+  /**
+   * WHICH CAPABILITY THIS DECISION NEEDS FROM THE HOLDER — one of the four exported at the top of
+   * this file. Required; see the header for why a default would fail open.
+   */
+  capability: string,
 ): Promise<RequestEligibility | null> {
   const [row] = await tx.select({
     role: mailboxes.organizerRole,
@@ -618,7 +680,7 @@ export async function readRequestEligibility(
   const role: OrganizerRole = isOrganizerRole(row.role) ? row.role : "reader";
   const state: OrganizerState | null = isOrganizerState(row.state) ? row.state : null;
   const capable = row.status !== "disabled"
-    && (role === "organizer" || (state === "held" && hasCapability(row.capabilities, CAPABILITY_REQUESTS)));
+    && (role === "organizer" || (state === "held" && hasCapability(row.capabilities, capability)));
 
   return {
     role,

@@ -1840,7 +1840,7 @@
     "toDesktopBody": "Dasselbe Neu-Verbinden, auf deinem eigenen Rechner — kein Export, kein Umzug, kein Konto zum Verknüpfen. Und es geht auch in die andere Richtung.",
     "outTerm": "Ganz raus aus ohmail",
     "outBody": "Deine Post ist längst in Ordnern abgelegt, die jedes Mailprogramm liest. Die Einstellungs-Nachricht bleibt in deinem Postfach, in einem veröffentlichten Format — lösch sie, und sonst ändert sich nichts.",
-    "note": "Was heute mitzieht: gescreente Absender, Regeln, Benachrichtigungs-Entscheidungen, die Abwesenheitsantwort und Tag-Namen. Triage-Stapel, Resurface-Zeiten und gelernte Muster bleiben bei der Installation, auf der sie entstanden sind."
+    "note": "Was heute mitzieht: gescreente Absender, Regeln, Benachrichtigungs-Entscheidungen, die Abwesenheitsantwort, deine Signatur und Tag-Namen. Triage-Stapel, Resurface-Zeiten und gelernte Muster bleiben bei der Installation, auf der sie entstanden sind."
   },
   "providers": {
     "title": "Wenn es IMAP spricht, organisiert ohmail es.",

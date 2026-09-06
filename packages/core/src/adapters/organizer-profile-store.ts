@@ -1,6 +1,7 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import {
-  awayResponders, contacts, notifyRules as notifyRulesTbl, rules as rulesTbl, tags as tagsTbl,
+  awayResponders, contacts, mailboxes as mailboxesTbl, notifyRules as notifyRulesTbl,
+  rules as rulesTbl, tags as tagsTbl,
   type Tx,
 } from "@trafficflow/db";
 import type { OrganizerProfilePayload } from "./organizer-profile.js";
@@ -27,14 +28,30 @@ import type { OrganizerProfilePayload } from "./organizer-profile.js";
  * sits below both, beside the document format it feeds. `drizzle-repo.ts` is the precedent for a
  * core adapter that reads the database directly.
  */
-export async function serializeOrganizerProfile(db: Tx, accountId: string): Promise<OrganizerProfilePayload> {
+export async function serializeOrganizerProfile(
+  db: Tx, accountId: string,
+  /**
+   * THE MAILBOX, and it is why this function stopped being account-scoped (mail 0093).
+   *
+   * Everything else here belongs to the ACCOUNT — contacts, rules, notify rules, the responder,
+   * the tags — and `signature` does not: it is `mailboxes.signature`, the text appended to mail
+   * sent FROM THIS ADDRESS, and a person with two mailboxes has two of them. Serializing one
+   * account-wide would publish one mailbox's sign-off into the other's document.
+   *
+   * Required rather than optional for the reason the capability argument next door is: an
+   * optional mailbox would have to default to "no signature", and a caller that forgot it would
+   * publish a document that silently drops the field. The republish then reads as the person
+   * having cleared their signature, which is a change nobody made.
+   */
+  mailboxId: string,
+): Promise<OrganizerProfilePayload> {
   // ONE SNAPSHOT, not five. Under READ COMMITTED each statement sees its own snapshot, so a
   // screener decide committing between the contacts read and the rules read would serialize a
   // TORN configuration — the contact without its promoted rule — and the document would say
   // something no store ever held (self-healing one flush later, but "a burst is one write" is
   // the contract, and a torn read is how it becomes two). REPEATABLE READ pins all five reads
   // to one snapshot; PGlite is real Postgres, so the same statement works on both stores.
-  const [contactRows, ruleRows, notifyRows, awayRows, tagRows] = await db.transaction(async (tx) => {
+  const [contactRows, ruleRows, notifyRows, awayRows, tagRows, mailboxRows] = await db.transaction(async (tx) => {
     return [
       await tx.select({ address: contacts.address, name: contacts.name })
         .from(contacts).where(eq(contacts.accountId, accountId)),
@@ -54,6 +71,13 @@ export async function serializeOrganizerProfile(db: Tx, accountId: string): Prom
         audience: awayResponders.audience, throttle: awayResponders.throttle,
       }).from(awayResponders).where(eq(awayResponders.accountId, accountId)),
       await tx.select({ name: tagsTbl.name }).from(tagsTbl).where(eq(tagsTbl.accountId, accountId)),
+      // THE SIXTH READ, inside the same snapshot as the other five for the reason the comment
+      // above gives: a signature edit committing between two statements would serialize a
+      // configuration no store ever held. Scoped by ACCOUNT as well as by mailbox — a predicate
+      // on the id alone would serialize whatever row carried that uuid, and the account column is
+      // the only thing that makes "this mailbox is ours" a property of the query.
+      await tx.select({ signature: mailboxesTbl.signature }).from(mailboxesTbl)
+        .where(and(eq(mailboxesTbl.id, mailboxId), eq(mailboxesTbl.accountId, accountId))),
     ] as const;
   }, { isolationLevel: "repeatable read", accessMode: "read only" });
 
@@ -76,5 +100,9 @@ export async function serializeOrganizerProfile(db: Tx, accountId: string): Prom
       audience: away.audience,
     },
     tagNames: tagRows.map((t) => t.name),
+    // NO ROW READS AS NO SIGNATURE, which is also what a NULL column reads as. They are the same
+    // answer here on purpose: a mailbox that is not this account's is not a state this serializer
+    // can report on, and its caller has already established the mailbox before asking.
+    signature: mailboxRows[0]?.signature ?? null,
   };
 }

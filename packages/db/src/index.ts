@@ -136,8 +136,11 @@ export {
   ORGANIZER_ROLES, ORGANIZER_KINDS, ORGANIZER_STATES, ORGANIZED_BY_NAME_MAX,
   isOrganizerRole, isOrganizerKind, isOrganizerState,
   // Mail 0088/0089, 0.14.1 — the fifth holder column and whether a reader's decision may become a
-  // request at all.
-  CAPABILITY_REQUESTS, capabilitiesColumn, hasCapability, readRequestEligibility,
+  // request at all. Mail 0093 adds the three capabilities beside `requests`: an organizer names
+  // each family of request it has an applier for, so a reader is refused at its own door rather
+  // than queueing a record the holder will never take.
+  CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_RULES, CAPABILITY_PROFILE,
+  capabilitiesColumn, hasCapability, readRequestEligibility,
   type OrganizerRole, type OrganizerKind, type OrganizerState,
   type OrganizedBy, type OrganizerRoleRow, type RequestEligibility, type RequestRefusalReason,
 } from "./organizer-role.js";

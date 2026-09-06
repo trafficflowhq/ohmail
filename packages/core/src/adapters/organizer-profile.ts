@@ -72,7 +72,8 @@ import {
  *       "audience": "screened_in" | "everyone",
  *       "throttle": "per_day" | …      // absent in a document written before 0087
  *     },
- *     "tagNames": ["<tag name>", …]    // the names of this mailbox's tags
+ *     "tagNames": ["<tag name>", …],   // the names of this mailbox's tags
+ *     "signature": "<string or null>"  // absent in a document written before mail 0093
  *   }
  *
  * ── NATURAL KEYS ONLY, AND THAT IS A RULE, NOT A STYLE ─────────────────────────────────────
@@ -226,6 +227,26 @@ export interface OrganizerProfilePayload {
   notifyRules: ProfileNotifyRuleEntry[];
   awayResponder: ProfileAwayResponder | null;
   tagNames: string[];
+  /**
+   * THE MAILBOX'S SIGNATURE (mail 0093) — `mailboxes.signature`, the text appended to outgoing
+   * mail from this address.
+   *
+   * It travels for the same reason the away-responder body does: it is per-mailbox configuration
+   * that the ORGANIZER applies, so an install that only reads the mailbox has to be able to see
+   * what it currently is rather than showing its own copy, which nothing acts on.
+   *
+   * `null` is "no signature", and ABSENT — a document written before this field — parses to
+   * `null` as well. The two are deliberately not distinguished here, unlike `throttle` above where
+   * the distinction is load-bearing: there is no third state a signature could be in, and a
+   * reader that treated "absent" as "unknown" would have nothing better to do with it.
+   *
+   * `PROFILE_VERSION` does NOT move for this, on the same argument mail 0087's `throttle` records:
+   * the envelope's version is about what a reader must UNDERSTAND to apply a document safely, and
+   * this is backward- and forward-compatible at the field level. An older reader ignores the key
+   * and applies the rest correctly; a newer one defaults it. Bumping would make every older
+   * install refuse a document it can read perfectly well.
+   */
+  signature: string | null;
 }
 
 /** The payload wrapped in its versioned envelope — the document as written. */
@@ -238,7 +259,12 @@ export interface OrganizerProfileDoc extends OrganizerProfilePayload {
 /** A payload with nothing in it — what a mailbox with no configuration serializes to. */
 export function isEmptyProfilePayload(p: OrganizerProfilePayload): boolean {
   return p.screener.length === 0 && p.rules.length === 0 && p.notifyRules.length === 0
-    && p.awayResponder === null && p.tagNames.length === 0;
+    && p.awayResponder === null && p.tagNames.length === 0
+    /* `?? null` for `canonicalizeProfilePayload`'s reason: a payload assembled in memory without
+       this key carries `undefined`, one parsed from a document carries `null`, and both mean "no
+       signature". Comparing to `null` alone would call the first one non-empty — so a mailbox with
+       nothing configured would publish a document instead of staying silent. */
+    && (p.signature ?? null) === null;
 }
 
 /**
@@ -338,6 +364,14 @@ export function canonicalizeProfilePayload(p: OrganizerProfilePayload): Organize
       throttle: p.awayResponder.throttle,
     },
     tagNames: [...p.tagNames].sort(byCodeUnit),
+    /* `?? null` RATHER THAN A PASS-THROUGH, and it is the fingerprint that needs it. An in-memory
+       payload assembled without this key has `undefined` here; `JSON.stringify` drops an undefined
+       value entirely, while a payload PARSED from a document carries an explicit `null` and
+       serializes `"signature":null`. Two payloads meaning the same thing would then hash
+       differently — and the fingerprint is what decides "is the held document already what I
+       have", so the disagreement shows up as an import prompt that cannot be made to go away.
+       Normalised here, in the one function every fingerprint goes through. */
+    signature: p.signature ?? null,
   };
 }
 
@@ -368,6 +402,7 @@ export function makeProfileDoc(
     notifyRules: canonical.notifyRules,
     awayResponder: canonical.awayResponder,
     tagNames: canonical.tagNames,
+    signature: canonical.signature,
   };
 }
 
@@ -521,7 +556,11 @@ function readPayload(raw: Record<string, unknown>): OrganizerProfilePayload {
   const tagNames: string[] = Array.isArray(raw.tagNames)
     ? raw.tagNames.filter((t): t is string => typeof t === "string" && t.length > 0)
     : [];
-  return { screener, rules, notifyRules, awayResponder, tagNames };
+  // ABSENT AND null BOTH PARSE TO null — see the field's own comment. `asString` already answers
+  // undefined for a non-string, so a document carrying a number or an object here reads as "no
+  // signature" rather than putting a stranger's value into an outgoing mail.
+  const signature: string | null = asString(raw.signature) ?? null;
+  return { screener, rules, notifyRules, awayResponder, tagNames, signature };
 }
 
 /**

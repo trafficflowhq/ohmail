@@ -1840,7 +1840,7 @@
     "toDesktopBody": "The same reconnect, on your own machine — no export step, no transfer flow, no account to link. It works the other way round too.",
     "outTerm": "Out of ohmail entirely",
     "outBody": "Your mail is already filed in folders any mail app reads. The settings message stays in your mailbox in a published format — delete it and nothing else changes.",
-    "note": "What travels today: screened senders, rules, notification choices, the away reply and tag names. Triage piles, Resurface timers and learned patterns stay with the install they were made on."
+    "note": "What travels today: screened senders, rules, notification choices, the away reply, your signature and tag names. Triage piles, Resurface timers and learned patterns stay with the install they were made on."
   },
   "providers": {
     "title": "If it speaks IMAP, ohmail organizes it.",

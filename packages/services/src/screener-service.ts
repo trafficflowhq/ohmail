@@ -29,6 +29,10 @@ import {
   rationaleHoldsAtGate, resolveOhboxPolicy,
 } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
+/* `capabilityForKind` — the ONE map from a request kind to the capability its holder must
+   advertise (mail 0093). Imported rather than spelled as a constant here so that this door and
+   the record it writes cannot disagree about what `screener.decide` requires. */
+import { capabilityForKind } from "@trafficflow/core/adapters/organizer-lease";
 import type { ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import { getScreeningPreference } from "./screening-preference.js";
@@ -1192,7 +1196,14 @@ export class ScreenerReadService {
   ): Promise<ScreenDecisionResult | ScreenRequestResult> {
     const v = await this.validateScreenerDecision(ctx, id, b);
 
-    const eligibility = await readRequestEligibility(asTx(ctx), ctx.accountId, v.target.mailboxId);
+    /* THE CAPABILITY THIS DOOR NEEDS, NAMED (mail 0093). A Screener decision is `screener.decide`,
+       whose capability is `requests` — the spelling every organizer in the field already
+       advertises, so nothing about this door's answer moves. It is passed through
+       `capabilityForKind` rather than written as the constant so that the door and the record it
+       writes can never disagree about which capability that kind requires. */
+    const eligibility = await readRequestEligibility(
+      asTx(ctx), ctx.accountId, v.target.mailboxId, capabilityForKind("screener.decide"),
+    );
     if (!eligibility) throw new MailboxNotFoundError(v.target.mailboxId);
     // A TOMBSTONE IS NOT A READER. A removed mailbox keeps whatever `organizer_role` it had, so
     // it reads `capable: false` and would fall to the reader branch — which refuses with "another
@@ -1889,7 +1900,9 @@ export class ScreenerService extends ScreenerReadService {
     const eligibilityByMailbox = new Map<string, RequestEligibility | null>();
     for (const mailboxId of new Set([...rep.values()].map((r) => r.mailboxId))) {
       eligibilityByMailbox.set(
-        mailboxId, await readRequestEligibility(asTx(ctx), ctx.accountId, mailboxId),
+        mailboxId, await readRequestEligibility(
+          asTx(ctx), ctx.accountId, mailboxId, capabilityForKind("screener.decide"),
+        ),
       );
     }
     /**

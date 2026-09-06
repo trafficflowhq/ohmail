@@ -1,4 +1,7 @@
 import { createHmac, hkdfSync, timingSafeEqual } from "node:crypto";
+import {
+  CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_RULES, CAPABILITY_PROFILE,
+} from "@trafficflow/db";
 import { WATCHED_FOLDERS, type ImapAuth } from "./imap-types.js";
 import {
   assertMetaIdentity, readMemo, writeMemo, forgetMemo,
@@ -769,7 +772,7 @@ const H = {
  * cannot reach the other, and the equality test it used to need is deleted along with the second
  * literal: there is nothing left for it to compare.
  */
-export { CAPABILITY_REQUESTS } from "@trafficflow/db";
+export { CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_RULES, CAPABILITY_PROFILE };
 
 /** Strip CR/LF so a display name can never inject a header. */
 function headerSafe(v: string): string {
@@ -4587,16 +4590,58 @@ export function verifyRequestSignature(key: string, f: RequestSignatureFields, s
 }
 
 /**
- * WHAT AN ORGANIZER DRAINS. Closed by `organizer_requests_kind_closed` in Postgres — the same
- * four members. `rule.*` is shaped and validated here (0.14.1's migration already carries the
- * CHECK) but has no applier until the rules-pane lane lands; a drain that meets one today refuses
- * it exactly as it refuses a kind it has never heard of. See {@link isRequestKind}.
+ * WHAT AN ORGANIZER DRAINS. Closed by `organizer_requests_kind_closed` in Postgres — the same SIX
+ * members, and the two lists must move together in that order: the widening migration ships ahead
+ * of the code that writes the new member, so a row an older build wrote still satisfies the CHECK
+ * and an older build keeps working against a migrated database (mail 0093's own marker).
+ *
+ * See {@link isRequestKind} for what a kind this build does not recognise gets: left standing, not
+ * refused and not expunged — it is a record for a FUTURE build, written by a newer install on the
+ * same account, and it becomes applicable the moment this organizer updates.
  */
-export const REQUEST_KINDS = ["screener.decide", "rule.create", "rule.update", "rule.delete"] as const;
+export const REQUEST_KINDS = [
+  "screener.decide",
+  "rule.create", "rule.update", "rule.delete",
+  "message.move",
+  "profile.update",
+] as const;
 export type RequestKind = (typeof REQUEST_KINDS)[number];
 
 export function isRequestKind(v: unknown): v is RequestKind {
   return typeof v === "string" && (REQUEST_KINDS as readonly string[]).includes(v);
+}
+
+/**
+ * WHICH CAPABILITY A HOLDER MUST ADVERTISE BEFORE THIS KIND IS WORTH QUEUEING.
+ *
+ * A `Record` over the union rather than a function with a `switch` and a default, deliberately:
+ * adding a member to {@link REQUEST_KINDS} without deciding its capability is then a COMPILE
+ * ERROR rather than a fall-through to some safe-looking constant. A default here would be the
+ * quiet failure — the new kind would be gated on `requests`, which every 0.14.1 organizer
+ * advertises, so the reader would write a record that organizer has no applier for and the person
+ * would watch it sit pending until it expired.
+ *
+ * The three `rule.*` members share one capability because they share one applier and one table:
+ * a build that can create a rule can delete one. `screener.decide` keeps `requests` — that is
+ * what the name has meant since 0088 and re-pointing it would strand every organizer already in
+ * the field.
+ *
+ * This map lives HERE, beside the kinds, rather than in `@trafficflow/db` beside the capability
+ * strings, because the kinds are this module's vocabulary and the edge runs core → db: this file
+ * can import the strings, and that file could not import the kinds.
+ */
+export const REQUEST_KIND_CAPABILITY: Readonly<Record<RequestKind, string>> = {
+  "screener.decide": CAPABILITY_REQUESTS,
+  "rule.create": CAPABILITY_RULES,
+  "rule.update": CAPABILITY_RULES,
+  "rule.delete": CAPABILITY_RULES,
+  "message.move": CAPABILITY_MOVES,
+  "profile.update": CAPABILITY_PROFILE,
+};
+
+/** The capability {@link REQUEST_KIND_CAPABILITY} names for one kind. */
+export function capabilityForKind(kind: RequestKind): string {
+  return REQUEST_KIND_CAPABILITY[kind];
 }
 
 export interface RequestInput {

@@ -416,7 +416,7 @@ export class ProfileImportService {
     // position changed, so that a `too_large` answer can be dismissed like any other.)
     // Already what the local store says ⇒ nothing an import would change, so nothing is asked.
     // (The organizer releases its own hold by this same comparison — one serializer, one answer.)
-    const local = await serializeOrganizerProfile(db, ctx.accountId);
+    const local = await serializeOrganizerProfile(db, ctx.accountId, mailboxId);
     if (profileFingerprint(local) === fingerprint) return { state: "none" };
 
     return {
@@ -665,6 +665,28 @@ export class ProfileImportService {
         }).returning({ id: tags.id });
         changes.push({ accountId: ctx.accountId, entityType: "tag", entityId: row!.id, op: "create", meta: null });
       }
+
+      /* ── signature — the one PER-MAILBOX field in the document (mail 0093) ──────────────
+       *
+       * Applied for the reason every section above is: this is a restore of the configuration the
+       * organizer published, and a section the importer skips is a setting the person loses
+       * silently on a machine they have just told to take the document.
+       *
+       * It also has to be applied for the import to TERMINATE. The organizer's hold releases when
+       * the local store's own serialization equals the held document — one serializer, one
+       * comparison — and `signature` is now part of that serialization. An importer that wrote
+       * every other section would converge on none of them: the fingerprints would differ for
+       * ever, the prompt would return on every cycle, and nothing would report an error, because
+       * "these two documents are not equal" is a true statement.
+       *
+       * Written to THIS mailbox, scoped by account as well as by id — the same predicate the
+       * serializer reads it back through, so a document cannot reach a row this account does not
+       * own. `null` is written as `null`: the document saying "no signature" is a statement about
+       * the configuration, not an absence of one, and treating it as "leave whatever is here"
+       * would make the import non-idempotent against a machine that had one.
+       */
+      await tx.update(mailboxes).set({ signature: doc.signature })
+        .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, ctx.accountId)));
 
       // One allocation for every change row (contacts/notify/away are REST-only, so only the
       // rule and tag writes wake the mirrors), then the answer itself — in THIS transaction, so

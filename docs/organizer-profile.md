@@ -73,7 +73,8 @@ One RFC822 message in `ohmail/_meta`:
     "audience": "screened_in" | "everyone",
     "throttle": "always" | "per_message" | "per_day" | "per_week"
   },
-  "tagNames": ["<tag name>", …]    // the names of this mailbox's tags
+  "tagNames": ["<tag name>", …],   // the names of this mailbox's tags
+  "signature": "<string or null>"  // the sign-off on mail sent from this address
 }
 ```
 
@@ -130,6 +131,17 @@ subject, so there is no subject to carry. A document written by an older ohmail 
 `subject` field; readers ignore it.
 
 **`tagNames`** — an array of this mailbox's tag names, as plain strings.
+
+**`signature`** — the text appended to mail sent from this address, or `null` for none. It is the
+one field in this document that belongs to the MAILBOX rather than to the account: somebody with
+two addresses has two signatures, so a document is written per mailbox and carries that mailbox's
+own. Absent in a document written by an older ohmail, which reads as `null` — the same as an
+explicit `null`, because there is no third state a signature can be in. The envelope's `v` does
+not move for this: an older reader ignores the field and applies the rest correctly, and a newer
+one supplies the default, so a document remains readable in both directions.
+
+Whether an outgoing message actually carries it is the compose window's decision — the signature
+is visible and removable there. This document records what the sign-off IS, not that it is used.
 
 ## A complete example
 
@@ -226,7 +238,8 @@ The format: versioned JSON, documented in ohmail's published source
   "tagNames": [
     "kiln",
     "pottery-fair"
-  ]
+  ],
+  "signature": "-- \nJuno Marchetti\nkiln + wheel, Basel"
 }
 ```
 

@@ -446,7 +446,7 @@ export class OrganizerProfileSync {
           accountId: deps.accountId, mailboxId: deps.mailboxId, newerV: v.v,
         }));
       } else if (v.kind === "found") {
-        const localFp = profileFingerprint(await serializeOrganizerProfile(deps.db, deps.accountId));
+        const localFp = profileFingerprint(await serializeOrganizerProfile(deps.db, deps.accountId, deps.mailboxId));
         open = v.fingerprint !== localFp && !(await profileImportResolutionExists(deps.db, {
           accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: v.fingerprint,
         }));
@@ -505,7 +505,7 @@ export class OrganizerProfileSync {
         let next: Awaited<ReturnType<OrganizerProfileSync["deriveNextHold"]>> = { kind: "lapse" };
         if (hasProfileIo(deps.adapter)) {
           const still = await readOrganizerProfile(deps.adapter.profileIo({ installId: deps.self.installId, mailboxId: deps.mailboxId }));
-          const localFp = profileFingerprint(await serializeOrganizerProfile(deps.db, deps.accountId));
+          const localFp = profileFingerprint(await serializeOrganizerProfile(deps.db, deps.accountId, deps.mailboxId));
           next = await this.deriveNextHold(still, localFp);
         }
         // Nothing below throws. The answered subject is released and the folder's current
@@ -515,7 +515,7 @@ export class OrganizerProfileSync {
         });
         await this.commitNextHold(next, log);
       } else if (this.holdFingerprint !== null) {
-        const localFp = profileFingerprint(await serializeOrganizerProfile(deps.db, deps.accountId));
+        const localFp = profileFingerprint(await serializeOrganizerProfile(deps.db, deps.accountId, deps.mailboxId));
         if (localFp === this.holdFingerprint) {
           // CONVERGENCE: the store is ACCOUNT-scoped, so the same travelling
           // profile imported through a SIBLING mailbox — or a hand-edit — can make local state
@@ -629,7 +629,7 @@ export class OrganizerProfileSync {
       // — the verify pass reopens the dirty check by clearing `lastWrittenFingerprint`, so
       // ownership alone cannot tell "never owned" from "mid-supersede".
       if (this.seenForeignFingerprints.has(fp)) return;
-      const payload = await serializeOrganizerProfile(deps.db, deps.accountId);
+      const payload = await serializeOrganizerProfile(deps.db, deps.accountId, deps.mailboxId);
       if (fp === profileFingerprint(payload)) { await this.lapseStaleMarker(read, profileFingerprint(payload), log); return; }
       // Already answered (an earlier hold on this same document, resolved by import or decline):
       // a re-attach must not re-open a question the person closed.
@@ -834,7 +834,7 @@ export class OrganizerProfileSync {
       /* THE PINNED CONNECTION, not the live getter — see the parameter. Correct wherever this
          line moves to, and no longer dependent on nothing awaiting above it. */
       const io = adapter.profileIo({ installId: deps.self.installId, mailboxId: deps.mailboxId });
-      const payload = await serializeOrganizerProfile(deps.db, deps.accountId);
+      const payload = await serializeOrganizerProfile(deps.db, deps.accountId, deps.mailboxId);
       const fp = profileFingerprint(payload);
 
       // A detection marker that failed durably is owed, not forgotten: the hold or the newer
