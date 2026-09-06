@@ -31,7 +31,7 @@ import type { Route } from "../router.js";
  *     apiVersion: string,
  *     needsSetup: boolean,
  *     auth:     { password, totp, webauthn, publicSignup },
- *     features: { sse, staging, ai, pairing } }
+ *     features: { sse, staging, ai, pairing, accountHeader } }
  *
  * Clients switch on it, so a key may be ADDED only as a deliberate contract change alongside the
  * contract test that pins this set — never dropped, never renamed. `product` is a constant so a
@@ -41,6 +41,29 @@ import type { Route } from "../router.js";
  * users", a database fact), and a capability can fail. On failure the route answers 503 — never
  * a guessed boolean, in either direction: `false` on a fresh box hides the setup ceremony
  * forever, `true` on an established box advertises a first-account ceremony that must not exist.
+ *
+ * **`features.accountHeader` — and it is a CONSTANT, not an injected one.** Every other member of
+ * `features` is a host's choice, arriving through {@link HelloConfig}. This one is a fact about the
+ * BUILD: `createApp.handle` sets `X-Ohmail-Account` on every response that resolved an account, in
+ * every composition compiled from this table, so a host has nothing to decide and must not be given
+ * the chance to say otherwise. An injected flag could be set `false` by a server that sends the
+ * header, or `true` by one that does not, and a negotiated capability a host can lie about is worse
+ * than no negotiation at all.
+ *
+ * What makes it useful is its ABSENCE. A server built before the header existed does not carry this
+ * key, so a client reads `features.accountHeader !== true` and does not require the header from it.
+ * That is the whole negotiation: a webapp pointed at an operator's older self-hosted install must
+ * not refuse every authenticated read because a header that server has never heard of is missing.
+ * A client must therefore treat the header as REQUIRED only against a server that advertises it,
+ * and the absence rule — a missing header on an authenticated read is a refusal — applies only
+ * there. Against a server that does NOT advertise it, a missing header says nothing at all and the
+ * client falls back to whatever it did before the header existed.
+ *
+ * The header's own meaning, for completeness and because the design note this used to cite is not
+ * part of the published repository: when present it names the account the response's contents
+ * belong to — the credential's account on the sign-in and token routes, the session's account
+ * elsewhere — and when absent on a server that advertises it, the response has no account subject
+ * and a client holding per-account state must treat it as a refusal.
  *
  * Always `Cache-Control: no-store`: `needsSetup` flips the moment the first account is created,
  * and a cached capability answer is a lie about the present.
@@ -90,6 +113,9 @@ export const helloRoutes: Route[] = [
           staging: hello.features.staging,
           ai: hello.features.ai,
           pairing: hello.features.pairing,
+          // Not `hello.features.accountHeader` — see the header. This composition sets the
+          // account header because `createApp.handle` does, and that is not the host's to choose.
+          accountHeader: true,
         },
       });
     },
