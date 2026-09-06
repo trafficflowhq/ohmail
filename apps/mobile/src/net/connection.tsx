@@ -36,7 +36,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Platform } from "react-native";
 import { Copy } from "../copy";
-import { refuse, type Refusal } from "../refusal";
+import { faultDetail, refuse, type Refusal, type RefusalArg } from "../refusal";
 import { mirrorExists, mirrorOwnerKey } from "../engine/boot";
 import { nativeEngineDeps } from "../engine/native";
 import { settleInstallGeneration } from "../state/install-marker";
@@ -77,7 +77,7 @@ export type Attempt = { ok: true } | { ok: false; reason: Refusal };
 export interface Connection {
   state: ConnectionState;
   syncing: boolean;
-  syncError: string | null;
+  syncError: RefusalArg | null;
   /** Every pairing on this phone — kept current across pair/forget/switch. */
   profiles: ServerProfile[];
   /** The active profile id (which row the app boots), or null with nothing paired. */
@@ -171,7 +171,10 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   const [profiles, setProfiles] = useState<ServerProfile[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
-  const [syncError, setSyncError] = useState<string | null>(null);
+  /* A REFUSAL ARGUMENT, not a sentence — see `drain.ts`. A failed round used to freeze its
+     words at the moment it was caught, so the Servers screen kept them across a language
+     change. It is worded where it is shown. */
+  const [syncError, setSyncError] = useState<RefusalArg | null>(null);
 
   const live = useRef<ConnectionState>(state);
   live.current = state;
@@ -391,7 +394,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       .catch((err) => {
         setState((s) =>
           s.k === "starting"
-            ? { k: "refused", reason: refuse("pairingsUnreadable", String(err)) }
+            ? { k: "refused", reason: refuse("pairingsUnreadable", faultDetail(err)) }
             : s,
         );
       });
@@ -434,7 +437,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
             await env.profiles.setActive(profileId);
           } catch (err) {
             /* The platform's own words, quoted — the diagnostic rule, now expressed as a key. */
-            return { ok: false, reason: refuse("verbatimDetail", String(err)) };
+            return { ok: false, reason: refuse("verbatimDetail", faultDetail(err)) };
           }
           await refreshProfiles();
           return runConnect(profileId, stillCurrent);

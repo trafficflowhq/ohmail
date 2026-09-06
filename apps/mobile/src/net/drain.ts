@@ -33,6 +33,8 @@ export interface DrainEngine {
   hydrate(): Promise<void>;
 }
 
+import { faultDetail, type RefusalArg } from "../refusal";
+
 export class SyncRunner {
   /** The round in the air, or null — teardown awaits it before closing the mirror. */
   private inflight: Promise<void> | null = null;
@@ -41,8 +43,12 @@ export class SyncRunner {
     private readonly on: {
       /** Mirrors into the provider's `syncing` state — the UI's one busy flag. */
       syncing(on: boolean): void;
-      /** The failure sentence (or its clearing) — the provider's `syncError`. */
-      error(reason: string | null): void;
+      /**
+       * The failure (or its clearing) — the provider's `syncError`. A refusal ARGUMENT, not a
+       * sentence: a round that fails is worded where it is shown, so a standing failure
+       * follows a language change like everything else on the screen.
+       */
+      error(reason: RefusalArg | null): void;
     },
   ) {}
 
@@ -74,7 +80,7 @@ export class SyncRunner {
       try {
         await (first ? engine.start() : engine.syncOnce());
       } catch (err) {
-        if (this.inflight === self.round) this.on.error(String(err));
+        if (this.inflight === self.round) this.on.error(faultDetail(err));
         // Re-sync memory with disk so the torn-flush guard's refusal window closes and the
         // retry re-fetches the failed page instead of writing past it. Through a thenable so
         // even a synchronously-throwing hydrate stays inside this round.

@@ -62,7 +62,7 @@
  * reinstall) has a working SQLite by definition, because the app just launched.
  */
 import type { ServerProfileStore } from "./servers";
-import { refuse, type Refusal } from "../refusal";
+import { faultDetail, refuse, type Refusal } from "../refusal";
 /* These `reason` fields reach the Servers screen through `Copy.serversInstallUnknown` and
    `serversPurgeRefused`, so they are copy. */
 import { Copy } from "../copy";
@@ -142,7 +142,7 @@ export async function settleInstallGeneration(
   try {
     db = await deps.openExecutor(INSTALL_MARKER_DB);
   } catch (err) {
-    return { kind: "unknown", reason: refuse("installMarkerUnopenable", String(err)) };
+    return { kind: "unknown", reason: refuse("installMarkerUnopenable", faultDetail(err)) };
   }
   try {
     await db.batch([
@@ -176,12 +176,12 @@ export async function settleInstallGeneration(
     try {
       await profiles.purgeAll();
     } catch (err) {
-      return { kind: "purge-refused", reason: refuse("installPurgeFailed", String(err)) };
+      return { kind: "purge-refused", reason: refuse("installPurgeFailed", faultDetail(err)) };
     }
     await stamp();
     return { kind: "fresh-install", generation, purged: true };
   } catch (err) {
-    return { kind: "unknown", reason: refuse("installMarkerUnreadable", String(err)) };
+    return { kind: "unknown", reason: refuse("installMarkerUnreadable", faultDetail(err)) };
   } finally {
     await db.close?.();
   }

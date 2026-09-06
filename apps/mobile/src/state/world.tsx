@@ -38,6 +38,7 @@ import {
 } from "react";
 
 import { Copy } from "../copy";
+import { type RefusalArg } from "../refusal";
 import { useLocale } from "../i18n/LocaleProvider";
 import { useConnection } from "../net/connection";
 import {
@@ -107,7 +108,7 @@ export interface World {
    */
   boot: {
     settled: boolean;
-    syncFailure: string | null;
+    syncFailure: RefusalArg | null;
     /**
      * The stale label's sentence-ready time ("Fri 09:00", the reader's zone), or null when the
      * mirror is current or has never settled — `live.ts#staleAsOf`, the Freshness Contract's

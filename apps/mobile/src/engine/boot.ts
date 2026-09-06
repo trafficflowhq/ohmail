@@ -39,7 +39,7 @@ import {
    straight to the connect screen — so they are copy and live in the deck. The thrown faults in
    this file are not: nobody but a developer reads a stack trace. */
 import { Copy } from "../copy";
-import { refuse, type Refusal } from "../refusal";
+import { faultDetail, refuse, type Refusal } from "../refusal";
 
 /** What the platform must provide — expo modules in the app, node modules in tests. */
 export interface MobileEngineDeps {
@@ -557,7 +557,7 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
     await store.load();
   } catch (err) {
     store.close();
-    return { kind: "refused", reason: refuse("bootMirrorFailed", String(err)) };
+    return { kind: "refused", reason: refuse("bootMirrorFailed", faultDetail(err)) };
   }
 
   const engine = new OhmailEngine({

@@ -83,6 +83,15 @@ export function sayRefusal(r: Refusal): string {
 }
 
 /**
+ * WORDS FOR A REFUSAL ARGUMENT — a nested refusal rendered NOW, anything else exactly as it is.
+ *
+ * What a render site calls when it holds one of these directly rather than inside a sentence: the
+ * standing sync failure on the Servers screen, the stalled-wait line under a skeleton. Both used
+ * to hold a `string` produced at the moment the round failed.
+ */
+export const sayArg = (a: RefusalArg): string => (isRefusal(a) ? sayRefusal(a) : String(a));
+
+/**
  * THE DETAIL INSIDE A TRANSLATED REFUSAL — our own failures worded, everything else quoted.
  *
  * The places that render a caught error used `String(err)`, which is right for a platform

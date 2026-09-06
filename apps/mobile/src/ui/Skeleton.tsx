@@ -30,6 +30,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Animated, Easing, View, type ViewStyle } from "react-native";
 import { useTheme } from "../theme";
+import { sayArg, type RefusalArg } from "../refusal";
 import { Panel, Screen, Txt } from "./base";
 import { TopBar } from "./chrome";
 
@@ -236,7 +237,7 @@ export function SkeletonList({
   kind?: SkeletonKind;
   rows?: number;
   active?: boolean;
-  stalled?: string | null;
+  stalled?: RefusalArg | null;
 }) {
   const show = useLoadingGrace(active);
   const opacity = useBreathe();
@@ -254,7 +255,7 @@ export function SkeletonList({
       {stalled ? (
         <View style={{ paddingHorizontal: 14, paddingTop: 12 }}>
           <Txt variant="caption" tone="ink3">
-            {stalled}
+            {sayArg(stalled)}
           </Txt>
         </View>
       ) : null}

@@ -16,8 +16,7 @@
  * quiet way a comment becomes a false claim.
  */
 import { useCallback, useState, useSyncExternalStore } from "react";
-import { type Refusal } from "../src/refusal";
-import { sayRefusal } from "../src/refusal";
+import { sayArg, sayRefusal, type Refusal } from "../src/refusal";
 import { View } from "react-native";
 import { router } from "expo-router";
 import { Copy } from "../src/copy";
@@ -162,7 +161,7 @@ function LiveFacts() {
               means that key changed. An unpinned one — the hosted service, a self-hosted server
               on a real name — has no key to change, and the honest reading is that the phone
               would not accept the certificate at that address. See `connectSyncFailed`. */}
-          {Copy.connectSyncFailed(conn.syncError, s.session.profile.pin !== null)}
+          {Copy.connectSyncFailed(sayArg(conn.syncError), s.session.profile.pin !== null)}
         </Txt>
       ) : null}
     </>
