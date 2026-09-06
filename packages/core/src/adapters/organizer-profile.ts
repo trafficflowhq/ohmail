@@ -123,6 +123,12 @@ export const PROFILE_VERSION = 1;
  */
 const PROFILE_FETCH_BATCH = 100;
 
+/** How wide one descending UID window is when searching for settings records. */
+const PROFILE_SEARCH_UID_WINDOW = 500;
+
+/** How many windows one search may walk before it reports that it could not ask. */
+const PROFILE_SEARCH_WINDOW_BUDGET = 20;
+
 /** The discriminator and bookkeeping headers. The lease's `H` table, for the profile. */
 const H = {
   profile: "X-Ohmail-Profile",
@@ -602,8 +608,14 @@ export interface ProfileImapClient extends MetaFolderClient {
    */
   status?(
     path: string,
-    query: { messages?: boolean },
-  ): Promise<{ messages?: number } | false | undefined>;
+    /**
+     * `uidNext` is asked of the SERVER, by name, on the folder — never read off `client.mailbox`,
+     * whose fields are whatever the last untagged response left behind. See the lease adapter's
+     * note where the same rule is stated: a stale ceiling sends every search window below the
+     * records that matter.
+     */
+    query: { messages?: boolean; uidNext?: boolean },
+  ): Promise<{ messages?: number; uidNext?: number } | false | undefined>;
   mailboxCreate(path: string): Promise<unknown>;
   mailboxUnsubscribe(path: string): Promise<unknown>;
   getMailboxLock(path: string): Promise<{ release(): void }>;
@@ -616,7 +628,11 @@ export interface ProfileImapClient extends MetaFolderClient {
    * library does, and that is not the same answer as an empty folder.
    */
   search?(
-    query: { header?: Record<string, string | boolean> },
+    /**
+     * `uid` is a UID SEQUENCE criterion (`UID <lo>:<hi>`), which is how the search is bounded to a
+     * window rather than asked about the whole folder — see {@link listProfileMessages}.
+     */
+    query: { header?: Record<string, string | boolean>; uid?: string },
     options?: { uid?: boolean },
   ): Promise<number[] | false | undefined>;
   fetch(
@@ -843,11 +859,55 @@ export function makeProfileIo(
          * connection cannot be asked or the server REFUSED — which is not the same answer as
          * "there are none" and must never be read as one.
          */
+        /**
+         * ── SEARCHED IN DESCENDING UID WINDOWS, LIKE THE LEASE'S ─────────────────────────────
+         *
+         * A bare header search is answered with however many uids the server chooses to name, and
+         * that whole array lands here before any ceiling of ours runs — capping it afterwards
+         * bounds the FETCH and nothing else. The lease learned this and windowed its search; this
+         * one was left as the last unbounded reply in the module.
+         *
+         * Each window can name at most one uid per number in it, so every reply is bounded by
+         * construction, and descending because a read wants the NEWEST settings and stops when it
+         * has enough. The top comes from a STATUS on the folder rather than the connection's
+         * cached mailbox object — the same rule and for the same reason: a stale ceiling puts
+         * every window below the records that matter, and here that renders as a mailbox whose
+         * published settings have vanished.
+         *
+         * `null` for every way of not knowing — no search, a refused search, no ceiling to walk
+         * down from, or a folder too sparse to finish inside the window budget. The caller reads
+         * that as "could not ask" and falls back to the bounded range read, which is honest about
+         * being a window.
+         */
         const profileUids = async (c: ProfileImapClient): Promise<number[] | null> => {
-          if (typeof c.search !== "function") return null;
-          const found = await c.search({ header: { [H.profile]: true } }, { uid: true });
-          if (!Array.isArray(found)) return null;
-          return [...found].sort((a, b) => a - b);
+          if (typeof c.search !== "function" || typeof c.status !== "function") return null;
+
+          const top = await (async (): Promise<number | null> => {
+            try {
+              const st = await c.status!(metaPath, { uidNext: true });
+              const next = typeof st === "object" && st !== null ? st.uidNext : undefined;
+              return typeof next === "number" && next > 1 ? next - 1 : null;
+            } catch {
+              return null;
+            }
+          })();
+          if (top === null) return null;
+
+          const out: number[] = [];
+          let hi = top;
+          for (let w = 0; w < PROFILE_SEARCH_WINDOW_BUDGET; w++) {
+            const lo = Math.max(1, hi - PROFILE_SEARCH_UID_WINDOW + 1);
+            const found = await c.search(
+              { header: { [H.profile]: true }, uid: `${lo}:${hi}` }, { uid: true },
+            );
+            if (!Array.isArray(found)) return null;
+            out.push(...found);
+            if (lo === 1) return out.sort((a, b) => a - b);
+            if (out.length > PROFILE_MESSAGES_MAX_PER_FETCH) return out.sort((a, b) => a - b);
+            hi = lo - 1;
+          }
+          // The budget ran out with folder unexamined: not an answer, and not reported as one.
+          return null;
         };
 
         /** Sizes first, then source for the survivors only — see the note at the call site. */

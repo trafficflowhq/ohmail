@@ -151,6 +151,25 @@ export const REQUEST_DRAIN_MAX_PER_CYCLE = 200;
  */
 const REQUEST_DRAIN_MAX_PAGES = 8;
 
+/**
+ * WHERE EACH MAILBOX'S WALK GOT TO, so the next cycle resumes instead of starting over.
+ *
+ * The page budget bounds the round trips one cycle may spend, and on its own that made the walk a
+ * treadmill: a folder with more than a budget's worth of no-work pages above the requests was
+ * walked from the newest page every cycle, got the same eight pages down, and stopped in the same
+ * place — for ever, paying the full cost each time. Bounded work per cycle is right; bounded work
+ * that always covers the same ground is not progress.
+ *
+ * IN MEMORY AND PER PROCESS, deliberately. Losing it costs one cycle of re-walking, which is
+ * exactly today's behaviour and never wrong — it says where to LOOK next, never what was settled.
+ * Anything durable would be a second source of truth about a folder whose only truth is the folder.
+ *
+ * Cleared as soon as the folder reads whole again, and when the walk reaches the bottom: the
+ * newest page is the right place to start when there is no backlog, and a stale cursor would send
+ * a healthy mailbox to its oldest records for no reason.
+ */
+const drainCursors = new Map<string, number>();
+
 /** The lowest uid in a page, which is the bound for the page below it. `null` when unaddressable. */
 function lowestRef(records: readonly RawMetaMessage[]): number | null {
   let low: number | null = null;
@@ -355,7 +374,11 @@ export async function applyMetaRequests(
 
   let records: RawMetaMessage[];
   try {
-    records = await io.listMetaRecords();
+    /* RESUME WHERE THIS MAILBOX'S WALK STOPPED. Absent, this is the newest page, which is where a
+     * folder with no backlog should always be read from. */
+    records = await io.listMetaRecords(drainCursors.get(rt.mailboxId));
+    // The folder read whole: no backlog to resume into, so the cursor goes.
+    drainCursors.delete(rt.mailboxId);
   } catch (err) {
     /* ── A FOLDER TOO FULL TO READ IS DRAINED A PAGE AT A TIME, NOT REFUSED WHOLESALE ────────
      *
@@ -433,8 +456,16 @@ export async function applyMetaRequests(
        * takes a record out of the folder. Acknowledgements are the sweep's business and it has
        * already run, ahead of this read, for exactly that reason. */
       let cursor = lowestRef(records);
+      /* The page this cycle actually read becomes the resume point, so even a cycle that finds
+       * work at once leaves the walk somewhere useful rather than back at the top. */
+      if (cursor !== null) drainCursors.set(rt.mailboxId, cursor);
       for (let page = 1; page < REQUEST_DRAIN_MAX_PAGES; page++) {
-        if (hasRequestRecord(records) || cursor === null || cursor <= 1) break;
+        if (hasRequestRecord(records)) break;
+        if (cursor === null || cursor <= 1) {
+          // The bottom: nothing older to resume into, so the next cycle starts fresh.
+          drainCursors.delete(rt.mailboxId);
+          break;
+        }
         let older: RawMetaMessage[];
         try {
           older = await io.listMetaRecords(cursor);
@@ -453,6 +484,7 @@ export async function applyMetaRequests(
         if (next === null || cursor !== null && next >= cursor) break;
         records = older;
         cursor = next;
+        drainCursors.set(rt.mailboxId, next);
         log("meta_requests_page_advanced", {
           mailboxId: rt.mailboxId, accountId: rt.accountId, page, cursor,
           reason: "the page above held nothing this pass can settle, so the walk moved older "

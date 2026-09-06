@@ -2339,11 +2339,20 @@ export async function readMetaFolderWindow(
   const readFrom = async (start: number): Promise<{ records: RawMetaMessage[]; evicted: boolean }> => {
   const records: RawMetaMessage[] = [];
   let evicted = false;
-  /* A PAGE BELOW THE CURSOR IS ADDRESSED BY UID, and the eviction below is what bounds it: the
-   * range names every record older than the cursor, and the newest ceiling's worth of those are
-   * what survive the walk. That is the same shape the unbounded read already has for a server
-   * that will not report `exists` — bounded in what it RETAINS, and correct about which. */
-  const range = beforeUid !== undefined ? `1:${Math.max(1, beforeUid - 1)}` : `${start}:*`;
+  /* ── A PAGE ASKS FOR ITS OWN WINDOW, NOT FOR EVERYTHING BELOW THE CURSOR ──────────────────
+   *
+   * This asked for `1:<cursor-1>` and let the eviction keep the newest ceiling's worth. Bounded in
+   * what it RETAINED and unbounded in what it TRANSFERRED: every page re-read the entire older
+   * prefix, so walking eight pages of a full folder pulled the folder down eight times, and the
+   * deeper the walk the more it cost per step. A walk whose cost grows with its own progress is
+   * not a walk anyone should take.
+   *
+   * The window is a uid RANGE now — one ceiling's worth below the cursor — so each page costs the
+   * same as the first. A record whose uid falls in a gap simply is not there; uid space is sparse
+   * by nature and the walk's budget is what bounds the number of steps, not the density. */
+  const pageHi = beforeUid !== undefined ? Math.max(1, beforeUid - 1) : 0;
+  const pageLo = Math.max(1, pageHi - META_RECORDS_MAX_PER_FETCH + 1);
+  const range = beforeUid !== undefined ? `${pageLo}:${pageHi}` : `${start}:*`;
   const byUid = beforeUid !== undefined;
   if (beforeUid !== undefined && beforeUid <= 1) return { records, evicted };
   for await (const m of client.fetch(range, { uid: true, headers: true }, { uid: byUid })) {
