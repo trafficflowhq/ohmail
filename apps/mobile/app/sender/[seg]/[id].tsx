@@ -115,11 +115,19 @@ function SenderBody() {
               </View>
               <Txt variant="note" tone="ink2" style={{ flex: 1 }}>
                 {Copy.senderFirstContact}
+                {/* ONE key, not four fragments joined by JSX. The destination used to be emitted
+                    here and the copy after it, which fixes English word order for every language;
+                    the German came out saying that Ohbox suggests the AI. The emphasis that was
+                    on the destination goes with it — a bold word is not worth a broken sentence,
+                    and this is a caption. */}
                 {row.ai ? (
                   <>
                     {" "}
-                    <Txt variant="settingsLabel">{destDone(row.ai.dest)}</Txt> {Copy.senderAiSuggestionAt}{" "}
-                    {row.ai.confidence.toFixed(2)}: {row.ai.rationale}.
+                    {Copy.senderAiSuggestion(
+                      destDone(row.ai.dest),
+                      row.ai.confidence.toFixed(2),
+                      row.ai.rationale,
+                    )}
                   </>
                 ) : null}
               </Txt>

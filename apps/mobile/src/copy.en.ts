@@ -1210,8 +1210,20 @@ const TABLE = {
   /** The sender sheet's note for a sender nothing has got past yet. */
   senderFirstContact:
     "First contact. Nothing from this sender has reached the Ohbox — it waited here.",
-  /** Reads around the suggestion chip: "<place> is the AI's suggestion at 0.82". */
-  senderAiSuggestionAt: "is the AI's suggestion at",
+  /**
+   * THE WHOLE SUGGESTION SENTENCE, in one key, because word order is not ours to assume.
+   *
+   * This used to be the fragment "is the AI's suggestion at", with the destination rendered
+   * BEFORE it by the screen and the score and reason after. English survives that; German does
+   * not — the verb moves, and the assembled result read "Ohbox schlägt die KI vor", which says
+   * that Ohbox suggests the AI. A sentence assembled from parts by JSX can only ever have one
+   * language's grammar.
+   *
+   * `reason` is the model's own words, arriving from the server. It is quoted rather than
+   * translated, for the same reason a platform diagnostic is.
+   */
+  senderAiSuggestion: (dest: string, confidence: string, reason: string): string =>
+    `${dest} is the AI's suggestion at ${confidence}: “${reason}”`,
 
   /* ───────────────────────────── refusals the seams RETURN, and a screen renders ──────────── */
 

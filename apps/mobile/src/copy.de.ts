@@ -754,7 +754,8 @@ export const DE: Deck = {
   senderGone: "Dieser Absender steht nicht mehr im Screener.",
   senderFirstContact:
     "Erster Kontakt. Von diesem Absender hat es noch nichts in die Ohbox geschafft — es hat hier gewartet.",
-  senderAiSuggestionAt: "schlägt die KI vor, mit",
+  senderAiSuggestion: (dest: string, confidence: string, reason: string): string =>
+    `Die KI schlägt ${dest} vor, mit ${confidence}: „${reason}“`,
 
   bootBadOrigin: (origin: string) => `keine Server-Adresse: „${origin}“`,
   bootBadApiBase: (base: string) => `keine API-Adresse des Servers: „${base}“`,
