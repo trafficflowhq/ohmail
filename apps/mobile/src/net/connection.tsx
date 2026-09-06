@@ -36,7 +36,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Platform } from "react-native";
 import { Copy } from "../copy";
-import { refuse, sayRefusal, type Refusal } from "../refusal";
+import { refuse, type Refusal } from "../refusal";
 import { mirrorExists, mirrorOwnerKey } from "../engine/boot";
 import { nativeEngineDeps } from "../engine/native";
 import { settleInstallGeneration } from "../state/install-marker";
@@ -350,7 +350,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         //    the pairings alone rather than act on a guess. Not using them and not destroying
         //    them are different acts, and only the first is safe to take on a maybe.
         if (install.kind === "purge-refused") {
-          if (stillCurrent()) setState({ k: "refused", reason: refuse("serversPurgeRefused", sayRefusal(install.reason)) });
+          if (stillCurrent()) setState({ k: "refused", reason: refuse("serversPurgeRefused", install.reason) });
           return;
         }
         //    AND `unknown` STOPS THE LAUNCH TOO, without deleting anything.
@@ -367,7 +367,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         //    mirror does, so a launch that cannot open it is a launch that could not have read
         //    any mail either.
         if (install.kind === "unknown") {
-          if (stillCurrent()) setState({ k: "refused", reason: refuse("serversInstallUnknown", sayRefusal(install.reason)) });
+          if (stillCurrent()) setState({ k: "refused", reason: refuse("serversInstallUnknown", install.reason) });
           return;
         }
         // 2. FINISH THE FORGETS THAT DID NOT FINISH. A forget writes its intent before it

@@ -72,8 +72,8 @@ import {
 /* Every sentence this module hands back reaches a screen, so they live in the copy deck and are
    translated with everything else. The `throw new Error(…)` messages below do not: they are
    programming faults nobody but a developer ever reads. */
-import { Copy, faultDetail } from "../copy";
-import { refuse, type Refusal } from "../refusal";
+import { Copy } from "../copy";
+import { faultDetail, refuse, type Refusal, type RefusalArg } from "../refusal";
 import { dropWakeRow } from "./push.js";
 import { resolveApiBase } from "./server-base.js";
 
@@ -95,7 +95,9 @@ export type Negotiation =
   | { kind: "hello"; hello: HelloAnswer }
   /** Something answered, but not an ohmail server (the `product` probe failed). */
   | { kind: "not-ohmail" }
-  | { kind: "unreachable"; detail: string };
+  /* `detail` is a refusal ARGUMENT, not a sentence: it is rendered where it is shown, so a
+     language change reaches inside `Copy.unreachable`/`Copy.pairUnreachable` too. */
+  | { kind: "unreachable"; detail: RefusalArg };
 
 export async function negotiate(fetchImpl: FetchLike, origin: string): Promise<Negotiation> {
   let res: Response;
@@ -104,7 +106,7 @@ export async function negotiate(fetchImpl: FetchLike, origin: string): Promise<N
   } catch (err) {
     return { kind: "unreachable", detail: faultDetail(err) };
   }
-  if (!res.ok) return { kind: "unreachable", detail: Copy.helloStatus(res.status) };
+  if (!res.ok) return { kind: "unreachable", detail: refuse("helloStatus", res.status) };
   let body: {
     product?: unknown; flavor?: unknown; apiVersion?: unknown; needsSetup?: unknown;
     features?: { pairing?: unknown };
