@@ -346,6 +346,15 @@ export class HttpAdapter implements EngineAdapter {
    * same-key request replays the first reservation's outcome without touching SMTP.
    */
   private readonly draftForKey = new Map<string, string>();
+  /**
+   * Keys whose `POST /drafts` went out and came back unreadable.
+   *
+   * `POST /drafts` is NOT idempotent — it ignores the key it is given — so a retry under the same
+   * key creates a second draft rather than returning the first. This is what stops that: the key
+   * is remembered, and the next attempt refuses instead of repeating a create the server may
+   * already have committed.
+   */
+  private readonly createAttempted = new Set<string>();
 
   constructor(opts: HttpAdapterOptions = {}) {
     this.baseUrl = (opts.baseUrl ?? "").replace(/\/$/, "");
@@ -1430,6 +1439,17 @@ export class HttpAdapter implements EngineAdapter {
           cc: m.cc,
           bcc: m.bcc,
         };
+        if (m.draftId === null && this.createAttempted.has(opts.idempotencyKey)) {
+          // A create under this key already went out and its answer was unreadable — see
+          // `createAttempted`. `POST /drafts` ignores the key, so trying again writes a SECOND
+          // draft rather than returning the first, and an autosave loop turns that into one new
+          // draft per attempt.
+          throw new MutationRejectedError(
+            "ohmail could not tell whether this draft was created, and will not create a second "
+              + "one. Reload to see what the server has.",
+            { code: "draft_unverified", status: null, retryable: false },
+          );
+        }
         if (m.draftId === null) {
           const res = await this.request("POST", "/drafts", {
             body: {
@@ -1444,11 +1464,16 @@ export class HttpAdapter implements EngineAdapter {
           const seq = this.noteSeq(res);
           const dto = await readJsonOrAmbiguous<{ id?: string; updatedAt?: string; createdAt?: string }>(res, "draft save");
           if (!dto.id) {
-            // Parsed, but without the id it promised. Same class as an unreadable body: the row may
-            // exist. Retryable under the same key, carrying the status so the ceiling can attribute
-            // it — a terminal refusal here drops the key and the next attempt creates a second row.
+            /**
+             * Parsed, but without the id it promised: the row may exist and this client cannot
+             * name it. The old sentence promised ohmail would "ask again under the same key" —
+             * it does not, because this route ignores the key, so asking again wrote a second
+             * draft. The key is remembered instead, and the branch above refuses the repeat.
+             */
+            this.createAttempted.add(opts.idempotencyKey);
             throw new MutationRejectedError(
-              "We could not read the server's answer to this draft save. ohmail will ask again under the same key.",
+              "We could not read the server's answer to this draft save, so ohmail cannot tell "
+                + "whether it was created. It will not create a second one.",
               { code: "unreadable_response", status: res.status, retryable: true, retryAfterMs: retryAfterMsOf(res) },
             );
           }
@@ -1670,6 +1695,21 @@ export class HttpAdapter implements EngineAdapter {
         );
       }
     }
+    if (!draftId && this.createAttempted.has(idempotencyKey)) {
+      /**
+       * A CREATE UNDER THIS KEY ALREADY WENT OUT AND ITS ANSWER WAS UNREADABLE.
+       *
+       * Sending it again would create a second draft, because the route does not honour the key.
+       * The honest answer is that this device cannot tell what happened — the same shape as an
+       * unverified send, and for the same reason: the only safe repeat is one the server would
+       * recognise, and there is none.
+       */
+      throw new MutationRejectedError(
+        "ohmail could not tell whether this draft was created, and will not create a second one. "
+          + "Reload to see what the server has.",
+        { code: "draft_unverified", status: null, retryable: false },
+      );
+    }
     if (!draftId) {
       const created = await this.request("POST", "/drafts", {
         body: {
@@ -1699,11 +1739,25 @@ export class HttpAdapter implements EngineAdapter {
       this.noteSeq(created);
       const draft = await readJsonOrAmbiguous<{ id?: string; bcc?: unknown }>(created, "draft create");
       if (!draft.id) {
-        // Same class, and the costliest instance: reporting this as `send_failed` tells a person
-        // no draft was made about one that may have been written and paid for, and frees the next
-        // press to mint a new key.
+        /**
+         * ── AN UNREADABLE CREATE IS AMBIGUOUS, AND THE CREATE IS NOT IDEMPOTENT ──────────────
+         *
+         * The old sentence here said ohmail would "ask again under the same key". It does not,
+         * because `POST /drafts` IGNORES the idempotency key — as the comment on the request
+         * itself records. So the retry issued a second create and the server, which had already
+         * committed the first one, wrote another: a duplicate draft on every autosave, and on a
+         * send an orphaned first draft with the message going out under the second.
+         *
+         * The key is remembered as having attempted a create, so the next attempt under it does
+         * not POST again. The refusal is still retryable — a person may press Try again — but it
+         * comes back through the branch below, which refuses rather than repeating the create.
+         * Reporting failure instead would be worse: it says no draft was made about one that may
+         * have been written.
+         */
+        this.createAttempted.add(idempotencyKey);
         throw new MutationRejectedError(
-          "We could not read the server's answer to this draft. ohmail will ask again under the same key.",
+          "We could not read the server's answer to this draft, so ohmail cannot tell whether it "
+            + "was created. It will not create a second one.",
           { code: "unreadable_response", status: created.status, retryable: true, retryAfterMs: retryAfterMsOf(created) },
         );
       }

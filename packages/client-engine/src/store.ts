@@ -103,6 +103,14 @@ export interface MirrorStore extends EntityReader {
    * deltas already applied to the rows that were kept.
    */
   prune(keys: ReadonlyArray<{ type: string; id: string }>): Promise<void>;
+  /**
+   * {@link prune}, taking its turn on the same durable-write lane as {@link commitLocal}.
+   *
+   * For a terminal delete that must not race a re-bootstrap: the reset decides which rows to
+   * carry by reading memory, and an unsequenced purge can land between that read and the wipe,
+   * so the wipe writes back a row the purge just removed.
+   */
+  pruneSerialized(keys: ReadonlyArray<{ type: string; id: string }>): Promise<void>;
 
   /**
    * ── THE OUTBOX'S OWN WRITE: ATOMIC ACROSS KEYS, AND WRITE-THEN-PUBLISH ───────────────────
@@ -621,8 +629,48 @@ export abstract class BaseMirrorStore implements MirrorStore {
     await this.flush(dirty, resp.cursor, []);
   }
 
+  /**
+   * {@link prune}, ON THE DURABLE-WRITE LANE.
+   *
+   * `prune` is memory-first: it evicts, then purges. That direction is right for a terminal
+   * delete — gone from memory, still on disk, replayed under the same key — but its persisted
+   * half raced `resetForBootstrap` in the same way `commitLocal` did before the lane existed:
+   * the reset snapshots which rows to carry, the purge lands, and the wipe writes back a row the
+   * purge has just removed. The verb had reached its terminal outcome and comes back on the next
+   * boot to be sent again.
+   *
+   * The memory eviction stays synchronous — three callers depend on it landing before their first
+   * await — and only the durable half takes its turn.
+   */
+  async pruneSerialized(keys: ReadonlyArray<{ type: string; id: string }>): Promise<void> {
+    // THE EVICTION HAPPENS HERE, synchronously, before any await — three callers are `void`
+    // functions that read the store on the next line. Wrapping the whole of `prune` in the lane
+    // pushed it a microtask later and those callers saw the row they had just removed; that is
+    // the same defect, in the same three places, that kept this method off `commitLocal`.
+    const gone = this.evictLocally(keys);
+    if (gone.length === 0) return;
+    this.ver++;
+    // Only the DURABLE half takes its turn.
+    return this.serializeWrite(() => this.purge(gone));
+  }
+
   /** See {@link MirrorStore.prune} — hard delete, body cascade, cursor and maxSeq untouched. */
   async prune(keys: ReadonlyArray<{ type: string; id: string }>): Promise<void> {
+    const gone = this.evictLocally(keys);
+    if (gone.length === 0) return;
+    this.ver++;
+    await this.purge(gone);
+  }
+
+  /**
+   * The MEMORY half of a prune: evict, evict the body cascade, drop them from the unflushed set.
+   * Answers the storage keys that must now be purged.
+   *
+   * Split out because two callers need the eviction to happen at different moments relative to
+   * the durable delete — {@link prune} purges immediately, {@link pruneSerialized} queues the
+   * purge behind the write lane — and both need the eviction itself to be synchronous.
+   */
+  private evictLocally(keys: ReadonlyArray<{ type: string; id: string }>): string[] {
     const gone: string[] = [];
     for (const { type, id } of keys) {
       const key = recordKey(type, id);
@@ -638,9 +686,7 @@ export abstract class BaseMirrorStore implements MirrorStore {
       const bodyKey = recordKey("message_body", id);
       if (this.records.delete(bodyKey)) gone.push(bodyKey);
     }
-    if (gone.length === 0) return;
-    this.ver++;
-    await this.purge(gone);
+    return gone;
   }
 
   /**

@@ -1567,6 +1567,14 @@ export class OhmailEngine {
    * visible and operable until then, rather than leaving it referenced by nothing.
    */
   private readonly abandonedLocally = new Map<string, PersistedOutboxEntry>();
+  /**
+   * Answers that arrived AFTER their dispatch deadline, waiting for the next `flushPending`.
+   *
+   * A verb whose request outlived its deadline is owned by that in-flight attempt and is not on
+   * the queue, so nothing else would ever produce a result for it — and the two families a
+   * surface waits on (a send's settlement, a create's server id) exist nowhere else.
+   */
+  private readonly lateResults = new Map<string, MutationResult>();
 
   /**
    * The abandoned record for an id, from disk OR from the session-local fallback.
@@ -4146,7 +4154,28 @@ export class OhmailEngine {
     if (timer !== undefined) clearTimeout(timer);
 
     if (timedOut) {
-      const hold: Promise<void> = attempt.then(() => undefined, () => undefined).finally(() => {
+      /**
+       * ── THE LATE ANSWER IS KEPT, NOT THROWN AWAY ────────────────────────────────────────────
+       *
+       * The attempt goes on and becomes the barrier; its eventual result used to be discarded
+       * entirely, because the caller had already been told `queued`. That is fine for a verb the
+       * drive owns and wrong for the two families a SURFACE is waiting on:
+       *
+       *  · a send. Its settlement reaches the composer only through a result `flushPending`
+       *    returns. The verb is not on the queue — the in-flight attempt owns it — so no later
+       *    flush produces one, and the composer stays locked after the message has gone.
+       *  · a first `draft_save`. The server's `entityId` exists in exactly one place, that
+       *    result. Lose it and the next edit creates a SECOND draft, because nothing adopted the
+       *    first one's id.
+       *
+       * So a late settle is recorded and handed to the next `flushPending`, which is the road
+       * every owner-settled result already travels. Nothing is re-dispatched: this is the answer
+       * to a request that did go out, arriving after the deadline said it might not.
+       */
+      const hold: Promise<void> = attempt.then(
+        (late) => { this.lateResults.set(p.id, late); this.notify(); },
+        () => undefined,
+      ).finally(() => {
         if (this.outboxHold === hold) this.outboxHold = null;
         void this.syncFresh().catch(() => { /* the scheduler's cadence retries */ });
       });
@@ -4213,7 +4242,13 @@ export class OhmailEngine {
    */
   private async dropOutbox(id: string): Promise<void> {
     try {
-      await this.store.prune([{ type: OUTBOX_TYPE, id }]);
+      // THROUGH THE STORE'S OWN WRITE LANE, like every other durable outbox write. `prune` is
+      // memory-first by design and that is still right here, but its PERSISTED half raced the
+      // re-bootstrap exactly as `commitLocal` used to: the reset snapshots the rows to keep, the
+      // purge lands, and the wipe re-writes a row the purge had just removed — a verb that
+      // reached its terminal outcome coming back to life on the next boot. `prune` now runs on
+      // the lane, so it and the reset take turns.
+      await this.store.pruneSerialized([{ type: OUTBOX_TYPE, id }]);
     } catch { /* an undeleted entry replays idempotently — the safe direction */ }
   }
 
@@ -5480,12 +5515,26 @@ export class OhmailEngine {
     // could never see one and this method would sit for minutes instead of answering. Its
     // contract is to answer — `useMailSend.flush` re-arms its backoff only when a result says
     // the key is still queued, and an empty array reads as "nothing left".
+    /**
+     * LATE ANSWERS FIRST, AND ABOVE THE HOLD CHECK.
+     *
+     * A late answer is the answer to the very request that armed the hold. Draining it below the
+     * check meant it was never handed over while the barrier stood — which is exactly when it
+     * exists — so a composer waiting on a send's settlement stayed locked until something else
+     * happened to flush, and a create's server id sat in a map nobody read.
+     */
+    const late = [...this.lateResults.values()];
+    this.lateResults.clear();
     if (this.outboxHold) {
-      return this.queue.map((p) => ({ id: p.id, key: p.key, status: "queued" as const, seq: null }));
+      return [
+        ...late,
+        ...this.queue.map((p) => ({ id: p.id, key: p.key, status: "queued" as const, seq: null })),
+      ];
     }
     // THE SAME SINGLE-FLIGHT every other outbox road takes — see {@link outboxGate}. Without it
     // two surfaces could flush concurrently and, for the null-key read verbs, land newer-then-older.
     const results = await this.outboxGate(() => this.flushPendingInner());
+    if (late.length > 0) results.unshift(...late);
     // OFF THE LANE. One drain covers the whole batch: they all finished before this line, so a
     // single drive that starts now began after every one of their POSTs returned and carries
     // every echo — the same happens-before the boot replay relies on.
