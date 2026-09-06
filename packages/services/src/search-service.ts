@@ -1,6 +1,7 @@
 import { sql, type SQL } from "drizzle-orm";
 import { holdsPunctuation, showSimilar, type SearchTier } from "@trafficflow/core/search-rank";
 import type { ServiceContext, Db } from "./context.js";
+import { dialect, type Dialect } from "@trafficflow/db/dialect";
 import { materializeMessages } from "./dto/materialize.js";
 import { clampLimit } from "./pagination.js";
 import { ServiceError } from "./errors.js";
@@ -259,6 +260,12 @@ function emptyResult(): SearchResult {
 // per Db handle so we probe `to_regprocedure` at most once per connection object.
 const trgmCache = new WeakMap<object, Promise<boolean>>();
 function hasTrgm(db: Db): Promise<boolean> {
+  // ASKED ONLY OF A STORE THAT COULD ANSWER. `to_regprocedure` is a server function, so composing
+  // this for the device store would not return `false` — it would fail to parse, during a search.
+  // The seam puts this probe in the caller by contract, because one dialect runs against a
+  // database that HAS the extension and one that does not; the device is neither, and its answer
+  // is a fact about the store.
+  if (dialect(db).name !== "pg") return Promise.resolve(false);
   const key = db as unknown as object;
   let p = trgmCache.get(key);
   if (!p) {
@@ -334,20 +341,23 @@ export class SearchService {
     const sort: SearchSort = opts.sort ?? "relevance";
 
     // ── shared predicates ──────────────────────────────────────────────────
-    const where = this.whereSql(ctx.accountId, opts.filters ?? {});
-    const tsq = sql`websearch_to_tsquery('english', ${q})`;
-    const lexPred = sql`(m.subject_tsv @@ ${tsq} or b.body_tsv @@ ${tsq})`;
+    // BOTH ARMS THROUGH THE SEAM. The two stores index this text in ways that share no syntax —
+    // a generated `tsvector` column on the row here, separate full-text tables joined by `rowid`
+    // there — and neither spelling parses on the other. `"mail"` names the corpus because the
+    // device arm needs TABLE NAMES this file has no reason to know.
+    const d = dialect(ctx.db);
+    const where = this.whereSql(d, ctx.accountId, opts.filters ?? {});
 
     const trgm = await hasTrgm(ctx.db);
-    const like = `%${q}%`;
-    // Fuzzy arm: pg_trgm word_similarity (typo-tolerant) or the offline ILIKE degrade.
-    const fuzzPred = trgm
-      ? sql`(word_similarity(${q}, m.subject) >= ${FUZZY_THRESHOLD} or word_similarity(${q}, m.from_address) >= ${FUZZY_THRESHOLD})`
-      : sql`(m.subject ilike ${like} or m.from_address ilike ${like})`;
-    const fuzzRank = trgm
-      ? sql`greatest(word_similarity(${q}, m.subject), word_similarity(${q}, m.from_address))`
-      : sql`coalesce(extract(epoch from m.date), 0)`;   // no relevance signal offline → recency
-    const lexRank = sql`greatest(ts_rank(m.subject_tsv, ${tsq}), ts_rank(coalesce(b.body_tsv, to_tsvector('')), ${tsq}))`;
+    const lex = d.search.lexical(q, "mail");
+    // Typo tolerance where the extension exists, and where it does not the seam's degrade — the
+    // same substring shape this file used to spell inline, ranked by RECENCY for the reason the
+    // old comment gave: offline there is no relevance signal left.
+    const fuzz = d.search.fuzzy(q, "mail", { trigram: trgm, threshold: FUZZY_THRESHOLD });
+    const lexPred = lex.pred;
+    const lexRank = lex.rank;
+    const fuzzPred = fuzz.pred;
+    const fuzzRank = fuzz.rank;
 
     /**
      * ── THE VERBATIM ARM: A PUNCTUATED QUERY IS ONE LEXEME, AND A LEXEME MATCH IS ALL-OR-NOTHING
@@ -403,11 +413,11 @@ export class SearchService {
      * `showSimilar` rather than `=== 0` so the floor exists in exactly one place; the argument
      * for its value is in `@trafficflow/core/search-rank`, measured on both doors.
      */
-    const exactTotal = await this.count(ctx, where, exactPred);
+    const exactTotal = await this.count(ctx, d, where, exactPred);
     const tier: SearchTier = showSimilar(exactTotal) ? "similar" : "exact";
     const matchPred = tier === "exact" ? exactPred : fuzzPred;
     const rank = tier === "exact" ? exactRank : fuzzRank;
-    const total = tier === "exact" ? exactTotal : await this.count(ctx, where, fuzzPred);
+    const total = tier === "exact" ? exactTotal : await this.count(ctx, d, where, fuzzPred);
 
     /**
      * THE RELEVANCE QUERY — one arm, the tier's own, over the tier's own predicate.
@@ -453,7 +463,9 @@ export class SearchService {
      * total alike.
      */
     const hitQuery = sort === "relevance" ? ranked : this.orderedArm(where, matchPred, sort, limit);
-    const hitRows = rowsOf<{ id: string }>(await ctx.db.execute(hitQuery));
+    // Positional rows on both stores — the seam's one shape, and this statement selects one
+    // column, so position 0 is the id.
+    const hitRows = (await d.exec(ctx.db, hitQuery)).map((r) => ({ id: String(r[0]) }));
 
     /**
      * Re-materialize the hits into canonical MessageDTOs (folder + sensitivity), preserving
@@ -480,7 +492,7 @@ export class SearchService {
       if (dto) items.push(dto);
     }
 
-    const facets = await this.facets(ctx, where, matchPred);
+    const facets = await this.facets(ctx, d, where, matchPred);
     return { items, facets, total, tier };
   }
 
@@ -528,10 +540,11 @@ export class SearchService {
       return { items: [], total: 0, direction: opts.direction };
     }
     const limit = clampLimit(opts.limit);
-    const where = this.whereSql(ctx.accountId, {});
+    const d = dialect(ctx.db);
+    const where = this.whereSql(d, ctx.accountId, {});
     const pred = sql`lower(m.from_address) = lower(${address})`;
 
-    const total = await this.count(ctx, where, pred);
+    const total = await this.count(ctx, d, where, pred);
     const hitRows = rowsOf<{ id: string }>(await ctx.db.execute(sql`
       select m.id
       ${this.from}
@@ -609,64 +622,70 @@ export class SearchService {
    * once — the same call, the same number — as the `total` the caller renders. In the exact tier
    * those are one query, not two.
    */
-  private async count(ctx: ServiceContext, where: SQL, matchPred: SQL): Promise<number> {
-    const r = await ctx.db.execute(sql`select count(*)::int as n ${this.from} where ${where} and ${matchPred}`);
-    return rowsOf<{ n: number }>(r)[0]?.n ?? 0;
+  private async count(ctx: ServiceContext, d: Dialect, where: SQL, matchPred: SQL): Promise<number> {
+    const rows = await d.exec(ctx.db,
+      sql`select ${d.castInt(sql`count(*)`)} as n ${this.from} where ${where} and ${matchPred}`);
+    return Number(rows[0]?.[0] ?? 0);
   }
 
-  private async facets(ctx: ServiceContext, where: SQL, matchPred: SQL): Promise<Facets> {
+  private async facets(ctx: ServiceContext, d: Dialect, where: SQL, matchPred: SQL): Promise<Facets> {
     const now = ctx.now();
     const todayStart = new Date(now); todayStart.setUTCHours(0, 0, 0, 0);
-    // Bind timestamp bounds as ISO strings with an explicit ::timestamptz cast:
-    // postgres-js will not serialize a bare Date through drizzle's raw `sql`.
-    const today = todayStart.toISOString();
-    const d7 = new Date(todayStart.getTime() - 7 * 86_400_000).toISOString();
-    const d30 = new Date(todayStart.getTime() - 30 * 86_400_000).toISOString();
+    // THE INSTANT IS A DIFFERENT LITERAL ON EACH STORE — an ISO string the server parses, a count
+    // of milliseconds the device keeps — and the old comment named only half the reason (that
+    // postgres-js will not serialize a bare Date through a raw `sql`). Both halves are the seam's.
+    const today = d.ts(todayStart);
+    const d7 = d.ts(new Date(todayStart.getTime() - 7 * 86_400_000));
+    const d30 = d.ts(new Date(todayStart.getTime() - 30 * 86_400_000));
+    const n = (e: SQL): SQL => d.castInt(e);
 
     // Scalars (unread / hasAttachments / recency buckets) in one aggregate pass.
     const scalarSql = sql`
       select
-        count(*) filter (where m.unread)::int as unread_t,
-        count(*) filter (where not m.unread)::int as unread_f,
-        count(*) filter (where m.has_attachments)::int as att_t,
-        count(*) filter (where not m.has_attachments)::int as att_f,
-        count(*) filter (where m.date >= ${today}::timestamptz)::int as d_today,
-        count(*) filter (where m.date >= ${d7}::timestamptz and m.date < ${today}::timestamptz)::int as d_7,
-        count(*) filter (where m.date >= ${d30}::timestamptz and m.date < ${d7}::timestamptz)::int as d_30,
-        count(*) filter (where m.date is null or m.date < ${d30}::timestamptz)::int as d_older
+        ${n(sql`count(*) filter (where m.unread)`)} as unread_t,
+        ${n(sql`count(*) filter (where not m.unread)`)} as unread_f,
+        ${n(sql`count(*) filter (where m.has_attachments)`)} as att_t,
+        ${n(sql`count(*) filter (where not m.has_attachments)`)} as att_f,
+        ${n(sql`count(*) filter (where m.date >= ${today})`)} as d_today,
+        ${n(sql`count(*) filter (where m.date >= ${d7} and m.date < ${today})`)} as d_7,
+        ${n(sql`count(*) filter (where m.date >= ${d30} and m.date < ${d7})`)} as d_30,
+        ${n(sql`count(*) filter (where m.date is null or m.date < ${d30})`)} as d_older
       ${this.from}
       where ${where} and ${matchPred}`;
 
     const folderSql = sql`
-      select ${this.folderExpr} as folder, count(*)::int as c
+      select ${this.folderExpr} as folder, ${n(sql`count(*)`)} as c
       ${this.from}
       where ${where} and ${matchPred}
       group by 1`;
 
     const senderSql = sql`
-      select m.from_address as address, count(*)::int as c
+      select m.from_address as address, ${n(sql`count(*)`)} as c
       ${this.from}
       where ${where} and ${matchPred}
       group by 1
       order by c desc, address asc
       limit ${SENDER_FACET_LIMIT}`;
 
+    // POSITIONAL ROWS, in the order each statement selects — the seam's one shape on both stores.
+    // The scalar row's eight positions are the eight aggregates above, read by index rather than
+    // by alias; if that list is ever reordered, these indices move with it.
     const [scalarR, folderR, senderR] = await Promise.all([
-      ctx.db.execute(scalarSql),
-      ctx.db.execute(folderSql),
-      ctx.db.execute(senderSql),
+      d.exec(ctx.db, scalarSql),
+      d.exec(ctx.db, folderSql),
+      d.exec(ctx.db, senderSql),
     ]);
 
-    const s = rowsOf<Record<string, number>>(scalarR)[0] ?? {};
+    const s = (scalarR[0] ?? []).map((v) => Number(v ?? 0));
     const folder: Record<string, number> = {};
-    for (const row of rowsOf<{ folder: string; c: number }>(folderR)) folder[row.folder] = row.c;
+    for (const row of folderR) folder[String(row[0])] = Number(row[1] ?? 0);
 
     return {
       folder,
-      sender: rowsOf<{ address: string; c: number }>(senderR).map((r) => ({ address: r.address, count: r.c })),
-      unread: { true: s.unread_t ?? 0, false: s.unread_f ?? 0 },
-      hasAttachments: { true: s.att_t ?? 0, false: s.att_f ?? 0 },
-      date: { today: s.d_today ?? 0, last7: s.d_7 ?? 0, last30: s.d_30 ?? 0, older: s.d_older ?? 0 },
+      sender: senderR.map((r) => ({ address: String(r[0]), count: Number(r[1] ?? 0) })),
+      unread: { true: s[0] ?? 0, false: s[1] ?? 0 },
+      hasAttachments: { true: s[2] ?? 0, false: s[3] ?? 0 },
+      date: { today: s[4] ?? 0, last7: s[5] ?? 0, last30: s[6] ?? 0, older: s[7] ?? 0 },
     };
   }
 
@@ -696,7 +715,7 @@ export class SearchService {
     return value;
   }
 
-  private whereSql(accountId: string, f: SearchFilters): SQL {
+  private whereSql(d: Dialect, accountId: string, f: SearchFilters): SQL {
     // `deleted_at is null` unconditionally (mail 0065): search is a living view, and a deleted
     // or fully-expunged message must not come back as a hit over its stored (husked) headers.
     const preds: SQL[] = [sql`m.account_id = ${accountId}`, sql`m.deleted_at is null`];
@@ -705,10 +724,10 @@ export class SearchService {
     if (f.unread !== undefined) preds.push(sql`m.unread = ${f.unread}`);
     if (f.hasAttachments !== undefined) preds.push(sql`m.has_attachments = ${f.hasAttachments}`);
     if (f.dateFrom !== undefined) {
-      preds.push(sql`m.date >= ${SearchService.instantOr400(f.dateFrom, "dateFrom")}::timestamptz`);
+      preds.push(sql`m.date >= ${d.ts(new Date(SearchService.instantOr400(f.dateFrom, "dateFrom")))}`);
     }
     if (f.dateTo !== undefined) {
-      preds.push(sql`m.date <= ${SearchService.instantOr400(f.dateTo, "dateTo")}::timestamptz`);
+      preds.push(sql`m.date <= ${d.ts(new Date(SearchService.instantOr400(f.dateTo, "dateTo")))}`);
     }
     return sql.join(preds, sql` and `);
   }
