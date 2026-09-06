@@ -62,6 +62,12 @@ export function localeSequencer(deps: LocaleSequencerDeps): LocaleSequencer {
    */
   let decisions = 0;
   let chosen: AppLocale | null = null;
+  /**
+   * THE KEYSTORE QUEUE. A press awaits its turn here before it writes, so writes reach the store
+   * in the order the presses happened rather than in the order two independent promises settle.
+   * See {@link LocaleSequencer.set} for what went wrong without it.
+   */
+  let queue: Promise<void> = Promise.resolve();
 
   return {
     chosen: () => chosen,
@@ -82,10 +88,23 @@ export function localeSequencer(deps: LocaleSequencerDeps): LocaleSequencer {
       const ticket = ++decisions;
       deps.onBusy(true);
       try {
-        await deps.write(next);
-        /* The write still happened — it is the newest write that must win, and abandoning an older
-           one mid-flight would leave the store holding whichever finished last. Only PUBLISHING is
-           gated. */
+        /* ── THE STORE IS A DECISION TOO, AND IT IS GATED ON THE SAME TICKET ─────────────────
+           This used to be a bare `await deps.write(next)`, with only the PUBLISH gated. Two
+           presses in one render therefore issued two concurrent keystore writes, and whichever
+           the keystore happened to finish LAST was the value left on the device. The publish was
+           correctly ordered, so the app showed the newer language and the next launch came back
+           in the older one — a disagreement between the screen and the disk that no screen can
+           show you, and that survives the relaunch which is the only thing a person would try.
+
+           Awaiting the queue orders the writes. Re-reading the ticket AFTER the turn arrives
+           drops a press that has already been superseded: a keystore the newest press is about to
+           overwrite anyway should not first be made to hold a value nobody chose, and if that
+           newest write then fails, the store is left as it was rather than at some intermediate
+           choice. One press, one decision, one write. */
+        const mine = queue.then(() => (decisions === ticket ? deps.write(next) : undefined));
+        /* A refusal belongs to the press that caused it; it must not poison the presses behind. */
+        queue = mine.then(() => undefined, () => undefined);
+        await mine;
         if (decisions !== ticket) return;
         chosen = next;
         deps.onChosen(next);
