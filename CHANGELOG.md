@@ -13,6 +13,33 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Every control on a phone is a 44-pixel target
+
+Controls drawn smaller than a fingertip were smaller than a fingertip to press, too. Segmented
+controls, filter chips, ghost verbs, the settings navigation, the add-tag chip, the topbar button
+and the read switch now all answer to a 44×44 press area on phones, without any of them being
+drawn larger: the extra area is invisible and sits around the control, so the layout looks exactly
+as it did and nothing crowds anything else. The switch keeps its 40×23 track inside it.
+
+Four icon-only controls are still smaller than that and are named as such rather than quietly
+skipped — the per-message disclosure among them. They need a different treatment and it is coming.
+
+### Handing a mailbox back checks which install is holding it
+
+Exactly one install organizes a mailbox at a time, and the claim that says so lives in the mailbox
+itself. Asking the hosted server to stop used to be decided from what SORT of install held it —
+hosted, local, unknown — which is the same question only when there is one install of each sort.
+There is not: a hosted deployment's identity includes the environment it runs in, so two of them
+over one mailbox is ordinary.
+
+The decision is made on the holder's identity now, and the report waits until the mailbox itself
+says it is free. Three things it used to get wrong: a claim removed by count rather than by
+checking the mailbox afterwards, so a mailbox could be reported free while another install still
+held it; a claim written by this same deployment moments earlier, which did not count as anybody
+holding it; and a request to stop that could still be honoured after you had taken it back with
+"Organize here", clearing the newer press. Where the mailbox cannot be read, or something is still
+holding it, the request stays pending and is tried again rather than reported done.
+
 ### Text is a step larger on phones
 
 Every reading role in the app sat one to three pixels under what the phone platforms set beside it,
@@ -266,6 +293,14 @@ palette's foot, the reading pane's return hint, the Reply Run's screens, the "op
 mode" button, and the rule-by-subject sheet, which was English from top to bottom inside a
 German window. Where a sentence names a destination it now uses the word the sidebar shows,
 so a message filed to Belege is described as going to Belege.
+
+Nine German sentences also stopped bending a folder name into a shape it does not take.
+German has a preposition for going somewhere — *nach Berlin*, *nach Hause* — and it wants a
+bare place-noun; a mail folder is not one, it is *der Ordner Belege*. Sentences like "Nach
+Belege verschoben" and "nach Belege einsortieren" therefore read as though you were being
+sent somewhere. They name the folder after a colon or a dash now, which asks nothing of the
+name and is right for every folder including the ones with articles in them. The rename
+notice reads *in* rather than *zu*, which is how German renames.
 
 The first-run consent screen was not untranslated but wrong, which is worse. It said ohmail
 would create folders called "Belege", "Aussortiert" and "Quarantäne". The folders it
