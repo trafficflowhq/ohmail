@@ -2151,6 +2151,25 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
               : "The worker driver is the fast arm (one pass a minute); while it is dark, every " +
                 "alert's detection latency is the API scheduler's cadence instead. Check the " +
                 "worker's leader lock.") +
+            // ── AND THE ONE STATE THIS RULE CANNOT DISTINGUISH ─────────────────────────
+            //
+            // A driver in schema skew is RUNNING and cannot record that it ran: the table it
+            // would write to is either absent (0030 not applied) or ungranted (the hardening
+            // script not re-run), which are exactly the two states that put it there. Its row
+            // ages out and this rule fires — a true observation with a false implication, and
+            // the remedy it suggests (a dead scheduler) is the wrong one. The rule cannot tell
+            // the two apart from here, so it says so rather than letting the operator assume.
+            " If a schema_behind alert is also firing, prefer that one: an arm reporting schema " +
+            "skew cannot write its own pass row, so it goes dark here while running perfectly." +
+            // ── AND THE ONE STATE THIS RULE CANNOT DISTINGUISH ─────────────────────────
+            //
+            // A driver in schema skew is RUNNING and cannot record that it ran: the table it
+            // would write to is either absent (0030 not applied) or ungranted (the hardening
+            // script not re-run), which are exactly the two states that put it there. Its row
+            // ages out and this rule fires — a true observation with a false implication, and
+            // the remedy it suggests (a dead scheduler) is the wrong one. The rule cannot tell
+            // the two apart from here, so it says so rather than letting the operator assume.
+
             ` Its last pass refused ${row.streak} delivery attempt(s) in a row.`,
           count: 1,
           oldestSeconds: darkSeconds,
@@ -3109,50 +3128,36 @@ export function selectOpenAlerts<T extends Record<string, AnyPgColumn>>(
  * writing its own `.from(alertState)` is exactly how the `resolved_at IS NULL` predicate would
  * be forgotten in a file the census does not watch.
  */
-/**
- * How many resolved rows the table keeps. Small, because they are evidence for a fence and not a
- * history: the only reader that needs a tombstone is the next pass deciding whether it may
- * re-open the key, and one flapping condition must not grow this table for ever.
- *
- * Per KEY the bound is already one — `alert_key` is the primary key, so a resolution reuses the
- * row rather than appending — which is why this cap is over the whole table: the growth that is
- * actually possible is in the number of distinct keys that have ever fired and stopped.
- */
-export const ALERT_TOMBSTONE_MAX = 64;
 
 /**
- * HOW LONG A TOMBSTONE MUST SURVIVE BEFORE IT MAY BE PRUNED.
+ * ── THERE IS NO PRUNE, AND THAT IS THE FIX ───────────────────────────────────────────────
  *
- * The tombstone exists so the observation write's INSERT branch has something to fence against.
- * A count-only prune therefore reintroduced the defect it was added to prevent: past the cap,
- * the oldest resolved row is deleted, and a pass that evaluated that key BEFORE its resolution
- * and resumes after the prune finds an empty table, takes the insert branch, and re-opens — and
- * can page — an incident that was already resolved.
+ * A tombstone is what the observation write's INSERT branch fences against: without the row, an
+ * older pass finds an empty table, inserts, and re-opens an incident that was already resolved.
+ * Two attempts to bound the number of tombstones both put that back:
  *
- * A cap alone cannot know that. What bounds the danger is TIME: a pass in flight is bounded by
- * its own claim lease, so a tombstone older than the longest pass horizon cannot be the fence
- * any live pass still needs. Thirty minutes is that horizon with room to spare — the claim TTL
- * is minutes, and the wall clock of a whole pass is under a minute.
+ *  · **A COUNT.** Past the cap the oldest resolved row was deleted, and the oldest is exactly the
+ *    one a long-stalled pass needs.
+ *  · **A COUNT PLUS AN AGE HORIZON**, justified here as "a pass is bounded by its own claim
+ *    lease". That sentence was wrong, and it was mine: the lease is acquired AFTER the
+ *    observation write, so it bounds the delivery, not the evaluation — and the worker invokes
+ *    passes with no enforced deadline at all. Nothing bounded the interval the horizon assumed.
  *
- * Both bounds apply, and they answer different questions: the age says "no live pass can need
- * this any more", the count says "and the table still may not grow without limit".
+ * So the row is kept. What made a tombstone expensive was never the row, it was the payload, and
+ * resolution already blanks that: what remains is a key, two stamps, a class and the notification
+ * record — the smallest thing that can answer "has this been resolved since you looked?".
+ *
+ * GROWTH IS BOUNDED BY DISTINCT KEYS, not by traffic. `alert_key` is the primary key, so a
+ * condition that fires and clears a thousand times reuses one row; the number of rows is the
+ * number of alert keys a deployment has ever raised, which is its rule set times its shards and
+ * projects. That is the same bound the table already carries for OPEN alerts, and it is why a
+ * flapping key cannot grow it.
+ *
+ * The consequence for privileges is stated where it belongs (`staff-grants.ts`): with no prune,
+ * the blind role's DELETE on this table has no remaining user. Removing a granted verb is a
+ * privilege change and is left to be decided rather than slipped in here.
  */
-export const ALERT_TOMBSTONE_MIN_AGE_MS = 30 * 60 * 1000;
 
-/**
- * Drop resolved rows that are BOTH older than {@link ALERT_TOMBSTONE_MIN_AGE_MS} and outside the
- * newest {@link ALERT_TOMBSTONE_MAX}. Either condition alone is unsafe or unbounded.
- */
-async function pruneAlertTombstones(db: Tx, now: Date): Promise<void> {
-  const cut = new Date(now.getTime() - ALERT_TOMBSTONE_MIN_AGE_MS).toISOString();
-  await db.delete(alertState).where(sql`${alertState.alertKey} in (
-    select alert_key from ${alertState}
-    where resolved_at is not null
-      and resolved_at < ${cut}::timestamptz
-    order by resolved_at desc
-    offset ${ALERT_TOMBSTONE_MAX}
-  )`);
-}
 
 export async function listOpenAlertStamps(db: Tx): Promise<Array<{
   alertKey: string; openedAt: Date; notifiedAt: Date | null;
@@ -3216,28 +3221,19 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
     const behindAcct = accountDelivery(
       behindStreak, sinks, outcomes, delivered, failed, errors, now, opts,
     );
-    // ── THE PASS STILL RECORDS THAT IT RAN ────────────────────────────────────────────
+    // ── THIS PASS CANNOT RECORD THAT IT RAN, AND PRETENDING OTHERWISE WAS THE DEFECT ──
     //
-    // This path skipped `recordAlertPass`, and the consequence was a second alert with the wrong
-    // remedy. `alert_driver_dark` watches the OTHER arm's `alert_pass_runs` row; an arm that
-    // reaches this branch every cycle — the migration landed, the harden script not re-run, so
-    // the blind role cannot read the new objects — never writes one, and after thirty minutes
-    // the healthy arm pages "the API driver has stopped running". It has not stopped. It is
-    // running and saying, correctly and loudly, that the schema is behind. The operator is sent
-    // to look for a dead cron instead of at the grant.
+    // A `recordAlertPass` call stood here, added to stop the other arm reporting this one dark.
+    // It could not work, and the reason is the same one that put this branch here: in BOTH
+    // states this path exists for, the write is impossible. If cloud 0030 has not been applied,
+    // `alert_pass_runs` does not exist. If it has been applied but the hardening script was not
+    // re-run, the blind role lacks the grant on that same table. `recordAlertPass` swallows the
+    // error by contract — a pass must outlive its own bookkeeping — so the call looked like a
+    // fix, changed nothing, and left the false page it was written to prevent.
     //
-    // Recording here is safe by this table's own contract: `recordAlertPass` is try/catch and a
-    // pass must outlive its own bookkeeping, so on a database that genuinely cannot be written
-    // this is a no-op rather than a throw.
-    await recordAlertPass(db, {
-      driver: opts.driver,
-      now,
-      firing: firing.length,
-      delivered: delivered.length,
-      failedSinks: failed.length,
-      sinkFailureStreak: behindStreak?.consecutiveFailures ?? 0,
-      sinksConfigured: sinks.length,
-    });
+    // There is no capability available here that the other arm reads. So the honest response is
+    // not to record a liveness this arm cannot prove: it is to make the resulting page tell the
+    // operator what it might mean, which `alert_driver_dark`'s detail now does.
     return {
       now: now.toISOString(),
       firing,
@@ -3362,11 +3358,31 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
           // count all go, so a later promotion is a first observation again and the claim pages
           // it at once. Promotions leave the history alone — that direction was never broken,
           // and clearing it there would re-page every pass a population wobbled upward.
-          notifiedAt: sql`case when ${alertState.cls} = 'incident' and ${alertClass(alert)} = 'signal'
+          // ── AND A RE-OPEN ENDS THE OCCURRENCE TOO, FOR THE SAME REASON ─────────────
+          //
+          // The demotion case below was written when a resolved row was DELETED, so re-opening
+          // was an INSERT and every field started fresh by construction. Once resolution began
+          // marking, this update became the re-open path — and it cleared only `resolved_at`,
+          // carrying the previous occurrence's `opened_at`, `notified_at` and signature into a
+          // NEW outage. The claim then read a row that says "already paged with this exact
+          // signature" and suppressed the page for up to the renotify interval: an hour for a
+          // critical, a day for a warning. The board meanwhile aged the new incident from the
+          // old opening time, so the one number an operator uses to judge severity was the
+          // duration of a condition that had already ended.
+          //
+          // A condition that was resolved and is firing again is a new occurrence. It gets a new
+          // `opened_at` and no delivery history, which is exactly what the DELETE-and-INSERT it
+          // replaced used to give it.
+          openedAt: sql`case when ${alertState.resolvedAt} is not null
+            then ${now.toISOString()}::timestamptz else ${alertState.openedAt} end`,
+          notifiedAt: sql`case when ${alertState.resolvedAt} is not null
+              or (${alertState.cls} = 'incident' and ${alertClass(alert)} = 'signal')
             then null else ${alertState.notifiedAt} end`,
-          notifiedSignature: sql`case when ${alertState.cls} = 'incident' and ${alertClass(alert)} = 'signal'
+          notifiedSignature: sql`case when ${alertState.resolvedAt} is not null
+              or (${alertState.cls} = 'incident' and ${alertClass(alert)} = 'signal')
             then null else ${alertState.notifiedSignature} end`,
-          notifyCount: sql`case when ${alertState.cls} = 'incident' and ${alertClass(alert)} = 'signal'
+          notifyCount: sql`case when ${alertState.resolvedAt} is not null
+              or (${alertState.cls} = 'incident' and ${alertClass(alert)} = 'signal')
             then 0 else ${alertState.notifyCount} end`,
           // ── AND THE LEASE GOES WITH THEM, WHICH IS THE CONCURRENT HALF ──────────────
           //
@@ -3378,7 +3394,8 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
           // pass having done anything wrong. Dropping the lease makes that settle match nothing,
           // which is the outcome it should have: it is confirming a page for a condition that
           // has since stopped being one.
-          claimedUntil: sql`case when ${alertState.cls} = 'incident' and ${alertClass(alert)} = 'signal'
+          claimedUntil: sql`case when ${alertState.resolvedAt} is not null
+              or (${alertState.cls} = 'incident' and ${alertClass(alert)} = 'signal')
             then null else ${alertState.claimedUntil} end`,
         },
         // ── THE OBSERVATION FENCE: A STALE PASS MAY NOT OVERWRITE A NEWER ONE ────────────
@@ -3636,7 +3653,6 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
       .returning({ alertKey: alertState.alertKey })
       .then((rows) => { if (rows.length > 0) resolved.push(key); });
   }
-  await pruneAlertTombstones(db, now);
 
   const streak = opts.deliveryStreak;
   if (toNotify.length === 0) {

@@ -584,7 +584,20 @@ export function makePlatformSignalPort(
                 ? (r as { target: string }).target
                 : null;
             if (env !== null && env !== "production") return { failed: "production_filter_ignored" };
-            if (env === null) { sampled = "missing_provenance"; continue; }
+            if (env === null) {
+              // ── THE CURSOR MOVES ON A ROW WE DO NOT COUNT ─────────────────────────────
+              //
+              // `continue` skipped this row entirely, including the line further down that
+              // lowers `oldest`. On a page whose rows ALL lack provenance the cursor therefore
+              // did not move at all, the walk hit its no-progress guard, and the bucket was
+              // reported as `stalled_cursor` — a cause naming the endpoint for something this
+              // loop did. The row is excluded from the COUNTS, which is the decision; it is
+              // still evidence of where in time the page reached.
+              sampled = "missing_provenance";
+              const skipTs = parseStamp(r.timestamp);
+              if (skipTs !== null && skipTs < oldest) oldest = skipTs;
+              continue;
+            }
             const id = typeof r.requestId === "string" ? r.requestId : "";
             // A blank id cannot be de-duplicated, so counting it would inflate the boundary. It is
             // skipped rather than refused: unlike the census script, an approximate count over a

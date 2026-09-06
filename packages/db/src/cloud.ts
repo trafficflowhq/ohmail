@@ -166,7 +166,7 @@ export {
   evaluateAlerts, runAlertPass, deliver, webhookAlertSink, nodePostJson, renderAlertText,
   writeHeartbeat, refreshHeartbeat, clearHeartbeat, humanAge,
   listFailedBillingEvents, listStuckSends, listOpenAlerts, listOpenAlertStamps,
-  ALERT_TOMBSTONE_MAX, ALERT_TOMBSTONE_MIN_AGE_MS, selectOpenAlerts,
+  selectOpenAlerts,
   newDeliveryStreak, newSinkStreak, redactEndpoint, classifyTransportError, sinkHealthOf,
   alertSignature, alertClass, incidentsOf, signalsOf,
   alertDriverStatuses, platformSignalWindow, CLOUD_JOURNAL_HEAD_WHEN,

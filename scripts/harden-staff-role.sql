@@ -981,6 +981,14 @@ GRANT SELECT (
 REVOKE ALL ON public.outbound_sends FROM ohmail_admin;
 GRANT SELECT (id, account_id, status, created_at) ON public.outbound_sends TO ohmail_admin;
 
+-- RESOLUTION MARKS, IT DOES NOT DELETE (cloud 0030), and this block's rationale is corrected to
+-- match: `runAlertPass` clears a condition with an UPDATE that stamps `resolved_at` and blanks
+-- every column that could name an account. DELETE survives on this table for one reason only —
+-- pruning resolved rows — and if that prune is ever removed, this verb has no user left and
+-- should go with it. Two other files carried this same stale sentence and were corrected first;
+-- this is the third, found by a review after the other two, which is the whole argument for
+-- fixing the path you are looking at AND the one beside it.
+--
 -- `alert_state` is the ONE table this role WRITES. `/internal/alerts` is a staff surface: the
 -- pass opens a row when a rule starts firing, claims and settles the notification, and deletes
 -- the row when the condition clears. DELETE is in the list because `runAlertPass` resolves by
