@@ -152,6 +152,11 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
   publicSignup?: boolean;
 }) {
   const t = useTranslations("join");
+  /* `bootstrap` is a `useCallback([])` — its identity drives the mount effect, so a translator
+     in its dependency list would re-run it on every render. The ref is the same device
+     `remote-images.ts` uses for `onFailed`, and for the same reason. */
+  const tRef = useRef(t);
+  tRef.current = t;
 
   /**
    * The invite step is part of this journey when the deployment gates on a code.
@@ -189,13 +194,24 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
   const [totpCode, setTotpCode] = useState("");
   const [recovery, setRecovery] = useState<string[] | null>(null);
   /**
-   * WHICH ACCOUNT THIS WIZARD IS FOR — learned from the first `GET /auth/session` and never
-   * rewritten. See {@link fetchCodes} for what it is compared against and why it cannot be a
-   * cookie: an enrolment session sets no readable owner marker (`enrollmentCookies` writes none),
-   * so this screen is outside the reach of the marker-based boundary that protects the rest of
-   * the signed-in product. The only thing that knows is the server, asked again.
+   * WHICH ACCOUNT THIS WIZARD IS FOR — learned once and NEVER REWRITTEN.
+   *
+   * A ref rather than state, and first-write-only rather than assignable, because the sentence
+   * above used to be a comment and not a rule. `bootstrap()` assigned it unconditionally, and
+   * `bootstrap()` is not only the mount path — the verification step's "I have confirmed it"
+   * button calls it again. So a wizard that began as A, left open while another tab signed in as
+   * B, re-anchored itself to B on that press: from then on every comparison below compared B
+   * with B and passed. `bootstrap()` then routes from the SERVER's state, and B lacking recovery
+   * codes lands on the codes step, whose mount effect generates without another press — B's
+   * codes, minted and rendered in A's window, with B's previous set destroyed.
+   *
+   * So the first read wins and every later one is CHECKED against it. See {@link sameAccount}
+   * for what it is compared against and why it cannot be a cookie: an enrolment session sets no
+   * readable owner marker (`enrollmentCookies` writes none), so this screen is outside the reach
+   * of the marker-based boundary that protects the rest of the signed-in product. The only thing
+   * that knows is the server, asked again.
    */
-  const [wizardAccount, setWizardAccount] = useState<string | null>(null);
+  const wizardOwner = useRef<string | null>(null);
   const [codesSaved, setCodesSaved] = useState(false);
   /** Has this tab asked for another verification link? Copy only; never a claim it landed. */
   const [resent, setResent] = useState(false);
@@ -249,8 +265,21 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
     if (!apiConfigured()) return;
     try {
       const s = await auth.session();
-      // The account this wizard belongs to, fixed at the first read. `fetchCodes` compares.
-      setWizardAccount(s.user.accountId);
+      /*
+       * ── THE FIRST READ FIXES THE OWNER; A LATER ONE IS COMPARED, NEVER APPLIED ────────────
+       *
+       * Everything below this line is account-derived — the address on screen, the step, the
+       * subscription, the mailbox — so a bootstrap that answers for a different account must
+       * not reach any of it. Refusing HERE rather than at each action is what makes the
+       * comparison in {@link sameAccount} meaningful: a guard that re-anchors itself to
+       * whatever it is shown is not a guard, and this one did.
+       */
+      if (wizardOwner.current === null) {
+        wizardOwner.current = s.user.accountId;
+      } else if (wizardOwner.current !== s.user.accountId) {
+        setError(tRef.current("accountChanged", { email: s.user.email }));
+        return;
+      }
       setEmail(s.user.email);
       setDisplayName(s.user.displayName);
       if (s.scope === "enrollment") { setStep("factor"); return; }
@@ -437,7 +466,10 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
        * reached the codes step with `wizardAccount === null` and the comparison below disabled
        * itself. The guard existed and, on the one path everybody takes, was not on.
        */
-      setWizardAccount(out.user.accountId);
+      // `??=`, not `=`: first-write-only holds on this path as well. A wizard that already knew
+      // its account cannot be re-pointed by a registration, and the ordinary signup — whose
+      // bootstrap 401s and leaves this null — is where the value comes from.
+      wizardOwner.current ??= out.user.accountId;
       setStep("factor");
     });
   };
@@ -504,7 +536,8 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
    * server accepts a passkey registration, a TOTP secret and its activation, a verification
    * resend, a mailbox create and a checkout — each for whatever session the browser holds. Under
    * a switched session that is a passkey enrolled on somebody else's account, their authenticator
-   * secret on this screen, their mail credentials attached, their card charged.
+   * secret on this screen, their mail credentials attached, a plan and a payment customer
+ * bound to their account.
    *
    * ── WHY IT CANNOT BE THE ACCOUNT BOUNDARY ─────────────────────────────────────────────────
    *
@@ -519,7 +552,7 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
    */
   const sameAccount = async (): Promise<boolean> => {
     const now = await auth.session();
-    if (wizardAccount !== null && now.user.accountId === wizardAccount) return true;
+    if (wizardOwner.current !== null && now.user.accountId === wizardOwner.current) return true;
     setError(t("accountChanged", { email: now.user.email }));
     return false;
   };
@@ -596,7 +629,12 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
   };
 
   const startCheckout = (plan: Plan) => void run(async () => {
-    // A card is charged at the end of this; it must be the account the wizard is for.
+    /* NOT "a card is charged at the end of this", which is what this comment used to say and
+       what the public message repeated. The trial takes no card (`step_plan_lead`: "No card,
+       and it does not renew on its own"). What a checkout started under the wrong session does
+       is bind THAT account to a plan and a payment customer nobody there chose, and navigate
+       this browser into their checkout — which is enough to be worth refusing, and is not a
+       charge. */
     if (!await sameAccount()) return;
     const { url } = await billing.checkout(plan, interval);
     window.location.assign(url);

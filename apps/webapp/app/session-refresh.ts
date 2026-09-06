@@ -124,9 +124,18 @@ const REFRESH_LOCK = "ohmail:session-refresh";
  *
  * A lock is a queue, and a queue behind a holder that never finishes is the deadlock this slice
  * already fixed once in the other place. `AbortSignal` cancels the WAIT FOR A GRANT — never the
- * holder, which keeps whatever budget it had — and on expiry the ceremony proceeds unlocked,
- * which is exactly the behaviour it had before this existed. A race the sign-in may lose beats a
- * sign-in that cannot happen.
+ * holder, which keeps whatever budget it had.
+ *
+ * ON EXPIRY THE CEREMONY REFUSES; IT DOES NOT PROCEED. This paragraph used to end "on expiry the
+ * ceremony proceeds unlocked, which is exactly the behaviour it had before this existed", and
+ * that sentence outlived the change that made it false — waiting out a holder and then writing
+ * anyway is the original race with a delay in front of it, because the holder is still going to
+ * write and its answer lands last. A `SessionBusyError` is thrown instead: retryable, rendered,
+ * and clear by itself the moment the other tab settles.
+ *
+ * The one path that still proceeds unlocked is a browser with NO lock manager at all — a
+ * different case, argued where it is taken, and the reason it is not this one is that a browser
+ * without Web Locks would otherwise be unable to sign in at all.
  */
 export async function withSessionCookieLock<T>(fn: () => Promise<T>): Promise<T> {
   /*

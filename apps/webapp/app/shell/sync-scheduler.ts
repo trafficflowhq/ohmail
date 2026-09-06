@@ -1562,6 +1562,13 @@ export function startSyncScheduler(
    */
   let pendingWake = false;
 
+  /**
+   * MAY THIS WINDOW HOLD A SESSION-AUTHENTICATED STREAM RIGHT NOW? One spelling, read at four
+   * points in the stream's life, because the stream is the one thing in this loop that keeps
+   * acting after the moment it was created.
+   */
+  const identityHolds = (): boolean => (gate?.identity() ?? "holds") === "holds";
+
   const closeStream = (): void => {
     const s = stream;
     stream = null;
@@ -1588,12 +1595,22 @@ export function startSyncScheduler(
      * one thing in this loop that is not a request, so nothing else in the file was ever going to
      * ask the question for it.
      */
-    if ((gate?.identity() ?? "holds") !== "holds") return;
+    if (!identityHolds()) return;
     try {
       const s = wakeFactory();
       stream = s;
       s.addEventListener("open", () => {
         if (stream !== s || stopped) return;
+        /*
+         * ── ASKED AGAIN ON EVERY OPEN, BECAUSE NOT EVERY OPEN IS ONE WE ASKED FOR ──────────
+         *
+         * `connectStream` checks identity once, at construction. `EventSource` then reconnects
+         * BY ITSELF after a transient failure — that is the whole of what the object does — and
+         * the reconnect carries whatever cookies the jar holds at that moment, not the ones it
+         * was opened with. So an open here can be a connection to another account's stream that
+         * nothing in this window requested.
+         */
+        if (!identityHolds()) { closeStream(); return; }
         streamOpen = true;
         // Drain once on every open, not only the first: a reconnect (the server cycles streams
         // before its platform ceiling; a network blip) is a window in which wakes were missed,
@@ -1602,11 +1619,32 @@ export function startSyncScheduler(
       });
       s.addEventListener("sync", () => {
         if (stream !== s || stopped) return;
+        // A frame can arrive on a connection the browser re-established under a jar that has
+        // since changed; the open check above is the first line and this is the second.
+        if (!identityHolds()) { closeStream(); return; }
         wake();
       });
       s.addEventListener("error", () => {
         if (stream !== s || stopped) return;
         streamOpen = false;
+        /*
+         * ── AND THIS IS WHERE THE RECONNECT IS ACTUALLY PREVENTED ─────────────────────────
+         *
+         * The error arm below deliberately leaves a CONNECTING stream alive, because that is
+         * the ordinary transient failure and `EventSource` recovers from it on its own. That
+         * recovery is exactly the hazard when the jar has changed in the meantime: the object
+         * re-dials with the new session and the server binds the connection to that account.
+         *
+         * The safety poll's tick closes a contradicted stream, but it runs on the relaxed
+         * cadence a tab with a live stream keeps — the reconnect lands long before it. So the
+         * question is asked at the moment the reconnect is about to be armed. Closing here is
+         * what makes the two checks above defence in depth rather than the only defence.
+         */
+        if (!identityHolds()) {
+          closeStream();
+          armFloor();
+          return;
+        }
         if (s.readyState === WAKE_STREAM_CLOSED) {
           // Non-200: EventSource will not reconnect, and neither will this module — permanent
           // fallback to polling for the session. WHICH refusal it was is deliberately not asked
