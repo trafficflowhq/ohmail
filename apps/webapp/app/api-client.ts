@@ -383,10 +383,8 @@ export function apiOwnerHolds(path: string, opts: { ceremony?: boolean } = {}): 
  * is applied. The client cannot observe a state it was never asked about, which is why the
  * warm-identity ruling filed the remainder rather than leaving a weaker guard in place.
  *
- * The server answers the question directly, where it speaks this contract — and since the release
- * stack it does: `packages/api/src/app.ts` sets the header and `GET /hello` advertises
- * `features.accountHeader`. The negotiation below still exists for every OTHER server, which is
- * the point of it. `X-Ohmail-Account` names the account a response was produced for — the session's, or on the sign-in and token routes the account the CREDENTIAL
+ * The server now answers the question directly. `X-Ohmail-Account` names the account a response
+ * was produced for — the session's, or on the sign-in and token routes the account the CREDENTIAL
  * resolved to — and the value is always server-derived: the session row or the resolved
  * credential, never a query parameter, a body field, or an inbound header of the same name, which
  * is ignored.
@@ -405,7 +403,7 @@ export function apiOwnerHolds(path: string, opts: { ceremony?: boolean } = {}): 
  *
  * ── AND ON THE SIGN-IN ROUTES A DISAGREEMENT IS THE NEW OWNER ────────────────────────────────
  *
- * The same header on {@link credentialRoutes} names whoever the credential resolved to, which
+ * The same header on {@link CREDENTIAL_ROUTES} names whoever the credential resolved to, which
  * during a sign-in is precisely NOT the account the cookie still names. Refusing there would
  * refuse every sign-in that follows a different account's session. It is safe to adopt because
  * the server has already refused — `409 session_conflict` — any request whose live session and
@@ -417,85 +415,28 @@ export function apiOwnerHolds(path: string, opts: { ceremony?: boolean } = {}): 
 const OWNER_HEADER = "X-Ohmail-Account";
 
 /**
- * ═══ THE REQUIREMENT IS NEGOTIATED, NEVER ASSUMED AND NEVER INFERRED ══════════════════════
- *
- * Requiring the header unconditionally is right for the hosted product — the webapp and its API
- * deploy together — and wrong for every other install. A self-host on an older server, or a proxy
- * that strips unknown headers, would have every authenticated read refused: not degraded, unusable.
- * That is the fail-closed-on-a-state-the-shell-cannot-produce shape this lane has now made twice.
- *
- * So the server SAYS whether it names its answers, `/hello` carries the word, and this client
- * requires the header only where it has been advertised.
- *
- * **NEVER INFERRED FROM HAVING SEEN ONE.** "We got a header once, so require it from now on"
- * looks equivalent and is not: it makes the requirement depend on the order requests happen to
- * arrive in, and it can be turned off for the rest of a session by a single answer that legitimately
- * carries no account. This value is written from `/hello`'s answer and from nothing else — the
- * setter says so and the guard proves nothing else calls it.
- *
- * THREE STATES, and the third is why this is not a boolean:
- *
- *  · `true`   the server advertises it. Absence on an authenticated read is a refusal.
- *  · `false`  the server has answered and does NOT advertise it. Absence is admitted, and the
- *             residual is DISCLOSED on screen — see `AboutSection`. Never silent.
- *  · `null`   nobody has asked yet, or `/hello` did not answer. Admits, and says nothing, because
- *             a failed probe is not evidence about the server. A network blip must not be able to
- *             switch the requirement off, which is why a failed `serverHello` leaves this alone.
- *
- * A WRONG NAME IS WRONG IN ALL THREE. The negotiation governs ABSENCE only: a header that names
- * another account is a refusal whether or not the server promised to send one.
- */
-let accountHeaderAdvertised: boolean | null = null;
-
-/**
- * `/hello` said whether this server names the account it answers for.
- *
- * The ONLY caller is `serverHello()`, and that is the whole design: see the block above. Passing
- * `null` returns the client to "nobody has asked", which is what a fresh test wants.
- */
-export function setAccountHeaderCapability(advertised: boolean | null): void {
-  accountHeaderAdvertised = advertised;
-}
-
-/** What the server said, for the guard and for the surface that discloses the residual. */
-export function accountHeaderCapability(): boolean | null {
-  return accountHeaderAdvertised;
-}
-
-/**
  * The routes where the header names the CREDENTIAL's account rather than a session's.
  *
  * Exactly the set the server's contract names, written out rather than derived from a prefix: a
  * prefix would silently enrol every route added below it into "a disagreement here is the new
  * owner", which is the one conclusion that must never be reached by default.
  */
-/**
- * The two census paths that only ever CLEAR the jar. A cleared session establishes nothing, so a
- * header on one of these names an account that is on its way out — never a new owner.
- */
-const CLEARS_ONLY = ["/auth/logout", "/account"] as const;
-
-/**
- * DERIVED FROM THE CENSUS, not remembered — and the derivation is the correction.
- *
- * The first version of this list was the set of routes that RESOLVE A CREDENTIAL, taken as given.
- * Review measured it against the server and three of them write no browser cookie at all:
- * `/auth/desktop-claim` and `/oauth/token` answer with native tokens, and `/pair/redeem` returns
- * none by design. A header adopted from one of those rewrites the browser's marker to name an
- * account whose session this browser does not hold — after which every ordinary request passes
- * the boundary and goes out under whatever session IS there.
- *
- * So the question is not "did this route resolve a credential" but "did this response ESTABLISH
- * a session in this browser", and the client already derives exactly that set: the cookie-writer
- * census, minus the two paths that only clear. `cookie-writer-census.test.ts` holds both halves
- * to the server's own routes, so a route that stops writing cookies leaves this list by itself.
- */
-const credentialRouteSet = (): readonly string[] =>
-  COOKIE_WRITING_PATHS.filter((p) => !(CLEARS_ONLY as readonly string[]).includes(p));
+const CREDENTIAL_ROUTES = [
+  "/auth/login",
+  "/auth/refresh",
+  "/auth/verify-email",
+  "/auth/register",
+  "/auth/desktop-claim",
+  "/oauth/token",
+  "/auth/2fa/totp/verify",
+  "/auth/2fa/webauthn/assert/verify",
+  "/auth/2fa/recovery-codes/verify",
+  "/pair/redeem",
+] as const;
 
 /** The routes on which a header disagreeing with the cookie is a sign-in, for the guard to read. */
 export function credentialRoutes(): readonly string[] {
-  return credentialRouteSet();
+  return CREDENTIAL_ROUTES;
 }
 
 /**
@@ -508,14 +449,7 @@ function responseNotOurs(): ApiError {
   return new ApiError(
     0,
     "response_not_owner_bound",
-    /*
-     * SAYS WHAT HAPPENED, NOT WHAT IS HAPPENING NEXT. This read "Checking who is signed in",
-     * which described work nothing starts: {@link reResolveApiOwner} withdraws the confirmation
-     * and that is all — the next confirm comes from the shell's own ladder, on its own schedule,
-     * and on a surface that has none it never comes at all. A sentence promising a check that is
-     * not running is the same kind of claim as a comment describing code that is not there.
-     */
-    "That answer was not for this account, so it was discarded. This window is no longer confirmed for it.",
+    "That answer was not for this account. Checking who is signed in.",
     undefined,
     { coded: false },
   );
@@ -542,7 +476,7 @@ export function reResolveApiOwner(): void {
 function checkAnswerOwner(path: string, seen: string | null | undefined, ceremony: boolean): void {
   if (seen === undefined) return;
 
-  if (credentialRouteSet().includes(path)) {
+  if ((CREDENTIAL_ROUTES as readonly string[]).includes(path)) {
     if (seen === null) return;              // established nothing — never "still you"
     bindApiOwner(seen);
     rememberOwner(seen);                    // the pair, and it must be a pair: see `rememberOwner`
@@ -564,20 +498,6 @@ function checkAnswerOwner(path: string, seen: string | null | undefined, ceremon
     : null;
   if (expected === null) return;
 
-  if (seen === null) {
-    /*
-     * ABSENCE, WHICH IS THE NEGOTIATED HALF. Where the server advertises the header, an answer
-     * that cannot say whose it is leaves this client unable to prove anything, and that is the
-     * moment to stop. Where it does not advertise it, absence is the ordinary shape of every
-     * answer that server gives, and refusing would refuse the whole product — so the client
-     * behaves as it did before the header existed, and the surface says so out loud.
-     */
-    if (accountHeaderAdvertised !== true) return;
-    reResolveApiOwner();
-    throw responseNotOurs();
-  }
-
-  // A WRONG NAME IS WRONG WHETHER OR NOT IT WAS PROMISED. Nothing is negotiated here.
   if (seen !== expected) {
     reResolveApiOwner();
     throw responseNotOurs();
@@ -2875,30 +2795,8 @@ export async function assertPasskey(options: PublicKeyCredentialRequestOptionsJS
  * refusal taxonomy — so it is used verbatim. A `NotAllowedError` from the WebAuthn API means
  * the user dismissed the prompt (or it timed out), which is not a failure to apologise for.
  */
-/** `session_busy` without importing the class — see {@link messageOf}. */
-function isSessionBusy(err: unknown): boolean {
-  return err instanceof Error
-    && (err as { code?: unknown }).code === "session_busy"
-    && typeof err.message === "string" && err.message.length > 0;
-}
-
 export function messageOf(err: unknown): string {
   if (err instanceof ApiError) return err.message;
-  /*
-   * ── THE ONE REFUSAL THIS CLIENT RAISES THAT IS NOT AN `ApiError` ──────────────────────────
-   *
-   * `SessionBusyError` is thrown when another tab has held the origin-wide session lock past the
-   * deadline. Its own message says what happened and what to do — "another tab is finishing a
-   * sign-in or sign-out, try that again in a moment" — and every surface renders refusals through
-   * this function, which dropped it to "Something went wrong. Please try again."
-   *
-   * That is worse than losing detail. The person is looking at a form that refused for a reason
-   * that clears by itself in seconds, and the generic sentence gives them no way to know that;
-   * the published note for the lock change promised them this sentence, so the claim was false as
-   * well as unhelpful. Matched by CODE rather than by class, because importing the class here
-   * would make `api-client` depend on `session-refresh`, which depends on it.
-   */
-  if (isSessionBusy(err)) return (err as Error).message;
   if (err instanceof DOMException && (err.name === "NotAllowedError" || err.name === "AbortError")) {
     return "The passkey prompt was dismissed. You can try again, or use an authenticator app instead.";
   }
