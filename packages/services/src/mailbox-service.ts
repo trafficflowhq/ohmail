@@ -1816,6 +1816,12 @@ export class MailboxService {
 
       const [row] = await tx.select().from(mailboxes)
         .where(and(eq(mailboxes.id, id), eq(mailboxes.accountId, ctx.accountId))).limit(1);
+      // NO-CREDENTIAL-REPORT: a context derived onto the transaction's handle, and it is safe
+      // because `toDTO` is a projection — it reads a row and shapes a DTO, it never mints or
+      // rotates a session and so can never reach `noteCredentialAccount`. If that ever stops
+      // being true this must move to `runInTransaction`, whose buffer holds a report until the
+      // commit. `credential-report-commit-side.test.ts` requires this marker on every derivation
+      // outside `context.ts`, so the next one cannot arrive silently.
       return this.toDTO({ ...ctx, db: tx as unknown as ServiceContext["db"] }, row!);
     }).catch((err: unknown) => {
       // The RE-ENABLE path hits the same index: `disabled → connected` inserts a new entry

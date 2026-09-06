@@ -75,13 +75,19 @@ function sessionMinter(deps: ApiDeps): PairedDeviceSessionMinter {
  *    revoke, a verification gate in front of it would keep a leaked token alive.
  *  · **The list is `cost: "read"`** — the caller's own rows, no hashes, nothing crossing
  *    accounts (the projection is creator-scoped in the service).
- *  · **Redeem is `public + anonymous`, `cost: "unauthenticated"`** — the token IS the
- *    credential, exactly as `POST /auth/desktop-claim`'s code is, and the redeemer by
- *    definition has no session yet. `anonymous` (the `/hello` pipeline: no session resolution,
- *    no envelope above the handler) rather than desktop-claim's `public` (full pipeline),
- *    because the redeemer may be the SETUP PAGE of a server whose first account does not exist:
- *    there is no cookie to resolve, no CSRF pair to check, and a stray ambient credential must
- *    not be able to fail the request outside this handler. The census fence holds — an
+ *  · **Redeem is `public + raw`, `cost: "unauthenticated"`** — the token IS the credential,
+ *    exactly as `POST /auth/desktop-claim`'s code is, and the redeemer by definition has no
+ *    session yet. It was `anonymous` until that flag was found to make a rule unenforceable:
+ *    that pipeline resolves no session, so `ctx.accountId` was always empty here and the
+ *    cross-account refusal could never fire — a browser signed in as one account could redeem
+ *    another's token, spend it, and be handed their session.
+ *
+ *    `raw` keeps everything `anonymous` was chosen for and adds only the session resolution the
+ *    refusal needs: no CSRF pair to check (the setup page of a server whose first account does
+ *    not exist has none), no envelope above the handler, and a stray ambient credential still
+ *    cannot fail the request outside it — `withSession` populates or does not, and a `public`
+ *    route never 401s for the lack. What it can no longer do is go unnoticed. The census fence
+ *    holds — an
  *    anonymous route is `unauthenticated`, and an unauthenticated route is public — and the
  *    handler therefore NEVER throws: every branch, the service refusals included, is mapped to
  *    the standard `ApiError` envelope here.

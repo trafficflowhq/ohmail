@@ -153,7 +153,9 @@ export interface RouteOptions {
    * The flag changes only where {@link ACCOUNT_HEADER} takes its value: `deps.credentialAccount`
    * instead of `deps.session`. It grants nothing and gates nothing, so a route that carries it
    * wrongly cannot become more permissive — it can only stop naming an account, which
-   * `account-header-census.test.ts` asserts against the frozen list.
+   * `account-header-census.test.ts` checks. And it checks against a set DERIVED from the
+   * handlers, not against a list — there was a frozen list, it said five when the truth was ten,
+   * and this sentence went on citing it after the list was deleted.
    */
   credentialSubject?: boolean;
   /**
