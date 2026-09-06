@@ -729,6 +729,15 @@ const LOCAL_IMAP_ADMISSION = {
 function localServices(
   authConfig: AuthConfig,
   keyProvider: KeyProvider,
+  /**
+   * THIS INSTALL'S OWN ID, and without it the hand-back is refused on the desktop whatever the
+   * row says. `MailboxService.release` accepts a stranded claim only when the row's
+   * `organized_by_install_id` equals `deps.installId`, and an absent one compares equal to
+   * nothing — so the desktop was told it could not stop organizing a mailbox it holds. That is
+   * the OTHER half of the same defect as the projection: one half records who holds it, the
+   * other half is able to recognise itself. Neither works alone.
+   */
+  installId: string,
   openSendAdapter: OpenSendAdapter,
   unsubscribe: UnsubscribeService,
   ai?: LocalAi,
@@ -784,7 +793,7 @@ function localServices(
     // on the user's own machine, so there is no cross-tenant network to protect. Named explicitly,
     // never a default — the hosted deployment wires the enforcing `makeProbeHostGuard` instead.
     probeHostGuard: ALLOW_ANY_PROBE_HOST,
-    mailbox: makeMailboxService({ keyProvider, allowance: UNMETERED_MAILBOX_ALLOWANCE }),
+    mailbox: makeMailboxService({ keyProvider, allowance: UNMETERED_MAILBOX_ALLOWANCE, installId }),
     rules: rulesService,
     message: messageService,
     thread: threadService,
@@ -1446,7 +1455,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       // Rebuilt per request so the AI slots reflect what this install can do NOW — see
       // `localServices`. `openLocalSend` (below) is the send transport, resolving the sealed
       // credential fresh per send.
-      services: localServices(authConfig, keyProvider, openLocalSend, unsubscribe, ai),
+      services: localServices(authConfig, keyProvider, world.accountId, openLocalSend, unsubscribe, ai),
       // BEARER ONLY. There is no browser here, so there is no ambient cookie to abuse — and with
       // `via` structurally unable to be "cookie", `withCsrf` becomes a no-op by construction
       // rather than by a check. Same posture as `api.ohmail.app`.
@@ -1995,7 +2004,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       ...depsFor(),
       authConfig: hostAuthConfig,
       services: {
-        ...localServices(hostAuthConfig, keyProvider, openLocalSend, unsubscribe, ai),
+        ...localServices(hostAuthConfig, keyProvider, world.accountId, openLocalSend, unsubscribe, ai),
         sendSurfaceMaxTotalBytes: HOST_SEND_MAX_TOTAL_BYTES,
       },
       hello: {
@@ -3157,7 +3166,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         kind: string | null; name: string | null; since: Date | null; state: string | null;
         /** Mail 0089 — the fifth holder column, tracked beside the other four for the same reason. */
         capabilities: string | null;
-      } = { kind: null, name: null, since: null, state: null, capabilities: null };
+        /** Mail 0092 — the SIXTH holder column, and the reason it is tracked here rather than
+            written blind is the compare below: a column this snapshot does not carry cannot be
+            found stale, so it is never corrected. That is exactly how the hosted twin shipped
+            this column inert — written by every writer, compared by none, NULL for ever on every
+            row that predated it, and a hand-back refused on precisely the mailboxes organized
+            longest. */
+        installId: string | null;
+      } = { kind: null, name: null, since: null, state: null, capabilities: null, installId: null };
 
       /**
        * AN INSTALL THAT IS NOT THE ORGANIZER LOOKS, AND STILL DOES NOT CLAIM.
@@ -3220,6 +3236,18 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // Mail 0089 — the fifth holder column, computed the same way the hosted twin
           // (`index.ts#refreshReaderHolder`) does: comma-joined, lowercased, empty ⇒ null.
           const capabilities = top ? capabilitiesColumn(top.capabilities) : null;
+          /* Mail 0092 — WHICH install holds it, beside WHAT KIND of install. `kind` is one of
+             three words and answers "what sort of thing"; the hand-back needs "is this us", and
+             those are the same question only when there is one install per kind. */
+          /* NAMED `holderInstallId`, NOT `installId`, and that is not style. An outer
+             `const installId = world.accountId` — THIS install's id — is in scope here, so a
+             binding called `installId` shadows it only inside its own block and reads as the
+             outer one everywhere else. Both are `string`-ish, so the mix-up TYPECHECKS: the
+             first cut of this projection wrote this install's id into every row, including a
+             peer's, which refreshes a peer's row on every poll and re-stamps
+             `organizer_event_at` — the fifteen-second notice the compare exists to stop.
+             Caught by renaming this binding and finding that nothing broke. */
+          const holderInstallId = top === null ? null : top.installId;
           /* The REASON is the caller's, because the two arms that peek mean different things by
              the same four columns. A pre-consent install names no reason — nobody has stood
              anything down and putting "another install has claimed this mailbox" in front of
@@ -3240,6 +3268,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            */
           const same = holderSeen.kind === kind && holderSeen.name === name
             && holderSeen.state === state && holderSeen.capabilities === capabilities
+            && holderSeen.installId === holderInstallId
             && (holderSeen.since ? holderSeen.since.getTime() : null)
               === (since ? since.getTime() : null);
           if (same) return;
@@ -3257,12 +3286,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               organizerState: state,
               // Mail 0089 — the fifth holder column, on the same read.
               organizedByCapabilities: capabilities,
+              // Mail 0092 — the sixth, on the same read as the kind: the two must never disagree.
+              organizedByInstallId: holderInstallId,
               ...(stateChanged ? { organizerEventAt: now() } : {}),
             })
             .where(eq(mailboxes.id, mb.id));
           holderSeen.kind = kind; holderSeen.name = name;
           holderSeen.since = since; holderSeen.state = state;
-          holderSeen.capabilities = capabilities;
+          holderSeen.capabilities = capabilities; holderSeen.installId = holderInstallId;
         } catch (err) {
           /* ── AND IT IS RECORDED WHERE A PERSON CAN SEE IT, NOT ONLY IN A LOG ───────────────
            *
@@ -3367,6 +3398,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             state: mailboxes.organizerState,
             // Mail 0089 — the fifth holder column, in the same read for the same reason.
             capabilities: mailboxes.organizedByCapabilities,
+            // Mail 0092 — the sixth, in the same read for the same reason.
+            byInstallId: mailboxes.organizedByInstallId,
           })
             .from(mailboxes).where(eq(mailboxes.id, mb.id)).limit(1);
           if (row) {
@@ -3381,6 +3414,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             holderSeen.since = row.since;
             holderSeen.state = row.state;
             holderSeen.capabilities = row.capabilities;
+            holderSeen.installId = row.byInstallId;
           }
         } catch (err) {
           log("organizer_takeover_reread_failed", {
@@ -3439,6 +3473,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 // Mail 0089 — the fifth holder column goes with the other four; nobody won this
                 // mailbox, so nobody offers anything.
                 organizedByCapabilities: null,
+                // Mail 0092 — nobody won it, so no id names anybody.
+                organizedByInstallId: null,
                 // Both stamps are spent. They are contradictory instructions about one mailbox, and
                 // a release that left a becoming authorized would be promoted straight back by the
                 // very next poll — the control undoing itself.
@@ -3692,6 +3728,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                    * holder renders "another install organizes this mailbox now" about itself.
                    */
                   organizedByKind: null,
+                  // Mail 0092 — the sixth goes with the other five. A holder cleared in five
+                  // columns and remembered in a sixth is the migrated row all over again.
+                  organizedByInstallId: null,
                   organizedByName: null,
                   organizedSince: null,
                   organizerState: null,
@@ -3795,6 +3834,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               // quieter of the two events to a person whose mailbox somebody else has just taken.
               organizerReleasedAt: null,
               organizedByKind: (outcome.by?.kind ?? outcome.reason.split(":")[1] ?? "unknown"),
+              /* Mail 0092 — AND DELIBERATELY NO INSTALL ID HERE. The kind above falls back to a word cut
+                 out of a reason string; an identity manufactured that way, in a column a release decision
+                 is made on, would satisfy the compare and never refresh — a fabrication that outranks the
+                 NULL it replaced. The verdict carries no id for the winner, so the column stays NULL, and
+                 NULL fails closed, which is the safe direction. Do not "complete" this by deriving one. */
               // Header-safe and capped at the write — this is another install's machine name,
               // arriving out of an RFC822 header it wrote.
               organizedByName: organizerDisplayName(outcome.by?.displayName ?? null),
