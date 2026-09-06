@@ -291,6 +291,29 @@ back. Cards are skipped when nothing they draw has changed, and messages were co
 — right for a subject or a sender, wrong for the three fields the action bar draws and the message
 can change. Those three are now compared at the values the bar reads.
 
+### The same message cannot be sent twice, even from a client that has lost its place
+
+Sending has always been protected two ways: by a key the app mints and reuses when it retries, and
+by a rule that a message already on its way cannot be sent again from the same draft. Both depend on
+something the app is still holding. An app that has lost both — a fresh install, a second device, a
+browser whose storage was cleared, an older build — and that writes a new draft holding the same
+words gets past both, and the person receives the message twice. There is no taking that back.
+
+So the account now claims the message itself. When a send is reserved, the server records a digest
+of what a recipient would perceive: the recipients, the subject, the text that goes out, the reply
+or forward it belongs to, the scheduled time, and the names, types and sizes of any attachments. For
+an hour, a second send of exactly that message from the same address is refused — whatever key it
+arrives under, and whatever draft it names. Nothing is submitted, the draft is left untouched and
+ready to send, and the composer says what became of the first attempt: whether it is known to have
+been sent, could not be confirmed, or is going out right now. Those are three different facts and
+they get three different sentences.
+
+Anything a recipient would notice makes it a different message and it sends: one character of the
+text, one more person on the copy line, a different file attached, a different message forwarded. So
+does sending it again once the hour has passed, and so does sending it again after an attempt that
+definitely failed — the ordinary "the mail server was unreachable, try again" retry, which must keep
+working.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

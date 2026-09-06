@@ -1,6 +1,8 @@
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, lt, sql } from "drizzle-orm";
+import { createHash } from "node:crypto";
 import {
-  attachments, drafts, mailboxes, messageBodies, messages, outboundSends, recordChange, threads, type Tx,
+  attachments, drafts, mailboxes, messageBodies, messages, outboundSends,
+  outboundSendFingerprints, recordChange, threads, type Tx,
 } from "@trafficflow/db";
 import {
   createLogger, isMessageGone, mintMessageId, normalizeMessageId, recordSentMessage,
@@ -193,10 +195,23 @@ export interface SendDeps {
  * against a number the client chose.
  */
 export interface StagedAttachmentSource {
-  /** The caller's own tickets. Ids that name nothing, or another account's row, are simply absent. */
+  /**
+   * The caller's own tickets. Ids that name nothing, or another account's row, are simply absent.
+   *
+   * `filename` and `contentType` ride along beside the size, and they are METADATA the mint
+   * already stored — never content. {@link sendContentFingerprint} folds a staged file by
+   * `(filename, contentType, sizeBytes)` for the same reason it folds an inline one that way, and
+   * it cannot use the ticket ID: a re-send under a fresh key RE-STAGES, minting new ids for the
+   * same files (`HttpAdapter.stagedIdsFor` POSTs `/attachments/staging` on every call it does not
+   * short-circuit), so a manifest keyed on ids would differ for an identical message and the
+   * duplicate guard would miss every send that carries an attachment.
+   *
+   * Digesting the BYTES is not on the table: they live in object storage, and reaching for them
+   * would put a network call inside the reserve transaction.
+   */
   declare(
     accountId: string, ids: readonly string[],
-  ): Promise<Array<{ id: string; sizeBytes: number; expiresAt: Date }>>;
+  ): Promise<Array<{ id: string; sizeBytes: number; expiresAt: Date; filename: string; contentType: string }>>;
   /**
    * The bytes, in the order `ids` names them, ONE ENTRY PER DISTINCT ID. A repeated id is one
    * file and one download — see `resolveStagedAttachments`, which holds that invariant for every
@@ -578,6 +593,144 @@ export function sendSurfaceFor(
  * wait out rather than a state they are stuck in.
  */
 export const SEND_STALE_AFTER_MS = 10 * 60 * 1000;
+
+/**
+ * HOW LONG AN ACCOUNT'S CLAIM ON ONE MESSAGE'S CONTENT STANDS.
+ *
+ * Inside it, a second send of the identical message from the same mailbox is REFUSED, whatever key
+ * it carries and whatever draft row it names. Outside it, the claim is reclaimed and the send goes.
+ *
+ * One hour, and the number is chosen against the two things that pull on it. The failure it
+ * defends against is a person pressing Send again after an outcome they could not read — they
+ * check the Sent folder, come back, press again — which is a seconds-to-minutes event, occasionally
+ * a few minutes more. The cost it imposes is on a DELIBERATE identical re-send, the one-line nudge
+ * sent twice, which is an hours-to-days event. An hour covers the whole of the first and almost
+ * none of the second.
+ *
+ * It is deliberately NOT coupled to two neighbouring horizons that look relevant and are not.
+ * `IDEMPOTENCY_TTL_MS` (24 h) is how long a stored RESPONSE is replayable, which is a statement
+ * about a key rather than about content; `SEND_LOCK_TTL_MS` (7 d, `apps/webapp/app/shell/send-lock.ts`)
+ * is how long a CLIENT still resumes its own key. This is the window in which two identical
+ * messages are one intent.
+ *
+ * ── ENFORCED AT THE DECISION, NEVER BY THE PRUNE ────────────────────────────────────────────
+ *
+ * Compared against `ctx.now()` in the conflict arm of {@link SendService.reserve}. The 24-hour
+ * DELETE a maintenance pass runs is hygiene and carries no correctness: the standalone engine runs
+ * this same `reserve` and has NO maintenance pass at all, so a window that expired by pruning
+ * would be unbounded on every desktop — identical re-sends refused for ever, with every suite
+ * green, because no test on the hosted side would ever see it.
+ *
+ * RESIDUAL, stated rather than left to be discovered: a client that has lost its idempotency key
+ * and presses Send again more than an hour later is not protected by this. It is protected by the
+ * key while it has one, and by the draft-status refusal while it still names the same draft.
+ */
+export const SEND_DUPLICATE_WINDOW_MS = 60 * 60 * 1000;
+
+/**
+ * WHAT THE SERVER SAYS WHEN IT REFUSES A DUPLICATE — one sentence per state the FIRST send is in.
+ *
+ * Three states, three different facts, and collapsing them would make the product claim something
+ * it does not know. `sent` is the only one where a copy is provably out there; `unverified` means
+ * the first attempt's fate is genuinely unknown and the reader has somewhere to look; `pending`
+ * means it is happening right now and nothing is settled either way.
+ *
+ * ── WHO READS THIS SENTENCE ─────────────────────────────────────────────────────────────────
+ *
+ * Not the ohmail web shell, which renders its own copy from `details.firstSend` in the reader's
+ * own language — a protocol sentence in the wrong language inside a translated interface is a
+ * defect this product has already shipped once. This one is for an API consumer, for a client
+ * built before the phase existed (which shows it verbatim as the refusal's reason, truthfully:
+ * this request sent nothing), and for the Drafts row of a SCHEDULED send, whose pass stores the
+ * `ServiceError`'s own message as `send_error`.
+ *
+ * The time is ISO-8601 rather than a friendly rendering, because none of those three readers has
+ * a locale this process knows, and an unambiguous instant beats a pretty one nobody can place.
+ */
+export function duplicateSendSentence(firstSendStatus: string, at: Date): string {
+  const when = at.toISOString();
+  if (firstSendStatus === "sent") {
+    return `This exact message was already sent from this mailbox at ${when}. `
+      + "Nothing was sent now — change the message to send it again.";
+  }
+  if (firstSendStatus === "unverified") {
+    return `An identical message was sent from this mailbox at ${when} and could not be confirmed. `
+      + "Check your Sent folder; nothing was sent now.";
+  }
+  return "This exact message is being sent from this mailbox right now. Nothing was sent again.";
+}
+
+/**
+ * WHAT MAKES TWO SENDS THE SAME MESSAGE — the digest the account's content claim is keyed on.
+ *
+ * Every member is something a RECIPIENT can perceive. Nothing that is an artefact of the attempt
+ * is in it, and the exclusions are as load-bearing as the inclusions:
+ *
+ *   · `draftId` — the field the defect MOVES. A client that sheds its draft id and composes a
+ *     fresh row is exactly the sequence this guard exists to refuse, so keying on the row would
+ *     reproduce the hole in a new table.
+ *   · `mailboxId` — a KEY COLUMN on `outbound_send_fingerprints`. Counting it in both the key and
+ *     the digest is redundant, and it would hide a defect in either one.
+ *   · the minted Message-ID, the idempotency key, the thread id, the From display name — all
+ *     per-attempt or invisible.
+ *
+ * `forwardOf` IS in it, and it has to be: two forwards of DIFFERENT originals, sent to the same
+ * person with no note, agree on every other member. Without it the second is refused as a
+ * duplicate of the first and a message the user meant to send never leaves.
+ *
+ * Addresses are compared as the delivery sees them — trimmed, lowercased, deduplicated and sorted,
+ * with display names dropped — so re-typing a recipient's name is not a new message and reordering
+ * the To line is not either.
+ *
+ * ── WHY ATTACHMENTS FOLD BY METADATA ────────────────────────────────────────────────────────
+ *
+ * `(filename, contentType, sizeBytes)`, sorted, inline and staged in ONE list. Staged bytes live in
+ * object storage and digesting them would mean a network call inside the reserve transaction,
+ * which this service does not do anywhere; inline bytes could be digested and buy a case nobody can
+ * produce, since a picked file cannot be altered in place. The accepted consequence is named in
+ * {@link SendService.reserve}'s refusal: two different files agreeing on name, type and exact byte
+ * length read as one message.
+ *
+ * ── CANONICAL FORM ──────────────────────────────────────────────────────────────────────────
+ *
+ * `JSON.stringify` over an ARRAY, never a delimiter join. A join needs a separator that cannot
+ * occur in the data, and the one that looks safe is a control byte — which makes `file` report the
+ * source as binary and every `grep` skip it in silence. JSON escapes for us and the structure
+ * carries the boundaries.
+ *
+ * SHA-256 rather than a cheap non-cryptographic hash. The client's own `sendFingerprint` may
+ * collide harmlessly — a collision there costs one wasted key — while a collision HERE suppresses
+ * a message somebody wrote.
+ */
+export function sendContentFingerprint(input: {
+  to: readonly EmailAddress[];
+  cc: readonly EmailAddress[];
+  bcc: readonly EmailAddress[];
+  subject: string;
+  /** The text actually sent: the rich half when the draft is rich, else the plain body. */
+  text: string;
+  inReplyToMessageId: string | null;
+  forwardOf: string | null;
+  sendAt: Date | null;
+  attachments: ReadonlyArray<{ filename: string; contentType: string; sizeBytes: number }>;
+}): string {
+  const addrs = (xs: readonly EmailAddress[]): string[] =>
+    [...new Set(xs.map((a) => a.address.trim().toLowerCase()))].sort();
+  const files = input.attachments
+    .map((a) => [a.filename, a.contentType, a.sizeBytes] as const)
+    .map((t) => JSON.stringify(t))
+    .sort();
+  const canonical = JSON.stringify([
+    addrs(input.to), addrs(input.cc), addrs(input.bcc),
+    input.subject,
+    input.text,
+    input.inReplyToMessageId ?? null,
+    input.forwardOf ?? null,
+    input.sendAt ? input.sendAt.toISOString() : null,
+    files,
+  ]);
+  return createHash("sha256").update(canonical, "utf8").digest("hex");
+}
 
 /**
  * The Drafts-row sentence for a definite non-delivery whose cause has no sentence of its own.
@@ -1238,6 +1391,13 @@ export class SendService {
     const stagedIds = dedupeStagedIds(input.stagedAttachmentIds);
     let stagedTotal = 0;
     /**
+     * THE STAGED HALF OF THE FINGERPRINT MANIFEST, collected here because this is the only place
+     * the facts exist — `declare` runs once, outside the transaction, and nothing downstream
+     * re-reads it. Metadata only: see {@link StagedAttachmentSource.declare} for why the ticket ID
+     * cannot be the identity and why the bytes are not reachable from inside the reserve tx.
+     */
+    const stagedManifest: Array<{ filename: string; contentType: string; sizeBytes: number }> = [];
+    /**
      * A STAGED-REFERENCE PROBLEM, HELD RATHER THAN THROWN — because an idempotent REPLAY must
      * not be turned into an error by it.
      *
@@ -1283,8 +1443,13 @@ export class SendService {
             break;
           }
           stagedTotal += f.sizeBytes;
+          stagedManifest.push({ filename: f.filename, contentType: f.contentType, sizeBytes: f.sizeBytes });
         }
-        if (stagedFault) stagedTotal = 0;
+        // Both are cleared together: a held fault means this list is INCOMPLETE, and an incomplete
+        // manifest must never become a fingerprint. It cannot anyway — `stagedFault` is thrown
+        // above the claim — but a half-filled list left lying around is the kind of thing a later
+        // reader moves a line past.
+        if (stagedFault) { stagedTotal = 0; stagedManifest.length = 0; }
       }
     }
     const attachTotal = inlineTotal + stagedTotal;
@@ -1627,6 +1792,122 @@ export class SendService {
         // writes a byte of them to disk. Empty ⇒ omitted, so a plain send is unchanged.
         ...(input.attachments && input.attachments.length ? { attachments: input.attachments } : {}),
       };
+
+      // ── THE ACCOUNT'S CLAIM ON THIS CONTENT — LAST, AND IMMEDIATELY BEFORE THE FLIP ─────────
+      //
+      // The duplicate defence that does not depend on the client keeping its key. Everything above
+      // has already refused a bad request; this is the only check left, and it is here rather than
+      // earlier for two reasons that both matter. The digest is computed from a FULLY VALIDATED
+      // row, so a draft that was going to be refused never leaves a claim behind. And the row lock
+      // this takes on the unique index is held for the SHORTEST possible span — the forward
+      // resolution above it reads IMAP metadata out of `messages` and can throw, and a claim taken
+      // before that would be held across it.
+      //
+      // WHY IT IS BELOW THE CONFLICT BRANCH and not above the `outbound_sends` INSERT: the same
+      // reason the disabled-mailbox, staged-fault and recipient-cap checks give at length. The
+      // CONFLICT branch returns before reaching here, and that branch is idempotent REPLAY — a
+      // client retrying its own key after a send that SUCCEEDED must be handed the stored result,
+      // not told it is a duplicate of itself.
+      const fingerprint = sendContentFingerprint({
+        to, cc, bcc,
+        subject: d.subject,
+        // The STORED text, not the assembled `msg.text`: a forward's quoted original is covered by
+        // `forwardOf` below, and folding the quote in as well would make the digest depend on how
+        // the original renders today.
+        text: d.html ?? d.body,
+        inReplyToMessageId: d.inReplyToMessageId ?? null,
+        forwardOf: input.forwardOf ?? null,
+        sendAt: d.sendAt ?? null,
+        attachments: [
+          ...(input.attachments ?? []).map((a) => ({
+            filename: a.filename, contentType: a.contentType, sizeBytes: a.content.byteLength,
+          })),
+          ...stagedManifest,
+        ],
+      });
+      const claimNow = ctx.now();
+      const claimed = await tx.insert(outboundSendFingerprints).values({
+        accountId: ctx.accountId, mailboxId: d.mailboxId, fingerprint,
+        sendId: inserted[0]!.id, createdAt: claimNow,
+      })
+        .onConflictDoNothing({
+          target: [
+            outboundSendFingerprints.accountId,
+            outboundSendFingerprints.mailboxId,
+            outboundSendFingerprints.fingerprint,
+          ],
+        })
+        .returning({ id: outboundSendFingerprints.id });
+
+      if (claimed.length === 0) {
+        // A CLAIM ALREADY STANDS, AND THIS IS WHERE THE RACE IS ARBITRATED BY THE DATABASE.
+        //
+        // `ON CONFLICT DO NOTHING` does not fail fast against an UNCOMMITTED conflicting row: it
+        // BLOCKS on the index until that transaction ends, and then does nothing if it committed
+        // or inserts if it aborted. So reaching this line means a committed claim exists — two
+        // simultaneous sends of one message cannot both get here, and the loser is decided by
+        // Postgres rather than by a read-then-write nothing serializes.
+        const [held] = await tx.select().from(outboundSendFingerprints)
+          .where(and(
+            eq(outboundSendFingerprints.accountId, ctx.accountId),
+            eq(outboundSendFingerprints.mailboxId, d.mailboxId),
+            eq(outboundSendFingerprints.fingerprint, fingerprint),
+          ))
+          .for("update").limit(1);
+        if (!held) {
+          // The claim was deleted between the blocked INSERT and this read. The maintenance prune
+          // is the only thing that deletes one, so this is the 24-hour sweep landing in the
+          // microseconds between two statements. Take the claim now rather than refusing a send
+          // over a row that no longer exists.
+          const retook = await tx.insert(outboundSendFingerprints).values({
+            accountId: ctx.accountId, mailboxId: d.mailboxId, fingerprint,
+            sendId: inserted[0]!.id, createdAt: claimNow,
+          })
+            .onConflictDoNothing({
+              target: [
+                outboundSendFingerprints.accountId,
+                outboundSendFingerprints.mailboxId,
+                outboundSendFingerprints.fingerprint,
+              ],
+            })
+            .returning({ id: outboundSendFingerprints.id });
+          if (retook.length === 0) {
+            throw new ServiceError("internal", 500, "the content claim could not be taken");
+          }
+        } else {
+          const [prior] = await tx.select({ status: outboundSends.status })
+            .from(outboundSends).where(eq(outboundSends.id, held.sendId)).limit(1);
+          const priorStatus = prior?.status ?? "pending";
+          // ── TWO WAYS A STANDING CLAIM IS RECLAIMED, AND THE SECOND IS NOT AN OPTIMISATION ────
+          //
+          // AGE — the window has passed, so these are two intents rather than one. Compared
+          // against the REQUEST CLOCK here and never left to the prune: the standalone engine runs
+          // this same code and has no maintenance pass, so an expiry that depended on pruning
+          // would be infinite on every desktop.
+          //
+          // FAILED — the reservation this claim names ended in a DEFINITE NON-DELIVERY. The draft
+          // is back at `draft` and the person must be able to press Send again on the same
+          // unedited text; without this arm the message's own claim would refuse it, and the
+          // ordinary "the mail server was down, try again" retry would be broken by the guard
+          // meant to protect it. Terminal `sent` and `unverified` do NOT reclaim: something may be
+          // in the recipient's inbox.
+          const stale = claimNow.getTime() - held.createdAt.getTime() >= SEND_DUPLICATE_WINDOW_MS;
+          if (!stale && priorStatus !== "failed") {
+            throw new ServiceError(
+              "duplicate_send", 409,
+              duplicateSendSentence(priorStatus, held.createdAt),
+              { firstSend: { status: priorStatus, at: held.createdAt.toISOString() } },
+              false,
+            );
+          }
+          // RE-POINT rather than insert a second row: one claim per piece of content, carried
+          // forward to whichever reservation owns it now. `createdAt` is restamped because it is
+          // the window's clock and not the row's birthday.
+          await tx.update(outboundSendFingerprints)
+            .set({ sendId: inserted[0]!.id, createdAt: claimNow })
+            .where(eq(outboundSendFingerprints.id, held.id));
+        }
+      }
 
       const now = ctx.now();
       await tx.update(drafts).set({ status: "sending", updatedAt: now })

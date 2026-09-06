@@ -102,7 +102,7 @@ import { scheduleLabel } from "./format";
 import { EMPTY_RICH, parseRichValue, serializeRichValue, type RichValue } from "./rich-text";
 import type { SignatureState } from "./signature";
 
-export type SendPhase = "idle" | "sending" | "sent" | "queued" | "unverified" | "failed";
+export type SendPhase = "idle" | "sending" | "sent" | "queued" | "unverified" | "failed" | "duplicate";
 
 /**
  * How long the delivered state is held on screen before the surface closes — the beat.
@@ -210,6 +210,18 @@ export interface SendState {
    * refusal below fails closed on it whenever the lane holds anything unresolved.
    */
   session?: string;
+  /**
+   * For `duplicate` only: what became of the send this one was refused as a copy of.
+   *
+   * Three states with three different truths — `sent` means a copy is provably out there,
+   * `unverified` means the first attempt's fate is unknown and the Sent folder is worth a look,
+   * `pending` means it is happening as the reader reads this. One sentence for all three would
+   * have to claim something the product does not know in two of them.
+   *
+   * Absent when the server sent a member this build does not recognise, and the surface then says
+   * the one thing true of all of them. See `firstSendStatusOf`.
+   */
+  firstSend?: "sent" | "unverified" | "pending";
 }
 
 export interface MailSendApi {
@@ -622,6 +634,12 @@ export function sendVerb(
  *     forward is a fresh send the user deliberately chooses. `unverified` IS locked, and only
  *     for the messages an unresolved send names — see the two arms in the body, which correct
  *     what this line used to claim about it.
+ *   · `duplicate` is NOT locked either, and the reason is read from the other side: the server
+ *     has refused THIS message as a copy of one it already holds, so the deliberate choice open
+ *     to the reader is usually an EDIT — a changed message is admitted — and locking the button
+ *     would leave no way to make that change and send it. (An earlier version of this line said
+ *     `unverified` was free too; that was true of the code it was written against and is not true
+ *     here. See the two arms in the body.)
  *   · a COMPOSE additionally needs a recipient and a mailbox to send from. Both are refused
  *     here rather than on the wire, where `POST /drafts` would already have written a row
  *     before `POST /drafts/:id/send` answered 400.
@@ -907,11 +925,49 @@ export function phaseFor(res: MutationResult): SendState {
     return res.error?.code === "send_queued" ? { phase: "queued", accepted: true } : { phase: "queued" };
   }
   if (res.error?.code === "send_unverified") return { phase: "unverified" };
+  /**
+   * THE SERVER REFUSED THIS AS A SECOND COPY OF A MESSAGE IT ALREADY HAS.
+   *
+   * Its own phase and not `failed`, because "failed" is the product's word for *nothing went out
+   * and you may try again*, and here the opposite may be true: something identical was already
+   * accepted, possibly delivered, and the one thing the reader must not do is press Send again.
+   * Not `unverified` either — that copy tells the reader a Sent-folder probe ran and came back
+   * empty, and on this path no probe ran at all.
+   *
+   * `firstSend` is the fact the sentence turns on and only the server has it: whether the first
+   * attempt is known sent, unconfirmed, or still running right now. It is carried as structured
+   * detail rather than as prose so the surface can say it in the reader's own language — the
+   * server's `message` stays in `reason` for diagnostics, exactly as it does for `failed`.
+   */
+  if (res.error?.code === "duplicate_send") {
+    return {
+      phase: "duplicate",
+      code: "duplicate_send",
+      ...(res.error?.message ? { reason: res.error.message } : {}),
+      ...(firstSendStatusOf(res.error?.details) ? { firstSend: firstSendStatusOf(res.error.details)! } : {}),
+    };
+  }
   return {
     phase: "failed",
     ...(res.error?.message ? { reason: res.error.message } : {}),
     ...(res.error?.code ? { code: res.error.code } : {}),
   };
+}
+
+/**
+ * Read `{ firstSend: { status } }` out of a refusal's details, or `undefined`.
+ *
+ * Defensive by construction: this is wire data, the shell renders a different sentence for each
+ * member, and a member this build has not heard of must degrade to the general sentence rather
+ * than to a blank line or a thrown render. An unrecognised status is therefore dropped, which is
+ * the same rule the organizer reader applies to a refusal reason it does not know.
+ */
+export function firstSendStatusOf(details: unknown): "sent" | "unverified" | "pending" | undefined {
+  if (typeof details !== "object" || details === null) return undefined;
+  const fs = (details as { firstSend?: unknown }).firstSend;
+  if (typeof fs !== "object" || fs === null) return undefined;
+  const status = (fs as { status?: unknown }).status;
+  return status === "sent" || status === "unverified" || status === "pending" ? status : undefined;
 }
 
 /**
@@ -1210,9 +1266,14 @@ export function useMailSend(
         /**
          * TERMINAL — and `unverified` is NOT one of the terminals that spends the key.
          *
-         * For `confirmed` and `failed` the key is spent: whatever it named on the server is that
-         * key's permanent answer, and the next press is a genuinely new send. Resuming a spent key
-         * would replay the old outcome for ever — a wedged Send button rather than a duplicate.
+         * For `confirmed`, `failed` and `duplicate` the key is spent: whatever it named on the
+         * server is that key's permanent answer, and the next press is a genuinely new send.
+         * Resuming a spent key would replay the old outcome for ever — a wedged Send button rather
+         * than a duplicate.
+         *
+         * `duplicate` joins them because nothing is pending under it: the server refused the
+         * request and rolled its own reservation back, so this key names nothing and the way
+         * forward is an edit, which is a different message and therefore a different send.
          *
          * `unverified` means nobody knows whether it delivered. The lock is what carries the key
          * across a reload, so releasing it is exactly how the next press gets a FRESH key for a
@@ -1221,6 +1282,14 @@ export function useMailSend(
          * moment the compose shed the draft id before re-sending. The key is kept, so any retry
          * reuses it and the server can recognise the reservation; the send parks as needing a
          * check instead of quietly going twice.
+         *
+         * THE SERVER-SIDE CONTENT CLAIM DOES NOT CHANGE THIS, and it is worth saying so here
+         * because it is the obvious thing to conclude. An identical second send is now refused for
+         * an hour whatever key it carries, so a released key would no longer mean a duplicate — but
+         * "no longer a duplicate" is not the same as "the right answer". Keeping the key still
+         * gives the better one: within the hour the server REPLAYS the original outcome instead of
+         * refusing, and past the hour the key is the only thing that still resumes. The two guards
+         * are belt and braces and the braces stay.
          */
         // NAMED BY MESSAGE, not by lane. A lane can hold an unresolved record beside this one,
         // and releasing the lane would delete the record saying an earlier message may already

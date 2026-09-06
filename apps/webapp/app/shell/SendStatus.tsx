@@ -115,7 +115,40 @@ export function SendStatus({
             ? send.code === "mailbox_disabled"
               ? { tone: "error", text: t("statusMailboxDisabled") }
               : { tone: "error", text: t("statusFailed") }
-            : null;
+            : send.phase === "duplicate"
+              /**
+               * THE SERVER ALREADY HAS THIS MESSAGE — three facts, three sentences.
+               *
+               * `warn` and not `error`, deliberately: nothing went wrong. The account asked to
+               * send a message it had already sent, and the server declined to send a second
+               * copy. An error tone would read as a fault the reader has to fix.
+               *
+               * The branch is on `firstSend`, which is a FACT from the server rather than this
+               * component's inference, because the three cases differ in what is true of the
+               * recipient's inbox and no single sentence covers them: `sent` means a copy is
+               * demonstrably out there, `unverified` means nobody knows and the Sent folder is
+               * the place to look, `pending` means it is leaving as this line renders. Saying
+               * "already sent" in the second case would claim a delivery this product cannot
+               * prove, which is the whole reason `unverified` exists as a separate state.
+               *
+               * ABSENT falls through to the general sentence rather than to a guess: a newer
+               * server may name a state this build has not heard of, and the one thing true of
+               * every one of them is that an identical message was already sent from this
+               * address and this press sent nothing.
+               */
+              ? {
+                tone: "warn",
+                text: t(
+                  send.firstSend === "sent"
+                    ? "statusDuplicateSent"
+                    : send.firstSend === "unverified"
+                      ? "statusDuplicateUnverified"
+                      : send.firstSend === "pending"
+                        ? "statusDuplicatePending"
+                        : "statusDuplicate",
+                ),
+              }
+              : null;
 
   if (!line) return null;
   return (

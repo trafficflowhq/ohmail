@@ -70,7 +70,8 @@ function defaultGetCookie(name: string): string | null {
 }
 
 interface WireError {
-  error?: { code?: string; message?: string; retryable?: boolean };
+  /** `details` is the refusal's structured facts — opaque here, read by the surface that knows the code. */
+  error?: { code?: string; message?: string; retryable?: boolean; details?: unknown };
 }
 
 // ── the two view vocabularies ──────────────────────────────────────────────
@@ -2064,6 +2065,15 @@ export class HttpAdapter implements EngineAdapter {
       // the drift the shared function exists to prevent; the field is named here rather than
       // inferred so the omission cannot recur silently.
       retryAfterMs: retryAfterMsOf(res),
+      // The refusal's structured facts, forwarded verbatim and unread here. A surface that has its
+      // OWN words for a code needs the facts that go with it — `duplicate_send` carries the first
+      // attempt's state and time, which decides which of three sentences is true — and quoting the
+      // server's English instead would put an untranslated sentence into a translated interface.
+      //
+      // Beside `retryAfterMs` and not instead of it: that field is MODELLED and branched on, this
+      // one is opaque cargo. The line above is exactly the omission its own comment warns about, so
+      // adding a second field here is the moment to check both survive — the census below does.
+      ...(env.error?.details !== undefined ? { details: env.error.details } : {}),
     });
   }
 

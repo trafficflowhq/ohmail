@@ -231,8 +231,8 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     module: `${W}/index.ts`, entry: "MAINTENANCE_EVERY_MS",
     triggers: ["cycle-tail"],
     cadence: "time-gated MAINTENANCE_EVERY_MS (~hourly), leader-only, global (not per account)",
-    budget: "pruneIdempotencyKeys + pruneAiAttemptClaims (packages/db) + sweepExpiredStagingFor pages until drained",
-    owns: "expired idempotency keys, abandoned AI claims and expired staged-attachment bytes actually go away",
+    budget: "pruneIdempotencyKeys + pruneSendFingerprints + pruneAiAttemptClaims (packages/db) + sweepExpiredStagingFor pages until drained",
+    owns: "expired idempotency keys, spent send-content claims, abandoned AI claims and expired staged-attachment bytes actually go away (the send-content sweep is hygiene: the duplicate window is compared against the request clock in the send path, never enforced by this)",
     fence: "leader lock (the worker is the single elected writer); each sweep failure is logged, never a cycle abort",
   },
 

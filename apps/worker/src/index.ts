@@ -1,6 +1,6 @@
 import { and, eq, sql } from "drizzle-orm";
 import {
-  pruneIdempotencyKeys, noticeSinkFor, setNoticeSink, accountSettings, mailboxCredentials, mailboxes,
+  pruneIdempotencyKeys, pruneSendFingerprints, noticeSinkFor, setNoticeSink, accountSettings, mailboxCredentials, mailboxes,
   messages, folderState, junkSweepCandidateWhere, closeStoodDownAppointments,
   RELEASED_ORGANIZER_SEND_SENTENCE, capabilitiesColumn,
 } from "@trafficflow/db";
@@ -5182,6 +5182,20 @@ export async function startWorkerWithLock(
           if (pruned > 0) log.info("idempotency_pruned", { pruned });
         } catch (err) {
           log.error("idempotency_prune_failed", { err });
+        }
+        // ── SPENT SEND-CONTENT CLAIMS ──────────────────────────────────────────────────
+        //
+        // HYGIENE, and it is worth saying plainly because the neighbouring sweep above is not:
+        // no send's answer depends on this running. The window inside which an identical message
+        // is refused is compared against the request clock in the send path, so a claim this
+        // deletes had already stopped refusing anything. That is deliberate — a standalone
+        // install runs the same send path and has no maintenance pass at all, so an expiry that
+        // depended on pruning would be unbounded on every desktop.
+        try {
+          const fps = await pruneSendFingerprints(db as unknown as Tx, new Date());
+          if (fps > 0) log.info("send_fingerprints_pruned", { pruned: fps });
+        } catch (err) {
+          log.error("send_fingerprint_prune_failed", { err });
         }
         // ── ABANDONED AI WORK CLAIMS ───────────────────────────────────────────────────
         //

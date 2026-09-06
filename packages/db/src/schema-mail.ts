@@ -2350,6 +2350,66 @@ export const outboundSends = pgTable("outbound_sends", {
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────
+// A CLAIM ON THE CONTENT OF A SEND — the duplicate defence that does not depend
+// on the client keeping its key.
+//
+// `outbound_sends` above is keyed on `(account_id, idempotency_key)`, and that key belongs to the
+// CLIENT. It is the whole protection today, and it fails in one measured way: a client that mints
+// a fresh key AND composes a fresh draft row collides with nothing. `SendService.reserve` refuses
+// a second reservation against the same DRAFT — it holds the row's `FOR UPDATE` lock, refuses any
+// status but `draft` and flips to `sending` in one transaction — so the surviving hole is a
+// SECOND DRAFT ROW carrying the same message. A reinstalled client, a second device, a cleared
+// browser store or an older build all reach it.
+//
+// So the account also claims the CONTENT. `fingerprint` is a SHA-256 over what a recipient can
+// perceive — the three address lists, the subject, the sent text, the reply and forward targets,
+// the schedule and an attachment manifest of names, types and sizes. Deliberately NOT in it: the
+// draft id (the field the defect moves), the thread, the minted Message-ID, the key, and the
+// mailbox — which is a KEY COLUMN here and would be double-counted in both.
+//
+// ── WHY A TABLE AND NOT A COLUMN ON `outbound_sends` ───────────────────────────────────────
+//
+// The claim is RE-POINTABLE and the reservation is not. `SendService` reclaims a row — repointing
+// `send_id` and restamping `created_at` — when it is older than the duplicate window or when the
+// send it names ended `failed`, so one row tracks one piece of content over successive attempts
+// while each attempt keeps its own permanent reservation. A nullable column on a permanent row
+// cannot say that, and expressing the window as a partial index is impossible anyway: an index
+// predicate must be immutable and `now()` is not.
+//
+// ── THE WINDOW IS ENFORCED AT THE DECISION, NEVER BY THE PRUNE ─────────────────────────────
+//
+// `SEND_DUPLICATE_WINDOW_MS` is compared against `ctx.now()` inside the conflict arm. The
+// worker's 24-hour DELETE is hygiene and nothing depends on it — which is the point: the sidecar
+// runs this same `reserve` and has no maintenance pass at all, so a prune-enforced window would
+// be UNBOUNDED on every desktop and identical re-sends would be refused for ever with every
+// suite green.
+//
+// `account_id` carries no FK, matching `outbound_sends` above and for the journal-split closure
+// rule: the mail journal must run first against an empty database, so nothing here may name a
+// Cloud object. `send_id` points at `outbound_sends`, which is on this side.
+// ─────────────────────────────────────────────────────────────────────────────
+export const outboundSendFingerprints = pgTable("outbound_send_fingerprints", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  accountId: uuid("account_id").notNull(),
+  mailboxId: uuid("mailbox_id").notNull(),
+  /** SHA-256 of the canonical member list, lowercase hex — closed by shape, never free text. */
+  fingerprint: text("fingerprint").notNull(),
+  /** The reservation that currently owns this content. Re-pointed on a reclaim. */
+  sendId: uuid("send_id").notNull().references(() => outboundSends.id),
+  /** Restamped on a reclaim — this is the window's clock, not the row's birthday. */
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  uqContent: unique("outbound_send_fingerprints_content_uq").on(t.accountId, t.mailboxId, t.fingerprint),
+  // Declared here to keep the TS schema honest; the constraint is created by the migration. The
+  // column is machine-generated and closed by SHAPE, which is what keeps it out of the operator
+  // console's taint sweep — the argument mail 0091 made for `organizer_requests.refused_reason`.
+  ckFingerprint: check(
+    "outbound_send_fingerprints_hex",
+    sql`${t.fingerprint} ~ '^[0-9a-f]{64}$'`,
+  ),
+}));
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Migration 0014 — workflow automation storage. Two
 // additive, account-scoped, REST-only tables (kb_entries/tracker precedent):
 // NEITHER writes `change_log` and NEITHER grows `EntityType` — clients refetch via

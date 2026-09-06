@@ -113,12 +113,13 @@ export interface AttachmentStagingPort {
   }): Promise<StagedUploadGrantWire>;
   /**
    * The two-phase staged-bytes source `SendService` reads through — `declare` (metadata, so an
-   * over-cap send is refused before any transfer) and `fetch` (the bytes, re-measured).
+   * over-cap send is refused before any transfer, and so the duplicate fingerprint can name the
+   * files without reaching for them) and `fetch` (the bytes, re-measured).
    */
   source: {
     declare(
       accountId: string, ids: readonly string[],
-    ): Promise<Array<{ id: string; sizeBytes: number; expiresAt: Date }>>;
+    ): Promise<Array<{ id: string; sizeBytes: number; expiresAt: Date; filename: string; contentType: string }>>;
     fetch(
       accountId: string, ids: readonly string[], now: Date,
     ): Promise<Array<{ filename: string; contentType: string; content: Buffer }>>;

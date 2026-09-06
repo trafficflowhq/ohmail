@@ -1739,11 +1739,30 @@ export class MutationRejectedError extends Error {
    * one for the same message.
    */
   readonly entityId: string | null;
+  /**
+   * THE REFUSAL'S OWN STRUCTURED FACTS, carried from the server's `{error:{details}}`.
+   *
+   * `message` is server English and a surface that renders it puts an untranslated protocol
+   * sentence inside a translated interface — a defect this product has shipped once already, and
+   * the reason every refusal a surface has words for branches on `code` instead. But a code alone
+   * cannot carry a FACT, and some refusals turn on one: a duplicate send is refused differently
+   * depending on whether the first attempt is known-sent, unconfirmed, or still running, and only
+   * the server knows which.
+   *
+   * So the details ride along, opaque to this class and read by whichever surface knows the shape
+   * that goes with the code. Absent for every refusal that carries none.
+   *
+   * Distinct from `retryAfterMs` above and not a replacement for it: that one is a MODELLED field
+   * this class reads and the outbox branches on, while this is an opaque payload this class only
+   * carries. A refusal can have both.
+   */
+  readonly details: unknown;
   constructor(
     message: string,
     opts: {
       status?: number | null; code?: string | null; retryable?: boolean; retryAfterMs?: number | null;
       entityId?: string | null;
+      details?: unknown;
     } = {},
   ) {
     super(message);
@@ -1753,6 +1772,7 @@ export class MutationRejectedError extends Error {
     this.retryable = opts.retryable ?? false;
     this.retryAfterMs = opts.retryAfterMs ?? null;
     this.entityId = opts.entityId ?? null;
+    this.details = opts.details;
   }
 }
 

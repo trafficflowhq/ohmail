@@ -222,6 +222,7 @@ export {
 } from "./away-responder-pass.js";
 export {
   SendService, sendService, SEND_STALE_AFTER_MS, SEND_FAILED_SENTENCE,
+  SEND_DUPLICATE_WINDOW_MS, sendContentFingerprint, duplicateSendSentence,
   SEND_ATTEMPT_CEILING_MS, SEND_TIMEOUT_SENTENCE,
   SEND_ATTACHMENT_MAX_TOTAL_BYTES, SEND_ATTACHMENT_FIELD_MAX_CHARS,
   SEND_MAX_ATTACHMENT_PARTS, SEND_MAX_RECIPIENTS, dedupeStagedIds,

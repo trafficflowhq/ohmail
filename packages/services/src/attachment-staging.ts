@@ -283,7 +283,7 @@ export function makeAttachmentStagingPort(deps: {
   source: {
     declare(
       accountId: string, ids: readonly string[],
-    ): Promise<Array<{ id: string; sizeBytes: number; expiresAt: Date }>>;
+    ): Promise<Array<{ id: string; sizeBytes: number; expiresAt: Date; filename: string; contentType: string }>>;
     fetch(accountId: string, ids: readonly string[], now: Date): Promise<SendAttachment[]>;
   };
 } {
@@ -347,7 +347,14 @@ export function makeAttachmentStagingPort(deps: {
     source: {
       async declare(accountId, ids) {
         const rows = await readStagingTickets(deps.db, accountId, ids);
-        return rows.map((r) => ({ id: r.id, sizeBytes: r.sizeBytes, expiresAt: r.expiresAt }));
+        // `filename` and `contentType` ride along beside the size. They are METADATA the mint
+        // stored and never content, and the send path folds them into its duplicate fingerprint —
+        // which cannot use the ticket id, because a re-send under a fresh key re-stages and mints
+        // new ids for the same files. See `StagedAttachmentSource.declare`.
+        return rows.map((r) => ({
+          id: r.id, sizeBytes: r.sizeBytes, expiresAt: r.expiresAt,
+          filename: r.filename, contentType: r.contentType,
+        }));
       },
       async fetch(accountId, ids, now) {
         const rows = await readStagingTickets(deps.db, accountId, ids);

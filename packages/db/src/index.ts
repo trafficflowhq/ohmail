@@ -151,6 +151,9 @@ export {
   idempotencyExpiry, IDEMPOTENCY_TTL_MS,
   type IdempotencyClaimInput,
 } from "./idempotency.js";
+export {
+  pruneSendFingerprints, SEND_FINGERPRINT_RETENTION_MS,
+} from "./send-fingerprints.js";
 // Billing + the credit ledger, observability and the AI spend gate USED to
 // be re-exported here. They are runtime surface — no `node:fs`, no migrator — so `/admin` was
 // never the right home for them, and the worker (which may import core + db only) still reaches

@@ -652,6 +652,13 @@
       "when": 1791600000011,
       "tag": "0092_organizer_install_id",
       "breakpoints": true
+    },
+    {
+      "idx": 93,
+      "version": "7",
+      "when": 1791600000021,
+      "tag": "0093_outbound_send_fingerprints",
+      "breakpoints": true
     }
   ]
 }

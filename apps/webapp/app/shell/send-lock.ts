@@ -415,12 +415,20 @@ export function legacySendFingerprint_0_14_1(m: MailSend): string {
 /**
  * HOW LONG A PERSISTED KEY IS STILL WORTH RESUMING.
  *
- * Seven days, and the number is chosen against the SERVER's two horizons rather than invented.
+ * Seven days, and the number is chosen against the SERVER's horizons rather than invented.
  * `idempotency_keys` expires at 24 h, so past a day a resumed key no longer replays a stored
  * RESPONSE — but `outbound_sends` is a permanent reservation and its `UNIQUE (account_id,
  * idempotency_key)` still refuses a second delivery, which is the half that matters here. Seven
  * days is therefore comfortably inside the guarantee that protects the recipient and well past any
  * window in which a person still believes the message is going.
+ *
+ * THAT KEY IS NO LONGER THE WHOLE PROTECTION, and this comment used to read as if it were. The
+ * uniqueness above is keyed on something the CLIENT holds, so it defends nothing once the client
+ * loses it — a reinstall, a cleared jar, a second device, an older build. The server now also
+ * claims the message's CONTENT for an hour, independently of any key and of which draft row the
+ * send names, and refuses an identical second send as `duplicate_send`. This record still earns
+ * its place: within the hour it turns a refusal into a REPLAY of the original outcome, which is
+ * the better answer, and past the hour it is the only thing that still resumes.
  *
  * Past it the record is dropped: a week-old unsettled lane is wreckage, and the honest thing is to
  * let the next press be a new send rather than to resume a key whose row nobody will ever look at.
