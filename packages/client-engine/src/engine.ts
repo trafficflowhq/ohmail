@@ -114,11 +114,30 @@ export interface MutationResult {
 }
 
 /** What one supersession changed, and everything needed to put it back. */
+/** What one pass of abandoned-record marking actually managed to do. */
+interface MarkerOutcome {
+  marked: Array<{ id: string; before: PersistedOutboxEntry }>;
+  failed: number;
+}
+
 interface SupersedeEffect {
   retired: string[];
+  /**
+   * Queued rows this verb NARROWED rather than retired, to be re-written in the replacement's own
+   * transaction.
+   *
+   * They used to be persisted by a separate best-effort `putOutbox` per row, which put them
+   * outside every guarantee the retirement had just been given: they were not in the replacement
+   * transaction, they were not in `retired`, and so the no-write-no-wire rule did not see them.
+   * Two windows followed — the narrowing lands and the replacement does not (disk keeps only the
+   * narrowed intent while memory is restored), or the narrowing fails and the replacement lands
+   * (disk keeps the full stale read, replayed once the replacement is deleted).
+   */
+  narrowed: PendingMutation[];
+  /** Everything this call changed, kept so a refused replacement can put it all back. */
   undo: Array<{ entry: PendingMutation; index: number; mutation: EngineMutation }>;
   /** The abandoned-record markers, awaited before this verb may dispatch. */
-  marked: Promise<void>;
+  marked: Promise<MarkerOutcome>;
 }
 
 interface PendingMutation {
@@ -359,6 +378,17 @@ export function targetOf(m: EngineMutation): string | null {
       return null;
     }
   }
+}
+
+/** One pending verb as the row that is persisted for it. */
+function outboxEntryOf(p: PendingMutation): PersistedOutboxEntry {
+  return {
+    v: OUTBOX_ENTRY_VERSION, id: p.id, key: p.key, n: p.n, at: p.at, mutation: p.mutation,
+    ...(p.attempts !== undefined ? { attempts: p.attempts } : {}),
+    ...(p.nextAt !== undefined ? { nextAt: p.nextAt } : {}),
+    ...(p.waitIsServerNamed !== undefined ? { waitIsServerNamed: p.waitIsServerNamed } : {}),
+    ...(p.lastError !== undefined ? { lastError: p.lastError } : {}),
+  };
 }
 
 /**
@@ -1537,6 +1567,22 @@ export class OhmailEngine {
    * visible and operable until then, rather than leaving it referenced by nothing.
    */
   private readonly abandonedLocally = new Map<string, PersistedOutboxEntry>();
+
+  /**
+   * The abandoned record for an id, from disk OR from the session-local fallback.
+   *
+   * Both controls used to read the durable collection alone while `abandoned()` merged the
+   * fallback in — so a record whose terminal transition could not be written was LISTED with a
+   * working-looking Retry and Discard, and both did nothing: Retry answered "this build cannot
+   * retry that" because it found no row, and Discard deleted a row that was not there. A control
+   * that is shown and inert is worse than one that is hidden, because the person presses it and
+   * believes something happened.
+   */
+  private abandonedRecordOf(id: string): PersistedOutboxEntry | null {
+    const row = this.store.entries<unknown>(OUTBOX_ABANDONED_TYPE).find((r) => r.id === id);
+    if (row !== undefined && isPersistedOutboxEntry(row.entity)) return row.entity;
+    return this.abandonedLocally.get(id) ?? null;
+  }
   /** Bumped whenever {@link refusedLocally} changes, so the snapshot below cannot serve a stale row. */
   private localRefusalRev = 0;
   /** {@link EngineOptions.outboxAutoReplay}, resolved once. */
@@ -3837,8 +3883,29 @@ export class OhmailEngine {
     // ONE TRANSACTION: the newer row in, the rows it supersedes out. See `supersedeQueued` for
     // why the removal may not be a separate best-effort delete.
     // Before the wire: a stale record must not be retryable while this verb is in flight.
-    await superseded.marked;
-    const persisted = await this.putOutbox(pending);
+    const markers = await superseded.marked;
+    /**
+     * A MARKER THAT DID NOT LAND IS A WRITE THIS DEVICE COULD NOT RECORD, so the same rule
+     * applies as to any other: no write, no wire. The record it failed to mark is still retryable
+     * and can later overwrite the state this verb is about to establish — the newer intent losing
+     * to the older one, with both requests reporting success. Whatever DID land goes back, so the
+     * refusal leaves nothing marked stale on behalf of a verb that never happened.
+     */
+    if (markers.failed > 0) {
+      await this.undoMarkers(markers.marked);
+      this.undoSupersede(superseded);
+      this.overlays.delete(id);
+      this.overlayRev++;
+      this.notify();
+      return {
+        id, key, status: "rolled_back", seq: null,
+        error: new MutationRejectedError(
+          "this device could not record the change, and it replaces others that are still queued",
+          { status: null, code: "storage_refused", retryable: true },
+        ),
+      };
+    }
+    const persisted = await this.putOutbox(pending, superseded.narrowed);
     if (!persisted && superseded.retired.length > 0) {
       /**
        * NO WRITE, NO WIRE — the supersession half of the rule stated in this module's header.
@@ -3851,6 +3918,10 @@ export class OhmailEngine {
        * So nothing is dispatched, everything the supersession changed goes back, and the person
        * is told the action was refused rather than being shown it succeed and silently lose.
        */
+      // The markers this verb wrote go back too: they were marked stale on behalf of a
+      // replacement that is not happening, and leaving them would take away a Retry for a reason
+      // that turned out not to exist.
+      await this.undoMarkers(markers.marked);
       this.undoSupersede(superseded);
       this.overlays.delete(id);
       this.overlayRev++;
@@ -4092,17 +4163,14 @@ export class OhmailEngine {
    * cannot be persisted must still be SENT". That is right for almost every verb and wrong for
    * exactly one, so the caller now gets to decide instead of this method deciding for all of them.
    */
-  private async putOutbox(p: PendingMutation): Promise<boolean> {
-    const entry: PersistedOutboxEntry = {
-      v: OUTBOX_ENTRY_VERSION, id: p.id, key: p.key, n: p.n, at: p.at, mutation: p.mutation,
-      ...(p.attempts !== undefined ? { attempts: p.attempts } : {}),
-      ...(p.nextAt !== undefined ? { nextAt: p.nextAt } : {}),
-      ...(p.waitIsServerNamed !== undefined ? { waitIsServerNamed: p.waitIsServerNamed } : {}),
-      ...(p.lastError !== undefined ? { lastError: p.lastError } : {}),
-    };
+  private async putOutbox(p: PendingMutation, alsoPut: readonly PendingMutation[] = []): Promise<boolean> {
+    const entry = outboxEntryOf(p);
     try {
       await this.store.commitLocal(
-        [{ type: OUTBOX_TYPE, id: p.id, entity: entry }],
+        [
+          { type: OUTBOX_TYPE, id: p.id, entity: entry },
+          ...alsoPut.map((q) => ({ type: OUTBOX_TYPE, id: q.id, entity: outboxEntryOf(q) })),
+        ],
         (p.retire ?? []).map((id) => ({ type: OUTBOX_TYPE, id })),
       );
       // Only now: a commit that did not happen has retired nothing, and the next write of this
@@ -4430,11 +4498,13 @@ export class OhmailEngine {
       };
     };
 
-    const row = this.store.entries<unknown>(OUTBOX_ABANDONED_TYPE).find((r) => r.id === id);
-    if (!row || !isPersistedOutboxEntry(row.entity)) {
+    // Disk OR the session-local fallback — see `abandonedRecordOf`. Reading disk alone meant a
+    // record whose terminal transition could not be written was listed with a Retry that answered
+    // "this build cannot retry that", because the row it looked for was only ever in memory.
+    const e = this.abandonedRecordOf(id);
+    if (e === null) {
       return refuse(null, "outbox_unknown_kind", "This change cannot be retried by this version.");
     }
-    const e = row.entity;
     if (e.superseded === true) {
       return refuse(e, "outbox_superseded", "A newer change to the same thing has since been saved.");
     }
@@ -4545,6 +4615,16 @@ export class OhmailEngine {
     try {
       await this.store.commitLocal([], [{ type: OUTBOX_ABANDONED_TYPE, id }]);
     } catch { /* best-effort, exactly like every other outbox write */ }
+    /**
+     * AND THE SESSION-LOCAL COPY, or Discard is a control that visibly does nothing.
+     *
+     * A record whose terminal transition could not be written lives only in `abandonedLocally`.
+     * Deleting from the durable collection alone left it listed exactly as before — the person
+     * presses Discard, the row stays, and there is no reason on screen why. The live row on disk
+     * is a separate matter and is deliberately left: it is what a reboot replays, and discarding
+     * a record this session could not even record is not a statement about that.
+     */
+    if (this.abandonedLocally.delete(id)) this.localRefusalRev++;
     this.notify();
   }
 
@@ -4591,12 +4671,14 @@ export class OhmailEngine {
    * "the same target" means. `null` keys — creates, sends, the read-flag list verbs — never
    * participate, exactly as they do not in the queue.
    */
-  private async supersedeAbandoned(m: EngineMutation): Promise<void> {
+  private async supersedeAbandoned(m: EngineMutation): Promise<MarkerOutcome> {
     const key = targetOf(m);
     const readIds = m.kind === "mark_seen" || m.kind === "feed_mark_seen"
       ? new Set(m.messageIds ?? [])
       : null;
-    if (key === null && readIds === null) return;
+    /** Records this call actually changed on disk, so a refused replacement can put them back. */
+    const marked: Array<{ id: string; before: PersistedOutboxEntry }> = [];
+    if (key === null && readIds === null) return { marked, failed: 0 };
 
     let changed = false;
     const writes: Array<Promise<unknown>> = [];
@@ -4614,10 +4696,32 @@ export class OhmailEngine {
          * person had just done. Narrowing keeps the part nothing else will deliver and drops the
          * part that is now stale.
          */
-        const older = e.mutation.kind === "mark_seen" || e.mutation.kind === "feed_mark_seen"
-          ? (e.mutation.messageIds ?? [])
+        const om = e.mutation;
+        const older = om.kind === "mark_seen" || om.kind === "feed_mark_seen"
+          ? (om.messageIds ?? [])
           : null;
         if (older === null || older.length === 0) continue;
+        /**
+         * THE EXPLICIT/GLANCE RULE, WHICH THIS BRANCH USED TO SKIP ENTIRELY.
+         *
+         * The queue's own supersession has always applied it: an EXPLICIT read verb outranks both
+         * queued read verbs, while a glance — an involuntary read, the dwell commit or a feed
+         * departure — outranks only other involuntary reads. It must never cancel a deliberate
+         * unread, because a person marking something unread has said something a passing glance
+         * did not.
+         *
+         * Abandoned rows were subtracted by ANY newer read verb regardless. So a deliberate
+         * `mark_seen(unread: true)` that had been given up on could be narrowed to nothing — and
+         * marked superseded, taking its Retry with it — by a later glance over the same message.
+         * The record vanished, and the state the person actually asked for was never delivered.
+         *
+         * A glance can only ever READ, so the VALUE takes part in the classification and not the
+         * label alone: a mislabelled mark-unread still outranks a queued stale read.
+         */
+        const newerExplicit = m.kind === "mark_seen" && (m.via !== "glance" || m.unread === true);
+        const olderInvoluntary = om.kind === "feed_mark_seen"
+          || (om.kind === "mark_seen" && om.via === "glance" && om.unread === false);
+        if (!newerExplicit && !olderInvoluntary) continue;
         const remaining = older.filter((id) => !readIds.has(id));
         if (remaining.length === older.length) continue; // no overlap at all
         next = remaining.length === 0
@@ -4629,16 +4733,47 @@ export class OhmailEngine {
       if (next === null) continue;
 
       changed = true;
+      const before = e;
       writes.push(this.store.commitLocal(
         [{ type: OUTBOX_ABANDONED_TYPE, id: e.id, entity: next }], [])
-        .catch(() => { /* the record stands unchanged; the next expression of this verb tries again */ }));
+        .then(() => { marked.push({ id: e.id, before }); }));
     }
-    // AWAITED before the row can be re-enabled: a marker still in flight is a window in which
-    // another tab — or this one, on a fast second press — can retry a record that is already stale.
-    await Promise.all(writes);
+    /**
+     * AWAITED, and a FAILURE IS A FAILURE.
+     *
+     * Every rejection used to be swallowed into success. `mutate` then awaited a promise that
+     * could not reject, and went on to persist and dispatch — while the record it believed it had
+     * marked was still retryable, and could later overwrite the very state the newer verb was
+     * establishing. Rethrowing turns that into the no-write-no-wire case, which is what it always
+     * was: a change this device could not fully record does not go out.
+     *
+     * `allSettled`, not `all`: with several markers, some can land while others do not, and the
+     * ones that landed have to be known so they can be rolled back.
+     */
+    const results = await Promise.allSettled(writes);
+    const failed = results.filter((r) => r.status === "rejected").length;
     if (changed) {
       this.notify();
     }
+    return { marked, failed };
+  }
+
+  /**
+   * PUT BACK THE ABANDONED RECORDS A REFUSED REPLACEMENT HAD MARKED STALE.
+   *
+   * `undoSupersede` restored the queue and the overlays and never touched these, so a replacement
+   * refused under no-write-no-wire left records marked superseded on behalf of a verb that never
+   * happened — their Retry gone for good, for a reason that turned out not to exist.
+   */
+  private async undoMarkers(marked: ReadonlyArray<{ id: string; before: PersistedOutboxEntry }>): Promise<void> {
+    if (marked.length === 0) return;
+    for (const { id, before } of marked) {
+      try {
+        await this.store.commitLocal([{ type: OUTBOX_ABANDONED_TYPE, id, entity: before }], []);
+      } catch { /* the store is refusing everything; the record is rebuilt from disk on the next boot */ }
+    }
+    this.localRefusalRev++;
+    this.notify();
   }
 
   /**
@@ -4662,6 +4797,7 @@ export class OhmailEngine {
    */
   private supersedeQueued(m: EngineMutation): SupersedeEffect {
     const retired: string[] = [];
+    const narrowed: PendingMutation[] = [];
     /** Everything this call changed, kept so a refused replacement can put it all back. */
     const undo: Array<{ entry: PendingMutation; index: number; mutation: EngineMutation }> = [];
     /**
@@ -4674,7 +4810,7 @@ export class OhmailEngine {
      * awaits it before it dispatches.
      */
     const marked = this.supersedeAbandoned(m);
-    if (this.queue.length === 0) return { retired, undo, marked };
+    if (this.queue.length === 0) return { retired, narrowed, undo, marked };
     const key = supersedeKey(m);
     const readIds = m.kind === "mark_seen" || m.kind === "feed_mark_seen"
       ? new Set(m.messageIds ?? [])
@@ -4723,9 +4859,9 @@ export class OhmailEngine {
           retired.push(q.id);
         } else {
           undo.push({ entry: q, index: i, mutation: qm });
-          const narrowed = { ...qm, messageIds: remaining } as EngineMutation;
-          if (lineSuperseded && narrowed.kind === "feed_mark_seen") delete narrowed.upToId;
-          q.mutation = narrowed;
+          const narrowedMutation = { ...qm, messageIds: remaining } as EngineMutation;
+          if (lineSuperseded && narrowedMutation.kind === "feed_mark_seen") delete narrowedMutation.upToId;
+          q.mutation = narrowedMutation;
           try {
             const effects = mutationEffects(this.read(), q.mutation, {
               now: () => new Date(q.at), uuid: this.uuid,
@@ -4733,7 +4869,9 @@ export class OhmailEngine {
             if (effects.length > 0) this.overlays.set(q.id, effects);
             else this.overlays.delete(q.id);
           } catch { this.overlays.delete(q.id); }
-          void this.putOutbox(q);
+          // NOT a separate best-effort write any more — see `SupersedeEffect.narrowed`. It rides
+          // the replacement's transaction, so disk cannot hold one without the other.
+          narrowed.push(q);
         }
         changed = true;
       }
@@ -4742,7 +4880,7 @@ export class OhmailEngine {
       this.overlayRev++;
       this.notify();
     }
-    return { retired, undo, marked };
+    return { retired, narrowed, undo, marked };
   }
 
   /**
