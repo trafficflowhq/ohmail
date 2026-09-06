@@ -10,6 +10,7 @@ import {
   parseRequestEnvelope, isMalformedRequest, formatRequest, formatAck, canonicalRequest,
   requestEnvelopesIn, acksIn, verifyRequestEnvelope, decodeRequestPayload,
   REQUEST_PROTOCOL, MetaFolderTruncatedError, META_RECORDS_MAX_PER_FETCH, metaPageBounds,
+  readMemo, writeMemo, forgetMemo, type Generation,
   type RequestReaderIo, type RequestOrganizerIo, type RawMetaMessage,
   type RequestEnvelope, type RequestRecord, type AckRecord, type OrganizerKind,
   type RequestRefusalReason,
@@ -203,7 +204,27 @@ const REQUEST_DRAIN_MAX_PAGES = 8;
  * newest page is the right place to start when there is no backlog, and a stale cursor would send
  * a healthy mailbox to its oldest records for no reason.
  */
-const drainCursors = new Map<string, number>();
+/**
+ * WHERE THIS INSTALL'S WALK STOPPED, kept beside everything else it remembers about this mailbox.
+ *
+ * This was a module-level map keyed by the MAILBOX ID alone, which is wrong in both directions: it
+ * could not tell two installs apart, and it survived a folder being deleted and recreated exactly
+ * as it survived a reconnect — so a resume point from a numbering that no longer exists read as
+ * current, and the walk began below every record in the new folder. The store keys by
+ * (install, mailbox) and holds the generation in the value, so a replaced folder empties it.
+ */
+const drainMemo = {
+  read(rt: RequestRuntime, generation: Generation): number | undefined {
+    const held = readMemo({ installId: rt.installId, mailboxId: rt.mailboxId }, generation);
+    return held.kind === "memo" ? held.memo.drainCursor : undefined;
+  },
+  set(rt: RequestRuntime, generation: Generation, at: number): void {
+    writeMemo({ installId: rt.installId, mailboxId: rt.mailboxId }, generation, { drainCursor: at });
+  },
+  clear(rt: RequestRuntime): void {
+    forgetMemo({ installId: rt.installId, mailboxId: rt.mailboxId }, "drainCursor");
+  },
+};
 
 /** The lowest uid in a page, which is the bound for the page below it. `null` when unaddressable. */
 function lowestRef(records: readonly RawMetaMessage[]): number | null {
@@ -250,7 +271,7 @@ export const REQUEST_DRAIN_TIME_BUDGET_MS = 10_000;
 
 /** An adapter that can hand out the ORGANIZER's half of the request IO. */
 export interface RequestOrganizerIoCapableAdapter {
-  requestOrganizerIo(): RequestOrganizerIo;
+  requestOrganizerIo(identity: { installId: string; mailboxId: string }): RequestOrganizerIo;
 }
 
 /** An adapter that can hand out the READER's half. Separate type, separate capability. */
@@ -376,7 +397,7 @@ export async function applyMetaRequests(
 
   let io: RequestOrganizerIo;
   try {
-    io = rt.adapter.requestOrganizerIo();
+    io = rt.adapter.requestOrganizerIo({ installId: rt.installId, mailboxId: rt.mailboxId });
   } catch {
     // A retired adapter — the cycle raced a reconnect or a shutdown. `requestOrganizerIo()` throws
     // on one by design (`ImapAdapter`'s own `assertUsable`), and outside this try that throw
@@ -384,6 +405,11 @@ export async function applyMetaRequests(
     // nothing was lost, and the next cycle has a live connection.
     return EMPTY_RESULT;
   }
+
+  /* The numbering this cycle's positions belong to. A folder deleted and recreated numbers from
+   * one again under a new generation, and a resume point from the old one would start the walk
+   * below every record now present. */
+  const generation: Generation = io.uidValidity?.() ?? null;
 
   // ── NO KEY, NO CHANNEL ──────────────────────────────────────────────────────────────────────
   //
@@ -434,25 +460,25 @@ export async function applyMetaRequests(
   let pageAdvance: { bottom: true } | { bottom: false; lo: number } | null = null;
   /* ── ONE WRITER FOR THE RESUME POINT ────────────────────────────────────────────────────
    *
-   * The walk used to write `drainCursors` directly as it stepped, while ALSO leaving
+   * The walk used to write the resume point directly as it stepped, while ALSO leaving
    * `pageAdvance` holding the bound from an earlier page. Whichever ran last won, and the exits
    * below run last: eight steps across empty windows advanced the cursor eight times and then
    * `keepPlace` put back the bound from before the first of them. Every cycle re-walked the same
    * gaps and the requests beneath them were never reached — the defect the gap step was added to
    * fix, reintroduced by the fix for it.
    *
-   * Nothing in the walk touches `drainCursors` now; it records where it got to in `pageAdvance`
+   * Nothing in the walk touches the resume point now; it records where it got to in `pageAdvance`
    * and this is the only thing that writes. */
   const keepPlace = (capBit: boolean): void => {
     if (pageAdvance === null || capBit) return;
-    if (pageAdvance.bottom) drainCursors.delete(rt.mailboxId);
-    else drainCursors.set(rt.mailboxId, pageAdvance.lo);
+    if (pageAdvance.bottom) drainMemo.clear(rt);
+    else drainMemo.set(rt, generation, pageAdvance.lo);
   };
   let records: RawMetaMessage[];
   try {
     /* RESUME WHERE THIS MAILBOX'S WALK STOPPED. Absent, this is the newest page, which is where a
      * folder with no backlog should always be read from. */
-    const resumeAt = drainCursors.get(rt.mailboxId);
+    const resumeAt = drainMemo.read(rt, generation);
     records = await io.listMetaRecords(resumeAt);
     /* ── WHAT AN EMPTY ANSWER MEANS DEPENDS ON WHETHER A WINDOW WAS ASKED FOR ──────────────
      *
@@ -465,7 +491,7 @@ export async function applyMetaRequests(
      * the newest page next cycle, walked down to the same gap, and gave up again, while the
      * requests underneath it were never reached and every counter reported an idle drain. */
     if (resumeAt === undefined) {
-      drainCursors.delete(rt.mailboxId);
+      drainMemo.clear(rt);
     } else {
       const here = metaPageBounds(resumeAt);
       /* A page holding work keeps its bound: settling is capped per cycle, so moving below a

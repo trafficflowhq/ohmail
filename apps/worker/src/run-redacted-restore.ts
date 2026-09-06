@@ -143,6 +143,7 @@ try {
 
     await acquireLeasePermit({
       adapter,
+      mailboxId,
       // The SAME set the worker and the backstop advertise — this command renews their shared
       // claim, so a narrower set here would make `requests` blink out for readers mid-repair.
       hasRequestKey: mailboxHasRequestKey({ auth: creds.imap.auth, address: mb.address }),

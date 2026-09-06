@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
 import { META_FOLDER, makeMetaFolderRef, lastSequence, type MetaFolderClient } from "./organizer-lease.js";
+import {
+  assertMetaIdentity, readMemo, writeMemo, forgetMemo,
+  type MetaIdentity, type Generation,
+} from "./meta-memo.js";
 
 /**
  * THE PORTABLE ORGANIZER PROFILE — how a mailbox carries its own organizer configuration.
@@ -571,7 +575,18 @@ export type ProfileOp = "ensure_meta" | "list_profiles" | "append_profile" | "re
  * across mailboxes, and a fresh io is built per call. A hint, never evidence — the document is
  * still read from the folder and parsed like any other.
  */
-const ownProfileUid = new WeakMap<object, number>();
+/**
+ * THE FOLDER'S GENERATION, which is what says whether a remembered uid still means anything.
+ *
+ * The anchor itself now lives in `meta-memo.ts`, keyed by (install, mailbox) rather than beside
+ * the connection: a reconnect changes nothing about the folder and must not cost the position,
+ * and a position from a replaced numbering must not be usable at all.
+ */
+function generationOf(client: { readonly mailbox?: { uidValidity?: number | bigint } | false }): Generation {
+  const selected = client.mailbox;
+  const v = typeof selected === "object" && selected !== null ? selected.uidValidity : undefined;
+  return typeof v === "number" || typeof v === "bigint" ? v : null;
+}
 
 export type ProfileUidAsk =
   | { readonly kind: "uids"; readonly uids: number[] }
@@ -622,7 +637,11 @@ export interface ProfileIo {
  * module never imports the client library.
  */
 export interface ProfileImapClient extends MetaFolderClient {
-  readonly mailbox?: { exists?: number } | false;
+  /* `uidValidity` is what says whether a remembered uid still refers to anything: a folder
+   * deleted and recreated numbers from one again under a new generation. Optional because a
+   * server may not have reported one yet, and an unknown generation is treated as a mismatch
+   * rather than a match. */
+  readonly mailbox?: { exists?: number; uidValidity?: number | bigint } | false;
   /**
    * A NOOP, which is how a long-lived connection LEARNS what changed under it. Optional, so every
    * existing fake behaves exactly as it did. See {@link listProfileMessages} for why a cached
@@ -701,8 +720,10 @@ export interface ProfileImapClient extends MetaFolderClient {
 export function makeProfileIo(
   client: ProfileImapClient,
   toServerPath: (canonical: string) => string,
+  identity: MetaIdentity,
   limits?: { maxBytes?: number },
 ): ProfileIo {
+  assertMetaIdentity("makeProfileIo", identity);
   const maxBytes = limits?.maxBytes ?? PROFILE_BYTES_MAX_PER_FETCH;
   // The lease's resolution, not a second one. The profile and the claim share a folder, so a
   // second spelling of where that folder is would put the settings document and the lease in
@@ -933,7 +954,10 @@ export function makeProfileIo(
            * top — a settings document written after ours has a higher uid, and starting at ours
            * would read past it and answer with a stale document. What the anchor buys is the
            * right to cover what the budget left beneath it. */
-          const anchor = ownProfileUid.get(client) ?? null;
+          const remembered = readMemo(identity, generationOf(client));
+          const anchor = remembered.kind === "memo" && typeof remembered.memo.profileUid === "number"
+            ? remembered.memo.profileUid
+            : null;
           const bottomFor = (): number => (anchor !== null && anchor >= 1 ? anchor : 1);
           let hi = top;
           for (let w = 0; w < PROFILE_SEARCH_WINDOW_BUDGET; w++) {
@@ -1185,8 +1209,22 @@ export function makeProfileIo(
       const uid = typeof reply === "object" && reply !== null
         ? (reply as { uid?: unknown }).uid
         : undefined;
-      if (typeof uid === "number" && Number.isFinite(uid) && uid > 0) ownProfileUid.set(client, uid);
-      else ownProfileUid.delete(client);
+      /* ── THE GENERATION COMES FROM THE APPEND'S OWN REPLY ──────────────────────────────
+       *
+       * Not from the connection: appending does not require a folder to be selected, so
+       * `client.mailbox` may describe another folder or none at all, and a uid paired with the
+       * wrong generation is exactly the stale anchor this pairing exists to prevent. UIDPLUS
+       * reports the uid and the generation together, so taken from there they are consistent by
+       * construction. */
+      const gen = typeof reply === "object" && reply !== null
+        ? (reply as { uidValidity?: unknown }).uidValidity
+        : undefined;
+      const generation = typeof gen === "number" || typeof gen === "bigint" ? gen : null;
+      if (typeof uid === "number" && Number.isFinite(uid) && uid > 0 && generation !== null) {
+        writeMemo(identity, generation, { profileUid: uid });
+      } else {
+        forgetMemo(identity, "profileUid");
+      }
     },
 
     async removeProfiles(refs: readonly unknown[]): Promise<void> {

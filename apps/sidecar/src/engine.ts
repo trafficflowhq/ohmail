@@ -2888,7 +2888,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          */
         if (releaseRequested !== null) {
           try {
-            const released = await releaseMailboxClaim(adapter, installId);
+            const released = await releaseMailboxClaim(adapter, installId, mb.id);
             if (released > 0) {
               log("organizer_claim_released", {
                 claims: released,
@@ -3041,6 +3041,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          */
         const outcome = await readMailboxLease({
           adapter,
+          mailboxId: mb.id,
           self: { installId, kind: "local", displayName: machineName, lastNonce: leaseNonce },
           now: now(),
           hasRequestKey: requestKey !== null,
@@ -5213,7 +5214,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               const removed = runtimes.get(mailboxId);
               if (removed) {
                 try {
-                  const released = await releaseMailboxClaim(removed.adapter, installId);
+                  const released = await releaseMailboxClaim(removed.adapter, installId, mailboxId);
                   if (released > 0) log("organizer_claim_released", { claims: released });
                 } catch (err) {
                   log("organizer_claim_release_failed", {

@@ -126,7 +126,13 @@ const profileReader = (deps: ApiDeps, mailboxId: string) => async (): Promise<Pr
     );
   }
   try {
-    return await readOrganizerProfile(opened.adapter.profileIo());
+    /* A NAMED READER RATHER THAN AN ORGANIZER'S IDENTITY. This route only reads: it never
+     * appends a settings document, so it records no position and its memory stays empty. The
+     * identity is still explicit and still its own, because borrowing an organizer's would let
+     * an API read and an organizer's write share one remembered position. */
+    return await readOrganizerProfile(
+      opened.adapter.profileIo({ installId: "api-profile-reader", mailboxId }),
+    );
   } finally {
     // ALWAYS — the peek's rule: a reader that leaked its slot would shrink the mailbox's
     // connection budget until the admission window rolled.

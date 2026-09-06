@@ -1707,6 +1707,7 @@ export async function startWorkerWithLock(
       const outcome = await readMailboxLease({
         adapter,
         self: leaseSelfFor(nonce),
+        mailboxId: mb.mailboxId,
         now: new Date(),
         hasRequestKey,
         // The no-seize-back rule. The stamp is what tells "the user just added this
@@ -1918,7 +1919,7 @@ export async function startWorkerWithLock(
       why: string,
     ): Promise<void> {
       try {
-        const released = await releaseMailboxClaim(rt.adapter, organizerInstallId);
+        const released = await releaseMailboxClaim(rt.adapter, organizerInstallId, rt.mailboxId);
         if (released === 0) return;
         log.info("organizer_claim_released", {
           mailboxId: rt.mailboxId, accountId: rt.accountId, claims: released, reason: why,

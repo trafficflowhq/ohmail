@@ -147,7 +147,7 @@ export function mailboxHasRequestKey(o: { auth: ImapAuth; address: string }): bo
  * widen an interface every other call site would then see.
  */
 export interface LeaseCapableAdapter {
-  leaseIo(): LeaseIo;
+  leaseIo(identity: { installId: string; mailboxId: string }): LeaseIo;
 }
 
 /** Does this adapter expose the lease's IO? */
@@ -218,6 +218,12 @@ export type MailboxLeaseOutcome =
 export interface MailboxLeaseInput {
   adapter: MailboxAdapter;
   self: LeaseSelf;
+  /**
+   * WHICH MAILBOX. Required, because what this install remembers about a mailbox's meta folder is
+   * keyed by (install, mailbox) — a position remembered under anything coarser answers another
+   * mailbox's question, and those positions decide how far down a claim search looks.
+   */
+  mailboxId: string;
   now: Date;
   /**
    * DOES THIS ACCOUNT HOLD A REQUEST KEY (mail 0090)? Decides whether the claim this call renews
@@ -265,7 +271,7 @@ export async function readMailboxLease(input: MailboxLeaseInput): Promise<Mailbo
   }
 
   const result = await runLeaseGate({
-    io: adapter.leaseIo(),
+    io: adapter.leaseIo({ installId: self.installId, mailboxId: input.mailboxId }),
     self,
     now,
     capabilities: organizerCapabilitiesFor({ hasRequestKey: input.hasRequestKey }),
@@ -334,9 +340,11 @@ function byOf(verdict: Exclude<LeaseVerdict, { verdict: "organize" }>): Organize
  * folded header. An adapter with no `leaseIo` releases nothing and says so with a 0 rather than
  * throwing: this runs on a teardown path, and a teardown must not be abortable by bookkeeping.
  */
-export async function releaseMailboxClaim(adapter: MailboxAdapter, installId: string): Promise<number> {
+export async function releaseMailboxClaim(
+  adapter: MailboxAdapter, installId: string, mailboxId: string,
+): Promise<number> {
   if (!hasLeaseIo(adapter)) return 0;
-  const io = adapter.leaseIo();
+  const io = adapter.leaseIo({ installId, mailboxId });
   /* ── A FULL FOLDER MUST NOT STOP A RELEASE, AND THE ELECTION'S RULE IS NOT THIS ONE ─────────
    *
    * `listClaims()` refuses a folder it could not read whole, because the GATE reads an incomplete

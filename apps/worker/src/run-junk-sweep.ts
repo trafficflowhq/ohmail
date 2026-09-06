@@ -129,6 +129,7 @@ try {
 
       permit = await acquireLeasePermit({
         adapter,
+        mailboxId,
         // The SAME set the worker and the backstop advertise, for the same reason the install id
         // below is the same one: this command RENEWS that shared claim, so a different capability
         // set here would make `requests` blink out for readers for the length of a sweep.

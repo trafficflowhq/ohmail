@@ -1,5 +1,17 @@
 import { createHmac, hkdfSync, timingSafeEqual } from "node:crypto";
 import { WATCHED_FOLDERS, type ImapAuth } from "./imap-types.js";
+import {
+  assertMetaIdentity, readMemo, writeMemo, forgetMemo,
+  type MetaIdentity, type Generation,
+} from "./meta-memo.js";
+
+/* Re-exported so hosts reach one surface for the meta folder rather than importing the memory
+ * from a second path — the drain keeps a position here too, and a second import path is how two
+ * callers come to disagree about which store they are writing to. */
+export {
+  readMemo, writeMemo, forgetMemo, assertMetaIdentity,
+  type MetaIdentity, type Generation, type MetaMemo, type MemoRead, MetaIdentityError,
+} from "./meta-memo.js";
 
 /**
  * THE ORGANIZER LEASE — how two databases that can never see each other agree on who organizes
@@ -2765,22 +2777,18 @@ async function highestUid(
  * It is only ever a HINT. Nothing is concluded from it: it narrows which uids get read, and every
  * decision is still made from records the server returned in this cycle.
  */
-const ownClaimUid = new WeakMap<object, { uid: number; generation: number | bigint | null }>();
-
 /**
- * WHERE THE ACK SWEEP STOPPED LOOKING, so the next pass carries on rather than starting over.
+ * THE FOLDER'S CURRENT GENERATION, read from the selected mailbox under the caller's own lock.
  *
- * Bounding the sweep's search made each pass affordable and, on its own, made the sweep a
- * treadmill: it walked down from the top of the uid space a fixed distance every time, so
- * acknowledgements lying deeper than that distance were never once looked at. The folder then
- * cannot be compacted below them, and the sweep is the only thing that ever makes it smaller.
- *
- * Like the drain's, this records WHERE TO LOOK and never what was settled — losing it costs one
- * re-walk from the top and can never lose a record, which is why it is content to live only as
- * long as the connection. Reaching the bottom clears it, so the next pass starts at the newest
- * acknowledgements again.
+ * Every position this module remembers is a position in a NUMBERING, and this is the only thing
+ * that says whether that numbering is still the one it was learned under. See `meta-memo.ts` for
+ * why the positions themselves no longer live beside the connection.
  */
-const sweepCursor = new WeakMap<object, number>();
+function generationOf(client: { readonly mailbox?: { uidValidity?: number | bigint } | false }): Generation {
+  const selected = client.mailbox;
+  const v = typeof selected === "object" && selected !== null ? selected.uidValidity : undefined;
+  return typeof v === "number" || typeof v === "bigint" ? v : null;
+}
 
 /**
  * WHY A CLAIM READ CAME BACK SHORT — the difference between a mailbox with nothing to say and one
@@ -2916,7 +2924,15 @@ async function searchHeaders(
   return out;
 }
 
-export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: string) => string): LeaseIo {
+export function makeLeaseIo(
+  client: LeaseImapClient,
+  toServerPath: (canonical: string) => string,
+  identity: MetaIdentity,
+): LeaseIo {
+  // The seam's own check: this package's tests are not typechecked, so a construction site that
+  // omits an identity would bind `undefined` and every mailbox in the process would share one
+  // memory under that key. Silent, and the exact defect the key exists to prevent.
+  assertMetaIdentity("makeLeaseIo", identity);
   // ONE resolution, shared with the APPEND-less peek. A writer and a reader that spell "where is
   // `_meta`" differently is exactly how each ends up renewing a claim the other cannot see.
   const meta = makeMetaFolderRef(client, toServerPath);
@@ -2935,11 +2951,7 @@ export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: s
 
   /** Set by the claim read when it refuses or distrusts its own memory; cleared when it succeeds. */
   let lastClaimReadFact: ClaimReadFact | null = null;
-  const currentGeneration = (): number | bigint | null => {
-    const selected = client.mailbox;
-    const v = typeof selected === "object" && selected !== null ? selected.uidValidity : undefined;
-    return typeof v === "number" || typeof v === "bigint" ? v : null;
-  };
+  const currentGeneration = (): Generation => generationOf(client);
   const sampleGeneration = (): void => {
     generationAtLastRead = currentGeneration();
   };
@@ -3018,9 +3030,9 @@ export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: s
       /* A uid with no generation cannot be checked for staleness later, so it is not kept: an
        * unverifiable anchor is worse than none, because none simply falls back to the walk. */
       if (typeof uid === "number" && Number.isFinite(uid) && uid > 0 && generation !== null) {
-        ownClaimUid.set(client, { uid, generation });
+        writeMemo(identity, generation, { claimUid: uid });
       } else {
-        ownClaimUid.delete(client);
+        forgetMemo(identity, "claimUid");
       }
     },
 
@@ -3065,21 +3077,16 @@ export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: s
          * afterwards, whether the anchored record had come back — by which point the stale number
          * had already set the floor of the gap read, so the reply omitted everything beneath it
          * and still looked like a complete claim set. */
-        const memo = ownClaimUid.get(client) ?? null;
         const generation = currentGeneration();
+        const remembered = readMemo(identity, generation);
         let ownUid: number | null = null;
-        if (memo !== null) {
-          if (generation !== null && memo.generation === generation) {
-            ownUid = memo.uid;
-          } else {
-            ownClaimUid.delete(client);
-            lastClaimReadFact = {
-              fact: "lease_memo_invalidated",
-              depth: 0,
-              floor: 0,
-              ownUid: memo.uid,
-            };
-          }
+        if (remembered.kind === "memo" && typeof remembered.memo.claimUid === "number") {
+          ownUid = remembered.memo.claimUid;
+        } else if (remembered.kind === "invalidated") {
+          /* The folder was replaced under us. Nothing remembered about the old numbering may bound
+           * this read — a uid from it can sit above every record now present, including a rival's,
+           * and the search would come back short while looking complete. */
+          lastClaimReadFact = { fact: "lease_memo_invalidated", depth: 0, floor: 0, ownUid: null };
         }
         const invalidated = lastClaimReadFact;
         let gapWasRead = false;
@@ -3110,7 +3117,7 @@ export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: s
          * it is absent, our claim is simply gone, which is a legitimate answer an election is
          * entitled to see. Either way the memory stops being trusted the moment it disagrees. */
         if (ownUid !== null && !set.some((m) => m.ref === ownUid)) {
-          ownClaimUid.delete(client);
+          forgetMemo(identity, "claimUid");
           lastClaimReadFact = { fact: "lease_own_record_absent", depth: 0, floor: 0, ownUid };
           /* ── AND IF THAT NUMBER BOUNDED THE READ, THE READ IS NOT AN ANSWER ────────────────
            *
@@ -4858,6 +4865,14 @@ export interface RequestReaderIo extends MetaRecordsIo {
 
 /** WHAT AN ORGANIZER MAY DO: look, acknowledge what it handled, and remove what it is done with. */
 export interface RequestOrganizerIo extends MetaRecordsIo {
+  /**
+   * THE FOLDER'S UID GENERATION, so a caller's remembered position can be checked against it.
+   *
+   * Optional, and the absence resolves the safe way: a caller that cannot learn the generation
+   * treats every remembered position as unusable and walks from the top, which costs a re-walk
+   * and can never act on a position from a numbering that no longer exists.
+   */
+  uidValidity?(): number | bigint | null;
   /** APPEND one ack record saying what became of one request. */
   ack(raw: string): Promise<void>;
   /** STORE `\Deleted` + EXPUNGE the given messages, in ONE round trip. */
@@ -5068,11 +5083,22 @@ export function makeRequestReaderIo(
  * the boundary the type system can actually hold.
  */
 export function makeRequestOrganizerIo(
-  client: LeaseImapClient, toServerPath: (canonical: string) => string,
+  client: LeaseImapClient,
+  toServerPath: (canonical: string) => string,
+  identity: MetaIdentity,
 ): RequestOrganizerIo {
+  assertMetaIdentity("makeRequestOrganizerIo", identity);
   const meta = makeMetaFolderRef(client, toServerPath);
   return {
     listMetaRecords: makeMetaRecordsList(client, meta, "list_requests"),
+
+    /**
+     * THE FOLDER'S CURRENT GENERATION, so a caller's remembered position can be checked against
+     * it. The drain keeps a resume point and that point is meaningless in a renumbered folder.
+     */
+    uidValidity(): Generation {
+      return generationOf(client);
+    },
 
     /**
      * See {@link RequestOrganizerIo.sweepStaleAcks}. Only acks match — a request carries
@@ -5128,7 +5154,9 @@ export function makeRequestOrganizerIo(
         let resumeBelow: number | null = null;
         /* Resume beneath the last pass's stopping point. A cursor above the current ceiling is
          * meaningless — the folder has been renumbered or replaced — so the top wins. */
-        const resumeAt = sweepCursor.get(client);
+        const sweepGeneration = generationOf(client);
+        const held = readMemo(identity, sweepGeneration);
+        const resumeAt = held.kind === "memo" ? held.memo.sweepCursor : undefined;
         let hi = resumeAt !== undefined && resumeAt < top ? resumeAt : top;
         for (let w = 0; w < SWEEP_SEARCH_WINDOW_BUDGET; w++) {
           const lo = Math.max(1, hi - SEARCH_UID_WINDOW + 1);
@@ -5174,8 +5202,8 @@ export function makeRequestOrganizerIo(
          * of ordinary mail produces empty pass after empty pass, and each one would have started
          * from the same place. A guard written for exactly that walk caught it. */
         const markProgress = (): void => {
-          if (reachedBottom) sweepCursor.delete(client);
-          else if (resumeBelow !== null) sweepCursor.set(client, resumeBelow);
+          if (reachedBottom) forgetMemo(identity, "sweepCursor");
+          else if (resumeBelow !== null) writeMemo(identity, sweepGeneration, { sweepCursor: resumeBelow });
         };
         if (found.length === 0) { markProgress(); return 0; }
         /* ── SWEPT IN BOUNDED BATCHES, BECAUSE THE SET IS AS LARGE AS THE FOLDER GOT ─────────

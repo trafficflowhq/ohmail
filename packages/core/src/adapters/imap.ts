@@ -127,6 +127,7 @@ import {
   IMAP_FLAG_SCAN_MAX_ROWS, IMAP_SAMPLE_MAX_ROWS,
   IMAP_READ_DEADLINE_MS, IMAP_CYCLE_DEADLINE_MS,
 } from "./imap-bounds.js";
+import type { MetaIdentity } from "./meta-memo.js";
 
 // Re-export the adapter types + folder constants so consumers can import them from this entrypoint.
 export * from "./imap-types.js";
@@ -2191,13 +2192,13 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * Callable only after {@link connect}, like every other method here — `toServerPath` depends on
    * the delimiter discovered at login.
    */
-  leaseIo(): LeaseIo {
+  leaseIo(identity: MetaIdentity): LeaseIo {
     // The lease and profile reads run BEFORE the cycle and on the raw client, so without this a
     // retired adapter's next visit would reach for a destroyed connection here — and that failure
     // is wrapped as a lease fault, which is deliberately not this mailbox's fault. Refuse with the
     // breach instead, so the cause survives the trip.
     this.assertUsable();
-    return makeLeaseIo(this.client as unknown as LeaseImapClient, (c) => this.toServerPath(c));
+    return makeLeaseIo(this.client as unknown as LeaseImapClient, (c) => this.toServerPath(c), identity);
   }
 
   /**
@@ -2211,13 +2212,13 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * folding `source: true` into the lease's fetch would make the gate's per-cycle cost scale
    * with the profile document's size.
    */
-  profileIo(): ProfileIo {
+  profileIo(identity: MetaIdentity): ProfileIo {
     // The lease and profile reads run BEFORE the cycle and on the raw client, so without this a
     // retired adapter's next visit would reach for a destroyed connection here — and that failure
     // is wrapped as a lease fault, which is deliberately not this mailbox's fault. Refuse with the
     // breach instead, so the cause survives the trip.
     this.assertUsable();
-    return makeProfileIo(this.client as unknown as ProfileImapClient, (c) => this.toServerPath(c));
+    return makeProfileIo(this.client as unknown as ProfileImapClient, (c) => this.toServerPath(c), identity);
   }
 
   /**
@@ -2267,9 +2268,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * THE ORGANIZER'S HALF — look, acknowledge what was handled, and remove it. See
    * {@link requestReaderIo} for why the two are separate objects rather than one.
    */
-  requestOrganizerIo(): RequestOrganizerIo {
+  requestOrganizerIo(identity: MetaIdentity): RequestOrganizerIo {
     this.assertUsable();
-    return makeRequestOrganizerIo(this.client as unknown as LeaseImapClient, (c) => this.toServerPath(c));
+    return makeRequestOrganizerIo(this.client as unknown as LeaseImapClient, (c) => this.toServerPath(c), identity);
   }
 
   /**

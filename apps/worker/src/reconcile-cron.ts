@@ -364,6 +364,7 @@ export async function runReconcileCron(
     try {
       permit = await acquireLeasePermit({
         adapter,
+        mailboxId,
         // The SAME set the always-on worker advertises, for the same reason the install id is the
         // same one: this pass RENEWS the worker's claim rather than writing its own, so a
         // different capability set here would make `requests` appear and disappear under readers
