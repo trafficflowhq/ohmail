@@ -1910,6 +1910,14 @@ export interface LeaseIo {
    * the connection cannot ask, and the gate REFUSES rather than guessing.
    */
   listClaimRecords?(): Promise<RawClaimMessage[] | null>;
+
+  /**
+   * WHY THE LAST CLAIM READ REFUSED, when it did. `null` after a read that answered.
+   *
+   * Optional because the peek's io has no such memory to report on; a caller that finds it absent
+   * learns nothing and must not conclude anything from that.
+   */
+  claimReadFact?(): ClaimReadFact | null;
   /**
    * THE SELECTED FOLDER'S UID GENERATION, where the server reports one.
    *
@@ -2628,8 +2636,9 @@ async function searchDescending(
   path: string,
   query: { header: Record<string, string | boolean>; before?: Date },
   max: number,
-): Promise<number[] | null> {
-  if (typeof client.search !== "function") return null;
+  span?: { from?: number; downTo?: number },
+): Promise<DescendingWalk> {
+  if (typeof client.search !== "function") return { kind: "refused" };
 
   /* ── THE TOP OF THE UID SPACE IS ASKED FOR, NEVER REMEMBERED ─────────────────────────────
    *
@@ -2664,24 +2673,31 @@ async function searchDescending(
    * conditional on the server choosing to answer: a server that declines STATUS got exactly the
    * unbounded reply the windows exist to prevent, and nothing said so. "I could not ask in a way
    * I can bound" is a partial answer, and this module has one word for that. */
-  if (top === null || top < 1) return null;
+  const ceiling = span?.from ?? top;
+  if (ceiling === null || ceiling < 1) return { kind: "refused" };
+  /* The walk never goes below `bottom`. For the ordinary claim read that is the start of the uid
+   * space; for the gap read below it is the incumbent's own uid, which is the only uid a walk is
+   * ever allowed to stop above — see the note at its call site. */
+  const bottom = Math.max(1, span?.downTo ?? 1);
+  if (ceiling < bottom) return { kind: "covered", uids: [] };
 
   const out: number[] = [];
-  let hi = top;
+  let hi = ceiling;
 
   for (let window = 0; window < SEARCH_WINDOW_BUDGET; window++) {
-    const lo = Math.max(1, hi - SEARCH_UID_WINDOW + 1);
+    const lo = Math.max(bottom, hi - SEARCH_UID_WINDOW + 1);
     const found = await client.search({ ...query, uid: `${lo}:${hi}` }, { uid: true });
-    if (!Array.isArray(found)) return null;
+    if (!Array.isArray(found)) return { kind: "refused" };
     out.push(...found);
-    if (lo === 1) return out;          // the whole folder has been covered
-    if (out.length > max) return out;  // enough in hand, and the caller's ceiling decides the rest
+    if (lo === bottom) return { kind: "covered", uids: out };
+    if (out.length > max) return { kind: "covered", uids: out };  // the caller's ceiling decides
     hi = lo - 1;
   }
   /* The budget ran out with folder still unexamined. That is not an answer, and reporting it as
    * one would be the "could not look" / "there are none" confusion this module refuses everywhere
-   * else. */
-  return null;
+   * else — but WHERE it ran out is a fact the caller can act on, so it comes back too. Everything
+   * at or above `floor` was covered; nothing below it was looked at. */
+  return { kind: "short", uids: out, floor: Math.max(bottom, hi + 1) };
 }
 
 /**
@@ -2710,15 +2726,113 @@ async function highestUid(
   }
 }
 
+/**
+ * WHAT A DESCENDING WALK MANAGED TO COVER.
+ *
+ * `short` is the case that used to be indistinguishable from `refused`: the walk was well-formed
+ * and the server answered every window, but the budget ran out with folder left beneath it. That
+ * is not an answer to "which claims exist", and it never becomes one — but the caller can ask a
+ * narrower question about the part that was missed, which is what `floor` is for.
+ */
+/**
+ * THE UID THE SERVER GAVE OUR OWN CLAIM WHEN WE WROTE IT.
+ *
+ * ── WHY IT IS KEYED ON THE CONNECTION ───────────────────────────────────────────────────────
+ *
+ * Not a module-level map keyed by folder path: that string is the same for every mailbox this
+ * process talks to, so one account's uid would answer another account's question — and the
+ * question is "is my claim still there", which is the one this module may never get wrong. Not a
+ * closure inside the io either: a fresh io is built for every call, so a closure would be empty
+ * on the next cycle and the memory would never once be used.
+ *
+ * The connection object is the thing whose lifetime matches: one per mailbox, alive across the
+ * cycles that renew, and gone on a reconnect — at which point the walk below does what it has
+ * always done. A weak key means the entry disappears with the connection rather than pinning it.
+ *
+ * It is only ever a HINT. Nothing is concluded from it: it narrows which uids get read, and every
+ * decision is still made from records the server returned in this cycle.
+ */
+const ownClaimUid = new WeakMap<object, number>();
+
+/**
+ * WHY A CLAIM READ CAME BACK SHORT — the difference between a mailbox with nothing to say and one
+ * that is permanently stuck.
+ *
+ * A read that cannot bound itself refuses, and refusing is correct: an election run on a partial
+ * claim set is how two organizers happen. But the refusal on its own is indistinguishable from a
+ * quiet mailbox, and the stuck case does not heal — uids only ever increase, so the same windows
+ * come back empty for ever. Naming it is what turns "this mailbox seems idle" into something a
+ * person can look at.
+ */
+export interface ClaimReadFact {
+  /** `lease_gap_too_deep`, `lease_walk_short`, or `lease_own_record_absent`. */
+  readonly fact: string;
+  /** How many uids lie between our own record and where the read stopped. */
+  readonly depth: number;
+  readonly floor: number;
+  readonly ownUid: number | null;
+}
+
+type DescendingWalk =
+  | { kind: "covered"; uids: number[] }
+  | { kind: "short"; uids: number[]; floor: number }
+  | { kind: "refused" };
+
 async function searchHeaders(
   client: Pick<LeaseImapClient, "search" | "fetch" | "mailbox" | "status">,
   path: string,
   query: { header: Record<string, string | boolean>; before?: Date },
-  opts?: { max?: number; refuseWhenOver?: boolean },
+  opts?: {
+    max?: number;
+    refuseWhenOver?: boolean;
+    /** The caller's own record, when it knows it — the floor for the gap read described below. */
+    gapDownTo?: number | null;
+    /** Named so a permanent stall is visible rather than silent. */
+    onShortfall?: (fact: { floor: number; ownUid: number | null; closed: boolean }) => void;
+  },
 ): Promise<RawClaimMessage[] | null> {
   if (typeof client.search !== "function") return null;
-  const found = await searchDescending(client, path, query, opts?.max ?? SEARCH_UIDS_MAX);
-  if (found === null) return null;
+  const max = opts?.max ?? SEARCH_UIDS_MAX;
+  const walk = await searchDescending(client, path, query, max);
+  /* ── A WALK THAT RAN OUT OF BUDGET IS STILL NOT AN ANSWER ────────────────────────────────
+   *
+   * Every caller but one reads a short walk exactly as it always did: could not look. The claim
+   * read is the exception, and it asks the narrower question itself rather than being handed a
+   * partial set here — a partial claim set is the input to an election, and this module has one
+   * rule about those. */
+  const gap = opts?.gapDownTo;
+  let found: number[];
+  if (walk.kind === "refused") return null;
+  else if (walk.kind === "covered") found = walk.uids;
+  else if (gap === undefined || gap === null || gap >= walk.floor) {
+    /* Nothing to narrow: either the caller keeps no uid of its own, or its record sits inside the
+     * part the walk already covered — in which case a short walk means the folder genuinely
+     * extends below anything this read can account for. */
+    opts?.onShortfall?.({ floor: walk.floor, ownUid: gap ?? null, closed: false });
+    return null;
+  } else {
+    /* ── THE UIDS BETWEEN OUR OWN RECORD AND THE WALK'S FLOOR ────────────────────────────────
+     *
+     * The walk goes DOWN from the top, so it meets every record newer than ours before it reaches
+     * ours: uids are handed out increasing on append, and a claim written after ours therefore
+     * has a higher uid. What the budget can leave unread is the stretch between our own record
+     * and where the walk stopped — and a competing claim sitting in there is newer than ours and
+     * would go unseen. So that stretch is read as its own bounded walk, under the same budget,
+     * and only then is the set complete.
+     *
+     * This never SEEDS the main walk from our own uid. Starting there would begin the read
+     * underneath every newer claim, which is how two organizers happen; the walk keeps starting
+     * at the top and this fills in behind it. */
+    const below = await searchDescending(client, path, query, max, { from: walk.floor - 1, downTo: gap });
+    if (below.kind === "refused") return null;
+    if (below.kind === "short") {
+      /* Even the gap is deeper than one cycle may read. Fail closed exactly as before — but say
+       * so, because a stall that looks like a quiet mailbox is a stall nobody fixes. */
+      opts?.onShortfall?.({ floor: below.floor, ownUid: gap, closed: true });
+      return null;
+    }
+    found = [...walk.uids, ...below.uids];
+  }
   if (found.length === 0) return [];
   /* ── THE REPLY IS BOUNDED BEFORE IT IS SPENT, NOT AFTER ────────────────────────────────────
    *
@@ -2749,7 +2863,6 @@ async function searchHeaders(
    * So the bound is still there and the callers differ in what they mean by crossing it: the
    * deciders take the slice, the release asks to be REFUSED, which its caller reports as a
    * release that did not happen rather than one that did. */
-  const max = opts?.max ?? SEARCH_UIDS_MAX;
   if (found.length > max && opts?.refuseWhenOver === true) return null;
   /* ── SORTED BEFORE IT IS CAPPED, BECAUSE THE WINDOWS ARRIVE IN WINDOW ORDER ────────────────
    *
@@ -2788,6 +2901,9 @@ export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: s
    * only moment the two are known to belong together.
    */
   let generationAtLastRead: number | bigint | null = null;
+
+  /** Set by the claim read when it refuses or distrusts its own memory; cleared when it succeeds. */
+  let lastClaimReadFact: ClaimReadFact | null = null;
   const sampleGeneration = (): void => {
     const selected = client.mailbox;
     const v = typeof selected === "object" && selected !== null ? selected.uidValidity : undefined;
@@ -2854,7 +2970,18 @@ export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: s
     },
 
     async appendClaim(raw: string): Promise<void> {
-      await client.append(await meta.path(), raw, ["\\Seen"]);
+      const reply = await client.append(await meta.path(), raw, ["\\Seen"]);
+      /* UIDPLUS reports the uid the appended message was given. Servers that do not support it
+       * say nothing, and then the read below simply works the way it did before this existed —
+       * which is why nothing may be concluded from the absence of a uid here. */
+      const uid = typeof reply === "object" && reply !== null
+        ? (reply as { uid?: unknown }).uid
+        : undefined;
+      if (typeof uid === "number" && Number.isFinite(uid) && uid > 0) {
+        ownClaimUid.set(client, uid);
+      } else {
+        ownClaimUid.delete(client);
+      }
     },
 
     async findOwnRecords(installId: string): Promise<RawClaimMessage[] | null> {
@@ -2892,10 +3019,40 @@ export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: s
       const claimPath = await meta.path();
       const lock = await client.getMailboxLock(claimPath);
       try {
-        return await searchHeaders(client, claimPath, { header: { [H.lease]: true } });
+        const ownUid = ownClaimUid.get(client) ?? null;
+        const set = await searchHeaders(client, claimPath, { header: { [H.lease]: true } }, {
+          gapDownTo: ownUid,
+          onShortfall: (fact) => {
+            lastClaimReadFact = {
+              fact: fact.closed ? "lease_gap_too_deep" : "lease_walk_short",
+              depth: Math.max(0, fact.floor - (fact.ownUid ?? fact.floor)),
+              floor: fact.floor,
+              ownUid: fact.ownUid,
+            };
+          },
+        });
+        if (set === null) return null;
+        lastClaimReadFact = null;
+        /* ── THE REMEMBERED UID IS CHECKED AGAINST WHAT CAME BACK ────────────────────────────
+         *
+         * Uids are never reused inside a UIDVALIDITY, so the record at ours cannot become someone
+         * else's — but "cannot" is the kind of premise this module has been wrong about before,
+         * and the cost of being wrong here is renewing against a stranger's claim. If our uid is
+         * remembered and a record came back at it, it has to be a record we would recognise; if
+         * it is absent, our claim is simply gone, which is a legitimate answer an election is
+         * entitled to see. Either way the memory stops being trusted the moment it disagrees. */
+        if (ownUid !== null && !set.some((m) => m.ref === ownUid)) {
+          ownClaimUid.delete(client);
+          lastClaimReadFact = { fact: "lease_own_record_absent", depth: 0, floor: 0, ownUid };
+        }
+        return set;
       } finally {
         lock.release();
       }
+    },
+
+    claimReadFact(): ClaimReadFact | null {
+      return lastClaimReadFact;
     },
 
     async removeClaims(refs: readonly unknown[]): Promise<void> {
@@ -4916,19 +5073,23 @@ export function makeRequestOrganizerIo(
          * refusal part-way through still leaves the folder smaller than it was and the next cycle
          * resumes on a shorter set. Progress that survives a failure is the property this needs;
          * an all-or-nothing sweep has none. */
-        /* ── THE CYCLE IS BOUNDED ONCE, WHERE IT IS ASKED FOR ────────────────────────────────
+        /* ── TWO BOUNDS, AND THEY BOUND DIFFERENT THINGS ────────────────────────────────────
          *
-         * The bound lives in `wanted` above: the walk stops as soon as it holds a cycle's worth,
-         * so this loop deletes what was asked for and nothing more. A second cap here — clamping
-         * the loop to the same product — was written first and it could never fire, because no
-         * reply can exceed a limit the request already carried. It measured nothing and would have
-         * read as protection.
+         * `wanted` above stops the WALK once it holds a cycle's worth, which bounds the reply.
+         * This clamps what is DELETED. They are not the same number in practice, and reasoning
+         * that they were is how this clamp came to be removed once already: the walk tests its
+         * total only after pushing a whole window, so a walk holding one short of `wanted` takes
+         * another full window and comes back with up to `SEARCH_UID_WINDOW - 1` more than asked
+         * for. Deleting all of it is a cycle half again as long as the one that was promised.
          *
-         * That is worth stating rather than deleting quietly: a guard that cannot fail is how a
-         * bound comes to look like it exists twice and hold once. One mechanism, named here. */
+         * The mutation that should have caught the removal was green, because the fixture's
+         * acknowledgements happened to fall so that the windows summed to exactly `wanted`. A
+         * fixture that aligns is not a property; the case below now has a hole in it for that
+         * reason. */
         let swept = 0;
-        for (let i = 0; i < found.length; i += SWEEP_DELETE_BATCH) {
-          const batch = found.slice(i, i + SWEEP_DELETE_BATCH);
+        const budget = Math.min(found.length, SWEEP_DELETE_BATCH * SWEEP_BATCHES_MAX_PER_CYCLE);
+        for (let i = 0; i < budget; i += SWEEP_DELETE_BATCH) {
+          const batch = found.slice(i, Math.min(i + SWEEP_DELETE_BATCH, budget));
           const done = await client.messageDelete(batch, { uid: true });
           if (done === false) {
             throw new RequestUnavailableError(
