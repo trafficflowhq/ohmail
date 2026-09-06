@@ -1062,7 +1062,7 @@ export class SessionLifecycle {
           // recovery loser, or a stale presenter colliding with the one live rotation. It
           // converges exactly like a grace-loser — the shared jar takes whichever cookie
           // lands last.
-          return this.mintRotation(ctx, tx, existing, now, ttls);
+          return this.mintRotation(txCtx, tx, existing, now, ttls);
         }
         if (verdict === "used") return null;   // a second holder in real use: the sweep's case
         // IDLE-BOUND: nothing was spent since — but that is only evidence of a lost response
@@ -1093,7 +1093,7 @@ export class SessionLifecycle {
           // the jar that rotation had just refilled. A fresh spend converges; anything else
           // is genuinely the sweep's case (no live tip at all).
           return (await classify()) === "racer"
-            ? this.mintRotation(ctx, tx, existing, now, ttls)
+            ? this.mintRotation(txCtx, tx, existing, now, ttls)
             : null;
         }
         // Audited IN the claim's transaction: no recovery without its row while the
@@ -1103,7 +1103,7 @@ export class SessionLifecycle {
           .where(eq(users.id, existing.userId)).limit(1);
         await this.audit(tx, user ?? null, "refresh_recovered", undefined, txCtx,
           `family=${existing.familyId} session=${existing.sessionId}`);
-        return this.mintRotation(ctx, tx, existing, now, ttls);
+        return this.mintRotation(txCtx, tx, existing, now, ttls);
       });
     } catch {
       return null;
