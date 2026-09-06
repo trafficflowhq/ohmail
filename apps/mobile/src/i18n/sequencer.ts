@@ -25,6 +25,8 @@
  * There is no second copy to drift.
  */
 import { deviceLocale, resolveLocale, setActiveLocale, type AppLocale } from "./locale";
+import { readStoredLocale, writeStoredLocale } from "./store";
+import type { SecureKV } from "../state/servers";
 
 export interface LocaleSequencerDeps {
   /** The stored override. Resolves `null` for "nothing chosen"; never rejects — see `store.ts`. */
@@ -50,6 +52,19 @@ export interface LocaleSequencer {
   wake(): void;
   /** The choice as of now — not as of the last render. */
   chosen(): AppLocale | null;
+  /**
+   * THE PROVIDER IS GOING AWAY. Everything still in flight finishes its keystore work — a press
+   * accepted before the unmount is a press that must persist — and then publishes NOTHING and
+   * calls no callback.
+   *
+   * Without this, a boot read or a write settling after the unmount points the module register
+   * from a provider that no longer exists. Where a second one has since mounted (a re-mount, a
+   * test's next case, a screen swapped under a fast refresh) the dead one's late answer lands on
+   * top of the live one's, and the language changes for a reason nothing on screen explains.
+   * `onChosen`/`onBusy` are React state setters, so they are the visible half; the register is
+   * the half that outlives the component.
+   */
+  dispose(): void;
 }
 
 export function localeSequencer(deps: LocaleSequencerDeps): LocaleSequencer {
@@ -68,16 +83,20 @@ export function localeSequencer(deps: LocaleSequencerDeps): LocaleSequencer {
    * See {@link LocaleSequencer.set} for what went wrong without it.
    */
   let queue: Promise<void> = Promise.resolve();
+  /** Set by {@link LocaleSequencer.dispose}. Read at every point that leaves this module. */
+  let disposed = false;
 
   return {
     chosen: () => chosen,
+
+    dispose() { disposed = true; },
 
     async boot() {
       const startedAt = decisions;
       const stored = await deps.read();
       /* THE WRITE WINS. A choice made while this read was in flight is newer than anything the
          keystore held when it started, and republishing the stored value would undo it. */
-      if (decisions !== startedAt) return;
+      if (decisions !== startedAt || disposed) return;
       chosen = stored;
       deps.onChosen(stored);
       publish(resolveLocale(stored, device()));
@@ -86,7 +105,7 @@ export function localeSequencer(deps: LocaleSequencerDeps): LocaleSequencer {
     async set(next) {
       /* The ticket is taken BEFORE the await, so two presses in one render are already ordered. */
       const ticket = ++decisions;
-      deps.onBusy(true);
+      if (!disposed) deps.onBusy(true);
       try {
         /* ── THE STORE IS A DECISION TOO, AND IT IS GATED ON THE SAME TICKET ─────────────────
            This used to be a bare `await deps.write(next)`, with only the PUBLISH gated. Two
@@ -105,20 +124,52 @@ export function localeSequencer(deps: LocaleSequencerDeps): LocaleSequencer {
         /* A refusal belongs to the press that caused it; it must not poison the presses behind. */
         queue = mine.then(() => undefined, () => undefined);
         await mine;
-        if (decisions !== ticket) return;
+        /* The write above is deliberately NOT gated on `disposed`: a press accepted before the
+           unmount must still reach the device. Only what leaves this module stops. */
+        if (decisions !== ticket || disposed) return;
         chosen = next;
         deps.onChosen(next);
         publish(resolveLocale(next, device()));
       } finally {
         /* An older press finishing late must not unlock a control the newer one is still using. */
-        if (decisions === ticket) deps.onBusy(false);
+        if (decisions === ticket && !disposed) deps.onBusy(false);
       }
     },
 
     wake() {
+      if (disposed) return;
       /* An explicit choice OUTRANKS the device, so walking through the phone's settings does not
          reset somebody who picked German on an English phone. */
       publish(resolveLocale(chosen, device()));
     },
+  };
+}
+
+/**
+ * THE PROVIDER'S WIRING, AS A VALUE.
+ *
+ * `LocaleProvider` is a React component in an app with no renderer in its test suite — nothing in
+ * `apps/mobile/test` mounts a tree, `react-test-renderer` is not a dependency, and `AppState` does
+ * not resolve under node. So the four lines that connect the sequencer to the keystore were the
+ * one part of this feature nothing could look at: the orderings were driven directly, and a
+ * provider wired to the wrong store, or to a stale one, would have satisfied every case.
+ *
+ * They are this function instead. The provider calls it and does nothing else with `deps`, so a
+ * test holding the same value is holding the wiring rather than a description of it.
+ *
+ * `kv` is a FUNCTION on purpose: the provider reads it through a ref, so a caller passing a fresh
+ * keystore object on each render does not rebuild the sequencer and does not keep writing to the
+ * object the first render happened to see.
+ */
+export function keystoreDeps(
+  kv: () => SecureKV,
+  onChosen: (next: AppLocale | null) => void,
+  onBusy: (busy: boolean) => void,
+): LocaleSequencerDeps {
+  return {
+    read: () => readStoredLocale(kv()),
+    write: (next) => writeStoredLocale(kv(), next),
+    onChosen,
+    onBusy,
   };
 }

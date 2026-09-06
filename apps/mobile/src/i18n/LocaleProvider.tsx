@@ -39,8 +39,7 @@ import {
   activeLocale, deviceLocale, DEFAULT_LOCALE, LOCALES, resolveLocale, setActiveLocale,
   subscribeLocale, type AppLocale,
 } from "./locale";
-import { readStoredLocale, writeStoredLocale } from "./store";
-import { localeSequencer } from "./sequencer";
+import { keystoreDeps, localeSequencer } from "./sequencer";
 import type { SecureKV } from "../state/servers";
 
 /**
@@ -124,14 +123,17 @@ export function LocaleProvider(
    * Built once per mount. `deps` closes over the state setters, which are stable, and reads `kv`
    * through the ref so a caller passing a fresh object each render does not rebuild it.
    */
-  const seq = useMemo(() => localeSequencer({
-    read: () => readStoredLocale(kvRef.current),
-    write: (next) => writeStoredLocale(kvRef.current, next),
-    onChosen: setChosen,
-    onBusy: setBusy,
-  }), []);
+  const seq = useMemo(
+    () => localeSequencer(keystoreDeps(() => kvRef.current, setChosen, setBusy)),
+    [],
+  );
 
-  useEffect(() => { void seq.boot(); }, [seq]);
+  /* Boot, and hand the sequencer back on the way out: anything still in flight then finishes its
+     keystore work and publishes nothing. See `LocaleSequencer.dispose`. */
+  useEffect(() => {
+    void seq.boot();
+    return () => { seq.dispose(); };
+  }, [seq]);
 
   /**
    * A DEVICE LANGUAGE CHANGE, PICKED UP WITHOUT A RELAUNCH.
