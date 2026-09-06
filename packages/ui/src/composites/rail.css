@@ -146,9 +146,18 @@ input.ritem-new-input{flex:1 1 auto;min-width:0;
  * rather than described only here, because "it must not look transient" is the kind of claim a
  * later tone class quietly breaks.
  *
- * `display:none` AT REST: the shell form (`.host-strip`, `app.css`) is what shows below 901px,
- * and the one `min-width: 901px` query in `app.css` swaps the two together. */
-.rail-host{display:none;flex-direction:column;gap:3px;color:var(--ink3);
+ * ── AND IT DECLARES NO `display` ─────────────────────────────────────────────────────────────
+ *
+ * Deliberately, and this was a defect before it was a rule. Whether this line or the shell-width
+ * one is on screen is decided in `app.css`, in the SAME single `min-width: 901px` query the sync
+ * line swaps on — and both declarations sit together directly above it. A resting `display:none`
+ * here would look equivalent and is not: this stylesheet is concatenated AFTER `app.css` in the
+ * built bundle, the two selectors have equal specificity, and a media query adds none — so source
+ * order decides and this file would win at every width. The line then never renders, anywhere,
+ * with nothing failing. Measured by rendering the shipped stylesheet in a browser; the width
+ * sweep in `sync-notice-one-copy.test.ts` had modelled the sheets in the other order and agreed
+ * with the mistake, which is why that sweep now reads one file. */
+.rail-host{flex-direction:column;gap:3px;color:var(--ink3);
   font-size:calc(10.5px + var(--type-up));line-height:1.5}
 .rail-host .rh-line{display:flex;align-items:flex-start;gap:7px}
 .rail-host .rh-mark{flex:none;width:8px;height:8px;margin-top:4px;border-radius:var(--r-avatar);

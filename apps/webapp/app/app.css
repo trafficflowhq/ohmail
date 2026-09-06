@@ -705,6 +705,14 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 .host-strip {
   display: flex;
 }
+/* AND THE RAIL FORM'S RESTING STATE IS HERE TOO, not in `rail.css` with the rest of its styling.
+   That sheet is concatenated AFTER this one, and a media query adds no specificity — so a
+   `display:none` there would beat the query below at every width and the line would never render
+   anywhere. Both halves of the decision live beside each other, above the one rule that swaps
+   them, which is the arrangement the sync pair already uses two lines up. */
+.rail-host {
+  display: none;
+}
 @media (min-width: 901px) {
   .sync-bar {
     display: none;
