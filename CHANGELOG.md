@@ -57,6 +57,34 @@ With a large mailbox the desktop rebuilt its whole view on every sync and every 
 when nothing had changed; an idle window grew by about a gigabyte an hour. It no longer rebuilds on
 a poll that changed nothing. Memory still grows slowly over a long session; that is a separate fix.
 
+### Every answer belongs to one account
+
+Two changes from opposite ends of the same idea: a request that mixes two accounts is refused, and
+an answer says whose it is.
+
+**A pairing code can no longer be redeemed by a browser signed in as somebody else.** Pairing a
+phone or a second machine works by redeeming a short-lived code. That redeem read the code on its
+own and never looked at who the browser doing the redeeming was already signed in as — so a browser
+signed in to one account could redeem a code belonging to another, spend it, and be handed that
+account's device session. It is refused now, and refused *before* the code is spent: the person the
+code was meant for can still use it, and signing out and trying again works. The same refusal
+already applied when signing in, rotating a session, claiming a desktop link or exchanging a token;
+this was the one door where it could not take effect, because that door never worked out who was
+asking.
+
+**Responses say which account they were answered for.** A response to a signed-in request now names
+the account it belongs to, and on the sign-in and pairing routes that is the account whose
+credential was presented rather than whoever the browser happened to already be signed in as. An
+app that keeps mail on the device can check that before it stores anything.
+
+It matters for a case a browser cannot see on its own: if a sign-in happens in another tab, and
+finishes, between a request leaving and its answer coming back, everything the asking tab can
+observe reads exactly as it did before — and the answer it applies belongs to somebody else. Only
+the server knows whose question it answered, so now it says so.
+
+A server states whether it sends this, so pointing an app at an older self-hosted install does not
+make every ordinary response look suspect.
+
 ### Controls fit the width they are given
 
 Four things in the app decided their own width from something other than the room they had, and
