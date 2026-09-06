@@ -51,6 +51,12 @@ than 640px is unchanged to the pixel.
 Text fields are the exception, and they are floored rather than stepped: a focused field under 16px
 makes iOS zoom the whole page, so those land on 16 whatever they were.
 
+### An idle window no longer rebuilds the whole view
+
+With a large mailbox the desktop rebuilt its whole view on every sync and every mailbox poll, even
+when nothing had changed; an idle window grew by about a gigabyte an hour. It no longer rebuilds on
+a poll that changed nothing. Memory still grows slowly over a long session; that is a separate fix.
+
 ### Controls fit the width they are given
 
 Four things in the app decided their own width from something other than the room they had, and

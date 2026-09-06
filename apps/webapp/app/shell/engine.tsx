@@ -24,11 +24,19 @@ import { Spinner } from "@ohmail/ui";
 import { useTranslations } from "next-intl";
 import { OhmailEngine, type AbandonedMutation, type EntityReader, type MirrorFreshness } from "@ohmail/client-engine";
 import { isDemoRequested } from "../demo-mode";
+import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "./confirm-schedule";
 import { cloudWakeStream, createEngine, EngineUnarmedError, syncsWhileHidden } from "./engine-config";
 import { useLoadingGrace } from "./loading-grace";
+import { useModalGate } from "./modal-gate";
 import { readOwner } from "./owner-cookie";
-import { markSessionAlive, probeSessionNow, useSessionDead } from "./session-truth";
 import {
+  markSessionAlive, probeSessionNow, sessionIsDead, subscribeSessionRevival,
+  subscribeSessionTruth, useSessionDead,
+} from "./session-truth";
+import {
+  confirmSyncOwner,
+  onSyncNeedsConfirm,
+  syncIdentityOf,
   sameSyncStatus,
   startSyncScheduler,
   SYNC_BOOTSTRAPPING,
@@ -37,18 +45,48 @@ import {
 } from "./sync-scheduler";
 
 /**
- * "Whose mailbox is this?", as a function the SHELL does not know how to answer.
+ * ═══ THE ANSWER TO "WHOSE MAILBOX IS THIS?" — THREE-VALUED, AND THAT IS THE FIX ════════════
  *
- * Resolves to a server-verified account id, or `null` for every refusal — expired,
- * revoked, enrollment-scoped, unreachable. It is a PROP rather than an import because this
- * file is shared: `apps/desktop` renders the same `AppShell` from a bundle that has no
- * account, no server and no `/auth` client at all (`scripts/publish-desktop.mjs` DENYs
- * `app/api-client`, and `vite.config.ts` aliases the sync adapter to a stub that throws).
- * Importing the Cloud's session client here would drag both into a tier that must not have
- * them. The Cloud client passes its implementation from `(product)/mailbox/CloudShell.tsx`;
- * the desktop passes nothing and never leaves the demo.
+ * This used to be `Promise<string | null>`, and the `null` was doing two incompatible jobs:
+ * "the server says this browser holds no full session" and "the server did not answer". The
+ * shell could only render one screen for both, so it rendered the verdict — and a signed-in
+ * user meeting one `503 db_busy` on the confirm was told "You are signed out." over a cookie
+ * that was still valid a millisecond later. Measured in production, 2.7 s before the report
+ * that opened `AUTH-FLICKER-DIAGNOSIS.md`; reproduced eight ways out of eleven injected
+ * transients, every one with the cookie re-read as `200 scope=full` immediately afterwards.
+ *
+ * The three arms are the three things that can actually be true:
+ *
+ *  · `owner`   — the server named an account. This browser holds a full session.
+ *  · `none`    — the server ANSWERED that it does not. A verdict, and rendered as one, at
+ *                once, with no retry: an enrollment-scoped session, or the refresh endpoint's
+ *                own coded 401. Nothing weaker qualifies.
+ *  · `unknown` — no answer. A 5xx, a 429, a gateway with no envelope of ours, a dead socket,
+ *                an uncoded 401. The shell RETRIES on a bounded schedule
+ *                (`confirm-schedule.ts`) and, if the ladder runs out, says the check did not
+ *                finish — which is what happened — rather than making a claim about the
+ *                account, which it cannot support.
+ *
+ * `retryAfterMs` rides on `unknown` because the server sometimes says when to come back
+ * (`Retry-After: 5` on `db_busy`). It seeds the backoff; it does not replace it.
+ *
+ * ── WHY IT IS STILL A PROP ─────────────────────────────────────────────────────────────────
+ *
+ * Unchanged, and unchanged for the original reason: this file is shared. `apps/desktop`
+ * renders the same `AppShell` from a bundle that has no account, no server and no `/auth`
+ * client at all (`scripts/publish-desktop.mjs` DENYs `app/api-client`, and `vite.config.ts`
+ * aliases the sync adapter to a stub that throws). Importing the Cloud's session client here
+ * would drag both into a tier that must not have them. The Cloud client passes its
+ * implementation from `(product)/mailbox/CloudShell.tsx` — which classifies through the one
+ * shared classifier, `(product)/session-outcome.ts`, so `/login` cannot drift from the shell
+ * — and the desktop passes nothing, hands in a built engine, and never runs this path.
  */
-export type OwnerResolver = () => Promise<string | null>;
+export type OwnerOutcome =
+  | { kind: "owner"; accountId: string }
+  | { kind: "none" }
+  | { kind: "unknown"; retryAfterMs: number | null };
+
+export type OwnerResolver = () => Promise<OwnerOutcome>;
 
 /**
  * AN ENGINE THE HOST ALREADY OWNS — the third way this provider can get one, and the only one
@@ -115,8 +153,51 @@ type Binding =
   | { status: "warm"; owner: string; engine: OhmailEngine }
   /** Live: the account id has been asked for and has not come back. */
   | { status: "resolving" }
-  /** Live: the API would not confirm a full session for this browser. */
+  /**
+   * Live: the confirm did not get an ANSWER and another ask is owed.
+   *
+   * `attempt` is the number of the ask this state is waiting to make (2, 3, 4 —
+   * `CONFIRM_ATTEMPTS` bounds it), and `retryAfterMs` is whatever the last refusal advised.
+   * `warm` carries the mirror forward when there is one, and carrying it is the point: the
+   * engine object is the SAME object, so `engine`/`live` below do not change, the sync
+   * scheduler is not torn down and restarted, and nothing on screen moves. A 503 does not
+   * make mail that is already on the device less real than it was a second earlier.
+   */
+  | { status: "checking"; attempt: number; warm: WarmMirror | null; retryAfterMs: number | null }
+  /**
+   * Live: the ladder ran out. The check never completed and the shell says exactly that —
+   * this is NOT a verdict about the session, and its copy may not read like one.
+   */
+  | { status: "unconfirmed"; warm: WarmMirror | null }
+  /** Live: the API ANSWERED that this browser holds no full session. A verdict. */
   | { status: "unauthenticated" };
+
+/** The mirror a `checking`/`unconfirmed` binding is keeping on screen, when there is one. */
+interface WarmMirror {
+  owner: string;
+  engine: OhmailEngine;
+}
+
+/**
+ * Is this the classifier's "this build has no server" rethrow?
+ *
+ * Matched STRUCTURALLY rather than with `instanceof ApiError`: `app/shell/**` is published to
+ * the desktop mirror, where `app/api-client` is aliased away entirely, so importing the class
+ * here would be an unresolved import in that bundle. The same reason `session-truth.ts` holds
+ * no transport. The shape is the contract `api-client.ts` states for an unarmed build.
+ */
+function isApiUnconfigured(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  const e = err as { status?: unknown; code?: unknown };
+  return e.status === 0 && e.code === "api_unconfigured";
+}
+
+/** The mirror this binding is painting from while unconfirmed, or `null` for a cold browser. */
+function warmOf(binding: Binding): WarmMirror | null {
+  if (binding.status === "warm") return { owner: binding.owner, engine: binding.engine };
+  if (binding.status === "checking" || binding.status === "unconfirmed") return binding.warm;
+  return null;
+}
 
 const EngineContext = createContext<EngineBinding | null>(null);
 
@@ -154,12 +235,28 @@ export function EngineProvider({
   demo: serverDemo,
   engine: provided,
   resolveOwner,
+  onConfirmed,
   children,
 }: {
   demo: boolean;
   /** See {@link ProvidedEngine}. Absent everywhere but the desktop app. */
   engine?: ProvidedEngine;
   resolveOwner?: OwnerResolver;
+  /**
+   * THE ACCOUNT THIS TAB HAS DECIDED IT IS FOR — called once, in the arm that has already
+   * believed the answer, and never from the classifier that produced it.
+   *
+   * The Cloud client is bound here (`CloudShell` supplies `bindApiOwner`). It cannot be done in
+   * `resolveOwnerOutcome`, and the reason is a sequence rather than a preference: that function
+   * runs for every attempt of the ladder, including attempts whose effect has since been
+   * cancelled, and it runs BEFORE the comparison that decides whether the answer is even about
+   * this mirror. Binding there mutated shared state that in-flight requests are judged against,
+   * so a request that left as A could be re-judged as B and allowed to recover under it.
+   *
+   * A prop rather than an import, for the reason `resolveOwner` is one: `app/shell/**` ships
+   * inside the desktop program, which has no session client. Absent on the desktop and the demo.
+   */
+  onConfirmed?: (accountId: string) => void;
   children: ReactNode;
 }) {
   // A mode change after mount (a client-side navigation from `/` to `/?demo=1`, or the
@@ -180,6 +277,13 @@ export function EngineProvider({
    * `"resolving"` is what everything else starts as, INCLUDING a browser that remembers whose
    * mailbox this is. The warm open is one render later and {@link browserPass} is why.
    */
+  /**
+   * A DEPLOYMENT ERROR, HELD UNTIL A RENDER CAN THROW IT. `null` in every healthy tab, for the
+   * life of the tab. Written only by the confirm's `.catch`, and only for the two errors that
+   * mean "this bundle has no server"; read once, below the hooks. See both sites for why the
+   * throw cannot happen where the error is caught.
+   */
+  const [fatal, setFatal] = useState<unknown>(null);
   const [binding, setBinding] = useState<Binding>(() => {
     const demo = resolveDemo(serverDemo);
     if (demo) return { status: "ready", demo, engine: createEngine(demo) };
@@ -305,14 +409,29 @@ export function EngineProvider({
    * WHO, and the account id is what names the mirror. It is also the honest re-check — a
    * session revoked between the two is a session this tab must not open a mailbox for.
    *
-   * Every refusal, and every failure, lands on `"unauthenticated"`. That is a rendered
-   * explanation and a link, NOT an automatic redirect: middleware and this call reach the
-   * API by different routes (edge → `api.ohmail.app` directly, browser → the `/api` rewrite),
-   * so a disagreement between them is possible, and a redirect on disagreement is an
-   * infinite loop between `/` and `/`.
+   * An ANSWERED refusal lands on `"unauthenticated"`. That is a rendered explanation and a
+   * link, NOT an automatic redirect: middleware and this call reach the API by different
+   * routes (edge → `api.ohmail.app` directly, browser → the `/api` rewrite), so a
+   * disagreement between them is possible, and a redirect on disagreement is an infinite loop
+   * between `/` and `/`.
+   *
+   * ── AND A FAILURE TO ANSWER LANDS SOMEWHERE ELSE ENTIRELY ─────────────────────────────────
+   *
+   * That paragraph used to read "every refusal, AND EVERY FAILURE, lands on
+   * `unauthenticated`", and it was accurate about the code and wrong about the world. The two
+   * are not one outcome: `{kind:"none"}` is the server's own answer and is rendered at once,
+   * while `{kind:"unknown"}` is the absence of one and is retried — up to
+   * {@link CONFIRM_ATTEMPTS} asks on {@link nextConfirmDelay}'s backoff — and then reported as
+   * a check that did not finish. `OwnerOutcome` carries the whole argument and
+   * `AUTH-FLICKER-DIAGNOSIS.md` carries the production request that forced it.
+   *
+   * The retry is a re-render into `"checking"` rather than a loop inside this effect, on
+   * purpose: the delay is then a state the tree can be tested against and the timer is owned
+   * by the effect's own cleanup, so a teardown mid-ladder cancels it rather than resolving
+   * into an unmounted tree.
    */
   useEffect(() => {
-    if (binding.status !== "resolving" && binding.status !== "warm") return;
+    if (binding.status !== "resolving" && binding.status !== "warm" && binding.status !== "checking") return;
     /**
      * NOT ON THE HYDRATION COMMIT — and this line is what keeps the check to ONE request.
      *
@@ -338,15 +457,50 @@ export function EngineProvider({
      * open the same database again, hydrate it again, and restart the drain from the same
      * cursor — a visible re-mount of the whole shell as a reward for being right.
      */
-    const warm = binding.status === "warm" ? binding : null;
+    const warm = warmOf(binding);
+    /**
+     * WHICH ASK THIS IS, and how long to wait before making it.
+     *
+     * `resolving` and `warm` are the first ask and wait for nothing — the confirm still runs
+     * on the same commit it always did, so a healthy load is byte-for-byte the load it was.
+     * Only a `checking` binding has a delay, and it is computed from the attempt it is about
+     * to make and from whatever the last refusal advised.
+     */
+    const attempt = binding.status === "checking" ? binding.attempt : 1;
+    const delay = binding.status === "checking"
+      ? nextConfirmDelay(attempt - 1, binding.retryAfterMs)
+      : 0;
+
     let cancelled = false;
-    void resolveOwner()
-      .then((owner) => {
+    const ask = () => void resolveOwner()
+      .then((outcome) => {
         if (cancelled) return;
-        if (typeof owner !== "string" || owner === "") {
+        /**
+         * NO ANSWER. Retry, or — once the ladder is spent — say so.
+         *
+         * Ordered FIRST among the non-owner arms so that reading this branch cannot be
+         * mistaken for reading a refusal: `unknown` never reaches `unauthenticated`, on any
+         * attempt, for any status. That is the invariant the source guard in
+         * `test/session-verdict-guard.test.ts` pins.
+         */
+        if (outcome.kind === "unknown") {
+          setBinding(
+            attempt >= CONFIRM_ATTEMPTS
+              ? { status: "unconfirmed", warm }
+              : { status: "checking", attempt: attempt + 1, warm, retryAfterMs: outcome.retryAfterMs },
+          );
+          return;
+        }
+        /**
+         * THE SERVER ANSWERED THAT THERE IS NO FULL SESSION. A verdict, immediately, with no
+         * retry and no delay — exactly the speed this screen had before the ladder existed.
+         * `session-outcome.ts` holds the two facts that qualify and nothing else does.
+         */
+        if (outcome.kind === "none") {
           setBinding({ status: "unauthenticated" });
           return;
         }
+        const owner = outcome.accountId;
         /**
          * A CONFIRMED OWNER DISPROVES A HELD SESSION DEATH — and the latch has to be told,
          * because the death store is module state and a sign-in is a CLIENT-SIDE navigation.
@@ -377,6 +531,25 @@ export function EngineProvider({
            * re-mints the cookie and the next load opens the right mirror, so the cost is one
            * screen and the alternative is a mailbox that changes identity mid-session.
            */
+          /*
+           * AND THE MIRROR'S SYNC GATE OPENS HERE, once the comparison has passed and BEFORE
+           * the binding changes.
+           *
+           * A scheduled engine is not a merging engine. The warm engine has been hydrating and
+           * painting since the render after hydration, and its gate has been closed the whole
+           * time — no `/sync`, no snapshot, no mutation — because until this line nobody had
+           * told it whose mailbox it holds. `confirmSyncOwner` is that telling, and it is
+           * inside the MATCH arm on purpose: the mismatch arm below opens nothing, so A's
+           * engine never merges under B's session even if this comparison were ever softened
+           * into an engine swap. Before `setBinding` so the scheduler's first tick after the
+           * transition already sees an open gate rather than racing it.
+           */
+          if (owner === warm.owner) {
+            confirmSyncOwner(warm.engine, owner);
+            // AFTER the comparison and the cancellation check above: the client is bound to the account
+            // this tab has decided it is for, not to whatever the last resolver happened to see.
+            onConfirmed?.(owner);
+          }
           setBinding(
             owner === warm.owner
               ? { status: "ready", demo: false, engine: warm.engine }
@@ -384,25 +557,108 @@ export function EngineProvider({
           );
           return;
         }
-        setBinding({ status: "ready", demo: false, engine: createEngine(false, undefined, owner) });
+        // The cold path builds the engine for the account the server just named, so the gate
+        // opens with no comparison to make — but it still has to be OPENED, and before the
+        // binding, for the same first-tick reason as the warm arm above.
+        const built = createEngine(false, undefined, owner);
+        confirmSyncOwner(built, owner);
+        onConfirmed?.(owner);
+        setBinding({ status: "ready", demo: false, engine: built });
       })
       .catch((err: unknown) => {
-        // A build with no API base is NOT "we could not prove who you are" — it is a broken
-        // deployment, and rendering the session screen for it would be the same silent lie
-        // `EngineUnarmedError` exists to end: a signed-in user told their session expired
-        // when the truth is that this bundle was never wired to a server. Let it escape to
-        // the error boundary and the console instead of dressing it as an auth outcome.
-        if (err instanceof EngineUnarmedError) throw err;
-        if (!cancelled) setBinding({ status: "unauthenticated" });
+        /*
+         * ═══ A BROKEN DEPLOYMENT REACHES THE ERROR BOUNDARY — BY BEING RE-THROWN IN A RENDER ═
+         *
+         * Two errors mean "this bundle was never wired to a server", and neither is an auth
+         * outcome: `EngineUnarmedError`, and the `ApiError(0, "api_unconfigured")` that
+         * `session-outcome.ts` deliberately rethrows. Rendering the session screen for either
+         * would be the silent lie `EngineUnarmedError` exists to end — a signed-in person told
+         * their session expired when the truth is that nobody finished the deploy.
+         *
+         * `throw err` HERE DOES NOT DO THAT, and the two lines that used to stand here said it
+         * did. This is a detached `.catch` on a promise nothing awaits: a throw from it is an
+         * unhandled rejection, which React error boundaries do not see (they catch throws from
+         * render, from lifecycles and from `useEffect` bodies — never from a callback that runs
+         * later on the microtask queue). So the promised deployment-error screen never appeared;
+         * what appeared was a tab wedged on `resolving`, or a warm mirror that never resolved,
+         * with a rejection in the console and no boundary anywhere.
+         *
+         * Held and rethrown from the RENDER instead — the one place a boundary is watching. The
+         * `fatal` state below is written once and never cleared: there is no recovery from a
+         * bundle with no server, and a Try again over it would be the same false promise in a
+         * different shape.
+         */
+        if (err instanceof EngineUnarmedError || isApiUnconfigured(err)) {
+          if (!cancelled) setFatal(err);
+          return;
+        }
+        /**
+         * EVERY OTHER THROW IS ALSO NOT AN AUTH OUTCOME, and this branch used to say it was.
+         *
+         * `resolveOwner` answers rather than rejects, so what reaches here is something that
+         * blew up on OUR side of the answer: `createEngine` refused (IndexedDB is unavailable
+         * in a hardened profile or a private window), or the classifier rethrew an unarmed
+         * build. None of that is evidence about the session, and `unauthenticated` claimed it
+         * was. It reports and lands on `unconfirmed`, whose copy is true of all of them.
+         *
+         * A dedicated screen for a storage refusal — which deserves its own sentence, because
+         * "try again" will not fix it — is a follow-up gap, not this slice.
+         */
+        console.error("ohmail: the session confirm could not be completed", err);
+        if (!cancelled) setBinding({ status: "unconfirmed", warm });
       });
+    if (delay <= 0) {
+      ask();
+      return () => {
+        cancelled = true;
+      };
+    }
+    const timer = setTimeout(ask, delay);
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
     // `binding` and not `binding.status`: the warm branch reads the remembered account id and
     // the engine off it, and a dependency on the status alone would let this effect close over a
     // stale one. The early return above is what keeps that cheap — every binding that is not
-    // `resolving` or `warm` re-runs the effect and leaves immediately.
+    // `resolving`, `warm` or `checking` re-runs the effect and leaves immediately.
   }, [binding, browserPass, resolveOwner]);
+
+  /**
+   * A FRESH SESSION CLEARS AN UNCONFIRMED CHECK — the one automatic escape from `unconfirmed`.
+   *
+   * `unconfirmed` is the end of the ladder, so without this it stands until somebody presses
+   * Try again. But a `204` from `POST /auth/refresh` is a server-confirmed world change, and it
+   * can arrive from somewhere this tree is not watching — the sync loop's own probe, a body
+   * fetch, the attachments seam. `session-truth.ts` already publishes exactly that event for
+   * exactly this shape of stuck state, so the confirm joins them.
+   *
+   * (An earlier version of this paragraph also named "another tab whose refresh rotated the
+   * shared jar". It cannot: see the same-tab note below, which is the correction rather than a
+   * caveat on it.)
+   *
+   * Bounded by construction: at most one revival per successful refresh, and this returns the
+   * binding to its FIRST attempt rather than resuming a ladder, so a revival cannot compound
+   * into a burst. Only `unconfirmed` subscribes; a `checking` binding already has a timer
+   * running and does not need a second door.
+   *
+   * **SAME TAB ONLY, and the earlier version of this comment claimed otherwise.** It said the
+   * signal could arrive "from another tab whose refresh rotated the shared jar". It cannot:
+   * `session-truth.ts` is module state with no `BroadcastChannel` and no storage event, so a
+   * revival is only ever published to the tab that performed the refresh. A second tab sitting
+   * at `unconfirmed` while this one recovers keeps its notice until somebody presses Try
+   * again — which is why that button is the primary action and not a footnote. Making the
+   * store cross-tab is a change to a file this slice deliberately does not touch.
+   */
+  useEffect(() => {
+    if (binding.status !== "unconfirmed") return;
+    const warm = binding.warm;
+    return subscribeSessionRevival(() => {
+      setBinding(
+        warm ? { status: "warm", owner: warm.owner, engine: warm.engine } : { status: "resolving" },
+      );
+    });
+  }, [binding]);
 
   /**
    * What the sync loop is doing. Only a LIVE engine ever moves it off its resting value —
@@ -439,9 +695,100 @@ export function EngineProvider({
    * engine, this reads `null`, and React runs the cleanup — which closes the engine's per-page
    * gate, so an in-flight drain stops at its next page boundary rather than running on behind a
    * screen that says the session ended.
+   *
+   * `checking` and `unconfirmed` are here for the same CONTINUITY reason `warm` is, and it is
+   * why they carry their mirror rather than a boolean: `warmOf` returns the very object the
+   * warm binding held, so `engine` does not change identity across warm → checking → warm →
+   * ready and the scheduler below is never torn down and restarted by a transient. A 503 on
+   * the confirm must not cost the tab its sync loop and a second bootstrap over a mirror that
+   * was already draining. A COLD `checking`/`unconfirmed` has no mirror, reads `null`, and
+   * correctly runs nothing.
+   *
+   * **BEING SCHEDULED IS NOT BEING ALLOWED TO MERGE, and that distinction is newer than these
+   * lines.** They used to be the whole story, and they were not: a scheduled engine drains
+   * into a mirror NAMED for the remembered account under whatever session the cookie jar
+   * holds, so keeping the loop alive through a failing confirm kept it merging too. The
+   * derivations are unchanged — the engine object and `live` are what they always were — and
+   * the mirror's own sync gate decides what a scheduled engine may DO
+   * (`createSyncGate`/`confirmSyncOwner`). Withholding the drain is invisible: the mirror was
+   * already on screen.
    */
-  const engine = binding.status === "ready" || binding.status === "warm" ? binding.engine : null;
-  const live = binding.status === "warm" || (binding.status === "ready" && binding.demo === false);
+  const warmMirror = warmOf(binding);
+  const engine = binding.status === "ready" ? binding.engine : warmMirror?.engine ?? null;
+  const live = warmMirror !== null || (binding.status === "ready" && binding.demo === false);
+
+  /**
+   * A DEATH CONFIRMED **DURING THIS MOUNT** — which is a different fact from the latch itself.
+   *
+   * Gating `SessionEnded` on `ready` closed the stale-latch defect and opened a smaller one:
+   * a session revoked while a warm binding sat in `checking` or `unconfirmed` could not be
+   * reported at all, because the prompt was not mounted and the notice does not read the
+   * store. The user kept "the check did not finish" over a session that had genuinely ended.
+   *
+   * The distinction that matters is not "is the latch set" but "did this tab watch it get
+   * set". A latch inherited from the page before this mount is somebody else's evidence; a
+   * false → true transition observed here is ours. So the subscription records the transition
+   * and nothing else: an already-`true` store at mount time is deliberately not counted.
+   */
+  const [deathSeenHere, setDeathSeenHere] = useState(false);
+  useEffect(() => {
+    if (!live) return;
+    return subscribeSessionTruth(() => {
+      if (sessionIsDead()) setDeathSeenHere(true);
+    });
+  }, [live]);
+
+
+  /**
+   * ASK AGAIN, BY HAND — the primary action on the unconfirmed surface.
+   *
+   * It puts the binding back where the ladder started, which restarts it at attempt one with
+   * no delay: back to `warm` when there is a mirror (so nothing on screen moves and the same
+   * engine keeps draining), and to `resolving` when there is not. Deliberately NOT a
+   * `location.reload()` — the fragment is the view (`shell/routing.ts`), the mirror is already
+   * open, and re-downloading the document to re-ask one question would throw away both.
+   *
+   * Depends on `warmMirror` rather than on `binding`, so pressing it cannot resurrect a mirror
+   * from a binding that has since moved on.
+   */
+  // The two FIELDS, not the wrapper: `warmOf` builds a fresh object for a `warm` binding, so a
+  // dependency on it would rebuild this callback every render for no change in meaning.
+  const warmOwner = warmMirror?.owner ?? null;
+  const warmEngine = warmMirror?.engine ?? null;
+  const retryConfirm = useCallback(() => {
+    setBinding(
+      warmOwner !== null && warmEngine !== null
+        ? { status: "warm", owner: warmOwner, engine: warmEngine }
+        : { status: "resolving" },
+    );
+  }, [warmOwner, warmEngine]);
+  /**
+   * ═══ A REVOKED MIRROR ASKS TO BE CONFIRMED AGAIN ══════════════════════════════════════════
+   *
+   * Revocation is monotonic on purpose: once the marker has changed, only a fresh server answer
+   * reopens the gate, and it must not oscillate. That left one state with no way out. On a
+   * `ready` binding the confirm effect finished long ago and `ready` carries no owner to
+   * re-compare, so when the marker came back to naming this mirror the tab cleared its terminal
+   * strip — the contradiction really was gone — and then sat there with reads, sync, mutations
+   * and the wake stream all disabled, and nothing on screen saying so. It looked well.
+   *
+   * The gate now says when it could plausibly be asked about (`onNeedsConfirm`, once per
+   * revocation), and this puts the binding back to `warm` so the confirm ladder runs again with
+   * the SAME engine — nothing re-mounts, nothing re-hydrates, and the answer either reopens the
+   * gate or ends the tab honestly.
+   */
+  useEffect(() => {
+    if (!engine || !live) return;
+    let cancelled = false;
+    onSyncNeedsConfirm(engine, () => {
+      if (cancelled) return;
+      const named = readOwner();
+      if (named === null) return;
+      setBinding({ status: "warm", owner: named, engine });
+    });
+    return () => { cancelled = true; };
+  }, [engine, live]);
+
   useEffect(() => {
     if (!engine) return;
     /**
@@ -498,28 +845,120 @@ export function EngineProvider({
     });
   }, [engine, live, onSyncStatus]);
 
+  /**
+   * THE ONE PLACE A BOUNDARY IS WATCHING. See the confirm's `.catch`: a throw from a detached
+   * promise callback is an unhandled rejection and reaches no error boundary, so a bundle wired
+   * to no server has to be re-thrown from a render to produce the deployment-error screen both
+   * this file and `session-outcome.ts` promise it will.
+   *
+   * After every hook, so the hook order is identical on the render that throws and the one
+   * before it. Never cleared: there is no recovery from a build with no API.
+   */
+  if (fatal !== null) throw fatal;
+
   if (binding.status === "resolving" || binding.status === "unauthenticated") {
     return <SessionScreen status={binding.status} />;
+  }
+
+  /**
+   * A COLD BROWSER STILL CHECKING LOOKS EXACTLY LIKE ONE STILL RESOLVING — because it is.
+   *
+   * There is no mirror to show and no answer yet, which is the state `resolving` already
+   * renders: an empty live region that grows one muted line past `useLoadingGrace`. A second,
+   * different waiting screen for the second ask would be a visible transition announcing that
+   * something went wrong, on a load that may yet succeed 600 ms later. Nothing has gone wrong
+   * that the person can act on, so nothing is said.
+   */
+  if (binding.status === "checking" && binding.warm === null) {
+    return <SessionScreen status="resolving" />;
+  }
+
+  /** No mirror and no answer after the whole ladder: the honest card, on its own. */
+  if (binding.status === "unconfirmed" && binding.warm === null) {
+    return <UnconfirmedGate onRetry={retryConfirm} />;
+  }
+
+  if (engine === null) {
+    /* Unreachable: every status still standing is `ready` or carries a warm mirror, so
+       `warmOf` gave one. Written as a wait rather than a throw because a wait is the harmless
+       answer if a future arm forgets to carry its engine, and a blank frame is a bug report
+       while a crashed root is a lost session. */
+    return <SessionScreen status="resolving" />;
   }
 
   return (
     <EngineContext.Provider
       value={{
-        engine: binding.engine,
+        engine,
         // A warm binding is a LIVE engine by construction — `createEngine(false, …)` built it —
         // so the mode it publishes is the mode it was built in, exactly as the field's contract
-        // says. There is no window in which the demo chrome renders over a warm mailbox.
-        demo: binding.status === "warm" ? false : binding.demo,
+        // says. There is no window in which the demo chrome renders over a warm mailbox. The
+        // two unconfirmed states inherit that: they carry the warm engine itself.
+        demo: binding.status === "ready" ? binding.demo : false,
         serverDemo,
         sync: live ? sync : SYNC_SETTLED,
       }}
     >
       {children}
       {/* The re-auth surface, LIVE ENGINES ONLY. The demo has no session and the desktop's
-          store never leaves its resting value, so on both this renders nothing, forever. */}
-      {live ? <SessionEnded sync={sync} /> : null}
+          store never leaves its resting value, so on both this renders nothing, forever.
+
+          AND ONLY ONCE THIS MOUNT HAS CONFIRMED SOMETHING — `ready`, never `warm`, `checking`
+          or `unconfirmed`. The death latch is module state that deliberately SURVIVES a
+          client-side navigation (see the withdrawal note in the confirm effect), so on a
+          freshly signed-in shell it can still be holding a truthful `true` from the `/login`
+          page that preceded it. Rendered on a `warm` binding, that stale latch puts "This
+          session ended" over a live mailbox before this tab has asked anybody anything — and
+          if the confirm then meets a 503 the latch is never withdrawn, because only a
+          confirmed owner withdraws it. That is the reported defect reached through a second
+          door, and it is why the gate is the BINDING rather than `live`: a latch observed
+          before this mount is not evidence about this mount, and one round trip settles it. */}
+      {live && (binding.status === "ready" || deathSeenHere) ? <SessionEnded sync={sync} engine={engine} /> : null}
+      {/* THE CHECK-DID-NOT-FINISH OVERLAY, and note what is NOT here: `checking` renders
+          nothing at all. A tab whose confirm is being retried keeps painting its mirror
+          exactly as `warm` does — no scrim, no dimming, no message. `warm` already paints
+          unconfirmed for a whole round trip and always has; a 503 does not make the mail on
+          this device less trustworthy than it was a second earlier, and dimming the screen for
+          600 ms is the flicker this slice removes wearing a different hat. Only the END of the
+          ladder is worth interrupting for. */}
+      {binding.status === "unconfirmed" && binding.warm !== null && !deathSeenHere
+        ? <UnconfirmedOverlay onRetry={retryConfirm} />
+        : null}
     </EngineContext.Provider>
   );
+}
+
+/**
+ * MAKE THE BACKGROUND INERT WHILE A MODAL SURFACE IS UP, and take it back on the way out.
+ *
+ * `role="alertdialog"` with `aria-modal="true"` is a CLAIM that nothing behind the dialog can
+ * be reached, and a fixed, scrimmed layer does not make it true: it blocks pointer hits and
+ * nothing else. Behind both of this file's dialogs the mailbox stays in the tab order, and —
+ * the half that actually costs mail — the shell's document-level keymap keeps dispatching, so
+ * `e` parks the focused message and two `d` presses can run the delete ceremony behind a
+ * screen that says the session is in question.
+ *
+ * `inert` is the one attribute that closes all three at once: no focus, no hit-testing, no
+ * event dispatch into the subtree. It is applied to the app root rather than to `document.body`
+ * so the dialog itself — a sibling of the root inside the provider — stays live.
+ *
+ * Applied by BOTH dialogs. `SessionEnded` had this defect before this slice and shares the fix
+ * rather than being left as the inconsistent twin; a modal that is honest on one screen and a
+ * pretence on the other is worse than either.
+ */
+function useInertBackground(active: boolean): void {
+  useEffect(() => {
+    if (!active) return;
+    const root = document.querySelector<HTMLElement>(".app-root");
+    if (!root) return;
+    // Guarded: `inert` is a property on every browser that ships it, and older engines simply
+    // do not reflect it — in which case the scrim is what it always was, rather than a crash.
+    const had = root.inert === true;
+    root.inert = true;
+    return () => {
+      root.inert = had;
+    };
+  }, [active]);
 }
 
 /**
@@ -560,10 +999,14 @@ export function EngineProvider({
  * or screen-reader user is standing on the remedy, not somewhere in a mailbox that no longer
  * answers.
  */
-function SessionEnded({ sync }: { sync: SyncStatus }) {
+function SessionEnded({ sync, engine }: { sync: SyncStatus; engine: OhmailEngine | null }) {
   const t = useTranslations("session");
   const dead = useSessionDead();
   const signInRef = useRef<HTMLAnchorElement | null>(null);
+  useInertBackground(dead);
+  // `inert` takes the background out of focus and hit-testing; this takes it out of the
+  // KEYMAP, which `inert` cannot reach. See `modal-gate.ts`.
+  useModalGate(dead);
 
   // One probe per refusal episode: fire when evidence APPEARS, stand down when it clears.
   const evidence = sync.refused || sync.terminal;
@@ -574,9 +1017,31 @@ function SessionEnded({ sync }: { sync: SyncStatus }) {
       return;
     }
     if (probed.current) return;
+    /*
+     * …AND NOT WHEN THE EVIDENCE IS SOMEBODY ELSE'S SESSION.
+     *
+     * `sync.terminal` has two causes, and this probe is right for exactly one of them. A server
+     * refusal is a question about THIS account, and one `POST /auth/refresh` answers it in both
+     * directions. A CONTRADICTED mirror is not: the loop stopped because the cookie jar now
+     * names a different account, so the refresh this would send carries that account's cookies.
+     * It cannot heal anything here — this tab's session is not in the jar to be healed — and
+     * what it does instead is rotate somebody else's refresh token from a tab that is not
+     * theirs, extending a session nobody in this window is signed in to and, in a bad
+     * interleaving, presenting a token their own tab is about to present again.
+     *
+     * `!== "holds"` and not `=== "contradicted"`, which is a correction: a REVOKED gate is one
+     * whose confirmation the marker has already outlived, and it has exactly as little business
+     * renewing a session as a contradicted one. The narrower test left the absent-marker case —
+     * a sign-out whose server call failed, then a refusal — free to refresh the session that
+     * sign-out could not revoke.
+     *
+     * Read at EFFECT time rather than at render time: the jar can be rewritten between the two,
+     * which is the whole event this arm is about.
+     */
+    if (syncIdentityOf(engine) !== "holds") return;
     probed.current = true;
     probeSessionNow();
-  }, [evidence]);
+  }, [evidence, engine]);
 
   useEffect(() => {
     if (dead) signInRef.current?.focus();
@@ -610,7 +1075,135 @@ function SessionEnded({ sync }: { sync: SyncStatus }) {
 }
 
 /**
+ * ═══ "THE CHECK DID NOT FINISH" — what the end of the ladder says, and what it refuses to ══
+ *
+ * Four asks over roughly one to thirty seconds could not get an ANSWER out of
+ * `GET /auth/session` (`confirm-schedule.ts` for the arithmetic, `OwnerOutcome` for what
+ * counts as an answer). The one thing this surface may not do is what its predecessor did:
+ * report that as a session ending. It is not one. The cookie may be — and in the measured
+ * production case was — perfectly live; what failed was the question, not the credential.
+ *
+ * So the copy names the failure, not a consequence: `session.unconfirmedTitle` /
+ * `unconfirmedBodyWarm`. Neither string contains "signed out", and a source guard keeps it
+ * that way, because the value of the whole slice is exactly that sentence not appearing here.
+ *
+ * ── THE PRIMARY IS `Try again`, AND `Sign in` IS DEMOTED TO AN EXIT ────────────────────────
+ *
+ * The old pane's primary was Sign in, which is the wrong act for this state: the session is
+ * probably fine, signing in again is a detour through a form, and — as the report that started
+ * this and the reproduction both showed — it frequently just bounces straight back into the mailbox,
+ * which tells the user the screen was lying. `Try again` re-asks the question that failed.
+ * Sign in stays as a plain secondary link because it is occasionally the right move (a
+ * session really is gone and the refresh path cannot say so), and because a screen with one
+ * button and no way out is its own trap. It is an exit, not a claim.
+ *
+ * ── IT YIELDS TO THE REAL VERDICT ──────────────────────────────────────────────────────────
+ *
+ * `useSessionDead()` is the confirmed fact. If it latches while this is on screen — a refresh
+ * somewhere in the tab finally got the server's coded 401 — `SessionEnded` is the truthful
+ * surface and this one gets out of its way rather than stacking a second dialog over it.
+ */
+function UnconfirmedOverlay({ onRetry }: { onRetry: () => void }) {
+  const t = useTranslations("session");
+  const retryRef = useRef<HTMLButtonElement | null>(null);
+  useInertBackground(true);
+  useModalGate(true);
+
+  // Focus the remedy when the surface appears, exactly as `SessionEnded` does and for the
+  // same reason: a keyboard or screen-reader user must be standing on the act that helps,
+  // not somewhere in a mailbox whose freshness is in question.
+  useEffect(() => {
+    retryRef.current?.focus();
+  }, []);
+
+  /*
+   * IT USED TO STAND ASIDE FOR `useSessionDead()`, AND THAT WAS THE SAME DEFECT AGAIN.
+   *
+   * The reasoning was "a confirmed death is the truthful surface, so yield to it". But the
+   * latch survives a client-side navigation, so on a freshly signed-in shell it can be a
+   * STALE `true` — and yielding to it meant the one honest sentence available ("the check did
+   * not finish") was suppressed by a claim this tab had never verified. The two surfaces are
+   * now disjoint by binding status instead: `SessionEnded` renders only at `ready`, this only
+   * at `unconfirmed`, so there is nothing left to yield to.
+   */
+  return (
+    <div
+      className="session-end"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="session-unconfirmed-title"
+      aria-describedby="session-unconfirmed-body"
+    >
+      <div className="gate-card">
+        <span className="wordmark">
+          <b>
+            <em>oh</em>mail
+          </b>
+        </span>
+        <h1 id="session-unconfirmed-title">{t("unconfirmedTitle")}</h1>
+        <p id="session-unconfirmed-body">{t("unconfirmedBodyWarm")}</p>
+        <div className="gate-actions">
+          <button ref={retryRef} type="button" className="btn primary" onClick={onRetry}>
+            {t("tryAgain")}
+          </button>
+          <a className="btn" href="/login">
+            {t("signIn")}
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The same statement for a browser with NO mirror to stand behind it.
+ *
+ * Same card, same two acts, one different sentence: there is nothing on screen from this
+ * device, so the body may not claim there is. It reuses `.gate` / `.gate-card` — the
+ * product's own furniture, as `SessionScreen` does — rather than inventing a third layout for
+ * a state a person meets for a few seconds.
+ */
+function UnconfirmedGate({ onRetry }: { onRetry: () => void }) {
+  const t = useTranslations("session");
+  const retryRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    retryRef.current?.focus();
+  }, []);
+  return (
+    <div className="gate">
+      <div className="gate-card">
+        <span className="wordmark">
+          <b>
+            <em>oh</em>mail
+          </b>
+        </span>
+        <h1>{t("unconfirmedTitle")}</h1>
+        <p>{t("unconfirmedBody")}</p>
+        <div className="gate-actions">
+          <button ref={retryRef} type="button" className="btn primary" onClick={onRetry}>
+            {t("tryAgain")}
+          </button>
+          <a className="btn" href="/login">
+            {t("signIn")}
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
  * The two states that are not a mailbox.
+ *
+ * ── `unauthenticated` NOW MEANS WHAT ITS COPY SAYS, WHICH IT DID NOT ALWAYS ────────────────
+ *
+ * `session.endedBody` — "We could not confirm this session, so nothing has been loaded" — is
+ * reached only when the SERVER answered that there is no full session: an enrollment-scoped
+ * session, the refresh endpoint's own coded 401, or a confirmed owner that is not the account
+ * whose mirror this browser remembered. A 5xx, a gateway, a 429 or a dead socket used to land
+ * here too, which made the sentence false in the one case people actually met it in — see
+ * `OwnerOutcome` and `AUTH-FLICKER-DIAGNOSIS.md`. Those go to `unconfirmed` now, and the
+ * source guard in `test/session-verdict-guard.test.ts` is what keeps them there.
  *
  * Same markup as `mailbox/page.tsx`'s honest gate — `.gate` / `.gate-card` in `app.css` —
  * so a visitor who lands here sees the product's own furniture rather than a stray spinner
@@ -778,8 +1371,23 @@ export function useAbandoned(): readonly AbandonedMutation[] {
 }
 
 /**
- * Subscribe to the engine; returns the overlay-aware mirror version so
- * memoized selectors recompute on every change (and only then).
+ * Subscribe to the engine; returns the overlay-aware mirror version so memoized selectors
+ * recompute when an ENTITY changes.
+ *
+ * "And only then" is what this used to claim, and it was false in the direction that costs: a
+ * `/sync` page carrying no rows, and the drain's own completion stamp, both bumped the version, so
+ * an idle client rebuilt every whole-mirror derivation on each poll. Both now leave it alone
+ * (`store.ts` — `applyResponse` guards on its dirty set, `setMeta` does not touch `ver` at all), and
+ * the claim is written as what the number MEANS rather than as a promise about renders.
+ *
+ * WHAT IT MEANS, exactly: the mirror AS THIS READER SEES IT moved. That is not the same as "a
+ * record moved" — this is the OVERLAY-merged version (`OverlayReader.version()` is
+ * `store.version() * 1_000_003 + overlayRev`), so registering, retiring or sweeping an optimistic
+ * overlay moves it with no stored record touched at all. Which is right: a surface reading through
+ * the overlay is looking at different rows either way.
+ *
+ * It does not say the reverse — a surface can still re-render for its own reasons, and on a large
+ * mailbox each such render is a full pass over the mirror.
  */
 export function useEngineVersion(): number {
   const engine = useEngine();

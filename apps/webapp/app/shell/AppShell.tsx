@@ -101,6 +101,7 @@ import { useAppLocale } from "./LocaleContext";
 import { useScreenerState } from "./screener-state";
 import { useJunkWindow, type JunkWire } from "./junk-window";
 import { useOlderBody, type OlderBodyWire } from "./older-body";
+import { syncMayRead } from "./sync-scheduler";
 import { useScreenerSuggestions, type SenderSuggestion, type SuggestWire } from "./screener-suggest";
 import { AutoSuggestRow } from "./AutoSuggestRow";
 import { ScreeningSection } from "./ScreeningSection";
@@ -267,6 +268,29 @@ const PILE_CHORD_LABEL: Record<string, "shortcuts.goOhbox" | "shortcuts.goReads"
 
 /** The `boot-cache.ts` scope for the account's own addresses. See `ownAddresses` below. */
 const OWN_ADDRESSES_BOOT_SCOPE = "own-addresses";
+
+/**
+ * The memo key for {@link ShellInner}'s `ownAddresses` — see the comment there for why the addresses
+ * and not the facts row.
+ *
+ * Sorted and lower-cased so the same set of mailboxes in a different order, or with a server that
+ * changed the case it echoes, is one key.
+ *
+ * JSON RATHER THAN A JOIN CHARACTER, and this comment used to argue for the opposite while the
+ * code did something worse than either: it joined on a literal NUL byte, which made `file` report
+ * this whole source as `data` and every grep-family tool skip it in silence — the trap CLAUDE.md
+ * names, introduced by the very comment claiming to have avoided it. `keymap.tsx`'s shape key
+ * settled this question already and its reasoning is not re-derived here: JSON escapes its own
+ * delimiters, so no two distinct lists can produce one string, and every byte of the result is
+ * printable.
+ */
+function ownAddressKey(
+  facts: ReadonlyArray<{ address: string }> | null,
+  remembered: readonly string[] | null,
+): string {
+  const list = facts?.map((m) => m.address) ?? remembered ?? [];
+  return JSON.stringify([...list].map((a) => a.trim().toLowerCase()).sort());
+}
 
 /** A cached address list an older build wrote degrades to "no cache", never to mixed types. */
 function acceptAddressList(parsed: unknown): string[] | null {
@@ -671,6 +695,7 @@ export function AppShell({
   demo,
   engine,
   resolveOwner,
+  onConfirmed,
   mailboxFacts,
   organizerNoticeTransport,
   mirrorFreshness,
@@ -712,6 +737,12 @@ export function AppShell({
    */
   engine?: ProvidedEngine;
   resolveOwner?: OwnerResolver;
+  /**
+   * Threaded to {@link EngineProvider.onConfirmed} — the Cloud client's binding, committed by the
+   * arm that has already believed the answer rather than by the classifier that produced it.
+   * Absent on the desktop and the demo, like `resolveOwner`.
+   */
+  onConfirmed?: (accountId: string) => void;
   /**
    * "What state are this account's mailboxes in?", as a function the SHELL does not know how
    * to answer — the seventh injected prop, and the same seam as `resolveOwner` for the same
@@ -1109,7 +1140,7 @@ export function AppShell({
   onUnread?: (unread: number) => void;
 }) {
   return (
-    <EngineProvider demo={demo} engine={engine} resolveOwner={resolveOwner}>
+    <EngineProvider demo={demo} engine={engine} resolveOwner={resolveOwner} onConfirmed={onConfirmed}>
       {/* ONE keydown listener for the whole client. Outside `ShellInner` so
           every view mounted under it can declare bindings into the same table, which is
           also the table the `?` sheet is generated from. */}
@@ -1539,9 +1570,30 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
     const cached = readBootCache(OWN_ADDRESSES_BOOT_SCOPE, owner, acceptAddressList);
     if (cached !== null) setRememberedOwn(cached);
   }, [demo, facts]);
+  /**
+   * KEYED ON THE ADDRESSES, NOT ON THE FACTS ROW.
+   *
+   * `consentView` below takes this as a dependency and depends on NOTHING ELSE about a mailbox.
+   * Keyed on `facts`, it produced a new array whenever ANY field of ANY mailbox moved — and one of
+   * them moves constantly: `pendingMoves` decrements on every poll for as long as the organizer has
+   * a backlog, which on a freshly connected mailbox is hours. Each of those rebuilt the whole-mirror
+   * consent partition and the projection over every message, for an address list that had not
+   * changed.
+   *
+   * The key is a STRING of the sorted, lower-cased addresses rather than the identity of `facts`,
+   * because a `MailStateProvider` that now equality-gates its publishes still hands a new array the
+   * moment `pendingMoves` legitimately changes — that gate stops the poll that learned nothing, and
+   * this stops the poll that learned something the partition does not care about. Sorted, so two
+   * answers listing the same mailboxes in a different order are one key; lower-cased, because that
+   * is the comparison `ownAddresses`' own consumers make (`isOwnSent`, `replyEnvelopePlan`).
+   *
+   * The VALUE keeps the addresses in the server's order and original case — only the KEY is
+   * normalised. Nothing downstream may see a re-ordered or case-folded address.
+   */
   const ownAddresses = useMemo(
     () => facts?.map((m) => m.address) ?? rememberedOwn ?? [],
-    [facts, rememberedOwn],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [ownAddressKey(facts, rememberedOwn)],
   );
   /**
    * THE ACCOUNT'S OWN NAME FOR ONE OF ITS ADDRESSES — what the "me" recipient chip wears
@@ -1711,7 +1763,37 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
     folderTailEpoch.current.epoch,
   );
 
-  /* ── engine-derived world (recomputed exactly when the mirror moves) ── */
+  /* ── engine-derived world ────────────────────────────────────────────────────────────────
+   *
+   * Every memo below is a WHOLE-MIRROR pass, and each carries `[presented, version]`: `presented`
+   * because a new consent projection is a different mirror, `version` because the projection object
+   * cannot carry a cache of its own (it is rebuilt with the partition — `consent-cutline.ts` says so
+   * at `presentationReader`).
+   *
+   * "Recomputed exactly when the mirror moves" is what this line used to claim, and it was not
+   * true: `version` moved on a `/sync` page that carried no rows and on the drain's completion
+   * stamp, and `presented` moved whenever `ownAddresses` got a new identity — which a mailbox poll
+   * produced on every read, and again whenever `pendingMoves` ticked down. All three are closed
+   * (`store.ts`, `MailStateProvider`'s equality gate, `ownAddressKey` above), so the line is now
+   * closer to true than it was.
+   *
+   * IT IS STILL NOT "EXACTLY", IN BOTH DIRECTIONS, and neither is a defect:
+   *
+   *  · MORE OFTEN than the entity mirror moves. `presented` is rebuilt whenever the CONSENT answer
+   *    moves — the dormancy window, the screening baseline, the scope, the folders flag — and none
+   *    of those is a message changing. That is correct: the same rows are presented somewhere else,
+   *    so every derivation below genuinely is stale. `version` is also the overlay-merged number
+   *    (see `useEngineVersion`), so an optimistic overlay moves it with no stored record touched.
+   *  · and every rebuild is retained for as long as the render scope that made it. A render
+   *    scope lives for as long as any closure created in it, and a memoized callback handed
+   *    back unchanged is exactly such a closure — so the rebuilds accumulate rather than
+   *    replace. Bounding that chain is a structural change and is not what the seams below
+   *    do; they stop producing the renders in the first place.
+   *
+   * So: these rebuild when what they are derived FROM changes — the mirror, the overlay on top of
+   * it, or where consent says the rows are presented. Never read them as "only when a message
+   * changed".
+   */
   const ohbox = useMemo(() => ohboxView(presented), [presented, version]);
   const partition = useMemo(() => feedPartition(presented, "reads"), [presented, version]);
   /**
@@ -2737,7 +2819,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
   // Destructured so `hydrateBody` can depend on the STABLE dispatch alone — the door's `bodyFor`
   // changes identity when an answer lands (that is how panes learn), and riding the whole object
   // would re-fire the urgent-selection effects once per delivered body for nothing.
-  const { open: openOlderBody, bodyFor: olderBodyFor } = useOlderBody(!demo, olderBodyWire);
+  /* The identity predicate, read at REQUEST time rather than at render time — a cookie can be
+     rewritten by a sign-in in another tab between the render that built this closure and the
+     press that uses it, and the whole point of the check is to catch exactly that. `useCallback`
+     with `[engine]` keeps the door's own dependency stable; the answer inside is always live. */
+  const mayReadOlderBody = useCallback(() => syncMayRead(engine), [engine]);
+  const { open: openOlderBody, bodyFor: olderBodyFor } =
+    useOlderBody(!demo, olderBodyWire, mayReadOlderBody);
   const hydrateBody = useCallback(
     (messageId: string, opts?: { retry?: boolean; urgent?: boolean }) => {
       if (engine.read().get<EngineMessage>("message", messageId) !== undefined) {
@@ -2788,6 +2876,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * no API — arrives here as `"manual"` and keeps the per-message button. See `consent-state.ts`.
    */
   const remoteImages = useRemoteImages({
+    // `/img` is fetched by the browser from an `<img src>`, so the account boundary in `api()`
+    // never sees it. Same predicate as every other direct reader — see `syncMayRead`.
+    mayRead: mayReadOlderBody,
     onFailed: (message) => toast(message),
     mode: consent.blockRemoteImages ? "manual" : "auto",
     // The pixel switch rides the same hook for the same reason `mode` does: the Settings row and
