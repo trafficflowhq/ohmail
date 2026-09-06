@@ -2210,7 +2210,7 @@ export const mailboxProfileMirror = pgTable("mailbox_profile_mirror", {
    * unique index beside it. Two mirrors of one mailbox is not a state this feature has.
    */
   mailboxId: uuid("mailbox_id").primaryKey(),
-  /** WHOSE. Invariant #9 is a column here, not a convention a caller remembers to join for. */
+  /** WHOSE. Account isolation is a column here, not a convention a caller remembers to join for. */
   accountId: uuid("account_id").notNull(),
   /**
    * THE SERVER EPOCH {@link uid} WAS READ UNDER, and it is stored because a remembered IMAP uid is
