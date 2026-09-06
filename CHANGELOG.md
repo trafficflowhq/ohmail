@@ -15,6 +15,10 @@ See [Status](README.md#status--read-this-first).
 
 A mailbox that cannot send no longer reports a send in progress; the refusal is shown as what it is.
 
+The row of actions under a message is as wide as the buttons it is standing. Where the column is
+too narrow for all of them the rest still move into the ⌄ menu at its end, but the row no longer
+keeps its full width with an empty gap where they were.
+
 ### Signing in, signing out, and a browser that two people share
 
 A browser holds one set of cookies for everything open in it. Sign into a second account in another

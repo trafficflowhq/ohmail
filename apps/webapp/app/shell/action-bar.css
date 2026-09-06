@@ -38,28 +38,78 @@
  * rule to keep, whatever decides the width.
  */
 
-/* ── THE BAR IS A FLOATING PILL THAT FILLS THE ROW IT IS GIVEN ─────────────────────────
+/* ── THE BAR IS A FLOATING PILL AS WIDE AS THE VERBS IT IS STANDING ────────────────────
  *
- * The pill was `width: fit-content; margin-inline: auto` — as wide
- * as the verbs it happened to stand, centred in the message's measure — so a bar that folded a
- * group also shrank, and the room it gave up stood empty on both sides while the group sat
- * behind More. Reported from real use: "the action pill should use its available width". It is
- * `width: 100%` now: the primary verb at the left edge, the read switch and More at the right
- * (`.abar-read-g { margin-left: auto }`), and the slack between them is where a group goes
- * when it is admitted. The measurement (`bar-density.ts`) reads the pill's own padding, so the
- * admission is against the row the pill actually has.
+ * TWO REPORTS, ONE RULE, AND THE FIRST FIX ANSWERED THE WRONG HALF OF THE FIRST ONE.
+ *
+ * The pill was `width: fit-content; margin-inline: auto` — as wide as the verbs it happened to
+ * stand, CENTRED in the message's measure. Reported from real use: *"the action pill should use
+ * its available width"*. It became `width: 100%`, with `.abar-read-g { margin-left: auto }`
+ * holding the read switch and More at the far end.
+ *
+ * That answered the centring and made the other half worse. The room a folded group gives up is
+ * not spread thin any more, it is ONE hollow between the last verb standing and the read switch,
+ * and it is large: measured across the sweep at up to 232px, and reported from real use as a pill
+ * that is wide and empty with its middle verbs gone.
+ *
+ * The mistake was reading "use the available width" as a question about the pill's BOX. It is a
+ * question about the ADMISSION — how many verbs get seated — and the admission has never read the
+ * pill: `bar-density.ts` measures `.msg-actions`, which is full width whatever the capsule does,
+ * minus the pill's own padding. So the fold is untouched by this rule and by the one it replaces;
+ * the same verbs stand at the same widths either way. What changes is only whether the capsule is
+ * drawn around room it is not using.
+ *
+ * `fit-content` and NOT the old `margin-inline: auto` with it: left, so the pill's edge is the
+ * message body's edge (`.msg-body` and `.msg-actions` share `--msg-measure` and both start at the
+ * left of the measure), and so the primary verb sits where the text it answers begins. Dropping the
+ * centring is the half of the first report that stands, and it is kept.
+ *
+ * `margin-left: auto` on the read group STAYS, and is not dead: the selection bar (`.pick-bar >
+ * .abar`, `flex: 1 1 100%`) and the reply-editor stand-down (`.msg:has(.reply) .msg-actions >
+ * .abar`, `width: 100%`) are both full-width rows where it still does the separating.
  *
  * `.msg-actions` stays the container named `abar` and the pill stays `container-type: normal`:
  * nothing queries the pill itself, and the selection bar's own rungs bind to `.abar` in THAT
  * surface (`.pick-bar`, below), where the bar is its own container. `.abar` keeps
- * `position: relative`, so `.mmenu` anchors to the pill's right edge — the end of the row,
- * where the button that opens it stands. */
+ * `position: relative`, so `.mmenu` anchors to the pill's right edge — which with a pill that
+ * hugs is the More button's own right edge, the end of the row, where the button that opens it
+ * stands.
+ *
+ * Held by `scripts/fit-render.mjs` ("the pill hugs its verbs"), at every width in the sweep, in
+ * both locales and on both faces: no empty run between two visible controls is wider than the
+ * row's own gap, and the pill's border box is its row's content plus its padding. */
 .msg-actions {
   container: abar / inline-size;
 }
 .msg-actions > .abar {
   container-type: normal;
-  width: 100%;
+  width: fit-content;
+  /* AND `min-width: 0` IS NOT DECORATION — `fit-content` alone reverses this rule's own promise in
+     the one column too narrow for the compact floor.
+
+     The pill is a flex item of `.msg-actions`, so its automatic minimum size (`min-width: auto`) is
+     its min-content — and the row is `nowrap` with `flex: none` children, which makes that the
+     UNFOLDABLE row. The item can then neither shrink to the line nor be clamped by `fit-content`'s
+     stretch-fit, and it is laid out at its full content width, outside the box that gave it room.
+
+     Measured in a real browser (German, paper) with the message measure squeezed to 292, 200, 150
+     and 120px, reading the pill against `.msg-actions`'s content box and the message's own edge:
+
+       measure       width:100% (before)   fit-content alone    fit-content + min-width:0
+       292 / 200     fits                  fits                 fits
+       150           150, row clips        173.8 — outside      150, row clips
+       120           120, row clips        173.8 — outside the  120, row clips
+                                           MESSAGE as well
+
+     So `min-width: 0` restores exactly the behaviour the width this replaces already had, which is
+     the one this file documents: below the compact floor the row is wider than the pill, and the
+     column is the thing that is too narrow. `max-width: 100%` clamps the same case from the other
+     side and is NOT kept beside it — one clamp, so a reader has one thing to check.
+
+     Not held by `fit-render.mjs`: its narrowest viewport (420px) is a full-width reader sheet whose
+     pill still has ~338px, so the sweep never reaches this state and would report a removal green.
+     `action-bar.test.ts` asserts the declaration for that reason. */
+  min-width: 0;
   padding: 6px;
   border-radius:var(--r-pill);
   background: var(--float);
