@@ -117,6 +117,8 @@ export interface MutationResult {
 interface SupersedeEffect {
   retired: string[];
   undo: Array<{ entry: PendingMutation; index: number; mutation: EngineMutation }>;
+  /** The abandoned-record markers, awaited before this verb may dispatch. */
+  marked: Promise<void>;
 }
 
 interface PendingMutation {
@@ -357,6 +359,79 @@ export function targetOf(m: EngineMutation): string | null {
       return null;
     }
   }
+}
+
+/**
+ * EVERY TARGET A VERB OWNS, not just its principal one.
+ *
+ * `targetOf` answers the single thing a verb is *about*, which is what the queue's whole-entry
+ * replacement needs. Tagging is the case that breaks it: `tag_assign` is about a MESSAGE, so two
+ * assignments of different tags to one message share a target and retire each other — losing the
+ * first tag — while a `tag_delete` of the tag being assigned does not retire the assignment at
+ * all, which is the destructive direction. It owns both, so it names both.
+ */
+function targetsOf(m: EngineMutation): string[] {
+  const principal = targetOf(m);
+  const out = principal === null ? [] : [principal];
+  // `tag_assign` names ONE tag, and it owns that tag as well as the message.
+  if (m.kind === "tag_assign") out.push(`tag:${m.tagId}`);
+  return out;
+}
+
+/**
+ * ── WHEN A NEWER VERB RETIRES AN ABANDONED ONE, AND THE TWO REASONS IT MAY ────────────────────
+ *
+ * SAME KIND, SHARED TARGET. An absolute-valued verb replaces its own earlier value: the newer
+ * triage, move, rename or destination IS the whole intent, so the older one has nothing left to
+ * say. This is the ordinary case and it is deliberately narrow — sharing a target is NOT enough on
+ * its own. A queued tag assignment and a later triage of the same message are independent
+ * intentions, and retiring one because the other happened to name the same message silently
+ * throws away work nobody asked to discard.
+ *
+ * THE DESTRUCTIVE ASYMMETRIES, named one at a time because each is a judgement rather than a rule,
+ * and each has the OLDER record as the destructive one — these are records whose replay does
+ * something that cannot be taken back, so a newer intent on the same target outranks them:
+ *  · a `draft_discard` is retired by a later `draft_save` of that draft — the person came back to
+ *    it, so the discard is not what they want any more;
+ *  · a `message_delete`, `folder_delete` or `tag_delete` is retired by ANYTHING later on that
+ *    target — a newer intent on a thing the record wants to destroy says plainly that it should
+ *    still exist;
+ *  · a `mail_send` naming a draft is retired by a later verb on that draft, because a record that
+ *    would re-send a body the person has since changed is the worst kind of stale.
+ *
+ * Everything else is left alone. The cost of retiring too eagerly is invisible — an intent
+ * disappears and nobody is told — while the cost of retiring too little is a stale record the
+ * person can see and discard themselves.
+ */
+const DESTRUCTIVE_KINDS = new Set(["message_delete", "folder_delete", "tag_delete"]);
+
+function retiresAbandoned(newer: EngineMutation, older: EngineMutation): boolean {
+  const shared = targetsOf(newer).filter((t) => targetsOf(older).includes(t));
+  if (shared.length === 0) return false;
+
+  /**
+   * TWO TAG ASSIGNMENTS ARE THE SAME KIND AND SHARE A MESSAGE, and they are still independent:
+   * applying a second tag says nothing about the first. Same-kind replacement is about a verb
+   * whose newer VALUE is the whole intent, and a tag assignment's value is the tag — so this pair
+   * is decided on the tag, not on the message they happen to share.
+   */
+  if (newer.kind === "tag_assign" && older.kind === "tag_assign") {
+    return newer.tagId === older.tagId;
+  }
+  if (newer.kind === older.kind) return true;
+
+  /**
+   * A DESTRUCTION ON EITHER SIDE RETIRES THE OLDER RECORD, and both directions are real:
+   *  · the destruction is NEWER — the thing is gone, so replaying an edit of it can only fail or
+   *    resurrect it (deleting a tag kills a queued assignment of that tag);
+   *  · the destruction is OLDER — a newer intent on the target says plainly it should still
+   *    exist, so the queued destruction is not what the person wants any more (a queued delete
+   *    met by a later move).
+   */
+  if (DESTRUCTIVE_KINDS.has(newer.kind) || DESTRUCTIVE_KINDS.has(older.kind)) return true;
+  if (older.kind === "draft_discard" && newer.kind === "draft_save") return true;
+  if (older.kind === "mail_send" && targetOf(older) !== null) return true;
+  return false;
 }
 
 /**
@@ -1455,6 +1530,13 @@ export class OhmailEngine {
    * the store genuinely does not know.
    */
   private readonly refusedLocally = new Map<string, string>();
+  /**
+   * Terminal outcomes this session could not WRITE — id to the record it wanted to store.
+   *
+   * The durable row is still live on disk, so a reboot replays the verb; this is what keeps it
+   * visible and operable until then, rather than leaving it referenced by nothing.
+   */
+  private readonly abandonedLocally = new Map<string, PersistedOutboxEntry>();
   /** Bumped whenever {@link refusedLocally} changes, so the snapshot below cannot serve a stale row. */
   private localRefusalRev = 0;
   /** {@link EngineOptions.outboxAutoReplay}, resolved once. */
@@ -3754,6 +3836,8 @@ export class OhmailEngine {
     };
     // ONE TRANSACTION: the newer row in, the rows it supersedes out. See `supersedeQueued` for
     // why the removal may not be a separate best-effort delete.
+    // Before the wire: a stale record must not be retryable while this verb is in flight.
+    await superseded.marked;
     const persisted = await this.putOutbox(pending);
     if (!persisted && superseded.retired.length > 0) {
       /**
@@ -4246,7 +4330,17 @@ export class OhmailEngine {
     const v = this.store.version() * 1_000_003 + this.localRefusalRev;
     if (this.abandonedCache !== null && this.abandonedCache.v === v) return this.abandonedCache.out;
     const out: AbandonedMutation[] = [];
-    for (const row of this.store.entries<unknown>(OUTBOX_ABANDONED_TYPE)) {
+    // The store's rows, plus any terminal outcome this session could not write — see
+    // {@link abandonedLocally}. A row that later reached disk wins over the memory copy.
+    const stored = this.store.entries<unknown>(OUTBOX_ABANDONED_TYPE);
+    const storedIds = new Set(stored.map((r) => r.id));
+    const rowsToRead = [
+      ...stored,
+      ...[...this.abandonedLocally.entries()]
+        .filter(([id]) => !storedIds.has(id))
+        .map(([id, entity]) => ({ id, entity: entity as unknown })),
+    ];
+    for (const row of rowsToRead) {
       const e = row.entity;
       if (!isPersistedOutboxEntry(e)) continue;
       out.push({
@@ -4510,24 +4604,34 @@ export class OhmailEngine {
       const e = row.entity;
       if (!isPersistedOutboxEntry(e) || e.superseded === true) continue;
 
-      let retire = false;
+      let next: PersistedOutboxEntry | null = null;
       if (readIds !== null) {
-        // A newer read-flag verb subtracts ids, exactly as `supersedeQueued` does. A record whose
-        // whole list is covered has nothing left to say and is retired; a partial overlap leaves
-        // it alone, because its untouched ids still carry an intent nothing else will deliver.
+        /**
+         * A newer read-flag verb SUBTRACTS ids, exactly as the queue's version does — it does not
+         * merely retire on total coverage. A record covering Giulia and Petra, met by a newer
+         * verb naming Giulia alone, used to be left completely untouched: pressing Try again then
+         * re-applied the newer verb's own id along with the one it still owed, undoing what the
+         * person had just done. Narrowing keeps the part nothing else will deliver and drops the
+         * part that is now stale.
+         */
         const older = e.mutation.kind === "mark_seen" || e.mutation.kind === "feed_mark_seen"
           ? (e.mutation.messageIds ?? [])
           : null;
-        retire = older !== null && older.length > 0 && older.every((id) => readIds.has(id));
-      } else {
-        retire = targetOf(e.mutation) === key;
+        if (older === null || older.length === 0) continue;
+        const remaining = older.filter((id) => !readIds.has(id));
+        if (remaining.length === older.length) continue; // no overlap at all
+        next = remaining.length === 0
+          ? { ...e, superseded: true }
+          : { ...e, mutation: { ...e.mutation, messageIds: remaining } as EngineMutation };
+      } else if (retiresAbandoned(m, e.mutation)) {
+        next = { ...e, superseded: true };
       }
-      if (!retire) continue;
+      if (next === null) continue;
 
       changed = true;
       writes.push(this.store.commitLocal(
-        [{ type: OUTBOX_ABANDONED_TYPE, id: e.id, entity: { ...e, superseded: true } }], [])
-        .catch(() => { /* the in-memory refusal below still stands for this session */ }));
+        [{ type: OUTBOX_ABANDONED_TYPE, id: e.id, entity: next }], [])
+        .catch(() => { /* the record stands unchanged; the next expression of this verb tries again */ }));
     }
     // AWAITED before the row can be re-enabled: a marker still in flight is a window in which
     // another tab — or this one, on a fast second press — can retry a record that is already stale.
@@ -4560,8 +4664,17 @@ export class OhmailEngine {
     const retired: string[] = [];
     /** Everything this call changed, kept so a refused replacement can put it all back. */
     const undo: Array<{ entry: PendingMutation; index: number; mutation: EngineMutation }> = [];
-    void this.supersedeAbandoned(m);
-    if (this.queue.length === 0) return { retired, undo };
+    /**
+     * THE MARKER'S PROMISE IS HANDED BACK, NOT DISCARDED.
+     *
+     * This was `void this.supersedeAbandoned(m)`. The method awaits its own writes internally —
+     * deliberately, so a marker still in flight cannot be raced — and then the caller threw that
+     * away, which put the window straight back: between this line and the verb reaching the wire,
+     * another tab or a fast second press could retry a record that is already stale. `mutate`
+     * awaits it before it dispatches.
+     */
+    const marked = this.supersedeAbandoned(m);
+    if (this.queue.length === 0) return { retired, undo, marked };
     const key = supersedeKey(m);
     const readIds = m.kind === "mark_seen" || m.kind === "feed_mark_seen"
       ? new Set(m.messageIds ?? [])
@@ -4629,7 +4742,7 @@ export class OhmailEngine {
       this.overlayRev++;
       this.notify();
     }
-    return { retired, undo };
+    return { retired, undo, marked };
   }
 
   /**
@@ -4964,7 +5077,26 @@ export class OhmailEngine {
             [{ type: OUTBOX_ABANDONED_TYPE, id: p.id, entity: record }],
             [{ type: OUTBOX_TYPE, id: p.id }],
           );
-        } catch { /* nothing moved; the verb stays queued on disk and the list is rebuilt on boot */ }
+        } catch {
+          /**
+           * THE TRANSITION WAS REFUSED, SO HOLD THE RECORD IN MEMORY.
+           *
+           * Nothing moved on disk: the row is still a LIVE outbox entry there. But the replay
+           * that dispatched it has already taken it out of the queue, and the boot latch stops
+           * the store being read again this session — so without this the verb is in the queue,
+           * in `abandoned()`, and on the screen exactly nowhere, while its durable row sits there
+           * unreferenced. A person who has just had a send come back "this may have gone, check
+           * Sent" would see that warning appear and then have nothing to act on, with no way to
+           * reach it again short of restarting the app.
+           *
+           * Held in memory instead, so the record is listed and its controls work for the rest of
+           * the session. A reboot reads the live row and replays it, which is honest: on disk the
+           * verb genuinely never reached its terminal state.
+           */
+          this.abandonedLocally.set(p.id, record);
+          this.localRefusalRev++;
+          this.notify();
+        }
       } else {
         // The durable entry goes with it: a refused verb whose owner read the sentence must not
         // replay, and must not sit in a list claiming to be unfinished work.
