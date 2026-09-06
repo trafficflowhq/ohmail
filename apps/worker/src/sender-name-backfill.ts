@@ -1,5 +1,6 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import { messageBodies, messages, recordChanges, type LedgerTx, type Tx } from "@trafficflow/db";
+import { dialect } from "@trafficflow/db/dialect";
 /* `@trafficflow/core/mail` AND NOT THE BARE BARREL, which is a packaging constraint rather than a
    style one and it was measured here rather than inherited. The desktop engine bundles this module,
    and the barrel's index re-exports the AI half: importing four symbols through it pulled the
@@ -240,13 +241,29 @@ export async function runSenderNameBackfill(
     // bag being shipped. A header bag holds the whole received header block; the three address
     // headers are a few hundred bytes of it. Selecting `headers` would move an entire table of
     // stored bodies over the wire to read three keys out of each one.
+    /**
+     * THE ONE CONSTRUCT HERE THE CENSUS COULD NOT SEE, and it is the dangerous one.
+     *
+     * `${headers} ? 'from'` is the jsonb KEY-EXISTS operator. The construct table catches its
+     * two-character forms and not the single one, so these three sites read as clean. On the
+     * device store `?` is not an operator at all — it is a PARAMETER PLACEHOLDER, so the
+     * statement would not fail, it would bind the next value into the wrong position and shift
+     * every binding after it. `d.jsonHasAny(col, [key])` asks the same question in each store's
+     * own terms.
+     *
+     * The empty-array comparisons go through the seam for the ordinary reason: the column is
+     * `jsonb` on one store and JSON-in-text on the other, and the literal has to be cast to
+     * whichever the column is.
+     */
+    const d = dialect(db);
+    const emptyJson = d.castJsonb(sql`'[]'`);
     const page = await db
       .select({
         id: messages.id,
         accountId: messages.accountId,
         fromName: messages.fromName,
-        toEmpty: sql<boolean>`${messages.toAddresses} = '[]'::jsonb`,
-        ccEmpty: sql<boolean>`${messages.ccAddresses} = '[]'::jsonb`,
+        toEmpty: sql<boolean>`${messages.toAddresses} = ${emptyJson}`,
+        ccEmpty: sql<boolean>`${messages.ccAddresses} = ${emptyJson}`,
         hFrom: sql<unknown>`${messageBodies.headers} -> 'from'`,
         hTo: sql<unknown>`${messageBodies.headers} -> 'to'`,
         hCc: sql<unknown>`${messageBodies.headers} -> 'cc'`,
@@ -257,11 +274,11 @@ export async function runSenderNameBackfill(
         // A row is only a candidate where a column is unset AND the header that would fill it
         // exists. `?` is jsonb key-presence; a row with no body headers matches nothing.
         sql`(
-          (${messages.fromName} is null and ${messageBodies.headers} ? 'from')
-          or (${messages.toAddresses} = '[]'::jsonb and ${messageBodies.headers} ? 'to')
-          or (${messages.ccAddresses} = '[]'::jsonb and ${messageBodies.headers} ? 'cc')
+          (${messages.fromName} is null and ${await d.jsonHasAny(messageBodies.headers, ["from"])})
+          or (${messages.toAddresses} = ${emptyJson} and ${await d.jsonHasAny(messageBodies.headers, ["to"])})
+          or (${messages.ccAddresses} = ${emptyJson} and ${await d.jsonHasAny(messageBodies.headers, ["cc"])})
         )`,
-        cursor === null ? undefined : sql`${messages.id} > ${cursor}::uuid`,
+        cursor === null ? undefined : sql`${messages.id} > ${d.castUuid(cursor)}`,
         deps.accountId === undefined ? undefined : eq(messages.accountId, deps.accountId),
       ))
       .orderBy(asc(messages.id))
@@ -345,8 +362,8 @@ export async function runSenderNameBackfill(
            now visible — which is what resumability is for. */
         const guards = [eq(messages.id, w.row.id)];
         if (w.fill.fromName !== undefined) guards.push(sql`${messages.fromName} is null`);
-        if (w.fill.toAddresses !== undefined) guards.push(sql`${messages.toAddresses} = '[]'::jsonb`);
-        if (w.fill.ccAddresses !== undefined) guards.push(sql`${messages.ccAddresses} = '[]'::jsonb`);
+        if (w.fill.toAddresses !== undefined) guards.push(sql`${messages.toAddresses} = ${d.castJsonb(sql`'[]'`)}`);
+        if (w.fill.ccAddresses !== undefined) guards.push(sql`${messages.ccAddresses} = ${d.castJsonb(sql`'[]'`)}`);
         const updated = await tx.update(messages)
           .set({ ...w.fill, updatedAt: new Date() })
           .where(and(...guards))

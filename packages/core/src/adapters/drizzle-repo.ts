@@ -1047,7 +1047,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     const nextAttemptAt = holds.length === 0
       ? opts.nextAttemptAt
       : sql`case when ${inArray(messageFailures.code, [...holds])} then null
-             else ${opts.nextAttemptAt === null ? null : opts.nextAttemptAt.toISOString()}::timestamptz end`;
+             else ${opts.nextAttemptAt === null ? sql`null` : this.d.ts(opts.nextAttemptAt)} end`;
     const rows = await this.db.update(messageFailures)
       .set({
         attempts: sql`${messageFailures.attempts} + 1`,
@@ -1281,7 +1281,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     if (!row || (row.reason !== "junk_filed" && row.reason !== "expunged")) return false;
     const bytes = bodyBytesOf(body);
     // The rolling-window reserve — counter row locked here, before the caller's seq writes.
-    const reserved = await reserveBodyBytesEvicting(this.db, storage.accountId, bytes, storage.capBytes);
+    const reserved = await reserveBodyBytesEvicting(this.db, this.d, storage.accountId, bytes, storage.capBytes);
     if (!reserved) return false;   // at the pathological ceiling the husk stands, honestly
     const updated = await this.db.update(messageBodies)
       .set({ text: body.text, html: body.html, withheldReason: null })
@@ -1320,7 +1320,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
         eq(messages.accountId, accountId),
         eq(messages.mailboxId, mailboxId),
         isNull(messages.deletedAt),
-        ...(opts.afterId !== undefined ? [sql`${messages.id} > ${opts.afterId}::uuid`] : []),
+        ...(opts.afterId !== undefined ? [sql`${messages.id} > ${this.d.castUuid(opts.afterId)}`] : []),
       ))
       .orderBy(asc(messages.id))
       .limit(opts.limit);
@@ -1441,7 +1441,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     // it answer `false`, which is the old decline-new shape kept as the pathological ceiling.
     const reserved = dupe.length > 0
       ? await reserveBodyBytes(this.db, storage.accountId, bytes, storage.capBytes)
-      : await reserveBodyBytesEvicting(this.db, storage.accountId, bytes, storage.capBytes);
+      : await reserveBodyBytesEvicting(this.db, this.d, storage.accountId, bytes, storage.capBytes);
     const rows = await this.db.insert(messageBodies).values({
       messageId,
       text: reserved ? body.text : "",
@@ -1626,36 +1626,51 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     // states: that schedule and that authorship belong to whichever intent WON the row, never to
     // an observation write, physical or not.
     const physical = c.physicalObservation === true;
-    const result = await this.db.execute<{ desiredFolder: string }>(sql`
+    /**
+     * THE PHYSICAL GATE IS DECIDED HERE, NOT BY THE DATABASE — and that is a simplification the
+     * port made available rather than a change of meaning.
+     *
+     * It used to be `desired_folder = $x OR $physical::boolean`, with a JavaScript boolean bound
+     * as a parameter and cast so the server would accept it. `A OR true` is `true` and
+     * `A OR false` is `A`, and `physical` is a constant by the time this statement is composed —
+     * so the same two branches are expressible without binding a boolean at all. That matters
+     * beyond tidiness: the device store has no boolean type and its driver does not take a
+     * JavaScript boolean as a parameter, so the cast was not portable and neither was the bind.
+     * Four occurrences, one fragment.
+     */
+    const matched = sql`desired_folder = ${c.expectDesiredFolder}`;
+    const gate = physical ? sql`TRUE` : matched;
+    const satisfiedBy = this.d.castText(c.satisfiedBy ?? null);
+    const result = await this.d.exec(this.db, sql`
       UPDATE ${folderState} SET
         observed_folder = CASE
-          WHEN desired_folder = ${c.expectDesiredFolder} OR ${physical}::boolean
+          WHEN ${gate}
             THEN ${c.observedFolder}
           ELSE observed_folder
         END,
-        last_set_by = CASE WHEN desired_folder = ${c.expectDesiredFolder}
+        last_set_by = CASE WHEN ${matched}
           THEN ${c.lastSetBy} ELSE last_set_by END,
         reconcile_status = CASE
-          WHEN desired_folder = ${c.expectDesiredFolder} OR ${physical}::boolean THEN
+          WHEN ${gate} THEN
             CASE
               WHEN desired_folder = ${c.observedFolder} THEN 'reconciled'
-              WHEN ${c.satisfiedBy ?? null}::text IS NOT NULL
-                   AND desired_folder = ${c.expectDesiredFolder}
-                   AND ${c.satisfiedBy ?? null}::text = ${c.observedFolder}
+              WHEN ${satisfiedBy} IS NOT NULL
+                   AND ${matched}
+                   AND ${satisfiedBy} = ${c.observedFolder}
                 THEN 'reconciled'
               ELSE 'pending'
             END
           ELSE reconcile_status
         END,
-        conflict = CASE WHEN desired_folder = ${c.expectDesiredFolder} OR ${physical}::boolean
-          THEN false ELSE conflict END,
-        updated_at = CASE WHEN desired_folder = ${c.expectDesiredFolder} OR ${physical}::boolean
-          THEN now() ELSE updated_at END,
-        attempts = CASE WHEN desired_folder = ${c.expectDesiredFolder}
+        conflict = CASE WHEN ${gate}
+          THEN FALSE ELSE conflict END,
+        updated_at = CASE WHEN ${gate}
+          THEN ${this.d.now()} ELSE updated_at END,
+        attempts = CASE WHEN ${matched}
           THEN 0 ELSE attempts END,
-        next_attempt_at = CASE WHEN desired_folder = ${c.expectDesiredFolder}
+        next_attempt_at = CASE WHEN ${matched}
           THEN NULL ELSE next_attempt_at END
-      WHERE message_id = ${messageId}::uuid
+      WHERE message_id = ${this.d.castUuid(messageId)}
       RETURNING desired_folder AS "desiredFolder"
     `);
     // THE TWO DRIVERS BEHIND `Db` DISAGREE ABOUT WHAT `execute` RETURNS — `consent-cutline.ts`
@@ -1669,10 +1684,10 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     // an array to begin with. Comparing `desired_folder` itself (a string this module already
     // owns) rather than a computed boolean removes one variable; reading the row shape correctly
     // removes the other.
-    const rows = Array.isArray(result)
-      ? result
-      : ((result as unknown as { rows?: Array<{ desiredFolder: string }> }).rows ?? []);
-    return rows[0]?.desiredFolder === c.expectDesiredFolder;
+    // The driver split above is GONE, and the comment stays because the reasoning is why the seam
+    // returns one shape: `d.exec` hands back rows positionally on both stores, so there is no
+    // array-or-`{rows}` question left to get wrong. One column is selected, so position 0 is it.
+    return String(result[0]?.[0] ?? "") === c.expectDesiredFolder;
   }
 
   /** {@link upsertFolderState}'s read-state twin, backoff reset included and for its reasons. */
@@ -2182,7 +2197,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
            )
       )`,
     ];
-    if (opts.afterId) filters.push(sql`${messages.id} > ${opts.afterId}::uuid`);
+    if (opts.afterId) filters.push(sql`${messages.id} > ${this.d.castUuid(opts.afterId)}`);
 
     const page = this.db.select({
       messageId: messages.id,

@@ -2590,16 +2590,20 @@ export class SendService {
       // strands a message that has already been sent. `SKIP LOCKED` needs the row to be selected,
       // so the update is driven by a subquery rather than by `where id = ...` directly.
       //
-      // The subquery goes through the seam rather than carrying `for update skip locked` in its
-      // own text: this store spells that clause and the device store has no clause at all, and a
-      // statement that carries it there does not answer differently — it fails to parse, inside
-      // the transaction that has just recorded a message as SENT. On the device the member is the
-      // identity and the subquery is an ordinary one, which is correct for the same reason the
-      // seam gives everywhere: one serialized writer, nothing to skip past.
-      const doorbell = dialect(ctx.db).skipLocked(
-        tx.select({ id: mailboxes.id }).from(mailboxes).where(eq(mailboxes.id, mailboxId)));
-      await tx.update(mailboxes).set({ syncRequestedAt: now })
-        .where(inArray(mailboxes.id, doorbell));
+      // REVERTED TO THE STATEMENT'S OWN TEXT, and the reason is measured rather than argued.
+      // Expressing this as `inArray(mailboxes.id, d.skipLocked(subquery))` compiles, renders and
+      // runs — and against real Postgres it turned twelve of fifteen cases in the send suites red
+      // where three were red before. The doorbell stopped doing what it is for, and a send that
+      // does not ring it settles as `pending` and pages the stuck-send alarm. Whatever drizzle
+      // renders for a locked builder embedded as a subquery, it is not this statement.
+      //
+      // So the clause stays inline and this site is one of the three the port does NOT convert.
+      // The device half is owed and is NOT this: it needs a statement written for that store,
+      // with a case that runs there, not a translation that looks right on both.
+      await tx.update(mailboxes).set({ syncRequestedAt: now }).where(sql`${mailboxes.id} in (
+        select ${mailboxes.id} from ${mailboxes} where ${mailboxes.id} = ${mailboxId}
+        for update skip locked
+      )`);
       return recordChange(tx, {
         accountId: ctx.accountId, entityType: "draft", entityId: draftId, op: "update", meta: null,
       });

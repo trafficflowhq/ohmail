@@ -4,6 +4,7 @@ import {
   type Tx,
 } from "@trafficflow/db";
 import { UNMETERED_STORAGE_CAP, type Logger, type StorageCap } from "@trafficflow/core/mail";
+import { dialect } from "@trafficflow/db/dialect";
 
 /**
  * THE ROLLING-WINDOW TRIM — the background half of the at-cap behaviour ratified 2026-08-21.
@@ -66,7 +67,8 @@ export async function storageEvictPass(
   let more = true;
   for (let round = 0; round < EVICT_ROUNDS_PER_CYCLE && more; round++) {
     const result = await db.transaction(async (tx) =>
-      evictOldestBodies(tx as Tx, accountId, { targetBytes: target, maxBodies: EVICT_BATCH_BODIES }));
+      evictOldestBodies(tx as Tx, dialect(db), accountId,
+        { targetBytes: target, maxBodies: EVICT_BATCH_BODIES }));
     evicted += result.evicted;
     freedBytes += result.freedBytes;
     more = result.more;

@@ -1,6 +1,6 @@
 import { sql, eq, inArray } from "drizzle-orm";
 import { accountStorage, messageBodies } from "./schema-mail.js";
-import { dialect } from "./dialect/index.js";
+import type { Dialect } from "./dialect/index.js";
 import type { Tx } from "./change-log.js";
 
 /**
@@ -138,11 +138,10 @@ export async function releaseBodyBytes(tx: Tx, accountId: string, bytes: number)
  * per-account row lock as {@link reserveBodyBytes}, so this introduces no new lock and no new
  * ordering: call it before the transaction's first `recordChange`, like every other writer here.
  */
-export async function recomputeAccountStorage(tx: Tx, accountId: string): Promise<number> {
+export async function recomputeAccountStorage(tx: Tx, d: Dialect, accountId: string): Promise<number> {
   // The row must EXIST before it can be locked — an account whose bodies all predate 0062 has no
   // row, and `FOR UPDATE` locks nothing rather than waiting for one to appear.
   await tx.insert(accountStorage).values({ accountId, bytes: 0 }).onConflictDoNothing();
-  const d = dialect(tx);
   // THROUGH THE QUERY BUILDER, not as `for update` inside the statement's text. The seam's member
   // takes a QUERY, so a raw fragment could not go through it — and a fragment member would be the
   // more dangerous shape, because it can be attached to a statement the server refuses to lock
@@ -244,10 +243,9 @@ export interface EvictionResult {
  * as they serialize behind each other.
  */
 export async function evictOldestBodies(
-  tx: Tx, accountId: string, opts: { targetBytes: number; maxBodies: number },
+  tx: Tx, d: Dialect, accountId: string, opts: { targetBytes: number; maxBodies: number },
 ): Promise<EvictionResult> {
   await tx.insert(accountStorage).values({ accountId, bytes: 0 }).onConflictDoNothing();
-  const d = dialect(tx);
   // The counter row's lock and its value in one query through the builder — see the note in
   // `recomputeAccountStorage`. It also drops the driver split this used to carry: the builder
   // returns rows, so there is no longer an array-or-`{rows}` shape to decide between.
@@ -314,11 +312,11 @@ export async function evictOldestBodies(
  * still refuse.
  */
 export async function reserveBodyBytesEvicting(
-  tx: Tx, accountId: string, bytes: number, capBytes: number | null,
+  tx: Tx, d: Dialect, accountId: string, bytes: number, capBytes: number | null,
 ): Promise<boolean> {
   if (await reserveBodyBytes(tx, accountId, bytes, capBytes)) return true;
   if (capBytes === null) return false;   // unreachable: a null cap never refuses
   const target = Math.max(0, capBytes - bytes);
-  await evictOldestBodies(tx, accountId, { targetBytes: target, maxBodies: EVICT_INLINE_MAX_BODIES });
+  await evictOldestBodies(tx, d, accountId, { targetBytes: target, maxBodies: EVICT_INLINE_MAX_BODIES });
   return reserveBodyBytes(tx, accountId, bytes, capBytes);
 }
