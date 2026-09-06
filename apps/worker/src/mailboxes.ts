@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, ne, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, sql, type SQL } from "drizzle-orm";
 import {
   mailboxes, mailboxCredentials, isOrganizerRole, organizerDisplayName, capabilitiesColumn, type Tx,
   type OrganizerRole, type OrganizerKind, type OrganizerState,
@@ -1459,7 +1459,17 @@ export async function markMailboxReleased(
     retryAfter: null,
     // Mail 0088 — the fifth writer of the triple. See `markMailboxStoodDown`'s note.
     organizerEventAt: opts.now ?? new Date(),
-  }).where(lifecycleWhere(mailboxId, opts.fence)).returning({ id: mailboxes.id }));
+  }).where(and(
+    lifecycleWhere(mailboxId, opts.fence),
+    /* THE REQUEST MUST STILL BE STANDING. A worker carries a release decision from the start of
+       its cycle to the write at the end of it, and in between the person can press "Organize
+       here" — which cancels the request and writes a takeover. Without this the stale write won:
+       it cleared the newer takeover and released a mailbox against the person's LAST press, which
+       is the control undoing itself. Requiring the stamp it was authorised by to still be there
+       makes the losing order harmless rather than merely unlikely — the same argument the
+       `FOR UPDATE` on the service side already makes for two presses racing each other. */
+    isNotNull(mailboxes.releaseRequestedAt),
+  )).returning({ id: mailboxes.id }));
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════

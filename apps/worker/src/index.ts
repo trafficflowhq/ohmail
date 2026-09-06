@@ -1632,14 +1632,21 @@ export async function startWorkerWithLock(
           if (typeof peek === "function") {
             try {
               const seen = await readLeasePeek({ io: peek.call(adapter), now: new Date() });
-              const foreign = seen.holders.find(
-                (h) => h.installId !== organizerInstallId && h.fresh,
-              );
-              mayMark = foreign === undefined && seen.unreadable === 0;
+              /* ANY LIVE CLAIM STOPS THIS, INCLUDING ONE CARRYING OUR OWN ID. Excluding our own
+                 was wrong in a way the word "foreign" hid: `releaseMailboxClaim` removes the
+                 claims it SAW in its own `listClaims`, so a claim appended after that read —
+                 by an overlapping worker of this same deployment, or by anything else writing
+                 our id — survives the removal. The peek then saw it, called it ours, and the row
+                 was stamped free while a fresh claim stood every other install down.
+                 What has to be true before saying "nobody organizes this" is that the folder
+                 holds no live claim at all. A surviving claim of ours is not an exception to
+                 that; it is an unfinished release, and the next cycle removes it. */
+              const live = seen.holders.find((h) => h.fresh);
+              mayMark = live === undefined && seen.unreadable === 0;
               if (!mayMark) {
                 log.info("organizer_release_withheld", {
                   mailboxId: mb.mailboxId, accountId: mb.accountId,
-                  holder: foreign?.installId ?? null, unreadable: seen.unreadable,
+                  holder: live?.installId ?? null, unreadable: seen.unreadable,
                   reason: "the mailbox is not free, so this install must not report it as free; "
                     + "the request stands and is honoured again when the folder says otherwise",
                 });
