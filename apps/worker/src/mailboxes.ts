@@ -13,6 +13,7 @@ import {
 import { makeDrizzleRepo, type DrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { asDatabaseFault, markDatabaseFaults } from "./db-fault.js";
 import type { SyncWriteFence } from "./sync.js";
+import { carryDialect } from "@trafficflow/db/dialect";
 
 // The always-on worker reads its per-mailbox credentials from `mailbox_credentials`
 // (envelope-encrypted at rest) instead of a single env mailbox. This module is
@@ -1184,7 +1185,12 @@ export function makeSyncWriteFence(
         // classified from a code that a dead IMAP host produces identically.
         return {
           fenced: false as const,
-          result: await fn(markDatabaseFaults(makeDrizzleRepo(tx as unknown as Tx), "repo")),
+          // `carryDialect`, not the bare `tx`: the transaction object does not inherit the
+          // connection's dialect brand, and a repository built straight from it refuses on its
+          // first locking statement — which is every write this fence exists to group.
+          result: await fn(
+            markDatabaseFaults(makeDrizzleRepo(carryDialect(db, tx) as unknown as Tx), "repo"),
+          ),
         };
       }));
     },

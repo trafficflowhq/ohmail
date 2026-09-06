@@ -61,6 +61,41 @@ export function brandDialect<T extends object>(db: T, name: DialectName): T {
 }
 
 /**
+ * Refuse a result whose columns cannot be told apart.
+ *
+ * Two columns of one name collapse into a single object key before anything here can see them, so
+ * the row would come back SHORTER than the statement selected, with no error. Refusing names the
+ * fix — alias them — instead of returning a row whose shape depends on the statement's spelling.
+ */
+export function assertDistinct(names: readonly string[]): void {
+  const seen = new Set<string>();
+  const duplicated = names.filter((n) => (seen.has(n) ? true : (seen.add(n), false)));
+  if (duplicated.length > 0) {
+    throw new Error(
+      `this statement selects more than one column named ${[...new Set(duplicated)].map((n) => `'${n}'`).join(", ")}. ` +
+      "Rows are returned positionally and duplicate names collapse before they can be ordered — " +
+      "give each column a distinct alias.",
+    );
+  }
+}
+
+/**
+ * Give a handle the dialect of the handle it came from.
+ *
+ * A driver's transaction object is not the connection it was opened on — it is a fresh object, and
+ * the brand does not travel to it. Anything that opens a transaction and then builds a repository
+ * around the transaction handle is therefore holding something unbranded, and the refusal in
+ * `dialectOf` will fire on its first locking statement rather than at the point the mistake was
+ * made.
+ *
+ * Passing both handles here says where the answer came from, which is the part a bare
+ * `brandDialect(tx, "pg")` at the call site would be guessing at.
+ */
+export function carryDialect<T extends object>(from: unknown, to: T): T {
+  return brandDialect(to, dialectOf(from));
+}
+
+/**
  * Which dialect this handle speaks — or a refusal.
  *
  * The refusal is the point. A handle that reaches a service without a brand came from a factory
@@ -144,6 +179,19 @@ export interface Dialect {
 
   /** Case-insensitive containment, in each dialect's own spelling. */
   ilike(column: SQL | unknown, pattern: string): SQL;
+
+  /**
+   * TRUE when the column holds at least one character that is not whitespace.
+   *
+   * The rule router ranks a rule by which of its terms are present, and "present" has to mean the
+   * same thing in SQL as it does in the evaluator: a term of `'  '` is BARE. The server says that
+   * with a regex match against a character class; this store has no regex operator at all, and a
+   * query using one does not fail on the device with a wrong answer, it fails with a syntax error.
+   *
+   * The class is `SUBJECT_TERM_TRIM` in `rules.ts` spelled in SQL, and the pg test checks the two
+   * agree over every one of its six characters.
+   */
+  hasNonBlank(column: SQL | unknown): SQL;
 
   /** A duration, as the timestamp columns can be offset by it. */
   interval(ms: number): SQL;

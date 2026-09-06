@@ -8,26 +8,12 @@
  * being written.
  */
 import { sql, type SQL } from "drizzle-orm";
-import type { Dialect, LockOptions, SearchArm } from "./index.js";
+import { assertDistinct, type Dialect, type LockOptions, type SearchArm } from "./index.js";
 
-/**
- * Refuse a result whose columns cannot be told apart.
- *
- * Two columns of one name collapse into a single object key before anything here can see them, so
- * the row would come back SHORTER than the statement selected, with no error. Refusing names the
- * fix — alias them — instead of returning a row whose shape depends on the statement's spelling.
- */
-export function assertDistinct(names: readonly string[]): void {
-  const seen = new Set<string>();
-  const duplicated = names.filter((n) => (seen.has(n) ? true : (seen.add(n), false)));
-  if (duplicated.length > 0) {
-    throw new Error(
-      `this statement selects more than one column named ${[...new Set(duplicated)].map((n) => `'${n}'`).join(", ")}. ` +
-      "Rows are returned positionally and duplicate names collapse before they can be ordered — " +
-      "give each column a distinct alias.",
-    );
-  }
-}
+// Re-exported because it was defined here first and the server arm's tests import it by this
+// path; the refusal itself belongs to both arms and now lives in the contract.
+export { assertDistinct };
+
 
 /** Fed to `to_tsvector`/`websearch_to_tsquery`; the literal is required for an immutable index. */
 const TEXT_SEARCH_CONFIG = "english";
@@ -71,6 +57,11 @@ export function pgDialect(): Dialect {
       // is readable.
       await run.execute(sql`select pg_notify(${channel}, ${payload})`);
     },
+
+    // The backslashes are DOUBLED so the text Postgres receives is byte-identical to the text in
+    // the migration's CHECK — a tagged template cooks `\t` into a literal tab, which means the same
+    // thing to the regex engine but makes the two definitions of one predicate impossible to diff.
+    hasNonBlank: (column) => sql`${column} ~ '[^ \\t\\n\\r\\f\\v]'`,
 
     ilike: (column, pattern) => sql`${column} ilike ${pattern}`,
 

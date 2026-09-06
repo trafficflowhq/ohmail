@@ -67,6 +67,7 @@ import type { ToolName, WorkflowStep } from "../../workflow-shapes.js";
  * unaffected by where it now lives. */
 export type { WorkflowInverse } from "../../workflow-shapes.js";
 import type { WorkflowInverse } from "../../workflow-shapes.js";
+import { carryDialect } from "@trafficflow/db/dialect";
 
 /** What a tool's `apply` returns: an audit-safe `effect` summary + the `inverse` (undo). */
 export interface ToolApplyResult {
@@ -678,7 +679,9 @@ export class WorkflowExecutor {
         //      as the write-time layer — (i) and (ii) are about not paying, these are about not
         //      double-applying and not acting.
         await deps.db.transaction(async (txRaw) => {
-          const tx = txRaw as unknown as Tx;
+          // The brand does not travel to a transaction object, and every locking statement below
+          // needs it, so it is carried from the handle the transaction was opened on.
+          const tx = carryDialect(deps.db, txRaw as object) as unknown as Tx;
           const repo = makeDrizzleRepo(tx);
           // Idempotency gate: an existing (runId, stepIndex) audit row ⇒ already applied.
           // Reaching this after (i) passed needs a concurrent drain of the SAME run, which the

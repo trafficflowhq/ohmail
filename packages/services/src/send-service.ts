@@ -14,6 +14,7 @@ import type { ServiceContext } from "./context.js";
 import type { AttachmentAdapter, OpenAdapter } from "./attachments-service.js";
 import { ServiceError, SettleFailed, TransientDialRefusal } from "./errors.js";
 import { sanitizeOutboundHtml } from "./outbound-html.js";
+import { carryDialect } from "@trafficflow/db/dialect";
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 
@@ -1396,7 +1397,9 @@ export class SendService {
         // the worker's plan phase has.
         repo: makeDrizzleRepo(ctx.db as never) as RepoPort,
         withTx: (run) => asTx(ctx).transaction(
-          (tx) => run(makeDrizzleRepo(tx as never) as RepoPort & RoutingPort),
+          // Carried from `ctx.db`: the transaction object has no dialect brand of its own, and the
+          // routing writes this repository performs all compose locking statements.
+          (tx) => run(makeDrizzleRepo(carryDialect(ctx.db, tx) as never) as RepoPort & RoutingPort),
         ),
       });
     } catch (err) {

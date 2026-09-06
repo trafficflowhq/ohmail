@@ -10,6 +10,7 @@ import {
   type RuleDecision,
 } from "@trafficflow/core";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
+import { carryDialect } from "@trafficflow/db/dialect";
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
    RE-ROUTING THE OHBOX BACKLOG — the automated mail `people_only` was turned on too late to catch
@@ -457,7 +458,12 @@ export async function ohboxTidyPass(
         // under different knowledge — is not a cost, it is the REQUIREMENT: the settings row is
         // already re-read per page for precisely that reason, and cached rules made the decision
         // half-fresh in a way no reader could see. Two indexed reads per hundred rows.
-        const pageRepo = makeDrizzleRepo(tx as unknown as Parameters<typeof makeDrizzleRepo>[0]);
+        // `carryDialect`, not the bare handle: a driver's transaction object is a fresh object and
+        // does not inherit the connection's dialect brand, so a repository built straight from `tx`
+        // refuses on its first locking statement.
+        const pageRepo = makeDrizzleRepo(
+          carryDialect(db, tx) as unknown as Parameters<typeof makeDrizzleRepo>[0],
+        );
         const rules: Rule[] = await pageRepo.listRules(accountId);
         const known: ReadonlySet<string> = await pageRepo.knownSenders(accountId);
 

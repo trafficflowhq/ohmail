@@ -11,7 +11,7 @@ import postgres from "postgres";
 import { adoptBaseline } from "./baseline.js";
 import { JOURNALS } from "./migrate.js";
 import { schema } from "./schema.js";
-import { brandDialect } from "./dialect/index.js";
+import { assertDistinct, brandDialect } from "./dialect/index.js";
 import { migrateSqlite } from "./sqlite-migrate.js";
 
 /**
@@ -97,6 +97,12 @@ async function makeSqliteTestDb(): Promise<PgliteDatabase<typeof schema>> {
       // server arm's `exec`: integer-like aliases enumerate numerically and silently reorder.
       const statement = raw.prepare(query);
       const order = statement.columns?.().map((c) => c.name ?? c.column ?? "") ?? null;
+      // THE SAME REFUSAL THE SERVER ARM MAKES, for the same reason and one step earlier. Rows come
+      // back from this driver as objects too, so two columns of one name collapse to a single key
+      // and BOTH positions would be filled from it — a row of the right length carrying the wrong
+      // value, which is worse than a short one. The server arm refuses; without this the two arms
+      // disagree about a statement neither can answer.
+      if (order !== null) assertDistinct(order);
       const raws = statement.all(...(params as never[])) as Record<string, unknown>[];
       const rows = order === null
         ? raws.map((r) => Object.values(r))

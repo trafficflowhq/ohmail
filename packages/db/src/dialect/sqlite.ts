@@ -30,7 +30,7 @@ export const SQLITE_MINIMUM = {
   octetLength: "3.43.0",
 } as const;
 
-/** The floor as a comparable tuple: the highest of the three requirements above. */
+/** The floor as a comparable tuple: the highest of the four requirements above. */
 const MINIMUM_TUPLE = [3, 43, 0] as const;
 
 function versionTuple(version: string): [number, number, number] {
@@ -121,6 +121,17 @@ export function sqliteDialect(): Dialect {
     // search for a name in any other alphabet therefore matches less on a device. Closing that gap
     // needs a folded column or an ICU build, neither of which this store has; naming it is what
     // stops the next reader assuming the two are the same comparison.
+    /**
+     * `trim(X, Y)` removes any of Y's characters from both ends, so what is left is empty exactly
+     * when every character of X was one of them — the same question the server's regex asks, put
+     * the only way this store can ask it. The class is built with `char()` rather than written as
+     * escapes because this store's string literals do not interpret backslash escapes at all: a
+     * literal '\t' here is a backslash and a t, and the predicate would then trim neither tabs nor
+     * anything else it was meant to.
+     */
+    hasNonBlank: (column) =>
+      sql`trim(coalesce(${column}, ''), ' ' || char(9) || char(10) || char(13) || char(12) || char(11)) <> ''`,
+
     ilike: (column, pattern) => sql`lower(${column}) like lower(${pattern})`,
 
     interval: (ms: number) => sql`${Math.trunc(ms)}`,

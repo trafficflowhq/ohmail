@@ -8,6 +8,7 @@ import {
   silentLogger, type Logger, type NormalizedMessage, type Rule,
 } from "@trafficflow/core";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
+import { carryDialect } from "@trafficflow/db/dialect";
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
    APPLYING A NEW RULE TO MAIL THAT IS ALREADY FILED
@@ -363,7 +364,12 @@ export async function ruleRetroPass(
         // as the rule that admitted this page and the candidates selected below it. The lock order is
         // unchanged: these are plain reads of `rules`/`contacts`, no row lock, taken between the
         // owned-rule lock and `folder_state`.
-        const pageRepo = makeDrizzleRepo(tx as unknown as Parameters<typeof makeDrizzleRepo>[0]);
+        // `carryDialect`, not the bare handle: a driver's transaction object is a fresh object and
+        // does not inherit the connection's dialect brand, so a repository built straight from `tx`
+        // refuses on its first locking statement.
+        const pageRepo = makeDrizzleRepo(
+          carryDialect(db, tx) as unknown as Parameters<typeof makeDrizzleRepo>[0],
+        );
         const rules: Rule[] = await pageRepo.listRules(rule.accountId);
         const known: ReadonlySet<string> = await pageRepo.knownSenders(rule.accountId);
 
