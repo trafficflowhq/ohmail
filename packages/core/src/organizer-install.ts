@@ -62,6 +62,14 @@ export function organizerEnvironment(env: OrganizerInstallEnv): string {
  * the worker's identity and leaves the API deciding against the default.
  */
 export function resolveCloudInstallId(env: OrganizerInstallEnv): string {
-  const override = env.TF_ORGANIZER_INSTALL_ID;
-  return override && override.trim() !== "" ? override : cloudInstallId(organizerEnvironment(env));
+  /* TRIMMED, NOT JUST TESTED FOR BLANKNESS. This tested `override.trim() !== ""` and then returned
+     the UNTRIMMED value, while `formatClaim` writes the id through `headerSafe`, which trims. So
+     `TF_ORGANIZER_INSTALL_ID=" cloud-a "` put `cloud-a` in the mailbox and kept `" cloud-a "` in
+     config: the claim and the identity comparing against it differed by two spaces, and the
+     comparison is exact. The mailbox is the master, so the bytes it will hold are the bytes this
+     returns — one value, from one place, all the way through. */
+  const override = env.TF_ORGANIZER_INSTALL_ID?.trim();
+  return override !== undefined && override !== ""
+    ? override
+    : cloudInstallId(organizerEnvironment(env));
 }
