@@ -285,6 +285,21 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // the other, because the alert preflight must not import an API route to answer a question
   // about the database.
   ["platform_signals", "sample_cause"],
+  // cloud 0031_credit_rollup_sweep_backlog — ONE marker for two columns, and the exception is
+  // deliberate: both are added by the same migration and `duration_ms` lands after
+  // `setup_sweep_backlog`, so on 0030's own rule (statements inside a migration apply in order) a
+  // database holding the second holds the first.
+  //
+  // The loudness here is the SWALLOWED kind, which is why it needs a marker at all. The roll-up's
+  // run-row INSERT names both columns and its failure is caught by contract — a pass that did its
+  // work must not report as one that did nothing — so an API or worker deployed ahead of the
+  // migration 42703s inside that write and the only symptom is a run ledger that quietly stops
+  // gaining rows. The console then reads its freshness stamp off the newest row and reports the
+  // aggregates as stale, which is the one thing they are not.
+  //
+  // `loadRollupState` also SELECTs `setup_sweep_backlog` on the staff connection, so the Billing
+  // board's read 42703s outright without it. Deploy order: migration → API → worker → admin.
+  ["credit_rollup_runs", "setup_sweep_backlog"],
 ] as const;
 
 /**
@@ -544,10 +559,17 @@ export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;
  * `platform_signals_window_idx` serves a read over a table the same migration creates, so the
  * table's own column marker already catches every database that lacks it.
  *
+ * `0031_credit_rollup_sweep_backlog` takes ONE column marker for TWO columns, which is the only
+ * entry in this list to do so, and the exception is worth naming rather than leaving to be
+ * noticed. Both columns are added by the same migration and `duration_ms` lands second, so on the
+ * rule 0030 established — statements inside one migration apply in order — a database holding the
+ * second holds the first, and a marker on the first catches every database that lacks either. It
+ * adds no table, no index and no CHECK, so no other marker class is owed.
+ *
  * The tag moves for its own reason: what this constant asserts is "the markers were reconciled
  * against the newest entry", and a stale tag beside an unchanged list is the state the assertion
  * exists to refuse — it cannot tell "nothing needed adding" from "nobody looked". */
-export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0030_heartbeat_signals_alert_runs";
+export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0031_credit_rollup_sweep_backlog";
 
 /** The journal entries {@link SCHEMA_MARKERS} was last reconciled against (asserted by a test). */
 export const SCHEMA_MARKER_JOURNAL_TAG =
