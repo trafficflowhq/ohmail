@@ -497,21 +497,50 @@ export function readerHolder(role: ScreenerRole): { name: string | null } | null
  * permitting a reader moves mail on somebody else's server. The roster is `null` before the first
  * probe answers and stays `null` through an outage, so the window is real, not theoretical.
  *
- * Four things therefore refuse: a `null` roster, an empty `mailboxIds`, an id no live row carries,
- * and a row this install reads rather than organizes. The first three have no holder to name and
- * take `say.unknown()`, which claims no particular install — the honest sentence when the answer
- * is "not from here" and nothing more is known.
+ * Four things therefore refuse: a roster still PENDING, an empty `mailboxIds`, an id no live row
+ * carries, and a row this install reads rather than organizes. The first three have no holder to
+ * name and take `say.unknown()`, which claims no particular install — the honest sentence when the
+ * answer is "not from here" and nothing more is known.
+ *
+ * A shell with NO PROBE AT ALL permits, and that is not a hole: see the `absent` arm below.
  *
  * A `disabled` row is skipped as unknown rather than read: it is a tombstone that KEEPS whatever
  * role it had ({@link readerStandDown}'s own first line), and nothing should be written to a
  * mailbox that has been removed.
  */
-export function readerMoveRefusal(
+export type RosterState =
+  /** This shell was given no probe: the desktop, the demo. There is no roster and never will be. */
+  | { kind: "absent" }
+  /** A probe exists and has not answered — mid-first-poll, or an outage. */
+  | { kind: "pending" }
+  | { kind: "known"; rows: ReadonlyArray<OrganizerRow> };
+
+/** Build the state from the provider's two fields. One place, so the collapse cannot come back. */
+export function rosterStateOf(
+  probed: boolean,
   facts: ReadonlyArray<OrganizerRow> | null,
+): RosterState {
+  if (!probed) return { kind: "absent" };
+  return facts === null ? { kind: "pending" } : { kind: "known", rows: facts };
+}
+
+export function readerMoveRefusal(
+  roster: RosterState,
   mailboxIds: ReadonlyArray<string>,
   say: { named: (name: string) => string; unknown: () => string },
 ): string | null {
-  if (facts === null || mailboxIds.length === 0) return say.unknown();
+  /* NO PROBE, NO GATE. On a door with no roster the wire has always been the only authority, and
+     it still is — the server refuses a reader's delete with `assertOrganizerRole` exactly as
+     before this predicate existed. A press-time refusal is an IMPROVEMENT where a roster exists;
+     it must not become a new gate where none does. Refusing here made every delete on the desktop
+     and in the demo fail with a sentence naming another install, which is false on both. */
+  if (roster.kind === "absent") return null;
+  /* PENDING IS A REFUSAL, and it is the arm the original rule was written for: the answer is
+     coming, the verb is destructive, and a second's wait costs a sentence while a wrong permit
+     costs mail moved on somebody else's server. */
+  if (roster.kind === "pending") return say.unknown();
+  const facts = roster.rows;
+  if (mailboxIds.length === 0) return say.unknown();
   for (const id of mailboxIds) {
     const row = id ? facts.find((m) => m.id === id && m.status !== "disabled") : undefined;
     if (!row) return say.unknown();

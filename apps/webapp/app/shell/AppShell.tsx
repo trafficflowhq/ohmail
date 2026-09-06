@@ -159,7 +159,10 @@ import { MailStateProvider, useMailState, type FreshnessProbe, type MailboxProbe
 /* The ONE stand-down predicate, aggregated over the roster: what may the Screener do here, and
    what changed about who organizes these mailboxes that nobody has acknowledged? Settings →
    Mailboxes renders its own state line from the same `readerStandDown` underneath. */
-import { organizerNotices, readerMoveRefusal, screenerMode, type MailboxFacts } from "./mail-state";
+import {
+  organizerNotices, readerMoveRefusal, rosterStateOf, screenerMode,
+  type RosterState,
+} from "./mail-state";
 /* Backspace/Delete → Trash, and the window in which it has not happened yet. See the module. */
 import { deleteKeyBindings, hideMessages, useDeleteIntentReplay, useDeleteUndo } from "./delete-undo";
 /* The once-per-change line above the Ohbox, and the shape of the press that ends it. */
@@ -1306,7 +1309,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * It is still derived exactly once, up here, from the one binding, which is the rule the
    * mail-state ladder established. A prop is how a derivation reaches a component that must be mountable alone.
    */
-  const { mailboxes: facts, state: mailState, refresh: refreshFacts } = useMailState();
+  const {
+    mailboxes: facts, rosterProbed, state: mailState, refresh: refreshFacts,
+  } = useMailState();
   /**
    * THE MIRROR AS IT IS. Where each message physically sits on the server.
    *
@@ -1335,7 +1340,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * `readerMoveRefusal`, and the defect that made it necessary. `[mailboxId]` rather than a
    * scalar so the single-message arm and the bulk arm are one code path.
    */
-  const rosterRef = useRef<readonly MailboxFacts[] | null>(null);
+  /* THE STATE, not the array. `mailboxes: null` collapses "no probe on this shell" (the desktop,
+     the demo) with "the probe has not answered", and those are opposite answers for a write gate
+     — see `rosterStateOf`. The resting value is `pending`, which refuses: a shell that HAS a probe
+     starts there, and one that has none is corrected by the effect on its first commit. */
+  const rosterRef = useRef<RosterState>({ kind: "pending" });
   const deleting = useDeleteUndo({
     mutate: (m) => engine.mutate(m),
     toast,
@@ -2075,7 +2084,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
      during render (review finding): a render that yields and is discarded must not publish a
      roster to a committed key handler. The initial `null` is the safe value — `readerMoveRefusal`
      refuses on it, which is what a destructive verb should do before it knows. */
-  useEffect(() => { rosterRef.current = facts; }, [facts]);
+  useEffect(() => { rosterRef.current = rosterStateOf(rosterProbed, facts); }, [rosterProbed, facts]);
   /**
    * WHAT CHANGED ABOUT WHO ORGANIZES THESE MAILBOXES, AND HAS NOT BEEN ACKNOWLEDGED.
    *

@@ -174,6 +174,10 @@ function showing(el: Element): boolean {
 export function isModalOpen(doc: Document): boolean {
   if (modalIsOpen()) return true;
   for (const el of Array.from(doc.querySelectorAll(MODAL_SELECTOR))) {
+    /* THE SHEET ITSELF, AND NOTHING INSIDE IT. `matches`, never `closest`: `closest` walks up and
+       so excluded every dialog the sheet CONTAINS, which is the opposite of the rule this file
+       states — and the popovers that open inside the reader are exactly the ones `.senderm` is in
+       the selector for. See the header. */
     if (el.matches(READING_SURFACE)) continue;
     if (!showing(el)) continue;
     return true;

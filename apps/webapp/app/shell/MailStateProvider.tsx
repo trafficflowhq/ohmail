@@ -187,6 +187,26 @@ interface MailStateBinding {
    */
   mailboxes: MailboxFacts[] | null;
   /**
+   * IS THERE A ROSTER TO SEE AT ALL — the state `mailboxes: null` collapses, and the collapse
+   * cost a regression.
+   *
+   * `null` above means "we cannot see mailboxes", and it means it for TWO different reasons: a
+   * shell that was given no probe (the desktop, the demo — there is no roster here and there
+   * never will be), and a shell whose probe has not answered yet (a Cloud tab mid-first-poll, or
+   * an outage). For rendering they are the same and the collapse is right: both render nothing.
+   *
+   * For a WRITE GATE they are opposite. "The probe has not answered" is a reason to refuse a
+   * delete until it does; "this shell has no probe" is not, because on those doors the wire has
+   * always been the only authority and a press-time check that refuses everything is a new gate
+   * where none existed. A helper reading only `mailboxes` refused every delete on the desktop and
+   * in the demo with a sentence naming another install — false there — and nothing errored.
+   * Measured 2026-09-06.
+   *
+   * `false` here means NO PROBE. It is a property of how this provider was mounted, never of what
+   * a fetch has returned, so it is stable from the first render.
+   */
+  rosterProbed: boolean;
+  /**
    * MESSAGES IN THE MIRROR — every folder, every mailbox — published as the fact it is.
    *
    * NOT `state.count`, and the difference is load-bearing rather than stylistic. `MailState.count`
@@ -517,8 +537,11 @@ export function MailStateProvider({
   }, [read]);
 
   const binding = useMemo<MailStateBinding>(
-    () => ({ state, mailboxes: facts, mirrored, freshness, refresh: () => void read() }),
-    [state, facts, mirrored, freshness, read],
+    () => ({
+      state, mailboxes: facts, rosterProbed: probe !== undefined, mirrored, freshness,
+      refresh: () => void read(),
+    }),
+    [state, facts, probe, mirrored, freshness, read],
   );
 
   return <MailStateContext.Provider value={binding}>{children}</MailStateContext.Provider>;
