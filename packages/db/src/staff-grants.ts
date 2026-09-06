@@ -309,9 +309,15 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
   // error and the timestamps the freshness stamp and the staleness rule read. `divergent_accounts`
   // is a COUNT — the accounts themselves are deliberately not stored, the same decision
   // `billing_reconciliation_runs.divergences` records for its own detail.
+  // `setup_sweep_backlog` and `duration_ms` (cloud 0031) are on the same terms as the counts
+  // above them: integers about a PASS, never about anybody's mail. They are here because this
+  // list is COLUMN-LEVEL — a column the schema has and this list does not is not "unread", it is
+  // `permission denied` the first time `loadRollupState` names it on the staff connection, with
+  // the migration reporting success and the console panel going dark. The column and its grant
+  // are one edit.
   "public.credit_rollup_runs": [
     "id", "ran_at", "days_recomputed", "rows_written", "divergent_accounts",
-    "pruned_setup_spends", "error",
+    "pruned_setup_spends", "setup_sweep_backlog", "duration_ms", "error",
   ],
   // ── THE SETUP POOL (cloud 0021, re-keyed by 0028) ───────────────────────────────────────
   //

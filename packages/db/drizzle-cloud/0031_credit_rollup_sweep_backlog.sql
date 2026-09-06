@@ -1,0 +1,83 @@
+-- THE ROLL-UP'S RUN ROW LEARNS TWO THINGS IT COULD NOT SAY — two integers, nothing else.
+--
+-- ══ WHY, AND WHAT 0028's PROSE GOT WRONG ═══════════════════════════════════════════════════
+--
+-- Cloud 0028 moved the console's spend reads onto day-grained aggregates and swept the setup
+-- pool's own draw record past a 30-day horizon. Its retention sweep deleted `setup_grant_spends`
+-- rows by a predicate over each ROW's age and its grant's expiry, and nothing anywhere
+-- established that the DAY those rows sat on had ever been aggregated.
+--
+-- It could not have: the recompute window is two days (hourly) or three (nightly), and the
+-- sweep bites at rows at least 30 days old. The two windows never touch. A day aggregated by no
+-- pass and swept by this one is gone in both places at once — the raw rows deleted, and
+-- `credit_usage_daily` holding no `pool='setup'` row for it, which no later pass can repair
+-- because the source it would read is what was just deleted.
+--
+-- 0028's own header argues that the recompute horizon and the sweep floor "can never overlap".
+-- That is true, and it answers a different question — whether a recompute could write a truthful
+-- zero over an already-thinned population. It says nothing about whether the swept day was ever
+-- aggregated at all, and a later reader takes the paragraph as covering both. The header is
+-- rewritten in the same commit as this file; that prose is why this migration exists rather than
+-- being noticed in an incident.
+--
+-- The fix is ordering, and it lives in `credit-rollup.ts`, not here: a `(day, account_id)` PAIR
+-- is folded into `credit_usage_daily` and only then are that pair's rows deleted, so the delete's
+-- predicate is the set of pairs folded in the same pass and never a clock. This migration adds
+-- the two columns that make the resulting drain, and the pass's own cost, legible.
+--
+-- ══ THE PAIR, NOT THE DAY — the reason the column is a DAY count and the unit is a pair ══════
+--
+-- The sweep's eligibility is per ROW (its own age AND its grant's expiry), so one account can
+-- hold two rows on one day whose grants expire months apart. Folding a whole DAY and deleting
+-- what happened to be eligible would leave survivors on a day already marked aggregated; when
+-- the second grant expired, that day would re-enter the drain and be "recomputed" over the
+-- survivors alone — a smaller number written over the correct one, silently. So a pair is folded
+-- only when EVERY row of it is eligible, which leaves the pair with nothing behind and makes
+-- re-entry impossible.
+--
+-- ══ THE TWO COLUMNS ════════════════════════════════════════════════════════════════════════
+--
+--   setup_sweep_backlog  eligible days the pass did not reach, floored at 0.
+--                        NULL ⇒ this run did not sweep (the hourly arm never does).
+--                        0    ⇒ the arm ran and drained. > 0 ⇒ a drain is in progress, which on
+--                        the first nights after this deploys is the EXPECTED state, not a fault.
+--                        Without it, "swept 40 rows" and "swept 40 of 40 000" are the same row,
+--                        which is the shape that let a growing backlog stay silent in the
+--                        attachment-staging sweep until it was found by hand.
+--
+--   duration_ms          how long the pass took. The nightly arm makes two full passes over
+--                        `credit_ledger` (the lifetime totals' GROUP BY, and the ledger/balance
+--                        comparison) under a 60 s `statement_timeout`, and the ledger is
+--                        append-only and never pruned. That cost grows with the deployment's age
+--                        with no bound. When it crosses the timeout the arm fails every night,
+--                        the lifetime totals freeze at their last good value and the divergence
+--                        count stops being computed — visible only as a stamp that stops moving.
+--                        This column is the tripwire that makes the day it approaches readable
+--                        instead of the day it arrives.
+--
+-- Both are plain integers: they can carry no subject, sender, snippet, body, header or
+-- attachment name, which is why the taintable-column census is unmoved by this file. The staff
+-- role's SELECT is COLUMN-LEVEL, so `staff-grants.ts` gains both names in the same commit —
+-- without that, `loadRollupState` dies with permission denied on the staff connection and the
+-- console panel goes dark while this migration reports success.
+--
+-- ══ ADDITIVE, NULLABLE, NO DATA, NO LOCK WORTH NAMING ══════════════════════════════════════
+--
+-- Two nullable `ADD COLUMN`s with no default: in PostgreSQL 11+ this rewrites nothing and takes
+-- an ACCESS EXCLUSIVE lock for the catalog update only. `credit_rollup_runs` is written once an
+-- hour by one elected process and read by the console, so there is nothing to contend with.
+--
+-- Every row that predates this file keeps NULL in both, and NULL is already the correct reading
+-- for those runs: none of them swept under the pair rule, and none of them measured its own
+-- duration. There is no back-fill, and there is nothing a back-fill could honestly write.
+--
+-- DEPLOY ORDER: migration, then worker + API + admin. The reverse leaves the writer inserting
+-- columns that do not exist, which fails the run-row write — caught and swallowed by design, so
+-- it would present as a roll-up that silently stopped recording its runs.
+--
+-- ROLLBACK is `ALTER TABLE credit_rollup_runs DROP COLUMN setup_sweep_backlog, DROP COLUMN
+-- duration_ms`, after reverting the readers. No data is involved.
+
+ALTER TABLE "credit_rollup_runs" ADD COLUMN IF NOT EXISTS "setup_sweep_backlog" integer;
+--> statement-breakpoint
+ALTER TABLE "credit_rollup_runs" ADD COLUMN IF NOT EXISTS "duration_ms" integer;

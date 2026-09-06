@@ -438,6 +438,30 @@ export const creditRollupRuns = pgTable("credit_rollup_runs", {
   divergentAccounts: integer("divergent_accounts"),
   /** `setup_grant_spends` rows the retention sweep removed. NULL ⇒ this run did not sweep. */
   prunedSetupSpends: integer("pruned_setup_spends"),
+  /**
+   * Eligible days the sweep did not reach, floored at 0 (cloud 0031).
+   *
+   * NULL ⇒ this run did not sweep — the hourly arm never does. `0` ⇒ the arm ran and drained.
+   * `> 0` ⇒ a drain is in progress, which for the first nights after 0031 deploys is the
+   * EXPECTED state rather than a fault.
+   *
+   * It exists because {@link prunedSetupSpends} has no denominator: "swept 40 rows" and "swept
+   * 40 of 40 000" are the same row without it, which is exactly how a growing backlog stayed
+   * silent in the attachment-staging sweep until somebody looked.
+   */
+  setupSweepBacklog: integer("setup_sweep_backlog"),
+  /**
+   * How long the pass took, in milliseconds (cloud 0031) — the tripwire on the one cost that
+   * grows without bound.
+   *
+   * The nightly arm makes two full passes over `credit_ledger` (the lifetime totals' `GROUP BY`
+   * and `findCreditDivergence`'s comparison) under a 60 s `statement_timeout`, over a table that
+   * is append-only and never pruned. When that crosses the timeout the arm fails every night:
+   * the lifetime totals hold their last good value and the divergence count stops being computed
+   * at all, visible only as a stamp that stops moving. Recording the duration makes the day it
+   * approaches readable instead of the day it arrives.
+   */
+  durationMs: integer("duration_ms"),
   /** class:code, scrubbed — null on a completed pass. */
   error: text("error"),
 }, (t) => ({ ixRanAt: index("credit_rollup_runs_ran_at_idx").on(t.ranAt) }));

@@ -778,6 +778,17 @@ export interface CreditLiability {
    * this figure exists to refuse.
    */
   divergentAccounts: number;
+  /**
+   * Eligible days the setup-spend fold has not reached yet.
+   *
+   * `0` ⇒ drained. `> 0` ⇒ the fold hit its per-pass day cap with days still behind it, which is
+   * the EXPECTED state while a deployment older than the roll-up drains and a fault only if it
+   * stops falling. `-1` ⇒ no pass has folded yet — and that distinction is load-bearing here in a
+   * way it is not elsewhere on this interface: a draw row becomes eligible only when its grant is
+   * 120 days old, so on a young deployment a perfectly working fold and one that never ran both
+   * leave `0` behind. Only `-1` tells them apart.
+   */
+  setupSweepBacklog: number;
 }
 
 /**

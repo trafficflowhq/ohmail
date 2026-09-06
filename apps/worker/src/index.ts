@@ -5299,7 +5299,36 @@ export async function startWorkerWithLock(
               nightly,
               days: rollup.daysRecomputed, rows: rollup.rowsWritten,
               divergent: rollup.divergentAccounts, prunedSetupSpends: rollup.prunedSetupSpends,
+              setupSweepBacklog: rollup.setupSweepBacklog, durationMs: rollup.durationMs,
             });
+            // ── THE DRAIN IS NOT SILENT ────────────────────────────────────────────────
+            //
+            // A warning although nothing threw, on `attachment_staging_backlog`'s exact
+            // reasoning: a clean-looking number over a set that is not shrinking is what let
+            // that bucket grow unnoticed. On the first nights after the fold ships this fires
+            // by design — a deployment with months of un-folded days drains 30 a night — so the
+            // line says which of the two it is rather than leaving an operator to guess.
+            if ((rollup.setupSweepBacklog ?? 0) > 0) {
+              log.warn("credit_sweep_backlog", {
+                backlogDays: rollup.setupSweepBacklog, swept: rollup.prunedSetupSpends,
+                reason: "the fold reached its per-pass day cap with eligible days still behind " +
+                  "it; the next nightly pass resumes from the oldest of them. Expected while a " +
+                  "deployment that predates the roll-up drains; sustained or RISING across " +
+                  "nights means the cap is below what this deployment produces and wants raising",
+              });
+            }
+            // A pair whose day already carries a folded aggregate. No writer in this codebase
+            // backdates `created_at`, so this is not reachable by ordinary use — which is why it
+            // is a warning and not a repair: the fold refuses rather than overwrite a closed
+            // number, and somebody should find out where the row came from.
+            if ((rollup.frozenSetupPairsSkipped ?? 0) > 0) {
+              log.warn("credit_sweep_frozen_pairs", {
+                pairs: rollup.frozenSetupPairsSkipped,
+                reason: "draw rows arrived for a (day, account) whose aggregate was already " +
+                  "folded and closed; they are left in place and NOT folded, because folding " +
+                  "again would write a partial number over a complete one",
+              });
+            }
             // A non-zero divergence is the ledger and the balances disagreeing about somebody's
             // money. It is not this pass's to fix and it must not be silent.
             if ((rollup.divergentAccounts ?? 0) > 0) {

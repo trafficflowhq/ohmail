@@ -59,16 +59,36 @@ import type { Tx } from "./change-log.js";
  * whose rows went with it — would keep a stale aggregate for ever, and an upsert cannot see the
  * absence it is supposed to record.
  *
- * ## THE SETUP POOL'S RECOMPUTE HORIZON
+ * ## THE SETUP POOL'S RECOMPUTE HORIZON, AND THE ORDERING THAT USED TO BE MISSING
  *
  * `setup_grant_spends` IS swept (see {@link SETUP_SPEND_RETENTION_DAYS}), so recomputing a day
  * whose rows have been swept would compute a truthful zero over an untruthful population and
- * overwrite a correct historical number with it. The setup half therefore only recomputes days
- * whose START is at or after the retention floor, and the sweep only removes rows created before
- * it. Both bounds are the same instant read from the same constant, and the comparison is against
- * the day's START on purpose: against the day's END the single day CONTAINING the floor satisfies
- * both, which is unreachable at the shipped two- and three-day windows and armed for exactly the
- * deep back-fill `days` invites.
+ * overwrite a correct historical number with it. The setup half of the DAY LOOP therefore only
+ * recomputes days whose START is at or after the retention floor, and it stays exactly as it was.
+ *
+ * **That guard answers one question and used to be read as answering two, which is how a day
+ * could be swept having never been aggregated at all.** It stops a recompute writing over an
+ * already-thinned population. It says nothing about whether the day was aggregated in the first
+ * place — and it could not, because the two windows never touch: the loop recomputes two or three
+ * days back, and the sweep bites at rows at least 30 days old. A day aggregated by no pass and
+ * swept by this one was gone in both places at once, the raw rows deleted and no
+ * `credit_usage_daily` row ever written, with nothing failing and the console's freshness stamp
+ * green. No later pass could repair it: the source it would read is what was deleted.
+ *
+ * The repair is ORDER, and it is {@link foldAndSweepSetupSpends}, deliberately NOT this loop:
+ * a `(day, account_id)` pair is folded into `credit_usage_daily` and only then are that pair's
+ * rows deleted. The delete's predicate is the set of pairs folded in the same pass — never a
+ * clock — which makes "deleted but never aggregated" unrepresentable rather than merely untested.
+ *
+ * ## WHY A PAIR AND NOT A DAY, WHICH IS THE WHOLE SUBTLETY
+ *
+ * Eligibility is a property of a ROW (its own age AND its grant's expiry), so one account can
+ * hold two rows on one day whose grants expire months apart. Folding a DAY and deleting whatever
+ * was eligible would mark that day aggregated while survivors remained; when the second grant
+ * expired the day would re-enter the drain and be "recomputed" over the survivors alone, writing
+ * a smaller number over the correct one — the very hazard the paragraph above describes, produced
+ * by the fix for it. A pair is therefore folded only when EVERY row of it is eligible, which
+ * leaves nothing behind and makes re-entry impossible.
  *
  * ## TWO CADENCES, AND THE PANELS SAY WHICH ONE THEY ARE ON
  *
@@ -109,10 +129,26 @@ export const CREDIT_ROLLUP_NIGHTLY_HOUR_UTC = 3;
  *
  * Note the sweep's predicate needs BOTH the grant's expiry and the row's own age past this
  * horizon, so in practice a swept row is at least 120 days old (a grant lives 90 days from its
- * creation, and its draws cannot predate it). The recompute horizon below is deliberately the
- * narrower 30 days, so the recompute window and the sweep window can never overlap.
+ * creation, and its draws cannot predate it). The day loop's recompute horizon is the same 30
+ * days, so the loop and the sweep never act on the same day — which is why the sweep has to do
+ * its own aggregating first, in {@link foldAndSweepSetupSpends}, rather than relying on the loop
+ * to have been there.
  */
 export const SETUP_SPEND_RETENTION_DAYS = 30;
+
+/**
+ * How many whole days one nightly pass will fold and sweep.
+ *
+ * The cap is in DAYS and not in pairs, and the difference decides whether a backlog ever drains:
+ * at hundreds of accounts a day holds many pairs, so a pair-cap converges in years while a
+ * day-cap converges in nights. A 200-day gap — the shape a deployment that predates the roll-up
+ * actually has — drains in seven passes.
+ *
+ * Oldest first, always. Newest-first would sweep the days nearest the horizon and starve the
+ * oldest for ever, which is the starvation this repository already paid for once in the
+ * attachment-staging sweep.
+ */
+export const CREDIT_ROLLUP_SWEEP_CAP_DAYS = 30;
 
 /** What one pass did — written to `credit_rollup_runs` and returned to the caller for its log. */
 export interface CreditRollupReport {
@@ -124,6 +160,22 @@ export interface CreditRollupReport {
   divergentAccounts: number | null;
   /** `setup_grant_spends` rows swept, or `null` when this pass did not sweep. */
   prunedSetupSpends: number | null;
+  /**
+   * Eligible days this pass did not reach, floored at 0; `null` when it did not sweep.
+   *
+   * `0` on a sweeping pass means the drain is complete — which is the ordinary state, and on a
+   * deployment younger than 120 days it is also the state a completely broken fold would report,
+   * because nothing is eligible yet. The pg positive control is what tells those apart.
+   */
+  setupSweepBacklog: number | null;
+  /**
+   * Pairs the fold REFUSED because their day already carries a folded aggregate — see
+   * {@link foldAndSweepSetupSpends}. Non-zero means a row arrived for a pair that was already
+   * closed, which no writer in this codebase can produce; it is counted rather than corrected.
+   */
+  frozenSetupPairsSkipped: number | null;
+  /** Wall-clock milliseconds the pass took, whether it completed or failed. */
+  durationMs: number;
   /** class:code, scrubbed. Non-null ⇒ the pass did not complete. */
   error: string | null;
 }
@@ -144,8 +196,20 @@ export interface CreditRollupOptions {
   totals?: boolean;
   /** Count the accounts whose ledger and balance disagree. A full pass; nightly only. */
   divergence?: boolean;
-  /** Sweep `setup_grant_spends` past {@link SETUP_SPEND_RETENTION_DAYS}. Nightly only. */
+  /**
+   * Fold and sweep `setup_grant_spends` past {@link SETUP_SPEND_RETENTION_DAYS}. Nightly only.
+   *
+   * It rides this one flag and takes NO option of its own, deliberately: a separate `sweep` or
+   * `catchUp` flag defaulting false is how a feature ships dark, working perfectly and reached by
+   * nothing. There is one call site (`apps/worker/src/index.ts`) and it passes `nightly` here.
+   */
   prune?: boolean;
+  /**
+   * How many days one sweep may fold. Defaults to {@link CREDIT_ROLLUP_SWEEP_CAP_DAYS}; present
+   * so a test can drive the cap without seeding thirty days, and so an operator draining a deep
+   * backlog by hand can widen it.
+   */
+  capDays?: number;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -186,6 +250,183 @@ export function isNightlyRollupSlot(now: Date, lastNightlyAt: Date | null): bool
   return utcDayStart(lastNightlyAt).getTime() < utcDayStart(now).getTime();
 }
 
+/** What one fold-and-sweep did. Folded into {@link CreditRollupReport} by the caller. */
+export interface SetupFoldReport {
+  /** Whole days this pass folded and swept. */
+  daysFolded: number;
+  /** `(day, account_id)` pairs aggregated. */
+  pairsFolded: number;
+  /** `setup_grant_spends` rows removed — always rows of a pair folded in the same pass. */
+  rowsSwept: number;
+  /** Eligible days this pass did not reach, floored at 0. */
+  backlogDays: number;
+  /** Eligible pairs refused because their day already carries a folded aggregate. */
+  frozenPairsSkipped: number;
+}
+
+/**
+ * FOLD A `(day, account_id)` PAIR INTO THE AGGREGATE, THEN TAKE ITS ROWS — in that order, and
+ * never the other, which is the whole point of this function existing separately.
+ *
+ * ## WHY THIS IS NOT PART OF THE DAY LOOP
+ *
+ * The loop refuses to recompute a setup day below the retention floor, and that refusal is
+ * correct and stays: below the floor the population has been thinned, so a recompute there writes
+ * a truthful zero over a correct historical number. This function is not a recompute. It runs
+ * over a population that is still WHOLE — it is what makes the population stop being whole, one
+ * statement later — so the floor does not apply to it and the guard is left exactly as written
+ * rather than being relaxed for a special case. Two different questions, two different functions.
+ *
+ * ## THE PAIR IS THE UNIT, AND IT IS FOLDED ONLY WHEN EVERY ROW OF IT IS ELIGIBLE
+ *
+ * `bool_and(expired AND old)` per `(day, account_id)`. A pair with one eligible row and one
+ * survivor is left entirely alone — not half-folded, not half-swept.
+ *
+ * The alternative, folding a DAY, is wrong in a way that takes a second reading to see. One
+ * account can hold two draws on one day against grants that expire months apart. Fold the day,
+ * delete what was eligible, and the day is marked aggregated with a survivor still on it; when
+ * the second grant expires the day becomes eligible again and is "recomputed" over the survivor
+ * alone — a smaller number written over the correct one, permanently, with every guard green.
+ * A fully-eligible pair has nothing left behind it, so it can never re-enter.
+ *
+ * ## THE FROZEN PAIR — a refusal for a state no writer here can produce
+ *
+ * A pair whose day already carries a setup aggregate stamped more than
+ * {@link SETUP_SPEND_RETENTION_DAYS} after that day began can only have been written by THIS
+ * function: the day loop never stamps a setup day below the floor. So rows arriving for such a
+ * pair mean somebody backdated `created_at`, which no writer in this repository does
+ * (`setup-grant.ts` inserts without the column). Rather than fold again — overwriting a closed,
+ * correct number with a partial one — the pair is refused, counted and warned about. The count is
+ * derived by SUBTRACTION (eligible minus folded), so it is measured by the fold's own effect and
+ * cannot report a refusal that did not happen.
+ *
+ * ## NO TRANSACTION, AND ORDER IS THE MECHANISM
+ *
+ * The caller hands us a pool, not a transaction, and the statements autocommit. That is
+ * deliberate: a death between the fold and the delete leaves rows whose pair the next pass folds
+ * again, identically, because the fold is a full recompute over the pair's population and not an
+ * increment. The reverse order has no such recovery, which is why the order is the invariant and
+ * a transaction is not needed to protect it.
+ */
+export async function foldAndSweepSetupSpends(
+  db: Tx, opts: { now: Date; computedAt: string; capDays?: number },
+): Promise<SetupFoldReport> {
+  const { now, computedAt } = opts;
+  const capDays = Math.max(0, Math.floor(opts.capDays ?? CREDIT_ROLLUP_SWEEP_CAP_DAYS));
+  const floor = new Date(now.getTime() - SETUP_SPEND_RETENTION_DAYS * DAY_MS).toISOString();
+
+  // ── EVERY FULLY-ELIGIBLE PAIR, OLDEST DAY FIRST ────────────────────────────────────────
+  //
+  // `(created_at at time zone 'utc')::date` and never `created_at::date`: the latter truncates in
+  // the SESSION's zone, so on a server not set to UTC it would disagree with `dayKey` — and the
+  // disagreement would be invisible except within a few hours of midnight, which is the shape
+  // that reads as flakiness rather than as a defect.
+  const pairs = rowsOf<{ day: string; account_id: string }>(await db.execute(sql`
+    select to_char((s.created_at at time zone 'utc')::date, 'YYYY-MM-DD') as day,
+           s.account_id as account_id
+      from setup_grant_spends s
+      join setup_grants g on g.id = s.grant_id
+     group by 1, 2
+    having bool_and(g.expires_at < ${floor}::timestamptz and s.created_at < ${floor}::timestamptz)
+     order by 1 asc`));
+
+  const eligiblePerDay = new Map<string, number>();
+  for (const p of pairs) eligiblePerDay.set(p.day, (eligiblePerDay.get(p.day) ?? 0) + 1);
+  const eligibleDays = [...eligiblePerDay.keys()].sort();      // ascending: oldest first
+  const take = eligibleDays.slice(0, capDays);
+  const backlogDays = Math.max(0, eligibleDays.length - take.length);
+
+  let pairsFolded = 0;
+  let rowsSwept = 0;
+  let frozenPairsSkipped = 0;
+
+  for (const key of take) {
+    // The pair set is re-derived inside EVERY statement rather than passed in as a list. Two
+    // reasons, and the second is the one that matters: a set-based predicate keeps this to three
+    // statements a day whatever the account count, and it means the delete's predicate is
+    // literally the fold's — not a copy of it that can drift.
+    const eligibleForDay = sql`
+      select s.account_id
+        from setup_grant_spends s
+        join setup_grants g on g.id = s.grant_id
+       where (s.created_at at time zone 'utc')::date = ${key}::date
+       group by s.account_id
+      having bool_and(g.expires_at < ${floor}::timestamptz
+                  and s.created_at < ${floor}::timestamptz)`;
+
+    // A pair whose day already carries a fold-stamped aggregate from an EARLIER pass. See the
+    // header.
+    //
+    // `d.computed_at < ${computedAt}` is load-bearing and its absence is a self-inflicted wound:
+    // statement 1 stamps the folded row with THIS run's `computed_at`, which for a day older than
+    // the horizon immediately satisfies "stamped more than 30 days after the day began". Without
+    // the `<`, every pair the fold had just written would read as frozen at statements 2 and 3,
+    // the sweep would delete nothing at all, and the pass would report a healthy fold with the
+    // rows still there — a backlog that never drains, wearing a completed drain's numbers.
+    const notFrozen = sql`
+      select e.account_id from (${eligibleForDay}) e
+       where not exists (
+         select 1 from credit_usage_daily d
+          where d.day = ${key}::date and d.pool = 'setup'
+            and d.account_id = e.account_id
+            and d.computed_at < ${computedAt}::timestamptz
+            and d.computed_at > ${key}::date + make_interval(days => ${SETUP_SPEND_RETENTION_DAYS})
+       )`;
+
+    // ── 1. THE FOLD ──────────────────────────────────────────────────────────────────────
+    //
+    // `filter (where refunded_at is null)` on both aggregates: a refunded draw is an attempt the
+    // model faulted on and gave the credit back for, so it is not spend. `coalesce(..., 0)`
+    // because a pair whose every draw was refunded still gets a row — the row is what records
+    // that the day was folded, and it is what the frozen check reads next time.
+    const folded = await db.execute(sql`
+      insert into credit_usage_daily
+             (day, account_id, pool, reason, credits, rows, computed_at)
+      select ${key}::date, s.account_id, 'setup', 'debit_classify',
+             coalesce(-sum(s.amount) filter (where s.refunded_at is null), 0)::int,
+             (count(*) filter (where s.refunded_at is null))::int,
+             ${computedAt}::timestamptz
+        from setup_grant_spends s
+       where (s.created_at at time zone 'utc')::date = ${key}::date
+         and s.account_id in (${notFrozen})
+       group by s.account_id
+      on conflict (day, account_id, pool, reason) do update
+         set credits = excluded.credits,
+             rows = excluded.rows,
+             computed_at = excluded.computed_at
+      returning account_id`);
+    const foldedNow = rowsOf(folded).length;
+    pairsFolded += foldedNow;
+    frozenPairsSkipped += (eligiblePerDay.get(key) ?? 0) - foldedNow;
+
+    // ── 2. THE ABSENCE HALF, SCOPED TO THESE PAIRS ───────────────────────────────────────
+    //
+    // The same argument the day loop makes: an upsert rewrites a category and cannot remove one.
+    // Here it can only fire if a setup row for one of these pairs carries a reason this build no
+    // longer writes, which is a migration's leavings rather than a live case — kept because the
+    // statement that makes a stale row unrepresentable costs one indexed delete a day.
+    await db.execute(sql`
+      delete from credit_usage_daily
+       where day = ${key}::date and pool = 'setup'
+         and computed_at < ${computedAt}::timestamptz
+         and account_id in (${notFrozen})`);
+
+    // ── 3. THE SWEEP — the only delete of `setup_grant_spends` in this file ───────────────
+    //
+    // Its predicate is the pair set, never a clock. That is what makes "deleted but never
+    // aggregated" unrepresentable rather than merely untested: reaching this statement for a pair
+    // means statement 1 wrote that pair's aggregate a moment ago, in the same pass.
+    const swept = await db.execute(sql`
+      delete from setup_grant_spends s
+       where (s.created_at at time zone 'utc')::date = ${key}::date
+         and s.account_id in (${notFrozen})
+      returning 1 as swept`);
+    rowsSwept += rowsOf(swept).length;
+  }
+
+  return { daysFolded: take.length, pairsFolded, rowsSwept, backlogDays, frozenPairsSkipped };
+}
+
 /**
  * Recompute the daily aggregates, and — when asked — the totals, the divergence count and the
  * setup-pool sweep.
@@ -209,7 +450,10 @@ export async function runCreditRollupPass(
   let rowsWritten = 0;
   let divergentAccounts: number | null = null;
   let prunedSetupSpends: number | null = null;
+  let setupSweepBacklog: number | null = null;
+  let frozenSetupPairsSkipped: number | null = null;
   let error: string | null = null;
+  const startedAt = Date.now();
 
   try {
     const newest = utcDayStart(now);
@@ -315,16 +559,32 @@ export async function runCreditRollupPass(
     //    `findCreditDivergence`, which already walks the same table in the same pass. What the
     //    aggregates removed was this scan running on every console page load; moving it here
     //    costs one pass a night and removes the class of bug above entirely.
-    //  · **`setup`** ← `credit_usage_daily`. The opposite argument: `setup_grant_spends` IS
-    //    swept, so aggregating it directly would produce a "lifetime" that SHRINKS as retention
-    //    bites. The daily rows survive the sweep (that is what the recompute horizon protects),
-    //    so they are the only complete record of setup spend once a row has been removed.
+    //  · **`setup`** ← `setup_grants`, as `-sum(granted - remaining)` per account.
     //
-    // THE COST OF THAT SPLIT, STATED: the setup pool's lifetime total is only as complete as the
-    // daily table, so it under-reports days that predate the first roll-up on this deployment.
-    // It is informational — the board's reconciliation reads `pool = 'ledger'` only, because the
-    // setup pool has no `credit_balances` row to reconcile against — and it becomes complete for
-    // every day the pass has ever seen.
+    // THAT SOURCE IS A CORRECTION, and the claim it replaces was false. This comment used to say
+    // the daily rows were "the only complete record of setup spend once a row has been removed",
+    // and derived the lifetime figure from `credit_usage_daily`. But the daily table only ever
+    // holds the days some pass recomputed, which is the exact defect this file's header describes
+    // for the ledger pool — the total OF THE WINDOW wearing the word "lifetime" — and it made the
+    // figure depend on the very rows the sweep removes.
+    //
+    // `setup_grants` is the pool's BALANCE table and it is complete by construction. `remaining`
+    // is decremented in the same transaction that writes the draw row and restored in the same
+    // transaction that marks a refund (`setup-grant.ts` — the only two writers of the column in
+    // the repository), so `granted - remaining` IS the sum of non-refunded draws, per grant,
+    // atomically. It is CHECK-bounded to `0 <= remaining <= granted`, `period_expiry` never
+    // touches it, and it is never pruned: the only delete of the table is account deletion, which
+    // cascades `credit_usage_totals` with it.
+    //
+    // So the lifetime figure is right on the first pass on any deployment, with no back-fill to
+    // run and none to forget, and it stays right through every sweep — which is what lets the
+    // sweep delete raw rows at all.
+    //
+    // `rows` still comes from `credit_usage_daily`, LEFT-joined and coalesced to 0: a count of
+    // draws is not recoverable from a balance, and unlike the credits it is informational. An
+    // account whose days all predate the first roll-up reports its spend exactly and its row
+    // count low, which is the honest shape — a wrong count beside a right amount, never the
+    // reverse.
     //
     // The trailing delete is the same absence argument as the day loop's.
     if (opts.totals === true) {
@@ -342,11 +602,18 @@ export async function runCreditRollupPass(
       await db.execute(sql`
         insert into credit_usage_totals
                (account_id, pool, reason, credits, rows, computed_at)
-        select account_id, pool, reason,
-               sum(credits)::int, sum(rows)::int, ${computedAt}::timestamptz
-          from credit_usage_daily
-         where pool = 'setup'
-         group by account_id, pool, reason
+        select g.account_id, 'setup', 'debit_classify',
+               (-sum(g.granted - g.remaining))::int,
+               coalesce(d.rows, 0)::int,
+               ${computedAt}::timestamptz
+          from setup_grants g
+          left join (
+            select account_id, sum(rows)::int as rows
+              from credit_usage_daily
+             where pool = 'setup'
+             group by account_id
+          ) d on d.account_id = g.account_id
+         group by g.account_id, d.rows
         on conflict (account_id, pool, reason) do update
            set credits = excluded.credits,
                rows = excluded.rows,
@@ -366,26 +633,30 @@ export async function runCreditRollupPass(
       divergentAccounts = (await findCreditDivergence(db)).length;
     }
 
-    // ── THE SETUP-POOL SWEEP ─────────────────────────────────────────────────────────────
+    // ── THE SETUP-POOL FOLD AND SWEEP ────────────────────────────────────────────────────
     //
-    // `setup_grant_spends` ONLY. Both halves of the predicate are required and they are not
-    // redundant: the grant's expiry says the pool can no longer fund anything, and the row's own
-    // age says no live retry can still be looking for it. A row whose grant expired yesterday
-    // may still be the free-retry record of work done yesterday.
+    // `setup_grant_spends` ONLY, and every row it removes belongs to a `(day, account_id)` pair
+    // this same pass has just written into `credit_usage_daily`. Both halves of the eligibility
+    // predicate are required and they are not redundant: the grant's expiry says the pool can no
+    // longer fund anything, and the row's own age says no live retry can still be looking for it.
+    // A row whose grant expired yesterday may still be the free-retry record of yesterday's work.
+    //
+    // There is no delete here. The only delete of this table lives in the function below, where
+    // its predicate is the folded pair set — see {@link foldAndSweepSetupSpends}.
     if (opts.prune === true) {
-      const cutoff = setupFloor.toISOString();
-      const pruned = await db.execute(sql`
-        delete from setup_grant_spends s
-         using setup_grants g
-         where g.id = s.grant_id
-           and g.expires_at < ${cutoff}::timestamptz
-           and s.created_at < ${cutoff}::timestamptz
-        returning 1 as swept`);
-      prunedSetupSpends = rowsOf(pruned).length;
+      const fold = await foldAndSweepSetupSpends(db, { now, computedAt, capDays: opts.capDays });
+      prunedSetupSpends = fold.rowsSwept;
+      setupSweepBacklog = fold.backlogDays;
+      frozenSetupPairsSkipped = fold.frozenPairsSkipped;
     }
   } catch (err) {
     error = scrub(err);
   }
+
+  // Measured across the whole pass INCLUDING a failure, because the failure this column exists to
+  // predict is a statement timeout — and a pass that died at 60 s is precisely the measurement an
+  // operator needs, not a gap in the series.
+  const durationMs = Date.now() - startedAt;
 
   // ── THE RUN ROW, WRITTEN WHETHER THE PASS COMPLETED OR NOT ─────────────────────────────
   //
@@ -395,12 +666,17 @@ export async function runCreditRollupPass(
   try {
     await db.execute(sql`
       insert into credit_rollup_runs
-             (ran_at, days_recomputed, rows_written, divergent_accounts, pruned_setup_spends, error)
+             (ran_at, days_recomputed, rows_written, divergent_accounts, pruned_setup_spends,
+              setup_sweep_backlog, duration_ms, error)
       values (${computedAt}::timestamptz, ${daysRecomputed}, ${rowsWritten},
-              ${divergentAccounts}, ${prunedSetupSpends}, ${error})`);
+              ${divergentAccounts}, ${prunedSetupSpends},
+              ${setupSweepBacklog}, ${durationMs}, ${error})`);
   } catch {
     /* the report below still carries the truth for the caller's log */
   }
 
-  return { daysRecomputed, rowsWritten, divergentAccounts, prunedSetupSpends, error };
+  return {
+    daysRecomputed, rowsWritten, divergentAccounts, prunedSetupSpends,
+    setupSweepBacklog, frozenSetupPairsSkipped, durationMs, error,
+  };
 }

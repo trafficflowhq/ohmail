@@ -999,11 +999,27 @@ async function loadRollupState(db: AdminDb): Promise<RollupState> {
     .orderBy(desc(creditRollupRuns.ranAt))
     .limit(1);
 
+  // ── THE SETUP SWEEP'S BACKLOG — off the newest run that actually SWEPT ─────────────────
+  //
+  // `is not null` for the same reason `divergentAccounts` needs it: only the nightly arm folds,
+  // so the hourly row carries NULL, and taking the newest completed run would report "drained"
+  // for the fifty-nine minutes of every hour when the answer is simply not in that row.
+  const [sweep] = await db
+    .select({ backlog: creditRollupRuns.setupSweepBacklog })
+    .from(creditRollupRuns)
+    .where(sql`${creditRollupRuns.error} is null and ${creditRollupRuns.setupSweepBacklog} is not null`)
+    .orderBy(desc(creditRollupRuns.ranAt))
+    .limit(1);
+
   return {
     computedAt: fresh ? asDate(fresh.ranAt).toISOString() : null,
     totalsComputedAt,
     // −1 and not 0: "no roll-up has ever measured this" must not render as "no divergence".
     divergentAccounts: measured?.divergent == null ? -1 : int(measured.divergent),
+    // −1 on the same argument, and it is not decorative here: on a deployment younger than 120
+    // days NOTHING is eligible, so a working fold and a fold that has never run both leave 0
+    // behind. −1 says "no pass has folded yet", which is a different sentence from "drained".
+    setupSweepBacklog: sweep?.backlog == null ? -1 : int(sweep.backlog),
   };
 }
 
@@ -1014,6 +1030,11 @@ interface RollupState {
   totalsComputedAt: string | null;
   /** `findCreditDivergence`'s count from the newest run that measured it; `-1` ⇒ never. */
   divergentAccounts: number;
+  /**
+   * Eligible days the setup-spend fold has not reached, from the newest run that folded.
+   * `0` ⇒ drained; `> 0` ⇒ a drain in progress; `-1` ⇒ no pass has ever folded.
+   */
+  setupSweepBacklog: number;
 }
 
 /**
@@ -1647,6 +1668,7 @@ export async function adminBilling(db: AdminDb, now: Date): Promise<BillingSnaps
     expiredLifetime: -sumOf("period_expiry"),
     clawedBackLifetime: -sumOf("adjustment_debit"),
     divergentAccounts,
+    setupSweepBacklog: rollup.setupSweepBacklog,
   };
 
   const failedRows = await listFailedBillingEvents(db, ADMIN_LIST_LIMIT);
