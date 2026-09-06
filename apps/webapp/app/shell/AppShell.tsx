@@ -1344,10 +1344,19 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
       undo: t("screener.toastUndo"),
       undone: t("ohbox.deleteUndone"),
       failed: t("ohbox.deleteFailed"),
+      /* THE PLURAL SET, for a press over a selection. Separate sentences rather than one string
+         with a number in it: the singular is what the key has said since it shipped, and it stays
+         word for word so nothing about the one-message press moves. */
+      deletedMany: (count) => t("ohbox.toastDeletedMany", { count }),
+      undoneMany: (count) => t("ohbox.deleteUndoneMany", { count }),
+      failedMany: (count) => t("ohbox.deleteFailedMany", { count }),
     },
-    refusal: (mailboxId) => readerMoveRefusal(
+    /* EVERY mailbox the press touches, asked once. A nullish id becomes `""`, which the predicate
+       refuses as an id no roster row carries — the same answer, reached without a second branch
+       here that could drift from the one inside it. */
+    refusal: (mailboxIds) => readerMoveRefusal(
       rosterRef.current,
-      mailboxId ? [mailboxId] : [],
+      mailboxIds.map((id) => id ?? ""),
       {
         named: (name) => t("screener.readerMoveRefused", { name }),
         unknown: () => t("screener.readerMoveRefusedUnknown"),

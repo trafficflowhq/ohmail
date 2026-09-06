@@ -42,9 +42,19 @@
 
 import { storageOwner } from "./storage-owner";
 
-/** One requested delete. The id is the message's; nothing else is needed to replay it. */
+/**
+ * ONE PRESS, and every message it asked to delete.
+ *
+ * A PRESS AND NOT A MESSAGE, which is the whole reason this is a list. One press over a selection
+ * of three opens ONE undo window; if it were journalled as three intents, `pagehide` could commit
+ * two of them and lose the third, and the person would find their selection half deleted with the
+ * toast having reported all of it. A press is the unit the window is offered over, so it is the
+ * unit the record is kept in — atomic in, atomic out.
+ */
 export interface DeleteIntent {
-  messageId: string;
+  /** A press id, so a replay can tell two presses apart and clear exactly one. */
+  id: string;
+  messageIds: string[];
   /** Epoch ms at the press, from the caller's clock. */
   at: number;
 }
@@ -63,23 +73,50 @@ export function deleteIntentsKey(owner: string | null = storageOwner()): string 
 }
 
 /**
- * How many stranded intents one jar holds. A bound rather than a cap somebody will hit: a person
+ * How many stranded PRESSES one jar holds. A bound rather than a cap somebody will hit: a person
  * pressing Delete faster than the window closes is walking a pile, and past this the oldest are
  * dropped rather than the write refused — a quota rejection would take the whole journal with it,
- * which is the failure this file exists to prevent.
+ * which is the failure this file exists to prevent. Counted in presses, so a bulk press of two
+ * hundred messages costs one row rather than two hundred.
  */
 export const DELETE_INTENTS_MAX = 200;
 
+/**
+ * READ, TOLERANTLY, AND ACCEPT THE SHAPE THE PREVIOUS BUILD WROTE.
+ *
+ * The first version of this journal stored `{ messageId, at }` — one row per message. A person
+ * who closes the tab inside the window and then reloads onto a NEW build must not lose the delete
+ * because the record changed shape between the two: that is the very failure the journal exists
+ * to prevent, arriving through the upgrade instead of through the crash. A legacy row is read as
+ * a one-message press and replayed exactly like one.
+ *
+ * Anything else is dropped rather than guessed at. A row that parses but is not either shape
+ * names no message this build can act on, and inventing one would be a delete nobody asked for.
+ */
 function read(): DeleteIntent[] {
   try {
     const raw = window.localStorage.getItem(deleteIntentsKey());
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter((r): r is DeleteIntent =>
-      typeof r === "object" && r !== null
-      && typeof (r as DeleteIntent).messageId === "string" && (r as DeleteIntent).messageId.length > 0
-      && typeof (r as DeleteIntent).at === "number" && Number.isFinite((r as DeleteIntent).at));
+    const out: DeleteIntent[] = [];
+    for (const r of parsed) {
+      if (typeof r !== "object" || r === null) continue;
+      const row = r as Partial<DeleteIntent> & { messageId?: unknown };
+      if (typeof row.at !== "number" || !Number.isFinite(row.at)) continue;
+      const ids = Array.isArray(row.messageIds)
+        ? row.messageIds.filter((x): x is string => typeof x === "string" && x.length > 0)
+        : typeof row.messageId === "string" && row.messageId.length > 0
+          ? [row.messageId]
+          : [];
+      if (ids.length === 0) continue;
+      out.push({
+        id: typeof row.id === "string" && row.id.length > 0 ? row.id : ids[0]!,
+        messageIds: ids,
+        at: row.at,
+      });
+    }
+    return out;
   } catch {
     return [];
   }
@@ -94,21 +131,35 @@ function write(rows: DeleteIntent[]): void {
   }
 }
 
-/** Record the request. Replaces any intent for the same message, so a re-press is idempotent. */
+/**
+ * Record the request.
+ *
+ * Replaces any intent with the same press id, and drops from EVERY OTHER press any message this
+ * one names: a message may belong to at most one open press, or a replay would delete it twice
+ * and the second would fail against a row that is already gone. A press left holding nothing
+ * after that is removed with it.
+ */
 export function armDeleteIntent(intent: DeleteIntent): void {
-  write([...read().filter((r) => r.messageId !== intent.messageId), intent]);
+  const claimed = new Set(intent.messageIds);
+  const kept: DeleteIntent[] = [];
+  for (const r of read()) {
+    if (r.id === intent.id) continue;
+    const ids = r.messageIds.filter((id) => !claimed.has(id));
+    if (ids.length > 0) kept.push(ids.length === r.messageIds.length ? r : { ...r, messageIds: ids });
+  }
+  write([...kept, intent]);
 }
 
 /**
- * Forget one — Undo, and the commit's own settle.
+ * Forget one PRESS — Undo, and the commit's own settle.
  *
  * The commit calls this only AFTER `engine.mutate` has settled, never before it dispatches: the
  * engine persists the verb to its outbox ahead of the wire, so between the press and that write
  * this journal is the only durable copy and dropping it early reopens the hole one step along.
  */
-export function disarmDeleteIntent(messageId: string): void {
+export function disarmDeleteIntent(pressId: string): void {
   const rows = read();
-  const kept = rows.filter((r) => r.messageId !== messageId);
+  const kept = rows.filter((r) => r.id !== pressId);
   if (kept.length !== rows.length) write(kept);
 }
 
