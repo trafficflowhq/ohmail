@@ -35,7 +35,8 @@ import {
   MANAGED_CLOUD_BASE,
   OPERATOR_CA_FILE,
 } from "./cloud-origin.js";
-import { createHostFetch } from "./host-pin-probe.js";
+import { createHostFetch, probeHostPin } from "./host-pin-probe.js";
+import { originNeedsPin } from "@trafficflow/core/pair-link";
 import type { Diagnostic } from "./log.js";
 import { startEngineVitals } from "./vitals.js";
 
@@ -604,6 +605,37 @@ export async function probeCloudServer(cloudUrl: string, fetchImpl: typeof fetch
 }
 
 /**
+ * A PROBE'S ANSWER, NARROWED TO THE ONE FLAVOR THE PAIRED-DESKTOP DOOR MAY CONFIGURE.
+ *
+ * `probeCloudServer` already refuses the two flavors nothing may pair with — the hosted service,
+ * and a desktop that is not offering itself — with sentences that name what to do instead. What it
+ * does not refuse is a SELF-HOSTED server, because on the self-hosted door that is the right
+ * answer. Reached from a pairing link it is the wrong door rather than the wrong address, and
+ * saying so is the difference between somebody moving one screen back and somebody re-printing a
+ * pairing code that was never the problem.
+ *
+ * A refusal is passed through untouched: it was composed where the failure happened, and a second
+ * classification here would be a worse description of something this function did not observe.
+ */
+async function refuseUnlessDesktopHost(said: Response, origin: string): Promise<Response> {
+  if (!said.ok) return said;
+  const body = (await said.clone().json()) as { flavor?: unknown };
+  if (body.flavor === "desktop-host") return said;
+  return json(
+    {
+      error: {
+        code: "cloud_probe_failed",
+        message:
+          `${origin} is an ohmail server you run rather than a desktop offering its mailbox to ` +
+          "your other devices. Go back and choose “A server I run” instead.",
+        details: { kind: "selfhost", target: origin },
+      },
+    },
+    502,
+  );
+}
+
+/**
  * WHERE IS THE API AT THIS ORIGIN? — the root, or under `/api`.
  *
  * ── WHY THIS IS DISCOVERED AND NOT CONFIGURED ─────────────────────────────────────────────────
@@ -1142,8 +1174,13 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       // this window can make this process dial anything.
       if (req.method === "POST" && path === "/cloud/probe") {
         let candidate: unknown = null;
+        let wantFlavor: unknown = null;
+        let wantPin: unknown = null;
         try {
-          candidate = ((await req.json()) as { origin?: unknown }).origin ?? null;
+          const parsed = (await req.json()) as { origin?: unknown; flavor?: unknown; hostPin?: unknown };
+          candidate = parsed.origin ?? null;
+          wantFlavor = parsed.flavor ?? null;
+          wantPin = parsed.hostPin ?? null;
         } catch {
           /* No body, or not JSON: probe what this engine is configured for. */
         }
@@ -1161,6 +1198,26 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
            The `/api` is composed here rather than accepted, so the path is never the caller's. */
         const origin = normalizeOrigin(candidate);
         if (origin === null) {
+          /* CLEARTEXT IS ITS OWN REFUSAL when the door asked for a paired desktop, because it is
+             the one shape a person can produce by hand and reasonably expect to work: an address
+             copied off a machine that serves plain HTTP. `normalizeOrigin` admits `http:` only on
+             loopback, so a rejected `http://<something else>` is exactly that case and deserves
+             the sentence rather than the general one about server addresses. */
+          const raw = typeof candidate === "string" ? candidate.trim() : "";
+          if (wantFlavor === "desktop-host" && /^http:\/\//i.test(raw)) {
+            return json(
+              {
+                error: {
+                  code: "invalid_request",
+                  message:
+                    "That address is not encrypted, so ohmail will not send your mail over it. " +
+                    "Use the link that computer printed, which always names an encrypted address.",
+                  details: { kind: "cleartext", target: raw },
+                },
+              },
+              400,
+            );
+          }
           return json(
             {
               error: {
@@ -1173,6 +1230,72 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
             400,
           );
         }
+        /* ── THE PAIRED-DESKTOP ARM ─────────────────────────────────────────────────────────
+           A desktop host is the one door whose certificate nothing can vouch for, so the probe
+           has to establish the pin BEFORE it will speak to the address at all. Everything below
+           happens with nothing configured — the whole reason this route takes a candidate — so a
+           wrong link costs no mirror. */
+        if (wantFlavor === "desktop-host") {
+          const pin = typeof wantPin === "string" ? wantPin.trim() : "";
+          /* AN ADDRESS NO CERTIFICATE CAN BE ISSUED FOR NEEDS THE FINGERPRINT. `originNeedsPin` is
+             the pairing grammar's own predicate — the same one the phone applies — rather than a
+             second IP test written here, so the two clients cannot disagree about which addresses
+             are safe to pair with unpinned. */
+          if (pin === "" && originNeedsPin(origin)) {
+            return json(
+              {
+                error: {
+                  code: "invalid_request",
+                  message:
+                    "That link does not carry the other computer's identity, and an address like " +
+                    "this one cannot be checked without it. Print a fresh pairing code on that " +
+                    "computer and paste the whole link.",
+                  details: { kind: "no_pin", target: origin },
+                },
+              },
+              400,
+            );
+          }
+          if (pin !== "") {
+            const url = new URL(origin);
+            const seen = await probeHostPin({
+              host: url.hostname.replace(/^\[|\]$/g, ""),
+              port: url.port === "" ? 443 : Number(url.port),
+              pin,
+              /* WRITTEN INTO THE REAL DATA DIRECTORY, and this is a cache warm-up rather than a
+                 commitment: nothing about the door is configured by a probe, and a leaf left here
+                 for an address that is never chosen is a public certificate that the next pinned
+                 connection either uses or replaces on its first verification failure. */
+              dataDir: config.dataDir,
+              ...(log ? { log } : {}),
+            });
+            if (!seen.ok) {
+              return json(
+                {
+                  error: {
+                    code: "cloud_probe_failed",
+                    message: seen.message,
+                    details: {
+                      kind: seen.code === "pin_changed" ? "pin_mismatch" : seen.code,
+                      target: origin,
+                    },
+                  },
+                },
+                502,
+              );
+            }
+            /* AND THE GREETING IS FETCHED OVER THE PINNED CONNECTION, not an ordinary one. Proving
+               the key and then asking the question over a connection that did not check it would
+               be answering about whatever holds the address now. */
+            const pinned = createHostFetch({
+              origin, pin, dataDir: config.dataDir, ...(log ? { log } : {}),
+            });
+            const said = await probeCloudDoor(origin, config.fetchImpl ?? pinned);
+            return refuseUnlessDesktopHost(said, origin);
+          }
+          return refuseUnlessDesktopHost(await probeCloudDoor(origin, config.fetchImpl ?? fetch), origin);
+        }
+
         /* THE ORIGIN, NOT A BASE — `probeCloudDoor` is what decides whether the API is at the
            root or under `/api`, because that answer comes from the server's own greeting and not
            from anything this window could know. */
