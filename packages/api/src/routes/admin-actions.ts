@@ -1,4 +1,4 @@
-import { silentLogger } from "@trafficflow/core";
+import { silentLogger, SECRET_VALUE_PATTERNS } from "@trafficflow/core";
 import { suspendAccount, resumeAccount, resyncMailbox } from "@trafficflow/db/cloud";
 import {
   recordManualPlatformCost, ManualCostShapeConflict, type CostProvider,
@@ -359,6 +359,24 @@ async function platformCost(
   const provider = str(body.provider).trim();
   if (!(COST_PROVIDERS as readonly string[]).includes(provider)) {
     return { status: 400, body: { error: { code: "provider_invalid" } } };
+  }
+  // ── OPERATOR TEXT IS SCREENED FOR A CREDENTIAL BEFORE IT BECOMES A DURABLE ROW ─────────
+  //
+  // `note`, `metric` and `unit` are free text and all three are granted to the content-blind
+  // staff role. `note` was treated as the only such column and its grant's security argument
+  // says so; the other two arrive from a vendor on the measured path and from a person here.
+  //
+  // The vendor credentials themselves stay in request headers — no URL, error or adapter result
+  // persists one. The reachable path is a person PASTING one: an operator putting an API key in
+  // the note produces a row every holder of the blind role can read, for ever.
+  //
+  // REFUSED, not redacted. Redaction stores an altered version of what somebody typed and says
+  // nothing about it; the refusal tells them, and the key they pasted is one they must now treat
+  // as exposed anyway. `SECRET_VALUE_PATTERNS` is the same set the log redactor uses, so a
+  // pattern added for one is added for both.
+  const screened = [str(body.note), str(body.metric), str(body.unit)];
+  if (screened.some((v) => SECRET_VALUE_PATTERNS.some((p) => p.test(v)))) {
+    return { status: 400, body: { error: { code: "secret_in_text" } } };
   }
   const metric = str(body.metric).trim();
   // THE SAME BOUND THE PARSER USES, from the same constant. These were 64 here and 128 there,

@@ -274,9 +274,24 @@ function microCentsFromDecimalString(raw: string): number | null {
   const m = /^\s*(-?)(\d*)(?:\.(\d*))?\s*$/.exec(raw);
   if (!m || (m[2] === "" && (m[3] ?? "") === "")) return null;
   const scale = 6;
-  const frac = (m[3] ?? "").padEnd(scale + 1, "0");
+  const rawFrac = m[3] ?? "";
+  // ── EXACT OR REFUSED. THE DOCSTRING ABOVE ALREADY SAID SO; THE CODE ROUNDED ─────────────
+  //
+  // This padded to the seventh digit and rounded at the sixth, which is a guess dressed as a
+  // reading — and the guess is not neutral, because rounding happens PER LINE and the lines are
+  // then summed. Measured, not argued: `0.00000051`, `-0.00000026`, `-0.00000026` are three
+  // amounts this parser accepts whose exact total is `-0.00000001` cents, a NET CREDIT. Rounded
+  // per line they are `+1`, `-0`, `-0`, summing to `+1` micro-cent, and because the month has
+  // both a charge and a credit neither the credit-only refusal nor the negative test fires: the
+  // board publishes ONE POSITIVE CENT for a month the vendor ended owing us.
+  //
+  // Refusing is the honest answer and costs nothing real: the vendor documents four decimal
+  // places and every amount seen has had four. An amount finer than this scale is money this
+  // parser cannot account for, which is the sentence directly above.
+  if (rawFrac.length > scale && /[1-9]/.test(rawFrac.slice(scale))) return null;
+  const frac = rawFrac.padEnd(scale, "0");
   const kept = `${m[2] || "0"}${frac.slice(0, scale)}`;
-  const magnitude = Number(kept) + (frac.charCodeAt(scale) - 48 >= 5 ? 1 : 0);
+  const magnitude = Number(kept);
   if (!Number.isSafeInteger(magnitude)) return null;
   return m[1] === "-" ? -magnitude : magnitude;
 }
@@ -430,6 +445,15 @@ const ANTHROPIC_MAX_PAGES = 12;
  */
 const ANTHROPIC_WALK_BUDGET_MS = 25_000;
 
+/**
+ * The most daily buckets one page may carry before the answer is a shape rather than a month.
+ *
+ * The request asks for `limit=31`, the API's own ceiling and the longest month there is. This is
+ * a generous multiple of that: it refuses a page large enough to spend the walk's whole
+ * reservation on parsing, without refusing a vendor that starts returning a few extra.
+ */
+const ANTHROPIC_MAX_BUCKETS_PER_PAGE = 256;
+
 /** `bucket_width=1d`, in milliseconds — what the continuity check in `parseAnthropic` steps by. */
 const ANTHROPIC_BUCKET_MS = 24 * 60 * 60 * 1000;
 
@@ -545,8 +569,24 @@ export function makePlatformCostPort(
       return { ok: false, code: "transport" };
     }
     if (!res.ok) return { ok: false, code: `http_${res.status}` as PlatformCostFailure };
+    // ── THE SAME CEILING THE NEWLINE-DELIMITED READER HAS ──────────────────────────────────
+    //
+    // `res.json()` parses the WHOLE body before returning, so a ceiling applied afterwards is a
+    // ceiling on nothing: the cost has been paid. The JSONL reader below has checked bytes since
+    // it was written and this one never did — the same guard, present on one of two readers,
+    // which is this lane's recurring shape and was found by sweeping the page-size fix's
+    // siblings rather than by it biting.
+    //
+    // Read as TEXT first so the ceiling can refuse before `JSON.parse` sees it.
+    let text: string;
     try {
-      return { ok: true, body: await res.json() };
+      text = await res.text();
+    } catch {
+      return { ok: false, code: "transport" };
+    }
+    if (text.length > MAX_CHARGES_BYTES) return { ok: false, code: "response_too_large" };
+    try {
+      return { ok: true, body: JSON.parse(text) as unknown };
     } catch {
       return { ok: false, code: "non_json" };
     }
@@ -669,6 +709,20 @@ export function makePlatformCostPort(
             const body = res.body as
               { data?: unknown; has_more?: unknown; next_page?: unknown } | null;
             if (!body || typeof body !== "object" || !Array.isArray(body.data)) {
+              return { failed: "unrecognised_shape" };
+            }
+            // ── THE RESERVATION BOUNDS THE REQUEST; THIS BOUNDS THE WORK AFTER IT ───────────
+            //
+            // The time arithmetic covers only the time a request may TAKE. A syntactically valid
+            // page can carry an unbounded `data` array, and merging and parsing it happens after
+            // the body has arrived, inside no budget at all — so one large first page can cross
+            // both the 25-second provider reservation and the 45-second pass budget and reach
+            // the route's hard kill, which records nothing about why.
+            //
+            // A month cannot have more buckets than it has days, and the request asks for daily
+            // buckets with `limit=31`. Anything past a generous multiple of that is a shape this
+            // parser does not understand rather than a month, and is refused as one.
+            if (body.data.length > ANTHROPIC_MAX_BUCKETS_PER_PAGE) {
               return { failed: "unrecognised_shape" };
             }
             for (const raw of body.data) {
@@ -801,7 +855,7 @@ function parseVercelCharges(
   lines: string[], window: PlatformCostWindow, asOf: Date,
 ): PlatformCostFetch {
   const totals = new Map<string, {
-    micro: number; quantity: number | null; unit: string | null; charged: boolean;
+    micro: number; quantity: number | null; unit: string | null; charged: boolean; lines: number;
   }>();
   // Counted only for records that fall INSIDE the window. Counting every recognised record was
   // the previous shape and it manufactured a zero: minutes after a month starts, the response can
@@ -990,7 +1044,8 @@ function parseVercelCharges(
     currency.observeRequired(record.BillingCurrency);
     if (billed < 0) credited = true;
     if (billed > 0) vendorCharged = true;
-    const acc = totals.get(service) ?? { micro: 0, quantity: null, unit: null, charged: false };
+    const acc = totals.get(service) ?? { micro: 0, quantity: null, unit: null, charged: false, lines: 0 };
+    acc.lines += 1;
     acc.micro += microCentsFromDollars(billed);
     if (billed > 0) acc.charged = true;
     const quantity = num(record.ConsumedQuantity);
@@ -1137,6 +1192,21 @@ function parseVercelCharges(
   // figure that is wrong is worth less than a figure with no detail.
   if (credited) {
     const netMicro = [...totals.values()].reduce((sum, t) => sum + t.micro, 0);
+    // ── A SUM TOO CLOSE TO ZERO FOR ITS OWN ROUNDING TO HAVE A SIGN ────────────────────
+    //
+    // The decimal-string parser refuses what it cannot read exactly; this side takes a JSON
+    // NUMBER, so it cannot refuse by counting digits — `microCentsFromDollars` rounds, and each
+    // rounded line carries up to half a micro-cent of error in either direction. With mixed
+    // signs those errors can carry the total across zero, which is how a net credit becomes a
+    // positive charge with both `credited` and `vendorCharged` true so neither refusal fires.
+    //
+    // So the accumulated error is bounded and compared against the total. If the month's net is
+    // no larger than the rounding could have moved it, its SIGN is not established, and an
+    // unestablished sign on a month that contains a credit is refused rather than published.
+    const roundedLines = [...totals.values()].reduce((n, t) => n + t.lines, 0);
+    if (credited && Math.abs(netMicro) * 2 <= roundedLines) {
+      return { failed: "negative_total" };
+    }
     // A month whose credits outweigh its charges is REFUSED rather than floored: `$0.00` written
     // as a measurement would say the vendor charged nothing, and the vendor said it owed us. The
     // sign is tested on the UNROUNDED total, because `Math.round(-0.004 * 100)` is negative zero
@@ -1300,9 +1370,15 @@ function parseAnthropic(
     for (const r of bucket.results as Array<Record<string, unknown>>) {
       // The vendor sends a STRING, so it is parsed exactly. A number is accepted too and scaled
       // the same way, for a response shape that has not been seen but would be readable.
-      const amount = typeof r?.amount === "string"
-        ? microCentsFromDecimalString(r.amount)
-        : (num(r?.amount) === null ? null : Math.round(num(r?.amount)! * MICRO_CENTS_PER_CENT));
+      // A NUMBER IS REFUSED, NOT ROUNDED. This used to accept one "for a response shape that has
+      // not been seen but would be readable", and rounded it — the same per-line rounding the
+      // string path just stopped doing, in the same function, reachable by the same mixed-sign
+      // reversal. A JSON number is a float and cannot be read exactly by construction, which is
+      // the one thing this parser refuses to guess at.
+      //
+      // If the vendor ever does send numbers, this refuses visibly and somebody adds exact
+      // handling, rather than the board quietly publishing a rounded total.
+      const amount = typeof r?.amount === "string" ? microCentsFromDecimalString(r.amount) : null;
       // Same rule one level down: a result this parser cannot read is money it cannot account
       // for, so the report is refused rather than summed around.
       if (amount === null) return { failed: "unrecognised_shape" };
@@ -1857,9 +1933,15 @@ async function passWindows(
       .filter((r) => r.periodStart < windowStart)
       .map((r) => r.provider as CostProvider));
 
-  // SETTLED IS EVIDENCE: a reading taken a full day past the month's end (so the vendor's own
-  // final period has closed and been indexed), or a reading of the NEXT month that already
-  // carries data — which can only exist once the vendor has moved on.
+  // SETTLED IS EVIDENCE: a reading taken a full day past the month's end, so the vendor's own
+  // final period has closed and been indexed. ONE signal, which is what the query below asks
+  // for and what `SETTLE_LAG_MS` says.
+  //
+  // This used to add "or a reading of the NEXT month that already carries data" — a second
+  // signal that has never been implemented, in a comment sitting directly above the query that
+  // does not ask for it, and contradicting the paragraph on `SETTLE_LAG_MS` that says in so many
+  // words "one signal and not two". A reader trusting it would look for a clause that is not
+  // there and conclude the query was wrong.
   const settledRows = await tx
     .select({ provider: platformCosts.provider })
     .from(platformCosts)
