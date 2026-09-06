@@ -387,6 +387,20 @@ export async function applyMetaRequests(
     }
   }
 
+  /* Where the walk would resume if this pass finishes the page it settles on. Applied after the
+   * per-cycle slice below, which is the first point at which "finished" means anything.
+   *
+   * IT IS APPLIED ON EVERY EXIT, and the first version was not: the cycles that end early — the
+   * folder could not be read, or held nothing this pass settles — are exactly the cycles a WALK
+   * consists of, so leaving them out meant the resume point was written only by the rare cycle
+   * that finished work, and every ordinary step of the walk forgot where it had got to. A guard
+   * written for that very property caught it. */
+  let pageAdvance: { bottom: true } | { bottom: false; lo: number } | null = null;
+  const keepPlace = (capBit: boolean): void => {
+    if (pageAdvance === null || capBit) return;
+    if (pageAdvance.bottom) drainCursors.delete(rt.mailboxId);
+    else drainCursors.set(rt.mailboxId, pageAdvance.lo);
+  };
   let records: RawMetaMessage[];
   try {
     /* RESUME WHERE THIS MAILBOX'S WALK STOPPED. Absent, this is the newest page, which is where a
@@ -410,10 +424,19 @@ export async function applyMetaRequests(
       /* A page holding work keeps its bound: settling is capped per cycle, so moving below a
        * page this pass could not finish would strand the remainder until the walk came round
        * again. Re-reading a settled record is a claimed key and a no-op. */
-      if (!hasRequestRecord(records)) {
-        if (here.bottom) drainCursors.delete(rt.mailboxId);
-        else drainCursors.set(rt.mailboxId, here.lo);
-      }
+      /* ── WHETHER THIS PAGE IS FINISHED IS NOT KNOWN YET ──────────────────────────────────
+       *
+       * The first rule here asked whether the page held any request record at all, and pinned the
+       * bound if it did. That is the wrong question, and it turned one stuck record into a stuck
+       * mailbox: a request this build cannot settle — one written by a newer ohmail, left standing
+       * on purpose — is a request record for ever, so the page containing it pinned the walk for
+       * ever and every older request underneath went unsettled while the drain reported healthy
+       * cycles.
+       *
+       * The real question is whether the per-cycle cap stopped this pass part-way through work it
+       * WOULD have settled, and that is not answerable until the slice below has been taken. So
+       * the bound is only a candidate here; the decision is made after it. */
+      pageAdvance = here.bottom ? { bottom: true } : { bottom: false, lo: here.lo };
     }
   } catch (err) {
     /* ── A FOLDER TOO FULL TO READ IS DRAINED A PAGE AT A TIME, NOT REFUSED WHOLESALE ────────
@@ -507,7 +530,7 @@ export async function applyMetaRequests(
        * five hundred, so the other three hundred waited for the walk to bottom out and start
        * over. A page with work keeps the bound that produced it, and the next cycle reads it
        * again — shorter, because what was settled has left the folder. */
-      if (cursor !== null && !hasRequestRecord(records)) drainCursors.set(rt.mailboxId, cursor);
+      if (cursor !== null) pageAdvance = { bottom: false, lo: cursor };
       for (let page = 1; page < REQUEST_DRAIN_MAX_PAGES; page++) {
         if (hasRequestRecord(records)) break;
         if (cursor === null || cursor <= 1) {
@@ -543,7 +566,7 @@ export async function applyMetaRequests(
         if (next === null || cursor !== null && next >= cursor) break;
         records = older;
         cursor = next;
-        if (!hasRequestRecord(older)) drainCursors.set(rt.mailboxId, next);
+        pageAdvance = { bottom: false, lo: next };
         log("meta_requests_page_advanced", {
           mailboxId: rt.mailboxId, accountId: rt.accountId, page, cursor,
           reason: "the page above held nothing this pass can settle, so the walk moved older "
@@ -558,6 +581,7 @@ export async function applyMetaRequests(
         err: err instanceof Error ? err.message : String(err),
         records: recordsPresentIn(err),
       });
+      keepPlace(false);
       return EMPTY_RESULT;
     }
   }
@@ -607,6 +631,7 @@ export async function applyMetaRequests(
         });
       }
     }
+    keepPlace(false);
     return EMPTY_RESULT;
   }
 
@@ -665,6 +690,15 @@ export async function applyMetaRequests(
   const budget = malformed.length + wellFormed.length;
   const takeMalformed = malformed.slice(0, REQUEST_DRAIN_MAX_PER_CYCLE);
   const takeWellFormed = wellFormed.slice(0, REQUEST_DRAIN_MAX_PER_CYCLE);
+
+  /* ── THE WALK ADVANCES UNLESS THE CAP STOPPED IT MID-PAGE ────────────────────────────────
+   *
+   * Work this pass declined to reach is the only reason to read the same window again. Work it
+   * CANNOT reach — a record standing for a protocol this build does not implement — is not work
+   * pending here at all, and treating it as such is what pinned the walk above every older
+   * request. So the page's own bound is taken whenever the slice consumed everything it was
+   * offered, and held only when the cap truly bit. */
+  keepPlace(malformed.length > takeMalformed.length || wellFormed.length > takeWellFormed.length);
   let deferred = budget - takeMalformed.length - takeWellFormed.length;
 
   let applied = 0;

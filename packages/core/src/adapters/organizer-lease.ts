@@ -2755,6 +2755,21 @@ async function highestUid(
 const ownClaimUid = new WeakMap<object, number>();
 
 /**
+ * WHERE THE ACK SWEEP STOPPED LOOKING, so the next pass carries on rather than starting over.
+ *
+ * Bounding the sweep's search made each pass affordable and, on its own, made the sweep a
+ * treadmill: it walked down from the top of the uid space a fixed distance every time, so
+ * acknowledgements lying deeper than that distance were never once looked at. The folder then
+ * cannot be compacted below them, and the sweep is the only thing that ever makes it smaller.
+ *
+ * Like the drain's, this records WHERE TO LOOK and never what was settled — losing it costs one
+ * re-walk from the top and can never lose a record, which is why it is content to live only as
+ * long as the connection. Reaching the bottom clears it, so the next pass starts at the newest
+ * acknowledgements again.
+ */
+const sweepCursor = new WeakMap<object, number>();
+
+/**
  * WHY A CLAIM READ CAME BACK SHORT — the difference between a mailbox with nothing to say and one
  * that is permanently stuck.
  *
@@ -5030,7 +5045,10 @@ export function makeRequestOrganizerIo(
          * round trips for records the budget below cannot delete this time round anyway. */
         const wanted = SWEEP_DELETE_BATCH * SWEEP_BATCHES_MAX_PER_CYCLE;
         const found: number[] = [];
-        let hi = top;
+        /* Resume beneath the last pass's stopping point. A cursor above the current ceiling is
+         * meaningless — the folder has been renumbered or replaced — so the top wins. */
+        const resumeAt = sweepCursor.get(client);
+        let hi = resumeAt !== undefined && resumeAt < top ? resumeAt : top;
         for (let w = 0; w < SWEEP_SEARCH_WINDOW_BUDGET; w++) {
           const lo = Math.max(1, hi - SEARCH_UID_WINDOW + 1);
           const page = await client.search(
@@ -5049,8 +5067,19 @@ export function makeRequestOrganizerIo(
             );
           }
           found.push(...page);
-          if (lo === 1 || found.length >= wanted) break;
+          if (lo === 1) {
+            // The bottom: nothing older to come back to, so the next pass starts at the top.
+            sweepCursor.delete(client);
+            break;
+          }
+          if (found.length >= wanted) {
+            // Enough for this pass. Carry on from just below this window next time.
+            sweepCursor.set(client, lo - 1);
+            break;
+          }
           hi = lo - 1;
+          // The budget may run out here; `hi` is where the next pass resumes.
+          if (w === SWEEP_SEARCH_WINDOW_BUDGET - 1) sweepCursor.set(client, hi);
         }
         /* A REFUSED SEARCH IS NOT AN EMPTY FOLDER — the library resolves `false` rather than
          * rejecting. Returning 0 for it reported a sweep that had not happened, and the sweep is

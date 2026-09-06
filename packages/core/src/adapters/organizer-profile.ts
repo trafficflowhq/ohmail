@@ -558,6 +558,21 @@ export type ProfileOp = "ensure_meta" | "list_profiles" | "append_profile" | "re
  * reason to read the folder another way. An empty folder is `{ kind: "uids", uids: [] }` and it is
  * the ONLY value that may be read as "there is no profile here".
  */
+/**
+ * THE UID THE SERVER GAVE OUR OWN SETTINGS DOCUMENT WHEN WE WROTE IT.
+ *
+ * The settings walk has the lease's problem in its own door: it covers a fixed distance below the
+ * top of the uid space, and churn moves the records further from that top without limit. Past the
+ * budget every window is empty, and because "could not ask" now correctly refuses rather than
+ * reading the folder an unbounded way, the result is a mailbox whose published settings are
+ * permanently unavailable. Refusing is right; never recovering is not.
+ *
+ * Keyed on the connection for the reasons written beside the lease's: a folder path is identical
+ * across mailboxes, and a fresh io is built per call. A hint, never evidence — the document is
+ * still read from the folder and parsed like any other.
+ */
+const ownProfileUid = new WeakMap<object, number>();
+
 export type ProfileUidAsk =
   | { readonly kind: "uids"; readonly uids: number[] }
   | { readonly kind: "unknown"; readonly why: string };
@@ -912,6 +927,14 @@ export function makeProfileIo(
           }
 
           const out: number[] = [];
+          /* ── THE STRETCH BETWEEN OUR OWN DOCUMENT AND WHERE THE WALK STOPS ──────────────────
+           *
+           * Read like the lease's claim gap and for the same reason. The walk still starts at the
+           * top — a settings document written after ours has a higher uid, and starting at ours
+           * would read past it and answer with a stale document. What the anchor buys is the
+           * right to cover what the budget left beneath it. */
+          const anchor = ownProfileUid.get(client) ?? null;
+          const bottomFor = (): number => (anchor !== null && anchor >= 1 ? anchor : 1);
           let hi = top;
           for (let w = 0; w < PROFILE_SEARCH_WINDOW_BUDGET; w++) {
             const lo = Math.max(1, hi - PROFILE_SEARCH_UID_WINDOW + 1);
@@ -928,11 +951,34 @@ export function makeProfileIo(
             }
             hi = lo - 1;
           }
-          // The budget ran out with folder unexamined: not an answer, and not reported as one.
+          /* ── THE BUDGET RAN OUT — READ THE GAP DOWN TO OUR OWN DOCUMENT ────────────────────
+           *
+           * Everything at or above `hi + 1` has been covered. If our own document lies below that,
+           * the stretch between is what the budget could not reach, and reading it is what stops
+           * depth alone making a mailbox's settings unavailable for good. */
+          const floor = hi + 1;
+          const bottom = bottomFor();
+          if (anchor !== null && bottom < floor) {
+            let gapHi = floor - 1;
+            for (let w = 0; w < PROFILE_SEARCH_WINDOW_BUDGET; w++) {
+              const lo = Math.max(bottom, gapHi - PROFILE_SEARCH_UID_WINDOW + 1);
+              const found = await c.search(
+                { header: { [H.profile]: true }, uid: `${lo}:${gapHi}` }, { uid: true },
+              );
+              if (!Array.isArray(found)) {
+                return { kind: "unknown", why: `the search of UIDs ${lo}:${gapHi} was refused` };
+              }
+              out.push(...found);
+              if (lo === bottom) return { kind: "uids", uids: out.sort((a, b) => a - b) };
+              gapHi = lo - 1;
+            }
+          }
+          // Deeper than two budgets: still a refusal, but a named one.
           return {
             kind: "unknown",
-            why: `the newest ${PROFILE_SEARCH_WINDOW_BUDGET * PROFILE_SEARCH_UID_WINDOW} UIDs did `
-              + "not reach the bottom of the folder",
+            why: "profile_gap_too_deep: the settings document lies further below the top of the "
+              + `uid space than ${2 * PROFILE_SEARCH_WINDOW_BUDGET * PROFILE_SEARCH_UID_WINDOW} `
+              + "uids, so no bounded read of this folder can reach it",
           };
         };
 
@@ -1134,7 +1180,13 @@ export function makeProfileIo(
     },
 
     async appendProfile(raw: string): Promise<void> {
-      await client.append(await meta.path(), raw, ["\\Seen"]);
+      const reply = await client.append(await meta.path(), raw, ["\\Seen"]);
+      // No UIDPLUS means no anchor rather than a guessed one; the walk then behaves as before.
+      const uid = typeof reply === "object" && reply !== null
+        ? (reply as { uid?: unknown }).uid
+        : undefined;
+      if (typeof uid === "number" && Number.isFinite(uid) && uid > 0) ownProfileUid.set(client, uid);
+      else ownProfileUid.delete(client);
     },
 
     async removeProfiles(refs: readonly unknown[]): Promise<void> {
