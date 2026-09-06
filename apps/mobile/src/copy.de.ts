@@ -786,6 +786,30 @@ export const DE: Deck = {
   /* "geht nach" + a place name has the same case problem; the web client's own heading for this
      pane asks the question instead (`screening.sectionWhere`: "Wohin ihre Post geht"). */
   screeningFor: (sender: string) => `Wohin die Post von ${sender} geht`,
+  /* Carried with the English above; see `copy.en.ts` for why these live in the deck. */
+  unsavedCount: (n: number): string =>
+    (n === 1 ? "1 Änderung konnte nicht gespeichert werden" : `${n} Änderungen konnten nicht gespeichert werden`),
+  unsavedShow: "Anzeigen",
+  unsavedHide: "Ausblenden",
+  unsavedRetry: "Erneut versuchen",
+  unsavedDiscard: "Verwerfen",
+  unsavedDismiss: "Schließen",
+  unsavedNoReason: "Der Server hat es abgelehnt und nicht gesagt, warum.",
+  unsavedSuperseded: "Am selben Objekt wurde inzwischen eine neuere Änderung gespeichert, deshalb lässt sich diese nicht wiederholen.",
+  unsavedKindOther: "Eine Änderung an deinem Postfach",
+  unsavedKindMove: "Eine Nachricht einsortieren",
+  unsavedKindDelete: "Eine Nachricht löschen",
+  unsavedKindTriage: "Eine Nachricht zurückstellen",
+  unsavedKindScreener: "Eine Screener-Entscheidung",
+  unsavedKindRead: "Post als gelesen markieren",
+  unsavedKindSend: "Eine Nachricht senden",
+  unsavedKindDraft: "Einen Entwurf speichern",
+  unsavedKindDraftDiscard: "Einen Entwurf verwerfen",
+  unsavedKindSchedule: "Einen geplanten Versand abbrechen",
+  unsavedKindTag: "Eine Tag-Änderung",
+  unsavedKindFolder: "Eine Ordner-Änderung",
+  unsavedKindRule: "Eine Regel-Änderung",
+
   screeningNote: (target: string) =>
     `Wird zur Regel — künftige Post von ${target} wird automatisch dorthin einsortiert, und was schon hier ist, wird verschoben.`,
 };

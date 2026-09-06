@@ -1291,6 +1291,31 @@ const TABLE = {
   connectSuperseded: "a newer connection attempt took over.",
 
   screeningFor: (sender: string) => `Mail from ${sender} goes to`,
+  // ── CHANGES THE SERVER WOULD NOT TAKE ──────────────────────────────────────────────────
+  // The phone's half of the browser's "could not be saved" strip. Same words on both platforms
+  // deliberately: a person who uses both should not have to learn two names for one state.
+  unsavedCount: (n: number) => (n === 1 ? "1 change could not be saved" : `${n} changes could not be saved`),
+  unsavedShow: "Show them",
+  unsavedHide: "Hide",
+  unsavedRetry: "Try again",
+  unsavedDiscard: "Discard",
+  unsavedDismiss: "Dismiss",
+  unsavedNoReason: "The server refused it and did not say why.",
+  unsavedSuperseded: "A newer change to the same thing has since been saved, so this one cannot be retried.",
+  unsavedKindOther: "A change to your mailbox",
+  unsavedKindMove: "Filing a message",
+  unsavedKindDelete: "Deleting a message",
+  unsavedKindTriage: "Setting a message aside",
+  unsavedKindScreener: "A Screener decision",
+  unsavedKindRead: "Marking mail read",
+  unsavedKindSend: "Sending a message",
+  unsavedKindDraft: "Saving a draft",
+  unsavedKindDraftDiscard: "Discarding a draft",
+  unsavedKindSchedule: "Cancelling a scheduled send",
+  unsavedKindTag: "A tag change",
+  unsavedKindFolder: "A folder change",
+  unsavedKindRule: "A rule change",
+
   screeningNote: (target: string) =>
     `Becomes a rule — future mail from ${target} files there automatically, and what is already here moves.`,
 };

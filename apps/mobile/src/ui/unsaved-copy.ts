@@ -17,35 +17,42 @@ import { Copy } from "../copy";
  * Deliberately NOT exhaustive over `MutationKind`: making a new verb a compile error would put a
  * copy chore in the path of everyone who adds one, and the pressure then is to write filler. The
  * guard asserts the FALLBACK works instead of asserting the table is complete.
+ *
+ * IT HOLDS KEYS, NOT SENTENCES. A module-scope map of `Copy.x` reads is evaluated once, when this
+ * module is first imported — so every value in it is frozen in whatever language was active at
+ * that moment, and a later language change never reaches them. The deck's members are live
+ * getters; the read has to happen when somebody asks. Same rule as everywhere else in this app:
+ * carry the key, format at the point of use.
  */
-const KINDS = new Map<string, string>(Object.entries({
-  move: Copy.unsavedKindMove,
-  message_delete: Copy.unsavedKindDelete,
-  triage_set: Copy.unsavedKindTriage,
-  screener_decide: Copy.unsavedKindScreener,
-  mark_seen: Copy.unsavedKindRead,
-  feed_mark_seen: Copy.unsavedKindRead,
-  mail_send: Copy.unsavedKindSend,
-  draft_save: Copy.unsavedKindDraft,
-  draft_accept: Copy.unsavedKindDraft,
-  draft_discard: Copy.unsavedKindDraftDiscard,
-  draft_schedule_cancel: Copy.unsavedKindSchedule,
-  tag_assign: Copy.unsavedKindTag,
-  tag_create: Copy.unsavedKindTag,
-  tag_rename: Copy.unsavedKindTag,
-  tag_recolor: Copy.unsavedKindTag,
-  tag_delete: Copy.unsavedKindTag,
-  folder_create: Copy.unsavedKindFolder,
-  folder_rename: Copy.unsavedKindFolder,
-  folder_delete: Copy.unsavedKindFolder,
-  folder_op_dismiss: Copy.unsavedKindFolder,
-  rule_create: Copy.unsavedKindRule,
-  rule_update: Copy.unsavedKindRule,
-  rule_delete: Copy.unsavedKindRule,
+const KINDS = new Map<string, keyof typeof Copy>(Object.entries({
+  move: "unsavedKindMove",
+  message_delete: "unsavedKindDelete",
+  triage_set: "unsavedKindTriage",
+  screener_decide: "unsavedKindScreener",
+  mark_seen: "unsavedKindRead",
+  feed_mark_seen: "unsavedKindRead",
+  mail_send: "unsavedKindSend",
+  draft_save: "unsavedKindDraft",
+  draft_accept: "unsavedKindDraft",
+  draft_discard: "unsavedKindDraftDiscard",
+  draft_schedule_cancel: "unsavedKindSchedule",
+  tag_assign: "unsavedKindTag",
+  tag_create: "unsavedKindTag",
+  tag_rename: "unsavedKindTag",
+  tag_recolor: "unsavedKindTag",
+  tag_delete: "unsavedKindTag",
+  folder_create: "unsavedKindFolder",
+  folder_rename: "unsavedKindFolder",
+  folder_delete: "unsavedKindFolder",
+  folder_op_dismiss: "unsavedKindFolder",
+  rule_create: "unsavedKindRule",
+  rule_update: "unsavedKindRule",
+  rule_delete: "unsavedKindRule",
 }));
 
 export function describeKind(m: AbandonedMutation): string {
-  return KINDS.get(m.mutation.kind) ?? Copy.unsavedKindOther;
+  const key = KINDS.get(m.mutation.kind);
+  return key === undefined ? Copy.unsavedKindOther : (Copy[key] as string);
 }
 
 /**
