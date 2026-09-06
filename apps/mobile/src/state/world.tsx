@@ -1013,8 +1013,12 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    *
    *  · round 2 — no formatted-label ambiguity is possible: both sides of the comparison come
    *    from the same derivation, so "a different stamp that happens to format identically"
-   *    cannot make a real transition invisible (a stamp change requires a drain, which
-   *    re-derives through `version` anyway);
+   *    cannot make a real transition invisible. (The parenthetical here used to add "a stamp
+   *    change requires a drain, which re-derives through `version` anyway", and that is no longer
+   *    true: writing the completion stamp does not bump the mirror version —
+   *    `packages/client-engine/src/store.ts`. The argument never needed it. Both sides still come
+   *    from one derivation, and the minute tick below is what re-reads; the removed clause only
+   *    ever said the re-read would also happen sooner.)
    *  · round 3 — a healthy drain's stamp churn re-arms and re-renders NOTHING: while current,
    *    the rendered label is null across every drain, the dep does not move, and the check
    *    compares null with null;
