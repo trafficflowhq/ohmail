@@ -446,8 +446,19 @@ can do, not a process that will finish.
 
 Settings → Desktop names the computer you are connected through, whether the pairing still stands,
 whether it is reachable and when it last answered, and offers to set this machine up on its own if
-it will not be coming back. Settings → About names it too, and the panes that belong to a hosted
-account are not shown on this door, because there is no hosted account behind it.
+it will not be coming back — in every state, not only while something is wrong. Settings → About
+names it too, Settings → Mailboxes points at that computer instead of at a browser, and the panes
+that belong to a hosted account are not shown on this door, because there is no hosted account
+behind it.
+
+The computer doing the organizing shows its own key under Settings → Devices, as the twelve
+characters a joining machine displays before it pairs. Comparing them is what tells "we reached
+something" apart from "we reached the machine you meant" on a network where no certificate
+authority vouches for anybody.
+
+Pairing again after a pairing has ended signs out and redeems in place rather than setting the app
+up afresh, so the copy of your mail on this machine is kept. A computer reinstalled at the same
+address is a different account behind a familiar name, and that is refused rather than merged.
 
 ### Still to come
 
