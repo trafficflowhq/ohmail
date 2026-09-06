@@ -68,7 +68,11 @@ async function makeSqliteTestDb(): Promise<PgliteDatabase<typeof schema>> {
   const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as {
     DatabaseSync: new (path: string) => {
       exec(sql: string): void;
-      prepare(sql: string): { all(...p: unknown[]): unknown[]; run(...p: unknown[]): unknown };
+      prepare(sql: string): {
+        all(...p: unknown[]): unknown[];
+        run(...p: unknown[]): unknown;
+        columns?(): { column?: string | null; name?: string }[];
+      };
     };
   };
   const raw = new DatabaseSync(":memory:");
@@ -89,8 +93,14 @@ async function makeSqliteTestDb(): Promise<PgliteDatabase<typeof schema>> {
   const db = drizzleSqliteProxy(async (query, params, method) => {
     return serial(() => {
       if (method === "run") { raw.prepare(query).run(...(params as never[])); return { rows: [] }; }
-      const rows = (raw.prepare(query).all(...(params as never[])) as Record<string, unknown>[])
-        .map((r) => Object.values(r));
+      // ORDERED BY THE STATEMENT'S COLUMNS, never by the row object's keys — see the note on the
+      // server arm's `exec`: integer-like aliases enumerate numerically and silently reorder.
+      const statement = raw.prepare(query);
+      const order = statement.columns?.().map((c) => c.name ?? c.column ?? "") ?? null;
+      const raws = statement.all(...(params as never[])) as Record<string, unknown>[];
+      const rows = order === null
+        ? raws.map((r) => Object.values(r))
+        : raws.map((r) => order.map((name) => r[name]));
       return { rows: method === "get" ? (rows[0] ?? []) : rows };
     });
   });

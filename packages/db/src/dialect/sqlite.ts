@@ -19,9 +19,10 @@ import type { Dialect, LockOptions, SearchArm } from "./index.js";
  * The oldest SQLite this schema can be opened on, and what each digit buys.
  *
  * Stated as three separate reasons rather than one number so a future reader can tell which
- * feature a bump would be for: `RETURNING` arrived in 3.35, sub-second `unixepoch` in 3.42, and
- * window functions — which the ranked reads use in place of the server's `DISTINCT ON` — in 3.25.
- * The highest of the three is the floor.
+ * feature a bump would be for: `RETURNING` arrived in 3.35, window functions — which the ranked
+ * reads use in place of the server's `DISTINCT ON` — in 3.25, sub-second `unixepoch` in 3.42, and
+ * `octet_length`, which a CHECK in the schema itself uses, in 3.43. The highest of the FOUR is the
+ * floor, and it is 3.43.
  */
 export const SQLITE_MINIMUM = {
   returning: "3.35.0", unixepochSubsec: "3.42.0", windowFunctions: "3.25.0",

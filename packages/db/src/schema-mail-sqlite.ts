@@ -29,9 +29,10 @@
  * migration beside these tables and kept current by triggers — the index reads the row it points
  * at, so the text is stored once.
  *
- * THIS FILE IS DERIVED AND CHECKED, NOT MAINTAINED BY HAND IN PARALLEL. A column added to the
- * Postgres twin without a sibling here fails the parity test, which is the only thing standing
- * between "the two schemas agree" and "nobody has looked lately".
+ * THIS FILE IS MAINTAINED, AND HELD TO ITS TWIN BY A TEST — it is not generated, and nothing
+ * regenerates it. A column added to the Postgres twin without a sibling here fails the parity
+ * test, which is what stands between "the two schemas agree" and "nobody has looked lately"; the
+ * parity test's own header says exactly which properties it compares and which it does not.
  */
 import { sqliteTable, text, integer, real, unique, uniqueIndex, index, primaryKey, customType, check } from "drizzle-orm/sqlite-core";
 import { sql, desc } from "drizzle-orm";
@@ -42,10 +43,40 @@ import { sql, desc } from "drizzle-orm";
  * The query builder's own large-integer column is a blob, and a blob neither compares nor orders
  * — which these columns do, in the sync cursor and in the change log's sequence.
  */
-const int64 = customType<{ data: bigint; driverData: number | bigint }>({
+const int64 = customType<{ data: bigint; driverData: string }>({
   dataType() { return "integer"; },
-  fromDriver(value) { return BigInt(value as number | bigint); },
-  toDriver(value) { return value; },
+
+  /**
+   * BOUND AS A DECIMAL STRING, not as a bigint.
+   *
+   * The store's column is a native 64-bit integer either way — a numeric string binds to an
+   * INTEGER column exactly, by affinity. What differs is the HOST: the device's SQLite binding
+   * accepts a string, a number, null, a boolean or bytes, and NOT a bigint, so passing one through
+   * unchanged either fails the bind or is coerced to a double and silently loses bits above
+   * 2^53 — which for a UIDVALIDITY or a change-log sequence is a message pointing at the wrong
+   * mail. Node's own binding accepts bigints, so a test on this machine cannot see it.
+   */
+  toDriver(value) { return value.toString(); },
+
+  /**
+   * And read back LOUDLY, because the return side cannot be made exact from here.
+   *
+   * A host that hands back a double for an INTEGER column has already lost the low bits by the
+   * time this runs; there is nothing to recover. Refusing names the value and the column instead
+   * of returning a number that is quietly one or two away from the one stored.
+   */
+  fromDriver(value) {
+    if (typeof value === "bigint") return value;
+    if (typeof value === "string") return BigInt(value);
+    const n = value as unknown as number;
+    if (!Number.isSafeInteger(n)) {
+      throw new Error(
+        `this store returned ${n} for a 64-bit column, and a value that large cannot survive a ` +
+        "double. The host's binding must return a string or a bigint for these columns.",
+      );
+    }
+    return BigInt(n);
+  },
 });
 
 /** The current instant, in the milliseconds-since-epoch the timestamp columns store. */

@@ -4,8 +4,11 @@
  * The same engine — the same services, the same sync loop, the same lease — runs against Postgres
  * on a server and against SQLite on a phone. Everything above this module is written once. This is
  * the seam where "the current timestamp", "lock this row", "search this text" stop being one thing
- * and become two, and it is deliberately small: every construct here earned its place by appearing
- * in code that ships to both, and nothing was added on the theory that it might.
+ * and become two, and it is deliberately small: every member names a construct a census over the
+ * engine's own sources actually found. Which of them have a caller TODAY, and which are waiting
+ * for the port that will use them, is set out below — it is mostly the latter, and saying so here
+ * matters because the sentence this replaced claimed the opposite four paragraphs above the list
+ * that contradicted it.
  *
  * ── WHY A BRAND AND NOT A SHAPE TEST ──────────────────────────────────────────────────────
  *

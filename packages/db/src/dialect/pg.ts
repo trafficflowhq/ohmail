@@ -10,6 +10,25 @@
 import { sql, type SQL } from "drizzle-orm";
 import type { Dialect, LockOptions, SearchArm } from "./index.js";
 
+/**
+ * Refuse a result whose columns cannot be told apart.
+ *
+ * Two columns of one name collapse into a single object key before anything here can see them, so
+ * the row would come back SHORTER than the statement selected, with no error. Refusing names the
+ * fix — alias them — instead of returning a row whose shape depends on the statement's spelling.
+ */
+export function assertDistinct(names: readonly string[]): void {
+  const seen = new Set<string>();
+  const duplicated = names.filter((n) => (seen.has(n) ? true : (seen.add(n), false)));
+  if (duplicated.length > 0) {
+    throw new Error(
+      `this statement selects more than one column named ${[...new Set(duplicated)].map((n) => `'${n}'`).join(", ")}. ` +
+      "Rows are returned positionally and duplicate names collapse before they can be ordered — " +
+      "give each column a distinct alias.",
+    );
+  }
+}
+
 /** Fed to `to_tsvector`/`websearch_to_tsquery`; the literal is required for an immutable index. */
 const TEXT_SEARCH_CONFIG = "english";
 
@@ -70,10 +89,19 @@ export function pgDialect(): Dialect {
 
     exec: async (db, statement) => {
       const handle = db as { execute: (s: SQL) => Promise<unknown> };
-      const result = (await handle.execute(statement)) as { rows?: unknown[] } | unknown[];
+      const result = (await handle.execute(statement)) as
+        { rows?: unknown[]; fields?: { name: string }[] } | unknown[];
       const rows = Array.isArray(result) ? result : (result.rows ?? []);
-      // Positional, to match the other arm — see the contract on `Dialect.exec`.
-      return rows.map((r) => (Array.isArray(r) ? r : Object.values(r as object)));
+      const fields = Array.isArray(result) ? undefined : result.fields;
+      if (!fields) return rows.map((r) => (Array.isArray(r) ? r : Object.values(r as object)));
+      // ORDERED BY THE DRIVER'S FIELD LIST, never by the row object's keys. A row is an object and
+      // JavaScript enumerates integer-like keys NUMERICALLY before the rest, so
+      // `select 'left' as "2", 'right' as "1"` comes back from `Object.values` as
+      // ["right","left"] — the wrong order, silently, for any statement whose aliases happen to
+      // look like numbers.
+      assertDistinct(fields.map((f) => f.name));
+      return rows.map((r) =>
+        Array.isArray(r) ? r : fields.map((f) => (r as Record<string, unknown>)[f.name]));
     },
 
     search: {
