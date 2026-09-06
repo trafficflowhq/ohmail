@@ -101,7 +101,6 @@ import { useAppLocale } from "./LocaleContext";
 import { useScreenerState } from "./screener-state";
 import { useJunkWindow, type JunkWire } from "./junk-window";
 import { useOlderBody, type OlderBodyWire } from "./older-body";
-import { syncMayRead } from "./sync-scheduler";
 import { useScreenerSuggestions, type SenderSuggestion, type SuggestWire } from "./screener-suggest";
 import { AutoSuggestRow } from "./AutoSuggestRow";
 import { ScreeningSection } from "./ScreeningSection";
@@ -695,7 +694,6 @@ export function AppShell({
   demo,
   engine,
   resolveOwner,
-  onConfirmed,
   mailboxFacts,
   organizerNoticeTransport,
   mirrorFreshness,
@@ -737,12 +735,6 @@ export function AppShell({
    */
   engine?: ProvidedEngine;
   resolveOwner?: OwnerResolver;
-  /**
-   * Threaded to {@link EngineProvider.onConfirmed} — the Cloud client's binding, committed by the
-   * arm that has already believed the answer rather than by the classifier that produced it.
-   * Absent on the desktop and the demo, like `resolveOwner`.
-   */
-  onConfirmed?: (accountId: string) => void;
   /**
    * "What state are this account's mailboxes in?", as a function the SHELL does not know how
    * to answer — the seventh injected prop, and the same seam as `resolveOwner` for the same
@@ -1140,7 +1132,7 @@ export function AppShell({
   onUnread?: (unread: number) => void;
 }) {
   return (
-    <EngineProvider demo={demo} engine={engine} resolveOwner={resolveOwner} onConfirmed={onConfirmed}>
+    <EngineProvider demo={demo} engine={engine} resolveOwner={resolveOwner}>
       {/* ONE keydown listener for the whole client. Outside `ShellInner` so
           every view mounted under it can declare bindings into the same table, which is
           also the table the `?` sheet is generated from. */}
@@ -2819,13 +2811,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
   // Destructured so `hydrateBody` can depend on the STABLE dispatch alone — the door's `bodyFor`
   // changes identity when an answer lands (that is how panes learn), and riding the whole object
   // would re-fire the urgent-selection effects once per delivered body for nothing.
-  /* The identity predicate, read at REQUEST time rather than at render time — a cookie can be
-     rewritten by a sign-in in another tab between the render that built this closure and the
-     press that uses it, and the whole point of the check is to catch exactly that. `useCallback`
-     with `[engine]` keeps the door's own dependency stable; the answer inside is always live. */
-  const mayReadOlderBody = useCallback(() => syncMayRead(engine), [engine]);
-  const { open: openOlderBody, bodyFor: olderBodyFor } =
-    useOlderBody(!demo, olderBodyWire, mayReadOlderBody);
+  const { open: openOlderBody, bodyFor: olderBodyFor } = useOlderBody(!demo, olderBodyWire);
   const hydrateBody = useCallback(
     (messageId: string, opts?: { retry?: boolean; urgent?: boolean }) => {
       if (engine.read().get<EngineMessage>("message", messageId) !== undefined) {
@@ -2876,9 +2862,6 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * no API — arrives here as `"manual"` and keeps the per-message button. See `consent-state.ts`.
    */
   const remoteImages = useRemoteImages({
-    // `/img` is fetched by the browser from an `<img src>`, so the account boundary in `api()`
-    // never sees it. Same predicate as every other direct reader — see `syncMayRead`.
-    mayRead: mayReadOlderBody,
     onFailed: (message) => toast(message),
     mode: consent.blockRemoteImages ? "manual" : "auto",
     // The pixel switch rides the same hook for the same reason `mode` does: the Settings row and
