@@ -1,3 +1,24 @@
+/**
+ * ── NO WRITE, NO WIRE ────────────────────────────────────────────────────────────────────────
+ *
+ * A verb whose durable record this device could not write does not go to the server, in exactly
+ * two cases — and they are one rule, not two exceptions:
+ *
+ *   · A SEND. Its Idempotency-Key is the only thing between a retry and a second copy in
+ *     someone's inbox, and the key lives in the row that just failed. Dispatch it anyway and a
+ *     process death before the answer leaves a reboot with no record the send was ever expressed;
+ *     the person sends again and the server, with no key to match, delivers twice.
+ *   · A VERB THAT REPLACES QUEUED ONES. The refused transaction retired nothing, so the verbs it
+ *     supersedes are still on disk and still the truth. Sending it would put a change on the wire
+ *     this device has no record of, over intents it has not managed to withdraw — and a kill
+ *     would then replay those older verbs on top of it.
+ *
+ * In both cases the durable record is the authority, and the action is REFUSED to the person's
+ * face — the same refusal surface, with the store's own reason — rather than appearing to succeed
+ * and quietly losing. Every other verb still goes at once when storage refuses it: repeating a
+ * state change is a no-op, so refusing it would cost a real action to prevent nothing. That trade
+ * is the reason this rule names its two cases instead of applying to everything.
+ */
 // `@trafficflow/core/ics` maps to a dependency-free SOURCE module (see its header) — the ONE
 // core entry point browser bundles may import. Never the barrel or `./mail` from here: both
 // carry mailparser and `node:crypto`, which no consumer of this engine can load.
@@ -90,6 +111,12 @@ export interface MutationResult {
    * caller that ignores this shows the press undoing itself a second later.
    */
   pendingWith?: { name: string | null } | null;
+}
+
+/** What one supersession changed, and everything needed to put it back. */
+interface SupersedeEffect {
+  retired: string[];
+  undo: Array<{ entry: PendingMutation; index: number; mutation: EngineMutation }>;
 }
 
 interface PendingMutation {
@@ -3683,7 +3710,7 @@ export class OhmailEngine {
       });
       return { id, key, status: "rolled_back", seq: null, error };
     }
-    const retired = this.supersedeQueued(enriched);
+    const superseded = this.supersedeQueued(enriched);
     this.overlays.set(id, effects);
     this.overlayRev++;
     this.notify();
@@ -3712,11 +3739,35 @@ export class OhmailEngine {
      */
     const pending: PendingMutation = {
       id, key, mutation: enriched, at: this.now().getTime(), n: this.outboxSeq++,
-      ...(retired.length > 0 ? { retire: retired } : {}),
+      ...(superseded.retired.length > 0 ? { retire: superseded.retired } : {}),
     };
     // ONE TRANSACTION: the newer row in, the rows it supersedes out. See `supersedeQueued` for
     // why the removal may not be a separate best-effort delete.
     const persisted = await this.putOutbox(pending);
+    if (!persisted && superseded.retired.length > 0) {
+      /**
+       * NO WRITE, NO WIRE — the supersession half of the rule stated in this module's header.
+       *
+       * This verb replaces queued verbs. Its durable write was refused, so the store still holds
+       * the ones it would have retired, and they are still the truth. Sending it anyway would put
+       * a change on the wire that this device has no record of, over intents it has not managed
+       * to withdraw — and a kill would then replay those older verbs on top of it.
+       *
+       * So nothing is dispatched, everything the supersession changed goes back, and the person
+       * is told the action was refused rather than being shown it succeed and silently lose.
+       */
+      this.undoSupersede(superseded);
+      this.overlays.delete(id);
+      this.overlayRev++;
+      this.notify();
+      return {
+        id, key, status: "rolled_back", seq: null,
+        error: new MutationRejectedError(
+          "this device could not record the change, and it replaces others that are still queued",
+          { status: null, code: "storage_refused", retryable: true },
+        ),
+      };
+    }
     if (!persisted && enriched.kind === "mail_send") {
       this.overlays.delete(id);
       this.overlayRev++;
@@ -4449,10 +4500,12 @@ export class OhmailEngine {
    * alone. If that transaction is refused, nothing was removed and the stale rows simply replay,
    * which is the behaviour a storage-refused verb already has.
    */
-  private supersedeQueued(m: EngineMutation): string[] {
+  private supersedeQueued(m: EngineMutation): SupersedeEffect {
     const retired: string[] = [];
+    /** Everything this call changed, kept so a refused replacement can put it all back. */
+    const undo: Array<{ entry: PendingMutation; index: number; mutation: EngineMutation }> = [];
     void this.supersedeAbandoned(m);
-    if (this.queue.length === 0) return retired;
+    if (this.queue.length === 0) return { retired, undo };
     const key = supersedeKey(m);
     const readIds = m.kind === "mark_seen" || m.kind === "feed_mark_seen"
       ? new Set(m.messageIds ?? [])
@@ -4463,6 +4516,7 @@ export class OhmailEngine {
       const qm = q.mutation;
       // Whole-entry replacement: same kind, same scalar target.
       if (key !== null && supersedeKey(qm) === key) {
+        undo.push({ entry: q, index: i, mutation: qm });
         this.queue.splice(i, 1);
         this.overlays.delete(q.id);
         retired.push(q.id);
@@ -4494,10 +4548,12 @@ export class OhmailEngine {
         const remaining = qids.filter((mid) => !readIds.has(mid));
         const keepsLine = qm.kind === "feed_mark_seen" && qm.upToId !== undefined && !lineSuperseded;
         if (remaining.length === 0 && !keepsLine) {
+          undo.push({ entry: q, index: i, mutation: qm });
           this.queue.splice(i, 1);
           this.overlays.delete(q.id);
           retired.push(q.id);
         } else {
+          undo.push({ entry: q, index: i, mutation: qm });
           const narrowed = { ...qm, messageIds: remaining } as EngineMutation;
           if (lineSuperseded && narrowed.kind === "feed_mark_seen") delete narrowed.upToId;
           q.mutation = narrowed;
@@ -4517,7 +4573,34 @@ export class OhmailEngine {
       this.overlayRev++;
       this.notify();
     }
-    return retired;
+    return { retired, undo };
+  }
+
+  /**
+   * PUT BACK EVERYTHING A SUPERSESSION CHANGED — see the no-write-no-wire rule in the header.
+   *
+   * A replacement whose durable write was refused never happens: it does not reach the wire, and
+   * the verbs it would have retired are still the truth. Disk already agrees, because the refused
+   * transaction removed nothing; this is memory catching up with it, so the two do not disagree
+   * for the rest of the session.
+   *
+   * Overlays are rebuilt at the verb's ORIGINAL stamp rather than now, for the reason
+   * `retryAbandoned` rebuilds them that way: a restored triage or read state carries the moment it
+   * was expressed, not the moment the store happened to fail.
+   */
+  private undoSupersede(effect: SupersedeEffect): void {
+    if (effect.undo.length === 0) return;
+    for (const { entry, mutation } of effect.undo) {
+      entry.mutation = mutation;
+      if (!this.queue.includes(entry)) this.queue.push(entry);
+      const effects = mutationEffects(this.read(), mutation, {
+        now: () => new Date(entry.at), uuid: this.uuid,
+      });
+      if (effects.length > 0) this.overlays.set(entry.id, effects);
+    }
+    this.queue.sort((a, b) => (a.at - b.at) || (a.n - b.n));
+    this.overlayRev++;
+    this.notify();
   }
 
   /**
