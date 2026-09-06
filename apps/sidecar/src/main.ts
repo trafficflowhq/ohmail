@@ -293,6 +293,19 @@ export function cloudConfigFromEnv(env: NodeJS.ProcessEnv = process.env): CloudS
     ...(access && refresh ? { tokens: { accessToken: access, refreshToken: refresh } } : {}),
     ...(env.OHMAIL_POLL_MS ? { pollIntervalMs: Number(env.OHMAIL_POLL_MS) } : {}),
     ...(Object.keys(keks).length > 0 ? { keks } : {}),
+    // ── THE PAIRED DESKTOP'S FINGERPRINT — the door that opens another machine's mailbox ──────
+    //
+    // Present only when the shell wrote a desktop-host door, and it is what makes every connection
+    // this engine opens a pinned one (see `CloudSidecarConfig.hostPin`). ABSENT means unpinned,
+    // which is right for the hosted and self-hosted doors and is never a fallback for this one: a
+    // desktop-host door with no pin cannot authenticate what answers at all, so the shell writes
+    // the two together and the door refuses a link that carries no fingerprint.
+    //
+    // NO VALIDATION HERE beyond "present and not blank", the host-mode knobs' rule: the value's
+    // shape is `host-pin-probe.ts`'s to rule on, and it does — a fingerprint that matches nothing
+    // refuses the connection with a sentence a person can act on, which is a better outcome than
+    // a launch that dies here with a parse error.
+    ...(env.OHMAIL_HOST_PIN?.trim() ? { hostPin: env.OHMAIL_HOST_PIN.trim() } : {}),
   };
 }
 

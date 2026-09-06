@@ -470,3 +470,90 @@ function isVerificationFailure(err: unknown): boolean {
 function isPrintable(text: string | undefined): text is string {
   return typeof text === "string" && text !== "" && /^[\t\x20-\x7e\x80-\xff]*$/.test(text);
 }
+
+export interface HostFetchOptions {
+  /** The door's origin, as configured — `https://host[:port]`. */
+  origin: string;
+  /** The fingerprint the pairing link carried. The whole of what this connection is judged against. */
+  pin: string;
+  /** Where the accepted leaf is cached between launches. */
+  dataDir: string;
+  log?: Diagnostic;
+}
+
+/**
+ * THE PINNED SEAM — one `fetch` for everything this install says to its host, with the bootstrap,
+ * the cache and the recovery behind it.
+ *
+ * ── WHY THE LIFECYCLE LIVES HERE AND NOT AT THE CALL SITE ─────────────────────────────────────
+ *
+ * The engine composes ONE `fetchImpl` and threads it through the bearer client, the mirror, the
+ * write-through proxy and the wake channel. That is the property worth protecting: a second way to
+ * reach the host is a second place the pin could be forgotten. So everything this needs to decide
+ * — is there a cached certificate, does it still cover what is being served, was the identity ever
+ * established at all — is decided behind that one function, and the engine passes it along like
+ * any other `fetch`.
+ *
+ * ── A MISSING LEAF IS NOT A FAILED LAUNCH ─────────────────────────────────────────────────────
+ *
+ * The bootstrap is deferred to the first REQUEST rather than run at construction, and that is a
+ * decision about what happens when the other machine is off. An engine that refused to start
+ * without a handshake would leave a person looking at a window that will not open, on a laptop
+ * whose desktop is asleep, with the mirror they already hold unreadable — the mirror is local and
+ * there is nothing wrong with it. Deferring means the app comes up, serves what it has, and the
+ * requests that need the host fail with the sentence the probe composed.
+ *
+ * ── ONE PROBE AT A TIME ───────────────────────────────────────────────────────────────────────
+ *
+ * The pull loop has several requests in flight, so a host that has just restarted makes all of
+ * them fail verification at once. Each starting its own bootstrap would open a handshake per
+ * in-flight request at a machine that is already busy coming back. One in-flight probe serves them
+ * all — `createCloudAuth`'s single-flight refresh, for the same reason and with the same shape.
+ */
+export function createHostFetch(opts: HostFetchOptions): typeof fetch {
+  const url = new URL(opts.origin);
+  const host = url.hostname.replace(/^\[|\]$/g, "");
+  const port = url.port === "" ? 443 : Number(url.port);
+
+  let pinned: typeof fetch | null = null;
+  let probing: Promise<string | null> | null = null;
+
+  /** Establish (or re-establish) the leaf. One in flight; the result is shared. */
+  const establish = (): Promise<string | null> => {
+    probing ??= probeHostPin({ host, port, pin: opts.pin, dataDir: opts.dataDir, ...(opts.log ? { log: opts.log } : {}) })
+      .then((out) => (out.ok ? out.leafPem : null))
+      .finally(() => { probing = null; });
+    return probing;
+  };
+
+  const build = (leafPem: string): typeof fetch =>
+    createPinnedFetch({
+      leafPem,
+      pin: opts.pin,
+      ...(opts.log ? { log: opts.log } : {}),
+      /* NOTHING IS REBUILT HERE, and that is worth stating because the obvious line to write is
+         `pinned = build(fresh)`. It would be dead: `createPinnedFetch` swaps its OWN agent on a
+         successful recovery, and `pinned` holds that same function object, so every later request
+         already goes through the repaired anchor. Writing it anyway would be a line no mutation
+         can redden — which a later reader takes for the thing that keeps the repair. */
+      refreshLeaf: establish,
+    });
+
+  return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    if (pinned === null) {
+      const cached = loadHostLeaf(opts.dataDir);
+      const leaf = cached ?? await establish();
+      if (leaf === null) {
+        /* NAMED, not a generic transport error. This is the state a person can act on — the other
+           computer is off, or somewhere else, or is no longer the one this install paired with —
+           and a bare socket error would send them to look at this machine. */
+        throw new Error(
+          `Could not establish a secure connection to ${opts.origin}: its identity could not be ` +
+          "confirmed. Check that computer is on and reachable from this one.",
+        );
+      }
+      pinned = build(leaf);
+    }
+    return pinned(input, init);
+  };
+}

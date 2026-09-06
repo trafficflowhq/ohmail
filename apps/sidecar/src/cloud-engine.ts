@@ -35,6 +35,7 @@ import {
   MANAGED_CLOUD_BASE,
   OPERATOR_CA_FILE,
 } from "./cloud-origin.js";
+import { createHostFetch } from "./host-pin-probe.js";
 import type { Diagnostic } from "./log.js";
 import { startEngineVitals } from "./vitals.js";
 
@@ -154,6 +155,27 @@ export interface CloudSidecarConfig {
   now?: () => Date;
   /** Injected for tests; production dials the real hosted API. */
   fetchImpl?: typeof fetch;
+  /**
+   * THE FINGERPRINT OF THE DESKTOP THIS INSTALL PAIRED WITH — present only on the desktop-host
+   * door, and what turns every connection this engine makes into a pinned one.
+   *
+   * No certificate authority will vouch for a machine on somebody's network, so the trust comes
+   * from the pairing ceremony instead: the link carried `SHA-256(SubjectPublicKeyInfo)` of the
+   * door's key, and that value is the whole of what this install will accept. See
+   * `host-pin-probe.ts` for the bootstrap and for why the certificate is a cache and the KEY is
+   * the identity.
+   *
+   * ABSENT MEANS UNPINNED, and that is correct for the two doors that predate this one: the hosted
+   * service and a self-host box are verified against the platform's trust store exactly as any
+   * other site is, and a pin there would add a way for the connection to break on a certificate
+   * renewal without adding anything. It is NOT a fallback for a desktop host — a desktop-host door
+   * configured without a pin has no way to authenticate what answers, which is why the shell
+   * writes the two together and the door refuses a link that carries no fingerprint.
+   *
+   * An explicit {@link fetchImpl} WINS over this. That is the test seam, and it is deliberately not
+   * reachable from any configuration a person can write: `main.ts` composes no `fetchImpl`.
+   */
+  hostPin?: string;
   pageLimit?: number;
   pollIntervalMs?: number;
   /**
@@ -742,6 +764,18 @@ function errorCode(err: unknown): string | null {
 }
 
 export async function createCloudSidecar(config: CloudSidecarConfig): Promise<CloudSidecar> {
+  /* THE ONE SEAM. Everything this engine says to its server goes through the `fetchImpl` the
+     bearer client, the mirror, the proxy and the wake channel are all handed — so pinning is done
+     once, here, rather than at four call sites where the fifth would be the one that forgot. */
+  const pinnedFetch = config.fetchImpl === undefined && (config.hostPin ?? "").trim() !== ""
+    ? createHostFetch({
+        origin: config.cloudUrl,
+        pin: config.hostPin!.trim(),
+        dataDir: config.dataDir,
+        ...(config.log ? { log: config.log } : {}),
+      })
+    : undefined;
+  if (pinnedFetch) config = { ...config, fetchImpl: pinnedFetch };
   const log = config.log;
   const now = config.now ?? ((): Date => new Date());
 
