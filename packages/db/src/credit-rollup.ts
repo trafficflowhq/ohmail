@@ -397,7 +397,15 @@ export async function foldAndSweepSetupSpends(
       returning account_id`);
     const foldedNow = rowsOf(folded).length;
     pairsFolded += foldedNow;
-    frozenPairsSkipped += (eligiblePerDay.get(key) ?? 0) - foldedNow;
+    // CLAMPED AT ZERO, and the clamp is not defensive dressing. The eligible count comes from the
+    // survey query and the folded count from a statement that re-derives eligibility, so the two
+    // read the table at different instants; if a pair became eligible in between, the difference
+    // is NEGATIVE and would silently cancel a real refusal counted on another day — leaving the
+    // worker's `> 0` warning dark in exactly the case it exists for. Nothing here can produce that
+    // interleaving today (eligibility needs a row 30 days old, and `expires_at` is never updated
+    // after a grant is minted), which is precisely why it must not be left to arithmetic nobody
+    // re-checks when one of those two facts changes.
+    frozenPairsSkipped += Math.max(0, (eligiblePerDay.get(key) ?? 0) - foldedNow);
 
     // ── 2. THE ABSENCE HALF, SCOPED TO THESE PAIRS ───────────────────────────────────────
     //
