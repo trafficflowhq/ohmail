@@ -906,9 +906,13 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         // through `setMeta`, and that used to bump the mirror `version` — also in these deps — so
         // either one would have re-run this memo. `setMeta` no longer touches the version
         // (`packages/client-engine/src/store.ts`; an idle client was rebuilding its whole view once
-        // per poll to record a timestamp), which leaves `conn.syncing` carrying it alone. Removing
-        // `conn.syncing` from the dependency array below would now silently stop the label
-        // clearing, where before it would only have made it late.
+        // per poll to record a timestamp), which leaves `conn.syncing` carrying it.
+        //
+        // NOT "silently stop", which is what this comment claimed for a few hours and a review
+        // corrected: `freshBeat` below ticks this memo on its own minute cadence, so removing
+        // `conn.syncing` from the dependency array would DELAY the label clearing to the next tick,
+        // not prevent it. Late rather than never — worth keeping accurate, because a reader who
+        // believed "never" would rank the dependency differently from one who knows the fallback.
         //
         // The APPEARING direction is time's alone — a phone sitting open crosses the threshold with
         // no store write anywhere — so `freshBeat` below ticks the memo when the verdict changes by
