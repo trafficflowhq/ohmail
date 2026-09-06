@@ -25,10 +25,14 @@
  *
  * ── WHAT HAS A CALLER TODAY, AND WHAT IS WAITING FOR ONE ──────────────────────────────────
  *
- * Two members are in use: `forUpdate` at four sites and `advisoryLock` at one, all in the
- * repository. **The other fourteen have no caller yet** — they exist because a census over the
- * engine's own sources named every construct that would need one, and porting those sources is
+ * Three members are in use: `forUpdate` at four sites, `hasNonBlank` at two and `advisoryLock` at
+ * one, all in the repository. **The rest have no caller yet** — they exist because a census over
+ * the engine's own sources named every construct that would need one, and porting those sources is
  * the next piece of work rather than this one.
+ *
+ * The count is deliberately not spelled out for the unused half: it was written as a number twice
+ * and was wrong the second time within a day of the first, because adding a member is exactly the
+ * moment nobody rereads this paragraph.
  *
  * That is stated because the alternative is worse in both directions. Code with no caller is code
  * nothing exercises, and this file's own rule is that a guard nobody has watched fail is not

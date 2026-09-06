@@ -715,7 +715,27 @@ function inSubtree(col: unknown, path: string) {
 }
 
 export class DrizzleRepo implements WorkerRepo, RoutingPort {
-  constructor(private readonly db: Db) {}
+  /**
+   * THE DIALECT IS RESOLVED HERE, NOT AT THE FIRST STATEMENT THAT NEEDS IT.
+   *
+   * A repository built around an unbranded handle used to be a perfectly good object that threw
+   * later, from inside a locking statement, on whichever background pass happened to reach one
+   * first. Resolving in the constructor moves the failure to the line that made the mistake.
+   *
+   * That change is what makes the seam safe rather than merely checked. The census over transaction
+   * call sites is a text rule, and a text rule has edges: a callback factored into a named function
+   * is not lexically inside the `.transaction(` call, and a carry written AFTER the construction
+   * reads the same as one written before. Both were demonstrated. Neither can survive this, because
+   * neither produces a branded handle — and an unbranded handle no longer yields an object at all.
+   *
+   * `carried` is how a transaction inherits its parent's dialect: the transaction object has no
+   * brand of its own, and the value is known to be right because the parent resolved it.
+   */
+  private readonly carriedDialect: Dialect;
+
+  constructor(private readonly db: Db, carried?: Dialect) {
+    this.carriedDialect = carried ?? dialect(db);
+  }
 
   /**
    * The spelling of every construct below that the two stores disagree about.
@@ -736,10 +756,8 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    * parent's dialect rather than letting it look one up, which is also the only reading that is
    * CORRECT: a transaction cannot be on a different store from the handle that opened it.
    */
-  private carriedDialect: Dialect | null = null;
-
   private get d(): Dialect {
-    return (this.carriedDialect ??= dialect(this.db));
+    return this.carriedDialect;
   }
 
   async findByDedupKey(mailboxId: string, dedupKey: string): Promise<StoredMessage | null> {
@@ -2070,9 +2088,10 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
 
   async transaction<T>(fn: (repo: DrizzleRepo) => Promise<T>): Promise<T> {
     return this.db.transaction(async (txdb) => {
-      const inner = new DrizzleRepo(txdb as Db);
-      // The transaction speaks this handle's dialect by construction — see `carriedDialect`.
-      inner.carriedDialect = this.d;
+      // The transaction speaks this handle's dialect by construction: the driver's transaction
+      // object carries no brand, and passing the resolved value is what spares every caller of this
+      // method the carry that direct construction has to do for itself.
+      const inner = new DrizzleRepo(txdb as Db, this.d);
       return fn(inner);
     });
   }

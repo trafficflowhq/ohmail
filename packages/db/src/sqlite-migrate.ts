@@ -50,8 +50,7 @@ export const SQLITE_MIGRATIONS_TABLE = "ohmail_sqlite_migrations";
  * ── AND THE PRAGMA IS PER-CONNECTION, WHICH IS A REQUIREMENT ON THE TARGET ────────────────
  *
  * Setting it here covers the connection this migrator runs on and NOTHING ELSE. A target whose
- * `batch` opens a second connection — which the device's does, because that is how it gets a
- * transaction that survives a concurrent read — gets a connection with foreign keys OFF, and an
+ * `batch` opens a second connection gets a connection with foreign keys OFF, and an
  * orphaned write there commits. This function cannot reach that connection and must not pretend
  * to: {@link SqliteMigrationTarget} states the requirement, and a target that opens connections
  * lazily owes the same initialisation on every one of them.
