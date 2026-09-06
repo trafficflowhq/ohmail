@@ -630,7 +630,13 @@ export function makePlatformCostPort(
           // code as the page ceiling because it is the same fact: the walk did not finish.
           const walkStartedAt = Date.now();
           for (let asked = 0; asked < ANTHROPIC_MAX_PAGES; asked += 1) {
-            if (asked > 0 && Date.now() - walkStartedAt >= ANTHROPIC_WALK_BUDGET_MS) {
+            // RESERVING THE PAGE ABOUT TO BE ASKED FOR, not counting the ones already
+            // fetched. `elapsed >= budget` permits a page to BEGIN at 24.9s and then run the
+            // full 15-second request timeout, so a "25-second" walk reaches nearly 40 and the
+            // pass budget that reserves 25 for it is wrong by the difference. The same
+            // correction as the pass loop's, one level down, and the same reasoning: the
+            // question is whether the NEXT request fits, never whether the last one did.
+            if (asked > 0 && Date.now() - walkStartedAt + timeoutMs > ANTHROPIC_WALK_BUDGET_MS) {
               return { failed: "too_many_pages" };
             }
             const url = page === null ? base : `${base}&page=${encodeURIComponent(page)}`;
@@ -721,6 +727,21 @@ export function makePlatformCostPort(
  * Every row is stamped with the calendar month it was asked for, so re-asking the open month
  * replaces the same primary key and `fetched_at` moves with it.
  */
+/**
+ * Whether the vendor's own text says a positive amount, independent of any rounding.
+ *
+ * A decimal string is positive when it carries a non-zero digit and no leading `-`; a number is
+ * compared directly. Deliberately NOT `microCentsFromDecimalString(x) > 0`, which is the
+ * arithmetic this exists to be independent of.
+ */
+function positiveAmount(raw: unknown): boolean {
+  if (typeof raw === "number") return Number.isFinite(raw) && raw > 0;
+  if (typeof raw !== "string") return false;
+  const t = raw.trim();
+  if (t.startsWith("-")) return false;
+  return /[1-9]/.test(t);
+}
+
 function parseVercelCharges(
   lines: string[], window: PlatformCostWindow, asOf: Date,
 ): PlatformCostFetch {
@@ -846,7 +867,31 @@ function parseVercelCharges(
       return { failed: "day_coverage_short" };
     }
     const region = typeof record.RegionId === "string" ? record.RegionId : "";
-    const series = `${service}\u0000${region}`;
+    // ── THE PROJECT IS PART OF THE SERIES, AND THE ARGUMENT FOR LEAVING IT OUT WAS WRONG ──
+    //
+    // Round nine dropped it on the reasoning that the per-series regrouping re-collapses
+    // projects and applies the same rule, so no input's verdict could change. A review
+    // falsified that: collapse the projects and a project-local HOLE disappears. Project A
+    // charged on days 1 and 3 with its day-2 line missing, beside project B present on all
+    // three, leaves a complete day 1-3 run in the map — continuity and the trailing edge both
+    // pass, and the total is written fresh missing project A's day-2 charge. Exactly the
+    // standing invariant, by a grain the coverage could not see.
+    //
+    // Keeping the project also removes the last place record order could matter: two projects
+    // sharing a day cannot overwrite each other's period, because they are no longer the same
+    // key.
+    //
+    // MEASURED BEFORE TRUSTING THE PER-SERIES TRAILING EDGE AT THIS FINER GRAIN, because a
+    // project that legitimately stops mid-month would be refused by it: over the live account's
+    // August (1,283 project series across 31 days) and July (1,274 across 18, the account's
+    // first month) there are ZERO interior gaps, ZERO series ending early and ZERO starting
+    // late. The vendor emits a row for every combination for the whole month, including zeroes.
+    const tags = record.Tags;
+    const project = tags !== null && typeof tags === "object" && !Array.isArray(tags)
+      && typeof (tags as { ProjectId?: unknown }).ProjectId === "string"
+      ? (tags as { ProjectId: string }).ProjectId
+      : "";
+    const series = `${service}\u0000${region}\u0000${project}`;
     // ── ONE SERVICE-DAY ARRIVES MANY TIMES, AND THAT IS THE ORDINARY SHAPE ─────────────────
     //
     // Measured over the live account's August: 3,534 of 20,615 (day, service, region) keys carry
@@ -1172,7 +1217,20 @@ function parseAnthropic(
       // for, so the report is refused rather than summed around.
       if (amount === null) return { failed: "unrecognised_shape" };
       micro += amount;
-      if (amount > 0) vendorCharged = true;
+      // ── PROVENANCE FROM THE VENDOR'S OWN TEXT, NOT FROM THE ROUNDED VALUE ───────────────
+      //
+      // `microCentsFromDecimalString` rounds at six decimal places of a cent, so an amount the
+      // parser ACCEPTS — `"0.0000001"` — becomes 0 micro-cents, `amount > 0` is false, and the
+      // row goes out as `costCents: 0, charged: false`. `writeMeasuredRows` only refuses a zero
+      // that is CHARGED, so it takes it: a fresh `source='api'` zero for a positive amount the
+      // vendor reported. The documented four-decimal precision cannot produce it today, but the
+      // parser does not reject greater precision, and the invariant has to hold over what is
+      // accepted rather than over what has been seen.
+      //
+      // This is the SAME defect the Vercel side was fixed for two rounds ago — provenance read
+      // from arithmetic instead of from the vendor — surviving in the other adapter because the
+      // fix was made where the bug was found rather than everywhere the pattern appears.
+      if (positiveAmount(r?.amount)) vendorCharged = true;
       currency.observeRequired(r?.currency);
     }
   }
@@ -1292,6 +1350,17 @@ export async function writeMeasuredRows(
     eq(platformCosts.source, "api"),
   ));
   for (const row of rows) {
+    // THE LOCK IS PER PROVIDER, SO THE ROWS MUST BE TOO. The advisory key names `provider`, and
+    // the DELETE above clears that provider's window; a row naming a DIFFERENT provider would be
+    // inserted outside both — not covered by the lock that serializes its writers, and not
+    // covered by the delete that makes the write a replacement. Two passes for different
+    // providers could then interleave on the same rows, and the replacement would leave a
+    // stranger's row standing beside the new one.
+    //
+    // Refused rather than reassigned: a port answering for a provider nobody asked about is a
+    // port fault, and silently relabelling its rows would publish one vendor's money under
+    // another's name.
+    if (row.provider !== provider) throw new WrongProviderRow(provider);
     await t.insert(platformCosts).values({
       provider: row.provider,
       metric: row.metric,
@@ -1333,6 +1402,9 @@ export async function writeMeasuredRows(
  * reverse. Surfaced as a refusal rather than stored and then filtered out of the reader.
  */
 export class ManualCostShapeConflict extends Error {}
+
+/** A port answered for a provider other than the one asked about — see `writeMeasuredRows`. */
+export class WrongProviderRow extends Error {}
 
 /** Thrown by {@link writeMeasuredRows} when a row would say zero for a line the vendor charged. */
 export class ZeroForChargedLine extends Error {}
@@ -1609,10 +1681,17 @@ export const CLOSED_MONTH_EAGER_MS = 7 * 24 * 60 * 60 * 1000;
 /**
  * Which windows this pass measures, in the order it measures them.
  *
- * The CLOSED month comes first while it is unsettled. The open month is asked again in six hours;
- * the closed one has to be finished, and both providers' open-month requests can spend the whole
- * 60-second invocation between them — so ordering the settling month last is ordering it to be
- * dropped, silently, with the pass reporting success.
+ * THE OPEN MONTH COMES FIRST. This paragraph argued the opposite until 2026-09-06 — that the
+ * closed month must go first because the open one is asked again in six hours — which left the
+ * module documenting both orders at once, in two comments, with the code following this one.
+ *
+ * The objection it raised was real and is answered elsewhere rather than by the order. "Ordering
+ * the settling month last is ordering it to be dropped, silently, with the pass reporting
+ * success" was true when running out of time produced no record at all. It no longer is: work
+ * the budget does not reach is reported `deferred`, which is neither a measurement nor a
+ * failure, and the eager cadence keeps re-asking an unsettled month until it settles. So the
+ * settling month is deferred visibly and retried, while the month the board projects from is the
+ * one that survives a short invocation.
  */
 interface PassWindow {
   start: Date;
