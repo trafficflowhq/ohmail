@@ -137,7 +137,7 @@ export function Doorbell({ initials, count }: { initials: string[]; count: numbe
     <Tap
       onPress={() => router.push("/screener")}
       accessibilityRole="button"
-      accessibilityLabel={`${Copy.doorbell(count)} ${Copy.doorbellRest}. ${Copy.doorbellGo}`}
+      accessibilityLabel={Copy.doorbellAria(count, Copy.doorbellGo)}
       style={{
         flexDirection: "row",
         alignItems: "center",

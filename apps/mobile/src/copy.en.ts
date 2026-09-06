@@ -541,6 +541,16 @@ const TABLE = {
   doorbell: (n: number) => `${n} new sender${n === 1 ? "" : "s"}`,
   doorbellRest: "waiting",
   doorbellGo: "Screener",
+  /**
+   * THE DOORBELL, SPOKEN — one key, because the markup was joining three.
+   *
+   * It was `` `${Copy.doorbell(n)} ${Copy.doorbellRest}. ${Copy.doorbellGo}` `` in `chrome.tsx`:
+   * the space, the full stop and the order all typed into the component, which fixes English
+   * grammar for every language. German puts the verb at the end and inflects the adjective with
+   * the count, and neither is expressible by concatenating those three pieces.
+   */
+  doorbellAria: (n: number, go: string): string =>
+    `${n} new sender${n === 1 ? "" : "s"} waiting. ${go}`,
 
   /* --------------------------------------------------------- reads/receipts */
 

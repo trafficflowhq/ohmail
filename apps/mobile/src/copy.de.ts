@@ -325,6 +325,8 @@ export const DE: Deck = {
   doorbell: (n: number) => `${n} ${n === 1 ? "neuer Absender wartet" : "neue Absender warten"}`,
   doorbellRest: "im Screener",
   doorbellGo: "Screener",
+  doorbellAria: (n: number, go: string): string =>
+    (n === 1 ? `1 neuer Absender wartet. ${go}` : `${n} neue Absender warten. ${go}`),
 
   /* --------------------------------------------------------- reads/receipts */
 
