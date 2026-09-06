@@ -460,6 +460,13 @@ Pairing again after a pairing has ended signs out and redeems in place rather th
 up afresh, so the copy of your mail on this machine is kept. A computer reinstalled at the same
 address is a different account behind a familiar name, and that is refused rather than merged.
 
+If the pairing is removed from the other computer's Devices list, this one says so and offers both
+ways forward — pair again, or set this machine up on its own. Choosing the second states what it
+costs first: the copy here is discarded, the mailbox is read again from the server, and this
+computer takes over the organizing. Nothing on the mail server changes until you agree to organize,
+one mailbox at a time. It also lists which mailboxes the other computer was holding, read before
+anything moves — that list only exists until it does.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
