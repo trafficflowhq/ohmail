@@ -862,6 +862,27 @@ export function DesktopMailboxes(
           method: "DELETE",
         });
         if (!res.ok) throw new Error(await reasonOf(res));
+        /* ── THE MAILBOX IS GONE; ITS CLAIM ON THE MAIL SERVER MAY NOT BE ────────────────────
+         *
+         * The route releases this install's organizer claim out of `ohmail/_meta` before it stops
+         * the runtime, and that release can fail on its own — the mail server can refuse the
+         * search that finds our own records in that folder. When it does the claim STAYS, and
+         * until it goes stale any other install connecting this mailbox stands itself down and
+         * says only that something else organizes it. That is a wait with no visible cause, about
+         * a machine the person has just removed the mailbox from.
+         *
+         * The route reports the outcome because it is the only thing that knows it, and this is
+         * the pane that can say it. Same shape as the sign-out failure below: the removal
+         * committed, what is being reported is the tidying that did not.
+         *
+         * THREE STATES, NOT TWO, and the middle one is why this reads `=== false` rather than
+         * falsy. `true` is released; `false` is a release that was attempted and could not be
+         * completed; ABSENT is an engine that predates the field and cannot answer — which is not
+         * a claim left behind and must not be announced as one. The shell and the engine ship
+         * together, so absent means "older engine", not "unknowable".
+         */
+        const outcome = await res.json().catch(() => null) as { claimReleased?: boolean } | null;
+        if (outcome?.claimReleased === false) setProblem(t("desktopRemovedClaimLeftBehind"));
         /* ── THE SINGLE-MAILBOX SIGN-OUT STOOD HERE, AND ITS OWN NOTE ASKED FOR THIS ──────────
          *
          * It read: *"the multi-mailbox version of this is a roster-aware decision … and it

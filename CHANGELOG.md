@@ -47,6 +47,26 @@ check — a slow server, a dropped connection — was reported as a verdict abou
 are now told apart: a session that was refused signs you out, and a question that could not be asked
 is retried.
 
+### Removing a mailbox releases its organizer claim, and says so plainly when it cannot
+
+Organizing a mailbox means keeping a record inside the mailbox itself saying which install is doing
+it, so that a second device can see the mailbox is taken and does not organize it twice. Removing
+the mailbox from a computer takes that record back out.
+
+Taking it out can fail on its own. The mail server has to be asked which records in that folder
+belong to this install, and it can refuse, or answer with less than the whole set. The release
+refuses in that case rather than removing only what it happened to see, because a half-finished
+release is worse than none.
+
+What was missing is that the refusal went to a log and nowhere else. The mailbox was reported
+removed, the record stayed in the folder, and the next device to try that mailbox waited for the
+record to lapse while saying only that something else was organizing it — naming a machine that had
+already let the mailbox go, with no way to find out why the wait was happening.
+
+The removal itself still goes through; it is not something this step may block. It now reports
+whether the record was actually taken out, and Settings → Mailboxes says so when it was not.
+Nothing is ever deleted from the mailbox itself.
+
 ### Every control on a phone is a 44-pixel target
 
 Controls drawn smaller than a fingertip were smaller than a fingertip to press, too. Segmented

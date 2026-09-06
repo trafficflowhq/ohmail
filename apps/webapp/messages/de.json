@@ -2164,6 +2164,7 @@
     "desktopLastChecked": "Zuletzt geprüft {when}",
     "desktopUnknownCode": "unbekannt",
     "desktopStateError": "Keine Verbindung ({code})",
+    "desktopRemovedClaimLeftBehind": "Das Postfach ist von diesem Computer entfernt, aber der Mailserver hat den Anspruch dieses Computers darauf nicht aufgehoben. Ein anderes Gerät, das dieses Postfach organisieren will, wartet, bis der Anspruch von selbst verfällt. Aus dem Postfach selbst wurde nichts gelöscht.",
     "desktopStateHandedOver": "An eine andere Installation übergeben",
     "desktopStateDisconnected": "Getrennt",
     "desktopStateSignInRefused": "Der Mailserver hat die Anmeldung abgelehnt.",

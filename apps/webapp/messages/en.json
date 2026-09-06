@@ -2164,6 +2164,7 @@
     "desktopLastChecked": "Last checked {when}",
     "desktopUnknownCode": "unknown",
     "desktopStateError": "Not connecting ({code})",
+    "desktopRemovedClaimLeftBehind": "The mailbox is removed from this computer, but the mail server would not let go of this computer's hold on it. Another device that tries to organize this mailbox will wait for that hold to lapse on its own. Nothing was deleted from the mailbox itself.",
     "desktopStateHandedOver": "Handed over to another install",
     "desktopStateDisconnected": "Disconnected",
     "desktopStateSignInRefused": "The mail server refused the sign-in.",

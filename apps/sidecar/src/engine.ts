@@ -712,6 +712,48 @@ const LOCAL_IMAP_ADMISSION = {
 };
 
 /**
+ * GIVE THIS INSTALL'S CLAIM BACK, KEEPING THE THIRD ANSWER — and the reason it is one function.
+ *
+ * {@link releaseMailboxClaim} has three outcomes and a bare `try`/`catch` at a call site collapses
+ * two of them. It removed N claims of ours; it found none of ours to remove, which is a COMPLETE
+ * answer and reads as `0`; or IT COULD NOT LOOK. The third is not an absence, and it is not
+ * exotic: the release enumerates this install's own records by asking the SERVER for them, and
+ * that enumeration answers "could not" when the search is refused, when the walk comes back short,
+ * and when the folder is over its ceiling. All three are ordinary things a mail server does.
+ *
+ * Every call site here used to catch that, log it, and go on reporting the outcome its caller
+ * wanted to hear. On the removal path that is the whole defect: a person is told the mailbox has
+ * been let go while this install's claim goes on standing in `ohmail/_meta`, and any OTHER install
+ * connecting that mailbox stands itself down against a claim nothing honours — for the length of
+ * the staleness window, with nothing anywhere saying why.
+ *
+ * So "could not look" is a VALUE the callers have to handle rather than a branch each of them
+ * re-derives, and the invariant is greppable in one place. The shape is deliberately the worker's
+ * own (`apps/worker/src/index.ts`): two halves of one product answering one question two ways is
+ * how they come to disagree.
+ *
+ * `null` — could not look; this install may still hold a claim on this mailbox.
+ * a number — how many of OURS were removed. `0` is an answer, not a failure.
+ *
+ * It does NOT log the success. Each caller says its own sentence about what the release meant
+ * there, and there are three different sentences; what they share is only the failure.
+ */
+async function releaseOwnClaim(
+  adapter: MailboxAdapter,
+  installId: string,
+  mailboxId: string,
+  log: Diagnostic,
+  reason: string,
+): Promise<number | null> {
+  try {
+    return await releaseMailboxClaim(adapter, installId, mailboxId);
+  } catch (err) {
+    log("organizer_claim_release_failed", { err, mailboxId, reason });
+    return null;
+  }
+}
+
+/**
  * The service bag, rebuilt PER REQUEST so the two AI slots can be present or absent according to
  * what this install can actually do at the moment it is asked.
  *
@@ -3442,21 +3484,18 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          * between it and removing the mailbox, and it is what the copy promises.
          */
         if (releaseRequested !== null) {
-          try {
-            const released = await releaseMailboxClaim(adapter, installId, mb.id);
-            if (released > 0) {
-              log("organizer_claim_released", {
-                claims: released,
-                reason: "the person asked this install to stop organizing this mailbox; its claim "
-                  + "is out of the folder so another install can take it without waiting out the "
-                  + "staleness window",
-              });
-            }
-          } catch (err) {
-            log("organizer_claim_release_failed", {
-              err,
-              reason: "the claim ages out of the mailbox on its own; until it does, another "
-                + "install that tries to take this mailbox over stands itself down again",
+          const released = await releaseOwnClaim(
+            adapter, installId, mb.id, log,
+            "the claim ages out of the mailbox on its own; until it does, another "
+              + "install that tries to take this mailbox over stands itself down again",
+          );
+          if (released !== null && released > 0) {
+            log("organizer_claim_released", {
+              mailboxId: mb.id,
+              claims: released,
+              reason: "the person asked this install to stop organizing this mailbox; its claim "
+                + "is out of the folder so another install can take it without waiting out the "
+                + "staleness window",
             });
           }
           try {
@@ -4913,19 +4952,24 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            * the next install wait out a claim nobody is honouring. */
           if (stopped) {
             if (permitted) {
-              try {
-                await releaseMailboxClaim(conn, installId, mb.id);
+              const released = await releaseOwnClaim(
+                conn, installId, mb.id, log,
+                "the claim this pass renewed could not be released; it ages out of " +
+                  "ohmail/_meta on its own and another install takes the mailbox then",
+              );
+              /* ONLY WHEN SOMETHING WAS ACTUALLY GIVEN BACK. This line was written
+                 unconditionally and the release's answer was discarded, so a pass that removed
+                 NOTHING — the folder held no record of ours the search could see — still said the
+                 claim "is given back rather than left to age out". Its two siblings on this door
+                 both gate on the count; this one did not, and it is the arm that runs on the
+                 detach a person's removal triggers, which is exactly when the sentence gets read. */
+              if (released !== null && released > 0) {
                 log("organizer_claim_released_on_detach", {
                   mailboxId: mb.id,
+                  claims: released,
                   reason: "the mailbox was removed or the engine stopped while the organizer " +
                     "lease was being read, and that read had already renewed this install's " +
                     "claim; it is given back rather than left to age out",
-                });
-              } catch (err) {
-                log("organizer_claim_release_failed", {
-                  err, mailboxId: mb.id,
-                  reason: "the claim this pass renewed could not be released; it ages out of " +
-                    "ohmail/_meta on its own and another install takes the mailbox then",
                 });
               }
             }
@@ -6332,18 +6376,36 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                * expunge from the wrong mailbox.
                */
               const removed = runtimes.get(mailboxId);
+              /* ── WHETHER THE CLAIM IS ACTUALLY OFF THE MAILBOX, CARRIED OUT TO THE PERSON ───
+               *
+               * `false` means one thing and only one: a release was ATTEMPTED for this mailbox
+               * and could not be completed, so this install's claim may still be standing in
+               * `ohmail/_meta`. The removal itself has happened either way — it is not abortable
+               * by bookkeeping, and none of the three acts below may turn it into an error
+               * somebody cannot get past — but "the mailbox is gone from this computer" and
+               * "nothing of ours is left holding it against your other machine" are two
+               * statements, and only the first was ever made here.
+               *
+               * That silence is the whole cost of the defect. The person's other install then
+               * refuses the mailbox for the length of the staleness window and says only that
+               * somebody else organizes it, which is a sentence about a machine that no longer
+               * exists. Told, it is a wait with a reason; untold, it is the product being wrong.
+               *
+               * A mailbox with NO runtime in the roster is not this state: this install is not
+               * organizing it, there is no login here to expunge over, and there is therefore no
+               * attempt to report the outcome of. That reads `true` — nothing of ours is being
+               * left behind by THIS removal — and it is the ordinary case for an already-detached
+               * or never-dialled row. */
+              let claimReleased = true;
               if (removed) {
-                try {
-                  const released = await releaseMailboxClaim(removed.adapter, installId, mailboxId);
-                  if (released > 0) log("organizer_claim_released", { claims: released });
-                } catch (err) {
-                  log("organizer_claim_release_failed", {
-                    err,
-                    reason: "the claim ages out of ohmail/_meta on its own; until it does, another "
-                      + "install connecting this mailbox stands itself down against a claim "
-                      + "nothing holds",
-                  });
-                }
+                const released = await releaseOwnClaim(
+                  removed.adapter, installId, mailboxId, log,
+                  "the claim ages out of ohmail/_meta on its own; until it does, another "
+                    + "install connecting this mailbox stands itself down against a claim "
+                    + "nothing holds",
+                );
+                if (released === null) claimReleased = false;
+                else if (released > 0) log("organizer_claim_released", { mailboxId, claims: released });
                 try {
                   await wipeLocalMirror(db, mailboxId);
                 } catch (err) {
@@ -6366,14 +6428,34 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 await removed.detach();
                 runtimes.delete(mailboxId);
               }
+              /* THE LINE SAYS WHICH OF THE TWO THINGS HAPPENED, because it used to say the one
+                 that is not always true. "its organizer claim is released" was written flat, and
+                 a release that could not look had just logged the opposite three lines above —
+                 so the record of a removal asserted, in its own words, something the code beside
+                 it had already reported failing. A log that contradicts itself in one request is
+                 worse than a quiet one: it is the sentence an operator reaches for first. */
               log("local_mailbox_removed", {
                 verdict: "removed",
-                reason: "a person removed this mailbox from this machine; its credentials are "
-                  + "deleted, its pending appointments are closed, its organizer claim is "
-                  + "released, this install's copy of its mail is deleted and nothing was "
-                  + "deleted from the mail server",
+                reason: claimReleased
+                  ? "a person removed this mailbox from this machine; its credentials are "
+                    + "deleted, its pending appointments are closed, its organizer claim is "
+                    + "released, this install's copy of its mail is deleted and nothing was "
+                    + "deleted from the mail server"
+                  : "a person removed this mailbox from this machine; its credentials are "
+                    + "deleted, its pending appointments are closed, this install's copy of its "
+                    + "mail is deleted and nothing was deleted from the mail server — but its "
+                    + "organizer claim could not be taken out of ohmail/_meta, so the claim "
+                    + "stands until it goes stale and another install connecting this mailbox "
+                    + "waits that long before it may organize it",
               });
-              return new Response(JSON.stringify({ seq: out.seq === null ? null : String(out.seq) }), {
+              /* `claimReleased` ON THE WIRE, because the shell is the only thing that can say it
+                 to the person and it had no way to know. The removal is a 200 either way — that
+                 is the promise this door makes and the reason the three acts above are best
+                 effort — so the outcome cannot be carried by the status code. */
+              return new Response(JSON.stringify({
+                seq: out.seq === null ? null : String(out.seq),
+                claimReleased,
+              }), {
                 status: 200, headers: { "content-type": "application/json" },
               });
             } catch (err) {
