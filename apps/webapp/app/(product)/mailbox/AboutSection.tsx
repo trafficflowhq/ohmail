@@ -44,8 +44,8 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { SettingsRow, SettingsSection } from "@ohmail/ui";
-import { apiConfigured, mailboxes as mailboxApi, messageOf, type MailboxDTO } from "../../api-client";
-import { SELF_HOST_BUILD } from "../../hello";
+import { accountHeaderCapability, apiConfigured, mailboxes as mailboxApi, messageOf, type MailboxDTO } from "../../api-client";
+import { SELF_HOST_BUILD, serverHello } from "../../hello";
 
 /** Inlined by `next.config.mjs` from the commit sha — see `buildIdentity` there. */
 const BUILD = process.env.NEXT_PUBLIC_BUILD ?? "dev";
@@ -105,6 +105,19 @@ export function AboutSection() {
     })();
   }, []);
 
+  /*
+   * WHAT THE SERVER SAID ABOUT NAMING ITS ANSWERS. Read through `serverHello`, which is the only
+   * thing that writes it, so this pane cannot invent the answer or infer it from having seen a
+   * header. One extra `/hello` when somebody opens About is the cheapest request the API has, and
+   * it is the request whose whole purpose is this question.
+   */
+  const [namesAccount, setNamesAccount] = useState<boolean | null>(() => accountHeaderCapability());
+  useEffect(() => {
+    let live = true;
+    void serverHello().then(() => { if (live) setNamesAccount(accountHeaderCapability()); });
+    return () => { live = false; };
+  }, []);
+
   /* A TABLE OF FACTS, LIKE EVERY OTHER SETTINGS PANE — which is what this one had stopped being.
      It was five loose paragraphs and two `<h3>`s: a mailbox sentence, a version, a keyboard hint
      and an address block, each floating with nothing naming it, so the one pane whose whole job is
@@ -130,6 +143,22 @@ export function AboutSection() {
           seven-character string in a row of its own with nothing to read it against. */}
       <SettingsRow label={t("buildLabel")} value={t("build", { version: VERSION, build: BUILD })} />
       <SettingsRow label={t("keyboardLabel")} description={t("keys")} />
+
+      {/* ── THE ONE CHECK THIS INSTALL CANNOT MAKE, SAID OUT LOUD ─────────────────────────────
+          `api()` refuses an answer that does not name the account it was produced for — but only
+          where the server advertises that it names them. Requiring it everywhere would make this
+          client unusable against any server that predates the header, so the requirement is
+          negotiated; the cost of negotiating is that on such a server one guard is off.
+
+          That cost is disclosed rather than carried quietly. Absent from a server that DOES
+          advertise it, and absent while nobody has asked yet — a failed `/hello` is not evidence
+          about a server, and a row appearing on a network blip would teach people to ignore it. */}
+      {namesAccount === false ? (
+        <SettingsRow
+          label={t("accountHeaderLabel")}
+          description={<span role="status">{t("accountHeaderMissing")}</span>}
+        />
+      ) : null}
 
       {/* The publisher. Same facts as ohmail.app/imprint, written the same way — see the
           header for why the FACTS are not translated (the heading and the link labels are). */}

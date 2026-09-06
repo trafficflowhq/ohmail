@@ -1354,6 +1354,8 @@
     "mailboxesLabel": "Postfächer",
     "buildLabel": "Build",
     "keyboardLabel": "Tastatur",
+    "accountHeaderLabel": "Kontoangabe",
+    "accountHeaderMissing": "Dieser Server gibt nicht an, für welches Konto er antwortet. Dieses Fenster kann eine Antwort für dich deshalb nicht von einer für jemand anderen unterscheiden, der eben noch in diesem Browser angemeldet war. Alles andere gilt weiterhin; nur diese eine Prüfung ist nicht möglich. Bitte den Betreiber um ein Update.",
     "publishedBy": "Herausgeber",
     "yourMail": "Was mit deiner Post passiert"
   },

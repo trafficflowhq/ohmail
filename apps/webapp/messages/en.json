@@ -1354,6 +1354,8 @@
     "mailboxesLabel": "Mailboxes",
     "buildLabel": "Build",
     "keyboardLabel": "Keyboard",
+    "accountHeaderLabel": "Account naming",
+    "accountHeaderMissing": "This server does not name the account it answers for, so this window cannot tell an answer meant for you from one meant for somebody else who was signed in on this browser a moment ago. Everything else still applies; this is the one check it cannot make. Ask whoever runs it to update.",
     "publishedBy": "Published by",
     "yourMail": "What happens to your mail"
   },

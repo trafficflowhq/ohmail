@@ -415,6 +415,52 @@ export function apiOwnerHolds(path: string, opts: { ceremony?: boolean } = {}): 
 const OWNER_HEADER = "X-Ohmail-Account";
 
 /**
+ * ═══ THE REQUIREMENT IS NEGOTIATED, NEVER ASSUMED AND NEVER INFERRED ══════════════════════
+ *
+ * Requiring the header unconditionally is right for the hosted product — the webapp and its API
+ * deploy together — and wrong for every other install. A self-host on an older server, or a proxy
+ * that strips unknown headers, would have every authenticated read refused: not degraded, unusable.
+ * That is the fail-closed-on-a-state-the-shell-cannot-produce shape this lane has now made twice.
+ *
+ * So the server SAYS whether it names its answers, `/hello` carries the word, and this client
+ * requires the header only where it has been advertised.
+ *
+ * **NEVER INFERRED FROM HAVING SEEN ONE.** "We got a header once, so require it from now on"
+ * looks equivalent and is not: it makes the requirement depend on the order requests happen to
+ * arrive in, and it can be turned off for the rest of a session by a single answer that legitimately
+ * carries no account. This value is written from `/hello`'s answer and from nothing else — the
+ * setter says so and the guard proves nothing else calls it.
+ *
+ * THREE STATES, and the third is why this is not a boolean:
+ *
+ *  · `true`   the server advertises it. Absence on an authenticated read is a refusal.
+ *  · `false`  the server has answered and does NOT advertise it. Absence is admitted, and the
+ *             residual is DISCLOSED on screen — see `AboutSection`. Never silent.
+ *  · `null`   nobody has asked yet, or `/hello` did not answer. Admits, and says nothing, because
+ *             a failed probe is not evidence about the server. A network blip must not be able to
+ *             switch the requirement off, which is why a failed `serverHello` leaves this alone.
+ *
+ * A WRONG NAME IS WRONG IN ALL THREE. The negotiation governs ABSENCE only: a header that names
+ * another account is a refusal whether or not the server promised to send one.
+ */
+let accountHeaderAdvertised: boolean | null = null;
+
+/**
+ * `/hello` said whether this server names the account it answers for.
+ *
+ * The ONLY caller is `serverHello()`, and that is the whole design: see the block above. Passing
+ * `null` returns the client to "nobody has asked", which is what a fresh test wants.
+ */
+export function setAccountHeaderCapability(advertised: boolean | null): void {
+  accountHeaderAdvertised = advertised;
+}
+
+/** What the server said, for the guard and for the surface that discloses the residual. */
+export function accountHeaderCapability(): boolean | null {
+  return accountHeaderAdvertised;
+}
+
+/**
  * The routes where the header names the CREDENTIAL's account rather than a session's.
  *
  * Exactly the set the server's contract names, written out rather than derived from a prefix: a
@@ -498,6 +544,20 @@ function checkAnswerOwner(path: string, seen: string | null | undefined, ceremon
     : null;
   if (expected === null) return;
 
+  if (seen === null) {
+    /*
+     * ABSENCE, WHICH IS THE NEGOTIATED HALF. Where the server advertises the header, an answer
+     * that cannot say whose it is leaves this client unable to prove anything, and that is the
+     * moment to stop. Where it does not advertise it, absence is the ordinary shape of every
+     * answer that server gives, and refusing would refuse the whole product — so the client
+     * behaves as it did before the header existed, and the surface says so out loud.
+     */
+    if (accountHeaderAdvertised !== true) return;
+    reResolveApiOwner();
+    throw responseNotOurs();
+  }
+
+  // A WRONG NAME IS WRONG WHETHER OR NOT IT WAS PROMISED. Nothing is negotiated here.
   if (seen !== expected) {
     reResolveApiOwner();
     throw responseNotOurs();

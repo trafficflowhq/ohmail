@@ -118,6 +118,15 @@ export const apiOwnerHolds: (path: string, opts?: { ceremony?: boolean }) => boo
 export const reResolveApiOwner: () => void = () => {};
 
 /**
+ * The account-header negotiation, for the shared shell's types. Always `null` here — "nobody has
+ * asked" — which is the honest value: this door has no `/hello` to ask and no answers to check,
+ * so the About pane's disclosure row is correctly absent rather than wrongly present.
+ */
+export const setAccountHeaderCapability: (advertised: boolean | null) => void = () => {};
+
+export const accountHeaderCapability: () => boolean | null = () => null;
+
+/**
  * The hosted client's cookie-writer census, for the test that derives it from the server's route
  * table. Empty here: this door writes no browser cookies at all, so there is nothing to lock and
  * nothing to compare — see the note above these five.

@@ -24,7 +24,7 @@
  * server is" as "behave normally", because the normal surfaces (sign-in, the landing) are never
  * wrong — the same fail-closed grammar as `session-gate.ts`.
  */
-import { api, apiConfigured } from "./api-client";
+import { api, apiConfigured, setAccountHeaderCapability } from "./api-client";
 
 /** Is this bundle the self-host flavor? Compile-time; see the module header. */
 export const SELF_HOST_BUILD = process.env.NEXT_PUBLIC_OHMAIL_FLAVOR === "selfhost";
@@ -59,7 +59,14 @@ export interface ServerHello {
    * `{ sse, staging, ai, pairing }`); this interface simply did not name it, because until now
    * nothing in the browser asked.
    */
-  features: { staging: boolean; ai: boolean; pairing: boolean };
+  /**
+   * `accountHeader` is the one feature word this client acts on for SAFETY rather than for a
+   * surface: it says the server names the account each answer was produced for
+   * (`X-Ohmail-Account`), which is what lets `api()` refuse an answer that names nobody. Optional
+   * on the type because a server that predates it simply does not send it, and that absence is
+   * the negotiation working rather than a parse failure.
+   */
+  features: { staging: boolean; ai: boolean; pairing: boolean; accountHeader?: boolean };
 }
 
 /**
@@ -87,6 +94,16 @@ export async function serverHello(opts: { signal?: AbortSignal } = {}): Promise<
   try {
     const h = await api<Partial<ServerHello>>("/hello", { signal: ctl.signal });
     if (h?.product !== "ohmail" || typeof h.needsSetup !== "boolean") return null;
+    /*
+     * THE ONE PLACE THE ACCOUNT-HEADER REQUIREMENT IS NEGOTIATED, and it is here rather than in
+     * `api-client.ts` because this is where the server's own word arrives. Set only on an answer
+     * that PARSED: a failed or malformed `/hello` returns `null` above and leaves the client's
+     * previous state alone, so a network blip cannot switch the requirement off for the session.
+     *
+     * A server that answers `/hello` without the word is saying no, which is different from not
+     * having answered — `false`, not `null`. That difference is what the disclosure hangs on.
+     */
+    setAccountHeaderCapability(h.features?.accountHeader === true);
     return h as ServerHello;
   } catch {
     return null;
