@@ -24,11 +24,18 @@
  *
  * So the comparator is keyed on the FACTS the card draws. A message's content is immutable per id
  * (subject, sender, amount and art never change under a stable id), so `m.id` stands in for all of
- * them; `unread` is the one mutable bit and is already folded into the `unread` prop. The body
- * arrives as PRIMITIVES (not the object `bodyOf` mints fresh each call), so a hydration flips
- * exactly the card that hydrated. The callbacks are stable (`useCallback`/state setters in the
- * view), and the per-card facts (`current`, `expanded`) are booleans, so a selection or
- * expand re-renders that one card and no other. `now` is `useMemo`'d on `demo` in the shell.
+ * them. The MUTABLE bits are four, and every one of them is compared: `unread`, which travels as
+ * its own prop, and `triage`, `sensitivity.no_forward` and `folder`, which do not — they are drawn
+ * by the action bar, which is handed `m` WHOLE. The body arrives as PRIMITIVES (not the object
+ * `bodyOf` mints fresh each call), so a hydration flips exactly the card that hydrated. The
+ * callbacks are stable (`useCallback`/state setters in the view, and `stable-callback.ts` in the
+ * shell), and the per-card facts (`current`, `expanded`) are booleans, so a selection or expand
+ * re-renders that one card and no other. `now` is `useMemo`'d on `demo` in the shell.
+ *
+ * That "four" is load-bearing and was three for a while: the three that arrive inside `m` were
+ * missing, and nothing caught it because `onAction` still changed identity often enough to
+ * re-render the card for another reason. See `areEqual` for what that cost once the shell's
+ * callbacks became genuinely stable.
  *
  * The inline `onToggle`/`onAction`/`bodySlot`/`art` closures are built INSIDE this component, so
  * they cost nothing on a render it skips. The guard is `test/stream-rerender.test.tsx`, which drives the
@@ -184,10 +191,33 @@ function StreamCardMemoInner({
  * every immutable-per-id field (subject/sender/amount/art); the mutable ones travel as their own
  * props. Miss one and a real change would be dropped, so the list is deliberately exhaustive over
  * `StreamCardMemoProps`.
+ *
+ * ── THE THREE THAT DO NOT TRAVEL AS THEIR OWN PROP ──────────────────────────────────────────
+ *
+ * `m` is handed WHOLE to `MessageActionBar`, so the fields that bar reads are drawn by this card
+ * even though they arrive inside `m` rather than beside it. `m.id` alone cannot stand in for them:
+ * the projection clones a relocated message, so a NEW object with the SAME id is exactly what a
+ * triage change looks like, and comparing ids says "equal" to it.
+ *
+ * That gap was invisible for as long as `onAction` changed identity on every render that mattered
+ * — the card re-rendered for that reason and picked up the fresh `m` on the way past. Once the
+ * shell's callbacks became genuinely stable (`stable-callback.ts`) the cover was gone and the
+ * defect became reachable: press Park on a card, the mutation lands, the button does not move
+ * because the card still holds the pre-mutation `m`; press again and the STALE `m` reaches the
+ * handler, which dispatches `set_aside` a second time instead of `none`, so the message cannot be
+ * unparked from the card that parked it.
+ *
+ * Compared at the exact sub-values `ActionBar` reads (`triage?.state`, `sensitivity?.no_forward`,
+ * `folder`) rather than by object reference: the containers are rebuilt per projection pass, so a
+ * reference comparison would re-render every card on every version bump — the cost this memo
+ * exists to avoid — while telling us nothing about whether the card's drawing changed.
  */
 function areEqual(a: StreamCardMemoProps, b: StreamCardMemoProps): boolean {
   return (
     a.m.id === b.m.id &&
+    a.m.triage?.state === b.m.triage?.state &&
+    a.m.sensitivity?.no_forward === b.m.sensitivity?.no_forward &&
+    a.m.folder === b.m.folder &&
     a.now === b.now &&
     a.current === b.current &&
     a.expanded === b.expanded &&
