@@ -1,4 +1,4 @@
-import { and, asc, eq, lt, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, lt, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import {
   attachments, drafts, mailboxes, messageBodies, messages, outboundSends,
@@ -14,7 +14,7 @@ import type { ServiceContext } from "./context.js";
 import type { AttachmentAdapter, OpenAdapter } from "./attachments-service.js";
 import { ServiceError, SettleFailed, TransientDialRefusal } from "./errors.js";
 import { sanitizeOutboundHtml } from "./outbound-html.js";
-import { carryDialect } from "@trafficflow/db/dialect";
+import { carryDialect, dialect } from "@trafficflow/db/dialect";
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 
@@ -2589,10 +2589,17 @@ export class SendService {
       // See the note above: the doorbell is skipped rather than waited on, because waiting here
       // strands a message that has already been sent. `SKIP LOCKED` needs the row to be selected,
       // so the update is driven by a subquery rather than by `where id = ...` directly.
-      await tx.update(mailboxes).set({ syncRequestedAt: now }).where(sql`${mailboxes.id} in (
-        select ${mailboxes.id} from ${mailboxes} where ${mailboxes.id} = ${mailboxId}
-        for update skip locked
-      )`);
+      //
+      // The subquery goes through the seam rather than carrying `for update skip locked` in its
+      // own text: this store spells that clause and the device store has no clause at all, and a
+      // statement that carries it there does not answer differently — it fails to parse, inside
+      // the transaction that has just recorded a message as SENT. On the device the member is the
+      // identity and the subquery is an ordinary one, which is correct for the same reason the
+      // seam gives everywhere: one serialized writer, nothing to skip past.
+      const doorbell = dialect(ctx.db).skipLocked(
+        tx.select({ id: mailboxes.id }).from(mailboxes).where(eq(mailboxes.id, mailboxId)));
+      await tx.update(mailboxes).set({ syncRequestedAt: now })
+        .where(inArray(mailboxes.id, doorbell));
       return recordChange(tx, {
         accountId: ctx.accountId, entityType: "draft", entityId: draftId, op: "update", meta: null,
       });

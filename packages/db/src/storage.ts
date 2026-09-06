@@ -1,5 +1,6 @@
 import { sql, eq, inArray } from "drizzle-orm";
 import { accountStorage, messageBodies } from "./schema-mail.js";
+import { dialect } from "./dialect/index.js";
 import type { Tx } from "./change-log.js";
 
 /**
@@ -141,8 +142,13 @@ export async function recomputeAccountStorage(tx: Tx, accountId: string): Promis
   // The row must EXIST before it can be locked — an account whose bodies all predate 0062 has no
   // row, and `FOR UPDATE` locks nothing rather than waiting for one to appear.
   await tx.insert(accountStorage).values({ accountId, bytes: 0 }).onConflictDoNothing();
-  await tx.execute(sql`
-    select 1 from ${accountStorage} where ${accountStorage.accountId} = ${accountId} for update`);
+  const d = dialect(tx);
+  // THROUGH THE QUERY BUILDER, not as `for update` inside the statement's text. The seam's member
+  // takes a QUERY, so a raw fragment could not go through it — and a fragment member would be the
+  // more dangerous shape, because it can be attached to a statement the server refuses to lock
+  // while `forUpdate(q, { of })` can only be attached to a query and can name the table.
+  await d.forUpdate(tx.select({ locked: accountStorage.accountId }).from(accountStorage)
+    .where(eq(accountStorage.accountId, accountId)));
   const rows = await tx.execute<{ bytes: string }>(sql`
     update ${accountStorage}
        set bytes = coalesce((select sum(octet_length(b."text") + coalesce(octet_length(b."html"), 0))
@@ -241,11 +247,13 @@ export async function evictOldestBodies(
   tx: Tx, accountId: string, opts: { targetBytes: number; maxBodies: number },
 ): Promise<EvictionResult> {
   await tx.insert(accountStorage).values({ accountId, bytes: 0 }).onConflictDoNothing();
-  const lockRows = await tx.execute<{ bytes: string }>(sql`
-    select bytes from ${accountStorage} where ${accountStorage.accountId} = ${accountId} for update`);
-  const lockList = Array.isArray(lockRows)
-    ? lockRows : (lockRows as unknown as { rows: Array<{ bytes: string }> }).rows;
-  const bytes = Number((lockList as Array<{ bytes: string }>)[0]?.bytes ?? 0);
+  const d = dialect(tx);
+  // The counter row's lock and its value in one query through the builder — see the note in
+  // `recomputeAccountStorage`. It also drops the driver split this used to carry: the builder
+  // returns rows, so there is no longer an array-or-`{rows}` shape to decide between.
+  const locked = await d.forUpdate(tx.select({ bytes: accountStorage.bytes }).from(accountStorage)
+    .where(eq(accountStorage.accountId, accountId)));
+  const bytes = Number(locked[0]?.bytes ?? 0);
   if (bytes <= opts.targetBytes) {
     return { evicted: 0, freedBytes: 0, bytesAfter: bytes, more: false };
   }

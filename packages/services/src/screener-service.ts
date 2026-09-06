@@ -22,7 +22,8 @@ import {
 /* The PORT, from the root barrel — not `@trafficflow/db/cloud`, which is the half that
  * answers. This service names a gate it may be handed; it never builds one, and it must
  * compile in a deployment where no gate and no ledger exist. */
-import type { SpendPort } from "@trafficflow/db";
+import type { AiCreditGate, SpendPort } from "@trafficflow/db";
+import { carryDialect } from "@trafficflow/db/dialect";
 import type { AdapterPort, ClassifierPort, Destination, NativeLocator, OhboxPolicy } from "@trafficflow/core/mail";
 import {
   applyReconcileAction, askScreeningQuestion, CLASSIFY_DESTINATIONS, createLogger,
@@ -1288,7 +1289,7 @@ export class ScreenerReadService {
 
       let applied;
       try {
-        applied = await applyScreenerDecision(tx, {
+        applied = await applyScreenerDecision(carryDialect(ctx.db, tx) as typeof tx, {
           accountId: ctx.accountId, mailboxId: target.mailboxId, scope, address, appliedFolder, decision,
           triggeringActionId: `screener:${id}`, now: ctx.now(),
         });
