@@ -525,6 +525,21 @@ export async function probeCloudServer(cloudUrl: string, fetchImpl: typeof fetch
       "managed",
     );
   }
+  /* AND `local` IS A DESKTOP'S OWN WINDOW DOOR, which is not a door anything may pair with.
+     It is the private surface an install serves to ITSELF — no pairing redeem is mounted on it, so
+     a client that got this far would configure successfully and then be refused at the redeem with
+     a sentence about a token. The two desktop surfaces are told apart by exactly this field: a
+     machine offering itself to other devices answers `desktop-host`, and one that is merely running
+     answers `local`. Refusing by name here is the difference between "turn same-network access on
+     over there" and an error about a pairing code. */
+  if (hello.flavor === "local") {
+    return refuse(
+      `${target} is an ohmail desktop that is not offering itself to other devices. On that ` +
+        "computer, open Settings → Devices and turn on access for your other devices, then use " +
+        "the pairing code it prints.",
+      "local",
+    );
+  }
 
   /* Everything here is the SERVER's own answer about itself and none of it is secret — it is what
      that address serves to anyone who asks. The door renders the flavor so somebody who typed our
@@ -532,10 +547,72 @@ export async function probeCloudServer(cloudUrl: string, fetchImpl: typeof fetch
   return json({
     ok: true,
     target,
+    /* THE BASE THIS ANSWER WAS OBTAINED AT, so the caller configures the one that worked instead
+       of re-deriving it. The two-step discovery below tries the root and then `/api`, and which of
+       them answered is a fact only this side holds; a window that recomposed it would be a second
+       opinion about the thing that was just measured. */
+    base,
     flavor: typeof hello.flavor === "string" ? hello.flavor : null,
     needsSetup: hello.needsSetup === true,
     auth: hello.auth ?? null,
   });
+}
+
+/**
+ * WHERE IS THE API AT THIS ORIGIN? — the root, or under `/api`.
+ *
+ * ── WHY THIS IS DISCOVERED AND NOT CONFIGURED ─────────────────────────────────────────────────
+ *
+ * The three server-shaped doors do not agree, and the person typing the address has no way to
+ * know which one they are looking at: the hosted service and a desktop acting as a host answer at
+ * the ROOT, and a self-host stack answers under `/api` because one Caddy site carries the web app
+ * as well. Asking somebody to know that is asking them to debug a deployment.
+ *
+ * So both are tried, root first, and the greeting decides. `probeCloudServer` composes every
+ * sentence and every refusal code; this only chooses which base is asked and passes the answer
+ * through whole.
+ *
+ * ── THE ROOT'S REFUSAL IS SOMETIMES FINAL, AND THAT IS THE WHOLE OF THE CARE HERE ─────────────
+ *
+ * A second dial is only worth making when the first one proved nothing about the ADDRESS. Two
+ * classes:
+ *
+ *  · **Something answered and it was not an ohmail greeting** (`status`, `not_ohmail`). That is
+ *    exactly what a self-host stack's root looks like — Caddy hands `/hello` to the web container,
+ *    which answers a 404 HTML page — so this is the case the second dial exists for.
+ *  · **Anything else.** A transport failure (nothing listening, a name that does not resolve, a
+ *    certificate that will not verify) is a fact about the ADDRESS and repeating it at a longer
+ *    path produces the same failure and a worse sentence — the person would be told their machine
+ *    could not be reached at `…/api/hello`, which invites them to go and look for a path that was
+ *    never the problem. And an ohmail server that answered and was REFUSED (`managed`, `local`,
+ *    `needs_setup`) has already been identified; dialling it again cannot change what it is.
+ */
+export async function probeCloudDoor(origin: string, fetchImpl: typeof fetch): Promise<Response> {
+  const root = origin.replace(/\/+$/, "");
+  const atRoot = await probeCloudServer(root, fetchImpl);
+  if (atRoot.ok) return atRoot;
+
+  const kind = await refusalKind(atRoot);
+  if (kind !== "status" && kind !== "not_ohmail") return atRoot;
+  return probeCloudServer(apiBaseFor(root), fetchImpl);
+}
+
+/**
+ * The `details.kind` a refusal carries, or null when it carries none.
+ *
+ * CLONED, because the caller may still return this very response and a body may be read once.
+ * Reading the original would hand the window a refusal whose body has been consumed — a 502 with
+ * nothing in it, which the door renders as its own generic sentence and which looks like the
+ * engine having failed rather than the server having answered.
+ */
+async function refusalKind(res: Response): Promise<string | null> {
+  try {
+    const body = (await res.clone().json()) as { error?: { details?: { kind?: unknown } } };
+    const kind = body.error?.details?.kind;
+    return typeof kind === "string" ? kind : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Node's own TLS verification failures, as the codes it raises them with. */
@@ -1039,7 +1116,10 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
             400,
           );
         }
-        return probeCloudServer(apiBaseFor(origin), config.fetchImpl ?? fetch);
+        /* THE ORIGIN, NOT A BASE — `probeCloudDoor` is what decides whether the API is at the
+           root or under `/api`, because that answer comes from the server's own greeting and not
+           from anything this window could know. */
+        return probeCloudDoor(origin, config.fetchImpl ?? fetch);
       }
 
       if (req.method === "POST" && path === "/cloud/signin/challenge") {

@@ -124,9 +124,28 @@ export const MANAGED_CLOUD_BASE = "https://api.ohmail.app";
  *
  * So the SELF-HOST door composes `<origin>/api` and the hosted door keeps its own constant
  * untouched. Nothing about the working door moves to accommodate the new one.
+ *
+ * ── AND THE FOURTH DOOR IS THE ONE CASE WHERE `/api` IS WRONG ─────────────────────────────────
+ *
+ * A DESKTOP acting as a host serves its API at the ROOT. It is not a Caddy site with a web
+ * container beside it; it is one process answering on a loopback port, and its route table is
+ * mounted at `/`. There is no Next app to collide with and therefore no prefix to disambiguate
+ * with — `<origin>/hello` IS the greeting, and `<origin>/api/hello` is a 404 from a router that
+ * has never heard of `/api`.
+ *
+ * That made a desktop host unreachable from a desktop BY CONSTRUCTION: the door composed
+ * `<origin>/api`, the probe asked `<origin>/api/hello`, got a 404, and reported "that is not an
+ * ohmail server" about a machine that was running one. Every part of the client worked and the
+ * only thing wrong was three characters composed in this function.
+ *
+ * The flavor is therefore a PARAMETER and not a guess. It is absent for every caller that predates
+ * the fourth door and means exactly what it always meant, so nothing about the two working doors
+ * moves; and the value is not invented here — it comes from the greeting the server sends about
+ * itself, which is what the probe below reads before anything is configured.
  */
-export function apiBaseFor(origin: string): string {
-  return `${origin.replace(/\/+$/, "")}/api`;
+export function apiBaseFor(origin: string, flavor?: string | null): string {
+  const root = origin.replace(/\/+$/, "");
+  return flavor === "desktop-host" ? root : `${root}/api`;
 }
 
 /**
