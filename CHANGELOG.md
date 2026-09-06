@@ -424,6 +424,31 @@ under the exact date. "Show images" keeps its place above the message, without t
 On a phone the caption yields to the glyph so the sender's address keeps its room. Nothing about
 the blocking itself changes.
 
+### A desktop can read and act through another computer of yours
+
+Set up on one computer, then let your other computers work through it. The setup chooser has a
+fourth door — **Another computer** — that takes the pairing link the first machine hands out under
+Settings → Devices. Your mail is organized in one place, on hardware you own, and every other
+machine of yours reads and acts through it over your own network or your Tailscale.
+
+The link is checked before it is used, because a pairing link works once. A link that is not a
+pairing link, one on a plain unencrypted address, and one with no key for an address no certificate
+authority can vouch for are all refused without opening a connection. A key that has changed since
+the link was made, something answering that is not ohmail, and a link already spent are all found
+out before the setup is changed — so a wrong link costs nothing. Where the connection is pinned to
+a key, the card shows twelve characters of it and says where the same twelve appear on the other
+computer.
+
+**When that computer is not answering, the app says so and keeps saying so.** The mail on screen is
+real and readable; nothing can be changed until it is back. That line does not look like a sync in
+progress and does not clear itself, and it cannot be dismissed — it is a fact about what the window
+can do, not a process that will finish.
+
+Settings → Desktop names the computer you are connected through, whether the pairing still stands,
+whether it is reachable and when it last answered, and offers to set this machine up on its own if
+it will not be coming back. Settings → About names it too, and the panes that belong to a hosted
+account are not shown on this door, because there is no hosted account behind it.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
