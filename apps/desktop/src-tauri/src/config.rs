@@ -103,11 +103,41 @@ pub struct LocalDoor {
     pub address: Option<String>,
 }
 
-/// The cloud door: a hosted account, mirrored.
+/// Which shape of server a cloud door opens. `None` is every door written before the fourth one.
+///
+/// A STRING AND NOT AN ENUM OF ONE, because the value's authority is the SERVER's own greeting —
+/// the engine's probe reads `flavor` out of `/hello` and the window hands back what it was told.
+/// A closed Rust enum here would make the shell the authority on a vocabulary it does not own, and
+/// a server announcing a flavor this build has not heard of must degrade to "a cloud door" rather
+/// than fail to parse a settings file the app has already written.
+pub type DoorFlavor = Option<String>;
+
+/// The flavor that changes how the door behaves rather than merely how it is labelled.
+pub const DESKTOP_HOST_FLAVOR: &str = "desktop-host";
+
+/// The cloud door: a hosted account, a server the person runs, or another computer's desktop.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CloudDoor {
     pub cloud_url: String,
-    pub address: String,
+    /// **`None` ONLY on a desktop-host door**, and the absence is a fact rather than a gap.
+    ///
+    /// The other two cloud doors are entered by naming a mailbox: somebody types the address they
+    /// sign in with, and the mirror is that address's. A pairing link names a COMPUTER. Which
+    /// mailbox this install ends up reading is the host's answer to the redeem, and it is not
+    /// known — by anyone — at the moment the door is written.
+    ///
+    /// It is kept optional HERE rather than made optional on the shared cloud shape, so that an
+    /// absent address on the hosted door stays what it has always been: a mirror belonging to
+    /// nobody, refused at parse.
+    pub address: Option<String>,
+    /// See {@link DoorFlavor}. `None` means a door written before the fourth one existed.
+    pub flavor: DoorFlavor,
+    /// base64url `SHA-256(SubjectPublicKeyInfo)` of the paired computer's key, from the link.
+    ///
+    /// Written together with `flavor: "desktop-host"` and never apart from it: a desktop-host door
+    /// with no pin cannot authenticate what answers at its address at all, so the two are one
+    /// fact. `None` on every other door, where the platform's trust store is the authority.
+    pub host_pin: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -125,11 +155,21 @@ impl Config {
     }
 
     /// The mailbox this install is for, as a person would recognise it.
+    ///
+    /// `None` on a desktop-host door until the pairing has answered — see `CloudDoor::address`.
+    /// Callers that render this must show nothing rather than a placeholder: a hostname in a field
+    /// that says "your mailbox" is a false state, and this door's own label comes from its address
+    /// bar (`baseUrl`) rather than from here.
     pub fn address(&self) -> Option<&str> {
         match self {
             Config::Local(l) => l.address.as_deref().or(Some(l.imap_user.as_str())),
-            Config::Cloud(c) => Some(c.address.as_str()),
+            Config::Cloud(c) => c.address.as_deref(),
         }
+    }
+
+    /// Is this the door that opens another computer's desktop?
+    pub fn is_desktop_host(&self) -> bool {
+        matches!(self, Config::Cloud(c) if c.flavor.as_deref() == Some(DESKTOP_HOST_FLAVOR))
     }
 }
 
@@ -322,14 +362,44 @@ pub fn parse(value: &serde_json::Value) -> Result<Config, String> {
                 address: string_at(map, "address"),
             }))
         }
-        "cloud" => Ok(Config::Cloud(CloudDoor {
-            cloud_url: checked_cloud_url(
-                &required_string(map, "cloudUrl")
-                    .map_err(|_| "the cloud door needs the hosted service's address".to_string())?,
-            )?,
-            address: required_string(map, "address")
-                .map_err(|_| "the cloud door needs the mailbox address".to_string())?,
-        })),
+        "cloud" => {
+            let flavor = string_at(map, "flavor");
+            let is_host = flavor.as_deref() == Some(DESKTOP_HOST_FLAVOR);
+            let host_pin = string_at(map, "hostPin");
+            // THE TWO ARE ONE FACT, in both directions, and each direction is a different hazard.
+            // A desktop-host door with no pin cannot authenticate what answers at its address; a
+            // pin on any other door is a value nothing reads, which is worse than useless because
+            // a later reader takes it for protection that is in force.
+            if is_host && host_pin.is_none() {
+                return Err(
+                    "a door that opens another computer needs that computer's identity from the \
+                     pairing link"
+                        .to_string(),
+                );
+            }
+            if !is_host && host_pin.is_some() {
+                return Err(
+                    "only a door that opens another computer carries an identity fingerprint"
+                        .to_string(),
+                );
+            }
+            let address = string_at(map, "address");
+            // AN ABSENT ADDRESS IS ADMISSIBLE ONLY HERE. A pairing link names a computer, and
+            // which mailbox this install reads is the host's answer to the redeem. On the other
+            // two cloud doors an absent address is a mirror belonging to nobody.
+            if !is_host && address.is_none() {
+                return Err("the cloud door needs the mailbox address".to_string());
+            }
+            Ok(Config::Cloud(CloudDoor {
+                cloud_url: checked_cloud_url(
+                    &required_string(map, "cloudUrl")
+                        .map_err(|_| "the cloud door needs the hosted service's address".to_string())?,
+                )?,
+                address,
+                flavor,
+                host_pin,
+            }))
+        }
         other if other.is_empty() => Err("the configuration needs a mode".to_string()),
         other => Err(format!(
             "\"{other}\" is not a mode; this app has two doors, \"local\" and \"cloud\""
@@ -360,11 +430,25 @@ pub fn to_json(config: &Config) -> serde_json::Value {
             }
             out
         }
-        Config::Cloud(c) => serde_json::json!({
-            "mode": "cloud",
-            "cloudUrl": c.cloud_url,
-            "address": c.address,
-        }),
+        Config::Cloud(c) => {
+            let mut out = serde_json::json!({
+                "mode": "cloud",
+                "cloudUrl": c.cloud_url,
+            });
+            // OMITTED RATHER THAN NULL for each of the three, so a door written by this build and
+            // read by an older one is the shape that build already understands — and so that a
+            // round trip through this function is byte-stable for every existing door.
+            if let Some(address) = &c.address {
+                out["address"] = serde_json::Value::String(address.clone());
+            }
+            if let Some(flavor) = &c.flavor {
+                out["flavor"] = serde_json::Value::String(flavor.clone());
+            }
+            if let Some(pin) = &c.host_pin {
+                out["hostPin"] = serde_json::Value::String(pin.clone());
+            }
+            out
+        }
     }
 }
 
@@ -476,7 +560,23 @@ pub fn env_for(config: &Config, root: &Path) -> Vec<(OsString, OsString)> {
             // mutation. See the module header for what happens without it.
             env.push(pair("OHMAIL_MODE", "cloud".to_string()));
             env.push(pair("OHMAIL_CLOUD_URL", c.cloud_url.clone()));
-            env.push(pair("OHMAIL_MAILBOX_ADDRESS", c.address.clone()));
+            if let Some(address) = &c.address {
+                env.push(pair("OHMAIL_MAILBOX_ADDRESS", address.clone()));
+            }
+            // ── THE PAIRED COMPUTER'S IDENTITY ──────────────────────────────────────────────
+            //
+            // What turns every connection the engine opens into a pinned one. It is composed only
+            // when the door carries it, and `parse` refuses a door that carries it without the
+            // flavor or the flavor without it — so this line cannot put a pin on a door where
+            // nothing would check it, and cannot leave one off a door that needs it.
+            //
+            // It is NOT a secret. The fingerprint is a hash of a public key, printed on the other
+            // machine's screen for somebody to carry across a room; the rule this file states
+            // about credentials never becoming command arguments is about the pairing TOKEN, which
+            // goes down the bridge and never through here.
+            if let Some(pin) = &c.host_pin {
+                env.push(pair("OHMAIL_HOST_PIN", pin.clone()));
+            }
         }
     }
     env

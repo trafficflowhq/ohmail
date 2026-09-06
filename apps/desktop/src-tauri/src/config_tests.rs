@@ -32,7 +32,9 @@ fn local_door() -> Config {
 fn cloud_door() -> Config {
     Config::Cloud(CloudDoor {
         cloud_url: "https://api.ohmail.app".to_string(),
-        address: "someone@ohmail.app".to_string(),
+        address: Some("someone@ohmail.app".to_string()),
+        flavor: None,
+        host_pin: None,
     })
 }
 
@@ -170,6 +172,156 @@ fn a_cloud_door_needs_the_service_and_the_address() {
     assert_eq!(parsed.address(), Some("a@ohmail.app"));
     assert!(parse(&serde_json::json!({ "mode": "cloud", "address": "a@b" })).is_err());
     assert!(parse(&serde_json::json!({ "mode": "cloud", "cloudUrl": "https://c" })).is_err());
+}
+
+/// THE FOURTH DOOR — another computer's desktop, which is a cloud door with two differences.
+///
+/// A pairing link names a COMPUTER, not a mailbox, so this is the one cloud door that may carry no
+/// address: which mailbox the install ends up reading is the host's answer to the redeem, and it is
+/// not known by anyone at the moment the door is written. And its address is one no certificate
+/// authority can vouch for, so the door carries the fingerprint the link brought instead.
+#[test]
+fn a_desktop_host_door_carries_a_fingerprint_and_may_carry_no_address() {
+    let parsed = parse(&serde_json::json!({
+        "mode": "cloud",
+        "cloudUrl": "https://desk.tail1234.ts.net",
+        "flavor": "desktop-host",
+        "hostPin": "A2Z_abcdefghijklmnopqrstuvwxyz0123456789-xyz",
+    }))
+    .expect("a paired-desktop door");
+    assert_eq!(parsed.mode(), Mode::Cloud);
+    assert!(parsed.is_desktop_host());
+    // NOTHING RATHER THAN A PLACEHOLDER. A hostname in a field that says "your mailbox" is a false
+    // state, and this door's label comes from its address bar rather than from here.
+    assert_eq!(parsed.address(), None);
+}
+
+#[test]
+fn the_flavor_and_the_fingerprint_are_one_fact_in_both_directions() {
+    // A desktop-host door with no pin cannot authenticate what answers at its address at all.
+    let no_pin = parse(&serde_json::json!({
+        "mode": "cloud", "cloudUrl": "https://desk.example", "flavor": "desktop-host",
+    }))
+    .expect_err("a paired door with no identity");
+    assert!(no_pin.contains("identity"), "{no_pin}");
+
+    // And a pin on any other door is a value nothing reads — worse than useless, because a later
+    // reader takes it for protection that is in force.
+    let stray = parse(&serde_json::json!({
+        "mode": "cloud", "cloudUrl": "https://api.ohmail.app", "address": "a@ohmail.app",
+        "hostPin": "A2Z_abcdefghijklmnopqrstuvwxyz0123456789-xyz",
+    }))
+    .expect_err("a fingerprint on a door that cannot use one");
+    assert!(stray.contains("another computer"), "{stray}");
+}
+
+#[test]
+fn only_the_paired_door_may_omit_the_address() {
+    // The hosted and self-hosted doors are entered by naming a mailbox. An absent address there is
+    // a mirror belonging to nobody, and it stays refused.
+    let hosted = parse(&serde_json::json!({
+        "mode": "cloud", "cloudUrl": "https://api.ohmail.app",
+    }))
+    .expect_err("a hosted door with no mailbox");
+    assert!(hosted.contains("mailbox address"), "{hosted}");
+
+    // An unrecognised flavor is a cloud door like any other — it must NOT unlock the omission.
+    let odd = parse(&serde_json::json!({
+        "mode": "cloud", "cloudUrl": "https://api.ohmail.app", "flavor": "something-new",
+    }))
+    .expect_err("an unknown flavor with no mailbox");
+    assert!(odd.contains("mailbox address"), "{odd}");
+}
+
+#[test]
+fn a_flavor_this_build_has_not_heard_of_still_parses() {
+    // The vocabulary's authority is the SERVER's greeting, not this file. A door already written
+    // to disk must keep opening after the vocabulary grows, so an unknown flavor degrades to
+    // "a cloud door" rather than failing to parse a settings file this app has itself written.
+    let parsed = parse(&serde_json::json!({
+        "mode": "cloud", "cloudUrl": "https://api.ohmail.app", "address": "a@ohmail.app",
+        "flavor": "something-new",
+    }))
+    .expect("an unfamiliar flavor");
+    assert_eq!(parsed.mode(), Mode::Cloud);
+    assert!(!parsed.is_desktop_host());
+}
+
+#[test]
+fn a_door_written_before_the_fourth_one_is_unchanged_through_a_round_trip() {
+    // Every existing install is this shape. The three new keys are OMITTED rather than written as
+    // null, so a door this build rewrites is byte-identical to what an older build would read.
+    let original = serde_json::json!({
+        "mode": "cloud", "cloudUrl": "https://api.ohmail.app", "address": "a@ohmail.app",
+    });
+    let parsed = parse(&original).expect("an existing hosted door");
+    assert_eq!(to_json(&parsed), original);
+}
+
+#[test]
+fn the_paired_door_hands_the_engine_the_fingerprint_and_no_mailbox() {
+    let dir = std::path::PathBuf::from("/tmp/ohmail-config-test");
+    let door = Config::Cloud(CloudDoor {
+        cloud_url: "https://desk.tail1234.ts.net".to_string(),
+        address: None,
+        flavor: Some("desktop-host".to_string()),
+        host_pin: Some("A2Z_abcdefghijklmnopqrstuvwxyz0123456789-xyz".to_string()),
+    });
+    let env = env_map(&env_for(&door, &dir));
+
+    // THE SAFETY-CRITICAL LINE IS STILL THERE. A paired door is a cloud door, and an engine
+    // spawned without this would run the local organizer against whatever the environment names.
+    assert_eq!(env.get("OHMAIL_MODE").map(String::as_str), Some("cloud"));
+    assert_eq!(
+        env.get("OHMAIL_HOST_PIN").map(String::as_str),
+        Some("A2Z_abcdefghijklmnopqrstuvwxyz0123456789-xyz"),
+    );
+    // OMITTED, not blank: the engine reads an empty value as absent, and a door that named an
+    // empty mailbox would be claiming a mirror belongs to "".
+    assert!(!env.contains_key("OHMAIL_MAILBOX_ADDRESS"), "{env:?}");
+}
+
+#[test]
+fn no_other_door_hands_the_engine_a_fingerprint() {
+    let dir = std::path::PathBuf::from("/tmp/ohmail-config-test");
+    for door in [cloud_door(), self_hosted_door()] {
+        let env = env_map(&env_for(&door, &dir));
+        assert!(!env.contains_key("OHMAIL_HOST_PIN"), "{env:?}");
+        assert!(env.contains_key("OHMAIL_MAILBOX_ADDRESS"), "{env:?}");
+    }
+}
+
+/// THE FINGERPRINT IS NOT A SECRET, and the secret filter must keep agreeing.
+///
+/// `refuse_secrets` rejects any key containing "pass", "secret", "token", "credential", "kek" or
+/// "auth" — anywhere, at any depth — and it runs BEFORE the door is parsed. `hostPin` clears that
+/// filter today by containing none of them, which is correct: the value is a hash of a public key,
+/// printed on another machine's screen for somebody to carry across a room. The PAIRING TOKEN is
+/// the secret here, and it goes down the bridge and never through a command argument.
+///
+/// This is pinned because the failure mode is silent and total: add "pin" to that list and every
+/// paired door stops parsing, with a message about passwords, on a value that is not one.
+#[test]
+fn the_pairing_fingerprint_is_not_read_as_a_secret() {
+    parse(&serde_json::json!({
+        "mode": "cloud",
+        "cloudUrl": "https://desk.tail1234.ts.net",
+        "flavor": "desktop-host",
+        "hostPin": "A2Z_abcdefghijklmnopqrstuvwxyz0123456789-xyz",
+    }))
+    .expect("a fingerprint must not be mistaken for a credential");
+
+    // The control, so "not refused" is not merely the filter having stopped working: a genuinely
+    // secret-shaped key on the same door is still refused.
+    let refused = parse(&serde_json::json!({
+        "mode": "cloud",
+        "cloudUrl": "https://desk.tail1234.ts.net",
+        "flavor": "desktop-host",
+        "hostPin": "A2Z_abcdefghijklmnopqrstuvwxyz0123456789-xyz",
+        "pairToken": "the-single-use-code",
+    }))
+    .expect_err("a pairing token in the settings file");
+    assert!(refused.contains("token"), "{refused}");
 }
 
 #[test]
@@ -427,7 +579,9 @@ fn the_host_setting_round_trips_and_everything_broken_reads_as_disabled() {
 fn self_hosted_door() -> Config {
     Config::Cloud(CloudDoor {
         cloud_url: "https://ohmail.example.com/api".to_string(),
-        address: "someone@example.com".to_string(),
+        address: Some("someone@example.com".to_string()),
+        flavor: None,
+        host_pin: None,
     })
 }
 
@@ -499,7 +653,9 @@ fn the_managed_base_is_recognised_through_its_harmless_spellings() {
     ] {
         let door = Config::Cloud(CloudDoor {
             cloud_url: spelling.to_string(),
-            address: "someone@ohmail.app".to_string(),
+            address: Some("someone@ohmail.app".to_string()),
+            flavor: None,
+            host_pin: None,
         });
         assert!(
             !env_map(&env_for(&door, &dir)).contains_key("NODE_EXTRA_CA_CERTS"),

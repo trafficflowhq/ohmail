@@ -1538,6 +1538,24 @@ impl Shell {
                     if let Some(address) = config.address() {
                         object.insert("address".into(), address.into());
                     }
+                    // ── WHICH KIND OF CLOUD DOOR, WHEN THE RECORD SAYS ──────────────────────
+                    //
+                    // `mode` says local or cloud, and three different things are cloud: the hosted
+                    // service, a server the person runs, and another computer's desktop. The window
+                    // reads this through one seam that narrows against a closed set and answers
+                    // "unknown" for anything absent or unrecognised, so an OMISSION here is not a
+                    // neutral saving — it silently gives a paired install the hosted account's
+                    // sentences and panes. It is emitted whenever the door record carries it.
+                    //
+                    // FROM THE CONFIGURATION AND NOT FROM THE ENGINE'S READY FRAME. The flavor is
+                    // a fact about the door this shell WROTE, which is exactly the class of thing
+                    // this block exists to add; taking it from the engine would make the window's
+                    // door state depend on a process that may not have announced itself yet.
+                    if let crate::config::Config::Cloud(cloud) = &config {
+                        if let Some(flavor) = &cloud.flavor {
+                            object.insert("flavor".into(), flavor.clone().into());
+                        }
+                    }
                 }
                 // NAMED RATHER THAN OMITTED. A window that reads an absent `mode` as "still
                 // loading" would spin for ever on a fresh install, which is exactly the state that

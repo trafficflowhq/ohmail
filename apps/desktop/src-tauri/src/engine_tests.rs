@@ -2218,7 +2218,9 @@ fn an_inherited_mail_server_setting_does_not_reach_a_cloud_child() {
     launch.env.push((OsString::from("FAKE_REPORT_ENV"), OsString::from("OHMAIL_IMAP_HOST")));
     launch.unset = crate::config::unset_for(&crate::config::Config::Cloud(crate::config::CloudDoor {
         cloud_url: "https://api.ohmail.app".to_string(),
-        address: "someone@ohmail.app".to_string(),
+        address: Some("someone@ohmail.app".to_string()),
+        flavor: None,
+        host_pin: None,
     }));
 
     let engine = Engine::spawn_with(launch, quick());
