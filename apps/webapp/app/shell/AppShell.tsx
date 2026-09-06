@@ -1883,11 +1883,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    *    of those is a message changing. That is correct: the same rows are presented somewhere else,
    *    so every derivation below genuinely is stale. `version` is also the overlay-merged number
    *    (see `useEngineVersion`), so an optimistic overlay moves it with no stored record touched.
-   *  · and every rebuild is retained for as long as the render scope that made it. A render
-   *    scope lives for as long as any closure created in it, and a memoized callback handed
-   *    back unchanged is exactly such a closure — so the rebuilds accumulate rather than
-   *    replace. Bounding that chain is a structural change and is not what the seams below
-   *    do; they stop producing the renders in the first place.
+   *  · and every rebuild is retained for as long as the render scope that made it —
+   *    a render scope is retained for as long as any closure created in it survives, and a
+   *    memoized callback handed back unchanged is exactly such a closure. `stable-callback.ts`
+   *    is the account of that mechanism, and every callback here now reads through a ref so no
+   *    render scope is retained through one.
    *
    * So: these rebuild when what they are derived FROM changes — the mirror, the overlay on top of
    * it, or where consent says the rows are presented. Never read them as "only when a message
