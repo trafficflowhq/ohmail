@@ -98,12 +98,12 @@ export interface EnabledMailbox {
    */
   organizedByCapabilities: string | null;
   /**
-   * Mail 0091. WHICH install holds it — the sixth holder column, and it is on the roster for a
+   * Mail 0092. WHICH install holds it — the sixth holder column, and it is on the roster for a
    * reason the other five are not: the reader peek writes only on a CHANGE, and the change is
    * detected by comparing this snapshot against what the folder says. A column the snapshot does
    * not carry cannot be compared, so it cannot be found stale, so it is never written.
    *
-   * That is not hypothetical — it is how this column shipped. Every row that existed before 0091
+   * That is not hypothetical — it is how this column shipped. Every row that existed before 0092
    * ran had a NULL id and five holder columns that already agreed with the folder, so the compare
    * returned early on every cycle and the id stayed NULL for ever. NULL fails closed in the
    * release arm, so the hand-back was refused permanently on exactly the mailboxes the feature
@@ -1342,7 +1342,7 @@ export async function markMailboxStoodDown(
     //    for the clear; nothing new is written to it, ever.
     organizerRole: "reader",
     organizedByKind: kind,
-    // Mail 0091 — WHICH install, beside WHAT kind. See `StandDownHolder.installId`.
+    // Mail 0092 — WHICH install, beside WHAT kind. See `StandDownHolder.installId`.
     organizedByInstallId: opts.by?.installId ?? null,
     // Header-safe and capped at the write site — this is a CUSTOMER'S MACHINE NAME arriving out
     // of another install's RFC822 header. Empty becomes NULL: "the claim did not say" is a
@@ -1433,7 +1433,7 @@ export async function markMailboxReleased(
     organizerRole: "reader",
     // Nobody holds it. See the header — this is the whole difference from a stand-down.
     organizedByKind: null,
-    // Mail 0091 — nobody holds it, so no id names anybody.
+    // Mail 0092 — nobody holds it, so no id names anybody.
     organizedByInstallId: null,
     organizedByName: null,
     organizedSince: null,
@@ -1590,7 +1590,7 @@ export async function clearOrganizerStandDown(
       // for the mailbox a human re-enabled past an old stand-down. Nothing writes it any more.
       organizerRole: "organizer",
       organizedByKind: null,
-      // Mail 0091 — this row names no holder now.
+      // Mail 0092 — this row names no holder now.
       organizedByInstallId: null,
       organizedByName: null,
       organizedSince: null,
@@ -1637,7 +1637,7 @@ export async function refreshOrganizerHolder(
   return applyFenced(db, mailboxId, opts.fence, (w) => w.update(mailboxes)
     .set({
       organizedByKind: by.kind ?? null,
-      // Mail 0091 — refreshed on the SAME peek as the kind, because the two must never disagree
+      // Mail 0092 — refreshed on the SAME peek as the kind, because the two must never disagree
       // about one claim: a stale id beside a fresh kind is exactly the confusion this closes.
       organizedByInstallId: by.installId ?? null,
       organizedByName: organizerDisplayName(by.displayName ?? null),

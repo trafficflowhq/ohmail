@@ -1014,7 +1014,7 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // The widened `state` CHECK gets no marker of its own — `organizer_requests.state` is already
   // probed above, and a CHECK that gained a member cannot be detected by reading a column name.
   ["organizer_requests", "refused_reason"],
-  // mail 0091_organizer_install_id — ONE column, because the migration adds one.
+  // mail 0092_organizer_install_id — ONE column, because the migration adds one.
   //
   // `mailboxes.organized_by_install_id` is WHICH install holds the claim, beside the four columns
   // above that say what sort of thing holds it. It is probed for the same reason
@@ -1798,7 +1798,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0091_request_refusal_closed";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0092_organizer_install_id";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */

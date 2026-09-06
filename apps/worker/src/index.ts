@@ -407,7 +407,7 @@ interface MailboxRuntime {
     kind: string | null; name: string | null; since: Date | null; state: string | null;
     /** Mail 0089 — the fifth holder column, tracked beside the other four for the same reason. */
     capabilities: string | null;
-    /** Mail 0091 — the sixth. Tracked here because the compare, not the write, is what decides
+    /** Mail 0092 — the sixth. Tracked here because the compare, not the write, is what decides
         whether a stale id is ever corrected; see the note on the compare in `refreshReaderHolder`. */
     installId: string | null;
   };
@@ -1450,7 +1450,7 @@ export async function startWorkerWithLock(
           seen.state === "held" ? "held" : seen.state === "stopped" ? "stopped" : null;
         const name = top && top.displayName.trim() !== "" ? top.displayName.trim() : null;
         const kind = top === null ? null : top.kind;
-        /* Mail 0091 — WHICH install, beside WHAT kind. Dropping the id here is what made the row
+        /* Mail 0092 — WHICH install, beside WHAT kind. Dropping the id here is what made the row
            unable to tell this deployment's own abandoned claim from another Cloud deployment's
            live one, and `lease.ts` scopes those ids by environment precisely so the two differ. */
         const installId = top === null ? null : top.installId;
@@ -1463,7 +1463,7 @@ export async function startWorkerWithLock(
         const capabilities = top ? capabilitiesColumn(top.capabilities) : null;
         /* THE ID IS PART OF THE COMPARE, not just part of the write. This compare decides whether
            the row is already what the folder says, and a column missing from it is a column that
-           can never be found stale: 0091 shipped with the id written but not compared, so every
+           can never be found stale: 0092 shipped with the id written but not compared, so every
            row that predated the migration kept a NULL id for ever — the five older columns already
            agreed, so this returned before the write on every cycle. NULL fails closed in the
            release arm, so the hand-back stayed refused on precisely the mailboxes it was for.
@@ -1904,7 +1904,7 @@ export async function startWorkerWithLock(
           fence,
           by: {
             kind: outcome.by ? outcome.by.kind : null,
-            // Mail 0091 — the winner's install id, so a stood-down row names WHICH install beat
+            // Mail 0092 — the winner's install id, so a stood-down row names WHICH install beat
             // it rather than only what sort of install it was.
             installId: outcome.by ? outcome.by.installId : null,
             displayName: outcome.by ? outcome.by.displayName : null,
