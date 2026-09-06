@@ -21,16 +21,16 @@
  * is how the toast and the window come apart, and `screener-state.ts` already carries the
  * measurement that fixed the duration.
  *
- * ── THE WINDOW IS OPEN, AND SO IS ITS ONE HOLE ────────────────────────────────────────────
+ * ── THE WINDOW IS DURABLE, WHICH IT WAS NOT ───────────────────────────────────────────────
  *
- * A tab closed inside the window loses the delete: the timer dies with the page and nothing is
- * sent. That is the SAFE direction for the least reversible verb in the product — the mail is
- * still in the mailbox and the next drain shows it — but it is a real gap between what the toast
- * said and what happened, and it is named here rather than left for somebody to discover. The
- * Screener closes the same hole with a durable `localStorage` intent (`armScreenerIntent`);
- * doing the same for a delete is a follow-up, not something this module pretends it has.
- * An UNMOUNT is different and is handled: {@link DeleteUndo.flush} commits every open window,
- * because leaving the view is not asking for the delete back.
+ * For one revision the only record of a requested delete, for the length of the window, was the
+ * timer. A tab closed inside it dropped a delete the toast had already reported — silent, and
+ * silent in the direction where the product did not do what it said. `delete-intents.ts` is the
+ * fix and it is the Screener's own shape: the intent is written SYNCHRONOUSLY before the timer is
+ * armed, Undo removes it, the commit removes it only once the engine has taken the verb, a
+ * `pagehide` commits what is still open, and anything that outlives even that is replayed at the
+ * next launch. An UNMOUNT commits too ({@link DeleteUndo.flush}) — leaving a view is not asking
+ * for the delete back.
  *
  * ══ WHAT A READER DOES INSTEAD ════════════════════════════════════════════════════════════
  *
@@ -42,10 +42,18 @@
  * (`message-service.ts#delete` calls `assertOrganizerRole` before it looks for a Trash folder,
  * so a reader is refused for the reason that is TRUE rather than for a missing folder).
  *
- * So the caller resolves the role with `readerHolder(screenerMode(facts))` — the one narrowing
- * that exists so it is written once — and passes the refusal in. This module never re-derives
- * it, and it refuses at the PRESS: a control wired to a refusal that arrives as a rollback four
- * seconds later is the failure `ScreenerMode`'s third state was invented to end.
+ * The role is asked PER MAILBOX and never of the roster as a whole — `mailboxWriteRole(facts,
+ * m.mailboxId)`. `screenerMode`'s account-wide answer is deliberately permissive and is right for
+ * a Screener decision, which writes an account-scoped rule; using it here let an account that
+ * organizes mailbox A delete from mailbox B, which somebody else organizes (review, 2026-09-06).
+ * An UNKNOWN roster refuses too: a destructive verb fails closed, and the sentence says the
+ * holder is not known yet rather than claiming one.
+ *
+ * The refusal is evaluated BEFORE anything else the press would do — nothing held, nothing
+ * hidden, no sheet closed, nothing on the wire. `remove` answers whether it acted so the caller
+ * can order its own side effects behind that verdict; a control wired to a refusal that arrives
+ * as a rollback four seconds later is the failure `ScreenerMode`'s third state was invented to
+ * end.
  *
  * A folder-move REQUEST is not an option today and is deliberately not invented here.
  * `REQUEST_KINDS` (`packages/core/src/adapters/organizer-lease.ts`) holds four members —
@@ -57,6 +65,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { EntityReader, EngineMessage } from "@ohmail/client-engine";
 import type { ToastFn } from "@ohmail/ui";
 import type { KeyBinding } from "./keymap";
+import { isModalOpen } from "./modal-gate";
+import { armDeleteIntent, disarmDeleteIntent, takeDeleteIntents } from "./delete-intents";
 import { UNDO_MS } from "./screener-state";
 
 export { UNDO_MS };
@@ -115,23 +125,39 @@ export interface DeleteUndoDeps {
   /** Called whenever the held set changes, with a NEW set. */
   onHeld: (held: ReadonlySet<string>) => void;
   /**
-   * THE READER REFUSAL, resolved by the caller — `null` on an install that organizes.
+   * MAY THIS MESSAGE'S MAILBOX BE WRITTEN TO — the sentence to say, or `null` for yes.
    *
-   * A function rather than a boolean so the caller's own `role` is read at PRESS time; a value
-   * captured at construction would answer with the role the shell had when the view mounted.
+   * Takes the MAILBOX ID, because the question is about one mailbox and not about the account:
+   * see the header, and `mailboxWriteRole`. A function rather than a value so the roster is read
+   * at PRESS time; one captured at construction would answer with the roster the shell had when
+   * the view mounted, which for a mailbox that changed hands mid-session is the wrong answer.
    */
-  refusal: () => string | null;
+  refusal: (mailboxId: string | null | undefined) => string | null;
   windowMs?: number;
   setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
   clearTimer?: (h: ReturnType<typeof setTimeout>) => void;
+  /** Epoch ms, for the durable intent's stamp. Injected so the TTL is testable. */
+  now?: () => number;
+}
+
+/** The message this verb acts on — the id to delete, and the mailbox that decides whether it may. */
+export interface DeleteTarget {
+  id: string;
+  mailboxId?: string | null;
 }
 
 export interface DeleteUndo {
-  /** Press Backspace/Delete on this message. Idempotent while its window is open. */
-  remove: (messageId: string) => void;
+  /**
+   * Press Backspace/Delete on this message. Idempotent while its window is open.
+   *
+   * Returns whether the press ACTED. `false` is a refusal — the caller must not run its own side
+   * effects (closing the reading sheet, moving a cursor) on a press that did nothing, which is
+   * how a refused delete came to close the sheet over the message it had just declined to touch.
+   */
+  remove: (target: DeleteTarget) => boolean;
   /** Take it back. Silent for an id with no open window — see the guard. */
   undo: (messageId: string) => void;
-  /** Commit every open window at once, without waiting. Used on unmount. */
+  /** Commit every open window at once, without waiting. Unmount, and `pagehide`. */
   flush: () => void;
   held: () => ReadonlySet<string>;
 }
@@ -140,66 +166,108 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
   const windowMs = deps.windowMs ?? UNDO_MS;
   const arm = deps.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
   const disarm = deps.clearTimer ?? ((h) => clearTimeout(h));
+  const clock = deps.now ?? (() => Date.now());
   const open = new Map<string, ReturnType<typeof setTimeout>>();
 
   const publish = () => deps.onHeld(new Set(open.keys()));
 
-  const commit = (messageId: string) => {
-    if (!open.delete(messageId)) return;
-    publish();
+  const dispatch = (messageId: string) => {
     /* THE ROW COMES BACK ON A REFUSAL, and the sentence says the message is where it was.
        Nothing hides it any more, the mutation's own optimistic tombstone was rolled back by
-       the engine, and the two agree — the honest screen for a delete that cannot happen. */
+       the engine, and the two agree — the honest screen for a delete that cannot happen.
+
+       THE JOURNAL IS CLEARED ONLY ONCE THE ENGINE HAS THE VERB, never before this dispatch:
+       the engine writes its durable outbox entry ahead of the wire, so until `mutate` settles
+       this intent is the only durable copy of the request. */
     void deps.mutate({ kind: "message_delete", messageId }).then(
-      (res) => { if (res.status === "rolled_back") deps.toast(deps.copy.failed); },
-      () => { deps.toast(deps.copy.failed); },
+      (res) => {
+        disarmDeleteIntent(messageId);
+        if (res.status === "rolled_back") deps.toast(deps.copy.failed);
+      },
+      () => { disarmDeleteIntent(messageId); deps.toast(deps.copy.failed); },
     );
   };
 
+  const commit = (messageId: string) => {
+    if (!open.delete(messageId)) return;
+    publish();
+    dispatch(messageId);
+  };
+
+  const take = (messageId: string): boolean => {
+    const h = open.get(messageId);
+    /* NOTHING RESTORED IS NOT AN UNDO — `screener-state.ts`'s rule, and it is reachable here for
+       the same reason: the toast's button outlives its own timer in the DOM, so a late press must
+       not claim it took something back. */
+    if (h === undefined) return false;
+    disarm(h);
+    open.delete(messageId);
+    disarmDeleteIntent(messageId);
+    publish();
+    deps.toast(deps.copy.undone);
+    return true;
+  };
+
   return {
-    remove: (messageId) => {
-      const refused = deps.refusal();
+    remove: (target) => {
+      /* THE REFUSAL IS THE FIRST THING THAT HAPPENS, and it is asked of THIS message's mailbox.
+         Nothing is held, nothing is hidden, no journal entry is written and nothing reaches the
+         wire, so there is no flicker to explain afterwards and no side effect for the caller to
+         undo — which is why this answers `false` rather than returning silently. */
+      const refused = deps.refusal(target.mailboxId);
       if (refused !== null) {
-        /* BEFORE THE PRESS TAKES EFFECT, not after. Nothing is held, nothing is hidden and
-           nothing reaches the wire, so there is no flicker to explain afterwards. */
         deps.toast(refused);
-        return;
+        return false;
       }
       /* A SECOND PRESS ON A ROW ALREADY IN FLIGHT IS ONE PRESS. The row is gone from every
          list, so a second press can only come from a key repeat or a stale cursor, and
          re-arming would silently extend a window the person is watching count down. */
-      if (open.has(messageId)) return;
-      open.set(messageId, arm(() => commit(messageId), windowMs));
+      if (open.has(target.id)) return false;
+      /* ON DISK BEFORE THE TIMER EXISTS. Between this line and the dispatch there is a window in
+         which the request has been reported done and not yet sent; the journal is what survives a
+         tab closed inside it. Synchronous, and it cannot throw — see `delete-intents.ts`. */
+      armDeleteIntent({ messageId: target.id, at: clock() });
+      open.set(target.id, arm(() => commit(target.id), windowMs));
       publish();
       deps.toast(deps.copy.deleted, {
         action: deps.copy.undo,
         duration: windowMs,
-        onAction: () => {
-          const h = open.get(messageId);
-          /* NOTHING RESTORED IS NOT AN UNDO — `screener-state.ts`'s rule, and it is reachable
-             here for the same reason: the toast's button outlives its own timer in the DOM, so
-             a late press must not claim it took something back. */
-          if (h === undefined) return;
-          disarm(h);
-          open.delete(messageId);
-          publish();
-          deps.toast(deps.copy.undone);
-        },
+        onAction: () => { take(target.id); },
       });
+      return true;
     },
-    undo: (messageId) => {
-      const h = open.get(messageId);
-      if (h === undefined) return;
-      disarm(h);
-      open.delete(messageId);
-      publish();
-      deps.toast(deps.copy.undone);
-    },
+    undo: (messageId) => { take(messageId); },
     flush: () => {
       for (const [id, h] of [...open]) { disarm(h); commit(id); }
     },
     held: () => new Set(open.keys()),
   };
+}
+
+/**
+ * REPLAY WHAT A KILLED TAB LEFT BEHIND — every stranded intent, dispatched once.
+ *
+ * Called at mount, with the engine's own clock. It does NOT go through the queue: there is no
+ * window to reopen and nothing to undo, because the person expressed this before the page went
+ * away and the toast that offered to take it back is long gone. The row is already absent from
+ * the mirror by then or will be on the next drain; either way the honest act is to finish the
+ * request rather than to re-ask a question nobody is looking at.
+ *
+ * A refusal is silent here, deliberately: a toast about a message the person deleted in a
+ * previous session, raised on a screen they have just opened, explains nothing and interrupts
+ * something else. The intent is cleared either way, so a delete this account may no longer make
+ * (the mailbox changed hands while the tab was closed) is dropped rather than retried for ever.
+ */
+export function replayDeleteIntents(
+  mutate: DeleteUndoDeps["mutate"],
+  nowMs: number,
+): number {
+  const intents = takeDeleteIntents(nowMs);
+  for (const intent of intents) {
+    void mutate({ kind: "message_delete", messageId: intent.messageId })
+      .then(() => disarmDeleteIntent(intent.messageId), () => disarmDeleteIntent(intent.messageId));
+  }
+  return intents.length;
 }
 
 /**
@@ -215,25 +283,39 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
  * SELECT and `contenteditable` are exactly what that predicate names. Stated because the guard
  * is an ABSENT field — the cheapest thing in this file to delete by accident, and
  * `test/delete-key.test.tsx` is what makes it fail loudly.
+ *
+ * ONE FACTORY, TWO CALLERS. The shell declares these over its own `focused`, and
+ * `message-verbs.ts` declares them over a split view's `shown`; the chords, the label, the
+ * repeat guard and the modal gate are therefore written once. Nine keycaps were dead in three
+ * views for exactly the want of that, and `message-verbs.ts`'s own header is the record of it.
  */
 export function deleteKeyBindings(input: {
   focused: EngineMessage | null;
   label: string;
-  /**
-   * SOMETHING IS OPEN OVER THE DECK. The shell answers from `escapeLayers` — the one list that
-   * already decides what Escape closes — so a dialog added later cannot be missing from here
-   * without also being missing from Escape, which is visible on first use.
-   */
-  modalOpen: boolean;
-  /** The strip's own render gates, resolved by the shell exactly as `d`'s are. */
+  /** The strip's own render gates, resolved by the caller exactly as `d`'s are. */
   canDelete: boolean;
   run: (m: EngineMessage) => void;
 }): KeyBinding[] {
-  const disabled = input.focused == null || input.modalOpen || !input.canDelete;
-  /* A HELD KEY IS ONE PRESS — the same guard `d` carries, and it matters more here: Backspace
-     auto-repeats, and a finger resting on it would walk a whole pile into Trash one window at a
-     time while each toast replaced the last. */
-  const when = (e: KeyboardEvent) => !e.repeat;
+  const disabled = input.focused == null || !input.canDelete;
+  /**
+   * A HELD KEY IS ONE PRESS, AND A QUESTION ON SCREEN OWNS THE KEY. Both are `when` conditions,
+   * which is what makes them right rather than merely convenient:
+   *
+   *  · auto-repeat — Backspace repeats faster than any key somebody leans on, and without this a
+   *    resting finger walks a whole pile into Trash one window at a time, each toast replacing the
+   *    last so only the final one is still undoable. `d` carries the identical guard;
+   *  · the modal gate — it is a DOM read (`isModalOpen`), and a DOM read cannot be a `disabled`
+   *    flag: `disabled` is computed while React renders, and the More menu this is meant to catch
+   *    opens without the shell re-rendering at all. As a `when` it is evaluated at the keypress,
+   *    which is the only moment the answer is true of.
+   *
+   * A `false` here FALLS THROUGH to the next binding rather than consuming the key, so a press
+   * under an open dialog is not `preventDefault`ed and the dialog's own handling is untouched.
+   * That is also why neither is folded into `disabled`: the `?` sheet must keep listing the verb,
+   * because the key IS bound here — it is simply not the innermost thing being asked.
+   */
+  const when = (e: KeyboardEvent) =>
+    !e.repeat && !isModalOpen(e.view?.document ?? document);
   const run = () => { if (input.focused) input.run(input.focused); };
   return [
     { chord: "Backspace", group: "message", label: input.label, disabled, when, run },
@@ -241,10 +323,13 @@ export function deleteKeyBindings(input: {
   ];
 }
 
-/** The shell's binding: the held set as React state, the queue in a ref, flushed on unmount. */
+/**
+ * THE SHELL'S BINDING — the held set as React state, the queue behind a ref, and the two places a
+ * window may not simply evaporate.
+ */
 export function useDeleteUndo(deps: Omit<DeleteUndoDeps, "onHeld">): {
   held: ReadonlySet<string>;
-  remove: (messageId: string) => void;
+  remove: (target: DeleteTarget) => boolean;
 } {
   const [held, setHeld] = useState<ReadonlySet<string>>(EMPTY);
   /* THE DEPS ARE READ THROUGH A REF, never closed over: `refusal`, `toast` and `copy` change
@@ -257,13 +342,52 @@ export function useDeleteUndo(deps: Omit<DeleteUndoDeps, "onHeld">): {
       mutate: (m) => latest.current.mutate(m),
       toast: (msg, opts) => latest.current.toast(msg, opts),
       get copy() { return latest.current.copy; },
-      refusal: () => latest.current.refusal(),
+      refusal: (mailboxId) => latest.current.refusal(mailboxId),
       onHeld: setHeld,
+      ...(latest.current.now ? { now: () => latest.current.now!() } : {}),
     }),
     [],
   );
-  useEffect(() => () => queue.flush(), [queue]);
-  return { held, remove: useCallback((id: string) => queue.remove(id), [queue]) };
+  /**
+   * LEAVING COMMITS. An unmount is a view change or a sign-out, not a retraction — and `pagehide`
+   * is the last moment a closing tab can still act, so the open windows are committed there too.
+   *
+   * `pagehide` rather than `beforeunload`: it fires on the mobile back/forward cache path where
+   * `beforeunload` does not, and it does not risk a browser dialog. The dispatch it starts may not
+   * finish before the page goes — which is exactly why `delete-intents.ts` exists and why this is a
+   * best effort layered on a durable record rather than the record itself. Whatever this does not
+   * get out is replayed at the next launch.
+   */
+  useEffect(() => {
+    const commitAll = () => queue.flush();
+    window.addEventListener("pagehide", commitAll);
+    return () => {
+      window.removeEventListener("pagehide", commitAll);
+      commitAll();
+    };
+  }, [queue]);
+  return { held, remove: useCallback((t: DeleteTarget) => queue.remove(t), [queue]) };
+}
+
+/**
+ * REPLAY, ONCE PER MOUNT — the other half of the durable record.
+ *
+ * Separate from {@link useDeleteUndo} because it is not part of pressing a key: it is the boot
+ * step that finishes what a killed tab started, and a caller that wants the verb without the
+ * replay (a surface with no engine to dispatch on) should be able to say so by not calling it.
+ */
+export function useDeleteIntentReplay(
+  mutate: DeleteUndoDeps["mutate"],
+  now: () => number,
+  enabled = true,
+): void {
+  const ran = useRef(false);
+  useEffect(() => {
+    if (!enabled || ran.current) return;
+    ran.current = true;
+    replayDeleteIntents(mutate, now());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled]);
 }
 
 const EMPTY: ReadonlySet<string> = new Set<string>();

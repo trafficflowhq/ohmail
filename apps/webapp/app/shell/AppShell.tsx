@@ -159,9 +159,9 @@ import { MailStateProvider, useMailState, type FreshnessProbe, type MailboxProbe
 /* The ONE stand-down predicate, aggregated over the roster: what may the Screener do here, and
    what changed about who organizes these mailboxes that nobody has acknowledged? Settings →
    Mailboxes renders its own state line from the same `readerStandDown` underneath. */
-import { organizerNotices, readerMoveRefusal, screenerMode, type ScreenerRole } from "./mail-state";
+import { organizerNotices, readerMoveRefusal, screenerMode, type MailboxFacts } from "./mail-state";
 /* Backspace/Delete → Trash, and the window in which it has not happened yet. See the module. */
-import { deleteKeyBindings, hideMessages, useDeleteUndo } from "./delete-undo";
+import { deleteKeyBindings, hideMessages, useDeleteIntentReplay, useDeleteUndo } from "./delete-undo";
 /* The once-per-change line above the Ohbox, and the shape of the press that ends it. */
 import { OrganizerNotice, type OrganizerNoticeTransport } from "./OrganizerNotice";
 /* The OS-answer seam, threaded to `SettingsView` for the hosts that must inject one. */
@@ -1325,11 +1325,17 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * the row has to leave every pile on the press, and the mutation that would do that is the
    * thing the window is postponing.
    *
-   * `roleRef` and not `screenerRole` itself: the role is derived further down (it needs the
-   * polled mailbox facts), and the refusal has to answer with the role at PRESS time rather
-   * than with whatever it was when this line ran. The ref is assigned beside the derivation.
+   * THE ROSTER RIDES A REF, AND THE REF IS WRITTEN IN AN EFFECT. Two reasons, and the second one
+   * was a review finding: the polled facts are derived below this line (they feed several
+   * memos), so a value could not be passed in; and assigning during render publishes a value a
+   * concurrent render may yield and discard, which would expose a role that never committed to a
+   * key handler that did. An effect runs only on the render that commits.
+   *
+   * The refusal asks about THIS MESSAGE'S MAILBOX and never about the account — see
+   * `readerMoveRefusal`, and the defect that made it necessary. `[mailboxId]` rather than a
+   * scalar so the single-message arm and the bulk arm are one code path.
    */
-  const roleRef = useRef<ScreenerRole>(screenerMode(null));
+  const rosterRef = useRef<readonly MailboxFacts[] | null>(null);
   const deleting = useDeleteUndo({
     mutate: (m) => engine.mutate(m),
     toast,
@@ -1339,14 +1345,22 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
       undone: t("ohbox.deleteUndone"),
       failed: t("ohbox.deleteFailed"),
     },
-    /* THE ONE RULE, from the module that owns it. `screener-state.ts#refuseMove` asks the same
-       function for the same sentence — a delete is a folder move against mail another install
-       is arranging, and both callers say so in the same words. */
-    refusal: () => readerMoveRefusal(roleRef.current, {
-      named: (name) => t("screener.readerMoveRefused", { name }),
-      unknown: () => t("screener.readerMoveRefusedUnknown"),
-    }),
+    refusal: (mailboxId) => readerMoveRefusal(
+      rosterRef.current,
+      mailboxId ? [mailboxId] : [],
+      {
+        named: (name) => t("screener.readerMoveRefused", { name }),
+        unknown: () => t("screener.readerMoveRefusedUnknown"),
+      },
+    ),
   });
+  /**
+   * WHAT A KILLED TAB LEFT BEHIND, finished at the next launch. The other half of the durable
+   * record `delete-intents.ts` keeps; without it the journal would grow and nothing would act on
+   * it, which is a durable record of nothing. Demo excluded: the fixture world has no server to
+   * carry a delete to, and replaying one there would mutate a demo somebody is looking at.
+   */
+  useDeleteIntentReplay((m) => engine.mutate(m), () => Date.now(), !demo);
   const theme = useTheme();
   const route = useHashRoute();
   // The registry owns ⌘K (see `keymap.tsx`). Leaving the hook's own binding on as well
@@ -1881,8 +1895,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * product that shows mail somewhere other than its folder and does not admit to it.
    */
   const history = useMemo(
-    () => (consentView?.history ?? []).map((m) => ({ ...m, physicalFolder: m.folder })),
-    [consentView],
+    /* MINUS ANYTHING INSIDE ITS UNDO WINDOW. History is built by `consentPartition` over the
+       MIRROR's reader, so `presented`'s projection never reaches it — and a row held for delete
+       stayed listed here for the whole window while the toast said it had moved (review finding).
+       The subtraction is the same held set every other view is filtered by. */
+    () => (consentView?.history ?? [])
+      .filter((m) => !deleting.held.has(m.id))
+      .map((m) => ({ ...m, physicalFolder: m.folder })),
+    [consentView, deleting.held],
   );
   /**
    * EVERY MESSAGE IN THE MIRROR — the first pull's numerator, and the same number
@@ -2042,11 +2062,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * function is pure and has its own table test.
    */
   const screenerRole = useMemo(() => screenerMode(facts), [facts]);
-  /* …AND THE DELETE KEY ASKS THE SAME ANSWER. Assigned rather than passed because the queue is
-     built above this line (it feeds `presented`), and a refusal must be judged at the moment of
-     the press: a role captured at mount would let a mailbox that changed hands mid-session
-     answer with the role it had then. See `readerMoveRefusal`. */
-  roleRef.current = screenerRole;
+  /* …AND THE DELETE KEY READS THE SAME ROSTER, one mailbox at a time. In an EFFECT rather than
+     during render (review finding): a render that yields and is discarded must not publish a
+     roster to a committed key handler. The initial `null` is the safe value — `readerMoveRefusal`
+     refuses on it, which is what a destructive verb should do before it knows. */
+  useEffect(() => { rosterRef.current = facts; }, [facts]);
   /**
    * WHAT CHANGED ABOUT WHO ORGANIZES THESE MAILBOXES, AND HAS NOT BEEN ACKNOWLEDGED.
    *
@@ -4728,8 +4748,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
            * holds the row for the length of the window, so `readerMessage` would otherwise keep
            * a sheet standing over mail every list has already let go of.
            */
-          if (readerFor === m.id) setReaderFor(null);
-          deleting.remove(m.id);
+          /* THE REFUSAL DECIDES FIRST, and the sheet closes only if the press acted. Reversed,
+             a refused reader delete closed the reading sheet over the very message it had just
+             declined to touch — the person is left looking at a list, told nothing moved, with
+             the message they were reading gone from the screen (review finding). */
+          if (deleting.remove({ id: m.id, mailboxId: m.mailboxId }) && readerFor === m.id) {
+            setReaderFor(null);
+          }
           break;
         }
         case "resurface_now":
@@ -5545,54 +5570,45 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * Order is innermost-first and is the list's own order — the palette sits over the sheet,
    * which sits over a popover, which sits over the reader.
    *
-   * ── THE THIRD MEMBER IS THE MODAL GATE, AND IT IS HERE FOR THE SAME REASON ─────────
+   * ── AND IT IS NOT THE DESTRUCTIVE-KEY GATE, WHICH IT BRIEFLY WAS ───────────────────
    *
-   * A destructive key must not fire into a question somebody is already being asked. That
-   * needs a list of what is OPEN — which is precisely this list, so it is answered from
-   * this list rather than from a second enumeration beside it. The lesson is the one the
-   * paragraph above records: two enumerations of the same overlays is a drift the type
-   * system cannot see, and an overlay added later would be missing from whichever copy its
-   * author did not think of. Here, forgetting the flag makes Escape inert for that overlay
-   * TOO, which is visible on first use.
-   *
-   * `true` is the default for anything that stands over the deck as a question. The two
-   * exceptions are stated where they sit: the READER SHEET is not a modal for this purpose —
-   * it is the reading surface, and deleting the message being read is the whole verb — and
-   * the reply editor is, because a Delete pressed beside a half-written answer means the
-   * text, not the mail.
+   * Backspace/Delete read this array for one revision, on the reasoning that the one list
+   * of what Escape closes is the one list of what is open. The premise was false: this
+   * enumerates the overlays THE SHELL OWNS, and first run was never in it (Escape is not
+   * how you leave first run) while a message More menu CANNOT be — its open state lives
+   * inside the component, below the shell. Both were reachable: Delete fired under them.
+   * The gate asks the DOM instead (`modal-gate.ts#isModalOpen`), which is the only form of
+   * the question a surface added later answers without anybody editing a list. This array
+   * is Escape's, and only Escape's.
    */
-  const escapeLayers: Array<[open: boolean, close: () => void, modal?: boolean]> = [
-    [palette.open, palette.closePalette, true],
-    [shortcutsOpen, () => setShortcutsOpen(false), true],
+  const escapeLayers: Array<[open: boolean, close: () => void]> = [
+    [palette.open, palette.closePalette],
+    [shortcutsOpen, () => setShortcutsOpen(false)],
     // Above the popover: the audit panel is opened FROM the sheet and replaces it, so it is
     // the innermost thing on screen whenever it exists.
-    [senderAudit != null, () => setSenderAudit(null), true],
+    [senderAudit != null, () => setSenderAudit(null)],
     // Above the sender popover for the same reason the audit panel is: the subject sheet is opened
     // FROM it and replaces it, so whenever both flags could be true the subject sheet is the thing
     // on screen. (It closes the popover on open, so in practice they are never both set — the
     // ordering is here so that stays a property of this list rather than of one callback.)
-    [subjectRule != null, () => setSubjectRule(null), true],
-    [senderMenu != null, () => setSenderMenu(null), true],
-    [picker != null, () => setPicker(null), true],
-    [fr != null, () => setFr(null), true],
+    [subjectRule != null, () => setSubjectRule(null)],
+    [senderMenu != null, () => setSenderMenu(null)],
+    [picker != null, () => setPicker(null)],
+    [fr != null, () => setFr(null)],
     // The 390px navigation drawer. It sits over the deck and intercepts every press until it
     // is dismissed, so while it is open it is the innermost thing a keyboard user is looking
     // at that is not one of the anchored popovers above — Escape closed everything else in
     // this list and left exactly this one standing (the backdrop tap was the only way out).
-    [railOpen, () => setRailOpen(false), true],
+    [railOpen, () => setRailOpen(false)],
     // The action bar's open destination strip (Move / Resurface / the delete confirm). Above
     // the reply editor and the reader because it stands OVER the bar inside them — a strip
     // opened by `m` or `d` is the innermost question on screen, and Escape answering it must
     // not close the editor or the sheet underneath instead.
-    [barPanel != null, () => setBarPanel(null), true],
-    [replyTo != null, () => setReplyTo(null), true],
-    // NOT a modal for the delete key's purpose: the sheet IS the reading surface, and
-    // Backspace on the message being read is exactly the verb somebody meant.
+    [barPanel != null, () => setBarPanel(null)],
+    [replyTo != null, () => setReplyTo(null)],
     [readerFor != null, () => setReaderFor(null)],
   ];
   const closeInnermost = escapeLayers.find(([open]) => open)?.[1] ?? null;
-  /** Is a question standing over the deck right now? One read of the one list. */
-  const modalOpen = escapeLayers.some(([open, , modal]) => open && modal === true);
 
   /**
    * AN OPEN OVERLAY OWNS ESCAPE WHILE IT IS OPEN.
@@ -6027,7 +6043,6 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
     ...deleteKeyBindings({
       focused,
       label: t("shortcuts.deleteKey"),
-      modalOpen,
       canDelete:
         consent.foldersEnabled === true
         && focused != null

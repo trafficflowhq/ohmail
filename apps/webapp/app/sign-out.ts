@@ -9,6 +9,7 @@ import {
 import { bindApiOwner, blockApiOwner } from "./api-client";
 import { forgetOwner, markSignedOutPending } from "./shell/owner-cookie";
 import { SCREENER_INTENTS_PREFIX } from "./shell/screener-intents";
+import { DELETE_INTENTS_PREFIX } from "./shell/delete-intents";
 import { SEND_LOCKS_PREFIX } from "./shell/send-lock";
 
 /**
@@ -196,6 +197,11 @@ export async function forgetThisBrowser(
   const durable = dropLocalStorageKeys([
     SEND_LOCKS_PREFIX,
     SCREENER_INTENTS_PREFIX,
+    // The DELETE journal, for the Screener journal's reason exactly: it is a scheduled write
+    // against a mailbox, owner-keyed, and left behind it would be replayed by whoever signs in
+    // next on this browser — a message deleted out of somebody else's mailbox because a previous
+    // account pressed Backspace and closed the tab. See `delete-intents.ts`.
+    DELETE_INTENTS_PREFIX,
     COMPOSE_DRAFT_PREFIX,
     LEGACY_COMPOSE_DRAFT_KEY,
     // The compose session id, which names the message the scratch buffer holds. It goes with the

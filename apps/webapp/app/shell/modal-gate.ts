@@ -87,3 +87,96 @@ export function useModalGate(active: boolean): void {
 export function resetModalGateForTests(): void {
   open = 0;
 }
+
+/* ══ AND THE DIALOGS THAT NEVER REGISTER — this lane's half ═══════════════════════════════════
+ *
+ * Everything above is a COUNT that a dialog takes by calling {@link useModalGate}, and the
+ * dispatcher suspends every key while it is held. That is the right mechanism for the session
+ * dialogs, and it closes a timing gap a DOM read cannot: the count is taken inside the commit.
+ *
+ * It covers exactly the dialogs that opt in, and the destructive keys met three that do not:
+ *
+ *   · the FIRST-RUN card — `AppShell` renders it and it takes no gate, and the route deliberately
+ *     leaves the Ohbox mounted underneath with an earlier selection alive, so ⌫ pressed while
+ *     focus sat on a first-run button filed a message nobody could see;
+ *   · the message More MENU and the contact POPOVER — their open state lives inside the
+ *     components, below the shell, so nothing above them can register on their behalf. Their
+ *     buttons are not typing targets and their handlers do not claim ⌫, so the key reached the
+ *     message underneath the open menu.
+ *
+ * Making each of them call `useModalGate` would work and would be a worse rule: it is a list
+ * again, and the next surface added is one nobody remembers to put on it. So the destructive
+ * keys ALSO ask what is actually on screen. The two are complementary rather than redundant —
+ * the count knows about dialogs whose markup this cannot recognise, and this knows about markup
+ * that never registered — and {@link isModalOpen} answers for both, so a caller gets the whole
+ * answer from one question.
+ *
+ * ── THE ONE EXCLUSION, AND WHY IT IS `matches` ────────────────────────────────────────────
+ *
+ * The reading sheet is `role="dialog"` and, at every width but the Zero push tier, `aria-modal`
+ * (`packages/ui/src/composites/Reader.tsx`). It is not a question standing over the deck: it IS
+ * the reading surface, and Backspace on the message being read is precisely the verb somebody
+ * meant. So the sheet is excluded — and ONLY the sheet.
+ *
+ * `matches`, never `closest`: `closest` walks UP from the match, so it excluded every dialog the
+ * sheet CONTAINS along with the sheet. `.senderm` is in the selector precisely so the sender
+ * popover gates, and that popover opens INSIDE the reader — reader open, screening open over it,
+ * and ⌫ filed the message underneath. Found by a second lane wiring its own keys to this helper,
+ * 2026-09-06; the guard written for it had asserted the defect under a name describing the fix.
+ *
+ * ── READ AT THE PRESS, NEVER AT RENDER ────────────────────────────────────────────────────
+ *
+ * A DOM query cannot be a `disabled` flag: `disabled` is computed while React renders, and the
+ * More menu this exists to catch opens without the shell re-rendering at all. So the consumers
+ * put it in a binding's `when` — a condition ON THE EVENT — and a `false` there falls through to
+ * the next binding rather than consuming the key, so a press under an open dialog is not
+ * `preventDefault`ed and the dialog's own handling is untouched.
+ */
+
+/**
+ * What counts. `role="menu"` is here for the More menu and `alertdialog` for the delete confirm
+ * and the session cards — the same three the zone model already names (`zone-nav.tsx`) — plus
+ * `aria-modal` for anything that claims the page without taking a role this list knows. The two
+ * popover CLASSES are belt: both already carry `role="dialog"` (`ContactPopover.tsx`,
+ * `SenderMenu.tsx`), and they are named anyway because a popover that loses its role in a
+ * refactor must not silently lose its gate with it.
+ */
+export const MODAL_SELECTOR =
+  '[aria-modal="true"], [role="dialog"], [role="alertdialog"], [role="menu"], .cpop, .senderm';
+
+/** The reading sheet itself. See the header for why the exclusion is `matches` and not `closest`. */
+export const READING_SURFACE = ".reader";
+
+/**
+ * Visible enough to be a question.
+ *
+ * Deliberately NOT `offsetParent`, which is null for everything in jsdom and would make every
+ * guard in the test suite pass for the wrong reason. These three are what the app actually uses
+ * to park an overlay without unmounting it, and each is readable in both environments.
+ */
+function showing(el: Element): boolean {
+  if ((el as HTMLElement).hidden === true) return false;
+  if (el.getAttribute("aria-hidden") === "true") return false;
+  const view = el.ownerDocument?.defaultView;
+  if (view) {
+    const style = view.getComputedStyle(el);
+    if (style.display === "none" || style.visibility === "hidden") return false;
+  }
+  return true;
+}
+
+/**
+ * Is anything standing over the deck — registered OR merely on screen?
+ *
+ * The registered count is consulted first because it is the cheaper question and because a
+ * dialog that took the gate is blocking whether or not its markup is one this file recognises.
+ */
+export function isModalOpen(doc: Document): boolean {
+  if (modalIsOpen()) return true;
+  for (const el of Array.from(doc.querySelectorAll(MODAL_SELECTOR))) {
+    if (el.matches(READING_SURFACE)) continue;
+    if (!showing(el)) continue;
+    return true;
+  }
+  return false;
+}

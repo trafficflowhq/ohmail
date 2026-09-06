@@ -463,35 +463,63 @@ export function readerHolder(role: ScreenerRole): { name: string | null } | null
 }
 
 /**
- * WHAT A READER IS TOLD WHEN IT ASKS FOR A FOLDER MOVE — one function, `null` where it may move.
+ * MAY THESE MAILBOXES BE WRITTEN TO FROM HERE — the sentence to say, or `null` for yes.
  *
- * The RULE was already written once (`screener-state.ts#refuseMove`), and its docstring names
- * the members: "Releasing a screened-out sender, rescuing mail out of Quarantine and DELETING it
- * are folder moves against mail another install is organizing. They are refused for EVERY
- * reader, in both modes, because the channel a decision travels carries a decision and nothing
- * else." Delete-by-key is the fourth member of that list, so it gets the same sentence — and the
- * sentence is here, rather than beside either caller, because a second spelling of it is how the
- * Screener and the keyboard come to describe one state differently.
+ * ══ ONE PREDICATE, TWO LANES ══════════════════════════════════════════════════════════════
  *
- * BOTH READER MODES, and that is the whole reason this is not `role.mode === "blocked"`: a
- * `pending` reader's DECISIONS travel to its organizer and are carried out, so refusing those
- * would withhold a press that works — but a move has no vocabulary in that channel at all
- * (`REQUEST_KINDS` is `screener.decide`, `rule.create`, `rule.update`, `rule.delete`, and the
- * column's CHECK is closed on exactly those). `readerHolder` is the narrowing that already
- * states "either reader mode", so it is what this asks.
+ * The single-message verbs (Backspace/Delete) and the bulk verbs over a selection ask the same
+ * question about different numbers of mailboxes, so they ask it here. The single-message arm
+ * passes `[m.mailboxId]` rather than a scalar, deliberately: one code path, and a selection
+ * spanning two mailboxes cannot take a route the single press has never been down.
  *
- * The two sentences are passed in as thunks because this module renders nothing and holds no
- * catalogue. What it owns is the DECISION — which reader modes are refused, and whether this
- * build has a name to put in the sentence — which is the half that can drift; the keys are the
- * `screener` namespace's two existing ones at both call sites.
+ * ══ WHY IT TAKES THE RAW ROSTER AND NOT A RESOLVED ROLE ═══════════════════════════════════
+ *
+ * Because the only resolved role on this surface is `screenerMode`'s, and it is the WRONG one.
+ * That derivation aggregates the whole roster and is deliberately permissive — "with an organizer
+ * present nothing is refused, so a decision that could have succeeded never is" — which is correct
+ * for the Screener, whose queue does not say which mailbox a sender belongs to and whose decision
+ * writes an ACCOUNT-scoped rule. Handing it a message verb produced a concrete defect: an account
+ * organizing mailbox A and reading mailbox B answered `organizer`, so Delete on B's mail was
+ * offered, held, hidden and dispatched, and only the server's own per-mailbox
+ * `assertOrganizerRole` rolled it back — the control-wired-to-a-refusal shape `ScreenerMode`'s
+ * third state was invented to end, reintroduced one verb over. Found by review, 2026-09-06.
+ *
+ * So nothing is aggregated. Each named mailbox is looked up in the roster and judged on its own
+ * row, and the FIRST one that refuses supplies the sentence — list order, so the answer is stable
+ * across repeated calls and a caller can put the mailbox it cares about first.
+ *
+ * ══ AND AN UNKNOWN ROSTER REFUSES, BECAUSE THESE VERBS FAIL CLOSED ════════════════════════
+ *
+ * Everywhere else on this surface an absent fact reads as `organizer` — "a host that does not send
+ * the column has not demoted anybody", and the dangerous default there is the other one, which
+ * would hang a claim banner over a mailbox this machine already organizes. A WRITE inverts that
+ * calculus: refusing an organizer for the second it takes the roster to arrive costs a sentence;
+ * permitting a reader moves mail on somebody else's server. The roster is `null` before the first
+ * probe answers and stays `null` through an outage, so the window is real, not theoretical.
+ *
+ * Four things therefore refuse: a `null` roster, an empty `mailboxIds`, an id no live row carries,
+ * and a row this install reads rather than organizes. The first three have no holder to name and
+ * take `say.unknown()`, which claims no particular install — the honest sentence when the answer
+ * is "not from here" and nothing more is known.
+ *
+ * A `disabled` row is skipped as unknown rather than read: it is a tombstone that KEEPS whatever
+ * role it had ({@link readerStandDown}'s own first line), and nothing should be written to a
+ * mailbox that has been removed.
  */
 export function readerMoveRefusal(
-  role: ScreenerRole,
+  facts: ReadonlyArray<OrganizerRow> | null,
+  mailboxIds: ReadonlyArray<string>,
   say: { named: (name: string) => string; unknown: () => string },
 ): string | null {
-  const holder = readerHolder(role);
-  if (holder === null) return null;
-  return holder.name ? say.named(holder.name) : say.unknown();
+  if (facts === null || mailboxIds.length === 0) return say.unknown();
+  for (const id of mailboxIds) {
+    const row = id ? facts.find((m) => m.id === id && m.status !== "disabled") : undefined;
+    if (!row) return say.unknown();
+    if (readerStandDown(row) === null) continue;
+    const name = row.organizedBy?.name && row.organizedBy.name.trim() ? row.organizedBy.name : null;
+    return name ? say.named(name) : say.unknown();
+  }
+  return null;
 }
 
 /**

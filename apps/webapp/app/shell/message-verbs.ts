@@ -53,6 +53,8 @@
 import { useTranslations } from "next-intl";
 import type { EngineMessage } from "@ohmail/client-engine";
 import { useKeyBindings } from "./keymap";
+/* The two destructive chords, from the module that owns them — see the `⌫ · ⌦` binding below. */
+import { deleteKeyBindings } from "./delete-undo";
 import { useMessageChrome } from "./message-chrome";
 import type { MessageAction } from "./MessagePane";
 
@@ -111,7 +113,7 @@ export function useMessageVerbs(input: MessageVerbsInput): void {
     reply: ts("reply"), replyAll: ts("replyAll"), forward: ts("forward"),
     answerLater: ts("answerLater"), park: ts("park"), resurface: ts("resurface"),
     screen: ts("screen"), move: ts("move"),
-    deleteAsk: ts("deleteAsk"), deleteConfirm: ts("deleteConfirm"),
+    deleteAsk: ts("deleteAsk"), deleteConfirm: ts("deleteConfirm"), deleteKey: ts("deleteKey"),
     tag: to("keyTag"),
   };
   const chrome = useMessageChrome();
@@ -122,6 +124,27 @@ export function useMessageVerbs(input: MessageVerbsInput): void {
   const none = shown == null;
 
   useKeyBindings([
+    /**
+     * ⌫ AND ⌦ — the same two chords the shell declares over its own cursor, declared here over
+     * THIS view's.
+     *
+     * They were missing, and the shape of the miss is this file's founding defect exactly: the
+     * shell's bindings act on `focused`, which is null in a split view, so Tag, Folder, History
+     * and Triage showed a message with a visible cursor on it and both keys did nothing. Nine
+     * keycaps were dead in these three views for that reason before; this is the tenth and
+     * eleventh, caught by review before anybody had to report them.
+     *
+     * The FACTORY and not a hand-written pair: the chords, the label, the auto-repeat guard and
+     * the DOM modal gate are one spelling, so the shell's `⌫` and this one cannot come to mean
+     * different things. `canDelete` is the host's — the same strip render gates, resolved by the
+     * shell for the reason the header states, and never re-derived here.
+     */
+    ...deleteKeyBindings({
+      focused: shown,
+      label: labels.deleteKey,
+      canDelete: shown != null && canDelete(shown),
+      run: (m) => onAction("delete", m),
+    }),
     {
       chord: "r",
       group: "message",

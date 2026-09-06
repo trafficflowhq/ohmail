@@ -63,7 +63,7 @@ import type { SuggestionOverlay } from "./screener-suggest";
 /* THE ONE ROLE ANSWER, imported rather than restated. `mail-state.ts` owns the derivation the
    mailbox pane renders its own state line from, and a second rule shaped like it here is how two
    surfaces come to describe one mailbox differently. */
-import { readerMoveRefusal, type ScreenerRole } from "./mail-state";
+import type { ScreenerRole } from "./mail-state";
 import {
   armScreenerIntent,
   disarmScreenerIntent,
@@ -1791,16 +1791,15 @@ export function useScreenerState(
    * move mail, which is a different thing to be told.
    */
   const refuseMove = (): void => {
-    /* THE SENTENCE AND THE CONDITION BOTH LIVE IN `mail-state.ts` NOW, because this is no longer
-       the only verb that asks. Backspace/Delete files the focused message to Trash, which is a
-       folder move by the definition above, and it must be refused in the same words — a second
-       spelling here and there is how one state comes to be described two ways. `readerHolder`'s
-       "either reader mode" narrowing is unchanged; only the two lines that read it moved. */
-    const refusal = readerMoveRefusal(role, {
-      named: (name) => t("readerMoveRefused", { name }),
-      unknown: () => t("readerMoveRefusedUnknown"),
-    });
-    if (refusal !== null) toast(refusal);
+    /* THE ACCOUNT-SCOPED FORM, and it stays here rather than moving to the shared predicate.
+       `mail-state.ts#readerMoveRefusal` asks about NAMED MAILBOXES, which is the right question
+       for a message verb and the wrong one for the Screener: its queue does not say which mailbox
+       a sender belongs to, so there is no id to pass, and a decision writes an ACCOUNT-scoped
+       rule. The two share the sentence — the same two catalogue keys — and differ in what they
+       ask, which is the honest split. */
+    toast(role.name
+      ? t("readerMoveRefused", { name: role.name })
+      : t("readerMoveRefusedUnknown"));
   };
   const guardMove = <A extends unknown[]>(verb: (...args: A) => void) =>
     (role.mode === "organizer" ? verb : ((..._args: A) => refuseMove()));

@@ -509,20 +509,35 @@ make every ordinary response look suspect.
 
 ### Backspace and Delete move a message to Trash
 
-The two keys every other mail client binds now do the same thing here: press either one on the
-message you are looking at and it goes to the Trash folder on your own mail server. It is a move,
-never a permanent erase — ohmail does not expunge mail, and what happens to it after that is your
-mail server's Trash policy.
+Press either key on the message you are looking at and it goes to the Trash folder on your own
+mail server. It is a move, never a permanent erase — ohmail does not expunge mail, and what
+happens after the move is your mail server's Trash policy. Both keys work on every list that
+shows a message with a cursor on it, and both are listed in the shortcut sheet (`?`).
 
-The press is undoable. For a few seconds the toast carries an Undo, and nothing has been sent
-while it is up: pressing Undo puts the message straight back because the delete had not happened
-yet. Let the toast go and it is filed. Both keys are listed in the shortcut sheet (`?`), and they
-are inert wherever a delete would not be what you meant — while you are typing in any text field,
-and while a dialog, menu or panel is open over the app.
+The press is undoable, and the undo is real rather than cosmetic. There is no un-delete on the
+wire, so instead of sending the request and offering to take it back, the press hides the message
+and holds the request for the length of the toast. Undo inside that window cancels a delete that
+was never sent; let the toast go and it is filed. The keys share one dispatch path with the
+action bar's own confirm button, so that button now carries the same window.
 
-On a mailbox another ohmail install is organizing, the keys do nothing and say so, in the same
-sentence the rest of the app uses for a move made where mail is not filed from. Nothing is sent
-and nothing disappears from the list.
+The request is written to this browser's storage before the window opens, so closing the tab
+inside it does not lose the delete: what can still be sent on the way out is sent, and anything
+left is finished the next time you open ohmail. Undo removes the record along with the request.
+
+The keys stay out of the way where a delete is not what you meant. They do nothing while you are
+typing in any text field — where Backspace is the most-pressed key on the keyboard — and nothing
+while a dialog, menu or popover stands over the app, including the first-run screens and menus
+opened on a message. That is decided by looking at what is actually on screen rather than by a
+list the app keeps of its own panels, so a panel added later is covered without anyone
+remembering to add it. The reading view is not treated as something in the way: deleting the
+message you are reading is exactly what the key is for.
+
+On a mailbox another ohmail install is organizing, the press is refused before it does anything
+and says so, in the same sentence the app already uses for a move made where mail is not filed
+from. The question is asked about that message's own mailbox, so an account that organizes one
+mailbox and only reads another gets the right answer for each. If the app does not yet know who
+organizes a mailbox — during startup, or while it cannot reach the server — the press is refused
+rather than guessed at. Nothing is hidden and nothing is sent in either case.
 
 ### Controls fit the width they are given
 
