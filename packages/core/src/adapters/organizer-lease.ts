@@ -2749,10 +2749,23 @@ async function highestUid(
  * cycles that renew, and gone on a reconnect — at which point the walk below does what it has
  * always done. A weak key means the entry disappears with the connection rather than pinning it.
  *
+ * ── AND IT IS PAIRED WITH THE GENERATION IT WAS LEARNED UNDER ───────────────────────────────
+ *
+ * A uid means nothing on its own. Delete a mailbox and recreate it under the same name and the
+ * server starts numbering again from one under a NEW UIDVALIDITY, so a remembered 1000 can sit
+ * above every record in the folder — including a live rival at 500. The gap read is bounded BELOW
+ * by this number, so a stale one does not merely fail to help: it defines a floor that hides
+ * exactly the records the election must see, and hands back a set that looks complete. That is a
+ * second organizer.
+ *
+ * So the generation travels with the uid, and a memo whose generation is not the folder's current
+ * one is discarded rather than used. Anything unknown on either side counts as a mismatch: a uid
+ * that cannot be shown to still mean what it meant is a uid that must not bound a read.
+ *
  * It is only ever a HINT. Nothing is concluded from it: it narrows which uids get read, and every
  * decision is still made from records the server returned in this cycle.
  */
-const ownClaimUid = new WeakMap<object, number>();
+const ownClaimUid = new WeakMap<object, { uid: number; generation: number | bigint | null }>();
 
 /**
  * WHERE THE ACK SWEEP STOPPED LOOKING, so the next pass carries on rather than starting over.
@@ -2804,6 +2817,8 @@ async function searchHeaders(
     gapDownTo?: number | null;
     /** Named so a permanent stall is visible rather than silent. */
     onShortfall?: (fact: { floor: number; ownUid: number | null; closed: boolean }) => void;
+    /** Fired when the anchor actually bounded a read, so a caller can tell what rested on it. */
+    onGapRead?: () => void;
   },
 ): Promise<RawClaimMessage[] | null> {
   if (typeof client.search !== "function") return null;
@@ -2838,6 +2853,7 @@ async function searchHeaders(
      * This never SEEDS the main walk from our own uid. Starting there would begin the read
      * underneath every newer claim, which is how two organizers happen; the walk keeps starting
      * at the top and this fills in behind it. */
+    opts?.onGapRead?.();
     const below = await searchDescending(client, path, query, max, { from: walk.floor - 1, downTo: gap });
     if (below.kind === "refused") return null;
     if (below.kind === "short") {
@@ -2919,10 +2935,13 @@ export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: s
 
   /** Set by the claim read when it refuses or distrusts its own memory; cleared when it succeeds. */
   let lastClaimReadFact: ClaimReadFact | null = null;
-  const sampleGeneration = (): void => {
+  const currentGeneration = (): number | bigint | null => {
     const selected = client.mailbox;
     const v = typeof selected === "object" && selected !== null ? selected.uidValidity : undefined;
-    generationAtLastRead = typeof v === "number" || typeof v === "bigint" ? v : null;
+    return typeof v === "number" || typeof v === "bigint" ? v : null;
+  };
+  const sampleGeneration = (): void => {
+    generationAtLastRead = currentGeneration();
   };
 
 
@@ -2992,8 +3011,14 @@ export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: s
       const uid = typeof reply === "object" && reply !== null
         ? (reply as { uid?: unknown }).uid
         : undefined;
-      if (typeof uid === "number" && Number.isFinite(uid) && uid > 0) {
-        ownClaimUid.set(client, uid);
+      const gen = typeof reply === "object" && reply !== null
+        ? (reply as { uidValidity?: unknown }).uidValidity
+        : undefined;
+      const generation = typeof gen === "number" || typeof gen === "bigint" ? gen : null;
+      /* A uid with no generation cannot be checked for staleness later, so it is not kept: an
+       * unverifiable anchor is worse than none, because none simply falls back to the walk. */
+      if (typeof uid === "number" && Number.isFinite(uid) && uid > 0 && generation !== null) {
+        ownClaimUid.set(client, { uid, generation });
       } else {
         ownClaimUid.delete(client);
       }
@@ -3034,10 +3059,38 @@ export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: s
       const claimPath = await meta.path();
       const lock = await client.getMailboxLock(claimPath);
       try {
-        const ownUid = ownClaimUid.get(client) ?? null;
+        /* ── AN ANCHOR FROM ANOTHER GENERATION IS NOT AN ANCHOR ──────────────────────────────
+         *
+         * Checked BEFORE it is allowed to bound anything. The previous version checked only
+         * afterwards, whether the anchored record had come back — by which point the stale number
+         * had already set the floor of the gap read, so the reply omitted everything beneath it
+         * and still looked like a complete claim set. */
+        const memo = ownClaimUid.get(client) ?? null;
+        const generation = currentGeneration();
+        let ownUid: number | null = null;
+        if (memo !== null) {
+          if (generation !== null && memo.generation === generation) {
+            ownUid = memo.uid;
+          } else {
+            ownClaimUid.delete(client);
+            lastClaimReadFact = {
+              fact: "lease_memo_invalidated",
+              depth: 0,
+              floor: 0,
+              ownUid: memo.uid,
+            };
+          }
+        }
+        const invalidated = lastClaimReadFact;
+        let gapWasRead = false;
         const set = await searchHeaders(client, claimPath, { header: { [H.lease]: true } }, {
           gapDownTo: ownUid,
+          onGapRead: () => { gapWasRead = true; },
           onShortfall: (fact) => {
+            /* A WALK THAT WAS SHORT BECAUSE ITS ANCHOR WAS DISCARDED should report the discard:
+             * "the folder is deeper than one pass" is true but downstream of the reason, and the
+             * reason is the one an operator can act on. The cause keeps precedence. */
+            if (invalidated !== null) return;
             lastClaimReadFact = {
               fact: fact.closed ? "lease_gap_too_deep" : "lease_walk_short",
               depth: Math.max(0, fact.floor - (fact.ownUid ?? fact.floor)),
@@ -3047,7 +3100,7 @@ export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: s
           },
         });
         if (set === null) return null;
-        lastClaimReadFact = null;
+        lastClaimReadFact = invalidated;
         /* ── THE REMEMBERED UID IS CHECKED AGAINST WHAT CAME BACK ────────────────────────────
          *
          * Uids are never reused inside a UIDVALIDITY, so the record at ours cannot become someone
@@ -3059,6 +3112,14 @@ export function makeLeaseIo(client: LeaseImapClient, toServerPath: (canonical: s
         if (ownUid !== null && !set.some((m) => m.ref === ownUid)) {
           ownClaimUid.delete(client);
           lastClaimReadFact = { fact: "lease_own_record_absent", depth: 0, floor: 0, ownUid };
+          /* ── AND IF THAT NUMBER BOUNDED THE READ, THE READ IS NOT AN ANSWER ────────────────
+           *
+           * Where the walk covered the folder on its own, our claim being gone is a real answer
+           * and the election is entitled to it. Where the GAP read ran, the set's completeness
+           * rested on this uid being ours — and it is not, so the floor it set was arbitrary and
+           * anything below it went unread. Handing that to an election is handing it a partial
+           * claim set, which is the one input this module never accepts. */
+          if (gapWasRead) return null;
         }
         return set;
       } finally {
