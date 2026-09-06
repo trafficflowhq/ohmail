@@ -140,10 +140,24 @@ const H = {
  * direction — hence the header block only, matched case-insensitively, with no other condition.
  */
 function looksLikeProfile(raw: string): boolean {
-  // The header block ends at the first blank line; a mention in the BODY is not a discriminator.
+  /* The header block ends at the first blank line; a mention in the BODY is not a discriminator.
+   *
+   * ── AND THE NAME IS ANCHORED AT A LINE START, NOT MERELY PRESENT ────────────────────────────
+   *
+   * A substring test accepts a header whose name merely ENDS with ours — `Not-X-Ohmail-Profile:`
+   * or `X-Forwarded-X-Ohmail-Profile:` — which the parser then rejects, so each one costs a slot
+   * in a retention window that is supposed to be spent on real documents. Enough of them and the
+   * current document is evicted by messages that were never candidates, which is the same lie by
+   * another route: "no settings have been published" about a mailbox that has some.
+   *
+   * A header name begins at the start of a line by definition (a continuation line begins with
+   * whitespace and is part of the value above it), so that is what is matched. Still
+   * case-insensitive, still nothing else — the parser remains the only thing that decides what a
+   * record MEANS. */
   const sep = /\r?\n\r?\n/.exec(raw);
   const head = sep ? raw.slice(0, sep.index) : raw;
-  return head.toLowerCase().includes(`${H.profile.toLowerCase()}:`);
+  const anchored = new RegExp(`(^|\\r?\\n)${H.profile.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:`, "i");
+  return anchored.test(head);
 }
 
 /** A sender this mailbox has screened IN. `address` is the natural key. */
@@ -963,7 +977,10 @@ export function makeProfileIo(
           win: Array<{ rec: RawProfileMessage; size: number }>; seen: number;
         }> => {
           const win: Array<{ rec: RawProfileMessage; size: number }> = [];
-          let bytes = 0;
+          /** What this window is KEEPING. Falls when a record is evicted. */
+          let held = 0;
+          /** What the connection has DELIVERED. Never falls — see the eviction below. */
+          let spent = 0;
           let seen = 0;
           /* ── THE FALLBACK RANGES TOO, AND IT USED TO BE THE HOLE ────────────────────────
            *
@@ -987,16 +1004,32 @@ export function makeProfileIo(
            * UIDVALIDITY. Walking them one at a time means each later fetch can land on a different
            * message than the one enumerated: a document silently skipped, a stranger's message
            * read in its place, and no error anywhere. UIDs do not move. */
+          /* ── ENUMERATED BY UID RANGE, SO NO SEQUENCE NUMBER IS USED ANYWHERE HERE ────────
+           *
+           * The uids are what the second pass asks for, and they were already stable. What was
+           * left was this range itself: `start:*` with `{ uid: false }` is a POSITION range, so
+           * the set of messages it names depends on the folder not having moved since the count
+           * that produced `start`. Addressing the range by uid removes the last place a position
+           * decides anything in this adapter — the ceiling below still keeps the newest, which is
+           * the property `start` was there to approximate. */
           const addrs: number[] = [];
-          for await (const m of client.fetch(`${start}:*`, { uid: true }, { uid: false })) {
+          for await (const m of client.fetch("1:*", { uid: true }, { uid: true })) {
             addrs.push(m.uid);
           }
-          for (const uid of addrs) {
+          addrs.sort((a, b) => a - b);
+          /* ── NEWEST FIRST, FOR THE REASON THE SEARCH PATH ALREADY HAS ────────────────────
+           *
+           * This walked in folder order, so an enormous OLD record — or merely enough small ones —
+           * could spend the whole transfer budget before the current document was asked for, and
+           * the read would answer with nothing about a mailbox that has settings. The document a
+           * read wants is the newest one; it should be paid for first. The result is put back in
+           * folder order at the end, which is what every caller reads. */
+          for (const uid of [...addrs].reverse()) {
             seen++;
-            const got = await fetchSourceBounded(String(uid), true, maxBytes - bytes);
+            const got = await fetchSourceBounded(String(uid), true, maxBytes - spent);
             if (got === null) continue;
             if ("over" in got) {
-              bytes += got.over;   // it crossed the connection; it is spent
+              spent += got.over;   // it crossed the connection; it is spent
               if (complete) {
                 throw new ProfileUnavailableError(
                   `a settings record in ${META_FOLDER} is larger than the ${maxBytes}-byte budget `
@@ -1009,7 +1042,8 @@ export function makeProfileIo(
             }
             // Charged whether kept or discarded — see the note on the search path.
             const size = got.source.byteLength;
-            bytes += size;
+            spent += size;
+            held += size;
             const raw = got.source.toString("utf8");
             if (!looksLikeProfile(raw)) continue;
             win.push({ rec: { ref: got.uid, raw }, size });
@@ -1021,7 +1055,7 @@ export function makeProfileIo(
               // list directly, without the reader's per-document guard in front of it, so a single
               // oversized profile-shaped message becomes an unbounded parse on the settings-write
               // path. A complete scan refuses on either ceiling, singleton included.
-              || (bytes > maxBytes && (complete || win.length > 1))
+              || (spent > maxBytes && (complete || win.length > 1))
             ) {
               /* ── ON A COMPLETE SCAN, EVICTING IS NOT AN OPTION — REFUSE INSTEAD ───────────
                *
@@ -1047,9 +1081,22 @@ export function makeProfileIo(
                   { op: "list_profiles" },
                 );
               }
-              bytes -= win.shift()!.size;
+              /* ── EVICTION GIVES BACK RETENTION, NEVER TRANSFER ────────────────────────────
+               *
+               * `bytes` was doing two jobs and could only be right about one. Dropping a record
+               * from the window frees the MEMORY it held, and that is what lets a long folder of
+               * small documents be read at all. It does not un-send the bytes: they crossed the
+               * connection, which is the cost the ceiling exists to bound, and refunding them made
+               * the transfer budget reusable — walk long enough and the same budget pays for the
+               * folder several times over.
+               *
+               * Two counters now. `held` is what this window is keeping and moves both ways;
+               * `spent` is what the connection has delivered and only ever rises. The bound below
+               * is on `spent`. */
+              held -= win.shift()!.size;
             }
           }
+          win.sort((a, b) => Number(a.rec.ref ?? 0) - Number(b.rec.ref ?? 0));
           return { win, seen };
         };
 

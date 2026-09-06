@@ -161,9 +161,28 @@ function lowestRef(records: readonly RawMetaMessage[]): number | null {
   return low;
 }
 
-/** Is there anything on this page that THIS pass can settle? Acknowledgements are the sweep's. */
+/**
+ * Is there anything on this page that THIS pass can settle? Acknowledgements are the sweep's.
+ *
+ * ── MATCHED AT A HEADER POSITION, NOT ANYWHERE IN THE RECORD ─────────────────────────────────
+ *
+ * A raw substring test says yes to a message that merely CONTAINS the header name — in its body,
+ * in a quoted reply, in a forwarded original — and this predicate is what stops the cursor. One
+ * such message parked in the newest page means the walk halts there every cycle and never reaches
+ * the requests below it: a starvation anyone able to append to the folder could arrange, and the
+ * pass would look busy the whole time.
+ *
+ * A header name begins at the start of a line, so that is what is matched, case-insensitively.
+ * The record still has to PARSE as a request for anything to be settled — this only decides
+ * whether the page is worth stopping on.
+ */
 function hasRequestRecord(records: readonly RawMetaMessage[]): boolean {
-  return records.some((r) => r.raw.includes("X-Ohmail-Request:"));
+  const anchored = /(^|\r?\n)X-Ohmail-Request\s*:/i;
+  return records.some((r) => {
+    // Header block only: the body of a record is not a place headers live.
+    const sep = /\r?\n\r?\n/.exec(r.raw);
+    return anchored.test(sep ? r.raw.slice(0, sep.index) : r.raw);
+  });
 }
 
 /**
