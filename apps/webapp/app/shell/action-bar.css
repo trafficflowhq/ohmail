@@ -315,7 +315,14 @@
  * `bar-density` measures the row in the same media state the reader is in, so the admission
  * follows the narrower row rather than fighting it — the caps come off before the widths are
  * taken, not after. The chord itself is untouched: a phone with a keyboard attached still types
- * it, and the `?` sheet still lists it. */
+ * it, and the `?` sheet still lists it.
+ *
+ * "WHERE THERE ARE NO KEYS" IS SHORTHAND, AND `touch-keys.css` STATES THE PRICE IN FULL: coarse
+ * is a claim about the PRIMARY POINTER, not about the absence of a keyboard, so an iPad with a
+ * Magic Keyboard loses a hint that would have been true there. That trade is ruled and written
+ * down in that file — the cost is one shortcut going unadvertised to a minority of touch users,
+ * against a majority being shown a key they do not have — and there is no media feature for "a
+ * keyboard is attached" to key on instead. Read it there before widening this. */
 @media (pointer: coarse) {
   .abar kbd {
     display: none;
