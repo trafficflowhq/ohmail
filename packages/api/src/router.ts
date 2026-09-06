@@ -136,10 +136,15 @@ export interface RouteOptions {
   raw?: boolean;
   /**
    * **THIS ROUTE ANSWERS FOR THE CREDENTIAL IT RESOLVED, NOT FOR THE SESSION THAT CARRIED THE
-   * REQUEST.** The sign-in and token routes: `/auth/login`, `/auth/refresh`,
-   * `/auth/verify-email`, `/auth/desktop-claim`, `/oauth/token`.
+   * REQUEST.** The sign-in, token and pairing routes — the ones whose handler mints or rotates a
+   * session from a credential in the request BODY.
    *
-   * All five are `public`, so `withSession` resolves whatever credential is ambient — and then
+   * **The set is not listed here on purpose.** It was, and the list said five while the true count
+   * was ten; a second review then found the derivation itself short by a seam. A list of route
+   * names in a comment is a fact about who last counted. `account-header-census.test.ts` derives
+   * the set from the handlers and asserts the flags match it, so the authority is the code.
+   *
+   * They are all `public`, so `withSession` resolves whatever credential is ambient — and then
    * the handler resolves a SECOND one out of the body, which is the one the response is about.
    * A browser refreshing an expired token has no session at all and the response still belongs to
    * an account; a caller holding a live session presents a credential that must belong to the

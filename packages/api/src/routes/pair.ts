@@ -161,7 +161,31 @@ export const pairRedeemRoutes: Route[] = [
     method: "POST",
     pattern: "/pair/redeem",
     cost: "unauthenticated",
-    options: { public: true, anonymous: true, credentialSubject: true },
+    // NOT `anonymous` ANY MORE, and the flag it lost is the one that made a rule unenforceable.
+    //
+    // ANONYMOUS_PIPELINE omits `withSession`, so `deps.session` was always null here and
+    // `ctx.accountId` always empty — and `refuseCrossAccountCredential` compares against exactly
+    // that. The cross-account refusal could therefore never fire on this route, whatever the
+    // caller presented. A browser holding a live session for A could redeem a pairing token
+    // belonging to B, spend it, and be handed B's full bearer session, while every other door
+    // answered 409 for the same shape.
+    //
+    // `raw` AND NOT PLAIN `public`, and the difference is CSRF. Plain `public` runs FULL_PIPELINE,
+    // which adds `withCsrf` — and a redeem arriving from a browser that happens to carry the
+    // minter's cookies would then need a CSRF token it has no way to have. That broke a real case
+    // the pairing suite already pins (a cookie-bearing browser redeeming, cookie-free). RAW_PIPELINE
+    // is `withRequestId, withRequestGuard, withSession, withStepUp, withSpendGate`: the session
+    // resolution this needs, without the CSRF and idempotency it does not.
+    //
+    // Safe without the JSON envelope for the reason the other raw routes are: this handler catches
+    // its own errors and answers a constructed Response on every branch, including the 409 the
+    // refusal now raises. It is also the first raw MUTATION — which `withRequestGuard` in that
+    // chain was kept for, exactly so it would not arrive unguarded.
+    //
+    // `public` still means no session is REQUIRED — a paired phone has none, which is the whole
+    // point of the route. It now means an ambient one is RESOLVED if presented. `cost` is
+    // unchanged, so the census pairing `unauthenticated` with `public` still holds.
+    options: { public: true, raw: true, credentialSubject: true },
     handler: async (req, deps) => {
       try {
         const b = await readObjectBody<{ grant?: unknown; token?: unknown; email?: unknown; kind?: unknown }>(req);
