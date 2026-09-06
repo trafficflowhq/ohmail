@@ -169,6 +169,13 @@ interface PendingMutation {
    * Cleared only by a commit that actually carried them.
    */
   retire?: string[];
+  /**
+   * TRUE when a newer verb for the same target was expressed while this one was on the wire.
+   *
+   * It cannot be un-sent, but it must not be replayed: the newer verb has since established the
+   * state, and re-running this one would put the older value back over it.
+   */
+  supersededInFlight?: boolean;
   /** Server-answered failures so far. See {@link OUTBOX_MAX_SERVER_FAILURES} for what counts. */
   attempts?: number;
   /** Epoch ms before which no drive may dispatch this verb. */
@@ -1575,6 +1582,17 @@ export class OhmailEngine {
    * surface waits on (a send's settlement, a create's server id) exist nowhere else.
    */
   private readonly lateResults = new Map<string, MutationResult>();
+  /**
+   * Verbs currently ON THE WIRE — dispatched, not yet settled.
+   *
+   * They are in no other collection: `dispatch` takes them off the queue before the request goes
+   * out. So a newer verb expressed while one is in flight could not see it, and supersession
+   * silently skipped it — then the in-flight verb failed retryably, went back on the queue AFTER
+   * the newer one had taken its snapshot, and replayed over the state the newer one established.
+   * Both requests succeed and the older value wins, which is the whole class this lane exists to
+   * close, arriving through the one door supersession could not look through.
+   */
+  private readonly inFlight = new Map<string, PendingMutation>();
 
   /**
    * The abandoned record for an id, from disk OR from the session-local fallback.
@@ -4000,7 +4018,17 @@ export class OhmailEngine {
         if (!awaitsHold) return queued();
         continue; // the create re-reads the hold at the top and waits it out off the chain
       }
-      if (out.timedOut || out.result === null) return queued();
+      if (out.timedOut) {
+        /**
+         * ONE OWNER, NOT TWO. The request is still running and owns this entry: it will settle it,
+         * re-queue it, or leave it persisted for the next boot, and its late answer now reaches
+         * `flushPending`. Putting the verb back on the queue as well gave it a second owner, and a
+         * later flush dispatched it AGAIN — for a draft create, whose route ignores the key, that
+         * is a second draft on the server for one the client already asked for.
+         */
+        return { id, key, status: "queued", seq: null };
+      }
+      if (out.result === null) return queued();
       // OFF THE CHAIN NOW, so concurrent verbs coalesce onto one drive exactly as they did before
       // this road was gated: `syncFresh` joins an in-flight drain rather than starting a second.
       await this.settleReconcile(out.owed);
@@ -4142,7 +4170,17 @@ export class OhmailEngine {
     // NO SEPARATE "ACTIVE" DEFERRED. Every caller of this method reaches it through
     // {@link outboxGate}, and the chain does not release the next one until this returns — so
     // being on the chain IS the in-flight barrier, and it is bounded by the deadline below.
+    /**
+     * IN FLIGHT FOR THE LIFE OF THE REQUEST, NOT OF THIS CALL.
+     *
+     * This method RETURNS at the deadline while the request keeps running — that is the whole
+     * point of the deadline. Tracking the verb around the call therefore un-tracked it at exactly
+     * the moment it most needs to be visible: still on the wire, in no collection, and about to
+     * come back and re-queue itself. The entry is removed when the ATTEMPT settles.
+     */
     const attempt = this.dispatch(p, opts);
+    this.inFlight.set(p.id, p);
+    void attempt.then(() => this.inFlight.delete(p.id), () => this.inFlight.delete(p.id));
     let timer: ReturnType<typeof setTimeout> | undefined;
     let timedOut = false;
     const raced = await Promise.race([
@@ -4850,6 +4888,19 @@ export class OhmailEngine {
     const readIds = m.kind === "mark_seen" || m.kind === "feed_mark_seen"
       ? new Set(m.messageIds ?? [])
       : null;
+    /**
+     * A VERB ON THE WIRE IS MARKED, NOT REMOVED — there is nothing to remove it from.
+     *
+     * Its request is running; the newer verb cannot un-send it. What it can do is say that when
+     * that request comes back retryable, the verb must NOT rejoin the queue: replaying it then
+     * would put the older value over the newer one that has since landed.
+     */
+    for (const q of this.inFlight.values()) {
+      if (q.mutation.kind === m.kind && supersedeKey(q.mutation) !== null
+        && supersedeKey(q.mutation) === supersedeKey(m)) {
+        q.supersededInFlight = true;
+      }
+    }
     let changed = false;
     for (let i = this.queue.length - 1; i >= 0; i--) {
       const q = this.queue[i]!;
@@ -5203,6 +5254,15 @@ export class OhmailEngine {
           p.waitIsServerNamed = rejection.retryAfterMs !== null;
         }
         p.lastError = { message: rejection.message, code: rejection.code, status: rejection.status };
+        if (p.supersededInFlight === true) {
+          // A newer verb for the same target was expressed while this was on the wire. Re-queuing
+          // it would replay the older value over the newer state — see `supersededInFlight`.
+          await this.dropOutbox(p.id);
+          this.overlays.delete(p.id);
+          this.overlayRev++;
+          this.notify();
+          return { id: p.id, key: p.key, status: "rolled_back", seq: null, error: rejection };
+        }
         this.queue.push(p);
         // Re-assert the durable entry. Normally redundant with `mutate()`'s write, but it is
         // the belt for the one window where it is not: a 410 reset wiped the store while this
@@ -5523,8 +5583,17 @@ export class OhmailEngine {
      * exists — so a composer waiting on a send's settlement stayed locked until something else
      * happened to flush, and a create's server id sat in a map nobody read.
      */
-    const late = [...this.lateResults.values()];
-    this.lateResults.clear();
+    /**
+     * TAKEN BY ID AND REMOVED INDIVIDUALLY, never cleared wholesale.
+     *
+     * `clear()` threw away every late answer, including ones that arrived while this flush was
+     * being prepared and ones no surface here was going to read — so a settlement could be
+     * removed by an unrelated consumer and then dropped on the floor. Only the entries actually
+     * handed back are deleted; anything that lands afterwards is still there for the next flush.
+     */
+    const lateIds = [...this.lateResults.keys()];
+    const late = lateIds.map((k) => this.lateResults.get(k)!);
+    for (const k of lateIds) this.lateResults.delete(k);
     if (this.outboxHold) {
       return [
         ...late,
