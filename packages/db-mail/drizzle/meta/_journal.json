@@ -659,6 +659,13 @@
       "when": 1791600000021,
       "tag": "0093_outbound_send_fingerprints",
       "breakpoints": true
+    },
+    {
+      "idx": 94,
+      "version": "7",
+      "when": 1791600100011,
+      "tag": "0094_request_kinds_moves_profile",
+      "breakpoints": true
     }
   ]
 }

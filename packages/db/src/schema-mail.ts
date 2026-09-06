@@ -2184,6 +2184,62 @@ export const organizerRequests = pgTable("organizer_requests", {
   ixAccountState: index("organizer_requests_account_state_idx").on(t.accountId, t.state),
 }));
 
+/**
+ * WHAT THE ORGANIZER SAYS THE CONFIGURATION IS — a reader's copy of the profile document (mail
+ * 0093).
+ *
+ * The organizer publishes a versioned document into `ohmail/_meta` (`organizer-profile.ts`). This
+ * is the last one a READER managed to read: one row per mailbox, replaced whole, never merged.
+ *
+ * ── A MIRROR, AND NEVER A SOURCE ──────────────────────────────────────────────────────────
+ *
+ * Nothing organizes from this table. It exists so a reader's settings panes render what the
+ * HOLDER's configuration actually is, rather than the reader's own row — which the organizer's
+ * pass never reads, and which is therefore a screen showing an edit as done that happened nowhere.
+ *
+ * ── NO ROW IS A STATE, AND IT IS NOT THE SAME AS AN EMPTY ONE ─────────────────────────────
+ *
+ * A reader that has never read a document has NO ROW here. That must render as "no profile from
+ * <holder> yet", not as a configuration with nothing in it: those are identical in a table of
+ * defaults and mean opposite things — one is "we have not looked", the other is "we looked and
+ * they have none". Absence is expressed by the row's absence for exactly that reason.
+ */
+export const mailboxProfileMirror = pgTable("mailbox_profile_mirror", {
+  /**
+   * The mailbox IS the identity of the document, so it is the key rather than a surrogate with a
+   * unique index beside it. Two mirrors of one mailbox is not a state this feature has.
+   */
+  mailboxId: uuid("mailbox_id").primaryKey(),
+  /** WHOSE. Invariant #9 is a column here, not a convention a caller remembers to join for. */
+  accountId: uuid("account_id").notNull(),
+  /**
+   * THE SERVER EPOCH {@link uid} WAS READ UNDER, and it is stored because a remembered IMAP uid is
+   * a fact only under its UIDVALIDITY: a renumbered folder re-issues the same small integers to
+   * different messages, and a memo that survived the renumber points confidently at the wrong one.
+   * Every other locator in this schema is keyed the same way (`message_instances_locator_uq`,
+   * `message_failures_locator_uq`) and 0028 states the rule — one UID inside one server epoch is
+   * one place.
+   *
+   * NULL means the reader could not learn the generation, which reads as "this locator is not
+   * usable" and never as "any generation will do".
+   */
+  uidvalidity: bigint("uidvalidity", { mode: "bigint" }),
+  /** The message the document was read from, inside that epoch. */
+  uid: integer("uid"),
+  /** THE DOCUMENT AS PARSED, envelope included — so a reader sees the version and producer that
+      wrote it rather than inferring them. */
+  doc: jsonb("doc").notNull(),
+  /**
+   * WHEN THIS INSTALL LAST READ IT. The pane says "as of <t>" from this; a reader that has been
+   * offline for a day has to be able to say so rather than present a day-old document as current.
+   */
+  readAt: timestamp("read_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  // THE ERASURE SWEEP'S READ, and the isolation census's. Both ask by ACCOUNT, and the primary key
+  // leads with the mailbox, so it does not serve them.
+  ixAccount: index("mailbox_profile_mirror_account_idx").on(t.accountId),
+}));
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Migration 0011 — attachment METADATA only. The BLOB bytes are NEVER
 // stored server-side: this table holds filename/contentType/size

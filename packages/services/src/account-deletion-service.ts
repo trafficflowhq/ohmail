@@ -23,6 +23,7 @@ import {
   kbEntries,
   learningSignals,
   mailboxCredentials,
+  mailboxProfileMirror,
   folderOps,
   mailboxFolders,
   mailboxes,
@@ -415,6 +416,14 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     // that removes it. The catalog sweep enumerates every table with an `account_id` column, so
     // this was red there until it landed.
     await drop("organizer_requests", tx.delete(organizerRequests).where(eq(organizerRequests.accountId, accountId)));
+    // The other half of that channel (mail 0093): what the ORGANIZER published, cached here by an
+    // install that only READS this mailbox. `doc` is the whole profile document, so it holds the
+    // screener list's CORRESPONDENT ADDRESSES, the person's own rule text and the away-responder
+    // body they wrote — a superset of the classes the three rows above it are deleted for, in one
+    // bag. It is keyed by mailbox and has no foreign key (the same design as the row above: the
+    // cache has to outlive the mailbox row it names), so nothing cascades it and this line is the
+    // only thing that removes it.
+    await drop("mailbox_profile_mirror", tx.delete(mailboxProfileMirror).where(eq(mailboxProfileMirror.accountId, accountId)));
     await drop("rules", tx.delete(rules).where(eq(rules.accountId, accountId)));
     await drop("graduations", tx.delete(graduations).where(eq(graduations.accountId, accountId)));
     await drop("learning_signals", tx.delete(learningSignals).where(eq(learningSignals.accountId, accountId)));
