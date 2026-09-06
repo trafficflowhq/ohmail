@@ -3932,7 +3932,7 @@ export async function startWorkerWithLock(
           } else if (!organize) {
             try {
               await driveOutstandingRequests(
-                db, { mailboxId: rt.mailboxId, accountId: rt.accountId, adapter: rt.adapter, requestKey: rt.requestKey },
+                db, { mailboxId: rt.mailboxId, accountId: rt.accountId, installId: organizerInstallId, adapter: rt.adapter, requestKey: rt.requestKey },
                 { installId: organizerInstallId, kind: "cloud" }, new Date(),
                 (event, detail) => log.info(event, { mailboxId: rt.mailboxId, accountId: rt.accountId, ...detail }),
               );
@@ -3945,7 +3945,7 @@ export async function startWorkerWithLock(
           } else {
             try {
               await applyMetaRequests(
-                db, { mailboxId: rt.mailboxId, accountId: rt.accountId, adapter: rt.adapter, requestKey: rt.requestKey }, new Date(),
+                db, { mailboxId: rt.mailboxId, accountId: rt.accountId, installId: organizerInstallId, adapter: rt.adapter, requestKey: rt.requestKey }, new Date(),
                 (event, detail) => log.info(event, { mailboxId: rt.mailboxId, accountId: rt.accountId, ...detail }),
               );
               // THE ROLE FLIP'S OWN DEBT. Rows this install queued while it was a READER are

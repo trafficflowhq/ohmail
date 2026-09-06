@@ -574,6 +574,7 @@ export async function runReconcileCron(
           await applyMetaRequests(
             db, {
               mailboxId, accountId: row.accountId, adapter,
+              installId: config.organizer?.installId ?? cloudInstallId(config.environment ?? "production"),
               requestKey: deriveRequestKey({ auth: { user: config.imap.user, pass: config.imap.pass }, address: row.address }),
             }, new Date(),
             (event, detail) => log.info(cronEvent("reconcile", event), { mailboxId, accountId: row.accountId, ...detail }),

@@ -115,8 +115,43 @@ type WorkerDb = Tx;
 export interface RequestRuntime {
   mailboxId: string;
   accountId: string;
+  /**
+   * WHICH INSTALL THIS IS. Required, and required as a VALUE rather than something read off the
+   * connection: what a process remembers about a mailbox — where a walk got to, which record it
+   * wrote — belongs to one install on one mailbox, and a memory keyed by anything coarser answers
+   * another install's question. The organizer side had no install to hand at all, which is why
+   * this had to be threaded before that memory could be keyed correctly.
+   */
+  installId: string;
   adapter: MailboxAdapter;
   requestKey: string | null;
+}
+
+/** Thrown when a caller builds a runtime without a usable identity. */
+export class RequestIdentityError extends Error {
+  constructor(what: string) {
+    super(`the request drain was given no usable ${what}, so nothing it remembers could be `
+      + "attributed to one install on one mailbox");
+    this.name = "RequestIdentityError";
+  }
+}
+
+/**
+ * THE SEAM'S OWN CHECK, because the compiler does not cover the callers that matter most.
+ *
+ * The tests in this package and in core are not typechecked, so adding a required field to the
+ * runtime above does NOT fail a build for the hundred-odd places that construct one — they bind
+ * `undefined` and carry on, and a memory keyed on `undefined` is shared by every mailbox in the
+ * process. That is silent and it is exactly the class of defect this field exists to remove, so
+ * the check is here at run time where it will actually fire.
+ */
+function assertIdentity(rt: RequestRuntime): void {
+  if (typeof rt.installId !== "string" || rt.installId.trim() === "") {
+    throw new RequestIdentityError("install id");
+  }
+  if (typeof rt.mailboxId !== "string" || rt.mailboxId.trim() === "") {
+    throw new RequestIdentityError("mailbox id");
+  }
 }
 
 /** How long a decision may sit before both sides give up on it. ONE window, read by both roles. */
@@ -336,6 +371,7 @@ export async function applyMetaRequests(
   now: Date,
   log: (event: string, detail: Record<string, unknown>) => void,
 ): Promise<ApplyMetaRequestsResult> {
+  assertIdentity(rt);
   if (!hasRequestOrganizerIo(rt.adapter)) return EMPTY_RESULT;
 
   let io: RequestOrganizerIo;

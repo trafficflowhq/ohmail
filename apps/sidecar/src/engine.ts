@@ -3941,7 +3941,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             if (organizing) {
               await applyMetaRequests(
                 db, {
-                  mailboxId: mb.id, accountId: world.accountId, adapter,
+                  mailboxId: mb.id, accountId: world.accountId, adapter, installId,
                   requestKey,
                 }, now(),
                 noteRequestEvent,
@@ -3955,7 +3955,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             } else {
               await driveOutstandingRequests(
                 db, {
-                  mailboxId: mb.id, accountId: world.accountId, adapter,
+                  mailboxId: mb.id, accountId: world.accountId, adapter, installId,
                   requestKey,
                 },
                 { installId, kind: "local" }, now(),
