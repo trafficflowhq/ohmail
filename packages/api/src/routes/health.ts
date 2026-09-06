@@ -1028,6 +1028,20 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // database certified healthy while missing it therefore serves a mailbox whose owner is told,
   // truthfully as far as the row knows, that they cannot stop Cloud organizing it.
   ["mailboxes", "organized_by_install_id"],
+  // mail 0093_outbound_send_fingerprints — the account's claim on the CONTENT of a send, and the
+  // probe is one column because probing a column of a table proves the table.
+  //
+  // Its absence is the loud kind rather than the silent kind, and it is worth saying which: the
+  // send path INSERTs here inside the reserve transaction on every send, so an API ahead of this
+  // migration raises Postgres 42P01 on the first press and nobody can send at all. That is a
+  // marker earning its place at the noisy end of this list — the point is not that the failure is
+  // subtle, it is that `/health` must not certify a database the send path cannot use.
+  //
+  // The UNIQUE constraint gets no marker of its own and the CHECK does: see
+  // `outbound_send_fingerprints_hex` in SCHEMA_CHECK_MARKERS. The uniqueness is what the INSERT
+  // itself names in its `ON CONFLICT` target, so a database missing it fails loudly on the first
+  // duplicate rather than quietly admitting one.
+  ["outbound_send_fingerprints", "fingerprint"],
 ] as const;
 
 /* THE CLOUD HALF OF THE MARKER CENSUS MOVED TO `./health-cloud.js`.
@@ -1261,6 +1275,17 @@ export const SCHEMA_CHECK_MARKERS: ReadonlyArray<string> = [
   // assertion about free text while nothing in the product misbehaves and no test notices. Which is
   // why the classification and this marker landed in the same commit.
   "organizer_requests_refused_reason_closed",
+  // mail 0093_outbound_send_fingerprints — `fingerprint ~ '^[0-9a-f]{64}$'`, and it is here for the
+  // silent-degradation property this list exists for rather than for the send path's sake.
+  //
+  // The column holds a digest this codebase computes and nothing a mail server, a sender or a
+  // message body can choose, so the write path is closed in code — which is exactly the argument
+  // 0029's and 0091's entries above say is NOT enough on its own. The operator console's isolation
+  // sweep can see a constraint and cannot see a write path, and it classifies this column as
+  // refused-by-constraint on the strength of this CHECK. Take the CHECK away and that
+  // classification becomes an assertion about free text while nothing in the product misbehaves
+  // and no test notices. The classification, the migration and this marker are one edit.
+  "outbound_send_fingerprints_hex",
 ];
 
 /**
@@ -1778,8 +1803,20 @@ export const MAIL_EXPECTED_MARKERS =
  * `0091_request_refusal_closed` adds NO column — it closes the set behind the column 0090 added —
  * so it is probed by its CHECK alone, in `SCHEMA_CHECK_MARKERS`. That is the whole of it, and it is
  * the case those lists exist for: a database with the column and without the constraint accepts
- * whatever a write site lets through and says nothing. **It is the newest entry, so it is also the
- * tag below.**
+ * whatever a write site lets through and says nothing.
+ *
+ * `0092_organizer_install_id` is probed as `mailboxes.organized_by_install_id` — the sixth holder
+ * column, one additive nullable field, so one column is the whole probe. It had a marker and no
+ * paragraph here, which is half of what this docblock is for; the enumeration is completed rather
+ * than left with a gap between 0091 and 0093.
+ *
+ * `0093_outbound_send_fingerprints` creates a TABLE, and is probed by BOTH halves: the column
+ * `outbound_send_fingerprints.fingerprint` (which proves the table, since a column probe on a
+ * missing table fails) and the CHECK `outbound_send_fingerprints_hex`. Two markers and not one,
+ * because they answer different questions — the column is what the send path 42P01s on when it is
+ * absent, and the CHECK is what the operator console's isolation sweep reads when it classifies
+ * that column as refused-by-constraint rather than as free text. **It is the newest entry, so it is
+ * also the tag below.**
  *
  * That last sentence is the one this docblock keeps getting wrong, and it is now attached to the
  * marker that is actually newest rather than left on an older one. It stood on `0081` and then on
@@ -1798,7 +1835,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0092_organizer_install_id";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0093_outbound_send_fingerprints";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */
