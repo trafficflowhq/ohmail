@@ -2,6 +2,7 @@ import { silentLogger } from "@trafficflow/core";
 import { suspendAccount, resumeAccount, resyncMailbox } from "@trafficflow/db/cloud";
 import {
   recordManualPlatformCost, ManualCostShapeConflict, type CostProvider,
+  MAX_METRIC_CHARS,
 } from "@trafficflow/services";
 import { resolveStaffSession, type StaffIdentity } from "./admin-staff.js";
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
@@ -360,7 +361,11 @@ async function platformCost(
     return { status: 400, body: { error: { code: "provider_invalid" } } };
   }
   const metric = str(body.metric).trim();
-  if (metric.length === 0 || metric.length > 64) {
+  // THE SAME BOUND THE PARSER USES, from the same constant. These were 64 here and 128 there,
+  // so a vendor metric in that band could be stored by a pass and then never corrected by hand:
+  // the correction was refused for its length. The column already holds 128-character vendor
+  // strings written by the parser, so an operator having the same bound adds no exposure.
+  if (metric.length === 0 || metric.length > MAX_METRIC_CHARS) {
     return { status: 400, body: { error: { code: "metric_required" } } };
   }
   // THE MONTH, as `YYYY-MM`, and never a free pair of timestamps. Every one of these vendors

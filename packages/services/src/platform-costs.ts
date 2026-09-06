@@ -494,6 +494,26 @@ const CHARGES_LOOKAHEAD_MS = 24 * 60 * 60 * 1000;
 const CHARGES_DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
+ * Caps on the vendor text that becomes `metric` and `unit` — columns the content-blind staff
+ * role can read. Roughly double the longest observed over a live month (59 and 15).
+ *
+ * ONE CONSTANT, SHARED WITH THE MANUAL ROUTE. `POST /admin/platform-costs` bounded an
+ * operator's `metric` at 64 while the parser accepted 128, so a vendor metric in that band could
+ * be STORED by a pass and then never corrected by hand — the route refused the correction for
+ * its length. Found by sweeping this fix's siblings rather than by it biting; the longest name
+ * the live account carries is 59, so nothing sits in the band today.
+ *
+ * Resolved by making the route use THIS constant rather than by moving either number. The
+ * column already carries 128-character vendor strings written by the parser, so allowing an
+ * operator the same bound adds no exposure the staff role does not already have — while a
+ * stored row nobody can correct is the worse outcome. Lowering the parser to 64 was the other
+ * option and was rejected: it refuses a month whose only fault is a long service name, which is
+ * the shape of error that once made a real July permanently unmeasurable.
+ */
+export const MAX_METRIC_CHARS = 128;
+const MAX_UNIT_CHARS = 64;
+
+/**
  * Build the live port.
  *
  * `fetchImpl` is injectable and every test passes one, so the default suite makes no network
@@ -636,7 +656,11 @@ export function makePlatformCostPort(
             // pass budget that reserves 25 for it is wrong by the difference. The same
             // correction as the pass loop's, one level down, and the same reasoning: the
             // question is whether the NEXT request fits, never whether the last one did.
-            if (asked > 0 && Date.now() - walkStartedAt + timeoutMs > ANTHROPIC_WALK_BUDGET_MS) {
+            // PAGE ZERO IS A PAGE. Skipping it meant an injected `timeoutMs` larger than the
+            // whole walk reservation could be spent on the FIRST request, so the provider
+            // overran the budget the pass had set aside for it before any page was counted. The
+            // check is the same one; what changed is that it no longer has an exemption.
+            if (Date.now() - walkStartedAt + timeoutMs > ANTHROPIC_WALK_BUDGET_MS) {
               return { failed: "too_many_pages" };
             }
             const url = page === null ? base : `${base}&page=${encodeURIComponent(page)}`;
@@ -734,6 +758,37 @@ export function makePlatformCostPort(
  * compared directly. Deliberately NOT `microCentsFromDecimalString(x) > 0`, which is the
  * arithmetic this exists to be independent of.
  */
+function negativeMicro(micro: number): boolean {
+  // `-0 < 0` IS FALSE, AND THAT IS THE WHOLE DEFECT. Both sign tests below already carried a
+  // comment about this trap for the ROUNDING step — `Math.round(-0.4)` is negative zero — and
+  // both then re-admitted it from the other side: `microCentsFromDecimalString("-0.0000001")`
+  // returns NEGATIVE ZERO itself, because the magnitude rounds away while the sign is applied
+  // afterwards. A month whose only line is a hair below zero therefore passed the refusal and
+  // was written as a measured `$0.00` — the vendor said it owed us, and the board said nothing
+  // was spent.
+  //
+  // Verified by running the parser rather than by reading it: "-0.0000001" -> -0 with
+  // `Object.is(v, -0)` true and `v < 0` false; "-0.0000009" -> -1, which the plain test catches.
+  //
+  // THIS ALONE IS NOT ENOUGH, AND BELIEVING IT WAS COST A ROUND. Both totals are ACCUMULATED
+  // before they reach a sign test — `reduce((sum, t) => sum + t.micro, 0)` and `micro += amount`
+  // — and `0 + (-0)` is POSITIVE zero, so the sign is destroyed before either test can see it.
+  // Measured, not reasoned: the reduce yields `Object.is(sum, -0) === false`. So this catches a
+  // negative zero only where one survives un-summed, and the real guard is the credit flag read
+  // from the vendor's own text beside every use of this.
+  return micro < 0 || Object.is(micro, -0);
+}
+
+function negativeAmount(raw: unknown): boolean {
+  // The mirror of `positiveAmount`, and it exists because the positive one was written first
+  // and its negative twin was not — the same one-sided fix this lane keeps making. A decimal
+  // string is negative when it carries a leading `-` AND a non-zero digit; `"-0.0"` is zero.
+  if (typeof raw === "number") return Number.isFinite(raw) && raw < 0;
+  if (typeof raw !== "string") return false;
+  const t = raw.trim();
+  return t.startsWith("-") && /[1-9]/.test(t);
+}
+
 function positiveAmount(raw: unknown): boolean {
   if (typeof raw === "number") return Number.isFinite(raw) && raw > 0;
   if (typeof raw !== "string") return false;
@@ -778,10 +833,10 @@ function parseVercelCharges(
   // whichever survived decided the contiguity join — reversing the line order changed the
   // verdict, and a record covering 23 hours could be hidden behind one covering 24.
   //
-  // Contiguity is now checked PER SERIES rather than over a merged set. The project is NOT part
-  // of this key: the vendor reports one service-day once per project, and adding the project
-  // changed no input's verdict because this same grouping re-collapses them. What the repeats
-  // do require is the disagreement refusal below.
+  // Contiguity is checked PER SERIES rather than over a merged set, and a series is one
+  // (service, region, PROJECT). The project was left out for one round on the argument that this
+  // grouping re-collapses projects so no verdict could change; a project-local hole is the input
+  // that falsified it, and it is in the key now.
   const periods = new Map<string, { from: number; to: number }>();
   let lastCoveredEnd = 0;
   // Detected on a RECORD rather than on a service's total: a credit that happens to be offset by
@@ -809,7 +864,23 @@ function parseVercelCharges(
       return { failed: "unrecognised_shape" };
     }
     const record = parsed as Record<string, unknown>;
-    const service = typeof record.ServiceName === "string" ? record.ServiceName : null;
+    // ── BOUNDED, BECAUSE `metric` AND `unit` ARE STAFF-READABLE COLUMNS ─────────────────
+    //
+    // `note` was treated as the only free-text column the content-blind staff role can read,
+    // and that grant's security argument says so. It is not: `metric` and `unit` are handed
+    // whatever the vendor put in `ServiceName` and `ConsumedUnit`, unbounded and unchecked, and
+    // stored under the same grant. A compromised or confused upstream could put arbitrary
+    // material there, and length alone is a denial-of-service on a board that renders it.
+    //
+    // The bound is evidence-based rather than guessed: over a live month, 65 distinct service
+    // names with a longest of 59 characters ("Global Config Writes (formerly known as Edge
+    // Config Writes)") and 23 units with a longest of 15. These caps are roughly double the
+    // observed maximum, so they refuse the absurd and nothing the vendor actually sends.
+    const rawService = typeof record.ServiceName === "string" ? record.ServiceName : null;
+    if (rawService !== null && rawService.length > MAX_METRIC_CHARS) {
+      return { failed: "unrecognised_shape" };
+    }
+    const service = rawService;
     const billed = num(record.BilledCost);
     // FOCUS v1.3 requires both period fields, and both are parsed as INSTANTS WITH AN OFFSET
     // rather than with a bare `Date.parse` — see `instantMs`: a timestamp with no offset is read
@@ -909,10 +980,9 @@ function parseVercelCharges(
     // today and guards a change in what it sends. The verdict no longer depends on record order
     // either way.
     //
-    // The project deliberately does NOT enter this key. It was tried: the per-series pass below
-    // re-groups by (service, region) and applies the same rule, so adding the project changed no
-    // input's verdict — an unfalsifiable elaboration, which is worse than nothing because it
-    // reads as protection.
+    // The project DOES enter the series below. This comment said the opposite for one round,
+    // on an equivalence that a project-local hole falsified: collapse the projects and a day
+    // missing from one of them is covered by another, and the month is written short.
     const prior = periods.get(`${from}\u0000${series}`);
     if (prior !== undefined && prior.to !== to) return { failed: "period_conflict" };
     periods.set(`${from}\u0000${series}`, { from, to });
@@ -926,6 +996,7 @@ function parseVercelCharges(
     const quantity = num(record.ConsumedQuantity);
     if (quantity !== null) acc.quantity = (acc.quantity ?? 0) + quantity;
     if (acc.unit === null && typeof record.ConsumedUnit === "string" && record.ConsumedUnit) {
+      if (record.ConsumedUnit.length > MAX_UNIT_CHARS) return { failed: "unrecognised_shape" };
       acc.unit = record.ConsumedUnit;
     }
     totals.set(service, acc);
@@ -986,6 +1057,21 @@ function parseVercelCharges(
     }
   }
   const covered = [...periods.values()].sort((a, b) => a.from - b.from);
+  // ── THE LEADING EDGE IS GLOBAL, AND PER-SERIES IT CANNOT BE ──────────────────────────
+  //
+  // A named limit rather than an oversight. The trailing edge is checked per series because a
+  // truncated read loses the END of a stream, so a series stopping early is evidence the answer
+  // is short. The start is not symmetric: a series that begins late is evidence about when the
+  // THING began. That asymmetry was measured the expensive way — an earlier per-series leading
+  // edge refused all of July, because the account did not exist before the 14th.
+  //
+  // What this leaves open, stated so nobody has to rediscover it: on an established account, a
+  // project whose FIRST day is missing is accepted, because another project satisfies the global
+  // check. That input is indistinguishable — from this response alone — from a project created
+  // on day 2, which is an ordinary event. Closing it needs evidence this table does not hold:
+  // the breakdown is per service, not per project, so there is no per-project history to ask
+  // whether that project existed last month. Adding one is a schema change, not a guard.
+  //
   // THE LEADING EDGE, WHEN THE DATABASE PROVES THE ACCOUNT EXISTED — see `PlatformCostWindow`.
   if (window.requireFullStart && covered[0]!.from >= window.start.getTime() + CHARGES_DAY_MS) {
     return { failed: "day_coverage_short" };
@@ -1055,7 +1141,10 @@ function parseVercelCharges(
     // as a measurement would say the vendor charged nothing, and the vendor said it owed us. The
     // sign is tested on the UNROUNDED total, because `Math.round(-0.004 * 100)` is negative zero
     // and `-0 < 0` is false — rounding first would let a small credit through as a measured zero.
-    if (netMicro < 0) return { failed: "negative_total" };
+    // AND THE SAME HERE, for the same reason: `reduce(..., 0)` destroys a negative zero before
+    // this test runs. `credited` is set from the raw amount, so a month of credits with no
+    // charge is refused however small the credits are.
+    if (negativeMicro(netMicro) || !vendorCharged) return { failed: "negative_total" };
     const net = centsFromMicroCents(netMicro);
     return {
       rows: [{
@@ -1176,6 +1265,7 @@ function parseAnthropic(
   let micro = 0;
   // See `parseVercelCharges`: provenance from what the vendor said, before rounding.
   let vendorCharged = false;
+  let vendorCredited = false;
   const currency = new Currency();
   // The bucket STARTS that landed inside the window, for the continuity check below.
   const starts: number[] = [];
@@ -1231,6 +1321,7 @@ function parseAnthropic(
       // from arithmetic instead of from the vendor — surviving in the other adapter because the
       // fix was made where the bug was found rather than everywhere the pattern appears.
       if (positiveAmount(r?.amount)) vendorCharged = true;
+      if (negativeAmount(r?.amount)) vendorCredited = true;
       currency.observeRequired(r?.currency);
     }
   }
@@ -1278,7 +1369,14 @@ function parseAnthropic(
   // `Math.round(-0.4)` is NEGATIVE ZERO and `-0 < 0` is false, so a small credit balance rounded
   // first slips past the refusal below and is written as a measured $0.00 — the false zero this
   // check exists to prevent, reintroduced by the rounding meant to satisfy the column.
-  if (micro < 0) return { failed: "negative_total" };
+  // A CREDIT THAT ROUNDS AWAY IS STILL A CREDIT. `micro` cannot carry the sign here — the
+  // accumulation above turns a negative zero into a positive one — so the fact that the vendor
+  // reported money owed to us is carried by a flag read from its own text. A month with a credit
+  // and no charge is a negative month whatever it rounds to, and `$0.00` written as a
+  // measurement for it says the opposite of what the vendor said.
+  if (negativeMicro(micro) || (vendorCredited && !vendorCharged)) {
+    return { failed: "negative_total" };
+  }
   const rounded = centsFromMicroCents(micro);
   // A NET-NEGATIVE MONTH IS REFUSED, not floored. Flooring was the previous answer and it
   // publishes `$0.00` as a MEASUREMENT for a month in which the vendor said it owed us money —
@@ -1349,7 +1447,14 @@ export async function writeMeasuredRows(
     eq(platformCosts.periodEnd, window.end),
     eq(platformCosts.source, "api"),
   ));
+  // A METRIC MAY APPEAR ONCE IN ONE ANSWER. Two rows for one (provider, metric, window) have
+  // no ordering and no correction marker between them, so there is no way to tell a vendor's
+  // restatement from two components of one bill that must be added. Refused rather than guessed:
+  // the previous behaviour silently kept the LAST one and published a month short by the rest.
+  const seenMetrics = new Set<string>();
   for (const row of rows) {
+    if (seenMetrics.has(row.metric)) throw new DuplicateMetricRow(row.metric);
+    seenMetrics.add(row.metric);
     // THE LOCK IS PER PROVIDER, SO THE ROWS MUST BE TOO. The advisory key names `provider`, and
     // the DELETE above clears that provider's window; a row naming a DIFFERENT provider would be
     // inserted outside both — not covered by the lock that serializes its writers, and not
@@ -1378,9 +1483,18 @@ export async function writeMeasuredRows(
       source: "api",
       fetchedAt: at,
     }).onConflictDoUpdate({
-      // Kept although the DELETE above has already cleared this provider's API rows for the
-      // window: a response carrying the same metric twice would otherwise abort the whole
-      // provider on a primary-key collision, and the second line is the vendor's own correction.
+      // ── THE DELETE ABOVE ALREADY CLEARED THIS WINDOW, SO A COLLISION HERE IS A REPEAT ────
+      //
+      // This used to be justified as "the second line is the vendor's own correction". Nothing
+      // in a row says that. Two independent lines for one metric — a response carrying `Pro`
+      // twice at 1,900 and 500 cents — collided, the second REPLACED the first, the pass
+      // reported two rows written, and the month read 500 instead of 2,400. An equivalence
+      // asserted about the vendor's intent, with no evidence in the data for it, exactly like
+      // the project-grain claim a round ago.
+      //
+      // A repeat is now refused BEFORE the insert (see `writeMeasuredRows`'s duplicate check),
+      // so this clause is reached only by a genuine re-run of the same pass, where replacing a
+      // row with itself is what it should do.
       target: [
         platformCosts.provider, platformCosts.metric,
         platformCosts.periodStart, platformCosts.periodEnd, platformCosts.source,
@@ -1405,6 +1519,9 @@ export class ManualCostShapeConflict extends Error {}
 
 /** A port answered for a provider other than the one asked about — see `writeMeasuredRows`. */
 export class WrongProviderRow extends Error {}
+
+/** One answer named the same metric twice; there is no evidence which one to keep. */
+export class DuplicateMetricRow extends Error {}
 
 /** Thrown by {@link writeMeasuredRows} when a row would say zero for a line the vendor charged. */
 export class ZeroForChargedLine extends Error {}
@@ -2122,7 +2239,12 @@ export async function costsForMonth(
       provider,
       cents: acc.cents,
       currency: acc.currency,
-      fetchedAt: acc.fetchedAt,
+      // THE DATE OF WHAT IS ACTUALLY STALE. Staleness is decided from the oldest API reading,
+      // but the date shown was the newest of ANY row — so a manual line entered today beside an
+      // API line frozen a fortnight ago rendered "stale since today", which reads as a
+      // contradiction and hides which half stopped moving. When the verdict comes from the API
+      // reading, so does the date.
+      fetchedAt: stale && acc.oldestApi !== null ? acc.oldestApi : acc.fetchedAt,
       // A manual figure does not go stale: a person read an invoice, and an invoice does not
       // change. An API figure does — a provider that stopped answering leaves its last row
       // standing, and this is the word that stops it reading as current. A provider carrying
