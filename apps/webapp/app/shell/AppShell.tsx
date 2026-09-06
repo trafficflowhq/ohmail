@@ -7,7 +7,6 @@
  * @ohmail/client-engine — the shell only owns view state.
  */
 import {
-  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -165,6 +164,7 @@ import {
 } from "./mail-state";
 /* Backspace/Delete → Trash, and the window in which it has not happened yet. See the module. */
 import { deleteKeyBindings, hideMessages, useDeleteIntentReplay, useDeleteUndo } from "./delete-undo";
+import { useStableCallback } from "./stable-callback";
 /* The once-per-change line above the Ohbox, and the shape of the press that ends it. */
 import { OrganizerNotice, type OrganizerNoticeTransport } from "./OrganizerNotice";
 /* The OS-answer seam, threaded to `SettingsView` for the hosts that must inject one. */
@@ -329,6 +329,15 @@ const LOCATE_TIMEOUT_MS = 2000;
  * `participantsOf`.
  */
 const NO_PARTICIPANTS: { initials: string; hue: number }[] = [];
+
+/**
+ * What a stream's departure commits: the waterline it read up to, and the glance marks it holds.
+ *
+ * The same shape `ReadsView`/`ReceiptsView` declare for their `onLeaveSeen` prop. Named here
+ * because two callbacks and a factory now spell it, and three copies of an inline object type
+ * drift apart one edit at a time.
+ */
+type FeedSeenCommit = { upToId: string; messageIds: string[] };
 
 /**
  * WHERE A MESSAGE OPENS — the decision, with nothing else in it.
@@ -1386,7 +1395,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
 
   /** Which mailboxes a set of messages lives in — first-seen order, de-duplicated. An
    *  unresolvable message contributes `""`, which the predicate refuses as an unknown id. */
-  const mailboxesOf = useCallback(
+  const mailboxesOf = useStableCallback(
     (ids: readonly string[]): string[] => {
       const out: string[] = [];
       for (const id of ids) {
@@ -1395,7 +1404,6 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
       }
       return out;
     },
-    [reader],
   );
 
   const theme = useTheme();
@@ -1693,16 +1701,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * Null — no label, no facts (the demo, the desktop) — and the chip shows the bare address
    * rather than an invented name.
    */
-  const ownNameOf = useCallback(
-    (address: string): string | null => {
-      const key = address.trim().toLowerCase();
-      const label = facts
-        ?.find((m) => m.address.trim().toLowerCase() === key)
-        ?.displayName?.trim();
-      return label ? label : null;
-    },
-    [facts],
-  );
+  const ownNameOf = useStableCallback((address: string): string | null => {
+    const key = address.trim().toLowerCase();
+    const label = facts
+      ?.find((m) => m.address.trim().toLowerCase() === key)
+      ?.displayName?.trim();
+    return label ? label : null;
+  });
   const consentView: ConsentPartition | null = useMemo(
     // THE DEMO IS NOT PARTITIONED, and this is a fact about the data rather than a shortcut.
     //
@@ -2373,9 +2378,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * mounted view the same as an unmounted one.) The bare `#/settings` stays reserved for the
    * `?settings=` deep link — see `Route.settingsPane`.
    */
-  const openSettingsPane = useCallback((pane: PaneId): void => {
+  const openSettingsPane = useStableCallback((pane: PaneId): void => {
     goSettings(pane);
-  }, []);
+  });
   /**
    * THE READER IS A MESSAGE NOW, NOT A BOOLEAN.
    *
@@ -2515,7 +2520,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
     }
   }, [replyTo, replyMode]);
   /** The two persisting setters — state and scratch move together, or a reopen lies. */
-  const onReplySig = useCallback((next: SignatureState) => {
+  const onReplySig = useStableCallback((next: SignatureState) => {
     setReplySig(next);
     if (replyTo === null) return;
     const lane = replyMode === "forward" ? inlineForwardKey(replyTo) : replyTo;
@@ -2523,13 +2528,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
       ...readReplyMeta(lane),
       ...(next.kind === "following" ? { sig: undefined } : { sig: next }),
     });
-  }, [replyTo, replyMode]);
-  const onReplySubject = useCallback((subject: string) => {
+  });
+  const onReplySubject = useStableCallback((subject: string) => {
     setReplySubjectEdit(subject);
     if (replyTo === null) return;
     const lane = replyMode === "forward" ? inlineForwardKey(replyTo) : replyTo;
     writeReplyMeta(lane, { ...readReplyMeta(lane), subject });
-  }, [replyTo, replyMode]);
+  });
   /**
    * THE COMPOSE FORM, and why it lives up here rather than in `ComposeView`.
    *
@@ -2605,7 +2610,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
   /* ONE callback, stable, for both halves — the chrome's `onToggleAbsoluteTime` and every list's
      `onToggleTime`. Two arrow literals would be two identities, and the row prop is handed to six
      memoizable views. */
-  const toggleAbsoluteTime = useCallback(() => setAbsoluteTime((v) => !v), []);
+  const toggleAbsoluteTime = useStableCallback(() => setAbsoluteTime((v) => !v));
   /**
    * THE ROW A SEARCH HIT LANDED ON — so the user can SEE where they were taken.
    *
@@ -2689,10 +2694,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
       );
     return out;
   }, [presented, version]);
-  const participantsOf = useCallback(
-    (threadId: string) => participantIndex.get(threadId) ?? NO_PARTICIPANTS,
-    [participantIndex],
-  );
+  const participantsOf = useStableCallback((threadId: string) => participantIndex.get(threadId) ?? NO_PARTICIPANTS);
   /**
    * THE CONVERSATION'S STORED NAME, for the Ohbox's grouped rows — bound here for the same
    * reason `participantsOf` is: the view has no reader of its own. The mirror's thread row
@@ -2700,10 +2702,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * grouped row says "Webshop" where its members say "Re: Webshop". `null` while the thread
    * row has not synced; the view falls back to the newest member's subject.
    */
-  const threadSubjectOf = useCallback(
-    (threadId: string) => threadSubject(presented, threadId),
-    [presented, version],
-  );
+  const threadSubjectOf = useStableCallback((threadId: string) => threadSubject(presented, threadId));
   /**
    * WHAT IS OPEN IN THE OHBOX — and `null` until somebody opens something.
    *
@@ -2837,12 +2836,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    *
    * The id still travels (see the call site): this narrows WHETHER, never WHAT.
    */
-  const enterReader = useCallback(
-    (messageId: string) => {
-      if (readColumnHidden()) setReaderFor(messageId);
-    },
-    [],
-  );
+  const enterReader = useStableCallback((messageId: string) => {
+    if (readColumnHidden()) setReaderFor(messageId);
+  });
 
   const waitingLive = screener.waiting.filter((w) => !screener.isExiting(w.id));
 
@@ -2867,13 +2863,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * assignable where three are expected — so `test/resurface-now-shell.test.ts` asserts the label
    * arrives at the adapter rather than trusting this line.
    */
-  const markSeen = useCallback(
-    (ids: string[], unread: boolean, via?: "glance") => {
-      if (ids.length === 0) return;
-      void engine.mutate({ kind: "mark_seen", messageIds: ids, unread, ...(via ? { via } : {}) });
-    },
-    [engine],
-  );
+  const markSeen = useStableCallback((ids: string[], unread: boolean, via?: "glance") => {
+    if (ids.length === 0) return;
+    void engine.mutate({ kind: "mark_seen", messageIds: ids, unread, ...(via ? { via } : {}) });
+  });
 
   /**
    * "Mark all read" for a whole view. Unlike {@link markSeen}, this CHUNKS at
@@ -2893,18 +2886,15 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * unread" would get wrong. Held longer than the default toast, since reading "Marked 312
    * read" and deciding takes longer than a confirmation glance.
    */
-  const markAllRead = useCallback(
-    (ids: string[]) => {
-      if (ids.length === 0) return;
-      dispatchMarkAllRead((m) => engine.mutate(m), ids);
-      toast(t("markAll.done", { count: ids.length }), {
-        action: t("markAll.undo"),
-        onAction: () => { dispatchMarkAll((m) => engine.mutate(m), ids, true); },
-        duration: 6000,
-      });
-    },
-    [engine, toast, t],
-  );
+  const markAllRead = useStableCallback((ids: string[]) => {
+    if (ids.length === 0) return;
+    dispatchMarkAllRead((m) => engine.mutate(m), ids);
+    toast(t("markAll.done", { count: ids.length }), {
+      action: t("markAll.undo"),
+      onAction: () => { dispatchMarkAll((m) => engine.mutate(m), ids, true); },
+      duration: 6000,
+    });
+  });
 
   /**
    * BODY HYDRATION, WIRED ONCE.
@@ -2941,30 +2931,25 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
   // would re-fire the urgent-selection effects once per delivered body for nothing.
   /* The identity predicate, read at REQUEST time rather than at render time — a cookie can be
      rewritten by a sign-in in another tab between the render that built this closure and the
-     press that uses it, and the whole point of the check is to catch exactly that. `useCallback`
-     with `[engine]` keeps the door's own dependency stable; the answer inside is always live. */
-  const mayReadOlderBody = useCallback(() => syncMayRead(engine), [engine]);
+     press that uses it, and the whole point of the check is to catch exactly that. The identity is
+     stable and the answer inside is always live — which matters more here than it looks: the door
+     below is built once by `useState`, so it holds this function for the life of the shell. */
+  const mayReadOlderBody = useStableCallback(() => syncMayRead(engine));
   const { open: openOlderBody, bodyFor: olderBodyFor } =
     useOlderBody(!demo, olderBodyWire, mayReadOlderBody);
-  const hydrateBody = useCallback(
-    (messageId: string, opts?: { retry?: boolean; urgent?: boolean }) => {
-      if (engine.read().get<EngineMessage>("message", messageId) !== undefined) {
-        engineHydrateBody(messageId, opts);
-        return;
-      }
-      openOlderBody(messageId, opts?.retry ? { retry: true } : {});
-    },
-    [engine, engineHydrateBody, openOlderBody],
-  );
-  const bodyOfMessage = useCallback(
-    (m: EngineMessage) => {
-      if (engine.read().get<EngineMessage>("message", m.id) !== undefined) {
-        return bodyOf(engine.read(), m);
-      }
-      return olderBodyFor(m);
-    },
-    [engine, olderBodyFor],
-  );
+  const hydrateBody = useStableCallback((messageId: string, opts?: { retry?: boolean; urgent?: boolean }) => {
+    if (engine.read().get<EngineMessage>("message", messageId) !== undefined) {
+      engineHydrateBody(messageId, opts);
+      return;
+    }
+    openOlderBody(messageId, opts?.retry ? { retry: true } : {});
+  });
+  const bodyOfMessage = useStableCallback((m: EngineMessage) => {
+    if (engine.read().get<EngineMessage>("message", m.id) !== undefined) {
+      return bodyOf(engine.read(), m);
+    }
+    return olderBodyFor(m);
+  });
 
   /*
    * Attachments for the OPEN message only, and released when it changes.
@@ -3065,7 +3050,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
   // The engine's `unread` IS the answer now — the client-side overlay that used to sit on top of
   // it is gone. The optimistic overlay already makes the flip instant, and unlike the `Set` it
   // survives a reload, because it is backed by a row.
-  const receiptsIsUnread = useCallback((m: EngineMessage) => m.unread, []);
+  const receiptsIsUnread = useStableCallback((m: EngineMessage) => m.unread);
   const receiptsUnread = receipts.filter(receiptsIsUnread).length;
   /**
    * WHAT THE RAIL COUNTS FOR THE STREAMS: "new since last visit" — the fresh side of each
@@ -3133,10 +3118,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
   }, [route]);
 
   /* ── shared actions ── */
-  const openTagPicker = useCallback((messageId: string, anchor: HTMLElement | null) => {
+  const openTagPicker = useStableCallback((messageId: string, anchor: HTMLElement | null) => {
     setPickerIds(null);
     setPicker({ forId: messageId, ...placePicker(anchor) });
-  }, []);
+  });
 
   /**
    * THE INLINE REPLY.
@@ -3151,13 +3136,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * `localStorage` slot — the prefix is the whole of the separation, and both sides of it
    * (the open's read, `onReplyBody`'s write) derive it from here.
    */
-  const replyDraftKey = useCallback(
-    (mode: "reply" | "forward", messageId: string): string =>
-      mode === "forward" ? inlineForwardKey(messageId) : messageId,
-    [],
-  );
+  const replyDraftKey = useStableCallback((mode: "reply" | "forward", messageId: string): string =>
+    mode === "forward" ? inlineForwardKey(messageId) : messageId);
 
-  const openReply = useCallback((messageId: string, all = false) => {
+  const openReply = useStableCallback((messageId: string, all = false) => {
     // The mode travels with the open, never separately: a Reply press while a reply-all
     // editor is up on the same message is an explicit narrowing, and vice versa.
     setReplyAll(all);
@@ -3168,7 +3150,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
     // reply would mount into a pane nobody can see and `r` would look broken — measured on
     // the shipped build at 390px. There, the reader IS the open message, so open it.
     if (readColumnHidden()) setReaderFor(messageId);
-  }, []);
+  });
 
   /**
    * THE INLINE FORWARD — the reply dock in forward mode, inside the thread.
@@ -3184,7 +3166,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * The `no_forward` refusal stays client-side courtesy AND server-side law, exactly as the
    * compose entry states: the user who presses Forward on an OTP learns why immediately.
    */
-  const openForward = useCallback((messageId: string) => {
+  const openForward = useStableCallback((messageId: string) => {
     const m = engine.read().get<EngineMessage>("message", messageId);
     if (!m) return;
     if (m.sensitivity?.no_forward) {
@@ -3197,9 +3179,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
     setReplyBody(readReplyDraft(replyDraftKey("forward", messageId)));
     // The same mobile rule `openReply` states: below 900px the dock lives in the reader.
     if (readColumnHidden()) setReaderFor(messageId);
-  }, [engine, toast, t, replyDraftKey]);
+  });
 
-  const closeReply = useCallback(() => setReplyTo(null), []);
+  const closeReply = useStableCallback(() => setReplyTo(null));
 
   /**
    * REPLY IS A TOGGLE ON THE VERBS THAT SAY "Reply" — the pill's button and the `r`/`⇧R` keys.
@@ -3212,7 +3194,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * paths (a panel's ⋯ menu, a sibling's footer verbs, the drafter) stay on `openReply`, because
    * "reply to THIS message" is not a toggle.
    */
-  const toggleReply = useCallback((messageId: string, all = false) => {
+  const toggleReply = useStableCallback((messageId: string, all = false) => {
     // The MODE is part of the editor's identity: Reply pressed while the FORWARD dock is up on
     // the same message is a switch to the reply, not a close — only the same verb on the same
     // message in the same mode toggles.
@@ -3221,17 +3203,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
       return;
     }
     openReply(messageId, all);
-  }, [replyTo, replyAll, replyMode, openReply]);
+  });
 
-  const onReplyBody = useCallback(
-    (next: RichValue) => {
-      setReplyBody(next);
-      // The mode-aware key — a forward note must never overwrite a reply draft. See
-      // `replyDraftKey`.
-      if (replyTo) writeReplyDraft(replyDraftKey(replyMode, replyTo), next);
-    },
-    [replyTo, replyMode, replyDraftKey],
-  );
+  const onReplyBody = useStableCallback((next: RichValue) => {
+    setReplyBody(next);
+    // The mode-aware key — a forward note must never overwrite a reply draft. See
+    // `replyDraftKey`.
+    if (replyTo) writeReplyDraft(replyDraftKey(replyMode, replyTo), next);
+  });
 
   /* ── buying a drafted reply ───────────────────────────────────────────────────────────── */
 
@@ -3266,26 +3245,23 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
     useState<{ draft: DraftedReply; messageId: string } | null>(null);
 
   /** Open the reply on `messageId` and put `next` in it — memory, buffer and mobile alike. */
-  const placeDraft = useCallback(
-    (messageId: string, next: RichValue) => {
-      // An arriving draft keeps the audience the editor already has on this message — a
-      // reply-all someone bought a draft for must not silently narrow to the sender alone —
-      // and resets to a plain reply when it opens the editor on a different message.
-      setReplyAll((prev) => replyToRef.current === messageId && prev);
-      // A drafted REPLY places into a REPLY editor, whatever the dock is doing right now: with
-      // the forward dock up on the same message, placing into `replyBody` without flipping the
-      // mode would put generated reply text into the forward's note and send it as one. The
-      // forward's own note is safe in its `fwd:` scratch.
-      setReplyMode("reply");
-      setReplyTo(messageId);
-      setReplyBody(next);
-      writeReplyDraft(messageId, next);
-      // Same mobile rule `openReply` states: under 900px the reading column is display:none,
-      // so an editor mounted there is one nobody can see.
-      if (readColumnHidden()) setReaderFor(messageId);
-    },
-    [],
-  );
+  const placeDraft = useStableCallback((messageId: string, next: RichValue) => {
+    // An arriving draft keeps the audience the editor already has on this message — a
+    // reply-all someone bought a draft for must not silently narrow to the sender alone —
+    // and resets to a plain reply when it opens the editor on a different message.
+    setReplyAll((prev) => replyToRef.current === messageId && prev);
+    // A drafted REPLY places into a REPLY editor, whatever the dock is doing right now: with
+    // the forward dock up on the same message, placing into `replyBody` without flipping the
+    // mode would put generated reply text into the forward's note and send it as one. The
+    // forward's own note is safe in its `fwd:` scratch.
+    setReplyMode("reply");
+    setReplyTo(messageId);
+    setReplyBody(next);
+    writeReplyDraft(messageId, next);
+    // Same mobile rule `openReply` states: under 900px the reading column is display:none,
+    // so an editor mounted there is one nobody can see.
+    if (readColumnHidden()) setReaderFor(messageId);
+  });
 
   /**
    * THE DRAFT ARRIVES. It goes into the editor and NOWHERE ELSE.
@@ -3298,41 +3274,35 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * An empty editor takes the draft directly, because there is no question to ask. A non-empty
    * one is asked, and keeps its text until it is answered.
    */
-  const onDraft = useCallback(
-    (draft: DraftedReply, messageId: string) => {
-      // The FORWARD dock's body is not "existing reply text": when the open editor is the
-      // forward on this message, the reply's own scratch is the honest source.
-      const existing =
-        replyToRef.current === messageId && replyModeRef.current === "reply"
-          ? replyBodyRef.current
-          : readReplyDraft(messageId);
-      if (isRichEmpty(existing)) {
-        placeDraft(messageId, draft);
-        return;
-      }
-      // The reply is opened either way, so the question is asked beside the text it is about
-      // rather than in a dialog over a message that is not on screen.
-      placeDraft(messageId, existing);
-      setPendingDraft({ draft, messageId });
-    },
-    [placeDraft],
-  );
+  const onDraft = useStableCallback((draft: DraftedReply, messageId: string) => {
+    // The FORWARD dock's body is not "existing reply text": when the open editor is the
+    // forward on this message, the reply's own scratch is the honest source.
+    const existing =
+      replyToRef.current === messageId && replyModeRef.current === "reply"
+        ? replyBodyRef.current
+        : readReplyDraft(messageId);
+    if (isRichEmpty(existing)) {
+      placeDraft(messageId, draft);
+      return;
+    }
+    // The reply is opened either way, so the question is asked beside the text it is about
+    // rather than in a dialog over a message that is not on screen.
+    placeDraft(messageId, existing);
+    setPendingDraft({ draft, messageId });
+  });
 
   const draftReply = useDraftReply({ onDraft });
 
-  const resolveDraft = useCallback(
-    (mode: "replace" | "append") => {
-      if (!pendingDraft) return;
-      const { draft, messageId } = pendingDraft;
-      const existing =
-        replyToRef.current === messageId && replyModeRef.current === "reply"
-          ? replyBodyRef.current
-          : readReplyDraft(messageId);
-      placeDraft(messageId, mode === "replace" ? draft : appendRich(existing, draft));
-      setPendingDraft(null);
-    },
-    [pendingDraft, placeDraft],
-  );
+  const resolveDraft = useStableCallback((mode: "replace" | "append") => {
+    if (!pendingDraft) return;
+    const { draft, messageId } = pendingDraft;
+    const existing =
+      replyToRef.current === messageId && replyModeRef.current === "reply"
+        ? replyBodyRef.current
+        : readReplyDraft(messageId);
+    placeDraft(messageId, mode === "replace" ? draft : appendRich(existing, draft));
+    setPendingDraft(null);
+  });
 
   const draftReplyChrome = useMemo(
     () => ({ control: draftReply, pending: pendingDraft, resolve: resolveDraft }),
@@ -3419,7 +3389,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    */
   const [replyDone, setReplyDone] = useState<OhboxReplyDone | null>(null);
 
-  const onSendSettled = useCallback((key: string, m: MailSendMutation) => {
+  const onSendSettled = useStableCallback((key: string, m: MailSendMutation) => {
     if (key === COMPOSE_SEND_KEY) {
       /* ── INVARIANT T(b), AND THIS IS THE ONE IMPLEMENTATION OF IT ──────────────────────────
          The live confirmed path used to clear the compose here, in four statements, while the
@@ -3518,7 +3488,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
       return rest;
     });
     setFr({ ...fr, step: fr.step + 1 });
-  }, [fr, engine]);
+  });
   const mailSend = useMailSend(engine, toast, onSendSettled);
   /**
    * The body comes from REACT STATE, not from `readReplyDraft`. Private mode refuses the
@@ -3565,111 +3535,109 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * When nothing can be named the field stays off and `enrich` behaves exactly as before —
    * `sendingMailboxId`'s newest-message guess is a COMPOSE fallback and must never reach a
    * reply, where it would silently answer from an address the sender never wrote to.
+   *
+   * THE ENVELOPE READS `ownAddresses`, AND IT MUST BE THE CURRENT ONE. A callback that captured
+   * it once would answer with the identity the account had when that closure was made — on a
+   * cold tab the empty list, i.e. the unknown-reader envelope — for as long as the closure
+   * lived. `useStableCallback` is what makes that unrepresentable rather than a dependency
+   * array: the body is rebuilt every render and reached through a ref, so there is no capture
+   * to go stale and no list of names to keep in step with the reads above.
    */
-  const sendReply = useCallback(
-    (messageId: string) => {
-      if (messageId !== replyTo) return;
-      const parent = reader.get<EngineMessage>("message", messageId) ?? null;
-      const parentMailbox = parent?.mailboxId ?? null;
-      const from = resolveReplyFrom(fromOptions, parentMailbox, replyFromId);
-      /**
-       * THE SIGNATURE, DERIVED EXACTLY AS THE BLOCK RENDERS IT — same state, same map, same
-       * resolved sender — and sealed into the mutation by `withSignature` at THIS press, so a
-       * send mid-edit ships the block's current text and never a torn mix. `null` (struck,
-       * empty, sender stores none, signatures not yet server-confirmed) leaves the mutation
-       * byte-identical to one built before signatures existed.
-       */
-      const sigText = effectiveSignature(
-        replySig,
-        consent.signaturesKnown ? consent.signatures : {},
-        from.mailboxId,
+  const sendReply = useStableCallback((messageId: string) => {
+    if (messageId !== replyTo) return;
+    const parent = reader.get<EngineMessage>("message", messageId) ?? null;
+    const parentMailbox = parent?.mailboxId ?? null;
+    const from = resolveReplyFrom(fromOptions, parentMailbox, replyFromId);
+    /**
+     * THE SIGNATURE, DERIVED EXACTLY AS THE BLOCK RENDERS IT — same state, same map, same
+     * resolved sender — and sealed into the mutation by `withSignature` at THIS press, so a
+     * send mid-edit ships the block's current text and never a torn mix. `null` (struck,
+     * empty, sender stores none, signatures not yet server-confirmed) leaves the mutation
+     * byte-identical to one built before signatures existed.
+     */
+    const sigText = effectiveSignature(
+      replySig,
+      consent.signaturesKnown ? consent.signatures : {},
+      from.mailboxId,
+    );
+    /**
+     * THE INLINE FORWARD'S ARM — the same builder the editor's lock judged
+     * (`forwardSend`/`forwardEnvelopePlan`, one derivation), sent on the INLINE surface so
+     * the outcome lands on the dock's own lane (`inlineForwardKey`) rather than the compose
+     * form's. Recipients are the user's edit alone; the server quotes the original and
+     * streams its attachments (`mail_send.forwardOf`). Nothing below this block changes for
+     * a reply.
+     */
+    if (replyMode === "forward") {
+      if (!parent) return;
+      mailSend.send(
+        // The signature seals into the forward's note, and the server appends the quoted
+        // original AFTER the body it is handed (`send-service.ts`) — so the block the editor
+        // showed sits ABOVE the quoted history in what the recipient reads.
+        withSignature(forwardSend(parent, {
+          body: replyBody.text,
+          ...(replyBody.html ? { html: replyBody.html } : {}),
+          // The resolved sender, or the receiving mailbox — the editor's lock judged the
+          // same fallback (`InlineReply`), so the button and the wire agree everywhere the
+          // facts are unreadable.
+          mailboxId: from.mailboxId ?? parent.mailboxId,
+          ...(replyAttachments.length > 0 ? { attachments: replyAttachments } : {}),
+          plan: forwardEnvelopePlan(replyEnvelope, fromOptions.map((o) => o.address)),
+        }), sigText),
+        { surface: "inline" },
       );
-      /**
-       * THE INLINE FORWARD'S ARM — the same builder the editor's lock judged
-       * (`forwardSend`/`forwardEnvelopePlan`, one derivation), sent on the INLINE surface so
-       * the outcome lands on the dock's own lane (`inlineForwardKey`) rather than the compose
-       * form's. Recipients are the user's edit alone; the server quotes the original and
-       * streams its attachments (`mail_send.forwardOf`). Nothing below this block changes for
-       * a reply.
-       */
-      if (replyMode === "forward") {
-        if (!parent) return;
-        mailSend.send(
-          // The signature seals into the forward's note, and the server appends the quoted
-          // original AFTER the body it is handed (`send-service.ts`) — so the block the editor
-          // showed sits ABOVE the quoted history in what the recipient reads.
-          withSignature(forwardSend(parent, {
-            body: replyBody.text,
-            ...(replyBody.html ? { html: replyBody.html } : {}),
-            // The resolved sender, or the receiving mailbox — the editor's lock judged the
-            // same fallback (`InlineReply`), so the button and the wire agree everywhere the
-            // facts are unreadable.
-            mailboxId: from.mailboxId ?? parent.mailboxId,
-            ...(replyAttachments.length > 0 ? { attachments: replyAttachments } : {}),
-            plan: forwardEnvelopePlan(replyEnvelope, fromOptions.map((o) => o.address)),
-          }), sigText),
-          { surface: "inline" },
-        );
-        return;
-      }
-      // WHO IT IS ADDRESSED TO — `replyEnvelopePlan`, ONE derivation for the head, the lock
-      // and this wire. Untouched (`replyEnvelope === null`) it is exactly the old inline
-      // resolution: `replyAllRecipients` for a reply-all (the same call that let the button
-      // render), `replyRecipients` for the self-authored plain case, nothing otherwise so
-      // `Engine.enrich` keeps deriving `[parent.from]` — and never a Bcc, which no reply
-      // derives. EDITED, the user's strings are the envelope: To/Cc/Bcc parsed by the compose
-      // form's own parser, a typo emptying the whole set so `canSend` refuses it (the same
-      // rule `composePlan` enforces, arriving on the same predicate).
-      // `ownAddresses`, and NOT `fromOptions` — which is what this line used to pass, and the
-      // sentence above ("the same call that let the button render") was true of the call and
-      // false of its argument. `fromOptions` answers "what may this account send AS": it falls
-      // back to the MIRROR's mailbox rows where `GET /mailboxes` is absent, which is exactly the
-      // demo and the desktop shell. `ownAddresses` falls back to `[]` there. So on those two
-      // surfaces the bar's predicate computed with an unknown reader while this line computed
-      // with a known one, and a self-authored message could show Reply all over an envelope the
-      // send then resolved to the plain reply. One question, one source.
-      const plan = replyEnvelopePlan(parent, ownAddresses, replyAll, replyEnvelope);
-      mailSend.send(withSignature({
-        kind: "mail_send",
-        inReplyTo: messageId,
-        // The PLAIN half in `body`, always — it is what `canSend` judges and what the
-        // optimistic row shows. The markup, when there is any, goes in `html` and the adapter
-        // sends it INSTEAD of `body`, so the recipient's plaintext part is the server's own
-        // rendering of the same markup rather than this client's second opinion.
-        body: replyBody.text,
-        ...(replyBody.html ? { html: replyBody.html } : {}),
-        // OVERRIDE ENRICH ONLY TO CHANGE THE SENDER. `Engine.enrich` derives the parent's mailbox
-        // (`engine.ts:1899`), so the ordinary reply attaches NOTHING and the envelope is unchanged
-        // byte-for-byte. `mailboxId` rides only when the resolved sender is genuinely NOT the
-        // parent's — a substitution (parent gone/disabled) or an explicit pick of a different
-        // address. The last term is what keeps a bare default off the wire: with no facts and no
-        // pick, `resolveReplyFrom` still names a fallback id, and forcing THAT would put a guess on
-        // the wire the old `from.substituted` path left to `enrich` — which is the byte-identity
-        // the untouched-reply guard pins.
-        ...(from.mailboxId !== null &&
-            from.mailboxId !== parentMailbox &&
-            (from.substituted || replyFromId !== null)
-          ? { mailboxId: from.mailboxId }
-          : {}),
-        // FILES, when the user attached any — carried to the send request and stored nowhere
-        // (`ComposeAttachment`). Absent on a plain reply, so the untouched mutation is unchanged.
-        ...(replyAttachments.length > 0 ? { attachments: replyAttachments } : {}),
-        // THE SUBJECT, only when the reader retitled it — `null` attaches nothing, so the
-        // untouched reply's mutation stays byte-identical and `Engine.enrich` derives the
-        // `Re:` subject exactly as before. Threading never reads this text: the server sends
-        // `In-Reply-To`/`References` from the parent row whatever the subject says.
-        ...(replySubjectEdit !== null ? { subject: replySubjectEdit } : {}),
-        ...replyEnvelopeOnWire(plan),
-      }, sigText));
-    },
-    // `ownAddresses` joins the list because the envelope now reads it (above). A memoised
-    // callback that closed over it without declaring it would answer with the identity the
-    // account had at the last shape change — which on a cold tab is the empty one, i.e. the
-    // unknown-reader envelope, for as long as the closure lived.
-    [mailSend, replyTo, replyAll, replyMode, replyBody, replyEnvelope, replyFromId, replyAttachments,
-      replySig, replySubjectEdit, consent.signatures, consent.signaturesKnown,
-      reader, version, fromOptions, ownAddresses],
-  );
+      return;
+    }
+    // WHO IT IS ADDRESSED TO — `replyEnvelopePlan`, ONE derivation for the head, the lock
+    // and this wire. Untouched (`replyEnvelope === null`) it is exactly the old inline
+    // resolution: `replyAllRecipients` for a reply-all (the same call that let the button
+    // render), `replyRecipients` for the self-authored plain case, nothing otherwise so
+    // `Engine.enrich` keeps deriving `[parent.from]` — and never a Bcc, which no reply
+    // derives. EDITED, the user's strings are the envelope: To/Cc/Bcc parsed by the compose
+    // form's own parser, a typo emptying the whole set so `canSend` refuses it (the same
+    // rule `composePlan` enforces, arriving on the same predicate).
+    // `ownAddresses`, and NOT `fromOptions` — which is what this line used to pass, and the
+    // sentence above ("the same call that let the button render") was true of the call and
+    // false of its argument. `fromOptions` answers "what may this account send AS": it falls
+    // back to the MIRROR's mailbox rows where `GET /mailboxes` is absent, which is exactly the
+    // demo and the desktop shell. `ownAddresses` falls back to `[]` there. So on those two
+    // surfaces the bar's predicate computed with an unknown reader while this line computed
+    // with a known one, and a self-authored message could show Reply all over an envelope the
+    // send then resolved to the plain reply. One question, one source.
+    const plan = replyEnvelopePlan(parent, ownAddresses, replyAll, replyEnvelope);
+    mailSend.send(withSignature({
+      kind: "mail_send",
+      inReplyTo: messageId,
+      // The PLAIN half in `body`, always — it is what `canSend` judges and what the
+      // optimistic row shows. The markup, when there is any, goes in `html` and the adapter
+      // sends it INSTEAD of `body`, so the recipient's plaintext part is the server's own
+      // rendering of the same markup rather than this client's second opinion.
+      body: replyBody.text,
+      ...(replyBody.html ? { html: replyBody.html } : {}),
+      // OVERRIDE ENRICH ONLY TO CHANGE THE SENDER. `Engine.enrich` derives the parent's mailbox
+      // (`engine.ts:1899`), so the ordinary reply attaches NOTHING and the envelope is unchanged
+      // byte-for-byte. `mailboxId` rides only when the resolved sender is genuinely NOT the
+      // parent's — a substitution (parent gone/disabled) or an explicit pick of a different
+      // address. The last term is what keeps a bare default off the wire: with no facts and no
+      // pick, `resolveReplyFrom` still names a fallback id, and forcing THAT would put a guess on
+      // the wire the old `from.substituted` path left to `enrich` — which is the byte-identity
+      // the untouched-reply guard pins.
+      ...(from.mailboxId !== null &&
+          from.mailboxId !== parentMailbox &&
+          (from.substituted || replyFromId !== null)
+        ? { mailboxId: from.mailboxId }
+        : {}),
+      // FILES, when the user attached any — carried to the send request and stored nowhere
+      // (`ComposeAttachment`). Absent on a plain reply, so the untouched mutation is unchanged.
+      ...(replyAttachments.length > 0 ? { attachments: replyAttachments } : {}),
+      // THE SUBJECT, only when the reader retitled it — `null` attaches nothing, so the
+      // untouched reply's mutation stays byte-identical and `Engine.enrich` derives the
+      // `Re:` subject exactly as before. Threading never reads this text: the server sends
+      // `In-Reply-To`/`References` from the parent row whatever the subject says.
+      ...(replySubjectEdit !== null ? { subject: replySubjectEdit } : {}),
+      ...replyEnvelopeOnWire(plan),
+    }, sigText));
+  });
 
   /**
    * THE COMPOSE PLAN — the mutation, the rejected recipients and the empty-subject note, all
@@ -3800,12 +3768,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * was an oversight.
    */
   const drafts = useMemo(() => draftsList(reader), [reader, version]);
-  const draftRepliesHere = useCallback(
+  const draftRepliesHere = useStableCallback(
     (d: EngineDraft): boolean =>
       d.inReplyToMessageId != null && reader.get<EngineMessage>("message", d.inReplyToMessageId) != null,
-    [reader, version],
   );
-  const openDraft = useCallback(
+  const openDraft = useStableCallback(
     (d: EngineDraft) => {
       const parent = d.inReplyToMessageId
         ? reader.get<EngineMessage>("message", d.inReplyToMessageId)
@@ -3983,7 +3950,6 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
       }
       go("compose");
     },
-    [draftRepliesHere, autosave, go, reader, version, compose.sig, engine, toast, t],
   );
   /**
    * ── THE SCHEDULED SENDS (mail 0077), and their two verbs ────────────────────────────────
@@ -4009,20 +3975,19 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * banner says the cancel has not landed — user-always-wins, with the sentence carrying the
    * doubt.
    */
-  const cancelOutcomeToast = useCallback((res: { status: string }) => {
+  const cancelOutcomeToast = useStableCallback((res: { status: string }) => {
     toast(res.status === "confirmed"
       ? t("drafts.scheduleCancelled")
       : res.status === "queued"
         ? t("drafts.scheduleCancelQueued")
         : t("drafts.scheduleCancelTooLate"));
-  }, [toast, t]);
-  const cancelSchedule = useCallback(
+  });
+  const cancelSchedule = useStableCallback(
     (draftId: string) => {
       void engine.mutate({ kind: "draft_schedule_cancel", draftId }).then(cancelOutcomeToast);
     },
-    [engine, cancelOutcomeToast],
   );
-  const editScheduled = useCallback(
+  const editScheduled = useStableCallback(
     (d: EngineDraft) => {
       void engine.mutate({ kind: "draft_schedule_cancel", draftId: d.id }).then((res) => {
         if (res.status !== "confirmed") {
@@ -4036,9 +4001,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
         openDraft({ ...d, status: "draft", sendAt: null });
       });
     },
-    [engine, openDraft, cancelOutcomeToast],
   );
-  const discardDraft = useCallback(
+  const discardDraft = useStableCallback(
     (draftId: string) => {
       /**
        * ── THE LIST'S DELETE IS A WRITE SITE, AND IT WAS THE ONE NOT COUNTED ──────────────────
@@ -4097,7 +4061,6 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
         }
       });
     },
-    [engine, autosave, toast, t],
   );
   /* `autosave.draftId` goes on the mutation, so Send uses the row autosave already wrote instead
      of creating a second one — the whole point of one draft from first keystroke to delivery. */
@@ -4105,10 +4068,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
     () => composePlan(compose, composeMailbox, autosave.draftId),
     [compose, composeMailbox, autosave.draftId],
   );
-  const onComposeFields = useCallback((next: ComposeFields) => {
+  const onComposeFields = useStableCallback((next: ComposeFields) => {
     setCompose(next);
     writeComposeDraft(next);
-  }, []);
+  });
   /**
    * A SECOND PRESS AFTER `unverified` IS A FRESH SEND, AND IT HAS TO BUILD A FRESH ROW.
    *
@@ -4128,7 +4091,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * record already resolved. A fresh send of a message whose outcome nobody knows is precisely
    * the duplicate delivery, and it is refused rather than rebuilt.
    */
-  const sendCompose = useCallback((sendAt?: string) => {
+  const sendCompose = useStableCallback((sendAt?: string) => {
     /**
      * THE SIGNATURE, DERIVED EXACTLY AS THE BLOCK RENDERS IT — the form's own state, the
      * server-confirmed map, and the SAME `composeFrom.mailboxId` the block was handed — sealed
@@ -4164,7 +4127,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
      * retry that reuses the key is safe; nothing here may invent a new one.
      */
     mailSend.send(withWhen(withSignature(plan.mutation, sigText)));
-  }, [mailSend, plan, autosave, compose.sig, composeFrom.mailboxId, consent.signatures, consent.signaturesKnown]);
+  });
 
   /**
    * ABANDONING THE COMPOSE — the row, the buffer and the form, in that order.
@@ -4180,13 +4143,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * the delete is queued through the engine, which owns the retry, and holding the view open
    * until the wire answers would make leaving a message feel like a network operation.
    */
-  const cancelCompose = useCallback(() => {
+  const cancelCompose = useStableCallback(() => {
     if (autosave.draftId) writeReplyMeta(`draft:${autosave.draftId}`, {});
     void autosave.discard();
     setCompose(EMPTY_COMPOSE);
     clearComposeDraft();
     go("ohbox");
-  }, [autosave, go]);
+  });
 
   /**
    * WRITE TO ONE PERSON — the contact popover's Write verb (viewer redesign).
@@ -4205,7 +4168,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * no longer has — Forward is the thread's inline dock now, `openForward`, and never touches
    * the compose form at all.)
    */
-  const writeTo = useCallback(
+  const writeTo = useStableCallback(
     (address: string, name?: string) => {
       const seeded: ComposeFields = {
         ...EMPTY_COMPOSE,
@@ -4240,7 +4203,6 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
       setReplyTo(null);
       go("compose");
     },
-    [autosave, go],
   );
 
   /**
@@ -4305,35 +4267,32 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * — is awaited, and `screeningToast` picks the sentence from what the server actually said.
    * The branch lives beside the sentences in `sender-screening.ts`, never here.
    */
-  const changeScreening = useCallback(
-    (
-      messageId: string,
-      dest: ScreeningDest,
-      scope: ScreeningScope = "sender",
-      makeRule = true,
-      // The contact-chip override (viewer redesign): the sheet resolved a To/Cc address, so the
-      // dispatch must resolve the SAME one — a plan computed from the message id alone would
-      // preview one person's mail and move the sender's.
-      address?: string,
-    ) => {
-      setSenderMenu(null);
-      const sender = senderScreening(reader, messageId, address);
-      if (!sender) return;
-      const plan = planScreeningChange(sender, dest, scope, makeRule);
-      const place = PLACE_LABEL[dest] ?? dest;
-      // The SUBJECT of the sentence follows the scope, or a domain decision would report
-      // itself as being about the one address the user happened to click.
-      const who = scope === "domain" ? displayDomain(sender.domain) : displayAddress(sender.address);
-      if (plan.mutations.length === 0) {
-        toast(t("screening.toastAlready", { sender: who, place }));
-        return;
-      }
-      void dispatchScreeningChange(plan, (m) => engine.mutate(m)).then((key) => {
-        toast(t(`screening.${key}`, { sender: who, place, count: plan.moved }));
-      });
-    },
-    [engine, reader, toast, t],
-  );
+  const changeScreening = useStableCallback((
+    messageId: string,
+    dest: ScreeningDest,
+    scope: ScreeningScope = "sender",
+    makeRule = true,
+    // The contact-chip override (viewer redesign): the sheet resolved a To/Cc address, so the
+    // dispatch must resolve the SAME one — a plan computed from the message id alone would
+    // preview one person's mail and move the sender's.
+    address?: string,
+  ) => {
+    setSenderMenu(null);
+    const sender = senderScreening(reader, messageId, address);
+    if (!sender) return;
+    const plan = planScreeningChange(sender, dest, scope, makeRule);
+    const place = PLACE_LABEL[dest] ?? dest;
+    // The SUBJECT of the sentence follows the scope, or a domain decision would report
+    // itself as being about the one address the user happened to click.
+    const who = scope === "domain" ? displayDomain(sender.domain) : displayAddress(sender.address);
+    if (plan.mutations.length === 0) {
+      toast(t("screening.toastAlready", { sender: who, place }));
+      return;
+    }
+    void dispatchScreeningChange(plan, (m) => engine.mutate(m)).then((key) => {
+      toast(t(`screening.${key}`, { sender: who, place, count: plan.moved }));
+    });
+  });
 
   /**
    * Open the detail view for whichever scope the sheet was showing.
@@ -4342,31 +4301,25 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * holds a plain snapshot and cannot re-derive a different answer on a re-render caused by a
    * sync drain landing mid-read. The sheet closes, because the panel replaces it.
    */
-  const openSenderAudit = useCallback(
-    (messageId: string, scope: ScreeningScope, address?: string) => {
-      setSenderMenu(null);
-      const sender = senderScreening(reader, messageId, address);
-      if (!sender) return;
-      setSenderAudit({
-        title: scope === "domain" ? displayDomain(sender.domain) : displayAddress(sender.address),
-        domain: scope === "domain",
-        rows: attributeMessages(reader, sender.scopes[scope].messages),
-      });
-    },
-    [reader],
-  );
+  const openSenderAudit = useStableCallback((messageId: string, scope: ScreeningScope, address?: string) => {
+    setSenderMenu(null);
+    const sender = senderScreening(reader, messageId, address);
+    if (!sender) return;
+    setSenderAudit({
+      title: scope === "domain" ? displayDomain(sender.domain) : displayAddress(sender.address),
+      domain: scope === "domain",
+      rows: attributeMessages(reader, sender.scopes[scope].messages),
+    });
+  });
 
   /**
    * `address` is the contact-chip override (viewer redesign): the sheet then resolves that To/Cc
    * address rather than the message's sender — see `SenderMenuState.address`. Every caller
    * that predates chips passes two arguments and gets the sender, unchanged.
    */
-  const openSenderMenu = useCallback(
-    (messageId: string, anchor: HTMLElement | null, address?: string) => {
-      setSenderMenu({ messageId, address, ...placePicker(anchor) });
-    },
-    [],
-  );
+  const openSenderMenu = useStableCallback((messageId: string, anchor: HTMLElement | null, address?: string) => {
+    setSenderMenu({ messageId, address, ...placePicker(anchor) });
+  });
 
   /**
    * OPEN THE SUBJECT-RULE SHEET — from a message's title, and from the sender popover's last row.
@@ -4379,10 +4332,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * It CLOSES the sender popover, because the subject sheet replaces it: they answer the same
    * question about different halves of one message and two open sheets is two questions.
    */
-  const openSubjectRule = useCallback((messageId: string, anchor: HTMLElement | null = null) => {
+  const openSubjectRule = useStableCallback((messageId: string, anchor: HTMLElement | null = null) => {
     setSenderMenu(null);
     setSubjectRule({ messageId, ...placePicker(anchor) });
-  }, []);
+  });
 
   /**
    * ── THE TWO GATES THE SPLIT VIEWS' MESSAGE VERBS BORROW ────────────────────────────────
@@ -4398,15 +4351,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * `replyAllRecipients` against the account's addresses — the same call the bar's button and
    * the `⇧R` binding both make, and the one `sendReply` resolves again at send time.
    */
-  const canDeleteMessage = useCallback(
-    (m: EngineMessage): boolean =>
-      consent.foldersEnabled === true && reader.get<EngineMessage>("message", m.id) != null,
-    [consent.foldersEnabled, reader],
-  );
-  const canReplyAllTo = useCallback(
-    (m: EngineMessage): boolean => replyAllRecipients(m, ownAddresses) !== null,
-    [ownAddresses],
-  );
+  const canDeleteMessage = useStableCallback((m: EngineMessage): boolean =>
+    consent.foldersEnabled === true && reader.get<EngineMessage>("message", m.id) != null);
+  const canReplyAllTo = useStableCallback((m: EngineMessage): boolean => replyAllRecipients(m, ownAddresses) !== null);
 
   /**
    * WRITE THE TWO-TERM RULE, AND SAY ONLY WHAT THE SERVER CONFIRMED.
@@ -4420,38 +4367,35 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * Dispatched here rather than inside the sheet so the sheet stays a pure render of a plan, and so
    * the awaiting is testable without a DOM.
    */
-  const confirmSubjectRule = useCallback(
-    (messageId: string, term: string, dest: ScreeningDest, field: TermField = "subject") => {
-      setSubjectRule(null);
-      const ctx = subjectRuleContext(reader, messageId);
-      if (!ctx) return;
-      const plan = planSubjectRule(ctx, term, dest, field);
-      const place = PLACE_LABEL[dest] ?? dest;
-      const rules = plan.ruleMutations.map((m) => engine.mutate(m));
-      for (const m of plan.mutations) {
-        if (!plan.ruleMutations.includes(m)) void engine.mutate(m);
-      }
-      void Promise.all(rules).then((results) => {
-        const key = subjectRuleToast(plan, worstStatus(results));
-        // The count is `matched`, not `outOfPlace`: the sentence is about the mail the rule NAMES,
-        // which is what the confirm row showed. Reporting the smaller number afterwards would read
-        // as the rule having done less than it said. The confirmed sentence names the FIELD the
-        // term reads (mail 0052), because "in the subject" about a text rule is a false claim.
-        toast(t.has(`screening.${key}`)
-          ? t(`screening.${key}`, { sender: displayAddress(ctx.address), place, count: plan.matched, term: plan.term })
-          : key === "subjectAlready"
-            ? `You already had that rule. Nothing changed.`
-            : key === "subjectRuleFailed"
-              ? `That rule wasn't saved. Nothing has moved.`
-              : key === "subjectRuleQueued"
-                ? `Rule saved here. We'll send it when you're back online.`
-                : plan.field === "body"
-                  ? `Mail from ${displayAddress(ctx.address)} with »${plan.term}« in the text now files to ${place}.`
-                  : `Mail from ${displayAddress(ctx.address)} with »${plan.term}« in the subject now files to ${place}.`);
-      });
-    },
-    [engine, reader, toast, t],
-  );
+  const confirmSubjectRule = useStableCallback((messageId: string, term: string, dest: ScreeningDest, field: TermField = "subject") => {
+    setSubjectRule(null);
+    const ctx = subjectRuleContext(reader, messageId);
+    if (!ctx) return;
+    const plan = planSubjectRule(ctx, term, dest, field);
+    const place = PLACE_LABEL[dest] ?? dest;
+    const rules = plan.ruleMutations.map((m) => engine.mutate(m));
+    for (const m of plan.mutations) {
+      if (!plan.ruleMutations.includes(m)) void engine.mutate(m);
+    }
+    void Promise.all(rules).then((results) => {
+      const key = subjectRuleToast(plan, worstStatus(results));
+      // The count is `matched`, not `outOfPlace`: the sentence is about the mail the rule NAMES,
+      // which is what the confirm row showed. Reporting the smaller number afterwards would read
+      // as the rule having done less than it said. The confirmed sentence names the FIELD the
+      // term reads (mail 0052), because "in the subject" about a text rule is a false claim.
+      toast(t.has(`screening.${key}`)
+        ? t(`screening.${key}`, { sender: displayAddress(ctx.address), place, count: plan.matched, term: plan.term })
+        : key === "subjectAlready"
+          ? `You already had that rule. Nothing changed.`
+          : key === "subjectRuleFailed"
+            ? `That rule wasn't saved. Nothing has moved.`
+            : key === "subjectRuleQueued"
+              ? `Rule saved here. We'll send it when you're back online.`
+              : plan.field === "body"
+                ? `Mail from ${displayAddress(ctx.address)} with »${plan.term}« in the text now files to ${place}.`
+                : `Mail from ${displayAddress(ctx.address)} with »${plan.term}« in the subject now files to ${place}.`);
+    });
+  });
 
   /**
    * Clicking a sender's circle or address, on ANY surface that shows one.
@@ -4478,36 +4422,24 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * The hit test itself is `sender-hit.ts` — a pure function of one element, so which elements
    * count as "the sender" can be asserted without standing up an engine and a router.
    */
-  const onStageClickCapture = useCallback(
-    (e: ReactMouseEvent<HTMLElement>) => {
-      if (e.shiftKey) return;
-      const hit = senderHitOf(e.target as HTMLElement);
-      if (!hit) return;
-      e.preventDefault();
-      e.stopPropagation();
-      openSenderMenu(hit.id, hit.anchor);
-    },
-    [openSenderMenu],
-  );
+  const onStageClickCapture = useStableCallback((e: ReactMouseEvent<HTMLElement>) => {
+    if (e.shiftKey) return;
+    const hit = senderHitOf(e.target as HTMLElement);
+    if (!hit) return;
+    e.preventDefault();
+    e.stopPropagation();
+    openSenderMenu(hit.id, hit.anchor);
+  });
 
-  const revokeRule = useCallback(
-    (ruleId: string) => engine.mutate({ kind: "rule_delete", ruleId }),
-    [engine],
-  );
+  const revokeRule = useStableCallback((ruleId: string) => engine.mutate({ kind: "rule_delete", ruleId }));
 
-  const retargetRule = useCallback(
-    (ruleId: string, destination: Folder) => engine.mutate({ kind: "rule_update", ruleId, destination }),
-    [engine],
-  );
+  const retargetRule = useStableCallback((ruleId: string, destination: Folder) => engine.mutate({ kind: "rule_update", ruleId, destination }));
 
-  const toggleTag = useCallback(
-    (messageId: string, tagId: string, assigned: boolean) => {
-      const name = tags.find((x) => x.id === tagId)?.name ?? tagId;
-      void engine.mutate({ kind: "tag_assign", messageId, tagId, assigned });
-      toast(assigned ? t("tag.toastTagged", { name }) : t("tag.toastUntagged", { name }));
-    },
-    [engine, tags, toast, t],
-  );
+  const toggleTag = useStableCallback((messageId: string, tagId: string, assigned: boolean) => {
+    const name = tags.find((x) => x.id === tagId)?.name ?? tagId;
+    void engine.mutate({ kind: "tag_assign", messageId, tagId, assigned });
+    toast(assigned ? t("tag.toastTagged", { name }) : t("tag.toastUntagged", { name }));
+  });
 
   /**
    * The same verb over a SET — and it is `tag_assign` fanned out.
@@ -4522,29 +4454,26 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * idempotent, so this is not correctness — it is not asking a server to restate forty
    * things it already holds.
    */
-  const bulkToggleTag = useCallback(
-    (ids: string[], tagId: string, assigned: boolean) => {
-      const name = tags.find((x) => x.id === tagId)?.name ?? tagId;
-      const targets = ids.filter((id) => {
-        const m = reader.get<EngineMessage>("message", id);
-        return m != null && m.labels.includes(tagId) !== assigned;
-      });
-      if (targets.length === 0) return;
-      for (const messageId of targets) {
-        void engine.mutate({ kind: "tag_assign", messageId, tagId, assigned });
-      }
-      if (targets.length === 1) {
-        toast(assigned ? t("tag.toastTagged", { name }) : t("tag.toastUntagged", { name }));
-        return;
-      }
-      toast(
-        assigned
-          ? t("tag.toastTaggedMany", { name, count: targets.length })
-          : t("tag.toastUntaggedMany", { name, count: targets.length }),
-      );
-    },
-    [engine, reader, tags, toast, t],
-  );
+  const bulkToggleTag = useStableCallback((ids: string[], tagId: string, assigned: boolean) => {
+    const name = tags.find((x) => x.id === tagId)?.name ?? tagId;
+    const targets = ids.filter((id) => {
+      const m = reader.get<EngineMessage>("message", id);
+      return m != null && m.labels.includes(tagId) !== assigned;
+    });
+    if (targets.length === 0) return;
+    for (const messageId of targets) {
+      void engine.mutate({ kind: "tag_assign", messageId, tagId, assigned });
+    }
+    if (targets.length === 1) {
+      toast(assigned ? t("tag.toastTagged", { name }) : t("tag.toastUntagged", { name }));
+      return;
+    }
+    toast(
+      assigned
+        ? t("tag.toastTaggedMany", { name, count: targets.length })
+        : t("tag.toastUntaggedMany", { name, count: targets.length }),
+    );
+  });
 
   /**
    * A TAG DROPPED ON THE RAIL — apply, never toggle.
@@ -4556,10 +4485,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * sentence at the end. A drop can never REMOVE a tag — the drop's meaning is "put it
    * here", and the picker remains the place where a tag is taken off.
    */
-  const dropTag = useCallback(
-    (ids: string[], tagId: string) => bulkToggleTag(ids, tagId, true),
-    [bulkToggleTag],
-  );
+  const dropTag = useStableCallback((ids: string[], tagId: string) => bulkToggleTag(ids, tagId, true));
 
   /**
    * Mint a tag and put it on this message.
@@ -4575,15 +4501,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * then appears on the next drain under the real id, which is why nothing here asserts the
    * tag is visible yet.
    */
-  const createTag = useCallback(
-    (messageId: string, name: string) => {
-      void engine.mutate({
-        kind: "tag_assign", messageId, tagId: crypto.randomUUID(), assigned: true, createName: name,
-      });
-      toast(t("tag.toastTagged", { name }));
-    },
-    [engine, toast, t],
-  );
+  const createTag = useStableCallback((messageId: string, name: string) => {
+    void engine.mutate({
+      kind: "tag_assign", messageId, tagId: crypto.randomUUID(), assigned: true, createName: name,
+    });
+    toast(t("tag.toastTagged", { name }));
+  });
 
   /**
    * ═══ THE TAG, WITHOUT A MESSAGE ═══════════════════════════════════════════════════════
@@ -4598,53 +4521,41 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * the id (unlike tag-or-create, which mints under the client's), so this uuid names a row
    * that lives exactly as long as the overlay — see the mutation's own comment.
    */
-  const createTagAlone = useCallback(
-    (name: string) => {
-      void engine.mutate({ kind: "tag_create", tagId: crypto.randomUUID(), name });
-      toast(t("tag.toastCreated", { name }));
-    },
-    [engine, toast, t],
-  );
+  const createTagAlone = useStableCallback((name: string) => {
+    void engine.mutate({ kind: "tag_create", tagId: crypto.randomUUID(), name });
+    toast(t("tag.toastCreated", { name }));
+  });
 
-  const renameTag = useCallback(
-    (tagId: string, name: string) => {
-      void engine.mutate({ kind: "tag_rename", tagId, name });
-      toast(t("tag.toastRenamed", { name }));
-    },
-    [engine, toast, t],
-  );
+  const renameTag = useStableCallback((tagId: string, name: string) => {
+    void engine.mutate({ kind: "tag_rename", tagId, name });
+    toast(t("tag.toastRenamed", { name }));
+  });
 
   /**
    * The name is read BEFORE the mutation. Afterwards the optimistic effect has already
    * tombstoned the row, so `reader.get` answers undefined and the sentence would be about a
    * tag it could not name.
    */
-  const deleteTag = useCallback(
-    (tagId: string) => {
-      const name = reader.get<TagDTO>("tag", tagId)?.name ?? "";
-      void engine.mutate({ kind: "tag_delete", tagId });
-      toast(t("tag.toastDeleted", { name }));
-    },
-    [engine, reader, toast, t],
-  );
+  const deleteTag = useStableCallback((tagId: string) => {
+    const name = reader.get<TagDTO>("tag", tagId)?.name ?? "";
+    void engine.mutate({ kind: "tag_delete", tagId });
+    toast(t("tag.toastDeleted", { name }));
+  });
   /**
    * Recolour a tag. NO toast, deliberately: the dot changes colour in place, which is the
    * confirmation — a "Recoloured Invoices" toast would restate a change the eye already saw. The
    * picker only ever passes a renderable hue (`TAG_HUES`), and the server accepts exactly those,
    * so this cannot store a colour nothing can draw.
    */
-  const recolorTag = useCallback(
-    (tagId: string, hue: string) => {
-      void engine.mutate({ kind: "tag_recolor", tagId, hue });
-    },
-    [engine],
-  );
+  const recolorTag = useStableCallback((tagId: string, hue: string) => {
+    void engine.mutate({ kind: "tag_recolor", tagId, hue });
+  });
   const tagAdmin = useMemo(
     () => ({ onCreate: createTagAlone, onRename: renameTag, onRecolor: recolorTag, onDelete: deleteTag }),
     [createTagAlone, renameTag, recolorTag, deleteTag],
   );
 
-  const onMessageAction = useCallback(
+  const onMessageAction = useStableCallback(
     (action: MessageAction, m: EngineMessage) => {
       switch (action) {
         case "reply":
@@ -4884,11 +4795,6 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
         }
       }
     },
-    [engine, toast, t, now, openReply, openForward, toggleReply, markSeen, draftReply, replyTo, replyAll,
-      /* `deleting.remove` and not `deleting`: the hook returns a fresh object each render (the
-         held set is state), and depending on it would rebuild this callback on every keystroke
-         anywhere. `remove` is the stable half. */
-      deleting.remove, readerFor],
   );
 
   /**
@@ -4913,15 +4819,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * Left out, pressing Forward on a Reads or Receipts card would set `replyTo` with nothing
    * mounted to render it — the dead-button shape this list exists to prevent.
    */
-  const onStreamAction = useCallback(
-    (action: MessageAction, m: EngineMessage) => {
-      if (action === "reply" || action === "reply_all" || action === "forward" || action === "draft") {
-        setReaderFor(m.id);
-      }
-      onMessageAction(action, m);
-    },
-    [onMessageAction],
-  );
+  const onStreamAction = useStableCallback((action: MessageAction, m: EngineMessage) => {
+    if (action === "reply" || action === "reply_all" || action === "forward" || action === "draft") {
+      setReaderFor(m.id);
+    }
+    onMessageAction(action, m);
+  });
 
   /**
    * ═══ THE SELECTION'S VERBS ══════════════════════════════════════════════════════════
@@ -4960,7 +4863,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * moves and are not refused: a reader "reads, searches, marks read and sends"
    * (`screener.moveBarWhy`), and refusing those would withhold presses that work.
    */
-  const onBulkAction = useCallback(
+  const onBulkAction = useStableCallback(
     (action: BulkAction, ids: string[]): boolean => {
       if (ids.length === 0) return false;
       if (action === "delete") {
@@ -5026,7 +4929,6 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
       toast(t("ohbox.toastBulkMoved", { count: moved, place: PLACE_LABEL[view] ?? view }));
       return true;
     },
-    [engine, reader, markSeen, toast, t, now, deleting],
   );
 
   /**
@@ -5049,39 +4951,36 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * from that sender, not only the ones that were picked — that IS what screening a sender
    * means, and it is precisely why the number has to be on screen before the button commits.
    */
-  const planBulkScreening = useCallback(
-    (ids: string[], dest: ScreeningDest) => {
-      const seen = new Set<string>();
-      const plans: EngineMutation[] = [];
-      let senders = 0;
-      let messages = 0;
-      let rules = 0;
-      for (const id of ids) {
-        const s = senderScreening(reader, id);
-        if (!s || seen.has(s.key)) continue;
-        seen.add(s.key);
-        /**
-         * `makeRule: false`, EXPLICITLY. The single-sender sheet makes a rule by
-         * default; bulk does not, and the reason is its own confirm copy — `bulkConfirm`
-         * promises *"No rule is made, so future mail is unchanged"* and `bulkConfirmRules`
-         * counts only the senders the SCREENER will rule on. Letting the default through here
-         * would have made both sentences false for up to forty senders at once, silently, and
-         * would have claimed rules whose outcome this path does not await. Owed, not dropped:
-         * bulk rule-creation needs its own confirm copy and its own three-outcome reporting.
-         */
-        const plan = planScreeningChange(s, dest, "sender", false);
-        if (plan.mutations.length === 0) continue;
-        senders++;
-        messages += plan.moved;
-        if (plan.rule) rules++;
-        plans.push(...plan.mutations);
-      }
-      return { senders, messages, rules, mutations: plans };
-    },
-    [reader],
-  );
+  const planBulkScreening = useStableCallback((ids: string[], dest: ScreeningDest) => {
+    const seen = new Set<string>();
+    const plans: EngineMutation[] = [];
+    let senders = 0;
+    let messages = 0;
+    let rules = 0;
+    for (const id of ids) {
+      const s = senderScreening(reader, id);
+      if (!s || seen.has(s.key)) continue;
+      seen.add(s.key);
+      /**
+       * `makeRule: false`, EXPLICITLY. The single-sender sheet makes a rule by
+       * default; bulk does not, and the reason is its own confirm copy — `bulkConfirm`
+       * promises *"No rule is made, so future mail is unchanged"* and `bulkConfirmRules`
+       * counts only the senders the SCREENER will rule on. Letting the default through here
+       * would have made both sentences false for up to forty senders at once, silently, and
+       * would have claimed rules whose outcome this path does not await. Owed, not dropped:
+       * bulk rule-creation needs its own confirm copy and its own three-outcome reporting.
+       */
+      const plan = planScreeningChange(s, dest, "sender", false);
+      if (plan.mutations.length === 0) continue;
+      senders++;
+      messages += plan.moved;
+      if (plan.rule) rules++;
+      plans.push(...plan.mutations);
+    }
+    return { senders, messages, rules, mutations: plans };
+  });
 
-  const onBulkScreen = useCallback(
+  const onBulkScreen = useStableCallback(
     (ids: string[], dest: ScreeningDest): boolean => {
       /* SCREENING A SET IS FILING IT, so it answers a reader the way every other filing verb
          does — at the press, once, with nothing dispatched and the selection kept. The
@@ -5119,15 +5018,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
       );
       return true;
     },
-    [engine, planBulkScreening, toast, t],
   );
 
   /** Tag a whole selection: the shell's picker, pointed at a set. See `pickerIds`. */
-  const openBulkTagPicker = useCallback((ids: string[], anchor: HTMLElement | null) => {
+  const openBulkTagPicker = useStableCallback((ids: string[], anchor: HTMLElement | null) => {
     if (ids.length === 0) return;
     setPickerIds(ids);
     setPicker({ forId: ids[0]!, ...placePicker(anchor) });
-  }, []);
+  });
 
   /**
    * The four callbacks the bulk bar takes, as one stable object.
@@ -5180,11 +5078,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
       }),
     [engine],
   );
-  const readsMarkSeen = useCallback((id: string) => readsSeenBatch.add(id), [readsSeenBatch]);
-  const receiptsMarkSeen = useCallback(
-    (id: string) => receiptsSeenBatch.add(id),
-    [receiptsSeenBatch],
-  );
+  const readsMarkSeen = useStableCallback((id: string) => readsSeenBatch.add(id));
+  const receiptsMarkSeen = useStableCallback((id: string) => receiptsSeenBatch.add(id));
   /**
    * The dying-tab drain — `StreamShell`'s own pagehide argument, applied to the batch: the
    * engine's durable outbox persists the dispatched verb before the wire, so a flush in the
@@ -5211,24 +5106,37 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * already history) and skips entirely when nothing would change — a leave that flips
    * nothing and moves nothing is not worth a wire round-trip and the drain that follows it.
    */
-  const commitFeedSeen = useCallback(
-    (view: FeedView) =>
-      (commit: { upToId: string; messageIds: string[] }) => {
-        // The departing visit's pending glance marks go first — see `readsSeenBatch`.
-        (view === "reads" ? readsSeenBatch : receiptsSeenBatch).flushNow();
-        const held = engine.read().get<WaterlineMeta>("view_meta", waterlineIdOf(view));
-        if (commit.messageIds.length === 0 && held?.newestSeenId === commit.upToId) return;
-        void engine.mutate({
-          kind: "feed_mark_seen",
-          view,
-          upToId: commit.upToId,
-          messageIds: commit.messageIds,
-        });
-      },
-    [engine, readsSeenBatch, receiptsSeenBatch],
-  );
-  const commitReadsSeen = useMemo(() => commitFeedSeen("reads"), [commitFeedSeen]);
-  const commitReceiptsSeen = useMemo(() => commitFeedSeen("receipts"), [commitFeedSeen]);
+  const commitFeedSeen = useStableCallback((view: FeedView) =>
+    (commit: FeedSeenCommit) => {
+      // The departing visit's pending glance marks go first — see `readsSeenBatch`.
+      (view === "reads" ? readsSeenBatch : receiptsSeenBatch).flushNow();
+      const held = engine.read().get<WaterlineMeta>("view_meta", waterlineIdOf(view));
+      if (commit.messageIds.length === 0 && held?.newestSeenId === commit.upToId) return;
+      void engine.mutate({
+        kind: "feed_mark_seen",
+        view,
+        upToId: commit.upToId,
+        messageIds: commit.messageIds,
+      });
+    });
+  /**
+   * THE TWO VIEWS' COMMITS RE-APPLY `commitFeedSeen` ON EVERY CALL, and that is the whole point
+   * of them not being memos.
+   *
+   * `commitFeedSeen` is a factory: calling it returns an inner closure over THIS render's
+   * `engine` and glance batches. As `useMemo(() => commitFeedSeen("reads"), [commitFeedSeen])`
+   * these were computed once — and once `commitFeedSeen` has a stable identity, once is FOREVER,
+   * so both would have kept the first render's inner closure and marked mail seen against a dead
+   * engine and dead batches for the life of the tab. Nothing would have thrown; the marks would
+   * simply have stopped landing.
+   *
+   * Applying the factory inside the call is what keeps it current: the stable callback forwards
+   * to the newest body, which builds a fresh inner closure over the current engine, which is then
+   * invoked. Guarded by a test that re-renders with a second engine and asserts the mark reaches
+   * THAT one, with the memoised shape kept beside it as the control that tells the two apart.
+   */
+  const commitReadsSeen = useStableCallback((commit: FeedSeenCommit) => commitFeedSeen("reads")(commit));
+  const commitReceiptsSeen = useStableCallback((commit: FeedSeenCommit) => commitFeedSeen("receipts")(commit));
 
   /**
    * The Screener row that speaks for `m`, in `segment`.
@@ -5240,19 +5148,16 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * server group by. Null when this client holds no row for them — the caller navigates
    * without a selection rather than inventing one.
    */
-  const screenerRowFor = useCallback(
-    (m: EngineMessage, segment: ScreenerSegmentId): string | null => {
-      const want = senderKey(m.from.address);
-      const rows =
-        segment === "waiting"
-          ? screener.waiting
-          : segment === "screened"
-            ? screener.screenedOut
-            : screener.spam.map((r) => r.sender);
-      return rows.find((r) => senderKey(r.from.address) === want)?.id ?? null;
-    },
-    [screener.waiting, screener.screenedOut, screener.spam],
-  );
+  const screenerRowFor = useStableCallback((m: EngineMessage, segment: ScreenerSegmentId): string | null => {
+    const want = senderKey(m.from.address);
+    const rows =
+      segment === "waiting"
+        ? screener.waiting
+        : segment === "screened"
+          ? screener.screenedOut
+          : screener.spam.map((r) => r.sender);
+    return rows.find((r) => senderKey(r.from.address) === want)?.id ?? null;
+  });
 
   /**
    * OPEN IT WHERE IT LIVES — the one answer, finished.
@@ -5294,88 +5199,82 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * hit (a row `GET /search` returned and this device's mirror does not hold) is in none of them,
    * and `openTargetFor` then opens it in the reader rather than navigating to a pile it is not in.
    */
-  const pileHolds = useCallback(
-    (view: "ohbox" | "reads" | "receipts", id: string): boolean => {
-      if (view === "ohbox") return allOhbox.some((m) => m.id === id);
-      if (view === "receipts") return receipts.some((m) => m.id === id);
-      return partition.fresh.some((m) => m.id === id) || partition.seen.some((m) => m.id === id);
-    },
-    [allOhbox, receipts, partition.fresh, partition.seen],
-  );
+  const pileHolds = useStableCallback((view: "ohbox" | "reads" | "receipts", id: string): boolean => {
+    if (view === "ohbox") return allOhbox.some((m) => m.id === id);
+    if (view === "receipts") return receipts.some((m) => m.id === id);
+    return partition.fresh.some((m) => m.id === id) || partition.seen.some((m) => m.id === id);
+  });
 
-  const openMessage = useCallback(
-    (m: EngineMessage) => {
-      // `consentView?.placeOf` is what turns "open it where its FOLDER is" into "open it where
-      // it is PRESENTED" — the same map SearchView labels the hit's chip from, so the arrival
-      // and the chip can no longer disagree. Undefined on demo/desktop, where folder is place.
-      // `pileHolds` is the second half: presentation says WHERE, the pile says WHETHER.
-      const target = openTargetFor(
-        m,
-        readColumnHidden(),
-        screenerRowFor,
-        consentView?.placeOf,
-        parked,
-        pileHolds,
-        // The mailbox's own folders (mailbox-scoped, like every folder-shaped surface): a hit
-        // living in one navigates to its folder view instead of dead-ending in Search — but
-        // ONLY when the PRESENTED mirror holds the row under that folder, which is exactly
-        // what the folder view renders. An archive-only hit (GET /search reaching past this
-        // device's window) falls to the reader, which carries the off-mirror row with it.
-        (hit, folder) => {
-          const f = folders.find((x) => x.mailboxId === hit.mailboxId && x.name === folder);
-          if (!f) return null;
-          const held = presented.get<EngineMessage>("message", hit.id);
-          return held && held.folder === folder ? f.id : null;
-        },
-      );
-      switch (target.kind) {
-        case "ohbox":
-          setOhboxSel(target.id);
-          // The reader, and via `readerPending` because `go` is about to clear it.
-          if (target.reader) setReaderPending(target.id);
-          setLocated(target.id);
-          go("ohbox");
-          return;
-        case "stream":
-          (target.view === "reads" ? setReadsCur : setReceiptsCur)(target.id);
-          setJump({ view: target.view, id: target.id });
-          setLocated(target.id);
-          go(target.view);
-          return;
-        case "screener":
-          // `target.row` is non-null by construction (see `OpenTarget`): a rowless screener hit
-          // is routed to the reader by `openTargetFor`, never here.
-          setScnSel((s) => ({ ...s, [target.segment]: target.row }));
-          // The SENDER row's id, not the message's: that is what this view puts in
-          // `data-id`, and the flash has to name the thing on screen.
-          setLocated(target.row);
-          goScreener(target.segment);
-          return;
-        case "folder":
-          // The canonical folder deep-link WITH the open-message tail, in one hash write: the
-          // route↔open-state mirror then opens the reader over the folder view (the same
-          // overlay a tag hit gets), so the message is on screen in the folder that holds it.
-          setLocated(target.id);
-          window.location.hash = `#/folder/${target.folderId}/m/${target.id}`;
-          return;
-        default:
-          // No navigation, so no `readerPending` is needed: nothing will clear this. This is the
-          // "folder no view owns" arm, the History arm and the PARKED arm — a message presented
-          // in History, or filed into a bottom pile, belongs to no list, so the reader opens over
-          // wherever you are, exactly as HistoryView's own row does — and now also the arm for a
-          // hit no pile holds at all (an archive-only search result), which must still open the
-          // message it named.
-          //
-          // The row travels with the open so the reader has something to show even when the
-          // mirror holds none — see `readerOffMirror`. Set unconditionally: the mirror's own row
-          // wins whenever there is one, so this is only ever consulted for a message there is no
-          // other copy of.
-          setReaderOffMirror(m);
-          setReaderFor(target.id);
-      }
-    },
-    [screenerRowFor, consentView?.placeOf, parked, pileHolds, folders, presented],
-  );
+  const openMessage = useStableCallback((m: EngineMessage) => {
+    // `consentView?.placeOf` is what turns "open it where its FOLDER is" into "open it where
+    // it is PRESENTED" — the same map SearchView labels the hit's chip from, so the arrival
+    // and the chip can no longer disagree. Undefined on demo/desktop, where folder is place.
+    // `pileHolds` is the second half: presentation says WHERE, the pile says WHETHER.
+    const target = openTargetFor(
+      m,
+      readColumnHidden(),
+      screenerRowFor,
+      consentView?.placeOf,
+      parked,
+      pileHolds,
+      // The mailbox's own folders (mailbox-scoped, like every folder-shaped surface): a hit
+      // living in one navigates to its folder view instead of dead-ending in Search — but
+      // ONLY when the PRESENTED mirror holds the row under that folder, which is exactly
+      // what the folder view renders. An archive-only hit (GET /search reaching past this
+      // device's window) falls to the reader, which carries the off-mirror row with it.
+      (hit, folder) => {
+        const f = folders.find((x) => x.mailboxId === hit.mailboxId && x.name === folder);
+        if (!f) return null;
+        const held = presented.get<EngineMessage>("message", hit.id);
+        return held && held.folder === folder ? f.id : null;
+      },
+    );
+    switch (target.kind) {
+      case "ohbox":
+        setOhboxSel(target.id);
+        // The reader, and via `readerPending` because `go` is about to clear it.
+        if (target.reader) setReaderPending(target.id);
+        setLocated(target.id);
+        go("ohbox");
+        return;
+      case "stream":
+        (target.view === "reads" ? setReadsCur : setReceiptsCur)(target.id);
+        setJump({ view: target.view, id: target.id });
+        setLocated(target.id);
+        go(target.view);
+        return;
+      case "screener":
+        // `target.row` is non-null by construction (see `OpenTarget`): a rowless screener hit
+        // is routed to the reader by `openTargetFor`, never here.
+        setScnSel((s) => ({ ...s, [target.segment]: target.row }));
+        // The SENDER row's id, not the message's: that is what this view puts in
+        // `data-id`, and the flash has to name the thing on screen.
+        setLocated(target.row);
+        goScreener(target.segment);
+        return;
+      case "folder":
+        // The canonical folder deep-link WITH the open-message tail, in one hash write: the
+        // route↔open-state mirror then opens the reader over the folder view (the same
+        // overlay a tag hit gets), so the message is on screen in the folder that holds it.
+        setLocated(target.id);
+        window.location.hash = `#/folder/${target.folderId}/m/${target.id}`;
+        return;
+      default:
+        // No navigation, so no `readerPending` is needed: nothing will clear this. This is the
+        // "folder no view owns" arm, the History arm and the PARKED arm — a message presented
+        // in History, or filed into a bottom pile, belongs to no list, so the reader opens over
+        // wherever you are, exactly as HistoryView's own row does — and now also the arm for a
+        // hit no pile holds at all (an archive-only search result), which must still open the
+        // message it named.
+        //
+        // The row travels with the open so the reader has something to show even when the
+        // mirror holds none — see `readerOffMirror`. Set unconditionally: the mirror's own row
+        // wins whenever there is one, so this is only ever consulted for a message there is no
+        // other copy of.
+        setReaderOffMirror(m);
+        setReaderFor(target.id);
+    }
+  });
   /* Assigned here so `openDraft`, which is declared several hundred lines above this, can open a
      reply draft in its own conversation. See {@link openMessageRef}. */
   openMessageRef.current = openMessage;
@@ -5595,13 +5494,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
     };
   }, [located]);
 
-  const startFR = useCallback(() => {
+  const startFR = useStableCallback(() => {
     // NO `setFrValues({})`. Keyed by message, what is in that map is a reply somebody wrote
     // and has not sent — a run that begins by erasing it is the bug this change exists to end,
     // one keystroke earlier. A delivered reply is removed by `onSendSettled`, and nothing else
     // has the standing to.
     setFr({ step: 0, items: piles.replyLater });
-  }, [piles.replyLater]);
+  });
 
   /**
    * The message the current view has under the cursor, whichever view that is.
@@ -5648,10 +5547,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * spellings of "is this row in the mirror" is how the key and the button come to disagree —
    * the same one-derivation rule `canSend` and `replyAllRecipients` are held to.
    */
-  const mirrorHolds = useCallback(
-    (id: string): boolean => reader.get<EngineMessage>("message", id) != null,
-    [reader],
-  );
+  const mirrorHolds = useStableCallback((id: string): boolean => reader.get<EngineMessage>("message", id) != null);
 
   /* A half-open destination strip must not carry over when the cursor moves — the same rule
      the pane enforced per mount while it owned the state (see `useBarPanel`). */
@@ -5776,9 +5672,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * every platform; zero is only ever this device's explicit choice (`ohmail.layout` — the
    * contract gives layout no account wire, and none is added here).
    */
-  const cycleLayout = useCallback(() => {
+  const cycleLayout = useStableCallback(() => {
     theme.setLayout(theme.layout === "zero" ? "classic" : "zero");
-  }, [theme]);
+  });
 
   /**
    * The Zero drawer summon (zone-nav's module seam): under zero the sub-900px rail is a
@@ -6682,10 +6578,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * a new identity every bump; a `useMemo` that forgot `version` would go stale, which is
    * exactly the bug `senderMenuFor` carries a `version` dep to avoid.
    */
-  const conversationOf = useCallback(
-    (messageId: string) => threadOf(engine.read(), messageId),
-    [engine],
-  );
+  const conversationOf = useStableCallback((messageId: string) => threadOf(engine.read(), messageId));
 
   /**
    * The address book for the reply's recipient rows — the same ranked selector the compose

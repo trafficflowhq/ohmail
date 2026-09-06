@@ -30,7 +30,7 @@
  * The obvious claim to make here — that inlining it as `stable.current ??= (...args) =>
  * latest.current(...args)` would pin `fn`, the first render's implementation, because it sits in
  * the same scope — IS FALSE, and it was measured rather than assumed: with the factory inlined,
- * this module's reachability census still finds the first implementation collected.
+ * `stable-callback.test.ts`'s reachability census still finds the first implementation collected.
  * The engine context-allocates only the variables an inner closure actually REFERENCES, and that closure
  * references `latest` alone, so `fn` is never promoted out of the frame.
  *
@@ -61,32 +61,13 @@
  * the reason it must), so by the time the binding exists the ref already holds THIS render's
  * implementation, and a call after it reads exactly the values the render is using. Calling it
  * before its own hook call is not a hazard but an impossibility — the binding is not in scope yet.
- * This module's tests pin it with a render-time read, and moving the assignment into an effect
- * makes that test red.
+ * `stable-callback.test.tsx` pins this with a render-time read, and the assignment moved into an
+ * effect makes that test red.
  *
  * What the stable identity does NOT license: treating the function as a reactive value. It never
  * changes, so it can never tell a consumer that anything changed, and listing it in a dependency
  * array communicates nothing. That is the point of it — not a caveat — but a dependency array that
- * was relying on it to re-run is one that has quietly stopped re-running. `StreamCardMemo`'s
- * comparator is the worked example: it was missing three mutable fields for as long as a shifting
- * `onAction` identity re-rendered the card anyway, and stabilising the callback made that
- * reachable. Before converting a callback, look at what its CONSUMERS compare.
- *
- * ── THE LIMIT OF THE PARAGRAPH ABOVE, MEASURED ──────────────────────────────────────────────
- *
- * "Reads exactly the values the render is using" holds for a render that COMMITS. It is not a
- * guarantee under concurrent rendering, and the difference was probed rather than reasoned about:
- * with an interrupted render B over a visible render A, A's committed handler runs B's
- * implementation, a child can render A's props while reading B's values, and a DISCARDED B can
- * leave its implementation installed until the next commit. Ordinary StrictMode double-rendering is
- * unaffected.
- *
- * No product failure path has been demonstrated through any of that — the shell renders
- * synchronously today and nothing here is scheduled at a transition — so this is a stated limit,
- * not a known defect. It is written down because the alternative is a later reader taking the
- * sentence above as a guarantee it does not make. If this shell ever adopts `startTransition` or a
- * Suspense boundary that can abandon a render of `ShellInner`, this paragraph is the thing to
- * re-open, and the effect-based assignment (with its own cost, above) becomes the safer trade.
+ * was relying on it to re-run is one that has quietly stopped re-running.
  */
 import { useRef } from "react";
 
