@@ -68,7 +68,12 @@ export interface ExclusiveTxnDatabase {
   /** The file this handle is open on — the queue's identity. See the header. */
   readonly databasePath: string;
   getAllAsync<T>(sql: string, params: readonly SqlValue[]): Promise<T[]>;
-  withExclusiveTransactionAsync(task: (txn: ExclusiveTxn) => Promise<void>): Promise<void>;
+  /**
+   * One statement on THIS connection — the one the migrator opened and configured. The batch
+   * runner drives `BEGIN IMMEDIATE` / `COMMIT` through it rather than handing the work to
+   * `withExclusiveTransactionAsync`; see the note on {@link serialSqlExecutor.batch}.
+   */
+  runAsync(sql: string, params: readonly SqlValue[]): Promise<unknown>;
   closeAsync(): Promise<void>;
 }
 
@@ -112,14 +117,41 @@ export function serialSqlExecutor(db: ExclusiveTxnDatabase): SqlExecutor {
     all(sql: string, params: ReadonlyArray<SqlValue> = []): Promise<ReadonlyArray<SqlRow>> {
       return inLane(path, () => db.getAllAsync<SqlRow>(sql, [...params]));
     },
+    /**
+     * ON THIS CONNECTION, NOT A SECOND ONE.
+     *
+     * `withExclusiveTransactionAsync` opens a fresh connection for the transaction, and a fresh
+     * connection is a fresh set of per-connection settings. `PRAGMA foreign_keys` is one of them:
+     * SQLite defaults it OFF, the migrator turns it ON for the connection it runs on, and nothing
+     * turns it on for a connection opened later by the driver. Every write in a batch therefore
+     * ran with the schema's references UNENFORCED — an orphaned row committed as readily as a good
+     * one, and the store's shape was being kept by luck.
+     *
+     * It cannot be fixed by setting the pragma inside the task, either: SQLite makes that
+     * statement a no-op while a transaction is open, so the obvious repair would have been silent
+     * and the guard would still have been green.
+     *
+     * The second connection was only ever there to get a write transaction that survives a
+     * concurrent read — and this queue already guarantees there is no concurrent anything on this
+     * file. So the transaction runs here, on the connection that was configured, and the
+     * serialisation that made the second connection unnecessary is the same serialisation that
+     * made it dangerous.
+     */
     batch(statements: ReadonlyArray<SqlStatement>): Promise<void> {
-      return inLane(path, () =>
-        db.withExclusiveTransactionAsync(async (txn) => {
+      return inLane(path, async () => {
+        await db.runAsync("BEGIN IMMEDIATE", []);
+        try {
           for (const { sql, params = [] } of statements) {
-            await txn.runAsync(sql, [...params]);
+            await db.runAsync(sql, [...params]);
           }
-        }),
-      );
+          await db.runAsync("COMMIT", []);
+        } catch (err) {
+          // A failed COMMIT has already ended the transaction; a failed statement has not. Asking
+          // either way is right, and the rollback's own failure must not replace the real error.
+          try { await db.runAsync("ROLLBACK", []); } catch { /* no transaction to roll back */ }
+          throw err;
+        }
+      });
     },
     close(): Promise<void> {
       return inLane(path, () => db.closeAsync());

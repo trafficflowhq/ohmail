@@ -11,15 +11,15 @@ import { dbFileName, type MobileEngineDeps } from "./boot";
 import { serialSqlExecutor, type ExclusiveTxnDatabase } from "./sql-queue";
 
 /**
- * expo-sqlite behind {@link SqlExecutor}. `batch` rides `withExclusiveTransactionAsync`, whose
- * dedicated transaction connection is what makes "all land or none" true even while another
- * query is in flight on the main connection — the atomicity the mirror's page+cursor contract
- * stands on (see `SqlExecutor`'s doc in the engine package).
+ * expo-sqlite behind {@link SqlExecutor}. Every operation on one mirror file is serialised, and
+ * `batch` drives its transaction on THIS handle — the one the migrator configured.
  *
- * THAT DEDICATED CONNECTION IS ALSO WHY THE OPERATIONS ARE QUEUED. It is a second connection to
- * the same file, so two overlapping `batch` calls are two writers and the loser aborts with
- * `database is locked` — which is what made every message on the phone open preview-only. The
- * serialisation, and the evidence, live in {@link serialSqlExecutor}; this function is the
+ * It used to ride `withExclusiveTransactionAsync`, which opens a second connection to the same
+ * file. That cost two things: two overlapping `batch` calls became two writers and the loser
+ * aborted with `database is locked` — which is what made every message on the phone open
+ * preview-only — and the second connection never received `PRAGMA foreign_keys = ON`, so the
+ * schema's references went unenforced for every write the app made. The serialisation, the
+ * evidence and the transaction now live in {@link serialSqlExecutor}; this function is the
  * binding to the real handle and nothing else.
  *
  * The adapter below is here rather than a cast: `getAllAsync` and `runAsync` are overloaded on
@@ -31,10 +31,7 @@ export function expoSqlExecutor(db: SQLite.SQLiteDatabase): SqlExecutor {
     databasePath: db.databasePath,
     getAllAsync: <T>(sql: string, params: readonly SqlValue[]): Promise<T[]> =>
       db.getAllAsync<T>(sql, [...(params as SqlValue[])]),
-    withExclusiveTransactionAsync: (task) =>
-      db.withExclusiveTransactionAsync((txn) =>
-        task({ runAsync: (sql, params) => txn.runAsync(sql, [...(params as SqlValue[])]) }),
-      ),
+    runAsync: (sql: string, params: readonly SqlValue[]) => db.runAsync(sql, [...(params as SqlValue[])]),
     closeAsync: () => db.closeAsync(),
   };
   return serialSqlExecutor(shaped);
