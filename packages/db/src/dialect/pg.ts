@@ -8,7 +8,7 @@
  * being written.
  */
 import { sql, type SQL } from "drizzle-orm";
-import { assertDistinct, type Dialect, type LockOptions, type SearchArm } from "./index.js";
+import { assertDistinct, type Dialect, type LockOptions, type SearchArm, type SearchCorpus } from "./index.js";
 
 // Re-exported because it was defined here first and the server arm's tests import it by this
 // path; the refusal itself belongs to both arms and now lives in the contract.
@@ -96,14 +96,29 @@ export function pgDialect(): Dialect {
     },
 
     search: {
-      lexical: (q: string): SearchArm => {
+      lexical: (q: string, corpus: SearchCorpus): SearchArm => {
         const tsq = sql`websearch_to_tsquery(${TEXT_SEARCH_CONFIG}, ${q})`;
+        if (corpus === "kb") {
+          return { pred: sql`kb_tsv @@ ${tsq}`, rank: sql`ts_rank(kb_tsv, ${tsq})` };
+        }
         return {
           pred: sql`(m.subject_tsv @@ ${tsq} or b.body_tsv @@ ${tsq})`,
           rank: sql`greatest(ts_rank(m.subject_tsv, ${tsq}), ts_rank(coalesce(b.body_tsv, to_tsvector('')), ${tsq}))`,
         };
       },
-      fuzzy: (q: string, opts): SearchArm => {
+      fuzzy: (q: string, corpus: SearchCorpus, opts): SearchArm => {
+        const like = `%${q}%`;
+        if (corpus === "kb") {
+          if (opts.trigram) {
+            return {
+              pred: sql`(word_similarity(${q}, title) >= ${opts.threshold} or word_similarity(${q}, content) >= ${opts.threshold})`,
+              rank: sql`greatest(word_similarity(${q}, title), word_similarity(${q}, content))`,
+            };
+          }
+          // A constant, because this corpus's query already breaks ties on `updated_at`. See the
+          // contract: the two corpora degrade differently and that is preserved, not smoothed.
+          return { pred: sql`(title ilike ${like} or content ilike ${like})`, rank: sql`0` };
+        }
         if (opts.trigram) {
           return {
             pred: sql`(word_similarity(${q}, m.subject) >= ${opts.threshold} or word_similarity(${q}, m.from_address) >= ${opts.threshold})`,
@@ -111,11 +126,12 @@ export function pgDialect(): Dialect {
           };
         }
         // The degrade, for a deployment without the trigram index: the same shape, no index, and
-        // it still answers rather than pretending the arm does not exist.
-        const like = `%${q}%`;
+        // it still answers rather than pretending the arm does not exist. RECENCY is the rank —
+        // there is no relevance signal left, and a constant here would have thrown away the one
+        // ordering the caller still had.
         return {
           pred: sql`(m.subject ilike ${like} or m.from_address ilike ${like})`,
-          rank: sql`0`,
+          rank: sql`coalesce(extract(epoch from m.date), 0)`,
         };
       },
     },

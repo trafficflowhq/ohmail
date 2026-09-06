@@ -1,6 +1,7 @@
 import { and, asc, eq, gt, sql } from "drizzle-orm";
 import { kbEntries } from "@trafficflow/db";
 import type { ServiceContext, Db } from "./context.js";
+import { dialect } from "@trafficflow/db/dialect";
 import { ServiceError } from "./errors.js";
 import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
 import { MAX_TAG_NAME_CHARS } from "./tags-service.js";
@@ -52,8 +53,16 @@ function rowsOf<T>(result: unknown): T[] {
 // pg_trgm presence is a property of the physical DB, not the request; memoize per
 // Db handle so we probe `to_regprocedure` at most once per connection object
 // (mirrors search-service.hasTrgm).
+//
+// THE PROBE IS ASKED ONLY OF A STORE THAT COULD ANSWER IT. `to_regprocedure` is a server
+// function, so composing this statement for the device store would not return `false` — it would
+// fail to parse, on a search. The seam's contract puts this probe in the caller on purpose
+// ("the caller's own probe of the deployment it is talking to"), because one dialect runs against
+// a database that has the extension and one that does not; the DEVICE is neither, and its answer
+// is a fact about the store rather than a property of a deployment.
 const trgmCache = new WeakMap<object, Promise<boolean>>();
 function hasTrgm(db: Db): Promise<boolean> {
+  if (dialect(db).name !== "pg") return Promise.resolve(false);
   const key = db as unknown as object;
   let p = trgmCache.get(key);
   if (!p) {
@@ -173,26 +182,23 @@ export class KbService {
     if (!q) return [];
     const limit = Math.max(1, Math.min(k, 50));
 
-    const tsq = sql`websearch_to_tsquery('english', ${q})`;
-    const lexPred = sql`kb_tsv @@ ${tsq}`;
+    // BOTH ARMS THROUGH THE SEAM. The two stores index this text completely differently — a
+    // generated `tsvector` column on the row here, a separate full-text table joined by `rowid`
+    // there — and neither spelling parses on the other. `"kb"` names the corpus because a column
+    // list could not: the device arm needs a TABLE this caller has no reason to know about.
+    const d = dialect(ctx.db);
     const trgm = await hasTrgm(ctx.db);
-    const like = `%${q}%`;
-    // Fuzzy/degrade arm: pg_trgm word_similarity when present, else ILIKE-contains.
-    const fuzzPred = trgm
-      ? sql`(word_similarity(${q}, title) >= ${FUZZY_THRESHOLD} or word_similarity(${q}, content) >= ${FUZZY_THRESHOLD})`
-      : sql`(title ilike ${like} or content ilike ${like})`;
-    const fuzzRank = trgm
-      ? sql`greatest(word_similarity(${q}, title), word_similarity(${q}, content))`
-      : sql`0`;
+    const lex = d.search.lexical(q, "kb");
+    const fuzz = d.search.fuzzy(q, "kb", { trigram: trgm, threshold: FUZZY_THRESHOLD });
 
     const retrieval = sql`
       select id
       from kb_entries
-      where account_id = ${ctx.accountId} and (${lexPred} or ${fuzzPred})
-      order by (ts_rank(kb_tsv, ${tsq}) + ${fuzzRank}) desc, updated_at desc
+      where account_id = ${ctx.accountId} and (${lex.pred} or ${fuzz.pred})
+      order by (${lex.rank} + ${fuzz.rank}) desc, updated_at desc
       limit ${limit}`;
 
-    const hits = rowsOf<{ id: string }>(await ctx.db.execute(retrieval));
+    const hits = (await d.exec(ctx.db, retrieval)).map((r) => ({ id: String(r[0]) }));
 
     // Re-fetch each hit as the canonical DTO, preserving ranked order. The
     // account-scoped select re-checks accountId.

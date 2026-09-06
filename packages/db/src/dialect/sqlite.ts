@@ -13,7 +13,7 @@
  * is folded explicitly because this dialect's own `like` folds ASCII only.
  */
 import { sql, type SQL } from "drizzle-orm";
-import type { Dialect, LockOptions, SearchArm } from "./index.js";
+import type { Dialect, LockOptions, SearchArm, SearchCorpus } from "./index.js";
 
 /**
  * The oldest SQLite this schema can be opened on, and what each digit buys.
@@ -161,18 +161,39 @@ export function sqliteDialect(): Dialect {
       // that kind, and duplicating the text into the row would double what a mailbox costs on a
       // device. `bm25` returns a smaller number for a better match, so it is negated to rank the
       // same direction the server's does.
-      lexical: (q: string): SearchArm => ({
-        pred: sql`(m.rowid IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ${q})
-                or b.rowid IN (SELECT rowid FROM message_bodies_fts WHERE message_bodies_fts MATCH ${q}))`,
-        rank: sql`-COALESCE((SELECT bm25(messages_fts) FROM messages_fts WHERE messages_fts MATCH ${q} AND rowid = m.rowid), 0)`,
-      }),
-      fuzzy: (q: string, _opts): SearchArm => {
+      //
+      // The knowledge base has its own table and no alias — its caller selects `from kb_entries`
+      // with nothing else in the statement — so `rowid` there is unqualified, while the mail
+      // corpus qualifies against the `m` and `b` its caller joins.
+      lexical: (q: string, corpus: SearchCorpus): SearchArm => {
+        if (corpus === "kb") {
+          return {
+            pred: sql`rowid IN (SELECT rowid FROM kb_entries_fts WHERE kb_entries_fts MATCH ${q})`,
+            rank: sql`-COALESCE((SELECT bm25(kb_entries_fts) FROM kb_entries_fts WHERE kb_entries_fts MATCH ${q} AND rowid = kb_entries.rowid), 0)`,
+          };
+        }
+        return {
+          pred: sql`(m.rowid IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ${q})
+                  or b.rowid IN (SELECT rowid FROM message_bodies_fts WHERE message_bodies_fts MATCH ${q}))`,
+          rank: sql`-COALESCE((SELECT bm25(messages_fts) FROM messages_fts WHERE messages_fts MATCH ${q} AND rowid = m.rowid), 0)`,
+        };
+      },
+      fuzzy: (q: string, corpus: SearchCorpus, _opts): SearchArm => {
         // There is no trigram index to have, so this is the degrade the server also falls back to
         // — one shape on both dialects rather than a device-only third behaviour.
         const like = `%${q}%`;
+        if (corpus === "kb") {
+          return {
+            pred: sql`(lower(title) like lower(${like}) or lower(content) like lower(${like}))`,
+            rank: sql`0`,
+          };
+        }
         return {
           pred: sql`(lower(m.subject) like lower(${like}) or lower(m.from_address) like lower(${like}))`,
-          rank: sql`0`,
+          // RECENCY, as the server's degrade ranks. The instant is already a count of
+          // milliseconds in this store, so there is no epoch to extract — the column IS the
+          // number, and `extract(epoch …)` would not parse here at all.
+          rank: sql`coalesce(m.date, 0)`,
         };
       },
     },

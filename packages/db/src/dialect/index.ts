@@ -128,6 +128,23 @@ export interface LockOptions {
 export interface SearchArm { readonly pred: SQL; readonly rank: SQL }
 
 /**
+ * WHICH BODY OF TEXT A SEARCH IS OVER — named, because neither store can be told in columns.
+ *
+ * The server searches a generated `tsvector` column that lives ON the row. This store cannot have
+ * one, so the same text is kept in a separate full-text table joined back by `rowid`. A caller
+ * that passed COLUMNS could describe the first arrangement and not the second — it would have no
+ * way to name a table it does not know exists — so it would be passing the server's shape through
+ * a parameter that is supposed to be dialect-free.
+ *
+ * A name instead. The seam owns the mapping, which is the only place that can hold both.
+ *
+ * `mail` is the message corpus: subject and sender, plus the stored body, joined as `m` and `b`
+ * the way every query over it already joins them. `kb` is the knowledge base's own entries, one
+ * table and no alias.
+ */
+export type SearchCorpus = "mail" | "kb";
+
+/**
  * Every construct the engine uses that the two dialects spell differently.
  *
  * Each member is a question with two correct answers, not a Postgres feature with a SQLite
@@ -215,15 +232,21 @@ export interface Dialect {
   exec(db: unknown, statement: SQL): Promise<unknown[][]>;
 
   readonly search: {
-    /** Word-based search over the indexed subject and body. */
-    lexical(q: string): SearchArm;
+    /** Word-based search over one {@link SearchCorpus}'s indexed text. */
+    lexical(q: string, corpus: SearchCorpus): SearchArm;
     /**
-     * Typo-tolerant search, and what it degrades to when the trigram index is absent.
+     * Typo-tolerant search over one corpus, and what it degrades to when trigrams are absent.
      *
      * `trigram` is the caller's own probe of the deployment it is talking to, not a guess made
      * here: the same dialect runs on a database that has the extension and one that does not.
+     *
+     * THE DEGRADE RANKS DIFFERENTLY PER CORPUS, and that is recorded rather than smoothed over.
+     * The mail arm falls back to RECENCY — its caller's comment says "no relevance signal offline
+     * → recency" — and the knowledge base falls back to a constant, because its query already
+     * breaks ties on `updated_at`. Making them agree would change what one of the two returns,
+     * which is a product decision and not a port's to take.
      */
-    fuzzy(q: string, opts: { trigram: boolean; threshold: number }): SearchArm;
+    fuzzy(q: string, corpus: SearchCorpus, opts: { trigram: boolean; threshold: number }): SearchArm;
   };
 }
 
