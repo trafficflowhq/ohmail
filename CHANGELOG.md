@@ -13,6 +13,40 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Signing in, signing out, and a browser that two people share
+
+A browser holds one set of cookies for everything open in it. Sign into a second account in another
+tab and every tab now belongs to that account — including the ones still showing the first one's
+mail. Several things in the app kept acting for the account they were opened for, and this release
+is that class of fault, found and fixed together.
+
+**A tab left open no longer renews somebody else's session.** When the short-lived part of a session
+expires, the app quietly renews it. A tab that had been idle since before another account signed in
+would renew THAT account's session — spending a one-time token in the process, so the other person's
+own tab could afterwards be treated as suspicious. The renewal now checks which account the browser
+holds at the moment the request leaves, not when it was decided.
+
+**The "welcome back" screen no longer spends whichever session the browser happens to hold.** That
+screen is chosen when the page is requested and does its work after the page has loaded and waited
+its turn. If somebody signed in during either gap, it renewed their session and then opened their
+mailbox in a window that was never theirs. It now records which account it was chosen for, on the
+server, and does nothing if that has changed.
+
+**Mail, settings and sign-up steps stop when the browser changes hands.** A window whose account has
+been replaced no longer merges new mail, loads pictures, keeps its live connection for new-mail
+notices, or acts on the settings screens — security, devices, billing, mailboxes. The sign-up wizard
+asks which account it is signed in as before every step that acts on one, and refuses when it cannot
+tell rather than continuing.
+
+**Signing out says so even when the server cannot be reached.** A sign-out the server did not confirm
+used to leave the browser looking signed out while the session was still live. It now records that
+state and refuses everything except signing in again or retrying the sign-out.
+
+**And the screen no longer says you are signed out when the app simply could not ask.** A failed
+check — a slow server, a dropped connection — was reported as a verdict about your session. Those
+are now told apart: a session that was refused signs you out, and a question that could not be asked
+is retried.
+
 ### Every control on a phone is a 44-pixel target
 
 Controls drawn smaller than a fingertip were smaller than a fingertip to press, too. Segmented
