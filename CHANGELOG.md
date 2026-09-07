@@ -77,6 +77,22 @@ asks rather than leaving you watching a request that was never going to be picke
 does not recognise is left where it is rather than thrown away — it happens as soon as that install
 updates.
 
+### A machine that reads a mailbox now knows what settings are in force on it
+
+The install that organizes a mailbox publishes its settings into the mailbox itself. An install that
+only reads that mailbox now keeps a copy of that as it goes, so its settings screens can show what
+is actually being applied rather than its own inert copies.
+
+It is read once per sync pass and costs nothing extra to look at afterwards. If the machine holding
+the mailbox has published nothing yet, that is said plainly rather than shown as empty settings.
+
+A cached copy is remembered together with which generation of the folder it was read from — mail
+servers renumber messages when a folder is deleted and recreated, and a remembered position from
+before a renumber points at the wrong message. If the folder has been renumbered, or the settings
+have been removed, the stale copy is discarded rather than shown. If the copy simply could not be
+read this time, it is left alone: a moment's connection trouble is not the same as somebody clearing
+their settings, and the two must not look alike.
+
 ### Settings that only worked on the machine you typed them into
 
 Your out-of-office, your screening posture, how far back screening looks, and the sign-off appended
