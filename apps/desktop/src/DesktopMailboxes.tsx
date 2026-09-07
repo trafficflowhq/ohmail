@@ -160,6 +160,10 @@ interface MailboxWire {
   organizerEventSeenAt?: string | null;
   /** When this install last gave this mailbox up on purpose — the pane's permanent line. */
   organizerReleasedAt?: string | null;
+  /** The standing "stop organizing here" ask, pending until the engine's pass confirms it. */
+  releaseRequestedAt?: string | null;
+  /** The standing "organize here" press, spent by the gate's next pass. */
+  takeoverAuthorizedAt?: string | null;
   /** Whether a decision made here would be accepted by whoever organizes this mailbox. */
   organizerAcceptsRequests?: boolean;
   /** How this mailbox is signed in — it decides one sentence about why a refusal is permanent. */
@@ -336,6 +340,10 @@ export async function readMailboxFactsVia(
     ...("organizerEventAt" in m ? { organizerEventAt: m.organizerEventAt } : {}),
     ...("organizerEventSeenAt" in m ? { organizerEventSeenAt: m.organizerEventSeenAt } : {}),
     ...("organizerReleasedAt" in m ? { organizerReleasedAt: m.organizerReleasedAt } : {}),
+    // THE TWO PENDING ASKS, forwarded by the same `in` spread: absent is an engine that predates
+    // the columns and withholds the pending sentence, which is what such an engine reports.
+    ...("releaseRequestedAt" in m ? { releaseRequestedAt: m.releaseRequestedAt } : {}),
+    ...("takeoverAuthorizedAt" in m ? { takeoverAuthorizedAt: m.takeoverAuthorizedAt } : {}),
     ...("organizerAcceptsRequests" in m ? { organizerAcceptsRequests: m.organizerAcceptsRequests } : {}),
     ...("authKind" in m ? { authKind: m.authKind } : {}),
     ...("pendingMoves" in m ? { pendingMoves: m.pendingMoves } : {}),
@@ -1192,7 +1200,16 @@ export function DesktopMailboxes(
           }
           description={
             role === "organizer"
-              ? t("stateOrganizingHere")
+              /* ── A STANDING STOP REQUEST IS ON THE ROW, NOT ONLY IN A LOG (0.14.1) ─────────
+                 The request is honoured by the engine's own next pass, and on a server that keeps
+                 refusing the confirmation that pass retries per poll — measured live: a whole
+                 session of retries with this row reading "files this mailbox" throughout, so the
+                 press showed no trace anywhere. While the request stands the row is still an
+                 ORGANIZER and deliberately files nothing, so the ordinary sentence is false in
+                 both halves; the pending one names the actual state. */
+              ? (m.releaseRequestedAt
+                ? t("stopOrganizingPending")
+                : t("stateOrganizingHere"))
               : role === "released"
                 /* THE ONE SENTENCE THAT DATES SOMETHING THE PERSON HERE DID. A mailbox whose
                    holder simply vanished and one this install released look identical from every
@@ -1248,9 +1265,13 @@ export function DesktopMailboxes(
           action={
             open || releasing ? undefined
               : role === "organizer" ? (
-                <Button variant="ghost" onClick={() => setReleaseFor(m.id)}>
-                  {t("stopOrganizing")}
-                </Button>
+                /* Withheld while the row already carries the request: the button would write the
+                   very ask the description above says is being carried out. */
+                m.releaseRequestedAt ? undefined : (
+                  <Button variant="ghost" onClick={() => setReleaseFor(m.id)}>
+                    {t("stopOrganizing")}
+                  </Button>
+                )
               ) : reclaimed.has(m.id) ? undefined : (
                 <Button
                   variant={role === "released" ? "primary" : undefined}
@@ -1327,28 +1348,36 @@ export function DesktopMailboxes(
             </SettingsActions>
           </div>
         ) : null}
-        {/* WHAT THE ENGINE ANSWERED, kept until the row's own role moves. `reclaimed` and
-            `released` are never cleared by this pane: the row is what ends them, and it does,
-            because the gate writes the role on its next cycle and the poll brings it back. */}
+        {/* WHAT THE ENGINE ANSWERED — and the ROW is what ends it, for real now (0.14.1).
+            The comment here used to claim "the row is what ends them" while nothing did: both
+            notes rendered on the row's every later state, so "Asked for … within a minute" stood
+            beside a release that had finished an hour ago — or had lapsed — which is a promise
+            about a clock that has long since run out. Each note now renders only while the row
+            has NOT answered: the takeover's while the role is not yet `organizer`; the stop's
+            while the role is still `organizer` AND the row does not yet carry the request (once
+            it does, the banner's own pending description says the same thing from the row's
+            clock, which is the one that is true). */}
         {/* `off`, NEVER `wait`. A spinner claims something is in flight, and nothing is: the
             route RECORDS a request and returns. The gate acts on it at its next tick, which may
-            be a minute away and is not this window's to watch. `wait` also never ends — the entry
-            is only ever added to — so it would spin for the life of the pane, including after the
-            poll confirmed the change and the banner above it had already moved on. And not `ok`
+            be a minute away and is not this window's to watch. And not `ok`
             either: this window has not been told the mailbox moved, and a tick would say it had. */}
         {reclaimed.has(m.id) ? (
           reclaimed.get(m.id)!.outcome === "authorized" ? (
-            <SettingsVerdict
-              state="off"
-              headline={m.legacyStandDown === true ? t("organizeHereQueuedLegacy") : t("organizeHereQueued")}
-            />
+            role !== "organizer" ? (
+              <SettingsVerdict
+                state="off"
+                headline={m.legacyStandDown === true ? t("organizeHereQueuedLegacy") : t("organizeHereQueued")}
+              />
+            ) : null
           ) : (
             <SettingsNote>{t(`desktopOrganizeHere_${reclaimed.get(m.id)!.outcome}`)}</SettingsNote>
           )
         ) : null}
         {released.has(m.id) ? (
           released.get(m.id) === "requested"
-            ? <SettingsVerdict state="off" headline={t("stopOrganizingQueued")} />
+            ? (role === "organizer" && !m.releaseRequestedAt
+              ? <SettingsVerdict state="off" headline={t("stopOrganizingQueued")} />
+              : null)
             : <SettingsNote>{t("stopOrganizingNot")}</SettingsNote>
         ) : null}
       </div>

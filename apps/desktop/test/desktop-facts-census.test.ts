@@ -101,6 +101,11 @@ describe("the desktop mailbox-facts seam", () => {
       organizerEventAt: "2026-09-02T11:00:00.000Z",
       organizerEventSeenAt: null,
       organizerReleasedAt: null,
+      /* The two pending asks (0.14.1): the standing "stop organizing here" request the engine's
+         pass has not yet confirmed, and the standing "organize here" press the gate has not yet
+         spent. Both are the engine's own columns, projected raw. */
+      releaseRequestedAt: null,
+      takeoverAuthorizedAt: null,
       organizerAcceptsRequests: false,
       /* HOW the mailbox is signed in. On this door it is always a password — the local engine
          has no OAuth ceremony — but the field is on the wire and the shell reads it, so the

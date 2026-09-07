@@ -3116,6 +3116,13 @@ export class MailboxService {
        * its four neighbours. The pane needs the instant, not a flag: "you stopped organizing this
        * here" without a date is a sentence about an event nobody can place. */
       organizerReleasedAt: m.organizerReleasedAt ? m.organizerReleasedAt.toISOString() : null,
+      /* THE TWO PENDING ASKS, projected raw on the release stamp's rule: each is meaningful only
+         while it stands, each is cleared by the pass or press that answers it, and a pane that
+         cannot see them renders a button-press as nothing having happened — measured on a real
+         provider, where the release retried for a whole session with the row reading as an
+         ordinary organized mailbox. */
+      releaseRequestedAt: m.releaseRequestedAt ? m.releaseRequestedAt.toISOString() : null,
+      takeoverAuthorizedAt: m.takeoverAuthorizedAt ? m.takeoverAuthorizedAt.toISOString() : null,
       // WHAT THIS MAILBOX'S SUBMISSION SERVER SAID IT WILL ACCEPT (mail 0055). UNCONDITIONAL, for
       // the reason the two lines above are: it is meaningful in every lifecycle state, and it is
       // read by the compose surface rather than by any error copy. `null` is "not known" — no

@@ -514,6 +514,29 @@ export interface MailboxDTO {
    * holder — and only the third is something the person here did.
    */
   organizerReleasedAt: ISODateTime | null;
+  /**
+   * THE STANDING ASK TO STOP ORGANIZING THIS MAILBOX HERE, or `null`.
+   *
+   * Written by the release route the instant the person presses "Stop organizing here, keep the
+   * mail", and honoured by the organizer's own next pass — so there is always a window, and on a
+   * server that will not confirm the removal there can be many passes, in which the ask is real
+   * and nothing else on this row says so. A pane reading only the role rendered an ordinary
+   * organized mailbox for that whole window: the person pressed a button and the screen showed
+   * no trace of it, which on a slow server reads as the button not working.
+   *
+   * Cleared by the pass that completes the release (confirmed, or ended by the lapse) and by the
+   * countermanding "Organize here" press. Projected raw: PENDING is the row's own state, not a
+   * rendering decision.
+   */
+  releaseRequestedAt: ISODateTime | null;
+  /**
+   * THE STANDING PRESS TO ORGANIZE THIS MAILBOX HERE, or `null` — the takeover's pending half,
+   * on the same argument as {@link releaseRequestedAt}: the stamp is spent by the gate's next
+   * pass, and until then the ask exists only on this column. A client that keeps its own
+   * "asked for" note can end that note the moment either this clears or the role moves,
+   * instead of showing it for ever beside a row that has long since answered.
+   */
+  takeoverAuthorizedAt: ISODateTime | null;
   id: string;
   provider: string;              // 'imap' today; 'exchange' planned
   address: string;

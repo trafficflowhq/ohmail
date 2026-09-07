@@ -991,6 +991,10 @@ export interface MailboxDTO {
    * both are readers with no holder, and only the first is something the person here did.
    */
   organizerReleasedAt?: string | null;
+  /** The standing "stop organizing here" ask, pending until the organizer's pass confirms it. */
+  releaseRequestedAt?: string | null;
+  /** The standing "organize here" press, spent by the gate's next pass. */
+  takeoverAuthorizedAt?: string | null;
   /**
    * WOULD A DECISION MADE HERE BE ACCEPTED BY WHOEVER ORGANIZES THIS MAILBOX?
    *

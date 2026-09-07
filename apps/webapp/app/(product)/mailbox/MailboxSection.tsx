@@ -2171,10 +2171,24 @@ export function MailboxSection() {
               {((standDown === null && m.organizerRole !== "reader") || stranded)
                 && m.status === "connected" && m.organizeConsentedAt ? (
                 <div className="mbx-org" data-role="organizer">
+                  {/* ── A STANDING STOP REQUEST IS ON THE ROW, NOT ONLY IN A LOG ──────────────
+                      The request is recorded at the press and honoured by the organizer's own
+                      next pass — and on a server that keeps refusing the confirmation, that pass
+                      retries per poll (measured live: a whole session of retries with this block
+                      rendering the ordinary organized description throughout, so the press showed
+                      no trace anywhere). While the request stands the row is still an ORGANIZER
+                      and deliberately files nothing, so the ordinary sentence is false in both
+                      halves. The pending description replaces it, and the stop control goes with
+                      it: the request already stands, and a second press would only write the same
+                      ask again under a banner that says it is being carried out. */}
                   <SettingsBanner
                     label={stranded ? t("stateReading") : t("stateOrganizing")}
-                    description={stranded ? t("stateClaimLeftBehind") : t("stateOrganizingHere")}
-                    action={releaseFor === m.id ? undefined : (
+                    description={
+                      stranded ? t("stateClaimLeftBehind")
+                        : m.releaseRequestedAt ? t("stopOrganizingPending")
+                          : t("stateOrganizingHere")
+                    }
+                    action={releaseFor === m.id || (!stranded && m.releaseRequestedAt) ? undefined : (
                       <Button
                         variant="ghost"
                         className="mbx-btn"

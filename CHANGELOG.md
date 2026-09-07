@@ -148,6 +148,11 @@ can take the mailbox past it. If the server still has not confirmed the removal 
 mailbox is recorded as no longer organized here, rather than promising for ever a confirmation the
 server will not give.
 
+While the request is waiting, the row in Settings → Mailboxes says so — "Stopping on the next
+pass — waiting for the server to confirm" — instead of reading as an ordinary organized mailbox
+with no trace of the press. The "Asked for" note a press leaves also ends when the row answers,
+instead of promising "within a minute" for ever beside a mailbox that finished long ago.
+
 ### Every control on a phone is a 44-pixel target
 
 Controls drawn smaller than a fingertip were smaller than a fingertip to press, too. Segmented

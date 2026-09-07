@@ -77,6 +77,11 @@ export function toMailboxFacts(m: MailboxDTO): MailboxFacts {
     // same reason: absent is an older server, `null` is "not released", and only the second is
     // a fact about this mailbox.
     organizerReleasedAt: m.organizerReleasedAt,
+    // THE TWO PENDING ASKS, untouched on the same rule: absent is an older server and withholds
+    // the pending sentence, which is what such a server actually reports; `null` is "nothing
+    // asked"; a stamp is a press the row has not answered yet.
+    releaseRequestedAt: m.releaseRequestedAt,
+    takeoverAuthorizedAt: m.takeoverAuthorizedAt,
     // WOULD A DECISION MADE HERE BE ACCEPTED. Untouched, and here the absent case is the one
     // that matters most: it degrades to the state that offers NO decision controls and names
     // the way out, which is the honest screen for a server that cannot answer the question.

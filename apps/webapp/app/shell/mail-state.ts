@@ -708,6 +708,23 @@ export interface MailboxFacts {
    */
   organizerReleasedAt?: string | null;
   /**
+   * THE STANDING ASK TO STOP ORGANIZING THIS MAILBOX HERE, or `null` — pending until the
+   * organizer's own pass confirms the record out of the mailbox (or the wait ends at the
+   * record's own expiry). While it stands, the row is still an ORGANIZER and files nothing:
+   * without this field that whole window renders as an ordinary organized mailbox, and on a
+   * server that keeps refusing the confirmation the person's press shows no trace at all.
+   *
+   * ABSENT is an older server and withholds the sentence — the ordinary organized description
+   * stands, which is what such a server actually reports.
+   */
+  releaseRequestedAt?: string | null;
+  /**
+   * THE STANDING PRESS TO ORGANIZE THIS MAILBOX HERE, or `null` — the takeover's pending half,
+   * spent by the gate's next pass. Read to END a pane's own "asked for" note once the row has
+   * answered, rather than showing it for ever. ABSENT is an older server and changes nothing.
+   */
+  takeoverAuthorizedAt?: string | null;
+  /**
    * WOULD A DECISION MADE HERE BE ACCEPTED BY WHOEVER ORGANIZES THIS MAILBOX?
    *
    * `true` only where a press has somewhere to go. ABSENT and `false` both mean it has not, and

@@ -1371,3 +1371,161 @@ describe("the holdings line — a windowed copy stated plainly, on the pane, wit
       "a trimmed fold hid a mailbox the database is willing to keep active").toBe(2);
   });
 });
+
+/**
+ * ═══ A STANDING STOP REQUEST IS ON THE ROW, AND THE PANE'S OWN NOTES END WHEN THE ROW ANSWERS ═══
+ *
+ * ── THE DEFECT, MEASURED LIVE ON A REAL PROVIDER AT RC3 ─────────────────────────────────────
+ *
+ * "Stop organizing here, keep the mail" is recorded as a request and honoured by the engine's own
+ * next pass — and on a provider that refused the release's folder read, that pass retried on
+ * every poll for a whole session. For all of it the row kept `organizerRole: "organizer"`, so
+ * this pane rendered the ordinary "organized here" description with the ordinary "Stop
+ * organizing" button: the person's press showed no trace, on a mailbox deliberately filing
+ * nothing while the request stood. The engine now projects the request (`releaseRequestedAt`),
+ * the description names the state, and the stop control is withheld while the ask it would make
+ * is already standing.
+ *
+ * ── AND THE "ASKED FOR" NOTES WERE FOR EVER ─────────────────────────────────────────────────
+ *
+ * `released` and `reclaimed` are this pane's own per-press notes, and the comment beside them
+ * claimed "the row is what ends them". Nothing did: the note rendered on the row's every later
+ * state, including long after the request completed — "Asked for … within a minute" beside a row
+ * whose release had finished an hour ago, or had lapsed, is a false state in the exact direction
+ * item 8 is about. Each note now renders only while the row has NOT answered: the stop note ends
+ * when the row carries the request (the description takes over) or the role moves; the takeover
+ * note ends when the role says organizer.
+ *
+ * ── HOW TO WATCH THESE FAIL ─────────────────────────────────────────────────────────────────
+ *
+ *  · WATCHED RED before the render arms existed: the pending case failed with the ordinary
+ *    description and a live stop button; the notes cases failed with "Asked for" standing over
+ *    rows that had long since answered — the released build's behaviour exactly.
+ *  · Delete the `releaseRequestedAt` arm from `organizerBlock`'s description and the pending
+ *    case reds; drop the field from the wire mapper and it reds one seam earlier (the facts
+ *    census reds too — the wire row must carry every `MailboxFacts` key).
+ */
+describe("a standing stop request is on the row, and the pane's notes end when the row answers", () => {
+  const mailboxCopy = (messages as unknown as { mailboxes: Record<string, string> }).mailboxes;
+  const ORGANIZING: MailboxFacts = {
+    ...MAILBOX,
+    organizerRole: "organizer",
+    organizeConsentedAt: "2026-08-01T09:00:00.000Z",
+  };
+
+  /** Re-render the SAME root so the pane's own state (its per-press notes) survives while the
+   *  facts under it move — the shape of the engine's next poll answering. `render()` would mount
+   *  a fresh pane and silently discard the very state these cases are about. */
+  async function repaint(door: string): Promise<void> {
+    const { DesktopMailboxes } = await import("../src/DesktopMailboxes.js");
+    await act(async () => {
+      root!.render(
+        h(
+          IntlProvider,
+          /* `as never` because `h(Provider, props, child)` passes children positionally, which
+             the overloads type as a missing `children` prop — the same shape the file's own
+             `render()` helper carries; cast here so this copy adds no new noise. */
+          { locale: "en", messages: messages as never, timeZone: "UTC" } as never,
+          h(
+            ThemeProvider,
+            { storageKey: "ohmail.theme" } as never,
+            h(ToastHost, null, h(DesktopMailboxes, {
+              door,
+              onShellStatus: (next: { state: string; mode?: string | null }) => {
+                published.push(next);
+              },
+            })),
+          ),
+        ),
+      );
+    });
+  }
+
+  it("a pending stop says so and withholds the stop control", async () => {
+    FACTS = [{ ...ORGANIZING, releaseRequestedAt: "2026-09-07T09:00:00.000Z" }];
+    const el = await render("local");
+    const said = el.textContent ?? "";
+    expect(said, "a pressed stop shows no trace on the row — the live RC3 shape")
+      .toContain(mailboxCopy.stopOrganizingPending!);
+    expect(said, "the ordinary organized description stands beside a pending stop")
+      .not.toContain(mailboxCopy.stateOrganizingHere!);
+    expect(buttonSaying(el, "Stop organizing"),
+      "the pane offers to write the very ask that is already standing").toBeNull();
+  });
+
+  it("an ordinary organizer still reads as organized here — the positive control", async () => {
+    FACTS = [ORGANIZING];
+    const el = await render("local");
+    const said = el.textContent ?? "";
+    expect(said, "the ordinary organized row lost its own description")
+      .toContain(mailboxCopy.stateOrganizingHere!);
+    expect(said, "the pending sentence leaked onto a row with nothing pending")
+      .not.toContain(mailboxCopy.stopOrganizingPending!);
+    expect(buttonSaying(el, "Stop organizing"),
+      "the ordinary organizer lost its stop control").not.toBeNull();
+  });
+
+  it("the stop note ends when the row answers — pending first, then the release", async () => {
+    FACTS = [ORGANIZING];
+    bridgeReply = () => new Response(JSON.stringify({ outcome: "requested" }), {
+      status: 202, headers: { "content-type": "application/json" },
+    });
+    const el = await render("local");
+
+    // The press, through the pane's own two-step ceremony.
+    await act(async () => { buttonSaying(el, "Stop organizing")!.click(); });
+    await act(async () => { buttonExactly(el, "Stop organizing")!.click(); });
+    expect(el.textContent ?? "", "the press left no note while the row has not yet answered")
+      .toContain(mailboxCopy.stopOrganizingQueued!);
+
+    // The engine's poll catches up: the row now carries the request. The note's sentence
+    // ("within a minute") yields to the row's own ("waiting for the server to confirm").
+    FACTS = [{ ...ORGANIZING, releaseRequestedAt: "2026-09-07T09:00:00.000Z" }];
+    await repaint("local");
+    expect(el.textContent ?? "", "the note and the row promise two different clocks at once")
+      .not.toContain(mailboxCopy.stopOrganizingQueued!);
+    expect(el.textContent ?? "").toContain(mailboxCopy.stopOrganizingPending!);
+
+    // The release completes: reader, release stamped, request spent. Only the row's own released
+    // sentence remains — a note promising "within a minute" here is the false state exactly.
+    FACTS = [{
+      ...MAILBOX,
+      organizerRole: "reader",
+      organizeConsentedAt: "2026-08-01T09:00:00.000Z",
+      organizerReleasedAt: "2026-09-07T09:12:00.000Z",
+      releaseRequestedAt: null,
+    }];
+    await repaint("local");
+    const done = el.textContent ?? "";
+    expect(done, "the 'Asked for' note outlived the request it was about")
+      .not.toContain(mailboxCopy.stopOrganizingQueued!);
+    expect(done, "the completed release lost its own sentence")
+      .toContain(mailboxCopy.stateReleased!.slice(0, mailboxCopy.stateReleased!.indexOf("{when}")));
+  });
+
+  it("the takeover note ends when the role says organizer", async () => {
+    FACTS = [{
+      ...MAILBOX,
+      organizerRole: "reader",
+      organizeConsentedAt: "2026-08-01T09:00:00.000Z",
+      organizerReleasedAt: "2026-09-07T08:00:00.000Z",
+    }];
+    bridgeReply = () => new Response(JSON.stringify({ outcome: "authorized" }), {
+      status: 200, headers: { "content-type": "application/json" },
+    });
+    const el = await render("local");
+
+    await act(async () => { buttonSaying(el, "Organize here")!.click(); });
+    /* The opener is withheld while its well is open, so the exact label finds the confirm. */
+    await act(async () => { buttonExactly(el, "Organize here")!.click(); });
+    expect(el.textContent ?? "", "the press left no note while the row has not yet answered")
+      .toContain(mailboxCopy.organizeHereQueued!);
+
+    // The gate's next pass promotes: the row says organizer, and the note's promise is kept.
+    FACTS = [ORGANIZING];
+    await repaint("local");
+    expect(el.textContent ?? "", "the 'Asked for' note outlived the takeover it was about")
+      .not.toContain(mailboxCopy.organizeHereQueued!);
+    expect(el.textContent ?? "").toContain(mailboxCopy.stateOrganizingHere!);
+  });
+});
