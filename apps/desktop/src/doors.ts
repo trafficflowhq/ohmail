@@ -716,6 +716,11 @@ export const HOST_REFUSAL_KINDS = [
   "managed",
   "selfhost",
   "pairing_invalid",
+  /* THE HOST WAS REINSTALLED AT THE SAME ADDRESS — a different account behind a familiar name.
+     It is on this list rather than falling through to the engine's own words because it is the
+     one refusal with a VERB attached: the sentence has to name what Start over costs, and a
+     translated sentence is the only place that fits. */
+  "pair_account_mismatch",
   "unreachable",
 ] as const;
 export type HostRefusalKind = (typeof HOST_REFUSAL_KINDS)[number];
@@ -792,15 +797,34 @@ export function hostLinkProblem(text: string): HostLinkStep {
   return { link, host, via, refusal: null };
 }
 
-/** The refusal a bridge answer carries, or null when it succeeded. */
+/**
+ * The refusal a bridge answer carries, or null when it succeeded.
+ *
+ * ── TWO ROUTES, TWO PLACES THE MEANINGFUL KIND LIVES, AND BOTH ARE READ ──────────────────────
+ *
+ * This read `details.kind` alone, which was right for the one route it was written against and
+ * silently wrong for the other:
+ *
+ *  · `/cloud/probe` answers a GENERIC `code` (`invalid_request`, `cloud_probe_failed`) and puts
+ *    what actually happened in `details.kind` — `cleartext`, `no_pin`, `not_ohmail`. Reading
+ *    `code` there would collapse eight distinct refusals into two useless ones.
+ *  · `/cloud/pair-redeem` has no `details` at all; its `code` IS the kind —
+ *    `pair_account_mismatch`, `already_signed_in`, `restart_required`.
+ *
+ * So `details.kind` wins where it exists and `code` is the fallback, which reads both correctly
+ * without either shadowing the other. Before this, every redeem refusal arrived as the empty kind
+ * and fell through to the engine's English — including `pair_account_mismatch`, whose whole point
+ * is a translated sentence with a verb attached, and `restart_required`, which the window would
+ * have shown as an error rather than as the pairing that worked.
+ */
 async function refusalOf(res: Response): Promise<HostRefusal | null> {
   if (res.ok) return null;
   try {
     const parsed = (await res.json()) as {
-      error?: { message?: string; details?: { kind?: string } };
+      error?: { code?: string; message?: string; details?: { kind?: string } };
     };
     return {
-      kind: parsed.error?.details?.kind ?? "",
+      kind: parsed.error?.details?.kind ?? parsed.error?.code ?? "",
       message: parsed.error?.message ?? null,
       status: res.status,
     };
@@ -932,7 +956,23 @@ export async function enterHostDoor(
  * path cannot quietly merge two accounts into one database. The remedy there is the takeover or a
  * fresh door, both of which say what they discard.
  */
-export async function pairAgainWithHost(link: PairLink): Promise<HostDoorResult> {
+export async function pairAgainWithHost(
+  link: PairLink,
+  /**
+   * START OVER — the person's explicit press, never an inference from the refusal.
+   *
+   * `409 pair_account_mismatch` means this machine holds mail from a DIFFERENT account on that
+   * computer, which happens when the host was reinstalled at the same address: same address, same
+   * base, different account, so neither comparison the engine already makes can see it. The plain
+   * redeem is then a dead end with nothing to press.
+   *
+   * This is that press, and it costs the previous account's copy on this machine. So it is a
+   * separate argument a caller has to pass on purpose — the refusal must never select it by
+   * itself. The code is also SPENT by then (the engine redeems at the host before comparing
+   * accounts), so the caller needs a fresh one from that computer's Settings → Devices.
+   */
+  startOver = false,
+): Promise<HostDoorResult> {
   try {
     await bridgeFetch("/cloud/session", { method: "DELETE" });
   } catch (err) {
@@ -942,7 +982,7 @@ export async function pairAgainWithHost(link: PairLink): Promise<HostDoorResult>
       problem: null,
     };
   }
-  return redeemPairing(link, null);
+  return redeemPairing(link, null, startOver);
 }
 
 /** What either pairing path ended as. */
@@ -952,6 +992,15 @@ export interface HostDoorResult {
   refusal: HostRefusal | null;
   /** A sentence with no kind behind it — a shell throw, or an engine that never settled. */
   problem: string | null;
+  /**
+   * THE PAIRING WORKED AND THE APP MUST BE REOPENED — a THIRD outcome, neither success nor
+   * refusal.
+   *
+   * It is its own field rather than a shape of `status` because the window routes on it before it
+   * routes on anything else: a session exists, and it may not be used until the next launch has
+   * performed the staged discard. Absent on every ordinary path.
+   */
+  restartRequired?: boolean;
 }
 
 /**
@@ -966,13 +1015,24 @@ export interface HostDoorResult {
 async function redeemPairing(
   link: PairLink,
   settled: EngineStatus | null,
+  /** The person's explicit Start over. Never inferred from a refusal — see {@link HostDoorResult}. */
+  startOver = false,
 ): Promise<HostDoorResult> {
   let res: Response;
   try {
     res = await bridgeFetch("/cloud/pair-redeem", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ token: link.token, kind: desktopDeviceKind() }),
+      /* THE EXACT BOOLEAN, and only when asked for. The engine matches `startOver === true` and
+         refuses every truthy near-miss — `"true"`, `1`, `{}` — as an ordinary pairing, because
+         this flag discards somebody's mail and a value nobody deliberately wrote must not select
+         it. Spread rather than always-present so an ordinary pairing sends no such field at all.
+
+         `kind` IS NOT SENT. The engine composes the device kind from its own `process.platform`
+         and ignores anything on the wire: what platform this install runs on is that process's
+         own fact, not something a caller over the bridge may assert. Sending it was harmless and
+         misleading — a reader would think this window decided it. */
+      body: JSON.stringify({ token: link.token, ...(startOver ? { startOver: true } : {}) }),
     });
   } catch (err) {
     return {
@@ -981,19 +1041,57 @@ async function redeemPairing(
       problem: null,
     };
   }
+
   const refusal = await refusalOf(res);
-  if (refusal !== null) return { status: settled, refusal, problem: null };
+  if (refusal !== null) {
+    /* A REDEEM ATTEMPTED WHILE A DISCARD IS PENDING. The engine may answer this either as a
+       refusal by name or as the staged 200 below; both mean the same thing to a person, so both
+       route to the relaunch card and this lane does not depend on which the engine chose. */
+    if (refusal.kind === "restart_required") {
+      return { status: settled, refusal: null, problem: null, restartRequired: true };
+    }
+    return { status: settled, refusal, problem: null };
+  }
+
+  /* ── `res.ok` IS NOT "PAIRED AND READY", AND TREATING IT AS SUCH WAS THE DEFECT ────────────
+     A start-over answers 200 — the pairing genuinely succeeded, the code is spent and the session
+     is sealed — but activates nothing: the previous account's mirror is an open database that
+     cannot be removed under the process holding it, so the discard is staged for the next launch
+     and every read stays refused until then. Reported as an ordinary success, the window would
+     have shown a signed-in mail client over an engine answering 409 to everything.
+
+     So the BODY decides, not the status. An ordinary pairing's 200 carries no `restartRequired`
+     at all, which is why the check is for the exact `true` rather than for the field's presence. */
+  try {
+    const body = (await res.json()) as { restartRequired?: unknown };
+    if (body.restartRequired === true) {
+      return { status: settled, refusal: null, problem: null, restartRequired: true };
+    }
+  } catch {
+    /* A 200 whose body will not parse is still a completed ordinary pairing as far as anything
+       here can tell; the status read below is what the window actually routes on. */
+  }
 
   return { status: await engineStatus(), refusal: null, problem: null };
 }
 
 /**
- * WHAT THIS INSTALL CALLS ITSELF ON THE HOST'S DEVICES LIST.
+ * WHAT THIS INSTALL CALLS ITSELF ON THE HOST'S DEVICES LIST — A CENSUS NOW, NOT A WIRE VALUE.
  *
- * REQUIRED on the redeem, and the reason is that the host's pane lies without it: the server
- * defaults an absent kind to `"web"`, so a paired laptop would appear there as a browser session
- * — beside a Remove button somebody is meant to use to tell their machines apart. The three
- * values are the ones the server already admits for a desktop.
+ * ── IT USED TO RIDE THE REDEEM, AND IT NO LONGER DOES ────────────────────────────────────────
+ *
+ * The engine composes the device kind from its own `process.platform` and ignores whatever
+ * arrives on the wire, deliberately: what platform an install runs on is that process's own fact,
+ * not something a caller over the bridge may assert. Sending it too was harmless — same machine,
+ * same answer — and misleading, because a reader would take it for the value that decides. The
+ * redeem sends only the token now.
+ *
+ * WHAT THIS STILL BUYS is the parity check. The window and the engine must agree about the
+ * vocabulary even though only one of them speaks it, so `desktop-host-door.test.ts` holds this
+ * function against the server's admitted set AND against the engine's own derivation. If those
+ * ever diverge the census reddens here, where it is cheap, rather than at a redeem in front of
+ * somebody — which is what the `desktop-mac`/`desktop-macos` split would have cost: a 400 after
+ * the single-use code had already been spent.
  */
 export function desktopDeviceKind(platform: string = BUILD_PLATFORM): string {
   switch (platform) {

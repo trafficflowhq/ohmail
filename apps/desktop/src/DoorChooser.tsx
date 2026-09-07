@@ -187,6 +187,22 @@ export function DoorChooser({
    */
   const [provedLink, setProvedLink] = useState<(HostLinkStep & { base: string }) | null>(null);
 
+  /**
+   * THE ONE REFUSAL WITH A WAY OUT — remembered so the card can offer the verb, and cleared the
+   * moment anything else happens.
+   *
+   * `pair_account_mismatch` means the computer at that address was reinstalled: a different
+   * account behind a familiar name, which neither of the engine's existing comparisons can see.
+   * The plain redeem is a dead end there, and the only way through discards the mail this machine
+   * holds for the other account.
+   *
+   * SO IT IS A REMEMBERED REFUSAL AND NOT AN INFERENCE. Start over is never selected by the
+   * refusal itself; it appears as a control and the person presses it. Anything else — a new
+   * link, Back, a successful pairing — clears it, so the verb can never outlive the refusal that
+   * justified it and be pressed against a different computer.
+   */
+  const [mismatch, setMismatch] = useState(false);
+
   /* One attempt at a time, and the result travels up whole. A door attempt restarts the engine
      and can take tens of seconds on a first run, so a second press while the first is in flight
      would reconfigure underneath it — the shell would stop an engine that was still starting. */
@@ -266,6 +282,31 @@ export function DoorChooser({
                looking at a mail client with no session and nothing explaining why. */
             onProve={(typedOrigin, address) => {
               if (busy) return;
+              /* ── A PAIRING LINK PASTED INTO THE SERVER FIELD GOES TO THE DOOR THAT WANTS IT ──
+                 Both doors ask for "an address", and the link a person is holding came from the
+                 other computer's Devices pane — so pasting it here is the ordinary mistake, not an
+                 exotic one. Left alone it is answered by THIS door's refusals, which are about
+                 self-hosting: the worst of them tells somebody to put a root certificate in a
+                 folder, which for a pairing link is advice that cannot help and reads as a
+                 configuration problem with their server.
+
+                 Routed BEFORE any dial, and that is the load-bearing half. `hostLinkProblem`
+                 parses; it opens nothing. So a link recognised here costs zero fetches, nothing is
+                 configured, and the previous door's mirror is untouched — whereas letting the
+                 self-host path take it would have replaced the engine to prove an address that was
+                 never a server.
+
+                 ONLY A PINNED LINK IS TAKEN. An unpinned `#<token>` fragment on a real hostname is
+                 genuinely ambiguous — that is also the shape a self-hosted origin has — so it is
+                 left to this door rather than captured on a guess. `k1.` is unambiguous. */
+              const pasted = hostLinkProblem(typedOrigin);
+              if (pasted.link !== null && pasted.link.pin !== null) {
+                setProblem(null);
+                setProvedLink(null);
+                setMismatch(false);
+                setStep("host");
+                return;
+              }
               setBusy(true);
               setProblem(null);
               void configureSelfHostDoor(typedOrigin, address)
@@ -297,7 +338,12 @@ export function DoorChooser({
             busy={busy}
             problem={problem}
             proved={provedLink}
-            onBack={() => { setProblem(null); setProvedLink(null); setStep("doors"); }}
+            onBack={() => {
+              setProblem(null);
+              setProvedLink(null);
+              setMismatch(false);
+              setStep("doors");
+            }}
             onCancel={onCancel}
             /* THE LINK STEP. Not routed through `attempt`, for `ServerDoor.onProve`'s reason: it
                does not end in a `DoorResult` and must not call `onEntered`. Proving that a
@@ -322,6 +368,9 @@ export function DoorChooser({
               const label = step.host ?? link.origin;
               setBusy(true);
               setProblem(null);
+              /* A NEW LINK RETIRES THE VERB. Start over discards mail, and a control justified by
+                 one refusal must never survive into a check against a different computer. */
+              setMismatch(false);
               void proveHostLink(link)
                 .then((proof) => {
                   if (proof.refusal !== null) {
@@ -334,7 +383,8 @@ export function DoorChooser({
                 })
                 .finally(() => setBusy(false));
             }}
-            onSubmit={() => {
+            mismatch={mismatch}
+            onSubmit={(startOver) => {
               const proved = provedLink;
               if (!proved?.link) return;
               const link = proved.link;
@@ -343,16 +393,36 @@ export function DoorChooser({
                 /* PAIR AGAIN IS NOT CHOOSING THE DOOR AGAIN. The door is already chosen and the
                    mirror is still here; reconfiguring would replace the engine and give
                    `enforceMirrorOwner` grounds to discard the copy the pane promises is kept.
-                   The same distinction `cloudAction` draws for the hosted door. */
-                const result = cloudAction === "signIn"
-                  ? await pairAgainWithHost(link)
+                   The same distinction `cloudAction` draws for the hosted door.
+
+                   A START OVER always takes the in-place path, whichever door this card was
+                   opened from: it is repairing a mismatch against a computer this install is
+                   already configured for, and reconfiguring would replace the engine underneath
+                   the very redeem that is staging the discard. */
+                const result = startOver || cloudAction === "signIn"
+                  ? await pairAgainWithHost(link, startOver)
                   : await enterHostDoor(link, proved.base);
+
+                /* THE PAIRING WORKED AND THE APP MUST BE REOPENED. Not a refusal and not an
+                   ordinary success: a session exists and may not be used until the next launch
+                   has performed the staged discard. `onEntered` still runs — the gate re-reads
+                   `/health`, sees `restartRequired`, and draws the relaunch card. */
+                if (result.restartRequired) {
+                  setMismatch(false);
+                  return { status: result.status, problem: null };
+                }
+
                 /* THE REDEEM'S REFUSAL BECOMES A SENTENCE HERE, for the reason the map above
                    gives: `doors.ts` may not read this window's catalogue, so it hands back the
                    kind and the card is what has the words. */
-                return result.refusal === null
-                  ? result
-                  : { ...result, problem: refusalSentence(result.refusal, label) };
+                if (result.refusal === null) {
+                  setMismatch(false);
+                  return result;
+                }
+                /* …and the ONE refusal that has a way out arms the verb. Remembered rather than
+                   acted on: the discard is the person's press, never this window's inference. */
+                setMismatch(result.refusal.kind === "pair_account_mismatch");
+                return { ...result, problem: refusalSentence(result.refusal, label) };
               });
             }}
           />
@@ -895,6 +965,7 @@ function HostDoor({
   busy,
   problem,
   proved,
+  mismatch,
   onBack,
   onCancel,
   onProve,
@@ -904,10 +975,17 @@ function HostDoor({
   problem: string | null;
   /** The link the first step proved, or null while it has not been proved yet. */
   proved: (HostLinkStep & { base: string }) | null;
+  /**
+   * The last redeem was refused because this machine holds mail from a DIFFERENT account on that
+   * computer — so there is a way out, and it costs that mail. Offering the verb is the whole of
+   * what this flag does; pressing it is the person's.
+   */
+  mismatch: boolean;
   onBack: () => void;
   onCancel?: () => void;
   onProve: (text: string) => void;
-  onSubmit: () => void;
+  /** `startOver` is true only from the Start over control — never from the refusal itself. */
+  onSubmit: (startOver: boolean) => void;
 }) {
   const [text, setText] = useState("");
 
@@ -916,7 +994,7 @@ function HostDoor({
       onSubmit={(e) => {
         e.preventDefault();
         if (proved === null) onProve(text);
-        else onSubmit();
+        else onSubmit(false);
       }}
     >
       <h1>{DOOR_COPY.doorHostName}</h1>
@@ -966,6 +1044,24 @@ function HostDoor({
             ? proved === null ? DOOR_COPY.hostChecking : DOOR_COPY.hostPairing
             : proved === null ? DOOR_COPY.hostCheck : DOOR_COPY.hostPair}
         </Button>
+        {/* ── THE WAY OUT OF THE ONE REFUSAL THAT HAS ONE ──────────────────────────────────
+            Offered only after that refusal, and it is a GHOST rather than a second primary: it
+            discards the mail this machine holds for the other account, so it must not read as
+            the obvious next press. The sentence above it has already said what it costs and that
+            a fresh link is needed; this is only the press.
+
+            `type="button"`, so the form's own submit — Pair, the ordinary path — cannot be what
+            fires it. That distinction is the whole safety of this control. */}
+        {mismatch ? (
+          <Button
+            variant="ghost"
+            type="button"
+            disabled={busy}
+            onClick={() => onSubmit(true)}
+          >
+            {busy ? DOOR_COPY.hostStartingOver : DOOR_COPY.hostStartOver}
+          </Button>
+        ) : null}
         <Button variant="ghost" type="button" onClick={onBack} disabled={busy}>
           {DOOR_COPY.back}
         </Button>
@@ -1025,6 +1121,7 @@ export function sentenceForKind(kind: HostLinkRefusal | string, host: string): s
     case "managed": return DOOR_COPY.hostRefuseManaged;
     case "selfhost": return DOOR_COPY.hostRefuseServer(host);
     case "pairing_invalid": return DOOR_COPY.hostRefuseSpent;
+    case "pair_account_mismatch": return DOOR_COPY.hostRefuseAccountMismatch(host);
     case "unreachable": return DOOR_COPY.hostRefuseUnreachable(host);
     /* NOT A DEFAULT SENTENCE. `null` is what sends the caller to the engine's own words; a
        catchall here would replace a true, specific refusal with a vague one. */

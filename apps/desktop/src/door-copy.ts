@@ -230,6 +230,23 @@ const EN = {
   hostRefuseServer: (host: string) =>
     `${host} is a server you run, not a computer sharing its mail. Go back and choose “Your own `
     + "server”.",
+  /* ── THE HOST WAS REINSTALLED AT THE SAME ADDRESS ────────────────────────────────────────
+     A different account behind a familiar name. Neither comparison the engine already makes can
+     see it — the address did not change and neither did the server — so without a way out this
+     refusal repeats for ever with nothing to press.
+
+     THE SENTENCE NAMES THE COST BEFORE THE VERB IS OFFERED, and it names both halves: the mail
+     held here for the other account is discarded, and a FRESH code is needed because the one just
+     used has already been spent at that computer. Leaving the second half out would send somebody
+     to press Start over with a code that cannot work, and the failure would look like the refusal
+     they were already stuck on. */
+  hostRefuseAccountMismatch: (host: string) =>
+    `This computer holds mail from a different account on ${host} — it looks like ohmail was `
+    + `reinstalled there. Starting over discards the mail held here for that other account and `
+    + `reads ${host}'s mailbox fresh. Your mail on the server is not touched. You will need a new `
+    + "pairing link, because the one you just used has been spent.",
+  hostStartOver: "Start over",
+  hostStartingOver: "Starting over…",
   hostRefuseSpent:
     "That link has already been used or has expired. Make a new one from Settings → Devices on "
     + "that computer.",
@@ -527,6 +544,20 @@ const EN = {
   gateUnpaired: (machine: string, host: string) =>
     `This ${machine} is no longer paired with ${host}. Pair again from its Settings → Devices, or `
     + `set this ${machine} up on its own. The copy of your mail here is kept.`,
+  /* ── A PAIRING THAT WORKED AND NEEDS THE APP REOPENED ────────────────────────────────────
+     The card for the one state where nothing is wrong and nothing can be done from inside the
+     window. The old mailbox's copy is thrown away on the next launch — the engine cannot do it
+     while its own database is open — so until then this install holds a session it may not use.
+
+     IT LEADS WITH THE SUCCESS, because the two states around it lead with failure and a person
+     arriving here has just pressed something destructive on purpose. Then the one action, in
+     plain words: quit ohmail and open it again. There is deliberately no Relaunch button — this
+     window has no command that restarts the app, and a button that did nothing would be worse
+     than a sentence that is true. */
+  gateRestartTitle: "Pairing finished",
+  gateRestart: (host: string) =>
+    `This computer is now paired with ${host}. Quit ohmail and open it again to finish `
+    + "connecting — the copy of the mail that was here before is replaced on the next start.",
   gatePairAgain: "Pair again",
   gateOwn: "Set up on its own",
   gateOpening: "Opening…",
@@ -556,6 +587,7 @@ export const DOOR_COPY: typeof EN = liveCopy("desktopDoor", EN, {
   hostPairLead: ["machine"],
   hostRefuseNotOhmail: ["host"],
   hostRefuseNotServing: ["host"],
+  hostRefuseAccountMismatch: ["host"],
   hostRefuseServer: ["host"],
   hostRefuseUnreachable: ["host"],
   hostFootStale: ["host"],
@@ -584,6 +616,7 @@ export const DOOR_COPY: typeof EN = liveCopy("desktopDoor", EN, {
   installSwitchWhyHost: ["host", "machine"],
   installSignOutWhyHost: ["host", "machine"],
   installSignOutConfirmWhyHost: ["machine", "host"],
+  gateRestart: ["host"],
   gateUnpaired: ["machine", "host"],
   aboutDoorHostWhy: ["host", "machine"],
   localLead: ["machine"],

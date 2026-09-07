@@ -324,7 +324,9 @@ export function DesktopGate() {
    */
   const [authEpoch, setAuthEpoch] = useState(0);
   const authKey = door === "cloud" && bridgeAvailable() ? `cloud:${authEpoch}` : null;
-  const [hostedAuth, setHostedAuth] = useState<{ key: string; gone: boolean; preAuth: boolean } | null>(null);
+  const [hostedAuth, setHostedAuth] = useState<
+    { key: string; gone: boolean; preAuth: boolean; restartRequired: boolean } | null
+  >(null);
   /** TRUE once the CURRENT engine's first `/health` answer has been read — pending otherwise.
       Until then the mail app is withheld: React would otherwise commit `AppShell` once, before
       the asynchronous probe responds, over an engine whose mail routes refuse. Non-cloud doors
@@ -332,6 +334,15 @@ export function DesktopGate() {
   const hostedAuthKnown = hostedAuth !== null && hostedAuth.key === authKey;
   const hostedSessionGone = hostedAuthKnown && hostedAuth.gone;
   const hostedPreAuth = hostedAuthKnown && hostedAuth.preAuth;
+  /**
+   * A PAIRING THAT SUCCEEDED AND IS WAITING FOR A RELAUNCH.
+   *
+   * Read BEFORE `gone` and `preAuth` at the render below, and the order is the whole of it: this
+   * state's `/health` shape is `signedIn:false, sessionExpired:false`, which is byte-for-byte
+   * `preAuth`'s. An arm added after them would be correct, unreachable, and invisible — the code
+   * would exist, read well, and never run.
+   */
+  const hostedRestartRequired = hostedAuthKnown && hostedAuth.restartRequired;
   /**
    * THE ONE FACT EVERY ACCOUNT-SHAPED SURFACE BELOW IS DECIDED BY — this engine's own live
    * verdict on the hosted session, in the shape the door rules take ({@link HostedSession}).
@@ -371,10 +382,23 @@ export function DesktopGate() {
         // pre-auth engine also answers signedIn:false, and the engine latches sessionExpired
         // only on the hosted API's definitive refusal to renew. Both states leave the mail
         // client — the difference is the sentence over the sign-in, never whether it shows.
-        const health = (await res.json()) as { signedIn?: boolean; sessionExpired?: boolean };
+        const health = (await res.json()) as {
+          signedIn?: boolean;
+          sessionExpired?: boolean;
+          restartRequired?: boolean;
+        };
         if (cancelled) return;
         setHostedAuth({
           key: authKey,
+          /* THE THIRD REASON `signedIn` CAN BE FALSE, and it is read FIRST because the other two
+             are wrong about it. A pairing that succeeded and is waiting for a relaunch answers
+             `signedIn: false` with `sessionExpired: false` — which is `preAuth`'s exact shape, so
+             without this the window draws the hosted PASSWORD FORM for an account that does not
+             exist, at the moment the pairing worked. Had the engine set `sessionExpired` instead
+             it would be worse: "no longer paired with {host}", the precise opposite of what
+             happened. Neither is a wording problem; both are the window having no third reading
+             available. `restartRequired` is that reading. */
+          restartRequired: health.restartRequired === true,
           gone: health.sessionExpired === true,
           preAuth: health.sessionExpired !== true && health.signedIn === false,
         });
@@ -402,10 +426,23 @@ export function DesktopGate() {
       try {
         const res = await bridgeFetch("/health");
         if (!res.ok) return;
-        const health = (await res.json()) as { signedIn?: boolean; sessionExpired?: boolean };
+        const health = (await res.json()) as {
+          signedIn?: boolean;
+          sessionExpired?: boolean;
+          restartRequired?: boolean;
+        };
         if (cancelled) return;
         setHostedAuth({
           key: authKey,
+          /* THE THIRD REASON `signedIn` CAN BE FALSE, and it is read FIRST because the other two
+             are wrong about it. A pairing that succeeded and is waiting for a relaunch answers
+             `signedIn: false` with `sessionExpired: false` — which is `preAuth`'s exact shape, so
+             without this the window draws the hosted PASSWORD FORM for an account that does not
+             exist, at the moment the pairing worked. Had the engine set `sessionExpired` instead
+             it would be worse: "no longer paired with {host}", the precise opposite of what
+             happened. Neither is a wording problem; both are the window having no third reading
+             available. `restartRequired` is that reading. */
+          restartRequired: health.restartRequired === true,
           gone: health.sessionExpired === true,
           preAuth: health.sessionExpired !== true && health.signedIn === false,
         });
@@ -685,6 +722,46 @@ export function DesktopGate() {
       <div className="gate gate-boot">
         <BootSkeleton active rail />
         <BootStatus phase={status?.bootPhase} />
+      </div>
+    );
+  }
+
+  /**
+   * ═══ A PAIRING THAT WORKED AND IS WAITING FOR A RELAUNCH ═══════════════════════════════════
+   *
+   * ── THIS ARM IS FIRST, AND THAT IS THE DESIGN RATHER THAN AN ACCIDENT OF WRITING ───────────
+   *
+   * Its `/health` shape is `signedIn:false, sessionExpired:false` — byte-for-byte the shape the
+   * `preAuth` arm below matches. Placed after it, this branch would be correct, unreachable, and
+   * completely invisible: the window would go on drawing the hosted PASSWORD FORM, for an account
+   * that does not exist, at the exact moment a pairing the person asked for had succeeded. Had the
+   * engine chosen `sessionExpired` for this state instead, the arm below THAT would claim "no
+   * longer paired with {host}" — the precise opposite of what happened. Both are false statements
+   * about a pairing that worked, and neither is a wording problem: the window simply had no third
+   * reading available until `restartRequired` existed.
+   *
+   * ── WHY THERE IS NO BUTTON ─────────────────────────────────────────────────────────────────
+   *
+   * Nothing in this window can restart the app. `app.restart()` exists in the shell, but only the
+   * updater calls it and reaching it from here would mean a new command — Rust this slice does not
+   * touch. So the card says the one true thing a person can act on: quit ohmail and open it again.
+   * A Relaunch button that did nothing would be worse than a sentence that is accurate.
+   *
+   * ── AND IT IS NOT `GateNotice` ─────────────────────────────────────────────────────────────
+   *
+   * That card is titled "ohmail cannot open your mailbox" and closes with "Your mail is untouched".
+   * Neither is true here: the pairing SUCCEEDED, and the previous account's copy on this machine
+   * is deliberately about to be replaced. Borrowing the apology card would have meant three
+   * sentences fighting each other on one screen.
+   */
+  if (hostedRestartRequired) {
+    return (
+      <div className="gate">
+        <div className="gate-card">
+          <span className="wordmark"><b>ohmail</b><em>.</em></span>
+          <h1>{DOOR_COPY.gateRestartTitle}</h1>
+          <p>{DOOR_COPY.gateRestart(hostLabelOf(status?.baseUrl) ?? DOOR_COPY.doorHostName)}</p>
+        </div>
       </div>
     );
   }
