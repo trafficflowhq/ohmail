@@ -121,6 +121,38 @@ gives up quickly, because someone is waiting at that form.
 
 If your first sync has been stopping short, this is why.
 
+### One draft per message
+
+A message you are writing has exactly one draft on your account, from the first thing you type
+until it is sent. Three ways it could end up with two are closed.
+
+Opening a compose with somebody already in the To line — from a contact, or from a mail link
+outside the app — no longer saves a draft by itself. Nothing is written to your account until you
+type a subject or a body, so Drafts stops filling with empty rows nobody wrote anything into.
+
+Pressing Send in the couple of seconds before the first save no longer leaves a second draft
+behind. The send makes its own, and that is the one the app keeps.
+
+Coming back to a message whose send could not be confirmed no longer starts a fresh copy of it,
+whatever state the server left the original in.
+
+### A send nobody could confirm is held
+
+It stays in Drafts, it says so when you open it, and the app will not send it again on its own —
+sending again could deliver the same mail twice. Trying again reuses the same send, which is the
+one repeat your server can recognise and answer for.
+
+Discarding such a message now says why it stays instead of reporting that something went wrong.
+Reopening it while you are part-way through writing something else is refused too, so what is on
+screen is not replaced without asking.
+
+A browser that will not let the app keep its own records can still send and still save. What it
+cannot do is decide, on evidence it does not have, to delete a draft, start a new one, or take
+over a message it may already have sent.
+
+The wording that told you to check your Sent folder and send it again has been replaced, because
+sending it again is refused — the sentence now says what is true.
+
 ## [0.14.1] — 2026-09-04
 
 **The phone's 0.14.1 build went out first; this desktop and web release completes 0.14.1.**
