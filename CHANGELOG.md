@@ -884,6 +884,16 @@ a contact from their card, or following a mail link from outside the app. Each o
 new composing session, so the message that replaces the unconfirmed one sends normally, while the
 unconfirmed one stays blocked whenever you come back to it, until it is resolved or discarded.
 
+Reopening the unconfirmed message itself keeps it parked. A message whose send could not be
+confirmed stays in Drafts — that row is the only copy of it — and opening it from there used to be
+treated as starting again from its text: a fresh draft was saved and a fresh composing session
+begun, which is what the app does for a message stranded by some other device. For a message this
+browser is still waiting on, that threw away both of the names the block was holding it by, so
+Send came back on and one press sent a second copy. Opening it now reopens the message, not a copy
+of it: no new draft, the same composing session, the warning still there and Send still held. Only
+a stranded message this browser knows nothing about takes the start-again path, and that one sends
+once, as before.
+
 A send left unconfirmed by 0.14.0 is still recognised after the update, and it is never sent again
 without you asking. The record of such a send is stored in your browser, and 0.14.1 changed how a
 message is recognised from it — so a record written by 0.14.0 would not have been matched to the

@@ -124,6 +124,7 @@ import {
   COMPOSE_SEND_KEY, inlineForwardKey, useMailSend, readReplyDraft, writeReplyDraft,
   readReplyMeta, writeReplyMeta,
 } from "./mail-send";
+import { unresolvedSendRows } from "./send-lock";
 import {
   clearComposeDraft,
   composePlan,
@@ -3719,26 +3720,54 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
         })(),
       };
       setCompose(seeded);
-      /* A DIFFERENT MESSAGE, SO A DIFFERENT COMPOSE SESSION — both branches. The id is what parks
-         an unresolved send (`compose.ts`), and leaving it in place made one session span every
-         draft this surface opened: a send of the FIRST one that came back unverified then parked
-         whichever draft replaced it, with the warning above a refused Send button. Cleared before
-         the new buffer is written, so the next read of `composeSessionId` mints a fresh id — and
-         the recovery branch below is a door in exactly the same sense: the text of a stranded row
-         seeded into a compose that will write its own row is a new message-in-progress. */
-      clearComposeDraft();
+      /* ── IS THIS ROW A MESSAGE WE ARE STILL WAITING TO LEARN THE FATE OF? ──────────────────
+         Asked FIRST, because it decides which of the three doors below this is, and it is a
+         question about the durable RECORD rather than about the row's status: the server may
+         leave the row at `draft` or move it to `unverified`, and neither says whether this
+         browser is still waiting. See `unresolvedSendRows`. */
+      const parked = unresolvedSendRows(COMPOSE_SEND_KEY).has(d.id);
+      /* A DIFFERENT MESSAGE, SO A DIFFERENT COMPOSE SESSION. The id is what parks an unresolved
+         send (`compose.ts`), and leaving it in place made one session span every draft this
+         surface opened: a send of the FIRST one that came back unverified then parked whichever
+         draft replaced it, with the warning above a refused Send button. Cleared before the new
+         buffer is written, so the next read of `composeSessionId` mints a fresh id.
+
+         NOT for a parked row, and that exception is the whole of the defect above. Re-minting is
+         what makes the reopened message a NEW one, and a new message is exactly what the record
+         must not be told: both names it carries — the row and the session — would be off the
+         message at once, the park could not recognise it, Send would light up, and one press
+         would deliver a second copy under a fresh key. Measured end to end, recipient total 2. */
+      if (!parked) clearComposeDraft();
       writeComposeDraft(seeded);
-      if (d.status === "draft") {
+      if (parked) {
+        /* THE PARKED MESSAGE, REOPENED AS ITSELF. No new row, no re-minted session, nothing
+           released and nothing deleted: the record still names this message, so `canSend` refuses
+           the press and the surface shows "We couldn't confirm this send. Check your Sent folder
+           before retrying" — which is the true sentence about it.
+
+           NOT ADOPTED either, whatever the row's status. A row the server has moved past `draft`
+           refuses every PUT (`SendService` reserves only from `status='draft'`), and adopting it
+           would point autosave at that refusal; a row still at `draft` would be safe to adopt and
+           is deliberately not, so this branch has ONE behaviour rather than two that differ by a
+           status nobody on this path acts on. Autosave writing a fresh row later cannot unlock
+           anything, because the session is untouched and still names the record.
+
+           AND NO `recoverySeed`. That field exists to discard the stranded copy when a fresh send
+           CONFIRMS, and there is no fresh send here — the press is refused. Setting it would arm
+           a delete of the one row that still holds this message. */
+        recoverySeed.current = null;
+      } else if (d.status === "draft") {
         recoverySeed.current = null;
         autosave.adopt(d.id, seeded);
       } else {
         /* AN UNCONFIRMED SEND, RECOVERED — NOT ADOPTED. The row is `unverified` or a stranded
-           `sending`: the server refuses to send it again under any key (`SendService` reserves
-           only from `status='draft'`), and adopting it would point every autosave PUT and the
-           Send press at that refusal. So the TEXT is seeded, the first pause writes a fresh
-           row, and the send delivers that one — the deliberate fresh send the unverified copy
-           has always promised. The stranded row stays in Drafts as the record of what is not
-           known until the fresh send CONFIRMS, at which point `onSendSettled` discards it. */
+           `sending` AND this browser holds no unresolved record of it (another device sent it, or
+           this browser's record was resolved or swept): the server refuses to send that row again
+           under any key, and adopting it would point every autosave PUT and the Send press at that
+           refusal. So the TEXT is seeded, the first pause writes a fresh row, and the send delivers
+           that one — the deliberate fresh send the unverified copy has always promised. The
+           stranded row stays in Drafts as the record of what is not known until the fresh send
+           CONFIRMS, at which point `onSendSettled` discards it. */
         recoverySeed.current = d.id;
         autosave.release();
       }

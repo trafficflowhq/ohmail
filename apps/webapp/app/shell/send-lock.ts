@@ -749,6 +749,42 @@ export function unverifiedSendIntents(lane: string, owner: string | null = stora
 }
 
 /**
+ * ── WHICH DRAFT ROWS AN UNRESOLVED SEND ON THIS LANE BELONGS TO ─────────────────────────────
+ *
+ * A row id is in this set when a record with `unverified: true` on this lane either NAMES it as
+ * its subject (`draft:<id>`) or has since ACQUIRED it ({@link attachSendLockDraft} writes the row
+ * onto a record that was named by the compose session, because the row appeared after the press).
+ * Both, because the two are the same fact recorded at different moments in one message's life, and
+ * reading only the first misses every send pressed before autosave had written anything.
+ *
+ * ── WHY REOPENING SUCH A ROW IS NOT A RECOVERY ──────────────────────────────────────────────
+ *
+ * `openDraft` has a recovery door for a row the server has moved past `draft`: it seeds the text,
+ * takes no row, and lets the next pause write a fresh one, which is the deliberate fresh send an
+ * unconfirmed copy has always promised. That door is right for a stranded row and WRONG for a row
+ * this browser still holds an unresolved record of — measured end to end, twice, one recipient
+ * holding two copies: reopening the row minted a new one AND started a new compose session, so
+ * neither name the record carries was on the message any more, the park could not recognise it,
+ * Send lit up, and one press delivered a second time under a fresh key.
+ *
+ * So the reopen asks this first. It is a question about the RECORD, not about the row's status:
+ * the server may leave the row at `draft` or move it to `unverified`, and neither says whether
+ * this browser is still waiting to learn what that send did.
+ *
+ * Rows only — a record naming nothing, or named by a session alone with no row yet, contributes
+ * nothing here and is parked by the comparison in `mail-send.ts` as it was before.
+ */
+export function unresolvedSendRows(lane: string, owner: string | null = storageOwner()): Set<string> {
+  const out = new Set<string>();
+  for (const r of load(owner)) {
+    if (r.lane !== lane || r.unverified !== true || r.v > SEND_LOCK_FORMAT) continue;
+    if (r.draftId !== null && r.draftId.length > 0) out.add(r.draftId);
+    for (const s of lockSubjects(r)) if (s.startsWith("draft:")) out.add(s.slice("draft:".length));
+  }
+  return out;
+}
+
+/**
  * THE DRAFT ROW THIS MESSAGE HAS ACQUIRED SINCE THE KEY WAS MINTED — recorded, never re-keyed.
  *
  * A compose pressed before autosave had written anything holds `draftId: null`, and a row appears
