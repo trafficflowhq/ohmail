@@ -87,23 +87,31 @@
 -- the new kinds — drain or delete them first), and drop the table. Nothing outside this feature
 -- reads either.
 --
--- ── SQLITE TWIN: REQUIRED, BOTH OBJECTS ───────────────────────────────────────────────────────
+-- ── SQLITE TWIN: REQUIRED, THREE OBJECTS ──────────────────────────────────────────────────────
 --
 -- Stated here by name because the journal-lockstep guard asks this entry for a twin or a reason,
--- and "a device never runs this table" is FALSE for both of them.
+-- and "a device never runs this" is FALSE for all three.
 --
 -- The standalone phone is built on SQLite and it is never a host — but "not a host" is not "always
 -- the organizer". It is an ordinary install of the same product: it organizes the mailbox when it
 -- holds the claim and is a READER whenever something else does, which is the common case for a
 -- phone beside a desktop or Cloud. A reader is precisely the install that WRITES `organizer_requests`
--- rows and READS `mailbox_profile_mirror` — the two objects here are the reader half of the
--- protocol, so the device that is most often a reader is the one that needs them most.
+-- rows and READS `mailbox_profile_mirror` — the objects here are the reader half of the protocol,
+-- so the device that is most often a reader is the one that needs them most.
 --
--- So both need a twin: `organizer_requests` needs its `kind` CHECK widened by the same two members
--- (SQLite enforces CHECK constraints, and a narrower one there would make a phone refuse a request
--- it is the intended author of), and `mailbox_profile_mirror` needs creating with the same six
--- columns. `uidvalidity` is `INTEGER` in SQLite, which is 64-bit there and so holds the same range
--- as `bigint` here.
+-- The three, and each needs its own twin:
+--
+--   1. `organizer_requests.kind` — the CHECK widened by the same two members. SQLite enforces
+--      CHECK constraints, and a narrower one there would make a phone refuse a request it is the
+--      intended AUTHOR of.
+--   2. `mailbox_profile_mirror` — created with the same six columns. `uidvalidity` is `INTEGER` in
+--      SQLite, which is 64-bit there and so holds the same range as `bigint` here.
+--   3. `organizer_requests.refused_reason` — the CHECK widened by `no_such_message` and
+--      `no_trash_folder`. This is the one easiest to miss, because it is the only one a phone
+--      needs as a READER RECEIVING an answer rather than as an author: the organizer writes the
+--      refusal, and the reader stores what came back. A phone whose constraint still holds eight
+--      words rejects the row at the moment it records why its own move did not happen — a failure
+--      on the path whose only job is to explain a refusal, which is the worst place for one.
 --
 -- Idempotent (dropped-then-added / `IF NOT EXISTS`, the shape `0007_staff_users` established),
 -- because a desktop engine replays this journal at every launch.

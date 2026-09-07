@@ -1,5 +1,5 @@
 import {
-  CAPABILITY_REQUESTS, deriveRequestKey,
+  CAPABILITY_REQUESTS, CAPABILITY_MOVES, deriveRequestKey,
   DEFAULT_STALE_AFTER_MS, LeaseUnavailableError, META_FOLDER,
   ClaimReleaseError,
   isMalformed, parseClaim, runLeaseGate,
@@ -106,7 +106,26 @@ export const CLOUD_DISPLAY_NAME = "ohmail Cloud";
  * not a preference a caller may express — which keeps the guarantee the paragraph above is about
  * while letting the honest degraded mode exist.
  */
-export const ORGANIZER_CAPABILITIES: readonly string[] = [CAPABILITY_REQUESTS];
+export const ORGANIZER_CAPABILITIES: readonly string[] = [CAPABILITY_REQUESTS, CAPABILITY_MOVES];
+
+/* ── WHY `moves` JOINS THE SET HERE AND NOT EARLIER (mail 0093) ─────────────────────────────
+ *
+ * A capability means "this build has an applier for that kind of request". `message.move` got its
+ * applier and its place in the drain's dispatch table first; the advertisement lands after, and
+ * that ORDER is the whole content of the promise. Advertised first, a reader reads `capable: true`
+ * off the row, writes a record this organizer has no code to drain, and the person watches a
+ * message sit pending until it expires — with nothing to report, because the claim was true about
+ * a build that did not exist yet.
+ *
+ * `rules` and `profile` are deliberately still absent. Both kinds are admitted by the database and
+ * both leave records STANDING in the drain, which is the honest state for a decision this build
+ * cannot yet carry out; each gets its capability in the same commit as its applier, never before.
+ *
+ * The set is still not injectable and still passes through {@link organizerCapabilitiesFor}, so a
+ * mailbox with no derived key advertises NOTHING — including `moves`. That is correct rather than
+ * incidental: a move request is signed with the same key, so an organizer that cannot verify one
+ * cannot apply one either, and inviting the request would be inviting a refusal.
+ */
 
 /**
  * WHAT THIS ORGANIZER ADVERTISES FOR THIS ACCOUNT — no key means no capability, and this is the
