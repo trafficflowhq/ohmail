@@ -79,6 +79,45 @@ export const SETUP_GRANT_TTL_DAYS = 90;
 const SETUP_GRANT_TTL_MS = SETUP_GRANT_TTL_DAYS * 24 * 60 * 60 * 1000;
 
 /**
+ * WHY THE GRANT REPORTS A REASON AND NOT A BOOLEAN.
+ *
+ * The mint runs inside the hosted mailbox-create transaction as `MailboxServiceDeps.onCreated`,
+ * where its answer is nobody's control flow: a create succeeds whether or not a pool was written.
+ * So the only consumer of the answer is an OPERATOR, and `false` is the one thing that is never
+ * actionable for them — "no pool appeared" is the observation, not the finding. The four ways it
+ * can happen are four different situations, and exactly one of them is a defect:
+ *
+ *  · `already_held`    — the account holds a setup grant of either kind. The COUNT CHECK refused,
+ *                        which is the ordinary second-connection answer and wants no attention.
+ *  · `no_subscription`  — no effective subscription row. Mailbox creation is gated on one, so this
+ *                        is unreachable from the hosted create path and is worth a look if seen.
+ *  · `zero_allowance`   — a subscription that sells no credits. A plan-shape question, not a bug.
+ *  · `lost_race`        — the PARTIAL UNIQUE INDEX refused, i.e. a concurrent first connection
+ *                        landed between this call's count check and its insert.
+ *
+ * `lost_race` is deliberately NOT folded into `already_held`, even though both mean "the account
+ * has a pool now". They are the two DIFFERENT mechanisms that make this function idempotent — the
+ * fast read and the table fact — and a log that cannot tell them apart cannot answer the only
+ * question worth asking of the pair: whether the index is doing any work, or whether the count
+ * check has silently been carrying the property alone. Collapsing them would also make the two
+ * unobservable in a test, which is the shape a mutation cannot watch fail.
+ */
+export type SetupGrantSkipReason =
+  | "already_held"
+  | "no_subscription"
+  | "zero_allowance"
+  | "lost_race";
+
+/**
+ * The mint's answer. `amount` rides on the minted arm because the size is chosen HERE — off the
+ * subscription row that was sold — so an operator reading the log never has to join the two to
+ * learn what the account actually received.
+ */
+export type SetupGrantOutcome =
+  | { minted: true; amount: number }
+  | { minted: false; reason: SetupGrantSkipReason };
+
+/**
  * Grant an account its setup pool at its first connection. Called from the hosted mailbox-create
  * transaction, AFTER the allowance gate and the insert — same transaction, so a refused create
  * grants nothing.
@@ -89,11 +128,13 @@ const SETUP_GRANT_TTL_MS = SETUP_GRANT_TTL_DAYS * 24 * 60 * 60 * 1000;
  * account-kind pool on its next connect would be a second grant wearing a new key. The index
  * alone would permit exactly that.
  *
- * Returns whether a grant was written — callers today ignore it; tests read it.
+ * Returns a TYPED OUTCOME rather than a boolean — see {@link SetupGrantOutcome}. The hosted
+ * composition logs it; the tests assert each reason by name. No caller branches on it: a mailbox
+ * create succeeds whether or not a pool was written.
  */
 export async function grantSetupCredits(
   tx: Tx, accountId: string, mailboxId: string, now: Date,
-): Promise<boolean> {
+): Promise<SetupGrantOutcome> {
   // ONCE PER ACCOUNT, EVER — and the read below is the fast, wide half of it, not the
   // enforcement. Enforcement is `setup_grants_account_once_uq`, the partial unique index, which
   // is why the insert can carry `ON CONFLICT DO NOTHING` and mean it: two first connections
@@ -104,7 +145,9 @@ export async function grantSetupCredits(
     .select({ n: sql`count(*)::int` })
     .from(setupGrants)
     .where(eq(setupGrants.accountId, accountId));
-  if (Number((held[0] as { n: number } | undefined)?.n ?? 0) > 0) return false;
+  if (Number((held[0] as { n: number } | undefined)?.n ?? 0) > 0) {
+    return { minted: false, reason: "already_held" };
+  }
 
   // The size is the subscription's OWN sold-at month, never `PLAN_LIMITS`: the same rule every
   // other allowance read follows, so a later price change cannot retro-size a pool that was
@@ -117,8 +160,11 @@ export async function grantSetupCredits(
   // hosted create path; it is written as a refusal rather than a default because a default here
   // would be a pool granted to an account with no revenue behind it at all.
   const sub = await effectiveSubscriptionOf(tx, accountId);
-  const amount = sub ? Number(sub.monthlyCredits) : 0;
-  if (!Number.isFinite(amount) || amount <= 0) return false;
+  if (!sub) return { minted: false, reason: "no_subscription" };
+  const amount = Number(sub.monthlyCredits);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return { minted: false, reason: "zero_allowance" };
+  }
 
   const rows = await tx
     .insert(setupGrants)
@@ -134,7 +180,11 @@ export async function grantSetupCredits(
     // connections, which carry two different mailbox ids and one account.
     .onConflictDoNothing()
     .returning({ id: setupGrants.id });
-  return rows.length > 0;
+  // NO ROW BACK means `onConflictDoNothing` swallowed a 23505 on `setup_grants_account_once_uq`:
+  // a concurrent first connection won. That is the index enforcing the bound the count check
+  // above only guesses at, and it is reported as its own reason for exactly that reason.
+  if (rows.length === 0) return { minted: false, reason: "lost_race" };
+  return { minted: true, amount };
 }
 
 /** One account's live setup remainder — what the settings surface shows beside the balance. */

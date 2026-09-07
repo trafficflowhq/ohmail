@@ -215,6 +215,8 @@ export {
   // the gate wrapper the two Screener arms install over their spend gates. See `setup-grant.ts`.
   SETUP_GRANT_TTL_DAYS,
   grantSetupCredits, setupPoolOf, withSetupPool,
+  // The mint's answer, so the hosted host can log the reason it refused without re-deriving it.
+  type SetupGrantOutcome, type SetupGrantSkipReason,
 } from "./setup-grant.js";
 
 export {

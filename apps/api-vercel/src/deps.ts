@@ -10,7 +10,7 @@ import {
   // send path, because the retention sweep's caller is the worker, which may not depend on
   // `@trafficflow/services`. This host is the one place that needs both halves.
   makeSupabaseStagingStorage,
-  type AdminDb, type AlertSink,
+  type AdminDb, type AlertSink, type SetupGrantOutcome,
 } from "@trafficflow/db/cloud";
 import {
   resolveCloudInstallId,
@@ -92,6 +92,52 @@ function wakeHubFor(cfg: HostConfig): ChangeWakeHub {
  * message, or anything that could quote a connection string. A real pager still belongs
  * to the observability owner; this makes the gap actionable instead of invisible in the meantime.
  */
+/**
+ * THE SETUP GRANT'S ONE LINE IN THE LOG — `setup_grant_minted` / `setup_grant_skipped`.
+ *
+ * The mint runs as the mailbox service's `onCreated` hook, inside the create transaction, and its
+ * answer is nobody's control flow: the create succeeds either way. That made a mint and a refusal
+ * indistinguishable on this host for the life of the feature — an account with no pool looked
+ * exactly like an account whose pool was never attempted. `grantSetupCredits` is the only code
+ * that knows WHICH of the four things happened, so it reports a reason and this wraps the
+ * reference to write it down. Same `console.log(JSON.stringify(...))` shape as `ai_call` above,
+ * for the same reason: Vercel's log drain indexes this stream, so a fixed shape behind a
+ * grep-able token is what a drain rule can key on.
+ *
+ * ── TWO THINGS THIS DELIBERATELY DOES NOT DO ──────────────────────────────────────────────────
+ *
+ *  1. **It does not catch the GRANT.** A mint that throws must still abort the create — that is
+ *     the shipped invariant `mailbox-service.ts` states at its hook ("a grant that fails aborts
+ *     the create — the two are one fact or neither is"), and swallowing it here would quietly
+ *     turn it into a create that succeeded with no pool and no error anywhere. Only the LOG is
+ *     guarded, because the inverse is also true: a logging fault must never cost a customer
+ *     their mailbox.
+ *  2. **It does not claim the row survived.** The line is written INSIDE the transaction, so a
+ *     commit that subsequently fails leaves a `setup_grant_minted` with no `setup_grants` row.
+ *     The database is the authority on what an account holds; this stream is the authority on
+ *     what was attempted and how it answered. Reconciling the two is what makes a missing pool
+ *     diagnosable at all, which is the whole point — and it is why the log carries the account
+ *     and mailbox ids and nothing else that could quote a credential.
+ *
+ * EXPORTED for its test only. It is not a second granter: the `SETUP_GRANT_CALLERS` census in
+ * the database package's own tests still names this file as the one place the hosted
+ * composition reaches the primitive, and `host-wiring.test.ts` asserts that `onCreated`
+ * is handed THIS wrapper rather than the bare reference — a mint that stopped being logged
+ * would otherwise be invisible, which is the condition this whole wrapper exists to end.
+ */
+export const grantSetupCreditsLogged = async (
+  ...args: Parameters<typeof grantSetupCredits>
+): Promise<SetupGrantOutcome> => {
+  const [, accountId, mailboxId] = args;
+  const outcome = await grantSetupCredits(...args);
+  try {
+    console.log(JSON.stringify(outcome.minted
+      ? { event: "setup_grant_minted", accountId, mailboxId, amount: outcome.amount }
+      : { event: "setup_grant_skipped", accountId, mailboxId, reason: outcome.reason }));
+  } catch { /* see (1): a log line never becomes the reason a mailbox failed to connect */ }
+  return outcome;
+};
+
 const billingAlert = (alert: {
   stage: string; code: string; stripeEventId: string | null;
   eventType: string | null; accountId: string | null;
@@ -299,7 +345,7 @@ function buildServices(cfg: HostConfig): ApiServices {
   // `setup-grant.ts`). Hosted-only by construction — the local tiers construct this service
   // without the hook, exactly as they pass their own `allowance`.
   lazily(bag, "mailbox", () => makeMailboxService({
-    keyProvider, onCreated: grantSetupCredits,
+    keyProvider, onCreated: grantSetupCreditsLogged,
     /* WHO THIS DEPLOYMENT IS TO A MAILBOX, resolved through the SAME function the worker
        resolves it with. The release asks whether a claim is ours, which is an identity
        question; answering it with the holder's KIND accepted another Cloud deployment's claim.
