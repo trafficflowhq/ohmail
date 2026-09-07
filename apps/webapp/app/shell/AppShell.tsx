@@ -124,7 +124,7 @@ import {
   COMPOSE_SEND_KEY, inlineForwardKey, useMailSend, readReplyDraft, writeReplyDraft,
   readReplyMeta, writeReplyMeta,
 } from "./mail-send";
-import { unresolvedSendRows } from "./send-lock";
+import { parkedComposeMessage } from "./send-lock";
 import {
   clearComposeDraft,
   composePlan,
@@ -3724,8 +3724,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
          Asked FIRST, because it decides which of the three doors below this is, and it is a
          question about the durable RECORD rather than about the row's status: the server may
          leave the row at `draft` or move it to `unverified`, and neither says whether this
-         browser is still waiting. See `unresolvedSendRows`. */
-      const parked = unresolvedSendRows(COMPOSE_SEND_KEY).has(d.id);
+         browser is still waiting.
+
+         `parkedComposeMessage` and not a set of rows, because the SAME question is asked when a
+         reload brings this surface back (`compose-autosave.ts`) and the two answering differently
+         was a duplicate delivery of its own. No session is passed HERE: the session at this
+         moment still names the message being left behind, which every draft in the account would
+         answer to. The row alone says which message is being opened. */
+      const parked = parkedComposeMessage(COMPOSE_SEND_KEY, d.id, null);
       /* A DIFFERENT MESSAGE, SO A DIFFERENT COMPOSE SESSION. The id is what parks an unresolved
          send (`compose.ts`), and leaving it in place made one session span every draft this
          surface opened: a send of the FIRST one that came back unverified then parked whichever

@@ -749,30 +749,66 @@ export function unverifiedSendIntents(lane: string, owner: string | null = stora
 }
 
 /**
+ * ── IS THIS COMPOSE A MESSAGE WE ARE STILL WAITING TO LEARN THE FATE OF? ────────────────────
+ *
+ * THE ONE GUARD, and it is one function because it was measured failing in two places that had to
+ * agree and did not. Both are moments at which this browser decides whether the message in front
+ * of it is a NEW one:
+ *
+ *  · REOPENING a draft from the list (`openDraft`) — asked with the row and no session, because
+ *    the session at that moment is still the one being left behind and every draft in the account
+ *    would answer to it. The row alone decides which message is being opened.
+ *  · COMING BACK after a reload (`useComposeAutosave`'s adoption) — asked with the row this
+ *    surface was holding AND the session it came back to, because a send pressed before autosave
+ *    had written anything is named by the session alone and there is no row to ask about.
+ *
+ * Answering `true` means: do not mint a row for this, do not start a new session for it, and do
+ * not treat it as recovered. It is the message the record names, it is parked, and the surface
+ * says so.
+ *
+ * ── WHAT WENT WRONG WHEN THE TWO SITES DID NOT SHARE IT ────────────────────────────────────
+ *
+ * Measured end to end, twice, one recipient holding two copies each time. The reopen minted a row
+ * and re-minted the session, so neither name the record carried was on the message any more. And
+ * EARLIER than that, the reload alone did it: the adoption found the row moved past `draft`,
+ * dropped it, and let the next pause create a fresh one — so the drafts list held TWO rows for one
+ * message before anybody reopened anything, and the fresh row was a message the record could not
+ * recognise.
+ *
+ * A row is matched by either name a record can carry it under: the subject it was minted with
+ * (`draft:<id>`), and the row it ACQUIRED afterwards ({@link attachSendLockDraft}). They usually
+ * agree; when the row moves they do not, and the row still in the drafts list is the one named by
+ * the subject. That reading is {@link unresolvedSendRows}, called from here rather than repeated.
+ *
+ * A record may name NO row — a send pressed before autosave had written anything carries
+ * `draftId: null` and `compose:<session>` — so the session arm is not a fallback for the row arm.
+ * It is the only name that message will ever have.
+ */
+export function parkedComposeMessage(
+  lane: string,
+  draftId: string | null,
+  session: string | null,
+  owner: string | null = storageOwner(),
+): boolean {
+  if (session !== null) {
+    for (const r of load(owner)) {
+      if (r.lane !== lane || r.unverified !== true || r.v > SEND_LOCK_FORMAT) continue;
+      if (lockSubjects(r).includes(`compose:${session}`)) return true;
+    }
+  }
+  // The ROW half is {@link unresolvedSendRows}, called rather than restated: the two names a row
+  // is recorded under appear at different moments in one message's life, and a second reading of
+  // that pair is a second chance to read only one of them.
+  return draftId !== null && unresolvedSendRows(lane, owner).has(draftId);
+}
+
+/**
  * ── WHICH DRAFT ROWS AN UNRESOLVED SEND ON THIS LANE BELONGS TO ─────────────────────────────
  *
- * A row id is in this set when a record with `unverified: true` on this lane either NAMES it as
- * its subject (`draft:<id>`) or has since ACQUIRED it ({@link attachSendLockDraft} writes the row
- * onto a record that was named by the compose session, because the row appeared after the press).
- * Both, because the two are the same fact recorded at different moments in one message's life, and
- * reading only the first misses every send pressed before autosave had written anything.
- *
- * ── WHY REOPENING SUCH A ROW IS NOT A RECOVERY ──────────────────────────────────────────────
- *
- * `openDraft` has a recovery door for a row the server has moved past `draft`: it seeds the text,
- * takes no row, and lets the next pause write a fresh one, which is the deliberate fresh send an
- * unconfirmed copy has always promised. That door is right for a stranded row and WRONG for a row
- * this browser still holds an unresolved record of — measured end to end, twice, one recipient
- * holding two copies: reopening the row minted a new one AND started a new compose session, so
- * neither name the record carries was on the message any more, the park could not recognise it,
- * Send lit up, and one press delivered a second time under a fresh key.
- *
- * So the reopen asks this first. It is a question about the RECORD, not about the row's status:
- * the server may leave the row at `draft` or move it to `unverified`, and neither says whether
- * this browser is still waiting to learn what that send did.
- *
- * Rows only — a record naming nothing, or named by a session alone with no row yet, contributes
- * nothing here and is parked by the comparison in `mail-send.ts` as it was before.
+ * {@link parkedComposeMessage}'s row half, and the only reading of it: both call sites in the app
+ * ask the guard, the guard asks this, so the two cannot drift apart the way they did when each
+ * site decided for itself. Exported on its own because a test can read a set and cannot read a
+ * boolean's reasons.
  */
 export function unresolvedSendRows(lane: string, owner: string | null = storageOwner()): Set<string> {
   const out = new Set<string>();

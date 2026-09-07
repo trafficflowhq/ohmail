@@ -876,7 +876,8 @@ A message you are writing is now identified by the composing session it belongs 
 you are writing it — whether or not a draft has been saved yet, and whether the draft it is saved
 to changes underneath it. A reload no longer loses which draft the composer is holding: it takes
 that draft back up rather than writing a second one, which is what used to make one message look
-like two.
+like two. For a message whose send is unconfirmed it takes up no draft and writes none — see
+below.
 
 Nothing about the message itself lifts the block: not a saved draft appearing, not the draft
 changing, and not an edit. What does is replacing the message — opening another draft, writing to
@@ -884,7 +885,7 @@ a contact from their card, or following a mail link from outside the app. Each o
 new composing session, so the message that replaces the unconfirmed one sends normally, while the
 unconfirmed one stays blocked whenever you come back to it, until it is resolved or discarded.
 
-Reopening the unconfirmed message itself keeps it parked. A message whose send could not be
+Reopening or reloading an unconfirmed message keeps it parked. A message whose send could not be
 confirmed stays in Drafts — that row is the only copy of it — and opening it from there used to be
 treated as starting again from its text: a fresh draft was saved and a fresh composing session
 begun, which is what the app does for a message stranded by some other device. For a message this
@@ -893,6 +894,15 @@ Send came back on and one press sent a second copy. Opening it now reopens the m
 of it: no new draft, the same composing session, the warning still there and Send still held. Only
 a stranded message this browser knows nothing about takes the start-again path, and that one sends
 once, as before.
+
+Reloading the tab did the same thing without your reopening anything. The composer takes the draft
+it was holding back up after a reload, and for an unconfirmed message it found that draft moved on
+by the server and let go of it — so the next pause saved a second draft, Drafts listed the one
+message twice before you had touched it, and the copy on screen was no longer the one being held
+back. The composer now keeps hold of an unconfirmed message across a reload without saving anything
+for it at all: the draft already in Drafts stays the only copy, the composing session is the same
+one, and the warning and the held Send come back with it. A message with no unconfirmed send behind
+it is unaffected — its draft is taken back up and saved as it always was.
 
 A send left unconfirmed by 0.14.0 is still recognised after the update, and it is never sent again
 without you asking. The record of such a send is stored in your browser, and 0.14.1 changed how a

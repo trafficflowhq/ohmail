@@ -43,11 +43,31 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { OhmailEngine } from "@ohmail/client-engine";
 import type { ComposeFields } from "./compose";
-import { writeReplyMeta } from "./mail-send";
-import { parseRecipients, readComposeRow, writeComposeRow } from "./compose";
+import { COMPOSE_SEND_KEY, writeReplyMeta } from "./mail-send";
+import { composeSessionId, parseRecipients, readComposeRow, writeComposeRow } from "./compose";
+import { parkedComposeMessage } from "./send-lock";
 
 /** How long the form must be still before it is written to the account. */
 export const AUTOSAVE_DELAY_MS = 2_000;
+
+/**
+ * ── IS THE MESSAGE THIS SURFACE IS HOLDING ONE WE ARE STILL WAITING ON? ─────────────────────
+ *
+ * The same question `openDraft` asks, from the same function, because the two were measured
+ * disagreeing: the reopen learned to keep a parked message parked while THIS side went on
+ * treating it as new, which is a duplicate delivery reached without reopening anything.
+ *
+ * Asked with BOTH names the message can carry — the row this surface came back to, and the
+ * compose session, which survives a reload whether or not a row does and is the only name a send
+ * pressed before the first save ever had.
+ *
+ * Reading the session mints one if the jar holds none. That is the same lazy mint every other
+ * reader does (`sessionOf` in `mail-send.ts`), and it is reached only where a message-in-progress
+ * already exists: a stored row to decide about, or a form with text in it on the compose route.
+ */
+function parkedHere(held: string | null): boolean {
+  return parkedComposeMessage(COMPOSE_SEND_KEY, held, composeSessionId());
+}
 
 /**
  * Is there anything here worth a row? The same fields {@link writeComposeDraft} tests, for the
@@ -202,6 +222,20 @@ export function useComposeAutosave(opts: {
    * Not adopting is safe rather than merely tolerable: the compose SESSION is what parks an
    * unresolved send (`mail-send.ts`), and it survives the reload whether or not a row does.
    *
+   * ── EXCEPT FOR A MESSAGE WE ARE STILL WAITING ON, WHERE DROPPING WAS THE DEFECT ────────────
+   *
+   * That last sentence was true and incomplete, and the gap between the two was a second copy in
+   * a recipient's mailbox. The session does keep such a message parked — but dropping its row
+   * let the next pause CREATE one, so the drafts list held two rows for one message before
+   * anybody reopened anything, and the surface presented the fresh row as the message. Measured
+   * on the release candidate: park a send from saved draft `d1`, reload, one press, total 2.
+   *
+   * So {@link parkedHere} is asked first, and while it answers `true` this surface takes no row
+   * at all: the stored id is kept, nothing is adopted, and the save effect creates nothing. It is
+   * the same behaviour `openDraft`'s parked door has, deliberately with no second arm for the
+   * row's status — a row still at `draft` would be safe to write to and a row past it would not,
+   * and neither status says anything about whether this browser is waiting.
+   *
    * ── AND "THE MIRROR HAS NOT LOADED YET" IS NOT "THERE IS NO SUCH ROW" ─────────────────────
    *
    * The two look identical through `get`, which answers nothing for both — and on the path this
@@ -228,6 +262,18 @@ export function useComposeAutosave(opts: {
     const settle = (): boolean => {
       const row = engine.read().get<{ status?: string }>("draft", held);
       if (row === null || row === undefined) return false;
+      /* ── A MESSAGE WE ARE STILL WAITING ON IS NEITHER ADOPTED NOR DROPPED ──────────────────
+         The row is kept written down and the question is left open. Dropping it is what let the
+         next pause mint a second row for this one message, which is the measured duplicate; and
+         adopting it would point every PUT, and a Discard's DELETE, at a row the server may be
+         sending right now. So this surface takes no row at all while the park lasts — the same
+         thing `openDraft`'s parked door does, for the same reason — and the send stays named by
+         the session, which is what refuses the press.
+
+         `false`, so the engine's own notifications ask again: the record can be resolved (a late
+         confirmation, a sweep) while this compose is still on screen, and the row is then adopted
+         or dropped exactly as it would have been. */
+      if (parkedHere(held)) return false;
       adopted.current = true;
       if (row.status !== "draft") {
         // Named, and not this hook's row to write to. Dropped, so no later mount asks again, and
@@ -288,6 +334,16 @@ export function useComposeAutosave(opts: {
     // A create with no mailbox would be a 400 the user cannot act on, and the From line is
     // already saying there is nowhere to send from. Nothing is written until there is.
     if (draftId === null && !mailboxId) return;
+    /* NOTHING IS MINTED FOR A MESSAGE THIS BROWSER IS ALREADY WAITING ON — see `parkedHere`.
+       A create here is a SECOND row for a message the durable record already names, and that is
+       the reload half of the duplicate: park a send from a saved draft, reload, and the pause
+       that followed minted `d2` while the record still named `d1`. Both rows were then listed
+       and the one press the surface allowed delivered a second copy.
+
+       Only the create. An UPDATE to a row this surface already holds is the in-session case and
+       is left exactly as it was — it writes to the one row the message has, and cannot make a
+       second. */
+    if (draftId === null && parkedHere(readComposeRow())) return;
 
     const timer = window.setTimeout(() => {
       if (inFlight.current) return;
