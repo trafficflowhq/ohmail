@@ -285,10 +285,13 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // the other, because the alert preflight must not import an API route to answer a question
   // about the database.
   ["platform_signals", "sample_cause"],
-  // cloud 0031_credit_rollup_sweep_backlog — ONE marker for two columns, and the exception is
-  // deliberate: both are added by the same migration and `duration_ms` lands after
-  // `setup_sweep_backlog`, so on 0030's own rule (statements inside a migration apply in order) a
-  // database holding the second holds the first.
+  // cloud 0031_credit_rollup_sweep_backlog — ONE marker for two columns, and it names the SECOND
+  // one, which is the whole point. Both columns are added by the same migration and `duration_ms`
+  // lands after `setup_sweep_backlog`, so a database holding the second holds the first — the
+  // implication runs that way and only that way. The first draft marked `setup_sweep_backlog` and
+  // argued the same sentence backwards: a database that ran statement one and not statement two
+  // has the backlog column, passes a marker on it, and then fails every run-row insert, which is
+  // exactly the swallowed failure this marker exists to refuse.
   //
   // The loudness here is the SWALLOWED kind, which is why it needs a marker at all. The roll-up's
   // run-row INSERT names both columns and its failure is caught by contract — a pass that did its
@@ -299,7 +302,7 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   //
   // `loadRollupState` also SELECTs `setup_sweep_backlog` on the staff connection, so the Billing
   // board's read 42703s outright without it. Deploy order: migration → API → worker → admin.
-  ["credit_rollup_runs", "setup_sweep_backlog"],
+  ["credit_rollup_runs", "duration_ms"],
 ] as const;
 
 /**

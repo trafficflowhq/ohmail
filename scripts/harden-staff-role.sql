@@ -909,9 +909,16 @@ GRANT SELECT (account_id, pool, reason, credits, rows, computed_at)
 -- error, and the `ran_at` a freshness stamp and a staleness rule both read. `divergent_accounts`
 -- is a COUNT and the accounts themselves are never stored — the same decision
 -- `billing_reconciliation_runs.divergences` records for its own operator detail.
+--
+-- `setup_sweep_backlog` and `duration_ms` (cloud 0031) are on the same terms as the counts above:
+-- integers about a maintenance PASS, never about anybody's mail. They are listed HERE as well as
+-- in the TypeScript allowlist because these two places are granted independently — the allowlist
+-- describes what a reader may select, this script is what the database actually permits, and a
+-- column present in one and absent in the other is `permission denied` on the staff connection
+-- the first time the console asks for it, with the migration reporting success.
 REVOKE ALL ON public.credit_rollup_runs FROM ohmail_admin;
 GRANT SELECT (id, ran_at, days_recomputed, rows_written, divergent_accounts,
-  pruned_setup_spends, error)
+  pruned_setup_spends, setup_sweep_backlog, duration_ms, error)
   ON public.credit_rollup_runs TO ohmail_admin;
 
 -- ── 9c-ter. The SETUP POOL (cloud 0021, re-keyed by 0028). ────────────────────────────────

@@ -321,20 +321,49 @@ export async function foldAndSweepSetupSpends(
   // the SESSION's zone, so on a server not set to UTC it would disagree with `dayKey` — and the
   // disagreement would be invisible except within a few hours of midnight, which is the shape
   // that reads as flakiness rather than as a defect.
-  const pairs = rowsOf<{ day: string; account_id: string }>(await db.execute(sql`
-    select to_char((s.created_at at time zone 'utc')::date, 'YYYY-MM-DD') as day,
-           s.account_id as account_id
-      from setup_grant_spends s
-      join setup_grants g on g.id = s.grant_id
-     group by 1, 2
-    having bool_and(g.expires_at < ${floor}::timestamptz and s.created_at < ${floor}::timestamptz)
+  const pairs = rowsOf<{ day: string; account_id: string; frozen: boolean }>(await db.execute(sql`
+    with elig as (
+      select (s.created_at at time zone 'utc')::date as day,
+             s.account_id as account_id,
+             count(*)::int as raw_rows
+        from setup_grant_spends s
+        join setup_grants g on g.id = s.grant_id
+       group by 1, 2
+      having bool_and(g.expires_at < ${floor}::timestamptz
+                  and s.created_at < ${floor}::timestamptz)
+    )
+    select to_char(e.day, 'YYYY-MM-DD') as day,
+           e.account_id as account_id,
+           coalesce((
+             select d.rows > e.raw_rows
+               from credit_usage_daily d
+              where d.day = e.day and d.pool = 'setup' and d.account_id = e.account_id
+                and d.computed_at > e.day + make_interval(days => ${SETUP_SPEND_RETENTION_DAYS})
+           ), false) as frozen
+      from elig e
      order by 1 asc`));
 
-  const eligiblePerDay = new Map<string, number>();
-  for (const p of pairs) eligiblePerDay.set(p.day, (eligiblePerDay.get(p.day) ?? 0) + 1);
-  const eligibleDays = [...eligiblePerDay.keys()].sort();      // ascending: oldest first
-  const take = eligibleDays.slice(0, capDays);
-  const backlogDays = Math.max(0, eligibleDays.length - take.length);
+  // FROZEN PAIRS DO NOT CONSUME THE CAP, and this is the half of the repair that stops the
+  // starvation rather than the loss. Thirty frozen days at the oldest end used to fill every slot
+  // of an oldest-first drain, so nothing behind them was ever folded again.
+  const workablePerDay = new Map<string, number>();
+  const frozenPerDay = new Map<string, number>();
+  for (const p of pairs) {
+    const m = p.frozen === true ? frozenPerDay : workablePerDay;
+    m.set(p.day, (m.get(p.day) ?? 0) + 1);
+  }
+  const workableDays = [...workablePerDay.keys()].sort();      // ascending: oldest first
+  const take = workableDays.slice(0, capDays);
+  const taken = new Set(take);
+  // BACKLOG IS "DAYS STILL WAITING", frozen ones included. The old figure counted only days the
+  // cap did not reach, so a pass that swept NOTHING because every eligible pair was frozen
+  // reported 0 — a drained console over a drain that had stopped. A day is counted once whether
+  // it waits because of the cap, because it is frozen, or both.
+  const waiting = new Set<string>([
+    ...workableDays.filter((d) => !taken.has(d)),
+    ...frozenPerDay.keys(),
+  ]);
+  const backlogDays = waiting.size;
 
   let pairsFolded = 0;
   let rowsSwept = 0;
@@ -346,7 +375,7 @@ export async function foldAndSweepSetupSpends(
     // statements a day whatever the account count, and it means the delete's predicate is
     // literally the fold's — not a copy of it that can drift.
     const eligibleForDay = sql`
-      select s.account_id
+      select s.account_id, count(*)::int as raw_rows
         from setup_grant_spends s
         join setup_grants g on g.id = s.grant_id
        where (s.created_at at time zone 'utc')::date = ${key}::date
@@ -354,23 +383,44 @@ export async function foldAndSweepSetupSpends(
       having bool_and(g.expires_at < ${floor}::timestamptz
                   and s.created_at < ${floor}::timestamptz)`;
 
-    // A pair whose day already carries a fold-stamped aggregate from an EARLIER pass. See the
-    // header.
+    // ── FROZEN IS A PROPERTY OF THE POPULATION, NOT OF THE STAMP ─────────────────────
     //
-    // `d.computed_at < ${computedAt}` is load-bearing and its absence is a self-inflicted wound:
-    // statement 1 stamps the folded row with THIS run's `computed_at`, which for a day older than
-    // the horizon immediately satisfies "stamped more than 30 days after the day began". Without
-    // the `<`, every pair the fold had just written would read as frozen at statements 2 and 3,
-    // the sweep would delete nothing at all, and the pass would report a healthy fold with the
-    // rows still there — a backlog that never drains, wearing a completed drain's numbers.
+    // The first version asked only whether a fold-stamped row existed, and that refused the
+    // WRONG case for ever. The aggregate commits, the process dies before the delete, and the
+    // next pass reads its own predecessor's stamp as a closed pair — so the rows are stranded
+    // permanently, the drain silently stops, and because those days sit at the oldest end of an
+    // oldest-first cap they starve every day behind them. It needed no backdated row: a power
+    // cut between two autocommitted statements was enough. Forty lines above, this file claimed
+    // the opposite — that a death between the fold and the delete is re-folded identically —
+    // and the two statements could not both be true.
+    //
+    // The discriminator is `d.rows > e.raw_rows`: did the stamped aggregate count MORE rows than
+    // the pair holds now?
+    //
+    //  · INTERRUPTED FOLD — nothing was deleted, so the counts are equal and the pair is
+    //    re-folded and swept. The recompute is over the same population, so it writes the same
+    //    number: idempotent, which is what the header always promised.
+    //  · A ROW ARRIVING AFTER A COMPLETED SWEEP — the stamp counted five, one row is present, so
+    //    5 > 1 refuses. Folding there would write that single row's amount over a complete
+    //    figure, which is the loss the frozen arm exists to prevent.
+    //
+    // It is compared against the pair's TOTAL row count rather than its non-refunded one on
+    // purpose. The stamp counts non-refunded rows, so a refund landing after a fold would make a
+    // non-refunded comparison read 5 > 4 and freeze a healthy pair; against the total it reads
+    // 5 > 5, the pair re-folds, and the new number correctly excludes the refund.
+    //
+    // The old `computed_at < ${'$'}{computedAt}` guard is GONE rather than kept beside this: the
+    // population test makes the within-pass self-freeze unreachable (statement 1 writes
+    // rows == population, so the comparison is false immediately afterwards), and a condition
+    // whose contrary state cannot be reached is one a later reader mistakes for a guarantee.
     const notFrozen = sql`
       select e.account_id from (${eligibleForDay}) e
        where not exists (
          select 1 from credit_usage_daily d
           where d.day = ${key}::date and d.pool = 'setup'
             and d.account_id = e.account_id
-            and d.computed_at < ${computedAt}::timestamptz
             and d.computed_at > ${key}::date + make_interval(days => ${SETUP_SPEND_RETENTION_DAYS})
+            and d.rows > e.raw_rows
        )`;
 
     // ── 1. THE FOLD ──────────────────────────────────────────────────────────────────────
@@ -405,7 +455,7 @@ export async function foldAndSweepSetupSpends(
     // interleaving today (eligibility needs a row 30 days old, and `expires_at` is never updated
     // after a grant is minted), which is precisely why it must not be left to arithmetic nobody
     // re-checks when one of those two facts changes.
-    frozenPairsSkipped += Math.max(0, (eligiblePerDay.get(key) ?? 0) - foldedNow);
+    frozenPairsSkipped += Math.max(0, (workablePerDay.get(key) ?? 0) - foldedNow);
 
     // ── 2. THE ABSENCE HALF, SCOPED TO THESE PAIRS ───────────────────────────────────────
     //
@@ -432,6 +482,9 @@ export async function foldAndSweepSetupSpends(
     rowsSwept += rowsOf(swept).length;
   }
 
+  // Frozen pairs found by the SURVEY count too, not only ones a folded day happened to reveal:
+  // a day whose every eligible pair is frozen is never taken, so the loop above never sees it.
+  for (const n of frozenPerDay.values()) frozenPairsSkipped += n;
   return { daysFolded: take.length, pairsFolded, rowsSwept, backlogDays, frozenPairsSkipped };
 }
 
