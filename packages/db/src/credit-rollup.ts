@@ -780,6 +780,17 @@ export async function runCreditRollupPass(
     }
   } catch (err) {
     error = scrub(err);
+    // A ROLLED-BACK PASS MUST NOT LOOK LIKE A PASS THAT NEVER SWEPT, and `null` is exactly that
+    // sentence: it is this column's word for "the hourly arm, which never folds". So a nightly
+    // pass whose fold threw records ZERO — the arm ran and moved nothing — beside the error that
+    // says why. The two readings are what an operator needs kept apart: "nothing to do" and
+    // "tried and failed" are different nights.
+    //
+    // `setupSweepBacklog` stays null on purpose and is NOT set to zero: the pass died, so the
+    // number of days still waiting was never measured, and inventing a 0 there would be the
+    // false-drained report this figure exists to refuse. The console never reads it from a failed
+    // row anyway — `loadRollupState` filters on `error is null`.
+    if (opts.prune === true && prunedSetupSpends === null) prunedSetupSpends = 0;
   }
 
   // Measured across the whole pass INCLUDING a failure, because the failure this column exists to
