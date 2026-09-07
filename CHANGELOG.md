@@ -876,6 +876,21 @@ draft has been saved yet and whether the app replaces that draft afterwards, so 
 until the send is resolved or you discard the message. Two different saved drafts are still two
 different messages, and sending one is not blocked by the other.
 
+A send left unconfirmed by 0.14.0 keeps its identity after the update. The record of such a send
+is stored in your browser, and 0.14.1 changed how a message is recognised from it — so a record
+written by 0.14.0 would not have been matched to the message it belongs to, and the next press
+would have started a second send of mail that may already have gone. The web app updates every
+open browser at once, so this affects anyone whose send was unresolved at that moment. 0.14.1 now
+reads a 0.14.0 record the way 0.14.0 wrote it, keeps the identity that send went out under, and
+rewrites the record in the current form once. The record also carries a version from now on, so
+the next change of form cannot repeat this.
+
+One limit worth stating: this can only recognise a message that still looks the way it did when
+0.14.0 recorded it, including which saved draft it belongs to. A new message whose draft was
+written after the update is not recognisable by any means, because nothing that identified it then
+identifies it now. Such a message shows the unconfirmed warning and can be sent again if you
+choose to; check your Sent folder first.
+
 A rule applied to existing mail could stop early if a mailbox changed hands at the wrong moment.
 The request stays open while any mailbox on the account is one this install is not organizing, and
 the place the walk had reached is cleared at the same time — but those were two separate writes,

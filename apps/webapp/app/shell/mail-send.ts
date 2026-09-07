@@ -88,8 +88,9 @@ import type { EngineMessage, MutationResult, OhmailEngine } from "@ohmail/client
 import type { ToastFn } from "@ohmail/ui";
 import { clearComposeDraft, composeSessionId, type MailSend } from "./compose";
 import {
-  attachSendLockDraft, claimSendLock, markSendLockUnverified, readSendLock, releaseSendLock,
-  sendFingerprint, sendSubject, sendSubjects, unverifiedSendIntents, type SendIntent,
+  attachSendLockDraft, claimSendLock, legacySendFingerprint_0_14_0, markSendLockUnverified,
+  releaseSendLock, resumeSendLock, SEND_LOCK_FORMAT, sendFingerprint, sendIdentity, sendSubject,
+  sendSubjects, unverifiedSendIntents, type SendIntent,
 } from "./send-lock";
 import { storageOwner } from "./storage-owner";
 import { scheduleLabel } from "./format";
@@ -540,6 +541,18 @@ function unresolvedNames(state: SendState, m: MailSend): boolean {
   let fp: string | null = null;
   const fpOf = (): string => (fp ??= sendFingerprint(m));
   /**
+   * AND THE 0.14.0 FINGERPRINT, for the records that carry no name at all.
+   *
+   * A record with no names is a record from before the subject existed — a released 0.14.0 one —
+   * and its `fp` is in 0.14.0's algebra, so comparing it against the CURRENT fingerprint is false
+   * for every message. That would have parked nothing: a browser upgraded mid-uncertainty would
+   * have shown no warning and an unlocked Send for the very message whose fate is unknown. The
+   * legacy hash is cheap (it folds an attachment in by size, not by content), so it is asked
+   * first and the expensive one only if it misses.
+   */
+  let legacyFp: string | null = null;
+  const legacyFpOf = (): string => (legacyFp ??= legacySendFingerprint_0_14_0(m));
+  /**
    * A DRAFT ROW OUTRANKS THE SESSION WHEN BOTH SIDES HAVE ONE, and that is the limit of the
    * session's authority rather than an exception to it.
    *
@@ -557,7 +570,7 @@ function unresolvedNames(state: SendState, m: MailSend): boolean {
   const rowOf = (names: ReadonlyArray<string>): string | undefined => names.find((s) => s.startsWith("draft:"));
   const myRow = rowOf(subjects);
   return state.unresolved.some((i) => {
-    if (i.subjects.length === 0) return i.fp === fpOf();
+    if (i.subjects.length === 0) return i.fp === legacyFpOf() || i.fp === fpOf();
     const itsRow = rowOf(i.subjects);
     if (myRow !== undefined && itsRow !== undefined && myRow !== itsRow) return false;
     return i.subjects.some((s) => subjects.includes(s));
@@ -1116,14 +1129,26 @@ export function useMailSend(
        * the write comes back with the mail possibly sent and no record of the key it went under.
        */
       const now = Date.now();
-      const fp = sendFingerprint(m);
       const session = sessionOf(key);
-      const subject = sendSubject(m, session);
-      const resumed = readSendLock(key, fp, now, owner.current);
+      // ONE ASSEMBLY, because `sendFingerprint` hashes every attachment's contents and the resume
+      // and the claim both need it — see `sendIdentity`.
+      const id = sendIdentity(m, session);
+      const fp = id.fp;
+      const subject = id.subjects[0];
+      /**
+       * THROUGH THE IDENTITY, not the fingerprint alone — that is what lets a record written by
+       * the released 0.14.0 build be recognised. 0.14.1 changed what a fingerprint hashes, so the
+       * same unchanged message computes a different one; the managed web app flips every browser
+       * at once, and a browser holding an unresolved 0.14.0 record at that moment would not have
+       * been recognised, would have minted a second key, and would have delivered the mail twice
+       * where the first send had reached the server. `resumeSendLock` decodes such a record with
+       * 0.14.0's own algebra and rewrites it in this build's shape on the way past.
+       */
+      const resumed = resumeSendLock(key, id, now, owner.current);
       const sendKey = resumed ?? crypto.randomUUID();
       if (!resumed) {
         claimSendLock({
-          v: 1, lane: key, key: sendKey, at: now, draftId: m.draftId ?? null, fp,
+          v: SEND_LOCK_FORMAT, lane: key, key: sendKey, at: now, draftId: m.draftId ?? null, fp,
           // Recorded at the press, from the mutation AS SENT — the same value `canSend` compares
           // against, so the UI and the wire cannot come to disagree about which message this is.
           ...(subject !== undefined ? { subject } : {}),

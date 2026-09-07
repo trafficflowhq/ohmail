@@ -54,9 +54,24 @@
 import type { MailSend } from "./compose";
 import { storageOwner } from "./storage-owner";
 
-/** One lane's unsettled send. `v` names the shape; an unrecognised record is ignored, not guessed. */
+/**
+ * THE RECORD SHAPE THIS BUILD WRITES.
+ *
+ * `1` was written by every build up to and including 0.14.0 and was NOT bumped when 0.14.1
+ * changed what a fingerprint hashes — which is the whole reason the legacy path below cannot key
+ * off it and reads the record's SHAPE instead. `2` is this build's, and it is bumped here so the
+ * next change to either the fingerprint or the field set has a number to move.
+ *
+ * Higher values are records from a build this one has never seen. They are carried and never
+ * touched: not matched, not rewritten, not deleted. A rolled-back install must not eat the
+ * evidence that a newer one left behind.
+ */
+export const SEND_LOCK_FORMAT = 2;
+
+/** One lane's unsettled send. `v` names the shape; an unrecognised record is carried, not guessed. */
 export interface SendLock {
-  v: 1;
+  /** {@link SEND_LOCK_FORMAT} at the moment it was written. */
+  v: number;
   /** The lane, as `sendKeyOf` derives it: `"compose"`, `"fwd:<id>"`, or a parent message id. */
   lane: string;
   /** The Idempotency-Key this lane's send is going out under. */
@@ -212,6 +227,44 @@ export function sendFingerprint(m: MailSend): string {
 }
 
 /**
+ * ── THE FINGERPRINT 0.14.0 WROTE, KEPT SO ITS RECORDS CAN STILL BE READ ─────────────────────
+ *
+ * Copied field for field and join for join from `apps/webapp/app/shell/send-lock.ts` at the
+ * released `v0.14.0` tag. It is FROZEN: it is not a second implementation of the identity but a
+ * decoder for jars that are already on people's disks, and changing it would silently stop
+ * matching the records it exists for. `sendFingerprint` above is the live one.
+ *
+ * What 0.14.0 hashed, and every way it differs from the current algebra:
+ *  · recipients by LOWERCASED ADDRESS ONLY, joined with `,` — no display name, no encoding;
+ *  · `html ?? body` as ONE field — a rich message's plain-text half was never hashed;
+ *  · no `threadId`;
+ *  · attachments as `filename:contentType:contentBase64.length`, joined `|` — by SIZE, not
+ *    content.
+ * Same `\u0000` join of the parts and the same FNV-1a over the result, which is why `fnv1a` is
+ * shared rather than re-inlined: 0.14.0's loop is byte for byte the function above.
+ *
+ * ── WHY A RELEASED BUILD'S RECORD HAS TO BE DECODED AT ALL ──────────────────────────────────
+ *
+ * The managed web app flips every browser at once. A browser holding an unresolved 0.14.0 record
+ * at that moment computes a different fingerprint for the same unchanged message under the new
+ * algebra, so the record would not be recognised, a second key would be minted, and where the
+ * first send had reached the server the mail would go out twice. The changelog's headline promise
+ * for this feature is that a send which could not be confirmed is never sent twice, so this is a
+ * release matter and not a tidiness one.
+ */
+export function legacySendFingerprint_0_14_0(m: MailSend): string {
+  const addrs = (xs: ReadonlyArray<{ address: string }> | undefined): string =>
+    (xs ?? []).map((a) => a.address.toLowerCase()).join(",");
+  const parts = [
+    m.inReplyTo ?? "", m.forwardOf ?? "", m.draftId ?? "", m.mailboxId ?? "",
+    addrs(m.to), addrs(m.cc), addrs(m.bcc),
+    m.subject ?? "", m.html ?? m.body ?? "", m.sendAt ?? "",
+    (m.attachments ?? []).map((a) => `${a.filename}:${a.contentType}:${a.contentBase64.length}`).join("|"),
+  ].join("\u0000");
+  return fnv1a(parts);
+}
+
+/**
  * HOW LONG A PERSISTED KEY IS STILL WORTH RESUMING.
  *
  * Seven days, and the number is chosen against the SERVER's two horizons rather than invented.
@@ -237,11 +290,23 @@ export function sendLocksKey(owner: string | null = storageOwner()): string {
 function isLock(x: unknown): x is SendLock {
   if (typeof x !== "object" || x === null) return false;
   const r = x as Record<string, unknown>;
-  return r.v === 1
-    && typeof r.lane === "string" && r.lane.length > 0
-    && typeof r.key === "string" && r.key.length > 0
-    && typeof r.at === "number"
-    && typeof r.fp === "string"
+  // THE FOUR FIELDS THAT MAKE A CLAIM A CLAIM, required at every version: which lane, which key,
+  // when, and how to read the rest.
+  if (typeof r.v !== "number" || !Number.isInteger(r.v) || r.v < 1) return false;
+  if (typeof r.lane !== "string" || r.lane.length === 0) return false;
+  if (typeof r.key !== "string" || r.key.length === 0) return false;
+  if (typeof r.at !== "number") return false;
+  /**
+   * A RECORD FROM A FORMAT THIS BUILD DOES NOT KNOW IS CARRIED, NOT PARSED.
+   *
+   * Everything below is this build's field set, and a later shape is free to have moved any of
+   * it. Refusing such a record here would DELETE it — `load` drops what it cannot recognise and
+   * every writer saves the filtered list back — and deleting a newer install's record is how a
+   * downgrade loses the only evidence that a message may already have been delivered. Nothing
+   * reads these fields off a higher-version record: it is never matched, rewritten or released.
+   */
+  if (r.v > SEND_LOCK_FORMAT) return true;
+  return typeof r.fp === "string"
     && (r.subject === undefined || typeof r.subject === "string")
     && (r.session === undefined || typeof r.session === "string")
     && (r.unverified === undefined || typeof r.unverified === "boolean");
@@ -294,7 +359,12 @@ function isLive(r: SendLock, nowMs: number): boolean {
   return r.unverified === true || nowMs - r.at <= SEND_LOCK_TTL_MS;
 }
 
-export function readSendLock(lane: string, fp: string, nowMs: number, owner: string | null = storageOwner()): string | null {
+export function resumeSendLock(
+  lane: string,
+  id: SendIdentity,
+  nowMs: number,
+  owner: string | null = storageOwner(),
+): string | null {
   const rows = load(owner);
   if (rows.length === 0) return null;
   const live = rows.filter((r) => isLive(r, nowMs));
@@ -308,14 +378,119 @@ export function readSendLock(lane: string, fp: string, nowMs: number, owner: str
    * is current. Reading by `(lane, fingerprint)` is what keeps them apart — see
    * {@link unverifiedSendIntents} for the other half.
    */
-  const exact = live.find((r) => r.lane === lane && r.fp === fp);
+  const exact = live.find((r) => r.lane === lane && r.fp === id.fp);
+  /**
+   * ── THE 0.14.0 RECORD, DECODED RATHER THAN DISCARDED ───────────────────────────────────────
+   *
+   * No current-format match. Before treating the record as spent, ask whether it was written by
+   * the RELEASED build under the algebra that build used: {@link legacySendFingerprint_0_14_0} of
+   * the very same message in hand. On a match the key is resumed exactly as a current record's
+   * would be, and the record is REWRITTEN in this build's shape so the decode happens once.
+   *
+   * Guarded by `mayMatchLegacy`, and only when the two fingerprints actually differ — so the
+   * fingerprint-only door below (which passes one fingerprint for both) can never take this
+   * branch, and neither can a record from a format newer than this build's.
+   */
+  const legacy = exact !== undefined || id.legacyFp === id.fp
+    ? undefined
+    : live.find((r) => r.lane === lane && r.fp === id.legacyFp && mayMatchLegacy(r));
+  const found = exact ?? legacy;
   // A different fingerprint means the key does not name THIS content, so it cannot be resumed and
   // the record is spent — EXCEPT an unverified one, which is kept regardless. Deleting it is how
   // reopening a draft and editing it turned into a fresh key for a message that may already have
-  // been delivered.
-  const kept = live.filter((r) => !(r.lane === lane && r.fp !== fp && r.unverified !== true));
-  if (kept.length !== rows.length) save(kept, owner);
-  return exact?.key ?? null;
+  // been delivered. A record from a LATER format is exempt too: this build cannot read what its
+  // fingerprint means, and a downgrade must not delete a newer install's evidence.
+  const kept = live.filter((r) => r === legacy || !(
+    r.lane === lane && r.fp !== id.fp && r.unverified !== true && r.v <= SEND_LOCK_FORMAT
+  ));
+  const migrated = legacy === undefined ? kept : kept.map((r) => (r === legacy ? rewritten(r, id) : r));
+  if (legacy !== undefined || kept.length !== rows.length) save(migrated, owner);
+  return found?.key ?? null;
+}
+
+/**
+ * IS THIS RECORD IN THE PRE-0.14.1 SHAPE? — the only reliable way to spot a 0.14.0 record.
+ *
+ * `v` cannot answer it. 0.14.0 wrote `v: 1` and 0.14.1 changed what a fingerprint hashes WITHOUT
+ * bumping it, so the number says the same thing about two different algebras. The SHAPE does
+ * answer it: `subject` arrived with 0.14.1 and `session` with the fix above it, and 0.14.0's
+ * record type had neither field — its whole interface was `v, lane, key, at, draftId, fp`. So a
+ * record carrying neither name was written before either existed.
+ *
+ * A 0.14.1 record for a message this browser could not name at all would also carry neither — but
+ * such a browser has no writable jar (`sendSubject` answers `undefined` only when the session id
+ * could not be read, which is the same failure that stops the record being saved), so it is not a
+ * state that reaches storage. `v < SEND_LOCK_FORMAT` is required as well, which keeps this off
+ * anything this build or a later one wrote.
+ */
+function mayMatchLegacy(r: SendLock): boolean {
+  return r.v < SEND_LOCK_FORMAT && r.subject === undefined && r.session === undefined;
+}
+
+/**
+ * THE SAME CLAIM, IN THIS BUILD'S SHAPE — a decoded 0.14.0 record, migrated in place.
+ *
+ * The key, the mint time and the unresolved flag are the record's own facts and are carried
+ * verbatim; nothing about the send changed, only how this build spells what it is of. The
+ * fingerprint and the names become the current message's, which is exactly what the match just
+ * established they belong to, and `v` moves so the next reader takes the ordinary path.
+ *
+ * The draft row is taken from the message when it has one and from the record otherwise, because
+ * a 0.14.0 record's `draftId` is the row the send actually used and is worth more than nothing.
+ */
+function rewritten(r: SendLock, id: SendIdentity): SendLock {
+  const subject = id.subjects[0];
+  return {
+    ...r,
+    v: SEND_LOCK_FORMAT,
+    fp: id.fp,
+    draftId: id.draftId ?? r.draftId,
+    ...(subject !== undefined ? { subject } : {}),
+    ...(id.session !== null ? { session: id.session } : {}),
+  };
+}
+
+/**
+ * WHAT ONE MESSAGE IN HAND IS, in every spelling a stored record could be using.
+ *
+ * Assembled once per press rather than recomputed at each comparison: `sendFingerprint` hashes
+ * every attachment's contents, and asking for it twice would put the bytes through a hash twice.
+ */
+export interface SendIdentity {
+  /** {@link sendFingerprint} — this build's algebra. */
+  fp: string;
+  /** {@link legacySendFingerprint_0_14_0} — the released 0.14.0 algebra, for decoding its records. */
+  legacyFp: string;
+  /** {@link sendSubjects} — every name the message answers to. */
+  subjects: ReadonlyArray<string>;
+  /** The compose session the press is in, or `null` off the compose lane. */
+  session: string | null;
+  /** The draft row the message carries, when it has one. */
+  draftId: string | null;
+}
+
+export function sendIdentity(m: MailSend, session: string | null = null): SendIdentity {
+  return {
+    fp: sendFingerprint(m),
+    legacyFp: legacySendFingerprint_0_14_0(m),
+    subjects: sendSubjects(m, session),
+    session,
+    draftId: m.draftId ?? null,
+  };
+}
+
+/**
+ * THE KEY FOR A FINGERPRINT ALONE — the door for a caller that has no message.
+ *
+ * It cannot ask the 0.14.0 question, and says so by handing the same fingerprint in as both: the
+ * legacy branch is written to skip when they are equal, so this door is provably decode-free
+ * rather than accidentally so. Every production press goes through {@link resumeSendLock} with a
+ * real identity.
+ */
+export function readSendLock(lane: string, fp: string, nowMs: number, owner: string | null = storageOwner()): string | null {
+  return resumeSendLock(lane, {
+    fp, legacyFp: fp, subjects: [], session: null, draftId: null,
+  }, nowMs, owner);
 }
 
 /**
@@ -337,8 +512,19 @@ export function claimSendLock(lock: SendLock, owner: string | null = storageOwne
    */
   const rows = load(owner).filter((r) => r.lane !== lock.lane
     ? true
-    : r.unverified === true && r.fp !== lock.fp);
-  rows.push(lock);
+    // A record from a LATER format is not this build's to evict, ordinary or not.
+    : (r.unverified === true && r.fp !== lock.fp) || r.v > SEND_LOCK_FORMAT);
+  /**
+   * THE VERSION IS STAMPED HERE, not taken from the caller.
+   *
+   * A caller can never legitimately write an older shape, and `v` is what every later reader
+   * branches on — including the 0.14.0 decode, which must never fire on a record this build
+   * wrote. Leaving the number in the caller's hands made it a literal at the one call site that
+   * had to be remembered on every format change, and it was not remembered on the last one:
+   * 0.14.1 changed the fingerprint algebra and still wrote `v: 1`, which is why the decode below
+   * has to read the record's shape instead of its version.
+   */
+  rows.push({ ...lock, v: SEND_LOCK_FORMAT });
   save(rows, owner);
 }
 
@@ -378,7 +564,9 @@ export function allSendLocks(nowMs: number, owner: string | null = storageOwner(
   if (rows.length === 0) return [];
   const live = rows.filter((r) => isLive(r, nowMs));
   if (live.length !== rows.length) save(live, owner);
-  return live.slice().sort((a, b) => a.at - b.at);
+  // RETURNED, not stored: a record from a later format stays in the jar and stays out of this
+  // list, because a caller reading fields off it would be reading a shape this build never wrote.
+  return live.filter((r) => r.v <= SEND_LOCK_FORMAT).sort((a, b) => a.at - b.at);
 }
 
 /**
@@ -511,7 +699,16 @@ function lockSubjects(r: SendLock): string[] {
  */
 export function unverifiedSendIntents(lane: string, owner: string | null = storageOwner()): SendIntent[] {
   return load(owner)
-    .filter((r) => r.lane === lane && r.unverified === true)
+    /**
+     * A LATER FORMAT'S RECORD IS NOT INTERPRETED HERE, and it is not deleted either.
+     *
+     * Its `fp` and its names mean whatever the build that wrote it decided, so reading them would
+     * be a guess dressed as a fact — and a wrong name here is a park on the wrong message. It
+     * stays in the jar untouched (`isLock` carries it, every writer preserves it), which is the
+     * protection that matters: the build that wrote it reads it correctly the moment the install
+     * is upgraded back. A downgrade in the window shows no park for that one message.
+     */
+    .filter((r) => r.lane === lane && r.unverified === true && r.v <= SEND_LOCK_FORMAT)
     .map((r) => ({ subjects: lockSubjects(r), fp: r.fp }));
 }
 
