@@ -55,8 +55,8 @@ import { Button, Kbd } from "@ohmail/ui";
 import { ComposeAttach, composeAttachCap } from "../components/ComposeAttach";
 import { rowAddress, senderName } from "./format";
 import { displayAddress } from "./idn";
-import { canSend, sendVerb, type SendState } from "./mail-send";
-import { parseRecipients } from "./compose";
+import { canSend, sendStateFor, sendVerb, type SendState } from "./mail-send";
+import { parseRecipients, type MailSend } from "./compose";
 import { forwardEnvelopePlan, forwardSend } from "./forward-send";
 import { RichEditor } from "./RichEditor";
 import type { RichValue } from "./rich-text";
@@ -535,28 +535,32 @@ export function InlineReply({
   /** Is the send chord bound here (a provider stands above)? Gates the Send button's keycap. */
   const sendChord = useBinding("mod+Enter");
   const mod = useModGlyph();
-  const locked = !canSend(
-    send,
-    mode === "forward"
-      ? // The forward mutation, via the same builder `AppShell.sendReply`'s forward arm uses —
-        // one derivation, so the lock and the wire cannot disagree. `canSend`'s non-reply
-        // branch is the gate that keeps Send locked until a recipient parses AND a sending
-        // mailbox resolves.
-        forwardSend(message, {
-          body: value.text,
-          // The resolved sender, or the mailbox the message ARRIVED in — the same default
-          // `enrich` derives for a reply. Facts can be unreadable (the demo, the desktop's
-          // bare panes), and a forward that can never send there would be a dead control.
-          mailboxId: from.mailboxId ?? message.mailboxId,
-          plan: envPlan,
-        })
-      : {
-          kind: "mail_send",
-          inReplyTo: message.id,
-          body: value.text,
-          ...replyEnvelopeOnWire(envPlan),
-        },
-  );
+  /**
+   * THE MUTATION AS IT WOULD GO OUT RIGHT NOW — built once, judged by `canSend` and read by the
+   * status line's own narrowing. It was inlined into the `canSend` call; the status line needs the
+   * same value (an unresolved send parks the message it belongs to and must not put a warning
+   * above a different one — see `sendStateFor`), and two builders would be two answers.
+   */
+  const wouldSend: MailSend = mode === "forward"
+    ? // The forward mutation, via the same builder `AppShell.sendReply`'s forward arm uses —
+      // one derivation, so the lock and the wire cannot disagree. `canSend`'s non-reply
+      // branch is the gate that keeps Send locked until a recipient parses AND a sending
+      // mailbox resolves.
+      forwardSend(message, {
+        body: value.text,
+        // The resolved sender, or the mailbox the message ARRIVED in — the same default
+        // `enrich` derives for a reply. Facts can be unreadable (the demo, the desktop's
+        // bare panes), and a forward that can never send there would be a dead control.
+        mailboxId: from.mailboxId ?? message.mailboxId,
+        plan: envPlan,
+      })
+    : {
+        kind: "mail_send",
+        inReplyTo: message.id,
+        body: value.text,
+        ...replyEnvelopeOnWire(envPlan),
+      };
+  const locked = !canSend(send, wouldSend);
 
   /**
    * THE FROM CONTROL, BUILT ONCE — the same `<select>` whether it stands in the collapsed
@@ -849,7 +853,7 @@ export function InlineReply({
         </span>
       </div>
 
-      <SendStatus send={send} scope="reply" />
+      <SendStatus send={sendStateFor(send, wouldSend)} scope="reply" />
     </div>
   );
 }

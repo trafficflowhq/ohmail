@@ -200,17 +200,24 @@ export function readSendLock(lane: string, fp: string, nowMs: number, owner: str
   const rows = load(owner);
   if (rows.length === 0) return null;
   const live = rows.filter((r) => isLive(r, nowMs));
-  const found = live.find((r) => r.lane === lane);
-  if (found && found.fp !== fp) {
-    // A different fingerprint means this key does not name THIS content, so it cannot be resumed
-    // — but an unverified record is kept regardless. Deleting it is how reopening a draft and
-    // editing it turned into a fresh key for a message that may already have been delivered.
-    if (found.unverified !== true) save(live.filter((r) => r !== found), owner);
-    else if (live.length !== rows.length) save(live, owner);
-    return null;
-  }
-  if (live.length !== rows.length) save(live, owner);
-  return found?.key ?? null;
+  /**
+   * ── ONE LANE MAY HOLD SEVERAL RECORDS, AND ONLY ONE OF THEM IS ORDINARY ────────────────────
+   *
+   * This used to take the FIRST record for the lane and answer about it alone. That was true
+   * while a lane could hold at most one record, and an unresolved send broke it: the record has
+   * to outlive the next press (it is the only thing naming the key a message may already have
+   * gone under), so the lane now carries the unresolved ones alongside whichever ordinary claim
+   * is current. Reading by `(lane, fingerprint)` is what keeps them apart — see
+   * {@link unverifiedSendIntents} for the other half.
+   */
+  const exact = live.find((r) => r.lane === lane && r.fp === fp);
+  // A different fingerprint means the key does not name THIS content, so it cannot be resumed and
+  // the record is spent — EXCEPT an unverified one, which is kept regardless. Deleting it is how
+  // reopening a draft and editing it turned into a fresh key for a message that may already have
+  // been delivered.
+  const kept = live.filter((r) => !(r.lane === lane && r.fp !== fp && r.unverified !== true));
+  if (kept.length !== rows.length) save(kept, owner);
+  return exact?.key ?? null;
 }
 
 /**
@@ -221,15 +228,37 @@ export function readSendLock(lane: string, fp: string, nowMs: number, owner: str
  * back with the mail possibly sent and no record of the key it went under.
  */
 export function claimSendLock(lock: SendLock, owner: string | null = storageOwner()): void {
-  const rows = load(owner).filter((r) => r.lane !== lock.lane);
+  /**
+   * IT EVICTS THE LANE'S ORDINARY CLAIM AND NOTHING ELSE.
+   *
+   * This filtered on the lane alone, which deleted an UNRESOLVED record the moment anybody
+   * pressed Send on that surface again — the record whose entire job is to outlive that press.
+   * The lane keeps at most one ordinary claim (a fresh press replaces it, exactly as before) and
+   * every unresolved record it has, minus any that names this same message: that one IS this
+   * claim, and two rows for one message would answer twice about it.
+   */
+  const rows = load(owner).filter((r) => r.lane !== lock.lane
+    ? true
+    : r.unverified === true && r.fp !== lock.fp);
   rows.push(lock);
   save(rows, owner);
 }
 
-/** Release a lane on a TERMINAL outcome — see the header for why `queued` is not one. */
-export function releaseSendLock(lane: string, owner: string | null = storageOwner()): void {
+/**
+ * Release ONE MESSAGE's claim on a lane at a TERMINAL outcome — see the header for why `queued`
+ * is not one.
+ *
+ * The fingerprint is required rather than optional, and that is the whole correction. A lane can
+ * hold an unresolved record beside a live claim, so "release the lane" is no longer a statement
+ * anybody can make: releasing everything would delete the record saying an earlier message may
+ * already have been delivered, and an optional fingerprint would make that the DEFAULT for any
+ * caller that did not think about it. A confirmed or failed outcome for the message named here
+ * releases that message's record — including its unresolved one, because an outcome the session
+ * has now observed is no longer unknown — and leaves every other record on the lane alone.
+ */
+export function releaseSendLock(lane: string, fp: string, owner: string | null = storageOwner()): void {
   const rows = load(owner);
-  const kept = rows.filter((r) => r.lane !== lane);
+  const kept = rows.filter((r) => !(r.lane === lane && r.fp === fp));
   if (kept.length !== rows.length) save(kept, owner);
 }
 
@@ -255,20 +284,61 @@ export function allSendLocks(nowMs: number, owner: string | null = storageOwner(
 }
 
 /**
- * Is this lane's send in the terminal-unknown state, according to DURABLE storage?
+ * WHICH MESSAGE AN UNRESOLVED SEND BELONGS TO — the identity a lock is scoped to.
+ *
+ * Both halves, because neither alone is an identity. The fingerprint changes the moment the
+ * person edits what they wrote, and a draft that is reopened and edited is still the same
+ * message — that is the case {@link readSendLock} exists for. A draft id is only an identity
+ * when there IS one: an interactive compose that never autosaved carries `null`, and `null`
+ * matching `null` would make every such compose the same message, which is precisely the
+ * lane-only defect this file's header describes.
+ */
+export interface SendIntent {
+  /** The draft row the send named, or `null` for a compose that never autosaved. */
+  draftId: string | null;
+  /** {@link sendFingerprint} of the message the key was minted for. */
+  fp: string;
+}
+
+/** Does this message belong to that unresolved send? See {@link SendIntent} for both halves. */
+export function sendIntentMatches(intent: SendIntent, m: MailSend): boolean {
+  if (intent.fp === sendFingerprint(m)) return true;
+  return intent.draftId !== null && intent.draftId === (m.draftId ?? null);
+}
+
+/**
+ * WHICH SENDS ON THIS LANE ARE IN THE TERMINAL-UNKNOWN STATE, according to DURABLE storage.
  *
  * The composer's own phase is component state and does not survive reopening the draft, a reload,
  * or another tab — and those are exactly the paths by which a person arrives back at a send that
  * may already have gone. This is the fact that outlives all of them.
+ *
+ * ── IT ANSWERS *WHICH*, NOT *WHETHER*, AND THAT IS THE CORRECTION ───────────────────────────
+ *
+ * It used to answer a boolean about the LANE. The compose surface has one lane for every message
+ * this browser will ever write, so one ambiguous delivery parked that lane for good: the surface
+ * read `unverified`, `canSend` refuses `unverified`, the record is exempt from the age limit on
+ * purpose, and Send and Send Later were therefore disabled for every future new message — with
+ * the only exit being the reload that mints a fresh key for a message that may already be gone.
+ * Naming the messages lets the uncertain one stay protected while a genuinely different message
+ * sends, which is the whole of what a person needs here.
  */
-export function unverifiedSendLock(lane: string, owner: string | null = storageOwner()): boolean {
-  return load(owner).some((r) => r.lane === lane && r.unverified === true);
+export function unverifiedSendIntents(lane: string, owner: string | null = storageOwner()): SendIntent[] {
+  return load(owner)
+    .filter((r) => r.lane === lane && r.unverified === true)
+    .map((r) => ({ draftId: r.draftId ?? null, fp: r.fp }));
 }
 
-/** Record that this lane's send came back unverified. See {@link SendLock.unverified}. */
-export function markSendLockUnverified(lane: string, owner: string | null = storageOwner()): void {
+/**
+ * Record that ONE MESSAGE's send on this lane came back unverified. See {@link SendLock.unverified}.
+ *
+ * Keyed by `(lane, fingerprint)` for the same reason {@link releaseSendLock} is: the lane may hold
+ * more than one record, and marking "the first one for this lane" would stamp the ambiguity onto
+ * whichever message happened to be listed first.
+ */
+export function markSendLockUnverified(lane: string, fp: string, owner: string | null = storageOwner()): void {
   const rows = load(owner);
-  const found = rows.find((r) => r.lane === lane);
+  const found = rows.find((r) => r.lane === lane && r.fp === fp);
   if (!found || found.unverified === true) return;
   save(rows.map((r) => (r === found ? { ...r, unverified: true } : r)), owner);
 }

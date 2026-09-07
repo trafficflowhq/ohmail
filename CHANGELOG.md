@@ -802,6 +802,15 @@ moving a message and moving it straight back could end with the first move sent 
 after the second one, leaving the message in the folder you had already taken it out of. A newer
 change now retires an older one whether it is waiting or already on its way.
 
+A send whose outcome the server could not confirm blocked every other new message. When a send
+comes back unconfirmed the app keeps the record of it and stops you sending again, because sending
+again could deliver the same mail twice and nothing can take that back. That block was written
+against the compose surface rather than against the message on it, and the record is deliberately
+kept indefinitely — so one unconfirmed send disabled Send and Send Later for every new message
+after it. The block now applies to the message it belongs to. That one stays parked, including
+after a reload and after the draft is edited; anything else you write sends normally, and more
+than one unconfirmed send can be waiting at a time.
+
 ## [0.14.0] — 2026-09-03
 
 A desktop install can hold more than one mailbox. Each one gets its own connection,

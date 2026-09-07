@@ -51,7 +51,7 @@ import { Button, Chip, Icon, Kbd, useToast } from "@ohmail/ui";
 import { chordKeys, useBinding, useKeyBindings, useModGlyph } from "../shell/keymap";
 import { go } from "../shell/routing";
 import { displayAddress } from "../shell/idn";
-import { canSend, sendVerb, type SendState } from "../shell/mail-send";
+import { canSend, sendStateFor, sendVerb, type SendState } from "../shell/mail-send";
 import { RichEditor } from "../shell/RichEditor";
 import { SendStatus } from "../shell/SendStatus";
 import {
@@ -515,7 +515,14 @@ export function ComposeView({
 
   const locked = !canSend(send, plan.mutation);
   const inFlight = send.phase === "sending" || send.phase === "queued";
-  const verb = sendVerb(send, "compose");
+  /**
+   * The state as it applies to THE MESSAGE ON SCREEN. An unresolved send parks the message it
+   * belongs to and nothing else, so its warn sentence must not stand above a different one — see
+   * `sendStateFor`. The lock above reads the unnarrowed state on purpose: it is the same rule,
+   * applied by the function that owns it.
+   */
+  const shown = sendStateFor(send, plan.mutation);
+  const verb = sendVerb(shown, "compose");
 
   return (
     <section className="view col view-compose" ref={rootRef}>
@@ -995,7 +1002,7 @@ export function ComposeView({
               <span className="send-note">{t("draftNote")}</span>
             </div>
 
-            <SendStatus send={send} scope="compose" />
+            <SendStatus send={shown} scope="compose" />
           </div>
         </div>
       </div>

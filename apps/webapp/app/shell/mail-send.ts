@@ -89,7 +89,7 @@ import type { ToastFn } from "@ohmail/ui";
 import { clearComposeDraft, type MailSend } from "./compose";
 import {
   claimSendLock, markSendLockUnverified, readSendLock, releaseSendLock, sendFingerprint,
-  unverifiedSendLock,
+  sendIntentMatches, unverifiedSendIntents, type SendIntent,
 } from "./send-lock";
 import { storageOwner } from "./storage-owner";
 import { scheduleLabel } from "./format";
@@ -170,6 +170,27 @@ export interface SendState {
    * API consumer. See `SendStatus`.
    */
   code?: string;
+  /**
+   * ── UNRESOLVED SENDS THIS LANE STILL HOLDS, AND WHICH MESSAGES THEY ARE ────────────────────
+   *
+   * A `send_unverified` answer means the reservation may already have delivered and nobody can
+   * tell. The only safe retry reuses the key it went under, so {@link canSend} locks Send — and
+   * it used to lock the LANE, which for the compose surface is every message this browser will
+   * ever write. One ambiguous delivery therefore disabled Send and Send Later for good.
+   *
+   * This names the messages instead, so the uncertain one stays locked and a genuinely different
+   * message sends. Several may be listed: two sends can end unresolved, and both records outlive
+   * every press after them.
+   *
+   * ── ABSENT AND EMPTY ARE DIFFERENT STATEMENTS, ON PURPOSE ──────────────────────────────────
+   *
+   * ABSENT means nobody named the intents — a state assembled by hand, or {@link phaseFor}'s own
+   * answer, which sees a `MutationResult` and not the message it belongs to. An `unverified`
+   * phase with nothing named FAILS CLOSED and locks the surface, exactly as it did before this
+   * field existed. EMPTY means the durable record was read and holds nothing unresolved, which is
+   * the ordinary state and locks nothing.
+   */
+  unresolved?: ReadonlyArray<SendIntent>;
 }
 
 export interface MailSendApi {
@@ -415,8 +436,10 @@ export function sendVerb(
  *     which is a second reservation, which is a second delivery to a real person.
  *   · an empty body is locked because the server accepts a blank one
  *     (`drafts-service.ts:167-171`) and would post it — EXCEPT ON A FORWARD, see below.
- *   · `unverified` and `failed` are NOT locked: both are terminal on the server for that
- *     draft, so the only way forward is a fresh send the user deliberately chooses.
+ *   · `failed` is NOT locked: it is terminal on the server for that draft, so the only way
+ *     forward is a fresh send the user deliberately chooses. `unverified` IS locked, and only
+ *     for the messages an unresolved send names — see the two arms in the body, which correct
+ *     what this line used to claim about it.
  *   · a COMPOSE additionally needs a recipient and a mailbox to send from. Both are refused
  *     here rather than on the wire, where `POST /drafts` would already have written a row
  *     before `POST /drafts/:id/send` answered 400.
@@ -448,6 +471,41 @@ export function sendVerb(
  * send already in flight is refused by the three checks below exactly as a written one is —
  * `forward-send.test.ts` walks all three.
  */
+/**
+ * DOES THIS STATE'S UNRESOLVED LIST NAME *THIS* MESSAGE? — one answer, both readers.
+ *
+ * {@link canSend} decides whether the press is refused and {@link sendStateFor} decides whether
+ * the surface says anything about it. Two copies of this would be two places for the button and
+ * the sentence beside it to disagree, which is the failure the "one rule" header is about.
+ *
+ * The two states {@link SendState.unresolved} distinguishes are both here. ABSENT means nobody
+ * supplied intents — `phaseFor` cannot, it sees a `MutationResult` and not the message it belongs
+ * to — and an `unverified` phase with nothing named FAILS CLOSED, exactly as it did before the
+ * field existed. PRESENT means the record was read, and only a match counts.
+ */
+function unresolvedNames(state: SendState, m: MailSend): boolean {
+  if (state.unresolved === undefined) return state.phase === "unverified";
+  return state.unresolved.some((i) => sendIntentMatches(i, m));
+}
+
+/**
+ * THE STATE AS IT APPLIES TO THE MESSAGE ON SCREEN — what a surface renders.
+ *
+ * `unverified` is a lane-level phase and `SendStatus` renders a warn sentence for it: "We
+ * couldn't confirm this send. Check your Sent folder before retrying." That sentence is true of
+ * the message the unresolved send belongs to and false of anything written afterwards on the same
+ * surface — and with the press no longer refused, leaving it would put a warning about somebody
+ * else's mail above a live Send button, permanently.
+ *
+ * So a surface renders THIS. It hands back the state untouched when the phase names the message,
+ * and presents it as `idle` when it does not — the phase only, with `unresolved` carried through,
+ * so a `canSend` reading the narrowed state gives the same answer as one reading the original.
+ */
+export function sendStateFor(state: SendState, m: MailSend): SendState {
+  if (state.phase !== "unverified") return state;
+  return unresolvedNames(state, m) ? state : { ...state, phase: "idle" };
+}
+
 export function canSend(state: SendState, m: MailSend): boolean {
   /**
    * `sent` joins the two locked phases: it is the beat between the confirmation and the surface
@@ -462,10 +520,25 @@ export function canSend(state: SendState, m: MailSend): boolean {
    * documented behaviour of pressing the button twice. A second copy in somebody's inbox cannot
    * be taken back, which is why this is a lock rather than a warning.
    */
-  if (
-    state.phase === "sending" || state.phase === "queued" || state.phase === "sent"
-    || state.phase === "unverified"
-  ) return false;
+  if (state.phase === "sending" || state.phase === "queued" || state.phase === "sent") return false;
+  /**
+   * ── THE UNVERIFIED LOCK IS PER MESSAGE, AND IT FAILS CLOSED WHEN NOBODY NAMED ONE ──────────
+   *
+   * `unverified` locked the whole lane, and for the compose surface a lane is every message this
+   * browser will ever write — so one ambiguous delivery disabled Send and Send Later for all
+   * future new messages, permanently: the durable record is exempt from the age limit by design,
+   * and `stateOf` reads it on every mount. The mailbox was locked out of composing.
+   *
+   * So the refusal reads {@link SendState.unresolved}, which names the messages an unresolved
+   * send belongs to. A press on one of them is refused for exactly the reason it always was; a
+   * press on a genuinely different message is not.
+   *
+   * The two arms below are the two states that field distinguishes, and they must stay apart. An
+   * `unverified` phase with NOTHING named is a state nobody supplied intents for — `phaseFor`
+   * cannot, it sees a result and not the message — and it refuses, which is the behaviour before
+   * this field existed. `unresolved` present is the answered case, and only a match locks.
+   */
+  if (unresolvedNames(state, m)) return false;
   const isForward = typeof m.forwardOf === "string" && m.forwardOf.length > 0;
   if (!isForward && m.body.trim().length === 0) return false;
   if (m.inReplyTo === null) {
@@ -772,11 +845,21 @@ export function useMailSend(
          * reuses it and the server can recognise the reservation; the send parks as needing a
          * check instead of quietly going twice.
          */
-        if (next.phase !== "unverified") releaseSendLock(key, owner.current);
+        // NAMED BY MESSAGE, not by lane. A lane can hold an unresolved record beside this one,
+        // and releasing the lane would delete the record saying an earlier message may already
+        // have been delivered — see `releaseSendLock`.
+        const fp = sendFingerprint(m);
+        if (next.phase !== "unverified") releaseSendLock(key, fp, owner.current);
         // DURABLY, because the phase below is component state: reopening the draft, a reload or
         // another tab all start from `idle`, and each of those is a way back to a send that may
         // already have gone. The lock is the only thing that survives them.
-        else markSendLockUnverified(key, owner.current);
+        //
+        // The intent rides on the phase as well, so the surface locks THIS message rather than
+        // the lane it was written on — `canSend` reads it, and a reload reads it back off disk.
+        else {
+          markSendLockUnverified(key, fp, owner.current);
+          next = { ...next, unresolved: [{ draftId: m.draftId ?? null, fp }] };
+        }
       }
       // A confirmation is the only outcome that does anything beyond the phase, and `settle`
       // is where all of it lives — so a confirmation from a flush minutes later clears the
@@ -863,15 +946,42 @@ export function useMailSend(
     };
   }, [flush]);
 
+  /**
+   * ── WHAT THIS LANE'S STATE IS, ONCE, FOR EVERY READER ──────────────────────────────────────
+   *
+   * `stateOf` and the refusal inside `send` are the same question, and they used to read two
+   * different sources: `stateOf` consulted the durable record, `send` read `states[key]` alone.
+   * The file's own comment beside that line claims `canSend` there "applies the SAME rule the
+   * button's `disabled` uses" — which was false for exactly the durable half, because React
+   * state starts empty on every mount and the record is what survives one. So a press that did
+   * not come through the button could get past something the button enforces.
+   *
+   * The durable intents ride on whatever phase this answers rather than replacing it: a live
+   * `sending` or `queued` must still refuse the press it is about, and an unresolved send from
+   * another tab or an earlier session must still lock the message it belongs to.
+   */
+  const stateFor = useCallback((key: string): SendState => {
+    const held = states[key];
+    const unresolved = unverifiedSendIntents(key, owner.current);
+    const base = held !== undefined && held.phase !== "idle"
+      ? held
+      : (unresolved.length > 0 ? { phase: "unverified" as const } : (held ?? IDLE));
+    // Union rather than replace: `absorb` names the intent it just observed, and the record
+    // holds every one this owner still has open, including sends this mount never saw.
+    const named = [...(base.unresolved ?? [])];
+    for (const i of unresolved) if (!named.some((x) => x.fp === i.fp)) named.push(i);
+    return named.length > 0 ? { ...base, unresolved: named } : base;
+  }, [states]);
+
   const send = useCallback(
     (m: MailSend, opts?: { surface?: "inline" }) => {
       const key = sendKeyOf(m, opts?.surface ?? "compose");
       // THE LOCK FIRST, off the ref, because it is the only check that is correct within one
-      // tick. `canSend` then applies the SAME rule the button's `disabled` uses, so a caller
-      // that is not the button (a keyboard shortcut, a future Reply Run step) cannot get past
-      // something the button enforces.
+      // tick. `canSend` then applies the SAME rule the button's `disabled` uses — through the
+      // SAME derivation, see `stateFor` — so a caller that is not the button (a keyboard
+      // shortcut, a future Reply Run step) cannot get past something the button enforces.
       if (locked.current.has(key)) return;
-      if (!canSend(states[key] ?? IDLE, m)) return;
+      if (!canSend(stateFor(key), m)) return;
 
       /**
        * ── THE DURABLE HALF, AND IT DOES NOT REFUSE THE PRESS ────────────────────────────────
@@ -921,26 +1031,24 @@ export function useMailSend(
           setPhase(key, { phase: "failed", reason: String(err) });
         });
     },
-    [engine, states, setPhase, absorb, arm],
+    [engine, stateFor, setPhase, absorb, arm],
   );
 
   return useMemo(
     () => ({
       /**
-       * THE DURABLE UNVERIFIED FACT OUTRANKS THE COMPONENT'S OWN PHASE.
+       * THE DURABLE UNVERIFIED FACT OUTLIVES THE COMPONENT'S OWN PHASE — see {@link stateFor},
+       * which the hook's own refusal reads through as well.
        *
        * `states` is React state and starts empty on every mount. Reopening the draft therefore
        * presented a fresh `idle` composer for a send that had come back unverified — Send live,
        * and the next press a new key for a message that may already be in somebody's inbox. The
-       * lock is consulted so the parked state survives the remount that used to clear it.
+       * record is consulted so the parked state survives the remount that used to clear it, and
+       * it names WHICH messages are parked so the surface is not parked with them.
        */
-      stateOf: (key: string) => {
-        const held = states[key];
-        if (held !== undefined && held.phase !== "idle") return held;
-        return unverifiedSendLock(key, owner.current) ? { phase: "unverified" } : (held ?? IDLE);
-      },
+      stateOf: stateFor,
       send,
     }),
-    [states, send],
+    [stateFor, send],
   );
 }
