@@ -88,8 +88,8 @@ import type { EngineMessage, MutationResult, OhmailEngine } from "@ohmail/client
 import type { ToastFn } from "@ohmail/ui";
 import { clearComposeDraft, composeSessionId, type MailSend } from "./compose";
 import {
-  claimSendLock, markSendLockUnverified, readSendLock, releaseSendLock, sendFingerprint,
-  sendSubject, unverifiedSendIntents, type SendIntent,
+  attachSendLockDraft, claimSendLock, markSendLockUnverified, readSendLock, releaseSendLock,
+  sendFingerprint, sendSubject, sendSubjects, unverifiedSendIntents, type SendIntent,
 } from "./send-lock";
 import { storageOwner } from "./storage-owner";
 import { scheduleLabel } from "./format";
@@ -505,18 +505,26 @@ function unresolvedNames(state: SendState, m: MailSend): boolean {
    * outcome nobody knows", and only the second may decide a refusal. Keying the refusal on the
    * fingerprint made an EDIT an escape from the lock, which is a second delivery by construction.
    */
-  const subject = sendSubject(m, state.session ?? null);
   /**
-   * FAIL CLOSED, AND THE TWO STATES THIS DISTINGUISHES ARE NAMED. `undefined` here means the
-   * subject could not be read at all — no draft row yet AND no session id (a blocked jar, a
-   * hand-built state). With something unresolved on this lane, a message we cannot name is not
-   * evidence that it is a different one, and the cost of guessing wrong is a duplicate delivery.
+   * EVERY NAME, NOT THE PREFERRED ONE — see {@link sendSubjects}, and this line is the measured
+   * defect. `sendSubject` prefers the draft row, so a compose recorded as `compose:<session>`
+   * before autosave had written anything was named `draft:<id>` half a second later, the two
+   * forms could not match, and the surface unlocked for a message it held an unresolved record
+   * of. A press with nothing edited then delivered it a second time. A record parks this message
+   * when the two sets share a name.
    */
-  if (subject === undefined) return true;
+  const subjects = sendSubjects(m, state.session ?? null);
   /**
-   * A RECORD WITH NO SUBJECT PARKS BY THE ONLY IDENTITY IT HAS, which is the fingerprint it was
-   * written under. Such a record was stored before the subject existed; comparing its absent
-   * subject against a real one is false for every message, so it would have parked NOTHING — a
+   * FAIL CLOSED, AND THE TWO STATES THIS DISTINGUISHES ARE NAMED. Empty here means the message
+   * could not be named at all — no draft row yet AND no session id (a blocked jar, a hand-built
+   * state). With something unresolved on this lane, a message we cannot name is not evidence that
+   * it is a different one, and the cost of guessing wrong is a duplicate delivery.
+   */
+  if (subjects.length === 0) return true;
+  /**
+   * A RECORD THAT NAMES NOTHING PARKS BY THE ONLY IDENTITY IT HAS, which is the fingerprint it
+   * was written under. Such a record was stored before the subject existed; comparing an absent
+   * name against a real one is false for every message, so it would have parked NOTHING — a
    * fail-open direction on a duplicate-delivery guard, and one the record's own docblock does not
    * claim. Weaker than the subject, and it is what that record can answer.
    */
@@ -531,7 +539,29 @@ function unresolvedNames(state: SendState, m: MailSend): boolean {
    */
   let fp: string | null = null;
   const fpOf = (): string => (fp ??= sendFingerprint(m));
-  return state.unresolved.some((i) => (i.subject === undefined ? i.fp === fpOf() : i.subject === subject));
+  /**
+   * A DRAFT ROW OUTRANKS THE SESSION WHEN BOTH SIDES HAVE ONE, and that is the limit of the
+   * session's authority rather than an exception to it.
+   *
+   * The session bridges the window in which a message has NO row — the window the duplicate
+   * delivery was reachable in. It must not go further than that: one compose surface reopens one
+   * draft after another under a single session, so a record naming `draft:30` and a message
+   * naming `draft:40` are two different messages, and parking the second on the shared session
+   * would lock the surface for every other draft in the account. That is the defect the
+   * subject-scoped park was introduced to fix, arrived at from the other side.
+   *
+   * A row is the server's identity for one message, so where both sides name one it decides. Where
+   * only one side does — the row appeared after the press, or the row the send consumed is gone —
+   * the session is the only name they share and it is the one that answers.
+   */
+  const rowOf = (names: ReadonlyArray<string>): string | undefined => names.find((s) => s.startsWith("draft:"));
+  const myRow = rowOf(subjects);
+  return state.unresolved.some((i) => {
+    if (i.subjects.length === 0) return i.fp === fpOf();
+    const itsRow = rowOf(i.subjects);
+    if (myRow !== undefined && itsRow !== undefined && myRow !== itsRow) return false;
+    return i.subjects.some((s) => subjects.includes(s));
+  });
 }
 
 /**
@@ -856,12 +886,25 @@ export function useMailSend(
   const owner = useRef<string | null>(storageOwner());
 
   /**
-   * The compose session id, read only for a message that has no subject of its own. A reply or a
-   * forward never touches storage for this, and neither does a draft-backed compose.
+   * THE COMPOSE SESSION ID FOR A LANE — the compose surface's, and `null` for every other lane.
+   *
+   * ── IT USED TO BE READ ONLY FOR A MESSAGE WITH NO NAME OF ITS OWN, AND THAT WAS THE DEFECT ──
+   *
+   * The old rule was `sendSubject(m, null) === undefined ? composeSessionId() : null`: a
+   * draft-backed compose never touched storage for it, on the reasoning that the row already
+   * names the message. The row does name it — but not for the whole of its life. A compose
+   * pressed before autosave has written anything is named `compose:<session>`, and the row
+   * appears half a second later; with the session unread from that point on, the record and the
+   * surface could no longer be shown to be about the same message, and an unresolved send
+   * unlocked and went out twice.
+   *
+   * So the session is the lane's fact, not the message's: read for the compose surface whatever
+   * the message currently carries, and never for a reply or a forward, which are named by the
+   * message they answer and cannot be renamed under them. This is the same expression
+   * {@link stateFor} uses, in one place, so the record's identity and the surface's cannot drift.
    */
   const sessionOf = useCallback(
-    (m: MailSend): string | null =>
-      sendSubject(m, null) === undefined ? composeSessionId(owner.current) : null,
+    (key: string): string | null => (key === COMPOSE_SEND_KEY ? composeSessionId(owner.current) : null),
     [],
   );
 
@@ -914,7 +957,7 @@ export function useMailSend(
         // the lane it was written on — `canSend` reads it, and a reload reads it back off disk.
         else {
           markSendLockUnverified(key, fp, owner.current);
-          next = { ...next, unresolved: [{ subject: sendSubject(m, sessionOf(m)), fp }] };
+          next = { ...next, unresolved: [{ subjects: sendSubjects(m, sessionOf(key)), fp }] };
         }
       }
       // A confirmation is the only outcome that does anything beyond the phase, and `settle`
@@ -1041,7 +1084,20 @@ export function useMailSend(
       // SAME derivation, see `stateFor` — so a caller that is not the button (a keyboard
       // shortcut, a future Reply Run step) cannot get past something the button enforces.
       if (locked.current.has(key)) return;
-      if (!canSend(stateFor(key), m)) return;
+      if (!canSend(stateFor(key), m)) {
+        /**
+         * REFUSED — and the row this message has since acquired is written down on the way out.
+         *
+         * The record's identity does not move (that is what the session field is for), but the
+         * draft row it names is a diagnostic and goes stale the moment autosave creates one: a
+         * parked send recorded `draftId: null` while the account holds a row for the very
+         * message nobody knows the fate of. Anybody reading the jar, or the account's Drafts
+         * list, beside a refusal needs the two connected. Nothing branches on it — see
+         * `attachSendLockDraft`.
+         */
+        attachSendLockDraft(key, sendSubjects(m, sessionOf(key)), m.draftId ?? null, owner.current);
+        return;
+      }
 
       /**
        * ── THE DURABLE HALF, AND IT DOES NOT REFUSE THE PRESS ────────────────────────────────
@@ -1061,7 +1117,8 @@ export function useMailSend(
        */
       const now = Date.now();
       const fp = sendFingerprint(m);
-      const subject = sendSubject(m, sessionOf(m));
+      const session = sessionOf(key);
+      const subject = sendSubject(m, session);
       const resumed = readSendLock(key, fp, now, owner.current);
       const sendKey = resumed ?? crypto.randomUUID();
       if (!resumed) {
@@ -1070,6 +1127,11 @@ export function useMailSend(
           // Recorded at the press, from the mutation AS SENT — the same value `canSend` compares
           // against, so the UI and the wire cannot come to disagree about which message this is.
           ...(subject !== undefined ? { subject } : {}),
+          // AND THE LANE'S SESSION BESIDE IT, unconditionally for the compose surface. The
+          // subject can be re-computed to a different string later in this message's life (the
+          // draft row appears); the session cannot, so it is the identity that survives the
+          // window in which a duplicate delivery was reachable — see `SendLock.session`.
+          ...(session !== null ? { session } : {}),
         }, owner.current);
       }
 

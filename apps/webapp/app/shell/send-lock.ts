@@ -71,6 +71,31 @@ export interface SendLock {
    * which is what it was written under.
    */
   subject?: string;
+  /**
+   * THE COMPOSE SESSION THIS SEND WAS PRESSED IN, when the lane has one — the SECOND identity,
+   * and the reason it exists is a measured double delivery.
+   *
+   * `subject` alone is not stable across the life of one message. A compose with no draft row
+   * yet is named `compose:<session>`; the moment autosave gives it a row the same
+   * message-in-progress is named `draft:<id>`, because {@link sendSubject} prefers the row. So an
+   * unresolved send recorded before the row existed parked NOTHING once the row appeared: the
+   * surface presented `idle`, Send lit up, and a press with nothing edited minted a second key
+   * and delivered the message a second time. The recipient held two copies and the sender's Sent
+   * folder held one, so neither side showed the duplicate.
+   *
+   * The session id is minted beside the scratch draft and cleared with it (`composeSessionId`),
+   * so it names the message-in-progress for exactly as long as that message exists — across the
+   * row appearing, across a reload, across the row being REPLACED. Recorded here in addition to
+   * `subject` rather than instead of it, because neither identity is available in every path:
+   * a draft reopened after the session was cleared has only `draft:<id>`, and a compose that
+   * never autosaved has only `compose:<session>`. {@link sendSubjects} reads both and a record
+   * parks a message when the two sets INTERSECT.
+   *
+   * Absent on a record written by a build before this field, and on every lane that is not the
+   * compose surface (a reply and a forward are named by the message they answer, which no
+   * autosave can change).
+   */
+  session?: string;
   /** {@link sendFingerprint} of the message this key was minted for. */
   fp: string;
   /**
@@ -217,6 +242,8 @@ function isLock(x: unknown): x is SendLock {
     && typeof r.key === "string" && r.key.length > 0
     && typeof r.at === "number"
     && typeof r.fp === "string"
+    && (r.subject === undefined || typeof r.subject === "string")
+    && (r.session === undefined || typeof r.session === "string")
     && (r.unverified === undefined || typeof r.unverified === "boolean");
 }
 
@@ -365,8 +392,20 @@ export function allSendLocks(nowMs: number, owner: string | null = storageOwner(
  * lane-only defect this file's header describes.
  */
 export interface SendIntent {
-  /** {@link sendSubject} of the message the key was minted for, when the record names one. */
-  subject: string | undefined;
+  /**
+   * EVERY IDENTITY the message this key was minted for answers to — {@link sendSubjects}.
+   *
+   * A list rather than one string, because one message-in-progress carries more than one name and
+   * acquires them at different moments. A compose is `compose:<session>` from the first press and
+   * becomes `draft:<id>` as well the moment autosave gives it a row; a draft reopened after the
+   * session was cleared has only the row. Comparing ONE name against ONE name meant a message
+   * whose row appeared between two presses read as a different message and sent twice.
+   *
+   * EMPTY means this browser could not name the message at all — no row, no session (a jar it
+   * cannot write, a state built by hand). It is not evidence of a different message, so the
+   * reader fails closed on it, and the fingerprint is the only comparison left.
+   */
+  subjects: ReadonlyArray<string>;
   /** {@link sendFingerprint} of the message the key was minted for. */
   fp: string;
 }
@@ -391,11 +430,66 @@ export interface SendIntent {
  * RESUMED for the content in hand. Two messages with one subject (an edit) must not share a key;
  * one message pressed twice must.
  */
+/**
+ * EVERY NAME THIS MESSAGE ANSWERS TO, most specific first — the identity a park compares.
+ *
+ * ── WHY IT IS A SET, MEASURED ───────────────────────────────────────────────────────────────
+ *
+ * {@link sendSubject} returns ONE name and prefers the draft row over the compose session. That
+ * preference is right for what to WRITE and wrong for what to COMPARE, because the row appears
+ * part-way through the life of a message: a compose pressed with no row is recorded as
+ * `compose:<session>`, autosave then creates a row, and the next press of the SAME UNEDITED
+ * MESSAGE computes `draft:<id>` — a different string, no match, nothing parked. On a send whose
+ * outcome the server could not confirm that is a second delivery: the surface presented `idle`,
+ * the button lit up, the press minted a second key, and the recipient held two copies while the
+ * sender's Sent folder held one, so neither side revealed it.
+ *
+ * The two names are not redundant and neither is available everywhere:
+ *  · a compose that never autosaved has a session and no row;
+ *  · a draft reopened after the compose session was cleared has a row and a NEW session;
+ *  · a row that autosave replaces (its create having been undone, or the row consumed by a send)
+ *    changes `draft:<id>` under one unchanged session.
+ *
+ * So both are collected and a record parks a message when the record's set and the message's set
+ * INTERSECT. A reply and a forward are named by the message they answer, which nothing can
+ * change under them, so they answer to exactly one name and the session is not consulted.
+ *
+ * EMPTY means this browser can name the message by nothing at all — no row and no session, which
+ * is a jar it cannot write. Callers read that as "unnameable", never as "a new message".
+ */
+export function sendSubjects(m: MailSend, session: string | null = null): string[] {
+  if (typeof m.forwardOf === "string" && m.forwardOf.length > 0) return [`fwd:${m.forwardOf}`];
+  if (m.inReplyTo !== null) return [`reply:${m.inReplyTo}`];
+  const out: string[] = [];
+  if (m.draftId !== undefined && m.draftId !== null && m.draftId.length > 0) out.push(`draft:${m.draftId}`);
+  if (session !== null) out.push(`compose:${session}`);
+  return out;
+}
+
+/**
+ * THE ONE NAME A RECORD IS WRITTEN UNDER — the first of {@link sendSubjects}, unchanged.
+ *
+ * The record keeps a single `subject` for the shape it has always had, and carries the session
+ * beside it in {@link SendLock.session}. Reading is what needs the whole set.
+ */
 export function sendSubject(m: MailSend, session: string | null = null): string | undefined {
-  if (typeof m.forwardOf === "string" && m.forwardOf.length > 0) return `fwd:${m.forwardOf}`;
-  if (m.inReplyTo !== null) return `reply:${m.inReplyTo}`;
-  if (m.draftId !== undefined && m.draftId !== null && m.draftId.length > 0) return `draft:${m.draftId}`;
-  return session === null ? undefined : `compose:${session}`;
+  return sendSubjects(m, session)[0];
+}
+
+/**
+ * EVERY NAME A STORED RECORD ANSWERS TO — the reading half of {@link sendSubjects}.
+ *
+ * The record's own `subject` plus the compose session it was pressed in. Both, for the same
+ * reason the message side collects both: the record was written at one moment in the message's
+ * life and is read at another, and whichever name the two moments have in common is the one that
+ * has to decide.
+ */
+function lockSubjects(r: SendLock): string[] {
+  const out: string[] = [];
+  if (r.subject !== undefined) out.push(r.subject);
+  const fromSession = r.session === undefined ? null : `compose:${r.session}`;
+  if (fromSession !== null && !out.includes(fromSession)) out.push(fromSession);
+  return out;
 }
 
 /**
@@ -418,7 +512,38 @@ export function sendSubject(m: MailSend, session: string | null = null): string 
 export function unverifiedSendIntents(lane: string, owner: string | null = storageOwner()): SendIntent[] {
   return load(owner)
     .filter((r) => r.lane === lane && r.unverified === true)
-    .map((r) => ({ subject: r.subject, fp: r.fp }));
+    .map((r) => ({ subjects: lockSubjects(r), fp: r.fp }));
+}
+
+/**
+ * THE DRAFT ROW THIS MESSAGE HAS ACQUIRED SINCE THE KEY WAS MINTED — recorded, never re-keyed.
+ *
+ * A compose pressed before autosave had written anything holds `draftId: null`, and a row appears
+ * moments later. The record's identity does NOT move with it — that is the whole point of
+ * {@link SendLock.session}, and re-keying the subject onto the new row is exactly the defect this
+ * pair of fields exists to close. What the row is worth is diagnostic: somebody reading the jar
+ * beside a parked send, or the account's Drafts list, needs to know which row belongs to the
+ * message whose outcome nobody knows. So it is written down and nothing branches on it.
+ *
+ * Matched on the SET, so it finds the record however the message is named at this moment. Only a
+ * record that names this message is touched, and only when the row has actually changed.
+ */
+export function attachSendLockDraft(
+  lane: string,
+  subjects: ReadonlyArray<string>,
+  draftId: string | null,
+  owner: string | null = storageOwner(),
+): void {
+  if (subjects.length === 0 || draftId === null) return;
+  const rows = load(owner);
+  let moved = false;
+  const next = rows.map((r) => {
+    if (r.lane !== lane || r.draftId === draftId) return r;
+    if (!lockSubjects(r).some((s) => subjects.includes(s))) return r;
+    moved = true;
+    return { ...r, draftId };
+  });
+  if (moved) save(next, owner);
 }
 
 /**

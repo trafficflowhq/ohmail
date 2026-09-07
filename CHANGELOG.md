@@ -865,6 +865,17 @@ out twice. Other conversations, other drafts and other new messages send normall
 one unconfirmed send can be waiting at a time. To write something else in place of an unconfirmed
 new message, discard it first; that is what tells the app you are done with it.
 
+The same block then lifted a moment later on its own, because the app had saved the message as a
+draft. A new message you are writing has no draft saved to your account until the app writes one,
+which it does a couple of seconds after you stop typing — and the block identified the message by
+that draft, so a message blocked before the draft existed stopped being recognised the instant it
+appeared. Send lit up again with nothing typed, and pressing it sent the mail a second time: the
+recipient held two copies, while your own Sent folder held one, so neither side showed it. The
+message you are writing is now identified for as long as you are writing it, whether or not a
+draft has been saved yet and whether the app replaces that draft afterwards, so the block stands
+until the send is resolved or you discard the message. Two different saved drafts are still two
+different messages, and sending one is not blocked by the other.
+
 A rule applied to existing mail could stop early if a mailbox changed hands at the wrong moment.
 The request stays open while any mailbox on the account is one this install is not organizing, and
 the place the walk had reached is cleared at the same time — but those were two separate writes,
