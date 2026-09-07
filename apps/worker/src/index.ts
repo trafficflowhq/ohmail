@@ -120,7 +120,8 @@ import {
   type EnabledMailbox, type MailboxDisabledReason, type MailboxErrorPhase,
   type MailboxSyncBlockReason,
 } from "./mailboxes.js";
-import { OrganizerProfileSync } from "./profile.js";
+import { OrganizerProfileSync, syncProfileMirror } from "./profile.js";
+import type { ProfileIo } from "@trafficflow/core/adapters/organizer-profile";
 import {
   readMailboxLease, releaseMailboxClaim, cloudInstallId, CLOUD_DISPLAY_NAME, LeaseUnavailableError,
   type LeaseSelf, type LeasePeekCapableAdapter,
@@ -3984,6 +3985,41 @@ export async function startWorkerWithLock(
             await refreshReaderHolder(
               { mailboxId: rt.mailboxId, accountId: rt.accountId }, rt.adapter, rt.holderSeen,
             );
+            /* ── AND CACHE THE ORGANIZER'S SETTINGS DOCUMENT, ONCE PER READER CYCLE (mail 0093) ──
+             *
+             * A reader's own responder/rule/window/signature rows are inert: the ones in force are
+             * in the published document of the install that HOLDS this mailbox. The panes rendered
+             * the local rows anyway — ruling 6's Critical — so the reader keeps a copy and
+             * `GET /mailboxes/:id/profile` serves that instead.
+             *
+             * A SIBLING OF `refreshReaderHolder`, NOT A LINE INSIDE IT, and that is the whole
+             * placement decision: that function RETURNS EARLY when none of the six holder columns
+             * moved, which is its zero-writes steady state. Folded in after that return, the mirror
+             * would refresh only when the HOLDER changed — and the document changes far more often
+             * than the holder does, so a person's settings pane would sit on a stale copy for as
+             * long as one machine kept organizing the mailbox.
+             *
+             * Here rather than at the attach path too: this is the recurring cycle, and attach is
+             * followed by one of these within a poll.
+             *
+             * Probed, not asserted: `profileIo` is an accessor the real IMAP adapter carries and a
+             * double need not, so an adapter without it is skipped — `refreshReaderHolder` treats
+             * `leasePeekIo` exactly this way. Never throws; `syncProfileMirror` owns that. */
+            const mkIo = (rt.adapter as Partial<{
+              profileIo(id: { installId: string; mailboxId: string }): ProfileIo;
+            }>).profileIo;
+            if (typeof mkIo === "function") {
+              await syncProfileMirror({
+                db, accountId: rt.accountId, mailboxId: rt.mailboxId,
+                /* A NAMED READER IDENTITY. `readOrganizerProfile` remembers a position per
+                   identity, so borrowing this install's own would let a read and the organizer
+                   write-behind share one anchor. */
+                io: mkIo.call(rt.adapter, {
+                  installId: "reader-profile-mirror", mailboxId: rt.mailboxId,
+                }),
+                now: new Date(), log: (event, detail) => { log.info(event, detail); },
+              });
+            }
           } else {
             leaseBlocked.delete(rt.mailboxId);
           }

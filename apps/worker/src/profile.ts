@@ -1,6 +1,7 @@
 import { and, desc, eq } from "drizzle-orm";
 import {
   PROFILE_FOUND_AUDIT_ACTION, auditLog, latestProfileFoundMarker, profileImportResolutionExists,
+  mailboxProfileMirror,
   type Tx,
 } from "@trafficflow/db";
 /* NAMED AT A LEAF, NEVER AT THE PACKAGE ROOT — this module is bundled into the desktop engine.
@@ -1327,6 +1328,183 @@ type MarkerFact =
    * a found subject, `v` for a newer one; `latestProfileFoundMarker` implements the reading.
    */
   | { state: "lapsed"; fingerprint?: string | null; v?: number | null };
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  THE READER'S SIDE — caching the organizer's document in `mailbox_profile_mirror` (mail 0093)
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Everything above is the ORGANIZER's half: serialize this store, publish it. This is the other
+ * half. An install that only READS a mailbox has responder, rule, window and signature rows of its
+ * own that nothing acts on — the ones in force are in the organizing install's published document —
+ * and ruling 6's Critical is that the panes rendered the local rows anyway. So the reader caches
+ * the document it can see, and `GET /mailboxes/:id/profile` serves that instead.
+ *
+ * Here rather than beside the reader arms because BOTH of them need it and there must be one
+ * implementation: `apps/worker`'s hosted reader cycle and `apps/sidecar`'s local one, the same
+ * argument this module's own header makes for the write-behind. The sidecar already imports
+ * `@trafficflow/worker/profile`, so this needs no new subpath and nothing new in the publish
+ * allow-set.
+ *
+ * ── THE PAIR IS WRITTEN TOGETHER OR NOT AT ALL ─────────────────────────────────────────────
+ *
+ * `uidvalidity` and `uid` are one fact. A remembered IMAP uid means nothing except under the
+ * generation it was read under: a folder deleted and recreated numbers from one again, so a uid
+ * that survived a renumber points confidently at the wrong message. The generation therefore comes
+ * from {@link ProfileReadResult}'s own `found` arm — taken inside the same lock as the fetch that
+ * produced the uid, so the two are consistent BY CONSTRUCTION — and never from a second read at
+ * this call site, which is the whole defect the pair exists to prevent.
+ *
+ * A `null` generation is NOT "any generation will do". It means the server reported no epoch, so
+ * the locator is unusable, so nothing is written and the log says why.
+ */
+
+/** What one mirror pass did, for the log and for the tests. */
+export type MirrorOutcome =
+  | { state: "written"; generation: number | bigint; uid: number }
+  /** The folder holds no document — a stale cached copy is DISCARDED rather than left standing. */
+  | { state: "discarded"; reason: "no_document" }
+  /** Nothing was touched, and the reason distinguishes "could not look" from "nothing there". */
+  | { state: "kept"; reason: "unreadable" | "newer" | "no_read_io" | "read_failed" }
+  | { state: "skipped"; reason: "no_generation" | "no_uid" };
+
+export interface MirrorDeps {
+  db: Tx;
+  accountId: string;
+  mailboxId: string;
+  /** The APPEND-less read. Built by the caller from its live adapter; see the reader arms. */
+  io: ProfileIo;
+  now: Date;
+  log: (event: string, detail: Record<string, unknown>) => void;
+}
+
+/**
+ * READ THE ORGANIZER'S DOCUMENT ONCE AND CACHE IT. Never throws — a profile IO failure is a
+ * mailbox fault for the logs, exactly as this module's write-behind treats one, and a reader whose
+ * cache is one poll stale is in a far better state than one that replaced a real document with an
+ * invented absence.
+ *
+ * ── THE FOUR ANSWERS ARE NOT INTERCHANGEABLE, WHICH IS THE WHOLE CARE HERE ─────────────────
+ *
+ * The lease peek's rule, restated for this table: *"I could not look" and "nobody holds it" must
+ * not be reachable from one another.* So:
+ *
+ *  · `found`      ⇒ REPLACE the row WHOLE. Both columns move together, so a stale generation can
+ *                   never end up beside a fresh uid — the state that would make the row a lie.
+ *  · `none`       ⇒ the folder genuinely holds no profile message. A cached copy would now be a
+ *                   document under a locator pointing at nothing, so the row is DELETED. This is
+ *                   also the renumber case: after a UIDVALIDITY bump the old uid addresses
+ *                   whatever now holds that small integer, and keeping it is worse than having no
+ *                   answer at all.
+ *  · `unreadable` ⇒ we could not read it. The row is LEFT ALONE. Deleting here is what would make
+ *                   a transient FETCH failure indistinguishable from the organizer clearing its
+ *                   settings.
+ *  · `newer`      ⇒ a later format. Left alone and not parsed, on the document engine's own rule:
+ *                   a reader that cannot understand a document does not overwrite or reinterpret
+ *                   it.
+ */
+export async function syncProfileMirror(deps: MirrorDeps): Promise<MirrorOutcome> {
+  let read: ProfileReadResult;
+  try {
+    read = await readOrganizerProfile(deps.io);
+  } catch (err) {
+    deps.log("profile_mirror_read_failed", {
+      mailboxId: deps.mailboxId, accountId: deps.accountId,
+      ...(err instanceof ProfileUnavailableError ? { op: err.op } : {}),
+      err: err instanceof Error ? err.message : String(err),
+      reason: "could not read the organizer's settings document; the cached copy is left as it is",
+    });
+    return { state: "kept", reason: "read_failed" };
+  }
+  return applyProfileRead(deps, read);
+}
+
+/**
+ * WHAT TO DO WITH EACH OF THE FOUR ANSWERS — split from the read above, and the split is the
+ * testable seam rather than a tidying.
+ *
+ * The decision logic is what has to be driven through every union member, and an ES module
+ * namespace cannot be monkey-patched, so a test that wanted to feed answers to
+ * {@link syncProfileMirror} would have to replace the whole document engine for its file. Taking
+ * the already-read result as an argument makes each answer a plain call — and leaves
+ * `syncProfileMirror` with exactly one behaviour of its own worth a case (a read that THROWS keeps
+ * the cached copy), which is drivable through a real `ProfileIo` that fails the way one fails.
+ */
+export async function applyProfileRead(
+  deps: Omit<MirrorDeps, "io">, read: ProfileReadResult,
+): Promise<MirrorOutcome> {
+  if (read.state === "unreadable" || read.state === "newer") {
+    deps.log("profile_mirror_kept", {
+      mailboxId: deps.mailboxId, accountId: deps.accountId, state: read.state,
+      reason: read.state === "newer"
+        ? "the document was written by a newer ohmail; it is not parsed and the cached copy stands"
+        : "the document could not be read; a transient fault must not read as cleared settings",
+    });
+    return { state: "kept", reason: read.state };
+  }
+
+  if (read.state === "none") {
+    /* THE DISCARD, AND IT IS A DELETE RATHER THAN A NULLED ROW. A missing row is how this table
+       spells "we have no document"; a row of nulls would be indistinguishable from a document that
+       says nothing, and `readMailboxProfile` distinguishes exactly those two. */
+    const gone = await deps.db.delete(mailboxProfileMirror)
+      .where(and(
+        eq(mailboxProfileMirror.mailboxId, deps.mailboxId),
+        eq(mailboxProfileMirror.accountId, deps.accountId),
+      ))
+      .returning({ mailboxId: mailboxProfileMirror.mailboxId });
+    if (gone.length > 0) {
+      deps.log("profile_mirror_discarded", {
+        mailboxId: deps.mailboxId, accountId: deps.accountId,
+        reason: "the mailbox holds no settings document, so the cached copy addressed nothing",
+      });
+    }
+    return { state: "discarded", reason: "no_document" };
+  }
+
+  // `found`. The generation and the uid came from one lock — see the header.
+  const generation = read.generation;
+  if (generation === null) {
+    deps.log("profile_mirror_skipped", {
+      mailboxId: deps.mailboxId, accountId: deps.accountId,
+      reason: "the server reported no folder generation, so the document's uid is not a usable "
+        + "locator — nothing is cached rather than caching a uid that means nothing",
+    });
+    return { state: "skipped", reason: "no_generation" };
+  }
+  const uid = typeof read.ref === "number" && Number.isInteger(read.ref) && read.ref > 0
+    ? read.ref : null;
+  if (uid === null) {
+    deps.log("profile_mirror_skipped", {
+      mailboxId: deps.mailboxId, accountId: deps.accountId,
+      reason: "the document carried no usable uid, so there is no locator to remember it by",
+    });
+    return { state: "skipped", reason: "no_uid" };
+  }
+
+  /* REPLACED WHOLE. Every column in the SET, deliberately: a partial update is how a row ends up
+     carrying one generation's uid beside another generation's number, and that row would be served
+     as a current document by a locator that addresses something else. */
+  await deps.db.insert(mailboxProfileMirror)
+    .values({
+      mailboxId: deps.mailboxId, accountId: deps.accountId,
+      uidvalidity: typeof generation === "bigint" ? generation : BigInt(generation),
+      uid, doc: read.doc, readAt: deps.now,
+    })
+    .onConflictDoUpdate({
+      target: mailboxProfileMirror.mailboxId,
+      set: {
+        accountId: deps.accountId,
+        uidvalidity: typeof generation === "bigint" ? generation : BigInt(generation),
+        uid, doc: read.doc, readAt: deps.now,
+      },
+    });
+  deps.log("profile_mirror_written", {
+    mailboxId: deps.mailboxId, accountId: deps.accountId,
+    generation: String(generation), uid, residue: read.residue,
+  });
+  return { state: "written", generation, uid };
+}
 
 export { PROFILE_VERSION };
 export type { OrganizerProfileDoc, OrganizerProfilePayload };

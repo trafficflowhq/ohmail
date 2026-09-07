@@ -109,7 +109,8 @@ import {
   readLeasePeek, deriveRequestKey, type LeasePeekIo,
 } from "@trafficflow/core/adapters/organizer-lease";
 import type { ImapAuth } from "@trafficflow/core/adapters/imap-types";
-import { OrganizerProfileSync } from "@trafficflow/worker/profile";
+import { OrganizerProfileSync, syncProfileMirror } from "@trafficflow/worker/profile";
+import type { ProfileIo } from "@trafficflow/core/adapters/organizer-profile";
 // THE SYMMETRIC-TAKEOVER REQUEST DRAIN (0.14.1), from the worker's own subpath for
 // the same reason `OrganizerProfileSync` is: one implementation of "apply a reader's decision" or
 // "carry this install's own decisions to the mailbox", not a second one that could disagree with
@@ -3981,6 +3982,42 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             });
           }
           await notePeekedHolder(priorStandDown as MailboxDisabledReason | null);
+          /* ── AND CACHE THE ORGANIZER'S SETTINGS DOCUMENT, ONCE PER READER CYCLE (mail 0093) ──
+           *
+           * A reader's own responder/rule/window/signature rows are inert: the ones in force are in
+           * the published document of the install that HOLDS this mailbox. The panes used to render
+           * the local rows anyway, which is ruling 6's Critical, so the reader keeps a copy here and
+           * `GET /mailboxes/:id/profile` serves that.
+           *
+           * ONLY ON THE READER ARM, and only when the row actually says `reader`. The arm above also
+           * covers a row this pass could not READ, where the role is unknown — and unlike the peek
+           * (bounded, headers only) this read fetches full message SOURCES, because the document is
+           * the body. Spending that on a mailbox whose role we could not establish, every poll, is a
+           * cost with nothing behind it. The pre-consent arm below is excluded for the same reason
+           * plus a better one: nobody has agreed to that mailbox, so there is no pane to feed.
+           *
+           * Never throws — `syncProfileMirror` owns that, on the peek's rule: one poll stale beats
+           * replacing a real document with an invented absence. */
+          if (rowRole === "reader") {
+            /* PROBED, not asserted — `notePeekedHolder`'s exact shape for `leasePeekIo`. `profileIo`
+               is not on `MailboxAdapter`: it is an accessor the real IMAP adapter carries and a test
+               double need not, so an adapter without it is SKIPPED rather than crashing a sync
+               cycle over a cache. */
+            const mkIo = (adapter as Partial<{
+              profileIo(id: { installId: string; mailboxId: string }): ProfileIo;
+            }>).profileIo;
+            if (typeof mkIo === "function") {
+              await syncProfileMirror({
+                db, accountId: world.accountId, mailboxId: mb.id,
+                /* A NAMED READER IDENTITY, not this install's own. `readOrganizerProfile` remembers
+                   a position per identity, and borrowing the organizer write-behind's would let a
+                   read and a write share one anchor — the API's profile reader makes the same split
+                   for the same reason. */
+                io: mkIo.call(adapter, { installId: "reader-profile-mirror", mailboxId: mb.id }),
+                now: now(), log,
+              });
+            }
+          }
           return false;
         }
         /* -- NOBODY HAS AGREED TO THIS YET, SO THIS INSTALL READS AND ARRANGES NOTHING ----------
