@@ -1,5 +1,7 @@
 import { and, eq, isNull, ne } from "drizzle-orm";
-import { claimIdempotencyKey, drafts, mailboxes, messages, recordChange, threads, type Tx } from "@trafficflow/db";
+import {
+  claimIdempotencyKey, drafts, mailboxes, messages, outboundSends, recordChange, threads, type Tx,
+} from "@trafficflow/db";
 import type { EmailAddress } from "@trafficflow/core/mail";
 import type { ServiceContext } from "./context.js";
 import { IdempotencyRaceLost, ServiceError } from "./errors.js";
@@ -385,6 +387,57 @@ export class DraftsService {
 
   async remove(ctx: ServiceContext, id: string): Promise<{ seq: number }> {
     const seq = await asTx(ctx).transaction(async (tx) => {
+      /**
+       * ── A MESSAGE WITH A SEND ON RECORD IS REFUSED BY NAME, NOT BY A FOREIGN KEY ──────────
+       *
+       * `outbound_sends.draft_id` references this table `ON DELETE no action`
+       * (`packages/db-mail/drizzle/0013_outbound_sends.sql`), and the reservation deliberately
+       * OUTLIVES every terminal outcome: `finalizeSent` clears `send_at`/`send_key` and moves the
+       * row to `sent`, the ambiguous ending moves it to `unverified`, and a failed attempt puts it
+       * back at `draft` — in all three the `outbound_sends` row stays, because it is the guard that
+       * makes a same-key retry replay instead of delivering a second copy.
+       *
+       * The delete below excludes only `scheduled` and a standing `send_key`, which none of those
+       * three states carries. So the statement reached the constraint, Postgres raised
+       * `23503 outbound_sends_draft_id_drafts_id_fk`, and — not being a {@link ServiceError} — it
+       * left the router as `internal` 500. Somebody discarding a send that could not be confirmed
+       * was told the application had broken, and the row stayed in Drafts either way.
+       *
+       * NOTHING CASCADES AND NOTHING IS DELETED. The reservation is the replay guard; removing it
+       * to make the delete succeed would hand the next press of the same key a clean slate for a
+       * message that may already be in somebody's inbox. The row stays and the sentence says so.
+       *
+       * ── WHY THE ROW IS LOCKED FIRST, AND WHY THAT ORDER IS THE WHOLE RACE ─────────────────
+       *
+       * A check that merely READ `outbound_sends` would answer about the past: `SendService.reserve`
+       * inserts its reservation in another transaction, and that INSERT takes a `FOR KEY SHARE` on
+       * this drafts row for the foreign key — so a reserve committing between the read and the
+       * DELETE puts the 500 straight back. `FOR UPDATE` is the one row-lock mode that conflicts
+       * with `FOR KEY SHARE`, and `reserve`'s first statement is a `FOR UPDATE` on the same row, so
+       * taking it here serializes the two: either the reserve committed first and this read sees
+       * its reservation (409), or this delete committed first and the reserve's own locked read
+       * finds no draft (404). Neither ending is the foreign key.
+       *
+       * ASKED ONLY FOR A ROW THE DELETE COULD ACTUALLY TAKE. A row wearing an appointment is
+       * refused below with the sentence that names the way forward (cancel the schedule), and the
+       * worker's claim mints a reservation for exactly such a row — asking about the reservation
+       * first would swap the two answers and tell somebody their scheduled message "has a send on
+       * record" instead of how to stop it.
+       */
+      const [held] = await tx.select({ status: drafts.status, sendKey: drafts.sendKey }).from(drafts)
+        .where(and(eq(drafts.id, id), eq(drafts.accountId, ctx.accountId)))
+        .for("update").limit(1);
+      if (held && held.status !== "scheduled" && held.sendKey === null) {
+        const [reserved] = await tx.select({ id: outboundSends.id }).from(outboundSends)
+          .where(and(eq(outboundSends.draftId, id), eq(outboundSends.accountId, ctx.accountId)))
+          .limit(1);
+        if (reserved) {
+          throw new ServiceError(
+            "send_recorded", 409,
+            "this message has a send on record; it stays in Drafts as that record",
+          );
+        }
+      }
       // A row WEARING AN APPOINTMENT refuses the delete with the way forward named, exactly as
       // `update` refuses the edit: cancel first. The predicate is `send_key IS NULL` for
       // `update`'s reason â the claim window ('draft', key standing) is precisely when a
