@@ -831,16 +831,24 @@ long — the request is still running and still owns that change. Expressing a n
 same message retires the older one, and that only looked at changes still waiting to be sent, so
 moving a message and moving it straight back could end with the first move sent a second time
 after the second one, leaving the message in the folder you had already taken it out of. A newer
-change now retires an older one whether it is waiting or already on its way.
+change now retires an older one whether it is waiting or already on its way — and if the app
+cannot record the newer change at all, the older one is left standing and sent, rather than being
+dropped on behalf of a change that never happened.
 
 A send whose outcome the server could not confirm blocked every other new message. When a send
 comes back unconfirmed the app keeps the record of it and stops you sending again, because sending
 again could deliver the same mail twice and nothing can take that back. That block was written
 against the compose surface rather than against the message on it, and the record is deliberately
 kept indefinitely — so one unconfirmed send disabled Send and Send Later for every new message
-after it. The block now applies to the message it belongs to. That one stays parked, including
-after a reload and after the draft is edited; anything else you write sends normally, and more
-than one unconfirmed send can be waiting at a time.
+after it.
+
+The block now applies to the message the unconfirmed send was OF: the mail you were answering, the
+draft you were writing, or the new message still open in the composer. That message stays blocked
+until the send is resolved — after a reload, and after you edit it, because an edit does not make
+it a different message. Editing it used to release the block, which is how the same mail could go
+out twice. Other conversations, other drafts and other new messages send normally, and more than
+one unconfirmed send can be waiting at a time. To write something else in place of an unconfirmed
+new message, discard it first; that is what tells the app you are done with it.
 
 A rule applied to existing mail could stop early if a mailbox changed hands at the wrong moment.
 The request stays open while any mailbox on the account is one this install is not organizing, and

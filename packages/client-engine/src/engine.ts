@@ -138,6 +138,25 @@ interface SupersedeEffect {
   undo: Array<{ entry: PendingMutation; index: number; mutation: EngineMutation }>;
   /** The abandoned-record markers, awaited before this verb may dispatch. */
   marked: Promise<MarkerOutcome>;
+  /**
+   * Requests ON THE WIRE this call marked superseded — see {@link PendingMutation.supersededInFlight}.
+   *
+   * ── WHY THE MARK IS MADE BEFORE PERSISTENCE, AND UNDONE RATHER THAN DEFERRED ────────────────
+   *
+   * Marking only AFTER the replacement is persisted was the other candidate and it is worse. The
+   * write is awaited, so between `supersedeQueued` (synchronous, and it must be: the queue half is
+   * this transaction's own `retire` payload) and the write returning, the older request can answer
+   * retryably and RE-QUEUE ITSELF. The queue loop has already run and the wire scan has not, so
+   * neither half retires it — the older verb replays over the newer intent, which is the defect
+   * the scan reorder exists to close, reintroduced as a race and needing no storage failure at all.
+   *
+   * Marking before has one bad case instead: a refusal, where the mark was made on behalf of a
+   * replacement that never happened. The mark says "when this answers retryable, DROP it", and
+   * dropping the older verb then loses the person's only expressed intent outright — nothing on
+   * the wire, nothing queued, nothing on disk, no sentence. So the mark is part of the rollback,
+   * exactly as the queue's retirement is.
+   */
+  markedInFlight: PendingMutation[];
 }
 
 interface PendingMutation {
@@ -4909,12 +4928,18 @@ export class OhmailEngine {
      * The QUEUE's loop is what an empty queue may skip. The wire's is not, and the emptiness of
      * the queue is not evidence about it.
      */
+    const markedInFlight: PendingMutation[] = [];
     for (const q of this.inFlight.values()) {
-      if (q.mutation.kind === m.kind && key !== null && supersedeKey(q.mutation) === key) {
+      if (q.mutation.kind === m.kind && key !== null && supersedeKey(q.mutation) === key
+        && q.supersededInFlight !== true) {
         q.supersededInFlight = true;
+        // Only what THIS call marked. An entry an EARLIER supersession marked is superseded by a
+        // verb that is still standing (it is in the queue, and a refused replacement puts it
+        // back), so clearing it on this refusal would resurrect a verb the queue already replaces.
+        markedInFlight.push(q);
       }
     }
-    if (this.queue.length === 0) return { retired, narrowed, undo, marked };
+    if (this.queue.length === 0) return { retired, narrowed, undo, marked, markedInFlight };
     let changed = false;
     for (let i = this.queue.length - 1; i >= 0; i--) {
       const q = this.queue[i]!;
@@ -4980,7 +5005,7 @@ export class OhmailEngine {
       this.overlayRev++;
       this.notify();
     }
-    return { retired, narrowed, undo, marked };
+    return { retired, narrowed, undo, marked, markedInFlight };
   }
 
   /**
@@ -4996,6 +5021,15 @@ export class OhmailEngine {
    * was expressed, not the moment the store happened to fail.
    */
   private undoSupersede(effect: SupersedeEffect): void {
+    /**
+     * THE WIRE'S MARKS GO BACK TOO, AND BEFORE THE EARLY RETURN BELOW.
+     *
+     * `undo` is EMPTY whenever the queue was empty, and an empty queue is exactly the state the
+     * wire scan above it exists for — so a `return` on `undo.length === 0` would skip the only
+     * case where a mark is the sole thing this supersession changed. That road is reachable and
+     * built: `abandoned-marker refusal with a verb on the wire` in `outbox-lifecycle.test.ts`.
+     */
+    for (const q of effect.markedInFlight) q.supersededInFlight = false;
     if (effect.undo.length === 0) return;
     for (const { entry, mutation } of effect.undo) {
       entry.mutation = mutation;
