@@ -112,7 +112,7 @@ import {
 // the mailbox (its empty-folder arm claims). One method, no way to write. See
 // `notePeekedHolder`.
 import {
-  readLeasePeek, deriveRequestKey, type LeasePeekIo,
+  readLeasePeek, deriveRequestKey, type LeasePeekIo, type OrganizerKindWritten,
 } from "@trafficflow/core/adapters/organizer-lease";
 import type { ImapAuth } from "@trafficflow/core/adapters/imap-types";
 import { OrganizerProfileSync, syncProfileMirror } from "@trafficflow/worker/profile";
@@ -143,6 +143,15 @@ import { createLocalAi, type LocalAi } from "./ai-provider.js";
 import { localAiRoutes } from "./ai-routes.js";
 import { localAutoSuggestRoutes } from "./auto-suggest-routes.js";
 import { openLocalDb, type LocalDb, type LocalDbOpenPhase, type OpenLocalDb } from "./db.js";
+
+/**
+ * The shape {@link SidecarConfig.store} supplies — `openLocalDb`'s own signature, named so a
+ * caller can be typed against it without importing the desktop's implementation.
+ */
+export type OpenLocalDbFn = (
+  dataDir: string,
+  opts: { log?: Diagnostic; onPhase?: (phase: LocalDbOpenPhase) => void },
+) => Promise<OpenLocalDb>;
 import {
   endLegacyOrganizerPauses, ensureLocalWorld, loadLocalRoster, loadUnattachedLocalRoster,
   mintLaunchSession,
@@ -348,6 +357,69 @@ export interface SidecarConfig {
    */
   machineName?: string;
   /**
+   * HOW THIS INSTALL NAMES ITS OWN KIND in the organizer claim — `local` unless told otherwise.
+   *
+   * The claim record in `ohmail/_meta` says what sort of install is holding the mailbox, and every
+   * other install ranks the holders partly by that. This composition served exactly one kind for
+   * its whole life, so the value was three literals in the code; a phone runs the SAME composition
+   * and is not a desktop, so the literal became a field.
+   *
+   * REQUIRED-IN-EFFECT FOR EVERY NON-DESKTOP COMPOSITION, and the pairing with `machineName` below
+   * is the reason it is not simply defaulted and forgotten: an install that claims as `local` while
+   * being something else makes the holder line lie on every other device, and that is a false
+   * statement about who holds somebody's mailbox rather than a cosmetic slip. The ruling's own risk
+   * list names this shape — "`organizerKind` defaulted to `local` ⇒ the phone claims as a desktop
+   * and the holder line lies".
+   */
+  organizerKind?: OrganizerKindWritten;
+  /**
+   * WHO THIS INSTALL IS TO THE ORGANIZER LEASE — the local `accounts` row unless the shell knows
+   * better, and on a phone it does.
+   *
+   * The lease's clone defence rests on this id: a claim bearing our id whose nonce is not the one
+   * we wrote, and which is live, is somebody else running a restored copy of us. That works because
+   * one data directory means one install. On a desktop `world.accountId` IS that — one row per data
+   * directory, surviving a crash, a reboot and a long sleep.
+   *
+   * A phone breaks the equivalence in one direction that matters: a restored device backup brings
+   * the app container back WITH the store in it, so the restored copy carries the same
+   * `accountId` — and two installs sharing an id are coalesced by the lease into one, which is a
+   * second organizer nobody can see. The ruling names this as a risk in its own right and requires
+   * the id to come from the install marker, which is rotated on restore, rather than from the
+   * store.
+   *
+   * ABSENT ⇒ `world.accountId`, which is what every existing composition gets and what the desktop
+   * should keep getting. Supplying it is not a way to have several identities: it must be stable
+   * for the life of an install and differ between installs, and a caller that generates one per
+   * launch would make its own second mailbox read its first one's claim as a stranger's.
+   */
+  installId?: string;
+  /**
+   * WHERE THE STORE COMES FROM — the desktop's PGlite mirror unless the caller brings its own.
+   *
+   * ── WHY THIS SEAM EXISTS AT ALL ───────────────────────────────────────────────────────────
+   *
+   * A phone runs this same composition over SQLite, reached through a queue that runs one
+   * statement at a time, and it has no PGlite, no lock file and no filesystem module.
+   * `openLocalDb` is none of those things it
+   * can use: it creates a directory, takes a lock, instantiates a WASM Postgres and adopts the
+   * server's migration journal. So the phone's composition root opens its own store and hands it
+   * over, and this is the one line that lets it — the alternative being a second copy of this
+   * five-thousand-line function, which is the fork the architecture ruling exists to prevent.
+   *
+   * OPTIONAL, WITH THE DESKTOP'S OPENER AS THE DEFAULT, deliberately: `main.ts` and the forty-one
+   * test compositions that call `createSidecar` say nothing about a store and must go on saying
+   * nothing. A required field here would be a mechanical edit to forty-two call sites in exchange
+   * for no property — and every one of those edits would be an opportunity to pass the wrong thing.
+   *
+   * The phone's bundle ALSO substitutes `./db.js` itself, so the default is not merely unused
+   * there — the module it names is not in the artifact at all. Two mechanisms for one property,
+   * and they are not redundant: this seam is what makes the composition CORRECT, and the
+   * substitution is what makes the absence of PGlite, `node:fs` and the desktop's lock a fact
+   * about the shipped file rather than a promise about which branch runs.
+   */
+  store?: OpenLocalDbFn;
+  /**
    * TEST SEAM. The lease's staleness window, which no test can afford to wait out.
    * Production takes the engine's ten minutes.
    */
@@ -447,6 +519,24 @@ export interface Sidecar {
   readonly sessionToken: string;
   /** `Request → Response`, with a fresh `ApiDeps` per call. This is what the stdio host serves. */
   handle(req: Request): Promise<Response>;
+  /**
+   * THE FOREGROUND WAKE — re-dial every mailbox whose connection has died, now.
+   *
+   * One call for the whole install, because the event that motivates it is one event: the app came
+   * back to the foreground, or the machine woke, and every socket this process held is stale at the
+   * same moment. Per-mailbox it is {@link LocalMailboxRuntime.redial}, whose header carries the
+   * argument for why this restores a CONNECTION and never starts a drain.
+   *
+   * Best-effort and never throws: one mailbox's dial failing must not stop the others being
+   * re-dialled, and a wake is not a request anybody is waiting on the result of. Each failure is
+   * already logged by the dial path itself.
+   *
+   * On the desktop nothing calls this today — the poll's own re-dial is the right cadence for a
+   * socket that dies rarely, and this is not a second mechanism competing with it. It exists
+   * because a phone's socket dies on every background, and the alternative there is a person
+   * looking at "organizing" while nothing is filed for up to two minutes.
+   */
+  wake(): Promise<void>;
   /**
    * THE DESKTOP-HOST DOOR — `Request → Response` over `desktopHostRoutes`, the surface a paired
    * phone reaches. Present IFF host mode is armed; a disarmed install has no second door at all,
@@ -1402,7 +1492,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
   // whatever the four named phases do not account for is the remainder, and a remainder that
   // dominates is itself the finding.
   const tBoot = Date.now();
-  const opened: OpenLocalDb = await openLocalDb(config.dataDir, {
+  const opened: OpenLocalDb = await (config.store ?? openLocalDb)(config.dataDir, {
     log,
     ...(config.onPhase ? { onPhase: config.onPhase } : {}),
   });
@@ -1889,7 +1979,33 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * to itself like several installs, and its own second mailbox would read its first one's claim
      * as a stranger's. One install, N claims, all carrying this id.
      */
-    const installId = world.accountId;
+    const installId = config.installId?.trim() || world.accountId;
+    /**
+     * WHAT THIS INSTALL CALLS ITSELF, to every other install reading the claim.
+     *
+     * ── THE FALLBACK IS THE DESKTOP'S, AND ONLY THE DESKTOP'S ───────────────────────────────
+     *
+     * `hostname()` is the only thing a desktop process knows about its machine without asking its
+     * shell, and it is the right default there. It is not available anywhere else: a phone has no
+     * `os` module, and the bundle for one substitutes a stub that throws. Reaching this fallback on
+     * a phone would therefore be a crash at composition time — the loud failure, which is the
+     * better half of the outcome.
+     *
+     * The worse half is what a SILENT fallback would produce, so the requirement is stated rather
+     * than left to the substitution: a composition that is not the desktop must name itself, or the
+     * holder line on every other device says a machine name that belongs to nothing. Tied to
+     * `organizerKind` because that is the field that makes it necessary — the desktop keeps its
+     * fallback, and nothing else gets one.
+     */
+    if (config.organizerKind !== undefined && config.organizerKind !== "local"
+      && (config.machineName ?? "").trim() === "") {
+      throw new Error(
+        `a composition that claims as \`${config.organizerKind}\` must pass \`machineName\`: the ` +
+          "claim it writes to the mailbox names the holder to every other install, and this " +
+          "process has no machine name of its own to fall back to",
+      );
+    }
+    const organizerKind: OrganizerKindWritten = config.organizerKind ?? "local";
     const machineName = config.machineName ?? hostname();
     /** Every mailbox this install runs, oldest first. See `roster.ts`. */
     const runtimes = new LocalRoster();
@@ -3659,7 +3775,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            write-behind publishing into a dead socket after a re-dial while every other pass had
            healed — a partial recovery, which is worse to diagnose than none. */
         get adapter() { return adapter; },
-        self: { installId, kind: "local" },
+        self: { installId, kind: organizerKind },
         producerVersion: "0.0.0",
         ...(config.profileFlushIntervalMs !== undefined
           ? { flushIntervalMs: config.profileFlushIntervalMs } : {}),
@@ -4378,7 +4494,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         const leaseArgs = {
           adapter,
           mailboxId: mb.id,
-          self: { installId, kind: "local" as const, displayName: machineName, lastNonce: leaseNonce },
+          self: { installId, kind: organizerKind, displayName: machineName, lastNonce: leaseNonce },
           hasRequestKey: requestKey !== null,
           // An explicit human choice, and the ONLY thing that distinguishes "this mailbox's last
           // organizer went quiet" from "the user wants this machine to have it". Without it the
@@ -5492,7 +5608,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                   mailboxId: mb.id, accountId: world.accountId, adapter: conn, installId,
                   requestKey,
                 },
-                { installId, kind: "local" }, now(),
+                { installId, kind: organizerKind }, now(),
                 noteRequestEvent,
               );
             }
@@ -6151,6 +6267,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         },
         serialize,
         syncUntilQuiet,
+        /* The foreground wake — see `LocalMailboxRuntime.redial`. The SAME function the poll runs,
+           handed a second caller rather than reimplemented: a wake that dialled by its own route
+           would be a second dial path, and the one thing both must do identically is take the
+           lease gate before anything is moved. */
+        redial: redialIfDead,
         credentialState: async () => (await resolveLogin()).state,
         forgetStoredLogin,
         async start() {
@@ -7705,6 +7826,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        */
       organizerState: () => seedRuntime()?.organizer
         ?? { organizing: false, reason: null, heldBy: null, unreadableSince: null },
+      /* Every mailbox, not the seed alone: a wake is an install-wide event and an install with
+         four mailboxes has four dead sockets. Settled rather than raced — `allSettled` so one
+         refusal cannot cut the others short, and the results are dropped because each dial path
+         logs its own failure and a caller has nothing to do with them. */
+      wake: async (): Promise<void> => {
+        await Promise.allSettled(runtimes.all().map((rt) => rt.redial()));
+      },
       credentialState: async () => (await seedRuntime()?.credentialState()) ?? "absent",
       forgetStoredLogin: async () => (await seedRuntime()?.forgetStoredLogin()) ?? false,
       /**

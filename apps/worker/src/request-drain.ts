@@ -16,7 +16,7 @@ import {
   REQUEST_PROTOCOL, MetaFolderTruncatedError, META_RECORDS_MAX_PER_FETCH, metaPageBounds,
   readMemo, writeMemo, forgetMemo, peekMemo, type Generation,
   type RequestReaderIo, type RequestOrganizerIo, type RawMetaMessage,
-  type RequestEnvelope, type RequestRecord, type AckRecord, type OrganizerKind,
+  type RequestEnvelope, type RequestRecord, type AckRecord, type OrganizerKindWritten,
   type RequestRefusalReason,
 } from "@trafficflow/core/adapters/organizer-lease";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
@@ -1475,7 +1475,11 @@ async function expireNeverSent(
 export async function driveOutstandingRequests(
   db: WorkerDb,
   rt: RequestRuntime,
-  self: { installId: string; kind: OrganizerKind },
+  /* `kind` is WRITTEN into the envelope this drain appends (`organizerKind: self.kind` below), so
+     it is the writer-side union: a standalone phone stamps `mobile` here exactly as it does in the
+     claim it renews. Nothing in this file RANKS a kind — the reading side of the envelope keeps its
+     own narrower type and its own `"unknown"` arm. */
+  self: { installId: string; kind: OrganizerKindWritten },
   now: Date,
   log: (event: string, detail: Record<string, unknown>) => void,
 ): Promise<DriveOutstandingRequestsResult> {

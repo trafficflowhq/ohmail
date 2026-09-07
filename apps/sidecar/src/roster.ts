@@ -233,6 +233,26 @@ export interface LocalMailboxRuntime {
   /** Stop this mailbox's timer, wait for the in-flight cycle and close its login. Leaves the
    *  store alone — the store is the install's, not this row's. */
   detach(): Promise<void>;
+  /**
+   * RE-DIAL NOW IF THIS MAILBOX'S CONNECTION IS DEAD — the foreground wake, exposed.
+   *
+   * The engine already re-dials a dead connection, at the top of its own poll. That is the right
+   * cadence for a desktop, whose socket dies rarely. It is the wrong one for a phone, where the
+   * socket dies on EVERY background: coming back to the foreground, the phone would show
+   * "organizing" and file nothing until the next poll tick came round and the re-dial inside it
+   * finished — measured on the desktop's own bound at up to 120 s and eight cycles.
+   *
+   * So the same function gets a caller. This does NOT drain and does NOT organize: it restores a
+   * connection and lets the ordinary gated cycle decide what may happen on it, which is the
+   * learn-then-act rule. A wake that called the drain instead would be organizing over a
+   * connection whose lease it had never read — the two-organizers failure, reached through the
+   * front door.
+   *
+   * Idempotent and cheap: a live connection, a stopped runtime, a re-dial already in flight, a
+   * mailbox with no usable password, a refused sign-in, or a backoff window not yet elapsed all
+   * return without doing anything.
+   */
+  redial(): Promise<void>;
   /** Can this install open this mailbox right now? Read fresh from the store on every call. */
   credentialState(): Promise<CredentialState>;
   /** Forget this mailbox's sealed password. Answers whether there was one to forget. */

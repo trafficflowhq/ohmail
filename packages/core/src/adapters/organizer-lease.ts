@@ -4930,8 +4930,20 @@ export interface RequestInput {
   /** THE MAILBOX THIS DECISION IS ABOUT. Signed, and checked against the folder it is read from. */
   mailboxId: string;
   installId: string;
-  /** This install's own kind, so the organizer's drain can log who asked without a second lookup. */
-  organizerKind: OrganizerKind;
+  /**
+   * This install's own kind, so the organizer's drain can log who asked without a second lookup.
+   *
+   * WRITTEN, not ranked — {@link OrganizerKindWritten}, the same asymmetry the claim header has and
+   * for the same reason. `RequestEnvelope.organizerKind` (the PARSED side, below) stays narrow and
+   * still answers `"unknown"` for anything its arm does not admit, so a phone's request reads on an
+   * older install exactly as it does today.
+   *
+   * Widened here as well as on the claim because the two are ONE change seen twice: a composition
+   * that stamps `mobile` into the claim it renews also stamps it into every request it appends, and
+   * a version of this that widened only the claim would compile — the request path takes its kind
+   * from the same variable — and then refuse the phone at this field alone.
+   */
+  organizerKind: OrganizerKindWritten;
   /** WHEN THE PERSON DECIDED, by the deciding door's clock — the drain applies in this order. */
   decidedAt: Date;
   protocol?: number;
