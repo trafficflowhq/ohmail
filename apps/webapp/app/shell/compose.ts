@@ -307,6 +307,27 @@ export function composeSessionId(owner: string | null = storageOwner()): string 
 }
 
 /**
+ * PUT A MESSAGE'S OWN SESSION BACK — the one writer, and it exists for exactly one caller.
+ *
+ * Every other door MINTS (lazily, by reading) or CLEARS. Reopening a message this browser holds
+ * an unresolved send record for does neither: that message already HAS a session — the one the
+ * record was written under — and the surface may have minted a different one since, because any
+ * door in between (writing to a contact, an operating-system mail link) legitimately starts a new
+ * message. Coming back to the unconfirmed one has to come back to its identity, or the record
+ * names neither of the things the message is now called and the hold silently lifts.
+ *
+ * `null` is not accepted: clearing is {@link clearComposeDraft}'s job, which drops the buffer and
+ * the row with it. This only ever restores a session that a record still names.
+ */
+export function writeComposeSession(session: string, owner: string | null = storageOwner()): void {
+  try {
+    window.localStorage.setItem(composeSessionKey(owner), session);
+  } catch {
+    /* private mode, or a full quota — the same failure `composeSessionId` answers `null` for */
+  }
+}
+
+/**
  * ── THE DRAFT ROW THE COMPOSE SURFACE IS HOLDING, ACROSS A RELOAD ───────────────────────────
  *
  * `useComposeAutosave` keeps the row in React state, and React state does not survive a reload —

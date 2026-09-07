@@ -124,12 +124,16 @@ import {
   COMPOSE_SEND_KEY, inlineForwardKey, useMailSend, readReplyDraft, writeReplyDraft,
   readReplyMeta, writeReplyMeta,
 } from "./mail-send";
-import { parkedComposeMessage } from "./send-lock";
+import { parkedComposeRecord } from "./send-lock";
 import {
   clearComposeDraft,
   composePlan,
+  composeSessionId,
   readComposeDraft,
+  readComposeRow,
   writeComposeDraft,
+  writeComposeRow,
+  writeComposeSession,
   EMPTY_COMPOSE,
   type ComposeFields,
   type ComposePrefill,
@@ -3629,9 +3633,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    *
    * Opening a compose draft ADOPTS its id, so the very next autosave PATCHes the row that was
    * opened rather than creating a second one beside it. Opening an UNCONFIRMED send does NOT
-   * adopt — see `recoverySeed`: the server refuses to send a row past `draft` again, so the
-   * text is recovered into a fresh row and the stranded one is discarded only once the fresh
-   * send confirms.
+   * adopt, and there are two of those with different endings. A row this browser holds no
+   * unresolved record for is STRANDED (another device sent it, or this browser's record was
+   * resolved): the server refuses to send a row past `draft` again, so the text is recovered into
+   * a fresh row — see `recoverySeed` — and the stranded one is discarded once the fresh send
+   * confirms. A row this browser IS still waiting on is PARKED: no fresh row, no fresh session,
+   * nothing discarded; the record's own identity is restored and Send stays refused with the
+   * warning. The parked branch below is the one that decides, and it decides from the record,
+   * never from the row's status.
    *
    * ── AND OPENING A REPLY DOES NOT ADOPT ─────────────────────────────────────────────────
    *
@@ -3726,12 +3735,24 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
          leave the row at `draft` or move it to `unverified`, and neither says whether this
          browser is still waiting.
 
-         `parkedComposeMessage` and not a set of rows, because the SAME question is asked when a
+         `parkedComposeRecord` and not a set of rows, because the SAME question is asked when a
          reload brings this surface back (`compose-autosave.ts`) and the two answering differently
-         was a duplicate delivery of its own. No session is passed HERE: the session at this
-         moment still names the message being left behind, which every draft in the account would
-         answer to. The row alone says which message is being opened. */
-      const parked = parkedComposeMessage(COMPOSE_SEND_KEY, d.id, null);
+         was a duplicate delivery of its own — and because "yes" is not enough here: the branch
+         below has to put the message's identity BACK, which means knowing what it was.
+
+         THE SESSION IS ASKED ABOUT ONLY WHEN THE ROW BEING OPENED IS THE ONE THIS COMPOSE IS
+         HOLDING. Passing it unconditionally would park every draft in the account behind one
+         unresolved send, because the session names whichever message the composer has open.
+         Passing it NEVER misses the message whose record names a session and no row: a send
+         pressed before the first save has only `compose:<session>`, autosave then creates the row
+         moments later, and nothing had attached it to the record — so the row that appears in
+         Drafts belonged to a parked message that the row alone could not identify. `readComposeRow`
+         is the link: that row IS this compose's row, so this compose's session speaks for it. */
+      const held = readComposeRow();
+      const parkedRecord = parkedComposeRecord(
+        COMPOSE_SEND_KEY, d.id, held !== null && held === d.id ? composeSessionId() : null,
+      );
+      const parked = parkedRecord !== null;
       /* A DIFFERENT MESSAGE, SO A DIFFERENT COMPOSE SESSION. The id is what parks an unresolved
          send (`compose.ts`), and leaving it in place made one session span every draft this
          surface opened: a send of the FIRST one that came back unverified then parked whichever
@@ -3760,8 +3781,30 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
 
            AND NO `recoverySeed`. That field exists to discard the stranded copy when a fresh send
            CONFIRMS, and there is no fresh send here — the press is refused. Setting it would arm
-           a delete of the one row that still holds this message. */
+           a delete of the one row that still holds this message.
+
+           ── THE IDENTITY IS RESTORED, NOT MERELY LEFT ALONE ─────────────────────────────────
+
+           "Left alone" was true only for the door the user came through immediately. Any door in
+           between — writing to a contact from their card, a mail link from outside the app —
+           legitimately starts a new message and mints a new session, so the browser arrives back
+           here holding NEITHER of the names the record carries. The park was then recognised and
+           the message presented under a session the record had never heard of: no warning, Send
+           live, one press, a second copy. So both names go back:
+
+            · the record's own session, which is what `canSend` compares the message against;
+            · the row, HELD (`writeComposeRow`) and not adopted — the composer takes no row, so
+              nothing PUTs to it and a Discard cannot delete it, while the save effect's create
+              block reads the held id and mints nothing beside it.
+
+           `autosave.release()` first, because it clears the held row on its way past and would
+           otherwise erase what is written next; it also disowns a create still in flight for the
+           message being left behind. A record with no session of its own leaves the current one
+           standing — it is named by its row, which is the id being held. */
         recoverySeed.current = null;
+        autosave.release();
+        writeComposeRow(parkedRecord.draftId ?? d.id);
+        if (parkedRecord.session !== null) writeComposeSession(parkedRecord.session);
       } else if (d.status === "draft") {
         recoverySeed.current = null;
         autosave.adopt(d.id, seeded);
@@ -3865,14 +3908,21 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
   /**
    * A SECOND PRESS AFTER `unverified` IS A FRESH SEND, AND IT HAS TO BUILD A FRESH ROW.
    *
-   * The warning's contract ("check your Sent folder before retrying"; the next press is a
-   * deliberate fresh send) predates autosave, and autosave silently broke it for Compose: the
-   * plan still carried the row's id, the row is `unverified`, and `SendService` refuses any
-   * key on a row past `draft` — so the deliberate retry answered 409 "cannot be sent from
-   * status 'unverified'" forever. The press now releases the stranded row (kept, as the record
-   * of the unconfirmed first attempt — it is in Drafts saying so) and sends WITHOUT a row id,
-   * so the adapter writes a fresh draft and a fresh reservation: exactly what the inline reply
-   * has always done. When this send confirms, `onSendSettled` discards the stranded copy.
+   * The warning's contract ("check your Sent folder before retrying") predates autosave, and
+   * autosave silently broke it for Compose: the plan still carried the row's id, the row is
+   * `unverified`, and `SendService` refuses any key on a row past `draft` — so the retry answered
+   * 409 "cannot be sent from status 'unverified'" forever. The press releases the stranded row
+   * (kept, as the record of the unconfirmed first attempt — it is in Drafts saying so) and sends
+   * WITHOUT a row id, so the adapter writes a fresh draft and a fresh reservation: exactly what
+   * the inline reply has always done. When this send confirms, `onSendSettled` discards the
+   * stranded copy.
+   *
+   * AND THIS PATH IS NOT REACHED FOR A MESSAGE THIS BROWSER IS STILL WAITING ON. "The next press
+   * is a deliberate fresh send" was the whole contract once and is no longer: while an unresolved
+   * record names the message, `canSend` refuses the press, so there is no second press to build a
+   * row for. What arrives here is a message with no such record — the stranded row above, or a
+   * record already resolved. A fresh send of a message whose outcome nobody knows is precisely
+   * the duplicate delivery, and it is refused rather than rebuilt.
    */
   const sendCompose = useCallback((sendAt?: string) => {
     /**

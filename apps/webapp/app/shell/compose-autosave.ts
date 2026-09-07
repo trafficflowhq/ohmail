@@ -44,8 +44,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { OhmailEngine } from "@ohmail/client-engine";
 import type { ComposeFields } from "./compose";
 import { COMPOSE_SEND_KEY, writeReplyMeta } from "./mail-send";
+import { attachSendLockDraft, parkedComposeRecord } from "./send-lock";
 import { composeSessionId, parseRecipients, readComposeRow, writeComposeRow } from "./compose";
-import { parkedComposeMessage } from "./send-lock";
 
 /** How long the form must be still before it is written to the account. */
 export const AUTOSAVE_DELAY_MS = 2_000;
@@ -66,7 +66,7 @@ export const AUTOSAVE_DELAY_MS = 2_000;
  * already exists: a stored row to decide about, or a form with text in it on the compose route.
  */
 function parkedHere(held: string | null): boolean {
-  return parkedComposeMessage(COMPOSE_SEND_KEY, held, composeSessionId());
+  return parkedComposeRecord(COMPOSE_SEND_KEY, held, composeSessionId()) !== null;
 }
 
 /**
@@ -390,6 +390,22 @@ export function useComposeAutosave(opts: {
             setDraftId(result.entityId);
             // Beside the state, for the reload — see the adoption effect above.
             writeComposeRow(result.entityId);
+            /* AND ONTO THE RECORD, IF THIS MESSAGE HAS ONE WAITING — the row it has just
+               ACQUIRED. A send pressed before the first save is named only by
+               `compose:<session>`, and the save it beat can still land: the timer was armed
+               before the press, so the row appears seconds AFTER the record. Attaching only on a
+               refused press (which is where `attachSendLockDraft`'s other caller sits) left that
+               row unattached until somebody pressed Send again — so the row sitting in Drafts was
+               a parked message that the row alone could not identify, and opening it from another
+               session took the recovery door and sent a second copy.
+
+               Only a record this session names is touched, and `draftId` is diagnostic: the
+               record's identity does not move onto the row, which is the whole point of keeping
+               both names. */
+            const session = composeSessionId();
+            if (session !== null) {
+              attachSendLockDraft(COMPOSE_SEND_KEY, [`compose:${session}`], result.entityId);
+            }
           }
           saved.current = signature;
           if (mailboxId) savedMailbox.current = mailboxId;

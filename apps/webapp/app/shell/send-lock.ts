@@ -790,16 +790,51 @@ export function parkedComposeMessage(
   session: string | null,
   owner: string | null = storageOwner(),
 ): boolean {
+  return parkedComposeRecord(lane, draftId, session, owner) !== null;
+}
+
+/** The identity a park holds a message by — {@link parkedComposeRecord}. */
+export interface ParkedIdentity {
+  /** The compose session the unresolved send was pressed in, when it had one. */
+  session: string | null;
+  /** The draft row the record names, when it has one. */
+  draftId: string | null;
+}
+
+/**
+ * THE SAME QUESTION, ANSWERED WITH THE NAMES — {@link parkedComposeMessage} is this, made boolean.
+ *
+ * The reopen needs more than "yes": it has to put the message's identity BACK. A door in between
+ * (writing to a contact, a mail link from outside) legitimately starts a new message and mints a
+ * new session, so the browser can arrive back at an unconfirmed message holding neither of the
+ * names its record carries. Answering only `true` there produced a surface that KNEW the message
+ * was parked and then presented it under a session the record had never heard of: no warning,
+ * Send live, one press and a second copy — the same ending as the door this replaced, reached
+ * from a different direction.
+ *
+ * `null` = not parked. Otherwise the record's own names, for the caller to restore.
+ */
+export function parkedComposeRecord(
+  lane: string,
+  draftId: string | null,
+  session: string | null,
+  owner: string | null = storageOwner(),
+): ParkedIdentity | null {
+  const rows = load(owner)
+    .filter((r) => r.lane === lane && r.unverified === true && r.v <= SEND_LOCK_FORMAT);
   if (session !== null) {
-    for (const r of load(owner)) {
-      if (r.lane !== lane || r.unverified !== true || r.v > SEND_LOCK_FORMAT) continue;
-      if (lockSubjects(r).includes(`compose:${session}`)) return true;
-    }
+    const named = rows.find((r) => lockSubjects(r).includes(`compose:${session}`));
+    if (named) return { session: named.session ?? session, draftId: named.draftId };
   }
+  if (draftId === null) return null;
   // The ROW half is {@link unresolvedSendRows}, called rather than restated: the two names a row
   // is recorded under appear at different moments in one message's life, and a second reading of
   // that pair is a second chance to read only one of them.
-  return draftId !== null && unresolvedSendRows(lane, owner).has(draftId);
+  if (!unresolvedSendRows(lane, owner).has(draftId)) return null;
+  const byRow = rows.find(
+    (r) => r.draftId === draftId || lockSubjects(r).includes(`draft:${draftId}`),
+  );
+  return { session: byRow?.session ?? null, draftId: byRow?.draftId ?? draftId };
 }
 
 /**

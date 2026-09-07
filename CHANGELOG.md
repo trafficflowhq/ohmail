@@ -882,8 +882,20 @@ below.
 Nothing about the message itself lifts the block: not a saved draft appearing, not the draft
 changing, and not an edit. What does is replacing the message — opening another draft, writing to
 a contact from their card, or following a mail link from outside the app. Each of those starts a
-new composing session, so the message that replaces the unconfirmed one sends normally, while the
-unconfirmed one stays blocked whenever you come back to it, until it is resolved or discarded.
+new composing session, so the message that replaces the unconfirmed one sends normally.
+
+The unconfirmed one is blocked again when you come back to it, and here is exactly what "come back
+to it" covers, because the block is only as good as the ways of returning it survives: opening it
+from Drafts; opening it from Drafts after you have written something else in between; and
+reloading the tab with it still open. In each of those the app puts the message's own identity
+back — the composing session it was written under, and the draft it is saved to — rather than
+treating what is on screen as a new message. It stays blocked until the send is resolved or you
+discard it.
+
+One case is not covered and is stated rather than left to be found: if the app cannot read its own
+storage at all — a browser configured to refuse it — it cannot see the record either, and the
+block cannot be applied. Nothing else about the app works in that state, but this is the part where
+the cost is a message sent twice.
 
 Reopening or reloading an unconfirmed message keeps it parked. A message whose send could not be
 confirmed stays in Drafts — that row is the only copy of it — and opening it from there used to be
