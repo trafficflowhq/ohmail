@@ -474,36 +474,65 @@ export async function ruleRetroPass(
     // `status = 'disabled'` is not "live": a disabled mailbox is one nothing will ever reconcile
     // (the candidate query's own argument), so it neither contributes candidates nor holds the
     // press open. `error` IS live — a mailbox that failed a cycle is still ours to organize.
-    const stamped = await db.update(rulesTbl).set({ retroDoneAt: now })
-      .where(and(
-        eq(rulesTbl.id, row.id),
-        isNull(rulesTbl.retroDoneAt),
-        sql`not ${aLiveMailboxIsOutsideTheWalk(row.accountId)}`,
-      ))
-      .returning({ id: rulesTbl.id });
-    if (stamped.length > 0) {
-      // Counted from the stamp the database actually wrote, not from reaching this line: a rule
-      // re-run with `force` is already done and stamps nothing, and two drivers finishing at once
-      // produce one stamp between them. `RuleRetroResult.completed` says "finished and stamped".
-      result.completed++;
-      continue;
-    }
-
-    /* ── THE RULE STAYS OWED, AND THE CURSOR HAS TO COME BACK WITH IT ─────────────────────────
+    /* ── ONE STATEMENT, BECAUSE TWO OF THEM COULD DISAGREE ABOUT THE SAME MAILBOX ────────────
+     *
+     * The stamp and the cursor reset are one decision — *is this backlog finished?* — and they
+     * used to be two `UPDATE`s that each asked the mailboxes for themselves. A promotion landing
+     * between them answered them differently, and the pair then produced a state neither of them
+     * would write alone:
+     *
+     *   1. the stamp asks: a live mailbox (B) is still outside the walk ⇒ withheld. Right.
+     *   2. B is PROMOTED — a lease claim, or somebody pressing "Organize here".
+     *   3. the reset asks the same question and now gets `false` ⇒ the cursor is KEPT.
+     *
+     * The rule is owed with the fence still standing, and `messages.id` is a random uuid, so the
+     * next pass walks only the part of B's mail that sorts ABOVE it, calls that the end of the
+     * backlog — every mailbox is organized now — and stamps. B's older matching mail is never
+     * filed, and nothing anywhere says so. The two writes were each correct; the pair was not.
+     *
+     * So both fields move in ONE statement, under ONE evaluation of the row: the two `case` arms
+     * are computed together for the row being written, so they cannot be answered by different
+     * versions of `mailboxes` whatever happens in between — and that holds even when Postgres has
+     * to re-check the row against a newer snapshot after a concurrent update, because the whole
+     * SET list is re-evaluated together, never one arm at a time. The arms are exhaustive and
+     * opposite —
+     * finished ⇒ stamp and keep the cursor (it is spent either way); not finished ⇒ leave
+     * `retro_done_at` NULL and clear the fence — so there is no third outcome to reason about.
+     *
+     * `retro_done_at IS NULL` stays in the `WHERE`: it is what makes the stamp the DATABASE's
+     * answer when two drivers finish at once, and it is what keeps `force` honest — a re-run of a
+     * FINISHED rule matches no row, so it neither re-stamps nor touches the cursor, which the
+     * flag's docblock promises by name.
+     *
+     * ── WHY THE BACKLOG IS ONLY FINISHED WHEN EVERY LIVE MAILBOX IS ORGANIZED HERE ───────────
+     *
+     * The owed probe is per ACCOUNT (`exists … organizer_role = 'organizer'`, above) and the
+     * candidate query is per MAILBOX (`not exists … organizer_role <> 'organizer'`, below), so on
+     * an account where this install organizes A and only READS B the two disagree by design: the
+     * rule is selected, A's backlog is walked to its end, and B's mail was never a candidate. An
+     * unconditional stamp called that "finished", and promoting B afterwards honoured nothing,
+     * because nothing was owed any more — the same swallowed PRESS the `exists` clause above was
+     * written for, one mailbox further in.
+     *
+     * Completion is therefore the COMPLEMENT of the candidate gate, asked of the account's live
+     * mailboxes, and a predicate over the mailboxes rather than a second flag. `status =
+     * 'disabled'` is not "live": a disabled mailbox is one nothing will ever reconcile (the
+     * candidate query's own argument), so it neither contributes candidates nor holds the press
+     * open. `error` IS live — a mailbox that failed a cycle is still ours to organize.
+     *
+     * ── AND WHY THE CURSOR COMES BACK WITH THE WITHHELD STAMP ────────────────────────────────
      *
      * Withholding the stamp is only half the repair. `retro_cursor` is the last `messages.id` of
-     * the last committed page and `messages.id` is a RANDOM uuid, so the cursor is not a point in
-     * time — it is a fence across the id space. B's rows sit on both sides of it: the ones below
-     * are already behind the walk, and holding the rule owed with the fence in place would honour
-     * the press for whichever of B's messages happen to sort high. Nothing about the outcome would
-     * be wrong-looking; it would just quietly be a fraction of the mailbox.
+     * the last committed page, and `messages.id` is a random uuid, so the cursor is not a point in
+     * time — it is a fence across the id space. B's rows sit on both sides of it, and holding the
+     * rule owed with the fence in place would honour the press for whichever of B's messages
+     * happen to sort high: not a wrong-looking outcome, just quietly a fraction of the mailbox.
      *
-     * So a backlog that ends while a live mailbox is still outside the walk resets the cursor. The
-     * next cycle re-offers every row to the candidate query, which is where the idempotency lives:
-     * a message this pass has already moved is desired into the destination and is no longer a
-     * candidate, so a re-walk moves nothing twice. It is also not a new state — it is exactly what
-     * `RulesService.update` writes when a rule is retargeted (`retro_done_at` and `retro_cursor`
-     * both NULL), the common path for a person changing their mind.
+     * Clearing it is not a new state — it is exactly what `RulesService.update` writes when a rule
+     * is retargeted (`retro_done_at` and `retro_cursor` both NULL), the common path for a person
+     * changing their mind — and re-offering every row is safe because the candidate query is the
+     * idempotency: a message this pass has already moved is desired into the destination and is no
+     * longer a candidate.
      *
      * WHAT IT COSTS, named rather than discovered: the rows a re-walk re-reads are the ones the
      * router DECLINED to move (a higher-priority deny rule, a message the user triaged), because
@@ -511,20 +540,27 @@ export async function ruleRetroPass(
      * mailbox indefinitely that read repeats every cycle, bounded by `RULE_RETRO_MAX_PAGES` pages.
      * The alternative — remembering which mailboxes have been walked — needs a column, and a
      * freeze fix does not add one.
-     *
-     * `retro_done_at IS NULL` in the `WHERE` is what keeps `force` honest: a re-run of a FINISHED
-     * rule must not reset its cursor, which the flag's docblock promises by name. `retro_cursor IS
-     * NOT NULL` keeps the write (and the log line) to the cycles where there was a fence to lift.
      */
-    const reopened = await db.update(rulesTbl).set({ retroCursor: null })
-      .where(and(
-        eq(rulesTbl.id, row.id),
-        isNull(rulesTbl.retroDoneAt),
-        isNotNull(rulesTbl.retroCursor),
-        aLiveMailboxIsOutsideTheWalk(row.accountId),
-      ))
-      .returning({ id: rulesTbl.id });
-    if (reopened.length > 0) {
+    const outside = aLiveMailboxIsOutsideTheWalk(row.accountId);
+    const [decided] = await db.update(rulesTbl)
+      .set({
+        retroDoneAt: sql`case when ${outside} then ${rulesTbl.retroDoneAt} else ${now} end`,
+        retroCursor: sql`case when ${outside} then null else ${rulesTbl.retroCursor} end`,
+      })
+      .where(and(eq(rulesTbl.id, row.id), isNull(rulesTbl.retroDoneAt)))
+      // The POST-update row, which is the decision itself rather than a re-read of it: a second
+      // `select` would be a second snapshot, and this whole block exists because two snapshots of
+      // one question can disagree.
+      .returning({ doneAt: rulesTbl.retroDoneAt, cursor: rulesTbl.retroCursor });
+
+    if (decided?.doneAt != null) {
+      // Counted from the stamp the database actually wrote, not from reaching this line: a rule
+      // re-run with `force` is already done and stamps nothing, and two drivers finishing at once
+      // produce one stamp between them. `RuleRetroResult.completed` says "finished and stamped".
+      result.completed++;
+      continue;
+    }
+    if (decided !== undefined) {
       log.info("rule_retro_owed_pending_mailbox", {
         ruleId: row.id, accountId: row.accountId,
         reason: "the backlog is finished for the mailboxes this install organizes, and a live " +

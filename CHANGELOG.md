@@ -822,8 +822,8 @@ pickers — is in the language the app is in.
 
 ### Corrections inside this release
 
-Two changes made during this release were wrong in ways that never reached 0.14.0, and are fixed
-here rather than carried into it.
+The changes below were made during this release and were wrong in ways that never reached 0.14.0.
+They are fixed here rather than carried into it.
 
 Undoing a move before the first one had been confirmed could let the first one win. A change sent
 to the server is kept until it is answered, and the app stops waiting for an answer that takes too
@@ -841,6 +841,14 @@ kept indefinitely — so one unconfirmed send disabled Send and Send Later for e
 after it. The block now applies to the message it belongs to. That one stays parked, including
 after a reload and after the draft is edited; anything else you write sends normally, and more
 than one unconfirmed send can be waiting at a time.
+
+A rule applied to existing mail could stop early if a mailbox changed hands at the wrong moment.
+The request stays open while any mailbox on the account is one this install is not organizing, and
+the place the walk had reached is cleared at the same time — but those were two separate writes,
+and a mailbox becoming this install's to organize in between left the old place standing. The next
+pass then looked only at the mail sorting after it, took that for the end of the backlog and marked
+the request done, so older mail on the mailbox that had just changed hands was never filed. The two
+are one write now, decided once.
 
 ## [0.14.0] — 2026-09-03
 
