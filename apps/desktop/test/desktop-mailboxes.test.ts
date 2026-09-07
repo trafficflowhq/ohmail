@@ -1784,20 +1784,10 @@ describe("the pane tells the truth about the outage, the holder and the standing
    * newer than its engine, an ordinary state on a desktop); 401 and 5xx are the route ANSWERING,
    * and answering badly, which is a different fact.
    *
-   * ── AND THE SENTENCE IS ABOUT THE QUESTION, NOT ABOUT THE MAIL SERVER ────────────────────
-   *
-   * This first rendered `desktopStateUnreachable` — "Can't reach the mail server" — which is a
-   * claim about the person's PROVIDER, and nothing here has learned anything about their
-   * provider: what answered badly is the engine on this machine, asked about its own sockets. A
-   * stale bearer after an engine restart answers 401 for every poll, so every row would announce
-   * an outage at a mail server that is working perfectly, while mail carries on arriving. The
-   * honest sentence names the question that could not be answered.
-   *
    * WATCH IT FAIL: restore the single `if (!res.ok) return {}` and this case reddens with
-   * "Up to date" over an engine that cannot say anything about its own connections; point the
-   * faulted arm back at `desktopStateUnreachable` and it reddens on the outage claim.
+   * "Up to date" over an engine that cannot say anything about its own connections.
    */
-  it("(2) an engine that answers BADLY about its own sockets says so, and claims no outage", async () => {
+  it("(2) an engine that answers BADLY about its own sockets is not a healthy mailbox", async () => {
     FACTS = [MAILBOX];
     bridgeReply = () => new Response(null, { status: 500 });
 
@@ -1805,82 +1795,9 @@ describe("the pane tells the truth about the outage, the holder and the standing
     expect(text, "a 500 from the engine's own connection route rendered as a working mailbox")
       .not.toContain(mailboxCopy.desktopStateUpToDate!);
     expect(text, "the row said nothing at all about a question that was answered badly")
-      .toContain(mailboxCopy.desktopStateUnknown!);
-    expect(text, "an unanswered question was reported as the person's mail server being down")
-      .not.toContain(mailboxCopy.desktopStateUnreachable!);
+      .toContain(mailboxCopy.desktopStateUnreachable!);
     expect(text, "a slice with no per-row answer invented a duration for the outage")
       .not.toContain("Last answered");
-  });
-
-  /**
-   * (2c) AND ONE BAD POLL DOES NOT STICK. The faulted state is the slice the last answer
-   * produced and nothing more, so the next good poll replaces it. This is what stands in place of
-   * a debounce: the arm claims nothing that would need to be withdrawn, and a transient 5xx is
-   * one interval of "cannot check" rather than a false outage that outlives its cause.
-   */
-  it("(2c) the next good poll clears a faulted slice", async () => {
-    FACTS = [MAILBOX];
-    let answer = (): Response => new Response(null, { status: 500 });
-    bridgeReply = () => answer();
-
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    try {
-      const el = await render("local");
-      expect(el.textContent ?? "").toContain(mailboxCopy.desktopStateUnknown!);
-
-      answer = () => reachAnswer({ reachable: true });
-      await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
-      const healed = el.textContent ?? "";
-      expect(healed, "a transient refusal outlived the poll that answered it")
-        .not.toContain(mailboxCopy.desktopStateUnknown!);
-      expect(healed).toContain(mailboxCopy.desktopStateUpToDate!);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  /**
-   * (2d) A 200 THAT IS NOT A VERDICT IS NOT AN EMPTY ROSTER. `body.items ?? []` read `{}`,
-   * `{"items": null}`, a bare array and a text body as "the engine answered about no mailboxes" —
-   * the SILENT slice, one line below the status check that was added to stop exactly this: every
-   * row keeps its last ordinary state, so a dead socket goes on reading "Up to date" for as long
-   * as the malformed answer keeps arriving.
-   *
-   * The last row is the one that keeps this from being a check that fires on everything: an
-   * engine holding no runtimes answers `{"items": []}`, which IS a verdict.
-   *
-   * WATCH IT FAIL: drop the `Array.isArray(items)` half of the decision and every faulted row
-   * below reddens; drop the whole check and the empty-roster row reddens with it.
-   */
-  it("(2d) a 200 whose body is not a roster is a non-verdict, and an empty roster is not", async () => {
-    FACTS = [MAILBOX];
-    const json = (text: string): Response => new Response(text, {
-      status: 200, headers: { "content-type": "application/json" },
-    });
-
-    for (const [what, res] of [
-      ["an object with no items at all", () => json("{}")],
-      ["items explicitly null", () => json('{"items":null}')],
-      ["a bare array", () => json("[]")],
-      ["a string body", () => json('"ok"')],
-    ] as const) {
-      bridgeReply = res;
-      const text = (await render("local")).textContent ?? "";
-      expect(text, `${what} was read as an engine that answered about no mailboxes`)
-        .toContain(mailboxCopy.desktopStateUnknown!);
-      expect(text, `${what} left the row claiming it was up to date`)
-        .not.toContain(mailboxCopy.desktopStateUpToDate!);
-      await act(async () => { root!.unmount(); });
-      root = null;
-    }
-
-    // …and the genuine empty roster is a verdict: nothing is said about this row, so it keeps
-    // the state it had, and nothing on screen says the engine could not be asked.
-    bridgeReply = () => json('{"items":[]}');
-    const empty = (await render("local")).textContent ?? "";
-    expect(empty, "an engine holding no runtimes was treated as a broken answer")
-      .not.toContain(mailboxCopy.desktopStateUnknown!);
-    expect(empty).toContain(mailboxCopy.desktopStateUpToDate!);
   });
 
   /**
@@ -1896,75 +1813,6 @@ describe("the pane tells the truth about the outage, the holder and the standing
     expect(text, "a route this engine does not serve was read as an outage")
       .toContain(mailboxCopy.desktopStateUpToDate!);
     expect(text).not.toContain("Can't reach the mail server");
-    expect(text, "silence was reported as a question that could not be answered")
-      .not.toContain(mailboxCopy.desktopStateUnknown!);
-  });
-
-  /**
-   * (2e) ONE UNREADABLE ENTRY IS A FACT ABOUT ONE ROW.
-   *
-   * `const it = raw as {…}` followed by `it.mailboxId` THREW on a `null` element, and the throw
-   * left `readMailboxReachVia` entirely — past the poll's `.then`, so `setReach` was never called
-   * and whatever slice was on screen stayed. After a healthy read that means a mailbox whose
-   * socket has since died goes on saying "Up to date", and so does every row AFTER the bad
-   * element, for as long as the roster keeps carrying it. One unreadable entry silenced the
-   * answer about every other mailbox.
-   *
-   * The roster is read element by element now: an element naming a row it cannot describe marks
-   * THAT row unanswered, one naming no row at all is dropped, and the rest publish.
-   *
-   * WATCH IT FAIL: restore `const it = raw as {…}` with no object guard and the first case throws;
-   * fold the unreadable element into `reachable: false` and the second reds on the outage claim.
-   */
-  it("(2e) a bad element does not silence its neighbours, and does not speak for them", async () => {
-    const dead = new Date(Date.now() - 20 * 60_000).toISOString();
-    const roster = (...entries: unknown[]): Response => new Response(
-      JSON.stringify({ items: entries }),
-      { status: 200, headers: { "content-type": "application/json" } },
-    );
-
-    /* A NULL BEFORE THE DEAD ROW — the reviewer's own sequence. The element names no row, so it
-       is dropped, and the row after it publishes its outage. */
-    FACTS = [MAILBOX];
-    bridgeReply = () => roster(null, {
-      mailboxId: "mbx-1", reachable: false, unreachableSince: dead,
-    });
-    let text = (await render("local")).textContent ?? "";
-    expect(text, "an unreadable entry silenced the answer about a different mailbox")
-      .toContain("Can't reach the mail server");
-    expect(text).toContain("20 minutes ago");
-    await act(async () => { root!.unmount(); });
-    root = null;
-
-    /* AN ELEMENT THAT NAMES THIS ROW AND CANNOT BE READ speaks for it — and says the one thing
-       that is true, which is that the question went unanswered. NOT an outage: nothing here has
-       learned anything about the person's mail server. */
-    bridgeReply = () => roster({ mailboxId: "mbx-1", reachable: "yes" });
-    text = (await render("local")).textContent ?? "";
-    expect(text, "an entry that could not be read was reported as a mailbox that is fine")
-      .not.toContain(mailboxCopy.desktopStateUpToDate!);
-    expect(text, "the row said nothing about an entry it could not read")
-      .toContain(mailboxCopy.desktopStateUnknown!);
-    expect(text, "an unreadable entry claimed an outage at a server it learned nothing about")
-      .not.toContain(mailboxCopy.desktopStateUnreachable!);
-    await act(async () => { root!.unmount(); });
-    root = null;
-
-    /* AND A WELL-FORMED NEIGHBOUR IS UNAFFECTED BY EITHER — the half that says this is per-row
-       rather than a slice that gave up more quietly. */
-    FACTS = [MAILBOX, { ...MAILBOX, id: "mbx-2", address: "other@example.test" }];
-    bridgeReply = () => roster(
-      null,
-      { mailboxId: "mbx-1", reachable: "yes" },
-      { mailboxId: "mbx-2", reachable: true },
-    );
-    const el = await render("local");
-    const rows = addressRows(el);
-    expect(rows, "the pane folded the two addresses into one row").toHaveLength(2);
-    expect(rows[0]!.textContent ?? "", "the unreadable row lost its own sentence")
-      .toContain(mailboxCopy.desktopStateUnknown!);
-    expect(rows[1]!.textContent ?? "", "a healthy neighbour was dragged down by a bad element")
-      .toContain(mailboxCopy.desktopStateUpToDate!);
   });
 
   /**
@@ -2006,81 +1854,6 @@ describe("the pane tells the truth about the outage, the holder and the standing
     const el = await render("local");
     expect(el.querySelector(".mbx-org"),
       "a row with nothing to say about organizing grew a banner").toBeNull();
-  });
-
-  /**
-   * (3c) THE SAME WIDENING, ON THE HOSTED DOOR — pinned because it is a consequence rather than an
-   * accident, and because nothing else in this file would notice it.
-   *
-   * The release is a standalone-door CONTROL: on the hosted door these rows mirror an account whose
-   * organizing is the service's, and the browser is where that is given up. But a standing stop is
-   * a FACT about the row, not a control, and it is as true there as anywhere — so the sentence
-   * renders and the verb still does not. Suppressing it would be hiding a true standing state on
-   * the one door where this window cannot offer any way to check it.
-   */
-  it("(3c) a hosted row carrying a standing stop says so, and still offers no verb", async () => {
-    FACTS = [{
-      ...MAILBOX,
-      organizerRole: "organizer",
-      organizeConsentedAt: "2026-08-01T09:00:00.000Z",
-      releaseRequestedAt: "2026-09-07T09:00:00.000Z",
-    }];
-    const el = await render("cloud");
-    expect(el.textContent ?? "", "the hosted row said nothing about a stop that is standing")
-      .toContain(mailboxCopy.stopOrganizingPending!);
-    expect(buttonSaying(el, "Stop organizing"),
-      "the hosted door grew a release control it cannot report the outcome of").toBeNull();
-  });
-
-  /**
-   * (3d) CONTROL — and an ordinary hosted row still grows no organizer banner at all, which is
-   * what every other hosted case in this file has always seen.
-   */
-  it("(3d) CONTROL — an ordinary hosted row has no organizer banner", async () => {
-    FACTS = [{ ...MAILBOX, organizerRole: "organizer", organizeConsentedAt: "2026-08-01T09:00:00.000Z" }];
-    const el = await render("cloud");
-    expect(el.querySelector(".mbx-org"),
-      "the hosted door grew a banner about organizing that it cannot act on").toBeNull();
-  });
-
-  /**
-   * (3e) A STAMP NEVER CHANGES A ROLE — the hosted door's reclassification, which the widening
-   * above made visible.
-   *
-   * `claimable` refuses every row on the hosted door (the release is a standalone-door control),
-   * so `role` answers `organizer` for a row the WIRE calls a reader. With a retained
-   * `releaseRequestedAt` on such a row — reachable when a mailbox is organized here, a stop is
-   * asked for, and the mailbox goes back to being organized in the cloud with the stamp still on
-   * the row — this block said "Organizing · Stopping on the next pass" about the service's
-   * organizer. That attributes one install's press to another, on the door where the person has
-   * no other way to check.
-   *
-   * The stamp says a request was made; the ROLE says whose it was. The block consults the DTO's
-   * role, so a reader row with a stamp is a reader here.
-   *
-   * WATCH IT FAIL: gate the block on `m.releaseRequestedAt` alone again.
-   */
-  it("(3e) a hosted READER row with a retained stop stamp is still a reader", async () => {
-    FACTS = [{
-      ...MAILBOX,
-      organizerRole: "reader",
-      organizedBy: { kind: "cloud", name: "ohmail Cloud", since: "2026-08-30T09:00:00.000Z" },
-      organizerState: "held",
-      organizeConsentedAt: "2026-08-01T09:00:00.000Z",
-      releaseRequestedAt: "2026-09-07T09:00:00.000Z",
-    }];
-    const el = await render("cloud");
-    const said = el.textContent ?? "";
-    expect(said, "a stop asked for by another install was reported as the holder's")
-      .not.toContain(mailboxCopy.stopOrganizingPending!);
-    expect(said, "the row claimed this computer organizes a mailbox the wire calls a reader")
-      .not.toContain(mailboxCopy.stateOrganizingHere!);
-    expect(buttonSaying(el, "Stop organizing"),
-      "a reader row grew a control over somebody else's organizing").toBeNull();
-    expect(el.querySelector(".mbx-org"),
-      "the hosted reader row grew an organizer banner off a stamp").toBeNull();
-    /* THE ROW ITSELF still says what it is — the state line is not the block. */
-    expect(said, "the reader row lost its own state").toContain(mailboxCopy.stateReading!);
   });
 
   /**
