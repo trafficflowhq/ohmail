@@ -96,13 +96,15 @@ describe("tauri.conf.json", () => {
     // ambiguous about which artifact they describe. A version is how a
     // downloader names what they have.
     //
-    // THIS LINE IS A TENTH STATING PLACE, and the release checklist below counts
-    // nine. Found the expensive way at the 0.13.0 bump: the nine files were
-    // edited, the census went red here, and the number a release moves is
-    // therefore ten. It is kept as a literal rather than read from the file it
-    // is asserting — an assertion that reads its own subject asserts nothing —
-    // so it MUST be bumped by hand with the other nine. Every release.
-    expect(conf.version).toBe("0.14.0");
+    // THIS LINE IS AN ELEVENTH STATING PLACE, and the release checklist below
+    // counts ten. Found the expensive way at the 0.13.0 bump: the files were
+    // edited, the census went red here, and the number a release moves is one
+    // more than the checklist says — apps/mobile/app.json joined the set later,
+    // which is why the two numbers differ. It is kept as a literal rather than
+    // read from the file it is asserting — an assertion that reads its own
+    // subject asserts nothing — so it MUST be bumped by hand with the rest.
+    // Every release.
+    expect(conf.version).toBe("0.14.1");
     expect(conf.identifier).toBe("io.ohmail.desktop");
   });
 

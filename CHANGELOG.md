@@ -13,9 +13,57 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Still to come
+
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
+
+## [0.14.1] — 2026-09-04
+
+**The phone's 0.14.1 build went out first; this desktop and web release completes 0.14.1.**
+The Android APK attached to this release is that build. iOS is not attached — there is still no
+sideload path on that platform and no Apple Developer Program membership behind a store build.
+
+### The download carries only what runs on your computer
+
+The mail engine inside the desktop app is built from this repository, and it had come to include
+code that exists to run the hosted service — the parts that bill accounts, that talk to the hosted
+database, and the machinery behind the assistant features an account pays for. None of it ran on a
+standalone install, which has no hosted account to bill and no such database to reach.
+
+It should not have been in the download all the same. A standalone install is meant to be
+standalone, and that is a statement about what is in the file you downloaded, not only about what
+it does once it starts. Shipping a service's internals to people who are not using that service
+also puts more of it in front of anyone reading the artifact than they have any reason to see.
+
+It arrived through two imports that named a package's front door instead of the one file they
+wanted, and a front door re-exports everything behind it. Both now name the file. The check that
+looks for this had a way of being skipped, which is why the growth went unnoticed for a month; it
+now runs wherever the engine is built, so the next import like it fails the build instead of
+shipping.
+
+### Recent mail says what time it arrived
+
+A message from today shows the time it arrived — `09:12`. A message from the last six days shows
+the weekday with it — `Mon 09:12`. Beyond that a weekday would repeat and stop telling two messages
+apart, so the stamp becomes the date — `2 Aug`, and `30 Dec 2025` for a message from another year.
+
+The time used to disappear at midnight: a mail stamped `09:12` became a bare `Mon` the moment the
+day turned, and a mail from March showed `Tue` sitting directly above yesterday's, which also
+showed `Tue`.
+
+Weekday and month names are in the app's language, and every clock is read in your own machine's
+time zone — the same one the account dates beside it already used, so no two stamps on a screen
+disagree about what time it is. The list rows, the open message and the earlier messages in a
+thread all read the same way, in the browser, on the desktop and on the phone.
+
+### A mailbox that cannot send says so
+
 A mailbox that cannot send no longer reports a send in progress; the refusal is shown as what it is.
 
-The row of actions under a message is as wide as the buttons it is standing. Where the column is
+### The action pill is as wide as its verbs
+
+The row of actions under a message is as wide as the buttons standing in it. Where the column is
 too narrow for all of them the rest still move into the ⌄ menu at its end, but the row no longer
 keeps its full width with an empty gap where they were.
 
@@ -618,17 +666,7 @@ so does one filed under a tag — `you+receipts@…` is you.
 Nothing changes for a reply or a forward: both answer from the mailbox the original arrived
 in, whoever they are addressed to.
 
-### Still to come
-
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
-
-## [0.14.1] — 2026-09-04
-
-**This one is the phone.** The desktop apps are unchanged and still on 0.14.0; their next
-release carries the work listed under Unreleased above. The Android APK is attached to this
-release, and iOS is not — there is still no sideload path on that platform and no Apple
-Developer Program membership behind a store build.
+### The phone
 
 ### Messages open with the whole message again
 
@@ -4371,7 +4409,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.14.1...HEAD
+[0.14.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.14.1
 [0.14.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.14.0
 [0.13.8]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.8
 [0.13.7]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.7
