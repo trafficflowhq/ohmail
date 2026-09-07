@@ -263,6 +263,10 @@ arrowing down to a result it used to leave the keyboard focused on nothing: the 
 away with the rest of the results, and the next letter typed was read as a shortcut instead of as
 the start of a new question. Escape now clears the search and puts the caret back where you type.
 
+**The keyboard hint on the front page says Ctrl where there is no ⌘.** The app's keycaps were
+corrected in an earlier release; the hint under the demo on ohmail.app was typed by hand and kept
+saying "⌘K" to everyone. It reads the visitor's own keyboard now, like the caps inside the app.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

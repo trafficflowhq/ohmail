@@ -40,10 +40,10 @@ import {
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
   type ReactNode,
 } from "react";
 import { modalIsOpen } from "./modal-gate";
+import { modGlyph, useModGlyph } from "./mod-glyph";
 /* The rules that stop key hints being shown on devices with no keys. It rides with the
    registry rather than with any one component because the chrome it hides is spread across the
    shell, the dock and the reading overlay, and this module is the one thing that is in the
@@ -274,37 +274,27 @@ export function chordMatches(chord: string, e: KeyboardEvent): boolean {
 }
 
 /**
- * THE MODIFIER'S OWN NAME ON THIS KEYBOARD. `mod` is one binding token — `chordMatches` accepts
- * ⌘ or Ctrl for it — but a cap has to read the way the key on the desk does: a Linux or Windows
- * keyboard has no ⌘, and "⌘K" on it documents a key that does nothing (reported: every modifier
- * cap said ⌘ on Linux while Ctrl+K opened the palette and Super+K did nothing). Detected from the
- * platform, never from the face; an iPad reporting as a Mac is a Mac for this purpose.
+ * THE MODIFIER'S OWN NAME ON THIS KEYBOARD — re-exported, not defined here.
+ *
+ * `mod-glyph.ts` holds it, for one reason: the landing page prints a modifier cap too, the
+ * marketing tree imports only leaf modules out of `shell/`, and importing this file for a glyph
+ * would put the whole registry and `touch-keys.css` into a page with no keyboard behind it. The
+ * re-export keeps every caller in the app — and every test — pointing at `./keymap`, which is
+ * where the rest of the keyboard vocabulary lives.
  */
-export function modGlyph(): string {
-  if (typeof navigator === "undefined") return "⌘";
-  const platform = navigator.platform ?? "";
-  const ua = navigator.userAgent ?? "";
-  return /Mac|iPhone|iPad|iPod/.test(platform) || /Macintosh|iPhone|iPad/.test(ua) ? "⌘" : "Ctrl";
-}
-
-const subscribeNever = () => () => {};
-const serverMod = () => "⌘";
-/**
- * `modGlyph()` for a render — hydration-safe. The server has no keyboard and says ⌘; the client
- * snapshot is the platform's, and `useSyncExternalStore` swaps to it as hydration completes
- * rather than as a later effect, so a client-only mount (the desktop) never paints the wrong cap.
- */
-export function useModGlyph(): string {
-  return useSyncExternalStore(subscribeNever, modGlyph, serverMod);
-}
+export { modGlyph, useModGlyph };
 
 /**
- * The chord as keycaps, for `<Kbd>`: `"mod+k"` → `["⌘", "K"]`, `"g o"` → `["g", "o"]`.
- * `mod` is the modifier's cap on this keyboard — pass {@link useModGlyph}'s answer from a render;
- * the default is the Mac's, which is what a caller with no keyboard in front of it (a test, the
- * server) gets.
+ * The chord as keycaps, for `<Kbd>`: `"mod+k"` → `["Ctrl", "K"]` on a PC, `["⌘", "K"]` on a Mac.
+ *
+ * `mod` IS REQUIRED, and that is the fix rather than a style preference. It used to default to
+ * "⌘" — "which is what a caller with no keyboard in front of it (a test, the server) gets" — and
+ * the trouble with that sentence is that it is also what a caller who simply FORGOT gets, on
+ * every platform, silently: the shipped bug this whole seam exists to close was hand-typed Mac
+ * caps on Linux, and a default that reproduces it is a loaded gun in the signature. Every render
+ * has an answer to hand ({@link useModGlyph}); a test that does not care still has to say so.
  */
-export function chordKeys(chord: string, mod = "⌘"): string[] {
+export function chordKeys(chord: string, mod: string): string[] {
   const caps: Record<string, string> = {
     mod,
     shift: "⇧",

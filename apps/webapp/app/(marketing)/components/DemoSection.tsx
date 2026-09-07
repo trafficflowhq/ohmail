@@ -11,6 +11,7 @@ import {
 } from "react";
 import { useTranslations } from "next-intl";
 import { Kbd, useTheme } from "@ohmail/ui";
+import { useModGlyph } from "../../shell/mod-glyph";
 import { Reveal } from "./Reveal";
 import { OMARCHY_DEMO_THEMES } from "./omarchy-demo-themes";
 
@@ -226,6 +227,9 @@ export function DemoSection() {
   const t = useTranslations("demo");
   const tf = useTranslations("face");
   const { resolved, face } = useTheme();
+  /* The modifier cap the keyboard hints wear — ⌘ on Apple hardware, Ctrl everywhere else. See
+     the hint row below for why a landing page needs this at all. */
+  const mod = useModGlyph();
   /* the explorer's pick: an Omarchy theme slug, or null for ohmail's own pairing
      (the static tokyo-night / flexoki-light defaults, following the scheme) */
   const [demoTheme, setDemoTheme] = useState<string | null>(null);
@@ -885,11 +889,19 @@ export function DemoSection() {
         ) : null}
 
         {/* the keyboard hints live here rather than in a pointer callout:
-            they are about the whole app, not about one region of it */}
+            they are about the whole app, not about one region of it
+
+            AND THE MODIFIER IS THE READER'S OWN. This cap was the string "⌘K", typed by hand,
+            on a page most of whose readers are on Linux or Windows — where there is no ⌘ and
+            Ctrl+K is what opens the palette. The app's caps were corrected in one pass and this
+            one was missed because it is not in the app: it is a picture of the app, making the
+            same claim, on the page somebody reads BEFORE they install anything. `useModGlyph`
+            is the app's own answer, imported from the leaf module rather than from the keyboard
+            registry so the landing page does not carry a dispatcher it has no keys for. */}
         <p className="l-demo-hints">
           <span className="l-demo-hints-lead">{t("hintsLabel")}</span>
           <span>
-            <Kbd>⌘K</Kbd> {t("hintCmdk")}
+            <Kbd>{mod}K</Kbd> {t("hintCmdk")}
           </span>
           <span>
             <Kbd>j</Kbd>

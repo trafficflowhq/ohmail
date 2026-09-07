@@ -1,0 +1,50 @@
+"use client";
+
+/**
+ * THE MODIFIER'S OWN NAME ON THIS KEYBOARD — the one answer, in a module small enough to import
+ * from anywhere that prints a keycap.
+ *
+ * ── WHY IT IS NOT IN `keymap.tsx`, WHERE IT WAS WRITTEN ─────────────────────────────────────
+ *
+ * Every cap inside the app reads it through the registry, so living beside the registry cost
+ * nothing — until the LANDING PAGE turned out to print a modifier cap too (`⌘K everything, by
+ * name`, hand-typed, and therefore wrong on Linux and Windows exactly as the app's caps were).
+ * The marketing tree deliberately imports only LEAF modules out of `shell/` — `locale.ts`,
+ * `owner-cookie.ts` — because pulling `keymap.tsx` in would put the whole keyboard registry,
+ * its dispatcher and `touch-keys.css` into a page whose only keyboard is a picture of one.
+ *
+ * So the two functions move here and `keymap.tsx` re-exports them. Every existing importer is
+ * unchanged, there is still one implementation, and a page that needs the glyph and nothing else
+ * can have exactly that.
+ */
+import { useSyncExternalStore } from "react";
+
+/**
+ * `mod` is one binding token — `chordMatches` accepts ⌘ or Ctrl for it — but a cap has to read
+ * the way the key on the desk does: a Linux or Windows keyboard has no ⌘, and "⌘K" on it
+ * documents a key that does nothing (reported: every modifier cap said ⌘ on Linux while Ctrl+K
+ * opened the palette and Super+K did nothing). Detected from the platform, never from the face;
+ * an iPad reporting as a Mac is a Mac for this purpose.
+ */
+export function modGlyph(): string {
+  if (typeof navigator === "undefined") return "⌘";
+  const platform = navigator.platform ?? "";
+  const ua = navigator.userAgent ?? "";
+  return /Mac|iPhone|iPad|iPod/.test(platform) || /Macintosh|iPhone|iPad/.test(ua) ? "⌘" : "Ctrl";
+}
+
+const subscribeNever = () => () => {};
+const serverMod = () => "⌘";
+
+/**
+ * `modGlyph()` for a render — hydration-safe. The server has no keyboard and says ⌘; the client
+ * snapshot is the platform's, and `useSyncExternalStore` swaps to it as hydration completes
+ * rather than as a later effect, so a client-only mount (the desktop) never paints the wrong cap.
+ *
+ * The server's ⌘ is therefore a REAL frame that a Linux reader can be served, and the repaint is
+ * the thing that makes it harmless. `keycap-platform.test.tsx` drives that sequence — server
+ * string, then hydrate, then read the cap — rather than trusting the argument in this sentence.
+ */
+export function useModGlyph(): string {
+  return useSyncExternalStore(subscribeNever, modGlyph, serverMod);
+}
