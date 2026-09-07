@@ -1316,6 +1316,17 @@ const MODELLED_WAIT_CODES = new Set([
   // left live by a crashed invocation.
   "send_queued",
   "send_in_flight",
+  // A duplicate refused while the FIRST attempt is still `pending`, which is the same kind of
+  // answer as the two above: the server HAS a reservation for this content and cannot say yet how
+  // it ended. It is retryable precisely so the client keeps asking until it can.
+  //
+  // Missing from this set it was counted as an unmodelled server failure, and the arithmetic
+  // decided the outcome: eight refusals at the web retry cadence is ~255 seconds, while the
+  // server's own stale recovery does not run until `SEND_STALE_AFTER_MS` (ten minutes). The verb
+  // was abandoned as `send_unverified` BEFORE the thing it was waiting for could happen — so a
+  // first attempt that then failed left a reclaimable claim nobody ever retried, and the message
+  // was simply lost. A wait shorter than the wait it is waiting on is not a wait.
+  "duplicate_send",
   // The desktop sidecar's DELIBERATE refusal while the hosted mailbox is unreachable
   // (`apps/sidecar/src/cloud-proxy.ts#offlineResponse`): `503`, `retryable: true`, and NO
   // `Retry-After`, because it does not know when the network returns. It is the offline case

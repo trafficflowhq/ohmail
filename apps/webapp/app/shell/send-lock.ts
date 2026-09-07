@@ -271,6 +271,18 @@ function fnv1a(s: string): string {
  * The cost is one pass over the base64 per press, bounded by the surface's own cap — 3 MB, or
  * 40 MB for a client permitted to stage. Both the length AND the content hash are folded in, so a
  * collision needs agreement on both.
+ *
+ * ── AND THE WAY IT WAS REACHED, WHICH THE SERVER CANNOT GUARD ───────────────────────────────
+ *
+ * The press that finds it is not an edit in place, it is a RE-PICK. Attach `invoice.csv` reading
+ * `amount\n100\n`, notice the figure is wrong, re-pick the corrected file, press Send: same name,
+ * same type, same length, so the fingerprint matched, the stored key was RESUMED rather than a
+ * fresh one minted, and the server replayed the first send's stored `sent` result — correctly,
+ * that is what a resumed key is for. The editor read `confirmed`, cleared the scratch and said
+ * "Sent." The correction never left and the person was told it had.
+ *
+ * The server-side guard cannot cover it: a replay returns from the conflict branch and never
+ * reaches a content digest at all. This is the client's to close, which is why it is closed here.
  */
 export function sendFingerprint(m: MailSend): string {
   /**

@@ -284,6 +284,40 @@ export async function runScheduledSendPass(
         // finalizing. The count was `deferred` for an outcome that was already terminal, so an
         // operator reading the counters saw a retry coming for a row whose `send_at` and
         // `send_key` were both already NULL. Nothing would ever claim it again.
+        // ── A RETRYABLE REFUSAL IS NOT A DETERMINISTIC ONE, AND CLOSING ON IT LOSES THE SEND ──
+        //
+        // This arm treats every `ServiceError` as a settled refusal and closes the appointment,
+        // clearing `send_at` and `send_key`. That is right for the deterministic ones — a disabled
+        // mailbox, an expired ticket, too many recipients — and wrong for a refusal the server has
+        // marked RETRYABLE, which means "not yet", not "no".
+        //
+        // The one that exists today is a duplicate refused while the FIRST attempt is still
+        // `pending`. Two appointments for the same message, one minute: A reserves and pauses
+        // before SMTP; B is refused as pending and, under the old behaviour, LOST its appointment;
+        // A then fails before SMTP. Zero deliveries, and the next pass claims neither row, because
+        // B no longer has a key to be claimed by. The person scheduled a message and nothing ever
+        // went.
+        //
+        // So a retryable refusal DEFERS: the appointment stands, the key stands, and the row comes
+        // due again — by which time the first attempt has ended and the answer is a real one.
+        if (err.retryable === true) {
+          // RE-ARM, exactly as the transient arm below does and guarded the same way: status still
+          // 'draft' (the claim window's own state) and the SAME key. That matches only a row this
+          // pass claimed and did not move past, so a row the reservation already advanced is left
+          // alone. Leaving it at 'draft' would also come back — the recovery arm claims a keyed row
+          // once it is provably stale — but not for ten minutes, and there is nothing to wait for
+          // here: the appointment is still due and the next pass can judge it again.
+          await (db as unknown as Tx).update(drafts)
+            .set({ status: "scheduled", updatedAt: now() })
+            .where(and(
+              eq(drafts.id, row.id), eq(drafts.status, "draft"), eq(drafts.sendKey, row.sendKey),
+            ));
+          result.deferred += 1;
+          log.warn("scheduled_send_deferred_retryable", {
+            draftId: row.id, accountId: row.accountId, code: err.code,
+          });
+          continue;
+        }
         const closed = await closeAppointment(db, ctx, row, err.message, log);
         if (closed || await reservationFailed(db, ctx, row)) result.failed += 1;
         else result.deferred += 1;
