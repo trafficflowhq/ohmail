@@ -460,6 +460,20 @@ Pairing again after a pairing has ended signs out and redeems in place rather th
 up afresh, so the copy of your mail on this machine is kept. A computer reinstalled at the same
 address is a different account behind a familiar name, and that is refused rather than merged.
 
+If a pairing finishes but needs the app reopened — which is what happens when it replaces mail
+already held here, since that copy cannot be thrown away while the app is running — the app says
+the pairing worked and asks you to quit and open it again. It used to show a sign-in form for a
+hosted account you do not have.
+
+Pairing with a computer that was reinstalled at the same address is no longer a dead end. It is a
+different account behind a familiar name, so it is refused; the refusal now says what starting over
+costs — the mail held here for that other account is discarded, the mail on your server is not
+touched — and that you will need a fresh pairing link, because the one you just used has been
+spent. Starting over is a button you press, never something the refusal does for you.
+
+A pairing link pasted into the self-hosted door's address field opens the right door instead,
+without dialling anything. It used to be answered with advice about installing a root certificate.
+
 If the pairing is removed from the other computer's Devices list, this one says so and offers both
 ways forward — pair again, or set this machine up on its own. Choosing the second states what it
 costs first: the copy here is discarded, the mailbox is read again from the server, and this
