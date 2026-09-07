@@ -562,6 +562,53 @@ The row of actions under a message is as wide as the buttons standing in it. Whe
 too narrow for all of them the rest still move into the ⌄ menu at its end, but the row no longer
 keeps its full width with an empty gap where they were.
 
+### A computer that stopped organizing no longer holds the mailbox for ever
+
+Organizing a mailbox means keeping a record inside the mailbox itself saying which install is doing
+it, so that a second computer can see the mailbox is taken. A record nobody has renewed for ten
+minutes has lapsed, and from then on you can press Organize here on another computer and take the
+mailbox over.
+
+That was not true of a record this version cannot read — one written in a newer format, or naming a
+kind of organizer this release does not know about. The app refuses to take a mailbox from an
+organizer it cannot place, which is right for as long as that organizer is still there, and the
+refusal was meant to end when the record lapsed. It never ended. The age of a record was measured
+against the newest record in the same mailbox, so a mailbox holding only one record measured that
+record against itself and read it as current whatever its date said. A computer that stopped
+organizing months ago and left its record behind refused every takeover, from every other computer,
+with no way out short of deleting the message by hand.
+
+The newest record in a mailbox is now measured against the clock of the computer reading it, and
+every older record is still measured against that newest one -- which is what keeps two computers
+with two clocks from disagreeing about who holds the mailbox.
+
+A second way to hold a mailbox for ever came out of closing the first. A date far enough in the
+future is ahead of any reader's clock, so it reads as current at every real moment, and a machine
+with a dead clock battery could hold a mailbox on nothing but a wrong date. A date beyond the
+tolerance for ordinary differences between two machines' clocks is now taken to say nothing at all
+about when the record was last renewed: such a record holds the mailbox only while something
+believable in the same mailbox is still being renewed. Inside the tolerance a clock that runs ahead
+is still believed, which is the case that matters -- treating a machine that is slightly ahead as
+gone is how two computers both decide they are the organizer.
+
+And a wrong date could push a working organizer out. Because the age of a record was judged against
+the newest date in the mailbox, a date far in the future -- pulled back only as far as a clock
+difference could explain -- was still far enough that a record written seconds ago read as expired
+beside it. A computer that was organizing the mailbox and checking in normally could be taken over
+by another, on the strength of a wrong date in a third record. Dates beyond that tolerance are no
+longer used to judge anything at all, so a record carrying one cannot expire a computer that is
+working.
+
+Two things deliberately did not change. A record that is genuinely still being renewed refuses a
+takeover exactly as before, and a record with an unusable date sitting beside one that is being
+renewed refuses too, because then something is organizing the mailbox even if we cannot tell what.
+And a computer that finds only its own record in a mailbox still resumes organizing without asking
+anybody, however long it has been asleep.
+
+The screen that tells you who is organizing a mailbox reads the same rule as the button beside it.
+It no longer names a live organizer for a record the app had already stopped defending, and no
+longer offers to stop a computer that has already stopped.
+
 ### Signing in, signing out, and a browser that two people share
 
 A browser holds one set of cookies for everything open in it. Sign into a second account in another

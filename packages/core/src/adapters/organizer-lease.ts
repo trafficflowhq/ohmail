@@ -1046,6 +1046,174 @@ function compareRecency(a: OrganizerClaim, b: OrganizerClaim): number {
 export const MAX_FUTURE_SKEW_MS = DEFAULT_STALE_AFTER_MS;
 
 /**
+ * IS THIS HEARTBEAT EVIDENCE OF ANYTHING? A stamp beyond `now + MAX_FUTURE_SKEW_MS` is not.
+ *
+ * A claim dated 2099 by a machine with a dead clock battery is still a CLAIM, and it must still be
+ * RANKED — two readers that disagreed about the candidate set could each conclude they won, which
+ * is why {@link clampFuture} clamps rather than drops it. What it must not do is grant its writer
+ * the protections reserved for an organizer that is demonstrably alive, and "when was this last
+ * renewed" is the question its stamp cannot answer. So implausibility is tracked here, beside
+ * liveness, rather than by removing the claim from the election.
+ *
+ * The tolerance is one staleness window: two machines have two clocks, and treating a peer that is
+ * slightly ahead as gone is how both sides conclude they are the organizer. Beyond that the stamp
+ * says more than a clock can be wrong by.
+ */
+function isBelievableHeartbeat(heartbeat: Date, now: Date): boolean {
+  return heartbeat.getTime() <= now.getTime() + MAX_FUTURE_SKEW_MS;
+}
+
+/**
+ * EVIDENCE THAT SOMETHING RENEWED THIS RECORD RECENTLY — believable, AND inside the window.
+ *
+ * The conjunction has a name because its two halves were written apart and drifted: the election
+ * excluded implausible stamps from "has the folder gone quiet" while both the gate's unrankable
+ * scan and the preview's per-holder `fresh` read the bare reader-clock test, under which a 2099
+ * stamp is fresh at every real instant. Naming it is what makes the pair greppable.
+ *
+ * Its caller today is {@link peekLease}'s per-holder `fresh`. {@link readFolderClock} asks the same
+ * question and does NOT call this, deliberately: it establishes believability first with a
+ * `continue`, because an unbelievable stamp is excluded from the REFERENCE as well as from the
+ * evidence, and calling this afterwards would test believability twice.
+ */
+function isRenewalEvidence(heartbeat: Date, now: Date, staleAfterMs: number): boolean {
+  return isBelievableHeartbeat(heartbeat, now) && isFresh(heartbeat, now, staleAfterMs);
+}
+
+/**
+ * WHAT ONE FOLDER'S CLAIMS SAY ABOUT TIME — read once, and read by every liveness question asked
+ * of that folder, so no two of them can answer differently.
+ */
+interface FolderClock {
+  /**
+   * The newest BELIEVABLE heartbeat present, `-Infinity` when no claim carries one.
+   *
+   * ── AND IT IS NOT THE NEWEST CLAMPED ONE, WHICH IS A TWO-ORGANIZER FIX RATHER THAN TIDYING ──
+   *
+   * It was `min(heartbeat, now + MAX_FUTURE_SKEW_MS)` over every claim, on the argument that a
+   * ceiling stops a writer whose clock reads 2099 from lapsing every honest claim in the folder by
+   * more than one window. The ceiling did bound it — and one window is enough, because at ship
+   * values `MAX_FUTURE_SKEW_MS` EQUALS `DEFAULT_STALE_AFTER_MS`. A 2099 record clamped to
+   * `now + 10 min` dragged the reference there, so an honest record stamped ten seconds ago sat
+   * 610 s behind it, past the 600 s window, and read STALE. `decideLease`'s rule 1/2 then did not
+   * fire and an authorized press took the mailbox from an organizer that was alive and checking
+   * in — two organizers, from a wrong date in another machine's record.
+   *
+   * Excluding unbelievable stamps removes the class rather than bounding it: a stamp we have
+   * already decided says nothing about renewal (see {@link isBelievableHeartbeat}) cannot lapse
+   * anything either. The tolerance itself is untouched — a stamp INSIDE it is believable, enters
+   * the reference at its own value, and can still lapse a claim by up to one window, which is the
+   * price of believing a peer whose clock runs ahead and is the trade `MAX_FUTURE_SKEW_MS`
+   * exists to make.
+   */
+  newestHeartbeat: number;
+  /**
+   * SOMETHING BELIEVABLE HAS BEEN RENEWED WITHIN THE WINDOW, by the reader's clock.
+   *
+   * The only question in this module a reader's own clock is allowed to decide about the folder as
+   * a whole, and it is the content of {@link Election.quiet}. Implausible stamps are excluded: a
+   * folder holding nothing but a claim dated 2099 has gone quiet, and reading it as busy is what
+   * let one dead machine hold a mailbox for seventy-three years with no way out short of a person
+   * deleting the message by hand.
+   */
+  renewing: boolean;
+}
+
+function readFolderClock(
+  claims: readonly OrganizerClaim[],
+  now: Date,
+  staleAfterMs: number,
+): FolderClock {
+  let newestHeartbeat = -Infinity;
+  let renewing = false;
+  for (const c of claims) {
+    // One test, one `continue`: a claim whose stamp is not believable contributes to NEITHER the
+    // reference nor the renewal evidence. Two separate conditions here is how the reference came
+    // to admit what the evidence excluded.
+    if (!isBelievableHeartbeat(c.heartbeat, now)) continue;
+    newestHeartbeat = Math.max(newestHeartbeat, c.heartbeat.getTime());
+    if (isFresh(c.heartbeat, now, staleAfterMs)) renewing = true;
+  }
+  return { newestHeartbeat, renewing };
+}
+
+/**
+ * IS THIS CLAIM STILL BEING RENEWED? One predicate, read everywhere the question is asked of a
+ * claim in the company of the other claims in its folder.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * A LONE CLAIM IS NOT ITS OWN CLOCK
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * The reference is IN THE FOLDER rather than on this machine, which is the property {@link
+ * runElection} is built on: two readers with two clocks cannot disagree about the candidate set,
+ * so they cannot each conclude they won. It has one degenerate case, and it is the ordinary shape
+ * of a mailbox rather than an exotic one — **the claim that IS the folder's newest heartbeat is
+ * measured against itself.** The difference is zero, so it reads live at ANY age, and a folder
+ * holding exactly one claim is nothing but that case.
+ *
+ * That is harmless where liveness only decides who wins an election among present claims, and it
+ * is not harmless in {@link decideLease}'s rules 1 and 2, which refuse a press — including an
+ * authorized one — while a claim this build cannot RANK is live. That refusal is bounded, and the
+ * bound is the whole of it: *until the claim is stale or released*. Folder-relative liveness gave
+ * the "until" no content. An install that stopped
+ * organizing a year ago and left its record behind — a decommissioned VPS, a phone whose `mobile`
+ * kind a desktop one release older reads as `unknown` — refused every press from every door, for
+ * ever, and the only cure was a person deleting the bookkeeping message by hand. That is the
+ * failure {@link MAX_FUTURE_SKEW_MS} was written for, reached through the other field.
+ *
+ * So the FRESHEST claim present is judged by the READER's clock, which is the only clock that can
+ * tell "nothing has renewed here within a window" from "this is the newest thing present"; every
+ * other claim keeps the folder-relative form, which is what the reference exists for. The escape
+ * is not new — `Election.quiet` has applied exactly it, one function over, since the seventy-three
+ * years were measured; what is new is that rule 1/2 and `quiet` now read ONE predicate instead of
+ * two expressions that happened to be written by different hands. A stale unrankable record is
+ * residue and displaces exactly as a stale rankable one does; a live one still refuses everything.
+ *
+ * ── AND AN UNBELIEVABLE STAMP IS NOT A CLOCK EITHER ───────────────────────────────────────────
+ *
+ * The reader-clock arm alone would hand the same permanence straight back on one shape. A stamp
+ * beyond `now + MAX_FUTURE_SKEW_MS` is AHEAD of the reader's clock, so `now − heartbeat` is
+ * negative and the claim is "fresh" at every real instant — a lone record dated 2099 would refuse
+ * every press for ever, which is the seventy-three-year lockout with the folder-relative step
+ * taken out of it. `Election.quiet` has always excluded such stamps; rules 1/2 did not, and the
+ * two therefore described different worlds for exactly that folder.
+ *
+ * So {@link isBelievableHeartbeat} decides which question is asked, and the ruling behind it is
+ * that an unbelievable stamp is NO EVIDENCE OF RENEWAL. A claim carrying one is live only while
+ * something believable in the same folder is being renewed — `FolderClock.renewing`, the value
+ * `quiet` is the negation of. The boundary is narrow on purpose: a heartbeat inside the tolerance
+ * is still fresh and still refuses, and a fresh believable claim beside the 2099 record still makes
+ * that record refuse — because then something IS organizing the mailbox and we still cannot rank
+ * the record. What it no longer does is hold a mailbox nobody is renewing.
+ *
+ * ── NOTHING IS CLAMPED HERE, AND THE ABSENCE IS THE FIX ───────────────────────────────────────
+ *
+ * There was a ceiling on both sides of the comparison. On the claim being JUDGED it could never
+ * change the answer — the unbelievable case is taken by the arm above, so the arms below only ever
+ * see a heartbeat at or below the ceiling, where a `min` is the identity. On the REFERENCE it
+ * changed the answer in the wrong direction: see {@link FolderClock.newestHeartbeat}, where a
+ * clamped 2099 stamp lapsed a living organizer at ship values and cost two organizers. The
+ * reference is now taken over believable heartbeats only, so there is no clamp left on either
+ * side, and `MAX_FUTURE_SKEW_MS` is read in exactly one place for the heartbeat — the
+ * believability test — instead of two that had to agree.
+ */
+function isClaimLive(
+  c: OrganizerClaim,
+  clock: FolderClock,
+  now: Date,
+  staleAfterMs: number,
+): boolean {
+  if (!isBelievableHeartbeat(c.heartbeat, now)) return clock.renewing;
+  const hb = c.heartbeat.getTime();
+  // `>=` rather than `===`: `newestHeartbeat` is a maximum, so for a set that CONTAINS this claim
+  // the two tests are the same one, and `>=` additionally does the right thing for a caller whose
+  // maximum was taken over a set this claim is not in.
+  if (hb >= clock.newestHeartbeat) return isFresh(c.heartbeat, now, staleAfterMs);
+  return clock.newestHeartbeat - hb < staleAfterMs;
+}
+
+/**
  * THE ELECTION. **A pure function of the folder's contents — never of the reader's clock.**
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -1101,16 +1269,14 @@ interface Election {
   /** The strongest live candidate, or `null` when the folder holds no readable claim. */
   winner: OrganizerClaim | null;
   /**
-   * Claims whose heartbeat is NOT implausibly far in the future, keyed by the object identity of
-   * the clamped candidate.
+   * WHAT THE FOLDER SAYS ABOUT TIME, read once — see {@link FolderClock}.
    *
-   * A claim dated 2099 by a machine with a dead clock battery is a claim, and it must still be
-   * RANKED (or two readers would disagree about the candidate set and both organize — see
-   * {@link runElection}). What it must not do is grant its writer the protections reserved for an
-   * organizer that is demonstrably alive. So implausibility is tracked separately from the
-   * election rather than by removing the claim from it.
+   * On the election so that {@link decideLease}'s rule 1/2 scan and {@link Election.quiet} cannot
+   * be two computations of one question. It used to be a `plausible` SET plus a re-derivation of
+   * "newest plausible, then compare" beside a third folder-relative expression in the rules, and
+   * the three disagreed about a folder holding one claim.
    */
-  plausible: ReadonlySet<OrganizerClaim>;
+  clock: FolderClock;
   /**
    * Claims whose PRESS is not implausibly far in the future — the same idea as {@link plausible},
    * one field over, and it exists because 0.14.1 moved the election onto a field the heartbeat's
@@ -1240,33 +1406,63 @@ function compareStrength(a: OrganizerClaim, b: OrganizerClaim): number {
 function runElection(claims: readonly ClaimRecord[], now: Date, staleAfterMs: number): Election {
   const { valid, malformed } = coalesce(claims);
   const ceiling = now.getTime() + MAX_FUTURE_SKEW_MS;
-  const plausible = new Set<OrganizerClaim>();
   const plausiblePress = new Set<OrganizerClaim>();
   const candidates = valid.map((raw) => {
     const c = clampFuture(raw, now);
-    if (raw.heartbeat.getTime() <= ceiling) plausible.add(c);
     // A claim with NO press is plausible about its press by construction: there is nothing to
     // disbelieve. Only a stamp beyond the ceiling is excluded — see `Election.plausiblePress`.
     if (raw.authorizedAt === null || raw.authorizedAt.getTime() <= ceiling) plausiblePress.add(c);
     return c;
   });
 
+  /* ── THE CLOCK IS READ OVER THE RAW CLAIMS, NOT THE COALESCED CANDIDATES ────────────────────
+   *
+   * Over the raw list because that is the set rules 1/2 and an authorized displacement judge, and
+   * one question deserves one computation. It also fixes a corner the coalesced form got wrong in
+   * the unsafe direction: coalesce keeps the NEWEST record per install, and a 2099 duplicate is
+   * the newest, so an install renewing honestly beside its own dead-clock record had its fresh
+   * record dropped from the set and the folder read as QUIET — a takeover offered over an install
+   * that was actively organizing. Widening `renewing` can only ever REFUSE a takeover the narrower
+   * form would have offered, which is the safe direction for the single-organizer rule.
+   *
+   * AND NOT OVER `candidates`, which is a second and sharper reason: `clampFuture` has already
+   * pulled every stamp under the ceiling there, so `isBelievableHeartbeat` cannot fail on a
+   * candidate and the whole no-evidence rule would be silently disabled — every 2099 record would
+   * read as renewing again. The two are separate mutations with separate rows, because "coalesced"
+   * and "clamped" are two different ways to lose this and each would otherwise cover for the other.
+   */
+  const clock = readFolderClock(
+    claims.filter((c): c is OrganizerClaim => !isMalformed(c)),
+    now,
+    staleAfterMs,
+  );
+
   // THE REFERENCE IS IN THE FOLDER, not on this machine. Clamped, so a broken clock cannot lapse
   // every honest claim in the folder by more than one window.
+  //
+  // ── AND THE ELECTION'S OWN LIVENESS STAYS FOLDER-RELATIVE FOR EVERY CANDIDATE, INCLUDING THE
+  //    NEWEST, WHICH IS THE OPPOSITE OF WHAT `isClaimLive` DOES ──────────────────────────────
+  //
+  // Deliberate, and it is §4's "continuing is not becoming". `live` is the candidate set the
+  // WINNER is chosen from, and a folder holding only our own claim — a laptop that slept for a
+  // week, a process that crashed and came back — must still elect us on rule 3 without asking
+  // anybody: we are the newest thing in the folder, however old that is. Judging this set by the
+  // reader's clock would empty it, drop the winner to null, and turn own-role resumption into a
+  // takeover that needs a human press. Whether the folder has gone QUIET is a different question,
+  // asked below and answered on the reader's clock, and it decides only arm 7 against arm 8.
   const newest = candidates.reduce<number>((m, c) => Math.max(m, c.heartbeat.getTime()), -Infinity);
   const live = candidates.filter((c) => newest - c.heartbeat.getTime() < staleAfterMs);
   const winner = [...live].sort(compareStrength)[0] ?? null;
 
-  // The one place the reader's clock decides anything, and it decides only whether to ASK a human.
-  // Computed over PLAUSIBLE heartbeats only: a folder holding nothing but a claim dated 2099 has
-  // gone quiet, and reading it as busy is what let one dead machine hold a mailbox for seventy-three
-  // years with no way out short of a person deleting the message by hand.
-  const newestPlausible = candidates
-    .filter((c) => plausible.has(c))
-    .reduce<number>((m, c) => Math.max(m, c.heartbeat.getTime()), -Infinity);
-  const quiet = !Number.isFinite(newestPlausible) || now.getTime() - newestPlausible >= staleAfterMs;
+  // The one place the reader's clock decides anything about the folder as a whole, and it decides
+  // only whether to ASK a human. It is now literally `!clock.renewing` rather than a second
+  // derivation beside it, which is what makes `quiet` and `decideLease`'s rule 1/2 agree BY
+  // CONSTRUCTION: the gate refuses a press over a lone unrankable record exactly while the folder
+  // is being renewed. They used to be two expressions with two authors, and they disagreed for
+  // every folder holding one claim.
+  const quiet = !clock.renewing;
 
-  return { candidates, live, winner, plausible, plausiblePress, quiet, malformed };
+  return { candidates, live, winner, clock, plausiblePress, quiet, malformed };
 }
 
 /**
@@ -1337,16 +1533,18 @@ export function decideLease(input: DecideLeaseInput): LeaseVerdict {
     return !clonedUs;
   };
 
-  // Folder-relative liveness for a RAW record, exactly as `runElection` computes it for the
-  // coalesced candidates: clamped against implausible future skew, measured from the newest
-  // heartbeat present. Needed below because coalesce keeps ONE record per install — and both
-  // rule 1/2 and an authorized displacement have to see the records coalesce dropped.
-  const newestHeartbeat = election.candidates
-    .reduce<number>((m, c) => Math.max(m, c.heartbeat.getTime()), -Infinity);
-  const rawIsLive = (c: OrganizerClaim): boolean => {
-    const clamped = Math.min(c.heartbeat.getTime(), now.getTime() + MAX_FUTURE_SKEW_MS);
-    return newestHeartbeat - clamped < staleAfterMs;
-  };
+  // Liveness for a RAW record — {@link isClaimLive}, the one predicate, against the newest clamped
+  // heartbeat in the folder. Needed on the raw list because coalesce keeps ONE record per install,
+  // and both rule 1/2 and an authorized displacement have to see the records coalesce dropped.
+  //
+  // `election.clock` is read over the RAW claims, so this is the same clock `quiet` is computed
+  // from and the same one `peekLease` reads — one question, one computation. Deliberately NOT a
+  // reference re-derived from `election.candidates`: `clampFuture` has already applied the ceiling
+  // to those, so the ceiling would be applied twice on this path and neither copy could be removed
+  // on its own without the other covering for it — a ceiling nobody can watch fail. `clampFuture`
+  // keeps its own job, which is bounding what `compareStrength` ranks.
+  const rawIsLive = (c: OrganizerClaim): boolean =>
+    isClaimLive(c, election.clock, now, staleAfterMs);
   /** Unambiguously this process's current claim, by VALUE — the raw list's `isOurs`. */
   const rawOurs = (c: OrganizerClaim): boolean =>
     c.installId === self.installId && (self.lastNonce === null || c.nonce === self.lastNonce);
@@ -1402,10 +1600,10 @@ export function decideLease(input: DecideLeaseInput): LeaseVerdict {
    * `compareStrength`, a live cloud claim and a live local claim are ranked by the same two
    * questions as any other pair, and the press is the first of them.
    *
-   * What is NOT lost with it: `election.quiet` and `election.plausible`, which rule 5 also
-   * consulted, are still computed and still used — `quiet` decides arm 8 (offerable vs held) and
-   * `plausible` keeps a 2099 claim from being treated as a live organizer. Only the kind
-   * comparison is deleted. */
+   * What is NOT lost with it: `election.quiet` and the implausibility test rule 5 also consulted
+   * are still computed and still used — `quiet` decides arm 8 (offerable vs held), and
+   * `isBelievableHeartbeat` (now inside {@link FolderClock}, where it was a `plausible` set) keeps
+   * a 2099 claim from being treated as a live organizer. Only the kind comparison is deleted. */
 
   // 6 — a human asked for this mailbox MORE RECENTLY than for anything alive in it. Take it, and
   // record the handover in the folder.
@@ -1606,19 +1804,20 @@ export function peekLease(input: PeekLeaseInput): LeasePeek {
    * `unknown` and fresh, which is the same sentence the gate's `organized_elsewhere:unknown`
    * verdict would write.
    */
-  // Liveness for the unrankable scan is FOLDER-RELATIVE and clamped, exactly as the gate
-  // computes it — the preview's per-holder `fresh` keeps its reader-clock idiom, but this set
-  // must agree with `decideLease`'s refusal or the two answer differently about the same folder
-  // (a record the gate reads as live-unknown reported here as an ordinary stopped holder, with
-  // a takeover on offer that every authorized gate then refuses).
+  // Liveness for the unrankable scan is {@link isClaimLive} — the SAME FUNCTION the gate's rule
+  // 1/2 calls, not a second expression that agrees with it. The preview's per-holder `fresh`
+  // keeps its own reader-clock idiom, but this set has to answer as the gate answers or the two
+  // describe different worlds: a record the gate reads as live-unknown reported here as an
+  // ordinary stopped holder, or — the direction that was shipping — a STALE lone record reported
+  // as a live holder while the gate had already stopped refusing over it, so a person was told
+  // another computer was organizing their mailbox by a build that would have let them take it.
+  // This is the seam the two copies of the folder-relative test hid from each other.
   const rawValid = input.claims.filter((c): c is OrganizerClaim => !isMalformed(c));
-  const ceiling = input.now.getTime() + MAX_FUTURE_SKEW_MS;
-  const clampedHb = (c: OrganizerClaim): number => Math.min(c.heartbeat.getTime(), ceiling);
-  const newestHeartbeat = rawValid.reduce<number>((m, c) => Math.max(m, clampedHb(c)), -Infinity);
+  const clock = readFolderClock(rawValid, input.now, staleAfterMs);
   const unrankableInstalls = new Set(
     rawValid
       .filter((c) => (c.protocol > CLAIM_PROTOCOL || c.kind === "unknown")
-        && newestHeartbeat - clampedHb(c) < staleAfterMs)
+        && isClaimLive(c, clock, input.now, staleAfterMs))
       .map((c) => c.installId),
   );
 
@@ -1629,7 +1828,14 @@ export function peekLease(input: PeekLeaseInput): LeasePeek {
       displayName: c.displayName,
       heartbeat: c.heartbeat,
       claimedAt: c.claimedAt,
-      fresh: isFresh(c.heartbeat, input.now, staleAfterMs) || unrankableInstalls.has(c.installId),
+      /* `isRenewalEvidence`, not the bare reader-clock test: a stamp beyond the skew tolerance is
+         no evidence that this machine is alive, so reporting it as fresh named a live organizer
+         for a record the gate had already stopped defending — the preview said `held` and offered
+         a takeover of a mailbox the gate would have granted outright. The unrankable arm beside it
+         stays, because a record we cannot READ is reported as held while the gate refuses over
+         it, which is a different sentence about a different thing. */
+      fresh: isRenewalEvidence(c.heartbeat, input.now, staleAfterMs)
+        || unrankableInstalls.has(c.installId),
       /* Reported for the holder the coalesce KEPT — the newest claim per install — because that is
          the build currently running there. An older duplicate advertising less is residue of a
          renew this same install is about to expunge, and reporting the weaker set would tell a
