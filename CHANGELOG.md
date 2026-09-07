@@ -465,6 +465,10 @@ already held here, since that copy cannot be thrown away while the app is runnin
 the pairing worked and asks you to quit and open it again. It used to show a sign-in form for a
 hosted account you do not have.
 
+Trying to pair while that restart is still pending says so plainly — nothing was paired, reopen
+ohmail first — and tells you your pairing link has not been used, so you do not go back to the
+other computer for one you do not need.
+
 Pairing with a computer that was reinstalled at the same address is no longer a dead end. It is a
 different account behind a familiar name, so it is refused; the refusal now says what starting over
 costs — the mail held here for that other account is discarded, the mail on your server is not
