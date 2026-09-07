@@ -124,7 +124,7 @@ import {
   COMPOSE_SEND_KEY, heldRowUnverified, inlineForwardKey, useMailSend, readReplyDraft, writeReplyDraft,
   readReplyMeta, writeReplyMeta,
 } from "./mail-send";
-import { parkedComposeRecord } from "./send-lock";
+import { composeMessageHeld, parkedComposeRecord } from "./send-lock";
 import {
   clearComposeDraft,
   composePlan,
@@ -3759,7 +3759,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
          that id, so the row listed in Drafts belongs to a message this browser holds no record
          of. Measured live, recipient total 2. The record stays beside this, not replaced by it —
          it is the only witness for a row the server still calls `draft`. */
-      const parked = parkedRecord !== null || d.status === "unverified";
+      const parked = composeMessageHeld(parkedRecord, d.status);
       /* A DIFFERENT MESSAGE, SO A DIFFERENT COMPOSE SESSION. The id is what parks an unresolved
          send (`compose.ts`), and leaving it in place made one session span every draft this
          surface opened: a send of the FIRST one that came back unverified then parked whichever

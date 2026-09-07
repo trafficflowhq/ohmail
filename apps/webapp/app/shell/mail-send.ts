@@ -88,7 +88,8 @@ import type { EngineMessage, MutationResult, OhmailEngine } from "@ohmail/client
 import type { ToastFn } from "@ohmail/ui";
 import { clearComposeDraft, composeSessionId, readComposeRow, type MailSend } from "./compose";
 import {
-  attachSendLockDraft, claimSendLock, legacySendFingerprint_0_14_0, markSendLockUnverified,
+  attachSendLockDraft, claimSendLock, composeMessageHeld, legacySendFingerprint_0_14_0,
+  markSendLockUnverified,
   releaseSendLock, resumeSendLock, SEND_LOCK_FORMAT, sendFingerprint, sendIdentity, sendSubject,
   sendSubjects, unverifiedSendIntents, type SendIntent,
 } from "./send-lock";
@@ -629,7 +630,9 @@ export function heldRowUnverified(
   if (state.phase === "sending" || state.phase === "queued" || state.phase === "sent") return state;
   if (heldRow === null) return state;
   const row = rows.find((r) => r.id === heldRow);
-  if (row === undefined || row.status !== "unverified") return state;
+  // The status half of {@link composeMessageHeld} — the record half reaches this state through
+  // `stateOf`, and the literal lives in one place so the three sites cannot drift.
+  if (!composeMessageHeld(null, row?.status)) return state;
   const subjects = session === null ? [`draft:${heldRow}`] : [`draft:${heldRow}`, `compose:${session}`];
   return {
     ...state,

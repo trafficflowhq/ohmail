@@ -44,7 +44,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { OhmailEngine } from "@ohmail/client-engine";
 import type { ComposeFields } from "./compose";
 import { COMPOSE_SEND_KEY, writeReplyMeta } from "./mail-send";
-import { attachSendLockDraft, parkedComposeRecord } from "./send-lock";
+import { composeMessageHeld, parkedComposeRecord } from "./send-lock";
 import { composeSessionId, parseRecipients, readComposeRow, writeComposeRow } from "./compose";
 
 /** How long the form must be still before it is written to the account. */
@@ -65,8 +65,14 @@ export const AUTOSAVE_DELAY_MS = 2_000;
  * reader does (`sessionOf` in `mail-send.ts`), and it is reached only where a message-in-progress
  * already exists: a stored row to decide about, or a form with text in it on the compose route.
  */
-function parkedHere(held: string | null): boolean {
-  return parkedComposeRecord(COMPOSE_SEND_KEY, held, composeSessionId()) !== null;
+function parkedHere(engine: OhmailEngine, held: string | null): boolean {
+  const row = held === null
+    ? null
+    : engine.read().get<{ status?: string }>("draft", held);
+  return composeMessageHeld(
+    parkedComposeRecord(COMPOSE_SEND_KEY, held, composeSessionId()),
+    row?.status ?? null,
+  );
 }
 
 /**
@@ -273,7 +279,7 @@ export function useComposeAutosave(opts: {
          `false`, so the engine's own notifications ask again: the record can be resolved (a late
          confirmation, a sweep) while this compose is still on screen, and the row is then adopted
          or dropped exactly as it would have been. */
-      if (parkedHere(held)) return false;
+      if (parkedHere(engine, held)) return false;
       adopted.current = true;
       if (row.status !== "draft") {
         // Named, and not this hook's row to write to. Dropped, so no later mount asks again, and
@@ -351,10 +357,18 @@ export function useComposeAutosave(opts: {
 
        It reads the PERSISTED row, not this hook's state: the persisted row is the message the
        surface is holding, which is exactly what the door writes and what the reopen restores. */
-    if (parkedHere(readComposeRow())) return;
+    if (parkedHere(engine, readComposeRow())) return;
 
     const timer = window.setTimeout(() => {
       if (inFlight.current) return;
+      /* ── ASKED AGAIN AT FIRE TIME, AND THIS IS THE HALF THAT WAS MISSING ───────────────────
+         The test above runs when the save is SCHEDULED. Two seconds pass before it fires, and in
+         that window the surface can become a different message: measured live, a compose with an
+         armed save was replaced by the reopen of a row the server holds as unconfirmed, and the
+         already-scheduled save then fired against it — a create, in the reopen window itself,
+         which replaced the hold and turned Send back on. Re-arranging who cancels what is a race
+         with a two-second window; asking again here is not. */
+      if (parkedHere(engine, readComposeRow())) return;
       inFlight.current = true;
       const era = epoch.current;
       void (async () => {
@@ -398,22 +412,13 @@ export function useComposeAutosave(opts: {
             setDraftId(result.entityId);
             // Beside the state, for the reload — see the adoption effect above.
             writeComposeRow(result.entityId);
-            /* AND ONTO THE RECORD, IF THIS MESSAGE HAS ONE WAITING — the row it has just
-               ACQUIRED. A send pressed before the first save is named only by
-               `compose:<session>`, and the save it beat can still land: the timer was armed
-               before the press, so the row appears seconds AFTER the record. Attaching only on a
-               refused press (which is where `attachSendLockDraft`'s other caller sits) left that
-               row unattached until somebody pressed Send again — so the row sitting in Drafts was
-               a parked message that the row alone could not identify, and opening it from another
-               session took the recovery door and sent a second copy.
-
-               Only a record this session names is touched, and `draftId` is diagnostic: the
-               record's identity does not move onto the row, which is the whole point of keeping
-               both names. */
-            const session = composeSessionId();
-            if (session !== null) {
-              attachSendLockDraft(COMPOSE_SEND_KEY, [`compose:${session}`], result.entityId);
-            }
+            /* NOTHING IS WRITTEN ONTO A RECORD HERE, and the reason is worth stating because an
+               earlier version of this did exactly that. A save cannot reach this line while an
+               unresolved record names the message — the check at the top of the callback refuses
+               it at fire time — so a row created here belongs to a message nothing is waiting on.
+               The row a record needs to know about is the one this surface was ALREADY holding
+               when the record was written, and that is bound where the record is written
+               (`mail-send.ts`). Attaching here would be a branch no test could enter. */
           }
           saved.current = signature;
           if (mailboxId) savedMailbox.current = mailboxId;

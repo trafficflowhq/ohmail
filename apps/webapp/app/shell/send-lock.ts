@@ -838,6 +838,36 @@ export function parkedComposeRecord(
 }
 
 /**
+ * ── IS THIS COMPOSE HOLDING A MESSAGE THAT MAY ALREADY HAVE GONE? THE ONE PREDICATE ─────────
+ *
+ * Two witnesses, and NEITHER is sufficient alone:
+ *
+ *  · the RECORD this browser wrote ({@link parkedComposeRecord}) — the only one that speaks for a
+ *    row the server still calls `draft`, and for a message with no row at all;
+ *  · the SERVER's own `unverified` on the row — the only one that speaks for a row this browser
+ *    never learned the id of. A press with no row makes the ADAPTER create one; that row is what
+ *    the server marks, and the result carries no id, so nothing here can name it.
+ *
+ * It is one function because the three places that ask were measured DISAGREEING, twice, and each
+ * disagreement was a second copy in a recipient's mailbox. The last one: the reopen and the send
+ * gate both honoured the server's mark while the autosave did not, so two seconds after opening
+ * such a row the save effect decided the message was new, created a row of its own and REPLACED
+ * the hold with it — after which the send gate saw an ordinary row, Send came back on, and one
+ * press sent the message again.
+ *
+ * `rowStatus` is what the mirror says about the row this compose is HOLDING: `null`/`undefined`
+ * when there is no row, or when the mirror cannot say yet (a cold reload). Unknown is not
+ * evidence of a draft, and it is not evidence of a park either — the record decides there, which
+ * is what it is for.
+ */
+export function composeMessageHeld(
+  parked: ParkedIdentity | null,
+  rowStatus: string | null | undefined,
+): boolean {
+  return parked !== null || rowStatus === "unverified";
+}
+
+/**
  * ── WHICH DRAFT ROWS AN UNRESOLVED SEND ON THIS LANE BELONGS TO ─────────────────────────────
  *
  * {@link parkedComposeMessage}'s row half, and the only reading of it: both call sites in the app
