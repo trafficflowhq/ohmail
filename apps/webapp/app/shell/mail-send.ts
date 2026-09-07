@@ -86,7 +86,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import type { EngineMessage, MutationResult, OhmailEngine } from "@ohmail/client-engine";
 import type { ToastFn } from "@ohmail/ui";
-import { clearComposeDraft, composeSessionId, type MailSend } from "./compose";
+import { clearComposeDraft, composeSessionId, readComposeRow, type MailSend } from "./compose";
 import {
   attachSendLockDraft, claimSendLock, legacySendFingerprint_0_14_0, markSendLockUnverified,
   releaseSendLock, resumeSendLock, SEND_LOCK_FORMAT, sendFingerprint, sendIdentity, sendSubject,
@@ -601,6 +601,43 @@ export function sendStateFor(state: SendState, m: MailSend): SendState {
   return unresolvedNames(state, m) ? state : { ...state, phase: "idle" };
 }
 
+/**
+ * ── A ROW THE SERVER ITSELF MARKED UNVERIFIED, HELD BY THIS COMPOSE ─────────────────────────
+ *
+ * The record in this browser is one witness that a send may already have gone. The SERVER's own
+ * `unverified` status on the row is another, and it is the one that survives everything the first
+ * does not: a record this browser never wrote (the row the send created for itself, whose id the
+ * client never learns), a record lost with the storage it lives in, another device's send.
+ * Measured live: such a row is listed in Drafts, opening it took the recovery door, and one press
+ * delivered the message a second time while the server held the first as unverified.
+ *
+ * So a compose HOLDING such a row is refused on the row's status alone, with the same sentence
+ * the record produces — `phase` as well as `unresolved`, because the warning renders off the
+ * phase (`sendStateFor`) and a lock with no sentence is a button that is broken for no stated
+ * reason. Both names go in the intent: the row, and the session holding it, so the refusal
+ * matches whether or not the composer has adopted it.
+ *
+ * A press already in flight is left alone — it is locked for a stronger reason and its own
+ * outcome is on its way.
+ */
+export function heldRowUnverified(
+  state: SendState,
+  heldRow: string | null,
+  rows: ReadonlyArray<{ id: string; status?: string }>,
+  session: string | null,
+): SendState {
+  if (state.phase === "sending" || state.phase === "queued" || state.phase === "sent") return state;
+  if (heldRow === null) return state;
+  const row = rows.find((r) => r.id === heldRow);
+  if (row === undefined || row.status !== "unverified") return state;
+  const subjects = session === null ? [`draft:${heldRow}`] : [`draft:${heldRow}`, `compose:${session}`];
+  return {
+    ...state,
+    phase: "unverified",
+    unresolved: [...(state.unresolved ?? []), { subjects, fp: "" }],
+  };
+}
+
 export function canSend(state: SendState, m: MailSend): boolean {
   /**
    * `sent` joins the two locked phases: it is the beat between the confirmation and the surface
@@ -976,6 +1013,20 @@ export function useMailSend(
         // the lane it was written on — `canSend` reads it, and a reload reads it back off disk.
         else {
           markSendLockUnverified(key, fp, owner.current);
+          /* AND BIND THE ROW THIS SURFACE IS HOLDING, AT THE MOMENT THE RECORD IS WRITTEN.
+             Measured live: a compose pressed with no row of its own is recorded as
+             `compose:<session>`, and the armed autosave's row lands either side of this answer.
+             The create-time attach (`compose-autosave.ts`) catches the row that lands AFTER;
+             this catches the one that landed BEFORE, which nothing did — the record then named
+             no row at all, the row sat in Drafts looking ordinary, and reopening it took the
+             recovery door and sent the message a second time. `m.draftId` first: it is what the
+             press itself carried. */
+          if (key === COMPOSE_SEND_KEY) {
+            attachSendLockDraft(
+              key, sendSubjects(m, sessionOf(key)), m.draftId ?? readComposeRow(owner.current),
+              owner.current,
+            );
+          }
           next = { ...next, unresolved: [{ subjects: sendSubjects(m, sessionOf(key)), fp }] };
         }
       }

@@ -334,16 +334,24 @@ export function useComposeAutosave(opts: {
     // A create with no mailbox would be a 400 the user cannot act on, and the From line is
     // already saying there is nowhere to send from. Nothing is written until there is.
     if (draftId === null && !mailboxId) return;
-    /* NOTHING IS MINTED FOR A MESSAGE THIS BROWSER IS ALREADY WAITING ON — see `parkedHere`.
-       A create here is a SECOND row for a message the durable record already names, and that is
-       the reload half of the duplicate: park a send from a saved draft, reload, and the pause
-       that followed minted `d2` while the record still named `d1`. Both rows were then listed
-       and the one press the surface allowed delivered a second copy.
+    /* NOTHING IS WRITTEN AT ALL FOR A MESSAGE THIS BROWSER IS ALREADY WAITING ON — see
+       `parkedHere`. A create is a SECOND row for a message the durable record already names, and
+       that is the reload half of the duplicate: park a send from a saved draft, reload, and the
+       pause that followed minted `d2` while the record still named `d1`.
 
-       Only the create. An UPDATE to a row this surface already holds is the in-session case and
-       is left exactly as it was — it writes to the one row the message has, and cannot make a
-       second. */
-    if (draftId === null && parkedHere(readComposeRow())) return;
+       AND NOT ONLY THE CREATE, which is what this said and where it was wrong. Measured live on
+       the release candidate: the door that opens a new compose (a contact's Write) MINTS AN EMPTY
+       ROW at once, so the hook is holding THAT row when the parked message is reopened; the pause
+       that followed wrote the parked message's subject and body into the DOOR'S row with a PUT.
+       The parked row itself was never touched — a guard that only watched writes to it saw
+       nothing — while the composer was working on a row the record does not name, so Send lit up
+       and one press delivered a second copy. The reopen releases that row (`AppShell`), and this
+       is the same refusal at the layer the write actually happens in, so a door that forgets to
+       release cannot reach the wire.
+
+       It reads the PERSISTED row, not this hook's state: the persisted row is the message the
+       surface is holding, which is exactly what the door writes and what the reopen restores. */
+    if (parkedHere(readComposeRow())) return;
 
     const timer = window.setTimeout(() => {
       if (inFlight.current) return;

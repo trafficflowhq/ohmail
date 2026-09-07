@@ -121,7 +121,7 @@ import { OhmarchyOffer, useOhmarchyOffer } from "./OhmarchyOffer";
 import type { ApplyFaceAllDevices } from "./FaceRow";
 import { ProfileImportCard, useProfileImport, type ProfileImportTransport } from "./ProfileImportCard";
 import {
-  COMPOSE_SEND_KEY, inlineForwardKey, useMailSend, readReplyDraft, writeReplyDraft,
+  COMPOSE_SEND_KEY, heldRowUnverified, inlineForwardKey, useMailSend, readReplyDraft, writeReplyDraft,
   readReplyMeta, writeReplyMeta,
 } from "./mail-send";
 import { parkedComposeRecord } from "./send-lock";
@@ -3752,7 +3752,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
       const parkedRecord = parkedComposeRecord(
         COMPOSE_SEND_KEY, d.id, held !== null && held === d.id ? composeSessionId() : null,
       );
-      const parked = parkedRecord !== null;
+      /* ── AND THE SERVER'S OWN `unverified` IS A PARK BY ITSELF ────────────────────────────
+         A row the server marked `unverified` IS a send it could not confirm. Recovering it into
+         a fresh send is the duplicate by definition, and the record cannot always speak for it:
+         the send creates its OWN row when the press carried none and the client never learns
+         that id, so the row listed in Drafts belongs to a message this browser holds no record
+         of. Measured live, recipient total 2. The record stays beside this, not replaced by it —
+         it is the only witness for a row the server still calls `draft`. */
+      const parked = parkedRecord !== null || d.status === "unverified";
       /* A DIFFERENT MESSAGE, SO A DIFFERENT COMPOSE SESSION. The id is what parks an unresolved
          send (`compose.ts`), and leaving it in place made one session span every draft this
          surface opened: a send of the FIRST one that came back unverified then parked whichever
@@ -3803,8 +3810,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
            standing — it is named by its row, which is the id being held. */
         recoverySeed.current = null;
         autosave.release();
-        writeComposeRow(parkedRecord.draftId ?? d.id);
-        if (parkedRecord.session !== null) writeComposeSession(parkedRecord.session);
+        writeComposeRow(parkedRecord?.draftId ?? d.id);
+        if (parkedRecord?.session != null) writeComposeSession(parkedRecord.session);
       } else if (d.status === "draft") {
         recoverySeed.current = null;
         autosave.adopt(d.id, seeded);
@@ -7170,7 +7177,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
                    render, so a signature is never drawn (or serialized) from a guess. */
                 signatures={consent.signaturesKnown ? consent.signatures : undefined}
                 plan={plan}
-                send={mailSend.stateOf(COMPOSE_SEND_KEY)}
+                /* The row this compose is HOLDING decides too, not only the jar — see
+                   `heldRowUnverified`. Read at render from the drafts the mirror holds, so it
+                   arms and disarms with the data rather than with a flag somebody has to
+                   remember to clear. */
+                send={heldRowUnverified(
+                  mailSend.stateOf(COMPOSE_SEND_KEY), readComposeRow(), drafts, composeSessionId(),
+                )}
                 onSend={sendCompose}
                 onSendLater={sendCompose}
                 onCancel={cancelCompose}

@@ -884,18 +884,25 @@ changing, and not an edit. What does is replacing the message — opening anothe
 a contact from their card, or following a mail link from outside the app. Each of those starts a
 new composing session, so the message that replaces the unconfirmed one sends normally.
 
-The unconfirmed one is blocked again when you come back to it, and here is exactly what "come back
-to it" covers, because the block is only as good as the ways of returning it survives: opening it
-from Drafts; opening it from Drafts after you have written something else in between; and
-reloading the tab with it still open. In each of those the app puts the message's own identity
-back — the composing session it was written under, and the draft it is saved to — rather than
-treating what is on screen as a new message. It stays blocked until the send is resolved or you
-discard it.
+A message the server could not confirm stays held wherever you come back to it — from Drafts,
+after another message, after a reload. In each of those the app puts the message's own identity
+back, rather than treating what is on screen as a new message: the composing session it was
+written under, and the draft it is saved to. It stays held until the send is resolved or you
+discard it, and nothing is written to your account for it in the meantime: the drafts it already
+has are left exactly as they are, and no new one is made.
+
+Two of those returns used to end in a second copy, and both are closed here. Coming back after
+writing something else in between poured the held message into the draft the app had made for that
+other message, and worked on it from there — a draft the record could not recognise, so the block
+lifted. And a message sent before its first draft had been saved ends up with TWO drafts on the
+account: the send makes one of its own, the composer's pending save makes another moments later.
+Opening either of them is now recognised as the same held message. A draft the server itself marks
+as unconfirmed is held on that alone, whatever this browser remembers — which also covers the copy
+the send made, whose existence this browser never learned of.
 
 One case is not covered and is stated rather than left to be found: if the app cannot read its own
-storage at all — a browser configured to refuse it — it cannot see the record either, and the
-block cannot be applied. Nothing else about the app works in that state, but this is the part where
-the cost is a message sent twice.
+storage at all — a browser configured to refuse it — it cannot see its own record of the send. A
+draft the server marks as unconfirmed is still held; one it does not is not.
 
 Reopening or reloading an unconfirmed message keeps it parked. A message whose send could not be
 confirmed stays in Drafts — that row is the only copy of it — and opening it from there used to be
