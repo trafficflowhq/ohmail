@@ -399,6 +399,17 @@ this install organizes only some of them, the request is no longer finished once
 is done — it stays open until every mailbox has been gone through, so a mailbox you start
 organizing later still has its existing mail considered.
 
+### A message you move back yourself stays where you put it
+
+Drag a message out of one of ohmail's folders and back into your inbox in another mail client, and
+that is where it stays. While this install was only reading the mailbox, a move like that was
+recorded as another install's filing rather than yours — and a rule you then applied to existing
+mail could move the message straight back out.
+
+A move you make in your own client is recorded as yours, and no rule undoes it. The same case seen
+from the other side is the trade: a message another install re-files while this one is reading is
+also kept where it now is, rather than counted as a placement a later rule may revisit.
+
 ### Screener decisions from a reader no longer buy advice nobody can use
 
 Asking for an AI suggestion on a mailbox you only read used to spend credits whatever the state of

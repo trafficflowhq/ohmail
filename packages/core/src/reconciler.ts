@@ -6,17 +6,28 @@ export type ReconcileAction =
   | {
       type: "adopt_external";
       newDesired: string;
-      /**
-       * WHOSE placement is being adopted — `'peer'` when a READER observed another install of this
-       * account file the message into a folder ohmail organizes; absent for everything else, which
-       * is the user's own hand and commits `'external'`.
+      /* ── THERE IS NO `attribution` HERE, AND THE ABSENCE IS THE DECISION ───────────────────
        *
-       * Absent by default on purpose: `reconcile()` below never sets it, so every ORGANIZER path
-       * keeps the behaviour it had. Only the reader seam in `pipeline.ts` supplies it. See
-       * `pipeline.ts#readerAdoption` for why calling a reader's adoption `'external'` froze the
-       * message past the reach of every mover.
+       * This member carried `attribution?: "peer"` so that a READER observing a message it
+       * already holds move into a folder ohmail organizes could record "another install of this
+       * account put it there". One producer supplied it (`pipeline.ts`'s reader arm) and one
+       * reader consumed it (`commitChange`), and between them they wrote `last_set_by = 'peer'`
+       * for a person dragging a message from `ohmail/Reads` back into `INBOX` in their own mail
+       * client — `INBOX` is one of the six organized folders, so the folder test could not tell
+       * the two apart. `rule-retro` admits `'peer'`, so a rule pressed afterwards moved the
+       * message straight back out of the inbox the person had just filed it into.
+       *
+       * Adopting an EXISTING message is now always the person's hand (`'external'`), because
+       * nothing on the wire says otherwise: the adapter reports that a folder changed and no more,
+       * the destination cannot answer it (`INBOX` is exactly where a person drags mail), and the
+       * lease says another install EXISTS, never that it moved THIS message. Reinstating the field
+       * therefore needs a new per-message fact, not a new inference — and until there is one, a
+       * field with no producer would leave `commitChange` with a branch nothing can reach, which
+       * the next reader would take for a guarantee.
+       *
+       * The NEW-message seam is untouched and still records `'peer'` (`NewPlan.adoption`): a
+       * message this install has never held carries no placement of ours for it to override.
        */
-      attribution?: "peer";
     };
 
 /**

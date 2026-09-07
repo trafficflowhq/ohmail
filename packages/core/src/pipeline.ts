@@ -426,10 +426,13 @@ export interface PlanDeps {
    *    {@link readerAdoption} for why calling the second one `'external'` froze the message past
    *    the reach of every mover. A reader never writes `'us'`. Either way it ADOPTS: `desired` is
    *    the arrival folder and no move is ever issued.
-   *  · an EXISTING message the reader finds somewhere new is adopted the same way, and carries the
-   *    same distinction through `ReconcileAction`'s `attribution`. BOTH seams, or the shape a
-   *    demoted organizer leaves behind depends on whether the message was first seen at the gate
-   *    or moved there afterwards.
+   *  · an EXISTING message the reader finds somewhere new is adopted too, and as `'external'` —
+   *    the person's hand — whatever folder it moved into. It is NOT the same question as the
+   *    arrival above: a message we already hold carries a placement of ours, and a move away from
+   *    it is the shape of somebody overriding that placement. Calling it `'peer'` read a drag from
+   *    `ohmail/Reads` back into `INBOX` as another install's filing, which let a pressed rule undo
+   *    it; the argument, and what evidence reinstating `'peer'` would need, is written where
+   *    `readerAttribution` used to be.
    *  · NO rules are read, NO known-sender set is read, NO classifier is constructed, NO credit is
    *    debited, NO `routing_decisions` row is written and NO learning signal is recorded. Not
    *    "the classifier happens to be undefined" — the branch is never entered, which is why the
@@ -782,19 +785,37 @@ function readerAdoption(arrivalFolder: string): { adoption?: "peer" } {
   return isOrganizedFolder(arrivalFolder) ? { adoption: "peer" } : {};
 }
 
-/**
- * The same question for an EXISTING message — see {@link readerAdoption} for the whole argument.
+/* ── AND THE SAME QUESTION FOR AN EXISTING MESSAGE, WHICH HAS A DIFFERENT ANSWER ─────────────
  *
- * Two spellings because the answer rides two different shapes: {@link NewPlan.adoption} on a plan
- * for mail we are ingesting, and `ReconcileAction`'s `attribution` on the adopt action for mail we
- * already hold. Both delegate to the one predicate, so the two seams cannot drift apart — and both
- * MUST exist: a demoted organizer meets a message either as new-in-`ohmail/Screener` or as one it
- * already held that has since moved there, and with only one seam changed the row it leaves behind
- * would depend on which of those happened first.
+ * `readerAttribution(arrivalFolder)` used to stand here, returning `{ attribution: 'peer' }` for
+ * the same six folders, on the argument that both reader seams must agree or the row a demoted
+ * organizer leaves behind would depend on whether the message was first seen at the gate or moved
+ * there afterwards. The two seams are not the same question, and reading them as one cost a
+ * person's own filing:
+ *
+ *   they drag a message out of `ohmail/Reads` back into `INBOX` in Apple Mail. `INBOX` is one of
+ *   the six organized folders, so the folder test answered true, the reader recorded the placement
+ *   as another install's (`'peer'`), and `rule-retro` — the one pass that admits `'peer'` — moved
+ *   it back out of the inbox the next time a rule of theirs was pressed. Their hand, undone by
+ *   their own rule, and nothing anywhere says so.
+ *
+ * `'peer'` is a CLAIM about who acted, and for a message we already hold there is no evidence for
+ * it: the adapter reports that a folder changed and nothing about who changed it, the destination
+ * folder cannot answer it (`INBOX` is precisely where a person drags mail), and the organizer lease
+ * says another install EXISTS, never that it moved THIS message. So an existing message a reader
+ * finds somewhere new is adopted as `'external'` — the person's hand — which is the direction that
+ * fails safe: their filing is kept and no pass moves it again.
+ *
+ * ONE NAMED CONSEQUENCE, so it is not rediscovered as a bug: a genuine peer move of a message we
+ * already hold — the new organizer files it from `INBOX` into `ohmail/Reads` while we watch — is
+ * also recorded `'external'`, and a pressed retro rule will not reach it afterwards. That is the
+ * import hold's bargain, taken deliberately: a placement made on the master is kept as it stands.
+ * Recovering the distinction needs a per-message fact on the wire, not a better inference.
+ *
+ * {@link readerAdoption} above is untouched: a message this install has NEVER held carries no
+ * placement of ours for a `'peer'` record to override, and that seam is what unfroze the mail
+ * waiting at the gate.
  */
-function readerAttribution(arrivalFolder: string): { attribution?: "peer" } {
-  return isOrganizedFolder(arrivalFolder) ? { attribution: "peer" } : {};
-}
 
 /** A tiny, sensitivity-safe digest of routing-relevant headers (never the body). */
 function headersDigest(normalized: NormalizedMessage): string {
@@ -1438,9 +1459,10 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
     ? (change.locator.folder === state.desiredFolder
       ? { type: "none" }
       : {
+        // No attribution rides along: adopting a message we ALREADY HOLD is the person's own hand
+        // (`'external'` at the commit). See the block where `readerAttribution` used to be.
         type: "adopt_external",
         newDesired: change.locator.folder,
-        ...readerAttribution(change.locator.folder),
       })
     : unexpungedSource
       ? { type: "move", to: state.desiredFolder }
@@ -1935,11 +1957,14 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
     }
     case "adopt_external": {
       const to = e.action.newDesired;
-      // `?? "external"` — the ORGANIZER's adoption, which is a person moving their own mail in
-      // their own client and is exactly what `'external'` is for. Only the reader seam supplies
-      // `attribution`, and only for a folder ohmail organizes; see {@link readerAdoption}.
+      // `'external'` unconditionally, for an organizer and a reader alike: adopting a message we
+      // already hold means it moved to a folder we did not choose, and the only account of that
+      // which the wire supports is the person's own hand. The reader seam used to override this
+      // with `'peer'`, which read a drag from `ohmail/Reads` into `INBOX` as another install's
+      // filing and let a pressed rule undo it — see the block where `readerAttribution` was, and
+      // `reconciler.ts#ReconcileAction` for why the field is gone rather than merely unset.
       await repo.upsertFolderState(e.messageId, {
-        desiredFolder: to, observedFolder: to, lastSetBy: e.action.attribution ?? "external",
+        desiredFolder: to, observedFolder: to, lastSetBy: "external",
       });
       // The tombstone was already cleared before the switch (every arrival shape clears it, not
       // only this arm — see the block above); the `move` change below carries the live entity,
