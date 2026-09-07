@@ -173,6 +173,23 @@ export type BulkAction =
 type BarPanel = MessageBarPanel;
 
 /**
+ * WHICH CONTROL A BAR PANEL WAS OPENED FROM, so cancelling puts the keyboard back on it.
+ *
+ * A KIND and not the element, and that is forced rather than chosen: the panel REPLACES the row,
+ * so the button that was pressed is unmounted while the strip is up and the node the press came
+ * from is detached by the time the cancel runs. `element.focus()` on a detached node does nothing
+ * and reports nothing, which is the same silence the bug being fixed here already had. The row's
+ * own refs are re-bound on the render that brings the row back, so the restore reads them from an
+ * effect after that render rather than from the handler.
+ *
+ * `"more"` is the disclosure menu — Delete's only door, and where Resurface and Move stand once
+ * the bar is narrow enough to fold them. No record at all means nothing in this bar opened the
+ * panel: `m` and `d` open it from the shell's keymap, and a key press has no control to go back
+ * to, so the keyboard stays where the person left it.
+ */
+type PanelTrigger = "resurface" | "move" | "more";
+
+/**
  * THE OPEN PANEL, RESOLVED THROUGH THE CHROME WHERE A SHELL PROVIDES ONE — the reply-draft
  * rule (`message-chrome.tsx` header) applied to the bar's strip: this bar is mounted in the
  * reading column AND the reader sheet (and on the open stream card), and a Move row opened
@@ -310,12 +327,47 @@ function ActionBar({
   const chrome = useMessageChrome();
   /** The runtime density measurement — which groups ACTUALLY fit; see `bar-density.ts`. */
   const density = useBarDensity();
+  /**
+   * MAY THE DELETE CONFIRM BE ON SCREEN AT ALL — the flag, and the mirror actually holding the row.
+   *
+   * Hoisted out of the render conditional below because the effect beside it has to ask the SAME
+   * question, and two spellings of "may this strip be drawn" is exactly how the strip and the state
+   * that says it is open come to disagree. One derivation, read from both places.
+   */
+  const deleteConfirmAdmitted =
+    chrome.foldersEnabled === true && chrome.mirrorHolds?.(message.id) !== false;
+
   /** The delete confirm's focus target (Cancel — the safe answer) and its described note. */
   const deleteCancelRef = useRef<HTMLButtonElement>(null);
   const deleteNoteId = useId();
   useEffect(() => {
     if (panel === "delete") deleteCancelRef.current?.focus();
   }, [panel]);
+
+  /**
+   * A CONFIRM THE GATE HAS CLOSED UNDER IS WITHDRAWN, NOT REMEMBERED.
+   *
+   * "Use folders" going off, or the row leaving the local mirror, while the delete strip is up
+   * left `panel === "delete"` standing with nothing drawn for it. The bar fell through to its
+   * resting row, which is correct and is not the defect — the defect is what the STATE then did:
+   * the shell's Escape list has the open bar panel above the reply editor and the reader (see
+   * `AppShell`'s `escapeLayers`), so the next Escape was spent closing a layer nobody could see
+   * and the reader stayed open. Pressing Escape twice to leave a message is indistinguishable
+   * from a key that did not register.
+   *
+   * The strip IS the ceremony, so when it may no longer be drawn the question is withdrawn: if
+   * the gate comes back, the confirmation does not reappear behind the reader's back — Delete is
+   * pressed again. That is the only reading that cannot delete mail somebody did not just ask to
+   * delete, and it is the same one-dispatch-site rule the strip already holds.
+   *
+   * An EFFECT and not a render-time write. The fall-through below is unchanged and still writes
+   * nothing while rendering; `onPanel` is in the dependency list because it closes over the
+   * message id and the chrome's setter, and a stale closure here would clear a different
+   * message's panel.
+   */
+  useEffect(() => {
+    if (panel === "delete" && !deleteConfirmAdmitted) onPanel(null);
+  }, [panel, deleteConfirmAdmitted, onPanel]);
   /* The `m`/`d` keys themselves are declared at the SHELL (AppShell's global map, beside
      r/a/e/b/s) so the sheet documents them even while no bar is mounted — "a shortcut that
      vanishes from the documentation when the list is empty is a shortcut nobody learns"
@@ -324,6 +376,20 @@ function ActionBar({
   const moveFirstRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (panel === "move") moveFirstRef.current?.focus();
+  }, [panel]);
+  /**
+   * AND RESURFACE LANDS THE SAME WAY — on "Now", its first control.
+   *
+   * It was the one ceremony with no focus line at all: Move focuses its first destination, the
+   * delete ask focuses Cancel, and opening the horizon chooser left the keyboard on a button that
+   * had just unmounted. Focus fell to the document, so the chooser could not be answered from the
+   * keyboard without Tabbing in from the top of the page, and nothing announced that a question
+   * had appeared. "Now" is first in the strip and is the one answer that costs nothing to change
+   * your mind about, which makes it the right landing for `b` then ↵.
+   */
+  const resurfaceFirstRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (panel === "resurface") resurfaceFirstRef.current?.focus();
   }, [panel]);
   /** Hoisted above `toggleRead`, which needs it to decide WHICH key it is standing in for. */
   const read = !message.unread;
@@ -383,6 +449,62 @@ function ActionBar({
 
   // A message swap must not leave a menu open over a different message's verbs.
   useEffect(() => setMenuOpen(false), [message.id]);
+
+  /**
+   * ── CANCELLING A PANEL PUTS THE KEYBOARD BACK ON THE CONTROL THAT OPENED IT ────────────────
+   *
+   * Three ceremonies open a strip over the bar and each of them focuses INTO it (Cancel for the
+   * delete ask, the first destination for Move, "Now" for Resurface). Cancelling did the opposite
+   * of opening: the strip unmounted, the row came back, and focus was on nothing — a keyboard user
+   * who opened Resurface and changed their mind was returned to the top of the document, with the
+   * bar they had been operating several Tab stops away.
+   *
+   * The trigger is recorded on the way IN, and the restore happens in an effect on the render that
+   * brings the row back — see {@link PanelTrigger} for why the element itself cannot be held. The
+   * message id rides along because this bar is mounted more than once (the reading column and the
+   * reader sheet) over a panel the chrome keys by message: a cursor move clears the panel with
+   * nobody having cancelled anything, and a restore then would take the keyboard to a DIFFERENT
+   * message's Resurface button. A recorded trigger belongs to the message it was pressed on, or
+   * to nothing.
+   *
+   * AN ANSWER IS NOT A CANCEL. Choosing a destination, a horizon or Delete clears the record, so
+   * the keyboard is not sent back to a verb that has just been spent on a message which has moved
+   * out from under it. That is the behaviour those three already had and it is deliberately
+   * unchanged here.
+   *
+   * ESCAPE GETS THE SAME RESTORE FOR FREE, and that is the reason this is a transition and not a
+   * callback: the shell closes the innermost layer by setting the panel to null itself
+   * (`AppShell`'s `escapeLayers`), never through anything in this file, so a restore hung off the
+   * Cancel button's handler would have covered the mouse and left the key that people actually
+   * use unfixed.
+   */
+  const panelTriggerRef = useRef<{ from: PanelTrigger; messageId: string } | null>(null);
+  /** The row's own Resurface and Move buttons, bound on the VISIBLE row only — see `rowGroups`. */
+  const resurfaceRef = useRef<HTMLButtonElement>(null);
+  const moveRef = useRef<HTMLButtonElement>(null);
+  const openPanel = (next: BarPanel, from: PanelTrigger): void => {
+    panelTriggerRef.current = { from, messageId: message.id };
+    onPanel(next);
+  };
+  /** The strip's own question was ANSWERED: no restore, for the reason stated above. */
+  const answerPanel = (): void => {
+    panelTriggerRef.current = null;
+    onPanel(null);
+  };
+  /** Cancelled: the record stands, and the effect below spends it on the render after this one. */
+  const cancelPanel = (): void => onPanel(null);
+  useEffect(() => {
+    if (panel !== null) return;
+    const opener = panelTriggerRef.current;
+    if (opener == null) return;
+    panelTriggerRef.current = null;
+    if (opener.messageId !== message.id) return;
+    const back =
+      opener.from === "resurface" ? resurfaceRef.current
+        : opener.from === "move" ? moveRef.current
+          : moreRef.current;
+    back?.focus();
+  }, [panel, message.id]);
 
   /**
    * THE RESURFACE CHOOSER'S DATE PICKER — open, and the capsule it hangs from. A `DatePicker`
@@ -458,7 +580,14 @@ function ActionBar({
    * opens the chooser rather than clearing the pin.
    */
   const pile = message.triage?.state;
-  const defer = (
+  /**
+   * A FUNCTION OF `measure`, for the reason `rowGroups` is one: the row is rendered twice, once
+   * visibly and once as the density measurement's inert copy, and React binds a ref to the LAST
+   * render that claims it. Held as a shared element, `resurfaceRef` would point at the invisible
+   * copy — which is the trap the comment at `rowGroups` already names for `moreRef`, arrived at
+   * from the other direction by a ref that has to be focusable.
+   */
+  const defer = (measure: boolean) => (
     <>
       {/* "Later", not "Answer Later". Inside a control whose own name is "Not now", each
           segment need only carry its HORIZON — the shared idea is said once, by the group,
@@ -487,10 +616,11 @@ function ActionBar({
           keyboard's quick default (the shell resolves plain `resurface` to next Friday), and
           the panel is where a specific when is chosen. */}
       <button
+        ref={measure ? undefined : resurfaceRef}
         type="button"
         className="abar-b"
         aria-pressed={pile === "bubbled_up"}
-        onClick={() => onPanel("resurface")}
+        onClick={() => openPanel("resurface", "resurface")}
       >
         {t("actionResurface")}
         <Key chord="b" />
@@ -536,7 +666,7 @@ function ActionBar({
      which is a different question and had no control anywhere outside the Screener.
      The anchor is the BUTTON — not a list row found by selector — because in the reader
      sheet the row is behind the overlay and a popover would open under it. */
-  const file = (
+  const file = (measure: boolean) => (
     <>
       <button
         type="button"
@@ -546,7 +676,12 @@ function ActionBar({
         {tr("action")}
         <Key chord="s" />
       </button>
-      <button type="button" className="abar-b" onClick={() => onPanel("move")}>
+      <button
+        ref={measure ? undefined : moveRef}
+        type="button"
+        className="abar-b"
+        onClick={() => openPanel("move", "move")}
+      >
         {t("actionMove")}
         <Key chord="m" />
       </button>
@@ -571,7 +706,7 @@ function ActionBar({
     const tomorrow = tomorrowNine(now);
     const nextWeek = nextWeekNine(now);
     const pick = (iso: string) => {
-      onPanel(null);
+      answerPanel();
       onAction(`resurface:${iso}`);
     };
     return (
@@ -579,10 +714,11 @@ function ActionBar({
         <div className="abar-panel">
           <span className="abar-lab">{t("resurfaceWhen")}</span>
           <button
+            ref={resurfaceFirstRef}
             type="button"
             className="abar-b abar-solo"
             onClick={() => {
-              onPanel(null);
+              answerPanel();
               onAction("resurface_now");
             }}
           >
@@ -623,7 +759,7 @@ function ActionBar({
               onClose={closeDate}
             />
           ) : null}
-          <button type="button" className="abar-b" onClick={() => onPanel(null)}>
+          <button type="button" className="abar-b" onClick={cancelPanel}>
             {t("moveCancel")}
           </button>
         </div>
@@ -644,14 +780,14 @@ function ActionBar({
               /* Where `m` lands focus — the first destination, so `m` then ↵ files. */
               ref={i === 0 ? moveFirstRef : undefined}
               onClick={() => {
-                onPanel(null);
+                answerPanel();
                 onAction(`move:${v}`);
               }}
             >
               → {PLACE_LABEL[v] ?? v}
             </button>
           ))}
-          <button type="button" className="abar-b" onClick={() => onPanel(null)}>
+          <button type="button" className="abar-b" onClick={cancelPanel}>
             {t("moveCancel")}
           </button>
         </div>
@@ -667,9 +803,12 @@ function ActionBar({
    * un-delete on the wire, so the question is the ceremony and no Undo follows. The ONLY
    * dispatch site of `"delete"` is the confirm button here.
    */
-  if (panel === "delete" && chrome.foldersEnabled === true && chrome.mirrorHolds?.(message.id) !== false) {
+  if (panel === "delete" && deleteConfirmAdmitted) {
     // Flag off with a stale "delete" panel falls THROUGH to the resting bar below — the strip
-    // simply is not drawn, and nothing here writes state during render.
+    // simply is not drawn, and nothing here writes state during render. What ALSO happens, one
+    // commit later and from an effect rather than from here, is that the panel is put back to
+    // resting: a strip that may not be drawn is a question nobody can see, and the shell's Escape
+    // list would spend a press closing it. See `deleteConfirmAdmitted` above.
     return (
       <div className="abar">
         {/* `aria-describedby` binds the consequence sentence to the dialog, and focus moves
@@ -688,14 +827,14 @@ function ActionBar({
             type="button"
             className="abar-b abar-solo abar-danger"
             onClick={() => {
-              onPanel(null);
+              answerPanel();
               onAction("delete");
             }}
           >
             {t("actionDelete")}
             <Key chord="d" />
           </button>
-          <button type="button" className="abar-b" ref={deleteCancelRef} onClick={() => onPanel(null)}>
+          <button type="button" className="abar-b" ref={deleteCancelRef} onClick={cancelPanel}>
             {t("moveCancel")}
           </button>
         </div>
@@ -744,7 +883,7 @@ function ActionBar({
       : []),
     { id: "later", group: "defer", label: t("actionLater"), run: () => { closeMenu(); onAction("later"); } },
     { id: "aside", group: "defer", label: t("actionSetAside"), run: () => { closeMenu(); onAction("aside"); } },
-    { id: "resurface", group: "defer", label: t("actionResurface"), run: () => { closeMenu(); onPanel("resurface"); } },
+    { id: "resurface", group: "defer", label: t("actionResurface"), run: () => { closeMenu(); openPanel("resurface", "more"); } },
     /**
      * TAG — THE FOLDED HALF OF THE ROW BUTTON, and it used to be the only half.
      *
@@ -776,7 +915,7 @@ function ActionBar({
         } as MoreMenuItem]
       : []),
     { id: "screen", group: "file", label: tr("action"), run: () => { setMenuOpen(false); onScreen(moreRef.current); } },
-    { id: "move", group: "file", label: t("actionMove"), run: () => { closeMenu(); onPanel("move"); } },
+    { id: "move", group: "file", label: t("actionMove"), run: () => { closeMenu(); openPanel("move", "more"); } },
     {
       id: "draft",
       label: t("actionDraftReply"),
@@ -790,13 +929,18 @@ function ActionBar({
      * a destructive verb does not belong where a stray click can land. It opens the CONFIRM
      * strip; only the strip dispatches (the one-dispatch-site rule the mobile parity test pins
      * on its side).
+     *
+     * The predicate is the same NAME the strip's own conditional reads, not the same expression
+     * typed twice. The two conditionals stay independent — which is the point of the header at
+     * the strip: a stale strip must re-ask the live question rather than trust that this item was
+     * once offered — and there is now one place where the question is written down.
      */
-    ...(chrome.foldersEnabled === true && chrome.mirrorHolds?.(message.id) !== false
+    ...(deleteConfirmAdmitted
       ? [{
           id: "delete",
           label: t("actionDelete"),
           icon: <Icon name="trash" size={13} />,
-          run: () => { closeMenu(); onPanel("delete"); },
+          run: () => { closeMenu(); openPanel("delete", "more"); },
         } as MoreMenuItem]
       : []),
   ];
@@ -878,7 +1022,7 @@ function ActionBar({
           role="group"
           aria-label={t("groupDefer")}
         >
-          {defer}
+          {defer(measure)}
         </div>
 
         {/* Between the horizons and filing — see `tag` above for why it is its own group and
@@ -890,7 +1034,7 @@ function ActionBar({
           role="group"
           aria-label={t("groupFile")}
         >
-          {file}
+          {file(measure)}
         </div>
 
         <div className="abar-g abar-read-g">

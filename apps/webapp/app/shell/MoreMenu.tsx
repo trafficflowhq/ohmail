@@ -106,11 +106,94 @@ export function MoreMenu({
     [],
   );
 
+  /**
+   * THE ITEM THE KEYBOARD IS ON, REMEMBERED — because `document.activeElement` cannot answer it
+   * after the fact.
+   *
+   * When a rule makes the focused element `display: none`, the browser BLURS it: by the time
+   * anything can react, focus is on `<body>` and nothing on screen knows the menu ever had it.
+   * (A test DOM does not blur — it has no layout — so a repair written against `activeElement`
+   * alone passes in a harness and does nothing in the product, which is the wrong way round.) A
+   * `focusin` listener records the item while it is still the item.
+   *
+   * This effect is declared FIRST on purpose: effects run in declaration order, so the listener
+   * is attached before the effect below moves focus into the menu, and the opening focus is
+   * recorded like every other.
+   */
+  const heldRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    const root = rootRef.current;
+    if (root == null) return;
+    const onFocusIn = (e: FocusEvent): void => {
+      const el = e.target as HTMLElement | null;
+      if (el?.getAttribute("role") === "menuitem") heldRef.current = el as HTMLButtonElement;
+    };
+    root.addEventListener("focusin", onFocusIn);
+    return () => root.removeEventListener("focusin", onFocusIn);
+  }, []);
+
   // Opening a menu puts the keyboard in it. Without this the reader would press More and then
   // have to Tab into what they just opened, which for a menu is not a disclosure at all.
   useEffect(() => {
     live()[0]?.focus();
   }, [live]);
+
+  /**
+   * ── THE ADMITTED SET MOVES UNDER THE MENU, AND THE KEYBOARD MOVES WITH IT ──────────────────
+   *
+   * Widening the reading column hands a group back to the ROW, and the admission rules switch that
+   * group's menu half off — while the menu is open, possibly with the keyboard on the very item
+   * that leaves. Nothing repaired that: the item was hidden, the browser blurred it, and focus
+   * landed on the document. Arrow keys then did nothing (the menu's own handler is on the menu,
+   * and the keyboard was no longer in it) and the next letter typed was not the menu's — it
+   * reached the shell's document-level shortcuts and acted on the mail underneath.
+   *
+   * NO DEPENDENCY ARRAY, deliberately. What changed is a computed style, decided by a container
+   * query this component cannot subscribe to; the bar re-renders when the measurement publishes a
+   * new answer (`bar-density.ts` holds it as state), and this asks the DOM the same question
+   * `live()` already asks. A dependency naming the admitted set would be a SECOND copy of the
+   * admission decision, kept in step by hand — the two-mechanism defect the static breakpoints
+   * were retired for.
+   *
+   * It acts only when the item the menu was HOLDING has gone, and only while nothing outside the
+   * menu has deliberately taken the keyboard since. Focus somebody moved on purpose is not taken
+   * back: this repairs a reference the stylesheet invalidated and is not a second "put the
+   * keyboard in the menu".
+   */
+  useEffect(() => {
+    const held = heldRef.current;
+    if (held == null) return; // the menu never had the keyboard
+    const standing = live();
+    if (standing.includes(held)) return; // the item is still admitted
+    const active = document.activeElement;
+    const elsewhere =
+      active != null
+      && active !== document.body
+      && active !== document.documentElement
+      && !(rootRef.current?.contains(active) ?? false);
+    if (elsewhere) {
+      heldRef.current = null;
+      return;
+    }
+    if (standing.length === 0) {
+      // Nothing is left behind the disclosure, so it is not a disclosure any more. The CALLER
+      // returns focus to the trigger — the same contract every other dismissal here relies on.
+      heldRef.current = null;
+      onClose();
+      return;
+    }
+    /* The NEAREST survivor by DOM order — forward first, then back — so the keyboard lands where
+       the eye already is rather than at the top of a list that has just changed shape. Read from
+       ALL the items, not from `standing`, because the one being left is not in `standing`. */
+    const all = [
+      ...(rootRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? []),
+    ];
+    const at = all.indexOf(held);
+    const next =
+      all.slice(at + 1).find((el) => standing.includes(el))
+      ?? all.slice(0, Math.max(at, 0)).reverse().find((el) => standing.includes(el));
+    (next ?? standing[0]).focus();
+  });
 
   /**
    * ── DISMISS ON A PRESS OUTSIDE — AND THE TRIGGER IS NOT OUTSIDE ────────────────────────────
@@ -185,7 +268,35 @@ export function MoreMenu({
     if (e.key === "Escape") {
       claim();
       onClose();
+      return;
     }
+    /**
+     * ── AND EVERY OTHER SINGLE-CHARACTER KEY IS THE MENU'S TOO ────────────────────────────
+     *
+     * The paragraph above states the rule — while a menu is open its keys belong to it — and the
+     * code kept it only for the five keys the menu ACTS on. Everything else went to the document,
+     * which is where the shell's mail shortcuts live: with this menu open and the keyboard in it,
+     * `a` parked the message underneath, `e` set it aside, `u` marked it unread. The menu was
+     * still standing afterwards, over mail that had just changed under it, and nothing on screen
+     * connected the two.
+     *
+     * A SINGLE CHARACTER WITH NO ⌘/⌃/⌥ is exactly the alphabet those shortcuts are written in —
+     * a, e, r, b, u, x, j, k, t, s, m, d, and the ⇧ pairs, which arrive as `"I"` and `"F"` with
+     * only `shiftKey` set. What it leaves alone is deliberate, and each exclusion has its own
+     * reason rather than being a shorter list:
+     *
+     *   · `" "` is one character and is how a keyboard presses the focused item — claiming it
+     *     would `preventDefault` the activation and make the menu unusable without a mouse;
+     *   · `Enter`, `Tab` and the function keys are longer than one character, which is what
+     *     keeps Enter's activation, Tab's way out of the menu and F5 intact;
+     *   · a modified combo belongs to the application or the browser (⌘K opens the palette) and
+     *     a menu has no claim on it.
+     *
+     * Same `claim()` as the acting keys, so the same `stopImmediatePropagation` reasoning above
+     * applies: `stopPropagation` alone would not stop the registry's listener, which sits on the
+     * same node as React's root container in the product.
+     */
+    if (e.key.length === 1 && e.key !== " " && !e.metaKey && !e.ctrlKey && !e.altKey) claim();
   };
 
   return (

@@ -231,6 +231,31 @@ navigate away from mail behind the form while the form itself stayed empty. Esca
 and the modifier shortcuts (such as ⌘K) still work over the form, and so do the shortcut sheet
 (`?`) and the send-later number keys.
 
+### Four small fixes in the reading pane
+
+**The More menu closes when you press More again.** A pointer press begins before the click lands,
+and the menu was dismissing itself on the first half of the press and reopening on the second — so
+the first thing anybody tries in order to put a menu away did nothing at all.
+
+**A delete question that stops applying is put away properly.** The confirmation stands only while
+folders are in use and the message is held on this machine. When one of those changed while the
+question was on screen, the question disappeared but something invisible stayed open behind it, and
+the next Escape was spent on that instead of closing the message. Escape now leaves the message —
+and if the setting comes back, the question is not restored behind your back: you press Delete
+again.
+
+**Resurface, Move and Delete keep the keyboard.** Opening the Resurface chooser left the keyboard on
+a control that had just gone, so the chooser could not be answered without tabbing in from the top
+of the page; it starts on its first choice now, as Move and Delete already did. And cancelling any
+of the three — with the button or with Escape — puts the keyboard back on the control that opened
+it, instead of dropping it at the top of the page.
+
+**Widening the window no longer loses the open menu.** As the reading area gets wider the bar takes
+verbs back out of the More menu and into the row. If the keyboard was on one of those verbs the menu
+lost it: the arrow keys stopped working, and the next letter typed acted on the mail behind the menu
+instead. The keyboard now moves to the nearest verb still in the menu, or back to the button if the
+menu has emptied — and while a menu is open, a letter belongs to the menu.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
