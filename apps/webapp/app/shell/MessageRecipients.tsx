@@ -161,11 +161,12 @@ export function MessageRecipients({
                  */
                 e.stopPropagation();
                 contactAnchor.current = e.currentTarget;
-                /* A TRIGGER TOGGLES — ported from `MessageCard` with the extraction,
-                   because moving the code this fix lives in would otherwise have dropped it in
-                   silence. Setting the state unconditionally re-opened the popover an open chip
-                   was already showing; and once the chip is excluded from the menu's
-                   outside-press listener (below, via `anchor`), nothing dismissed it at all. */
+                /* A TRIGGER TOGGLES. Setting the state unconditionally re-opened the popover
+                   an open chip was already showing; and once the chip is excluded from the
+                   menu's outside-press listener (below, via `anchor`), nothing dismissed it at
+                   all. The two halves sit on DIFFERENT events — the dismiss on `mousedown`, this
+                   toggle on `click` — so a test that presses with `click` alone exercises only
+                   one of them; see `test/reads-recipients.test.tsx`. */
                 if (contact?.key === key) { setContact(null); return; }
                 setContact({
                   key,
@@ -273,9 +274,9 @@ export function MessageRecipients({
         <ContactPopover
           state={contact}
           /* THE CHIP IS THE TRIGGER, so the menu's outside-press dismiss must not count a press
-             on it as "outside" — otherwise the toggle above closes and the listener immediately
-             re-opens. Ported with the toggle from `MessageCard`; `MoreMenu` reads it as
-             `anchor?.contains(target)`. */
+             on it as "outside" — otherwise the listener closes on `mousedown` and the toggle
+             above re-opens on the `click` that follows, and the chip can never close what it
+             opened. `MoreMenu` reads this as `anchor?.contains(target)`. */
           anchor={contactAnchor.current}
           onWrite={
             chrome.writeTo
