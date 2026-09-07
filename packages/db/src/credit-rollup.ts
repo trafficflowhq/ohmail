@@ -259,6 +259,17 @@ export function isNightlyRollupSlot(now: Date, lastNightlyAt: Date | null): bool
  */
 export const CREDIT_ROLLUP_FOLD_LOCK_KEY = 4207279201n;
 
+/**
+ * Per-statement bound inside the fold's transaction, in milliseconds.
+ *
+ * Every statement the fold runs is an indexed range over one day, so this is generous by an
+ * order of magnitude and exists to stop a pathological one holding
+ * {@link CREDIT_ROLLUP_FOLD_LOCK_KEY} while the next pass waits — not to tune anything. It does
+ * NOT bound the pass's total duration; ninety-two statements each inside the limit still add up,
+ * and a pass-level budget is a separate question.
+ */
+export const CREDIT_ROLLUP_FOLD_STATEMENT_TIMEOUT_MS = 15_000;
+
 /** What one fold-and-sweep did. Folded into {@link CreditRollupReport} by the caller. */
 export interface SetupFoldReport {
   /** Whole days this pass folded and swept. */
@@ -350,6 +361,24 @@ export async function foldAndSweepSetupSpends(
     // postgres.js takes bigint at runtime; its published types omit it. `migrate.ts`'s cast,
     // for migrate.ts's reason: the 64-bit key must stay exact.
     await tx.execute(sql`select pg_advisory_xact_lock(${CREDIT_ROLLUP_FOLD_LOCK_KEY as unknown as number})`);
+    // A BOUND ON EACH STATEMENT, taken inside the transaction so it reverts with it.
+    //
+    // The fold is up to 92 statements at the default cap — the lock, the survey, and three per
+    // day — and it holds one connection and this key throughout. The client's 60 s default
+    // applies per statement and says nothing about a fold whose statements are individually
+    // quick; a single pathological statement could still sit there holding the key while the
+    // next pass waits. `SET LOCAL` is the right scope: it lasts for this transaction only, so a
+    // rollback or commit restores whatever the connection had.
+    //
+    // WHAT THIS DOES NOT BOUND, stated so nobody reads it as more than it is: the TOTAL time the
+    // fold can take. Ninety-two statements each finishing inside the limit can still add up. A
+    // pass-level budget is filed as a gap row rather than invented here.
+    //
+    // `set_config(..., true)` and NOT `SET LOCAL`: `SET` is not a parameterisable statement, so a
+    // bound value there is a syntax error (42601) — measured. `set_config`'s third argument is
+    // `is_local`, which is exactly `SET LOCAL`'s scope, and it takes the value as a parameter.
+    await tx.execute(sql`
+      select set_config('statement_timeout', ${String(CREDIT_ROLLUP_FOLD_STATEMENT_TIMEOUT_MS)}, true)`);
 
   const { now, computedAt } = opts;
   const capDays = Math.max(0, Math.floor(opts.capDays ?? CREDIT_ROLLUP_SWEEP_CAP_DAYS));
@@ -365,7 +394,7 @@ export async function foldAndSweepSetupSpends(
     with elig as (
       select (s.created_at at time zone 'utc')::date as day,
              s.account_id as account_id,
-             count(*)::int as raw_rows
+             (count(*) filter (where s.refunded_at is null))::int as raw_rows
         from setup_grant_spends s
         join setup_grants g on g.id = s.grant_id
        group by 1, 2
@@ -413,7 +442,7 @@ export async function foldAndSweepSetupSpends(
     // statements a day whatever the account count, and it means the delete's predicate is
     // literally the fold's — not a copy of it that can drift.
     const eligibleForDay = sql`
-      select s.account_id, count(*)::int as raw_rows
+      select s.account_id, (count(*) filter (where s.refunded_at is null))::int as raw_rows
         from setup_grant_spends s
         join setup_grants g on g.id = s.grant_id
        where (s.created_at at time zone 'utc')::date = ${key}::date
@@ -442,10 +471,24 @@ export async function foldAndSweepSetupSpends(
     //    5 > 1 refuses. Folding there would write that single row's amount over a complete
     //    figure, which is the loss the frozen arm exists to prevent.
     //
-    // It is compared against the pair's TOTAL row count rather than its non-refunded one on
-    // purpose. The stamp counts non-refunded rows, so a refund landing after a fold would make a
-    // non-refunded comparison read 5 > 4 and freeze a healthy pair; against the total it reads
-    // 5 > 5, the pair re-folds, and the new number correctly excludes the refund.
+    // BOTH SIDES COUNT THE SAME THING — non-refunded rows — and the earlier version did not.
+    //
+    // It used to compare the stamp (which counts non-refunded rows) against the pair's TOTAL row
+    // count, to stop a reversal landing after a fold from freezing a healthy pair. Comparing two
+    // different populations is what made this lose a day. Round three's sequence: a day holds two
+    // draws on grants expiring months apart and the second is reversed, so the truthful figure is
+    // -1 over 1. The old clock sweep then deletes the NON-REFUNDED draw and leaves the reversed
+    // one. Total counts read 1 == 1, the pair is not refused, the fold recomputes over a
+    // population whose only row is reversed, and the day is rewritten to 0 over 0 with the
+    // survivor deleted — success reported, no refusal, no backlog, the usage gone.
+    //
+    // Counting non-refunded on both sides makes that 1 > 0, which refuses.
+    //
+    // THE COST, STATED: a reversal arriving after its day was summarised now reads as a smaller
+    // population and freezes the pair — a stall, not a loss, with the day counted in the backlog
+    // and the rows left in place. It needs a reversal landing more than 120 days after its draw,
+    // and reversals are synchronous with the fault that causes them, seconds after the draw. That
+    // is the direction to fail in: refusing costs a stalled pair, re-folding costs a day's usage.
     //
     // The old `computed_at < ${'$'}{computedAt}` guard is GONE rather than kept beside this: the
     // population test makes the within-pass self-freeze unreachable (statement 1 writes
@@ -715,7 +758,23 @@ export async function runCreditRollupPass(
     // count low, which is the honest shape — a wrong count beside a right amount, never the
     // reverse.
     //
-    // The trailing delete is the same absence argument as the day loop's.
+    // ── THE TRAILING DELETE, AND WHOSE ABSENCE IT IS ALLOWED TO ACT ON ─────────────────
+    //
+    // It used to remove every totals row this pass did not rewrite, on the day loop's absence
+    // argument: a category that no longer produces a group should not keep a stale number. For
+    // the SETUP pool that reasoning destroys the figure it is meant to keep.
+    //
+    // Round three's sequence, through the real `deleteAccount`: erasure removes an account's
+    // grants and its draw rows but KEEPS the account row and its daily summaries. The setup
+    // total is grant-derived, so with no grants there is no group, and an unqualified cleanup
+    // then deleted the lifetime row — leaving an account that still records -1 for a day and
+    // nothing at all for its life. `setup_grants` is a correct balance identity and NOT a
+    // permanent lifetime source; once the grants are gone the aggregate is the only record.
+    //
+    // So the cleanup now acts only on an ERASED account: the account row gone (which the
+    // cascade normally handles first) or `erased_at` set. "This account has no grant group any
+    // more" is never sufficient — that is the ordinary state of an erased-but-retained account
+    // and of any account whose pools have all been deleted.
     if (opts.totals === true) {
       await db.execute(sql`
         insert into credit_usage_totals
@@ -748,7 +807,11 @@ export async function runCreditRollupPass(
                rows = excluded.rows,
                computed_at = excluded.computed_at`);
       await db.execute(sql`
-        delete from credit_usage_totals where computed_at < ${computedAt}::timestamptz`);
+        delete from credit_usage_totals t
+         where t.computed_at < ${computedAt}::timestamptz
+           and (not exists (select 1 from accounts a where a.id = t.account_id)
+                or exists (select 1 from accounts a
+                            where a.id = t.account_id and a.erased_at is not null))`);
     }
 
     // ── DIVERGENCE ───────────────────────────────────────────────────────────────────────
