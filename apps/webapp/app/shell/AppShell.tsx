@@ -106,7 +106,7 @@ import { useScreenerSuggestions, type SenderSuggestion, type SuggestWire } from 
 import { AutoSuggestRow } from "./AutoSuggestRow";
 import { ScreeningSection } from "./ScreeningSection";
 import { DormancyRow } from "./DormancyRow";
-import { useComposeAutosave } from "./compose-autosave";
+import { useComposeAutosave, worthSaving } from "./compose-autosave";
 import { RemoteImagesRow } from "./RemoteImagesRow";
 import { TrackingPixelsRow } from "./TrackingPixelsRow";
 import { AutoUnsubscribeRow } from "./AutoUnsubscribeRow";
@@ -121,10 +121,11 @@ import { OhmarchyOffer, useOhmarchyOffer } from "./OhmarchyOffer";
 import type { ApplyFaceAllDevices } from "./FaceRow";
 import { ProfileImportCard, useProfileImport, type ProfileImportTransport } from "./ProfileImportCard";
 import {
-  COMPOSE_SEND_KEY, heldRowUnverified, inlineForwardKey, useMailSend, readReplyDraft, writeReplyDraft,
+  COMPOSE_SEND_KEY, heldRowUnverified, inlineForwardKey, SEND_IN_FLIGHT_PHASES, useMailSend,
+  readReplyDraft, writeReplyDraft,
   readReplyMeta, writeReplyMeta,
 } from "./mail-send";
-import { composeMessageHeld, parkedComposeRecord } from "./send-lock";
+import { attachSendLockDraft, holdOf } from "./send-lock";
 import {
   clearComposeDraft,
   composePlan,
@@ -3274,18 +3275,26 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * below) or when the row is discarded from the Drafts list (`discardDraft`).
    */
   const replySeedDrafts = useRef(new Map<string, string>());
-  /**
-   * THE STRANDED ROW A COMPOSE IS RECOVERING — an `unverified` (or stale-`sending`) draft whose
-   * text was seeded into Compose, or the row a send just left in `unverified`. The compose does
-   * NOT adopt it: adopting would point autosave and Send at a row the server refuses to send
-   * again (`SendService` takes only `status='draft'`), so the recovery writes a FRESH row and
-   * this ref remembers the stranded one. Discharged when the fresh send CONFIRMS — the moment
-   * the message is known delivered, the stranded copy of it is a phantom and is discarded, the
-   * `replySeedDrafts` rule one surface over. Cleared without discarding when the user abandons
-   * the recovery (cancel, a different draft, a forward): nothing got delivered, so the record
-   * of the unconfirmed send stays in Drafts.
+  /*
+   * ── THE COMPOSE RECOVERY IS GONE, AND ITS ABSENCE IS THE FIX ─────────────────────────────────
+   *
+   * `recoverySeed` stood here: the row a compose was "recovering" — an `unverified` or stranded
+   * `sending` draft whose text had been seeded into a FRESH row, with the stranded one discarded
+   * once the fresh send confirmed.
+   *
+   * Invariant S(2) says a row past `draft` is never recovered into a fresh key, and the recovery is
+   * exactly that: it takes a message whose first send may already have been delivered and sends it
+   * again under a key the server cannot recognise. Its only reachable case was a stranded `sending`
+   * row — an `unverified` one was already parked — and that is the row whose send is most likely
+   * still in flight. Such a row is PARKED now (`holdOf` calls every non-`draft` status parked), so
+   * the branch that set this ref cannot be entered and the ref, its discard on confirmation, and
+   * its four clears are removed rather than left as a dead arm a later reader would take for a
+   * guarantee.
+   *
+   * What a person does with such a message instead: it is listed in Drafts with the warning, it is
+   * not sent again on its own, and Try again on the record replays the ORIGINAL key, which is the
+   * one repeat the server can recognise.
    */
-  const recoverySeed = useRef<string | null>(null);
 
   /**
    * The reply that most recently settled, handed to `OhboxView` for the animate-to-Earlier gesture
@@ -3298,17 +3307,6 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
   const onSendSettled = useCallback((key: string, m: MailSendMutation) => {
     if (key === COMPOSE_SEND_KEY) {
       setCompose(EMPTY_COMPOSE);
-      /* THE RECOVERED MESSAGE IS DELIVERED, so the stranded row it was recovered from is a
-         phantom copy of a sent mail and goes — see `recoverySeed`. Only on a CONFIRMED send:
-         this callback fires on nothing else. NOT on a SEND-LATER confirm: an appointment is a
-         promise, not a delivery, and the stranded row is still the only record of the
-         unconfirmed first attempt until the scheduled send actually goes out. */
-      const seeded = recoverySeed.current;
-      if (seeded && seeded !== m.draftId && !m.sendAt) {
-        recoverySeed.current = null;
-        void engine.mutate({ kind: "draft_discard", draftId: seeded });
-        writeReplyMeta(`draft:${seeded}`, {}); // the phantom row's block state dies with it
-      }
       /* RELEASED WHEN THE SEND USED THE ROW, DISCARDED WHEN IT DID NOT — `autosave.settled`
          judges by the settled mutation's own `draftId`. A send that carried the row turned it
          into a sent message (`SendService` moved it to `sent`), and deleting that would destroy
@@ -3603,6 +3601,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
     fields: compose,
     mailboxId: composeMailbox,
     active: route.view === "compose",
+    /* THE PRESS-BEFORE-FIRST-SAVE RACE, CLOSED FROM THE WRITE SIDE. While a send of this surface's
+       message is on the wire, the armed save must not CREATE a row: the send that carried none
+       makes the adapter create one, and a create here would be the second row for one message.
+       Read off the lane's live phase rather than a ref, so it clears with the outcome. */
+    sendInFlight: SEND_IN_FLIGHT_PHASES.has(mailSend.stateOf(COMPOSE_SEND_KEY).phase),
   });
   releaseDraft.current = autosave.settled;
   /**
@@ -3733,17 +3736,15 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
           return sig && sig.kind !== "following" ? { sig } : {};
         })(),
       };
-      setCompose(seeded);
       /* ── IS THIS ROW A MESSAGE WE ARE STILL WAITING TO LEARN THE FATE OF? ──────────────────
-         Asked FIRST, because it decides which of the three doors below this is, and it is a
-         question about the durable RECORD rather than about the row's status: the server may
-         leave the row at `draft` or move it to `unverified`, and neither says whether this
-         browser is still waiting.
+         Asked FIRST — before the form is touched — because it decides which of the doors below
+         this is, and one of them does not open at all.
 
-         `parkedComposeRecord` and not a set of rows, because the SAME question is asked when a
-         reload brings this surface back (`compose-autosave.ts`) and the two answering differently
-         was a duplicate delivery of its own — and because "yes" is not enough here: the branch
-         below has to put the message's identity BACK, which means knowing what it was.
+         `holdOf` and not a reading of its own: the SAME question is asked when a reload brings
+         this surface back (`compose-autosave.ts`) and when Send is pressed, and the three
+         answering differently was a duplicate delivery each time. It answers with the record's own
+         names as well as a verdict, because "yes" is not enough here — the parked branch has to
+         put the message's identity BACK, which means knowing what it was.
 
          THE SESSION IS ASKED ABOUT ONLY WHEN THE ROW BEING OPENED IS THE ONE THIS COMPOSE IS
          HOLDING. Passing it unconditionally would park every draft in the account behind one
@@ -3753,18 +3754,29 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
          moments later, and nothing had attached it to the record — so the row that appears in
          Drafts belonged to a parked message that the row alone could not identify. `readComposeRow`
          is the link: that row IS this compose's row, so this compose's session speaks for it. */
-      const held = readComposeRow();
-      const parkedRecord = parkedComposeRecord(
-        COMPOSE_SEND_KEY, d.id, held !== null && held === d.id ? composeSessionId() : null,
-      );
-      /* ── AND THE SERVER'S OWN `unverified` IS A PARK BY ITSELF ────────────────────────────
-         A row the server marked `unverified` IS a send it could not confirm. Recovering it into
-         a fresh send is the duplicate by definition, and the record cannot always speak for it:
-         the send creates its OWN row when the press carried none and the client never learns
-         that id, so the row listed in Drafts belongs to a message this browser holds no record
-         of. Measured live, recipient total 2. The record stays beside this, not replaced by it —
-         it is the only witness for a row the server still calls `draft`. */
-      const parked = composeMessageHeld(parkedRecord, d.status);
+      const heldRow = readComposeRow();
+      const hold = holdOf(engine, {
+        lane: COMPOSE_SEND_KEY,
+        draftId: d.id,
+        session: heldRow !== null && heldRow === d.id ? composeSessionId() : null,
+      });
+      const parked = hold.kind !== "free";
+      /* ── AND IT DOES NOT OPEN OVER SOMETHING SOMEBODY IS STILL WRITING ─────────────────────
+         The parked door deliberately does NOT re-mint the compose session or clear the scratch
+         buffer — that is what keeps the reopened message recognisable as itself. The cost is that
+         `writeComposeDraft` below then overwrites the buffer of whatever WAS on screen, and that
+         buffer is the only copy of a message the account has not been given yet. Measured on the
+         release candidate: write s2, reopen the held s1, and s2's text was gone with nothing having
+         asked.
+         Saving s2 first is not the alternative — that is a write, and this door has no business
+         writing a row on the way through. So the reopen is REFUSED and says why. Only against
+         unsaved text, and only for a row this composer is not already holding: reopening the very
+         row on screen changes nothing about it. */
+      if (parked && autosave.draftId !== d.id && worthSaving(compose)) {
+        toast(t("drafts.heldReopenBlocked"));
+        return;
+      }
+      setCompose(seeded);
       /* A DIFFERENT MESSAGE, SO A DIFFERENT COMPOSE SESSION. The id is what parks an unresolved
          send (`compose.ts`), and leaving it in place made one session span every draft this
          surface opened: a send of the FIRST one that came back unverified then parked whichever
@@ -3775,14 +3787,16 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
          what makes the reopened message a NEW one, and a new message is exactly what the record
          must not be told: both names it carries — the row and the session — would be off the
          message at once, the park could not recognise it, Send would light up, and one press
-         would deliver a second copy under a fresh key. Measured end to end, recipient total 2. */
+         would deliver a second copy under a fresh key. Measured end to end, recipient total 2.
+
+         `unknown` keeps the session for the same reason, on weaker evidence: this browser cannot
+         read its own record, so it cannot say the message is new either. */
       if (!parked) clearComposeDraft();
       writeComposeDraft(seeded);
       if (parked) {
-        /* THE PARKED MESSAGE, REOPENED AS ITSELF. No new row, no re-minted session, nothing
+        /* THE HELD MESSAGE, REOPENED AS ITSELF. No new row, no re-minted session, nothing
            released and nothing deleted: the record still names this message, so `canSend` refuses
-           the press and the surface shows "We couldn't confirm this send. Check your Sent folder
-           before retrying" — which is the true sentence about it.
+           the press and the surface shows the sentence that is true about it.
 
            NOT ADOPTED either, whatever the row's status. A row the server has moved past `draft`
            refuses every PUT (`SendService` reserves only from `status='draft'`), and adopting it
@@ -3791,9 +3805,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
            status nobody on this path acts on. Autosave writing a fresh row later cannot unlock
            anything, because the session is untouched and still names the record.
 
-           AND NO `recoverySeed`. That field exists to discard the stranded copy when a fresh send
-           CONFIRMS, and there is no fresh send here — the press is refused. Setting it would arm
-           a delete of the one row that still holds this message.
+           THIS IS ALSO WHERE THE RECOVERY DOOR USED TO BE. A stranded `sending` row — a send whose
+           answer never arrived, its record swept or never written — took a third branch that
+           seeded the text into a FRESH row and sent that. Invariant S(2) forbids it: the row whose
+           send is most likely still in flight is the last one to send again, and the fresh key the
+           recovery minted is one the server cannot recognise. `holdOf` calls every non-`draft`
+           status parked, so that branch is unreachable and is gone rather than left as a dead arm.
 
            ── THE IDENTITY IS RESTORED, NOT MERELY LEFT ALONE ─────────────────────────────────
 
@@ -3811,30 +3828,22 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
 
            `autosave.release()` first, because it clears the held row on its way past and would
            otherwise erase what is written next; it also disowns a create still in flight for the
-           message being left behind. A record with no session of its own leaves the current one
-           standing — it is named by its row, which is the id being held. */
-        recoverySeed.current = null;
+           message being left behind. A hold with no session of its own — a park by the row's
+           status, or a record that never had one — leaves the current session standing: it is
+           named by its row, which is the id being held. */
         autosave.release();
-        writeComposeRow(parkedRecord?.draftId ?? d.id);
-        if (parkedRecord?.session != null) writeComposeSession(parkedRecord.session);
-      } else if (d.status === "draft") {
-        recoverySeed.current = null;
-        autosave.adopt(d.id, seeded);
+        writeComposeRow(hold.kind === "parked" ? hold.draftId ?? d.id : d.id);
+        if (hold.kind === "parked" && hold.session != null) writeComposeSession(hold.session);
       } else {
-        /* AN UNCONFIRMED SEND, RECOVERED — NOT ADOPTED. The row is `unverified` or a stranded
-           `sending` AND this browser holds no unresolved record of it (another device sent it, or
-           this browser's record was resolved or swept): the server refuses to send that row again
-           under any key, and adopting it would point every autosave PUT and the Send press at that
-           refusal. So the TEXT is seeded, the first pause writes a fresh row, and the send delivers
-           that one — the deliberate fresh send the unverified copy has always promised. The
-           stranded row stays in Drafts as the record of what is not known until the fresh send
-           CONFIRMS, at which point `onSendSettled` discards it. */
-        recoverySeed.current = d.id;
-        autosave.release();
+        /* FREE, so it is an ordinary draft and it is adopted: the next autosave PATCHes the row
+           that was opened rather than creating a second one beside it. `holdOf` answers `free`
+           only for a row the mirror positively calls `draft`, so there is no second arm here for
+           a status this branch would have to decide about. */
+        autosave.adopt(d.id, seeded);
       }
       go("compose");
     },
-    [draftRepliesHere, autosave, go, reader, version, compose.sig],
+    [draftRepliesHere, autosave, go, reader, version, compose, engine, toast, t],
   );
   /**
    * ── THE SCHEDULED SENDS (mail 0077), and their two verbs ────────────────────────────────
@@ -3902,8 +3911,6 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
       for (const [msgId, dId] of replySeedDrafts.current) {
         if (dId === draftId) replySeedDrafts.current.delete(msgId);
       }
-      // And so may a compose recovery — same rule, same reason.
-      if (recoverySeed.current === draftId) recoverySeed.current = null;
     },
     [engine, autosave],
   );
@@ -3991,10 +3998,6 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
   const cancelCompose = useCallback(() => {
     if (autosave.draftId) writeReplyMeta(`draft:${autosave.draftId}`, {});
     void autosave.discard();
-    // An abandoned RECOVERY is only abandoned: the fresh copy this compose made goes (above),
-    // but the stranded row it was recovering stays in Drafts — nothing got delivered, so the
-    // record of the unconfirmed send is still the truth.
-    recoverySeed.current = null;
     setCompose(EMPTY_COMPOSE);
     clearComposeDraft();
     go("ohbox");
@@ -4025,8 +4028,21 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
         // raw text in the input — the same rule as `openDraft`.
         to: formatRecipientChips([{ name: name ?? null, address }]),
       };
+      /* ── A NEW-MESSAGE DOOR MUST NOT ORPHAN A HELD MESSAGE ───────────────────────────────
+         This re-mints the compose session (below), which is right for a new message and is how a
+         held one loses a name: a send pressed before the first save is recorded as
+         `compose:<session>` alone, so once that session is replaced the record names nothing this
+         browser can find, the row sits in Drafts looking ordinary, and reopening it takes the
+         ordinary door with Send live. Binding the row the surface is holding onto the record
+         first leaves the park reachable by ROW, which is the name that survives every door. */
+      const outgoing = readComposeRow();
+      const held = holdOf(engine, {
+        lane: COMPOSE_SEND_KEY, draftId: outgoing, session: composeSessionId(),
+      });
+      if (held.kind === "parked" && held.session !== null) {
+        attachSendLockDraft(COMPOSE_SEND_KEY, [`compose:${held.session}`], outgoing);
+      }
       autosave.release();
-      recoverySeed.current = null; // the form's contents are replaced, a recovery included
       setCompose(seeded);
       // A NEW message, so a new compose session — see `openDraft` and `compose.ts`. Without it
       // this message inherited the identity of whatever the form last held, and an unresolved
@@ -4068,8 +4084,16 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
       subject: mailtoDraft.subject,
       body: mailtoDraft.body,
     };
+    // The same binding `writeTo` does, for the same reason and in the same order — this door is
+    // that one, opened by the operating system rather than by a click inside the app.
+    const outgoing = readComposeRow();
+    const held = holdOf(engine, {
+      lane: COMPOSE_SEND_KEY, draftId: outgoing, session: composeSessionId(),
+    });
+    if (held.kind === "parked" && held.session !== null) {
+      attachSendLockDraft(COMPOSE_SEND_KEY, [`compose:${held.session}`], outgoing);
+    }
     autosave.release();
-    recoverySeed.current = null;
     setCompose(seeded);
     // A new compose session, for the reason `writeTo` states — this door is the same one, opened
     // by the operating system rather than by a click inside the app.
@@ -7186,8 +7210,19 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
                    `heldRowUnverified`. Read at render from the drafts the mirror holds, so it
                    arms and disarms with the data rather than with a flag somebody has to
                    remember to clear. */
+                /* The hold is computed ONCE, here, and projected onto the send state — see
+                   `heldRowUnverified`, which no longer reads the row itself. The row this compose
+                   is holding is the persisted one, not the hook's: a parked reopen holds a row it
+                   deliberately did not adopt. */
                 send={heldRowUnverified(
-                  mailSend.stateOf(COMPOSE_SEND_KEY), readComposeRow(), drafts, composeSessionId(),
+                  mailSend.stateOf(COMPOSE_SEND_KEY),
+                  readComposeRow(),
+                  holdOf(engine, {
+                    lane: COMPOSE_SEND_KEY,
+                    draftId: readComposeRow(),
+                    session: composeSessionId(),
+                  }),
+                  composeSessionId(),
                 )}
                 onSend={sendCompose}
                 onSendLater={sendCompose}

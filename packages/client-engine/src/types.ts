@@ -1720,10 +1720,30 @@ export class MutationRejectedError extends Error {
    * the server having spoken.
    */
   readonly retryAfterMs: number | null;
+  /**
+   * THE SERVER ROW THIS REFUSAL IS ABOUT, when the refusal knows one — `null` otherwise.
+   *
+   * `MutationResult.entityId` names a row a mutation CREATED, and it rides the confirmed result
+   * only, on the reasoning that "a row that was refused has no id to adopt". That is true of every
+   * refusal but one, and the exception is the one that matters most.
+   *
+   * A send pressed before the first autosave carries no `draftId`, so the ADAPTER creates a row
+   * and sends that. When the answer comes back `unverified` the server has marked THAT row, and
+   * the client is never told which row it is: it is listed in Drafts looking like an ordinary
+   * draft, opening it takes the recovery door, and one press delivers the message a second time.
+   * The row is not "adopted" in the create sense — nothing may PUT to it — it is NAMED, so the
+   * durable record can park the message it belongs to.
+   *
+   * The same is true of a transport- or server-`queued` answer: the row exists, the send is on the
+   * wire under a key that will be resumed, and a reload that cannot name the row mints a second
+   * one for the same message.
+   */
+  readonly entityId: string | null;
   constructor(
     message: string,
     opts: {
       status?: number | null; code?: string | null; retryable?: boolean; retryAfterMs?: number | null;
+      entityId?: string | null;
     } = {},
   ) {
     super(message);
@@ -1732,6 +1752,7 @@ export class MutationRejectedError extends Error {
     this.code = opts.code ?? null;
     this.retryable = opts.retryable ?? false;
     this.retryAfterMs = opts.retryAfterMs ?? null;
+    this.entityId = opts.entityId ?? null;
   }
 }
 

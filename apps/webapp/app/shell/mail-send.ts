@@ -88,10 +88,10 @@ import type { EngineMessage, MutationResult, OhmailEngine } from "@ohmail/client
 import type { ToastFn } from "@ohmail/ui";
 import { clearComposeDraft, composeSessionId, readComposeRow, type MailSend } from "./compose";
 import {
-  attachSendLockDraft, claimSendLock, composeMessageHeld, legacySendFingerprint_0_14_0,
-  markSendLockUnverified,
+  attachSendLockDraft, claimSendLock, holdOf, legacySendFingerprint_0_14_0,
+  legacySendFingerprint_0_14_1, markSendLockUnverified,
   releaseSendLock, resumeSendLock, SEND_LOCK_FORMAT, sendFingerprint, sendIdentity, sendSubject,
-  sendSubjects, unverifiedSendIntents, type SendIntent,
+  sendSubjects, unverifiedSendIntents, type Hold, type SendIntent,
 } from "./send-lock";
 import { storageOwner } from "./storage-owner";
 import { scheduleLabel } from "./format";
@@ -219,6 +219,22 @@ export interface MailSendApi {
 }
 
 const IDLE: SendState = { phase: "idle" };
+
+/**
+ * THE PHASES IN WHICH A SEND OF THIS LANE'S MESSAGE IS STILL ON THE WIRE OR STILL OWED AN ANSWER.
+ *
+ * `sending` and `queued` are the two the autosave has to know about, and `sent` is the beat
+ * between the confirmation and the surface closing. What they have in common is that a `drafts`
+ * row created during any of them is a SECOND row for a message the send is already carrying —
+ * the press-before-first-autosave race, measured on the release candidate as one message leaving
+ * two rows behind.
+ *
+ * `unverified` is deliberately NOT here: it is terminal-unknown rather than in flight, and the
+ * message is parked by `holdOf` at that point, which refuses the create for a stronger reason.
+ */
+export const SEND_IN_FLIGHT_PHASES: ReadonlySet<SendPhase> = new Set<SendPhase>([
+  "sending", "queued", "sent",
+]);
 
 /** There is one compose surface, so its send state needs one key. */
 export const COMPOSE_SEND_KEY = "compose";
@@ -554,6 +570,20 @@ function unresolvedNames(state: SendState, m: MailSend): boolean {
   let legacyFp: string | null = null;
   const legacyFpOf = (): string => (legacyFp ??= legacySendFingerprint_0_14_0(m));
   /**
+   * AND THE 0.14.1 ONE, for the same reason one step later.
+   *
+   * A `v: 2` record that carries no name at all — a 0.14.1 browser that could not read its own
+   * session id — has its fingerprint in THAT build's algebra, which folded the draft row in. It is
+   * neither the 0.14.0 spelling nor this one, so without this line such a record parked nothing:
+   * no warning, Send live, for the very message whose fate is unknown.
+   *
+   * All three are tried because a nameless record does not say which build wrote it. Widening a
+   * fail-closed comparison in the closed direction costs a false park at worst; the other
+   * direction costs a second copy in somebody's mailbox.
+   */
+  let legacyFp0141: string | null = null;
+  const legacyFp0141Of = (): string => (legacyFp0141 ??= legacySendFingerprint_0_14_1(m));
+  /**
    * ── A SESSION MATCH IS FINAL. NEITHER THE ROW NOR THE FINGERPRINT OVERRIDES IT ─────────────
    *
    * A rule used to stand here: where BOTH sides named a draft row and the rows differed, they
@@ -579,7 +609,9 @@ function unresolvedNames(state: SendState, m: MailSend): boolean {
    * NOTHING — see the fingerprint arm's own note above; it is what that record can answer.
    */
   return state.unresolved.some((i) => {
-    if (i.subjects.length === 0) return i.fp === legacyFpOf() || i.fp === fpOf();
+    if (i.subjects.length === 0) {
+      return i.fp === legacyFpOf() || i.fp === legacyFp0141Of() || i.fp === fpOf();
+    }
     return i.subjects.some((s) => subjects.includes(s));
   });
 }
@@ -624,15 +656,23 @@ export function sendStateFor(state: SendState, m: MailSend): SendState {
 export function heldRowUnverified(
   state: SendState,
   heldRow: string | null,
-  rows: ReadonlyArray<{ id: string; status?: string }>,
+  hold: Hold,
   session: string | null,
 ): SendState {
   if (state.phase === "sending" || state.phase === "queued" || state.phase === "sent") return state;
   if (heldRow === null) return state;
-  const row = rows.find((r) => r.id === heldRow);
-  // The status half of {@link composeMessageHeld} — the record half reaches this state through
-  // `stateOf`, and the literal lives in one place so the three sites cannot drift.
-  if (!composeMessageHeld(null, row?.status)) return state;
+  /**
+   * A PROJECTION OF {@link holdOf}, NOT A SECOND READING OF THE ROW.
+   *
+   * This used to look the row up in the drafts array and apply the status rule itself, which made
+   * it the third place that decided what "held" means. It now consumes the answer: the caller asks
+   * `holdOf` once and hands it here.
+   *
+   * `parked` only. `unknown` — a jar this browser cannot read — deliberately does NOT put the
+   * warning up or lock the button: a browser that refuses this app its own storage must still be
+   * able to send (invariant S(4)). The recovery sites are where `unknown` fails closed.
+   */
+  if (hold.kind !== "parked") return state;
   const subjects = session === null ? [`draft:${heldRow}`] : [`draft:${heldRow}`, `compose:${session}`];
   return {
     ...state,
@@ -977,6 +1017,18 @@ export function useMailSend(
         else if (accepted.current.has(key)) next = { ...next, accepted: true };
         queued.current.set(res.key, key);
         inFlight.current.set(res.key, m);
+        /* THE ROW AN ACCEPTED SEND IS ABOUT, BOUND WHILE THE ANSWER IS STILL HERE.
+           A queued send is unconfirmed and is parked under the message's names (invariant S(3)).
+           The row is one of those names, and for a press that carried none it exists only on the
+           server until this result names it — so a reload inside the queued window came back, read
+           that row as an ordinary draft, and the next press minted a second key for one message.
+           Diagnostic on the record, exactly as everywhere else: nothing chooses a key from it. */
+        attachSendLockDraft(
+          key, sendSubjects(m, sessionOf(key)),
+          m.draftId ?? res.entityId
+            ?? (key === COMPOSE_SEND_KEY ? readComposeRow(owner.current) : null),
+          owner.current,
+        );
         // STILL LOCKED: the intent is out there under this key and a second press would
         // mint another one. The DURABLE claim stands for the same reason and is what carries
         // that sentence across a reload — see `shell/send-lock.ts`.
@@ -1024,12 +1076,21 @@ export function useMailSend(
              no row at all, the row sat in Drafts looking ordinary, and reopening it took the
              recovery door and sent the message a second time. `m.draftId` first: it is what the
              press itself carried. */
-          if (key === COMPOSE_SEND_KEY) {
-            attachSendLockDraft(
-              key, sendSubjects(m, sessionOf(key)), m.draftId ?? readComposeRow(owner.current),
-              owner.current,
-            );
-          }
+          /* AND THE ROW THE *ADAPTER* MADE, WHICH NOTHING HERE COULD NAME UNTIL NOW.
+             A press that carried no row makes the adapter create one and send THAT; the server
+             marks it `unverified` and the client was never told which row it was, so it sat in
+             Drafts looking ordinary — reopening it took the recovery door and one press delivered
+             the message a second time. `MutationRejectedError.entityId` carries it now
+             (`http-adapter.ts`, the `unverified` arm), and it is preferred over the local fallback
+             for exactly the case the fallback cannot cover.
+             The lane test is gone with it: a reply or a forward pressed with no row has the same
+             gap, and the record for those lanes is named by the parent message either way. */
+          attachSendLockDraft(
+            key, sendSubjects(m, sessionOf(key)),
+            m.draftId ?? res.error?.entityId
+              ?? (key === COMPOSE_SEND_KEY ? readComposeRow(owner.current) : null),
+            owner.current,
+          );
           next = { ...next, unresolved: [{ subjects: sendSubjects(m, sessionOf(key)), fp }] };
         }
       }
@@ -1157,6 +1218,29 @@ export function useMailSend(
       // SAME derivation, see `stateFor` — so a caller that is not the button (a keyboard
       // shortcut, a future Reply Run step) cannot get past something the button enforces.
       if (locked.current.has(key)) return;
+      /**
+       * ── THE HOLD, ASKED AT THE PRESS AND NOT ONLY AT THE BUTTON ────────────────────────────
+       *
+       * `canSend` below reads the durable RECORD through `stateFor`. It does not read the row's
+       * status, and the row's status is the only witness for a send whose row this browser never
+       * learned the id of — so the surface's own `heldRowUnverified` (applied where the button is
+       * rendered) refused a press the button could see while THIS door, which a keyboard shortcut
+       * and every non-button caller comes through, let it past.
+       *
+       * `parked` refuses. `unknown` does NOT: a browser that will not let this app read its own
+       * storage must still be able to send, and the key it sends under is session-only (invariant
+       * S(4)). The row is written onto whatever record does exist on the way out, for the same
+       * reason the `canSend` refusal below does it.
+       */
+      const hold = holdOf(engine, {
+        lane: key,
+        draftId: m.draftId ?? (key === COMPOSE_SEND_KEY ? readComposeRow(owner.current) : null),
+        session: sessionOf(key),
+      }, owner.current);
+      if (hold.kind === "parked") {
+        attachSendLockDraft(key, sendSubjects(m, sessionOf(key)), m.draftId ?? null, owner.current);
+        return;
+      }
       if (!canSend(stateFor(key), m)) {
         /**
          * REFUSED — and the row this message has since acquired is written down on the way out.

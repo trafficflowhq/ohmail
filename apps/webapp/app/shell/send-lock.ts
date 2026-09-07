@@ -49,6 +49,43 @@
  * Owner-keyed, wrapped, `"local"`-defaulted: the same three rules `composeDraftKey` states one file
  * over, for the same reasons. A blocked jar means the lock is only as durable as the tab, which is
  * exactly where this file found it.
+ *
+ * ══ INVARIANT S — THE ONE RULE THE SEND SEAM OBEYS ═══════════════════════════════════════════
+ *
+ * Written here, once, because it was NOT written anywhere before and seven consecutive fixes each
+ * closed one duplicate route while the next was found: the question "is this message held?" was
+ * asked in three places with three answers, and every fix moved WHO the message is rather than
+ * WHERE the question is asked.
+ *
+ * > **S.** A message-in-progress *M* is named by its compose session while unsaved and by its row
+ * > id once saved; the durable record carries every name *M* has acquired. At every instant:
+ * > **(1)** the account holds at most one `drafts` row whose content is *M*; **(2)** a row past
+ * > `draft` (`sending`, `unverified`, `sent`) or one that carries a send record is never PUT to,
+ * > never DELETEd by this client, and never recovered into a fresh key; **(3)** a send of *M* that
+ * > is not confirmed — `unverified`, transport-`queued`, server-`queued` — is PARKED under *M*'s
+ * > names: a press resumes the same Idempotency-Key or is refused, and unchanged content never
+ * > mints a second key while a record exists; **(4)** the hold is answered by ONE predicate, and a
+ * > jar that cannot be read answers *unknown*, on which every write site fails closed; an EMPTY
+ * > jar admits.
+ *
+ * The one predicate is {@link holdOf}. Every write site consults it — the autosave create, the
+ * autosave PUT, the adopt-on-mount, `openDraft`, `writeTo`, the mailto seam, `cancelCompose`, the
+ * Send press, the settled discard — and a census in the web application's own suite pins the
+ * per-file CALL-SITE COUNT so a new write site has to name itself there. A route a reviewer finds
+ * that the census admits is a MISSING CALL SITE, fixed by adding the call, never by a second
+ * predicate.
+ *
+ * TWO DECISIONS THAT LIVE IN THE INVARIANT AND NOT IN A CALLER:
+ *
+ *  1. **A record resumes across sessions only when it is unresolved.** `r.session === id.session`
+ *     OR `r.unverified === true`. An ordinary claim belongs to the message-in-progress it was
+ *     pressed in and a different session is a different message; an unresolved record is the only
+ *     evidence a message may already be out there, and refusing to resume it is exactly how the
+ *     next press mints a fresh key for mail that has already gone.
+ *  2. **`unknown` admits the PRESS and refuses every RECOVERY.** A browser that will not let this
+ *     app read its own storage must still be able to send — refusing there would leave somebody
+ *     with a message the product declines to send and cannot explain. But it must not DISCARD a
+ *     row, re-mint a key, or adopt a row into a fresh session on evidence it does not have.
  */
 
 import type { MailSend } from "./compose";
@@ -66,7 +103,27 @@ import { storageOwner } from "./storage-owner";
  * touched: not matched, not rewritten, not deleted. A rolled-back install must not eat the
  * evidence that a newer one left behind.
  */
-export const SEND_LOCK_FORMAT = 2;
+export const SEND_LOCK_FORMAT = 3;
+
+/**
+ * THE LAST FORMAT WHOSE RECORDS THE 0.14.0 DECODE MAY FIRE ON — a literal, not `SEND_LOCK_FORMAT - 1`.
+ *
+ * {@link mayMatchLegacy} used to read `r.v < SEND_LOCK_FORMAT`, which was correct while that
+ * constant was `2` and silently wrong the moment it moved: a `3` would have made every RELEASED
+ * 0.14.1 record (`v: 2`) "a 0.14.0 record", rewritten it as nameless and unverified, and thrown
+ * away the subject and session that are the only things naming the message it belongs to. The
+ * predicate is about ONE released shape, so it names that shape's number.
+ */
+const LAST_0_14_0_FORMAT = 1;
+
+/**
+ * THE LAST FORMAT WHOSE FINGERPRINT IS IN THE 0.14.1 ALGEBRA — the other half of the same idea.
+ *
+ * The released 0.14.1 build wrote `v: 2` and hashed the draft row into the fingerprint. This build
+ * writes `v: 3` and does not. A record at or below this number is compared against
+ * {@link legacySendFingerprint_0_14_1}; anything above it against {@link sendFingerprint}.
+ */
+const LAST_0_14_1_FORMAT = 2;
 
 /** One lane's unsettled send. `v` names the shape; an unrecognised record is carried, not guessed. */
 export interface SendLock {
@@ -210,8 +267,23 @@ export function sendFingerprint(m: MailSend): string {
    * `sendFingerprintFieldsCovered` in the test dir is the census that keeps this list equal to the
    * mutation's own fields, so a field added to the wire cannot quietly stay out of the identity.
    */
+  /**
+   * ── THE DRAFT ROW IS THE CONTAINER, NOT THE CONTENT, AND HASHING IT WAS THE DEFECT ──────────
+   *
+   * `m.draftId ?? ""` used to sit here. A row is not something the person wrote: it appears
+   * part-way through one message's life (the first autosave), it is REPLACED when a send makes
+   * its own, and it is absent entirely for a press that beat the first save. So one unchanged
+   * message hashed as three different messages depending on which moment the press happened in —
+   * and a fingerprint that changes without the content changing is precisely how a resume misses
+   * and a second Idempotency-Key is minted for mail that may already have gone.
+   *
+   * Which ROW a record names is still written down ({@link SendLock.draftId}, kept current by
+   * {@link attachSendLockDraft}); it is diagnostic, and nothing branches on it. Which MESSAGE a
+   * record is of is `subject`/`session` and this hash. `sendFingerprintFieldsCovered` in
+   * `send-lock-durable.test.tsx` exempts `draftId` by name for this reason.
+   */
   const parts = [
-    m.inReplyTo ?? "", m.forwardOf ?? "", m.draftId ?? "", m.mailboxId ?? "",
+    m.inReplyTo ?? "", m.forwardOf ?? "", m.mailboxId ?? "",
     m.threadId ?? "",
     addrs(m.to), addrs(m.cc), addrs(m.bcc),
     m.subject ?? "", m.body ?? "", m.html ?? "", m.sendAt ?? "",
@@ -260,6 +332,42 @@ export function legacySendFingerprint_0_14_0(m: MailSend): string {
     addrs(m.to), addrs(m.cc), addrs(m.bcc),
     m.subject ?? "", m.html ?? m.body ?? "", m.sendAt ?? "",
     (m.attachments ?? []).map((a) => `${a.filename}:${a.contentType}:${a.contentBase64.length}`).join("|"),
+  ].join("\u0000");
+  return fnv1a(parts);
+}
+
+/**
+ * ── THE FINGERPRINT 0.14.1 WROTE, KEPT FOR THE SAME REASON THE 0.14.0 ONE IS ────────────────
+ *
+ * Copied field for field and join for join from `apps/webapp/app/shell/send-lock.ts` at the
+ * released 0.14.1 build. FROZEN: a decoder for jars that are on people's disks right now, not a
+ * second implementation of the identity. {@link sendFingerprint} above is the live one.
+ *
+ * It differs from the live algebra in exactly one place — it folds `m.draftId` into the hash — and
+ * that one place is the whole reason for the format bump. A browser holding an unresolved 0.14.1
+ * record when the managed web app flips computes a different hash for the same unchanged message
+ * under the new algebra; without this the record would not be recognised, a second key would be
+ * minted, and the mail would go out twice where the first send had reached the server.
+ *
+ * A `v: 2` record is compared against THIS; a `v: 3` record against {@link sendFingerprint}. The
+ * version is what tells them apart, which is why it was bumped rather than left at 2 as the 0.14.1
+ * change itself was — see {@link SEND_LOCK_FORMAT}.
+ *
+ * `send-lock-durable.test.tsx` pins the OUTPUT of the released build's own code over fixed
+ * messages, extracted with `git show` from the 0.14.1 tag's tree and run unmodified, so a
+ * transcription slip here shows up as a mismatch rather than as two copies of one assumption.
+ */
+export function legacySendFingerprint_0_14_1(m: MailSend): string {
+  const addrs = (xs: ReadonlyArray<{ name?: string | null; address: string }> | undefined): string =>
+    JSON.stringify((xs ?? []).map((a) => [a.name ?? null, a.address.toLowerCase()]));
+  const parts = [
+    m.inReplyTo ?? "", m.forwardOf ?? "", m.draftId ?? "", m.mailboxId ?? "",
+    m.threadId ?? "",
+    addrs(m.to), addrs(m.cc), addrs(m.bcc),
+    m.subject ?? "", m.body ?? "", m.html ?? "", m.sendAt ?? "",
+    JSON.stringify((m.attachments ?? []).map((a) => [
+      a.filename, a.contentType, a.contentBase64.length, fnv1a(a.contentBase64),
+    ])),
   ].join("\u0000");
   return fnv1a(parts);
 }
@@ -347,9 +455,38 @@ function isLock(x: unknown): x is SendLock {
  * read takes the ordinary path. The fingerprint is NOT touched, and that is deliberate: it is
  * still a 0.14.0 hash and the reader that compares it knows so.
  */
-function load(owner: string | null = storageOwner()): SendLock[] {
+/**
+ * ── `null` IS NOT `[]`, AND COLLAPSING THEM WAS A FAIL-OPEN ─────────────────────────────────
+ *
+ * This returned `[]` for everything its `catch` swallowed, so a browser that refuses this app
+ * access to its own storage — a private window, a profile with site data blocked — read as *a
+ * browser with no unresolved sends*. Every reader then answered "nothing is held": the reopen took
+ * the recovery door, the autosave minted a row, the settled discard deleted one. Each of those is
+ * a decision made on evidence that was never obtained.
+ *
+ * `null` = THE JAR COULD NOT BE READ. `[]` = the jar was read and holds nothing, which genuinely
+ * admits. {@link holdOf} maps the first to `unknown` and every recovery fails closed on it, while
+ * the press is still admitted (see invariant S(4) and the header's second decision).
+ *
+ * ONLY A THROWN ACCESSOR IS `null`. Content that will not parse is a jar that CAN be read whose
+ * bytes are garbage: the next write replaces it and the surface recovers, whereas answering
+ * `unknown` there would park the composer permanently with no exit — a jar nobody can repair. So
+ * a `JSON.parse` failure keeps the old `[]`, and only `localStorage` itself throwing is unknown.
+ *
+ * ── AND A `v: 2` RECORD IS NOT REWRITTEN ────────────────────────────────────────────────────
+ *
+ * The decode below is 0.14.0's alone ({@link mayMatchLegacy} names its format). A released 0.14.1
+ * record decodes perfectly well under {@link legacySendFingerprint_0_14_1}; rewriting it would
+ * throw away the `subject` and `session` that are the only names its message has.
+ */
+function load(owner: string | null = storageOwner()): SendLock[] | null {
+  let raw: string | null;
   try {
-    const raw = window.localStorage.getItem(sendLocksKey(owner));
+    raw = window.localStorage.getItem(sendLocksKey(owner));
+  } catch {
+    return null;
+  }
+  try {
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -365,6 +502,11 @@ function load(owner: string | null = storageOwner()): SendLock[] {
   } catch {
     return [];
   }
+}
+
+/** What the jar holds, with an unreadable jar read as empty — for the readers that admit on it. */
+function loadOrEmpty(owner: string | null = storageOwner()): SendLock[] {
+  return load(owner) ?? [];
 }
 
 function save(rows: SendLock[], owner: string | null = storageOwner()): void {
@@ -423,6 +565,10 @@ export function resumeSendLock(
   owner: string | null = storageOwner(),
 ): string | null {
   const rows = load(owner);
+  // AN UNREADABLE JAR RESUMES NOTHING and mints nothing: the press goes out under a fresh
+  // session-only key, which is the admit arm of invariant S(4). It also writes nothing back —
+  // `save` no-ops on the same refusal — so the sweep below cannot delete evidence it never read.
+  if (rows === null) return null;
   if (rows.length === 0) return null;
   const live = rows.filter((r) => isLive(r, nowMs));
   /**
@@ -442,14 +588,36 @@ export function resumeSendLock(
    * is then exempt from the spent-record sweep below (it is `unverified`), it parks its own
    * message at the surface, and it is not offered here to any message at all.
    */
-  const found = live.find((r) => r.lane === lane && r.fp === id.fp);
+  /**
+   * ── A RECORD RESUMES ACROSS SESSIONS ONLY WHEN IT IS UNRESOLVED — invariant S, decision 1 ────
+   *
+   * An ordinary claim belongs to the message-in-progress it was pressed in. The compose lane is
+   * one lane for every message this browser will ever write, so a claim left behind by a message
+   * that was replaced (a new compose, a mail link, a contact's Write — each of which re-mints the
+   * session) would otherwise be handed to whatever is on screen next, and the server replays the
+   * FIRST send's stored result at it: "Sent." about a message that never left.
+   *
+   * An UNRESOLVED record is the opposite case and keeps resuming regardless of session: it is the
+   * only thing naming the key a message may already have gone under, and refusing to resume it is
+   * precisely how the next press mints a fresh one for mail that is already delivered.
+   *
+   * A record with no session of its own (a reply, a forward, a 0.14.0 rewrite) is not scoped by
+   * this: it is named by the message it answers, which no session can change.
+   */
+  const sessionAdmits = (r: SendLock): boolean =>
+    r.unverified === true || r.session === undefined || id.session === null
+    || r.session === id.session;
+  const found = live.find(
+    (r) => r.lane === lane && r.fp === fingerprintFor(r, id) && sessionAdmits(r),
+  );
   // A different fingerprint means the key does not name THIS content, so it cannot be resumed and
   // the record is spent — EXCEPT an unverified one, which is kept regardless. Deleting it is how
   // reopening a draft and editing it turned into a fresh key for a message that may already have
   // been delivered. A record from a LATER format is exempt too: this build cannot read what its
   // fingerprint means, and a downgrade must not delete a newer install's evidence.
   const kept = live.filter((r) => !(
-    r.lane === lane && r.fp !== id.fp && r.unverified !== true && r.v <= SEND_LOCK_FORMAT
+    r.lane === lane && r.fp !== fingerprintFor(r, id) && r.unverified !== true
+    && r.v <= SEND_LOCK_FORMAT
   ));
   if (kept.length !== rows.length) save(kept, owner);
   return found?.key ?? null;
@@ -476,7 +644,23 @@ export function resumeSendLock(
  * "the outcome of this send was never observed and this build cannot name what it was of".
  */
 function mayMatchLegacy(r: SendLock): boolean {
-  return r.v < SEND_LOCK_FORMAT && r.subject === undefined && r.session === undefined;
+  return r.v <= LAST_0_14_0_FORMAT && r.subject === undefined && r.session === undefined;
+}
+
+/**
+ * WHICH SPELLING OF THIS MESSAGE A STORED RECORD'S FINGERPRINT IS IN — the version decides.
+ *
+ * `v: 2` is the released 0.14.1 algebra ({@link legacySendFingerprint_0_14_1}, `draftId` folded
+ * in); `v: 3` is this build's. Comparing every record against one hash is what made the 0.14.0 →
+ * 0.14.1 flip a duplicate-delivery window, and it is the same window here.
+ *
+ * A record the 0.14.0 decode rewrote carries `v: 3` and a 0.14.0 fingerprint on purpose: it is
+ * NAMELESS and must match no message by hash at all, which is exactly what comparing it against
+ * this build's algebra achieves. Its park is `unresolvedNames`' nameless arm, which tries all
+ * three spellings.
+ */
+function fingerprintFor(r: SendLock, id: SendIdentity): string {
+  return r.v <= LAST_0_14_1_FORMAT ? id.legacyFp0141 : id.fp;
 }
 
 /**
@@ -497,6 +681,15 @@ export interface SendIdentity {
    * both hashes from the one assembly rather than re-hashing every attachment to get the second.
    */
   legacyFp: string;
+  /**
+   * {@link legacySendFingerprint_0_14_1} — the released 0.14.1 algebra, `draftId` folded in.
+   *
+   * The spelling every `v: 2` record in a jar on somebody's disk right now is written in. Carried
+   * on the identity rather than recomputed at each comparison for the reason the other two are:
+   * the hash walks every attachment's base64, and asking for it twice puts the bytes through a
+   * hash twice on the render path that decides whether Send is pressable.
+   */
+  legacyFp0141: string;
   /** {@link sendSubjects} — every name the message answers to. */
   subjects: ReadonlyArray<string>;
   /** The compose session the press is in, or `null` off the compose lane. */
@@ -509,6 +702,7 @@ export function sendIdentity(m: MailSend, session: string | null = null): SendId
   return {
     fp: sendFingerprint(m),
     legacyFp: legacySendFingerprint_0_14_0(m),
+    legacyFp0141: legacySendFingerprint_0_14_1(m),
     subjects: sendSubjects(m, session),
     session,
     draftId: m.draftId ?? null,
@@ -525,7 +719,7 @@ export function sendIdentity(m: MailSend, session: string | null = null): SendId
  */
 export function readSendLock(lane: string, fp: string, nowMs: number, owner: string | null = storageOwner()): string | null {
   return resumeSendLock(lane, {
-    fp, legacyFp: fp, subjects: [], session: null, draftId: null,
+    fp, legacyFp: fp, legacyFp0141: fp, subjects: [], session: null, draftId: null,
   }, nowMs, owner);
 }
 
@@ -546,7 +740,9 @@ export function claimSendLock(lock: SendLock, owner: string | null = storageOwne
    * every unresolved record it has, minus any that names this same message: that one IS this
    * claim, and two rows for one message would answer twice about it.
    */
-  const rows = load(owner).filter((r) => r.lane !== lock.lane
+  // AN UNREADABLE JAR IS EMPTY HERE ON PURPOSE: there is nothing to evict and `save` will no-op,
+  // so the claim is as durable as the tab — exactly what it was before this file existed.
+  const rows = loadOrEmpty(owner).filter((r) => r.lane !== lock.lane
     ? true
     // A record from a LATER format is not this build's to evict, ordinary or not.
     : (r.unverified === true && r.fp !== lock.fp) || r.v > SEND_LOCK_FORMAT);
@@ -577,7 +773,9 @@ export function claimSendLock(lock: SendLock, owner: string | null = storageOwne
  * has now observed is no longer unknown — and leaves every other record on the lane alone.
  */
 export function releaseSendLock(lane: string, fp: string, owner: string | null = storageOwner()): void {
-  const rows = load(owner);
+  // Nothing read, nothing to release — and nothing written, so an unreadable jar cannot lose a
+  // record it never handed over.
+  const rows = loadOrEmpty(owner);
   const kept = rows.filter((r) => !(r.lane === lane && r.fp === fp));
   if (kept.length !== rows.length) save(kept, owner);
 }
@@ -596,7 +794,7 @@ export function releaseSendLock(lane: string, fp: string, owner: string | null =
  * inviting them to.
  */
 export function allSendLocks(nowMs: number, owner: string | null = storageOwner()): SendLock[] {
-  const rows = load(owner);
+  const rows = loadOrEmpty(owner);
   if (rows.length === 0) return [];
   const live = rows.filter((r) => isLive(r, nowMs));
   if (live.length !== rows.length) save(live, owner);
@@ -734,7 +932,10 @@ function lockSubjects(r: SendLock): string[] {
  * sends, which is the whole of what a person needs here.
  */
 export function unverifiedSendIntents(lane: string, owner: string | null = storageOwner()): SendIntent[] {
-  return load(owner)
+  // EMPTY on an unreadable jar, and that is the ADMIT arm of invariant S(4) rather than an
+  // oversight: this feeds `canSend`, and a browser that will not let this app keep a record must
+  // still be able to send. The recovery sites fail closed instead, through {@link holdOf}.
+  return loadOrEmpty(owner)
     /**
      * A LATER FORMAT'S RECORD IS NOT INTERPRETED HERE, and it is not deleted either.
      *
@@ -820,7 +1021,7 @@ export function parkedComposeRecord(
   session: string | null,
   owner: string | null = storageOwner(),
 ): ParkedIdentity | null {
-  const rows = load(owner)
+  const rows = loadOrEmpty(owner)
     .filter((r) => r.lane === lane && r.unverified === true && r.v <= SEND_LOCK_FORMAT);
   if (session !== null) {
     const named = rows.find((r) => lockSubjects(r).includes(`compose:${session}`));
@@ -838,33 +1039,104 @@ export function parkedComposeRecord(
 }
 
 /**
- * ── IS THIS COMPOSE HOLDING A MESSAGE THAT MAY ALREADY HAVE GONE? THE ONE PREDICATE ─────────
+ * ── THE HOLD, AS THREE ANSWERS RATHER THAN A BOOLEAN ────────────────────────────────────────
  *
- * Two witnesses, and NEITHER is sufficient alone:
- *
- *  · the RECORD this browser wrote ({@link parkedComposeRecord}) — the only one that speaks for a
- *    row the server still calls `draft`, and for a message with no row at all;
- *  · the SERVER's own `unverified` on the row — the only one that speaks for a row this browser
- *    never learned the id of. A press with no row makes the ADAPTER create one; that row is what
- *    the server marks, and the result carries no id, so nothing here can name it.
- *
- * It is one function because the three places that ask were measured DISAGREEING, twice, and each
- * disagreement was a second copy in a recipient's mailbox. The last one: the reopen and the send
- * gate both honoured the server's mark while the autosave did not, so two seconds after opening
- * such a row the save effect decided the message was new, created a row of its own and REPLACED
- * the hold with it — after which the send gate saw an ordinary row, Send came back on, and one
- * press sent the message again.
- *
- * `rowStatus` is what the mirror says about the row this compose is HOLDING: `null`/`undefined`
- * when there is no row, or when the mirror cannot say yet (a cold reload). Unknown is not
- * evidence of a draft, and it is not evidence of a park either — the record decides there, which
- * is what it is for.
+ * `composeMessageHeld(parked, rowStatus) -> boolean` stood here. It carried two of the three
+ * witnesses correctly and could not say the third thing a caller needs: whether it KNOWS. A
+ * boolean has one place to put "no answer", and every caller put it with `false`.
  */
-export function composeMessageHeld(
-  parked: ParkedIdentity | null,
-  rowStatus: string | null | undefined,
-): boolean {
-  return parked !== null || rowStatus === "unverified";
+export type Hold =
+  /** Nothing is waiting on this message. Every write site may proceed. */
+  | { kind: "free" }
+  /**
+   * A send of this message has not been confirmed. `by` names the witness:
+   *
+   *  · `"record"` — the durable record this browser wrote. The only witness for a row the server
+   *    still calls `draft`, and for a message with no row at all.
+   *  · `"status"` — the mirror says the row is past `draft`. The only witness for a row this
+   *    browser never learned the id of: a press with no row makes the ADAPTER create one, that row
+   *    is what the server marks, and nothing here can name it.
+   *
+   * `draftId`/`session` are the identity to RESTORE — a door in between (a contact's Write, a mail
+   * link) legitimately mints a new session, so a caller that only learned "yes" would present the
+   * message under a session the record has never heard of: no warning, Send live, one press, a
+   * second copy.
+   */
+  | { kind: "parked"; by: "record" | "status"; draftId: string | null; session: string | null }
+  /**
+   * NOBODY KNOWS. The jar threw on read, or the mirror cannot yet name the row this surface is
+   * holding (a cold reload: the shell starts the engine in an effect and the rows arrive after).
+   *
+   * Not `free`. Collapsing the two is what let a private window read as "this browser has no
+   * unresolved sends" and take every recovery door there is. See invariant S(4): the PRESS is
+   * admitted on `unknown` (a browser that refuses storage must still send); every recovery —
+   * discard, re-mint, adopt, create — fails closed.
+   */
+  | { kind: "unknown" };
+
+/** The narrowest thing {@link holdOf} needs: one mirror read. Any `OhmailEngine` satisfies it. */
+export interface HoldMirror {
+  read(): { get<T = unknown>(type: string, id: string): T | undefined };
+}
+
+/**
+ * ── IS THIS MESSAGE HELD? THE ONE PREDICATE — invariant S(4) ────────────────────────────────
+ *
+ * Every write site in the shell asks THIS and nothing else: the autosave create, the autosave PUT,
+ * the adopt-on-mount, `openDraft`, `writeTo`, the mailto seam, `cancelCompose`, the Send press,
+ * the settled discard. A census in the web application's own suite pins the per-file call-site
+ * COUNT, because a census over file MEMBERSHIP cannot see a missing call.
+ *
+ * ── WHY IT IS ONE FUNCTION AND NOT THREE ────────────────────────────────────────────────────
+ *
+ * It was three — `parkedHere` in the autosave, `parkedComposeRecord` + `composeMessageHeld` at the
+ * reopen, and the send gate's own reading — and each of the seven fixes before this one closed the
+ * duplicate route the previous one had left. Every one of those routes was the same shape: two of
+ * the three agreed that a message was held and the third wrote anyway. The write is what matters,
+ * so the answer is computed in one place and the sites consume it.
+ *
+ * ── THE THREE ANSWERS, AND WHY `unknown` IS NOT `free` ──────────────────────────────────────
+ *
+ * The record is asked FIRST, because it speaks for a row the server still calls `draft` and for a
+ * message with no row at all. The mirror's status is asked SECOND, because it speaks for the row
+ * the adapter made for itself, whose id this browser is never told.
+ *
+ * `parked/status` is every status that is not `draft` — `sending`, `unverified`, `sent`. It used
+ * to be `unverified` alone, so a STRANDED `sending` row (a send whose answer never arrived, its
+ * record swept or never written) read as an ordinary draft: reopening it took the recovery door,
+ * and one press delivered the message a second time. `sent` is in the list for the same reason and
+ * costs nothing — such a row is not offered in Drafts.
+ *
+ * A row the mirror cannot NAME is `unknown`, never `free`. Absent and "not loaded yet" look
+ * identical through `get`, and on the path this exists for — a reload — the mirror is empty at
+ * mount.
+ */
+export function holdOf(
+  engine: HoldMirror,
+  q: { lane: string; draftId: string | null; session: string | null },
+  owner: string | null = storageOwner(),
+): Hold {
+  // THE JAR FIRST. A browser that will not answer about its own records cannot be read as a
+  // browser with none — see {@link load}, which is where the two used to collapse.
+  if (load(owner) === null) return { kind: "unknown" };
+  const record = parkedComposeRecord(q.lane, q.draftId, q.session, owner);
+  if (record !== null) {
+    return { kind: "parked", by: "record", draftId: record.draftId, session: record.session };
+  }
+  // NO ROW IS NOT A HOLD. A compose that has never been saved is named by its session alone, and
+  // the record arm above is the only thing that can speak for it.
+  if (q.draftId === null) return { kind: "free" };
+  const row = engine.read().get<{ status?: unknown }>("draft", q.draftId);
+  if (row === null || row === undefined || typeof row.status !== "string") return { kind: "unknown" };
+  if (row.status !== "draft") {
+    return { kind: "parked", by: "status", draftId: q.draftId, session: q.session };
+  }
+  return { kind: "free" };
+}
+
+/** `true` for every hold that is not `free` — the shape a write site's guard reads. */
+export function holdRefusesWrite(hold: Hold): boolean {
+  return hold.kind !== "free";
 }
 
 /**
@@ -877,7 +1149,7 @@ export function composeMessageHeld(
  */
 export function unresolvedSendRows(lane: string, owner: string | null = storageOwner()): Set<string> {
   const out = new Set<string>();
-  for (const r of load(owner)) {
+  for (const r of loadOrEmpty(owner)) {
     if (r.lane !== lane || r.unverified !== true || r.v > SEND_LOCK_FORMAT) continue;
     if (r.draftId !== null && r.draftId.length > 0) out.add(r.draftId);
     for (const s of lockSubjects(r)) if (s.startsWith("draft:")) out.add(s.slice("draft:".length));
@@ -905,7 +1177,7 @@ export function attachSendLockDraft(
   owner: string | null = storageOwner(),
 ): void {
   if (subjects.length === 0 || draftId === null) return;
-  const rows = load(owner);
+  const rows = loadOrEmpty(owner);
   let moved = false;
   const next = rows.map((r) => {
     if (r.lane !== lane || r.draftId === draftId) return r;
@@ -924,7 +1196,7 @@ export function attachSendLockDraft(
  * whichever message happened to be listed first.
  */
 export function markSendLockUnverified(lane: string, fp: string, owner: string | null = storageOwner()): void {
-  const rows = load(owner);
+  const rows = loadOrEmpty(owner);
   const found = rows.find((r) => r.lane === lane && r.fp === fp);
   if (!found || found.unverified === true) return;
   save(rows.map((r) => (r === found ? { ...r, unverified: true } : r)), owner);

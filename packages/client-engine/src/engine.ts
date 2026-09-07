@@ -95,10 +95,16 @@ export interface MutationResult {
   /**
    * The SERVER's id for a row this mutation created — see {@link MutationOutcome.entityId}.
    *
-   * Present only where the caller has to keep using it, which today means `draft_save`'s create:
-   * the compose surface adopts it, PATCHes it on every later autosave and sends THAT row, so one
-   * draft exists from the first keystroke to delivery. Absent on every rejection, because a row
-   * that was refused has no id to adopt.
+   * Present where the caller has to keep using it. Two cases, and they are different verbs:
+   *
+   *  · `draft_save`'s CREATE, confirmed — the compose surface adopts it, PATCHes it on every later
+   *    autosave and sends THAT row, so one draft exists from the first keystroke to delivery.
+   *  · a QUEUED send — the row the adapter created for a press that carried none. Nothing adopts
+   *    it (a queued send may still be delivering), but the durable send record has to NAME it, or
+   *    a reload cannot tell that the row sitting in Drafts is the message it is already waiting on.
+   *
+   * A ROLLED-BACK result carries it too when the refusal knows the row — see
+   * {@link MutationRejectedError.entityId}, which is where an `unverified` send's row comes from.
    */
   entityId?: string;
   /**
@@ -5237,10 +5243,12 @@ export class OhmailEngine {
       this.reconcileOptimisticSent();
       this.overlayRev++;
       this.notify();
-      // `entityId` rides only on the CONFIRMED result. A queued or rolled-back mutation has no
-      // server row to name, and handing back an id for one would be the worst kind of wrong
-      // answer here — a compose surface would adopt it and go on PATCHing a draft that is not
-      // there, or send it.
+      // `entityId` rides the CONFIRMED result here. The queued arm below carries its own, taken
+      // from the refusal that produced it, and the two are different claims: this one says "a row
+      // was created and it is yours to write to", the queued one says "a row exists and this send
+      // is about it". Handing the first back for a mutation that was NOT confirmed would be the
+      // worst kind of wrong answer — a compose surface would adopt it and go on PATCHing a draft
+      // that may not be there, or send it — which is why the queued arm names rather than adopts.
       // `pendingWith` rides the same way, and for the reason it exists: the server took the
       // decision and did NOT act on it, and this result is the only thing that can say so. It is
       // on the CONFIRMED result because the mutation genuinely succeeded — a queued or
@@ -5312,13 +5320,19 @@ export class OhmailEngine {
           return { id: p.id, key: p.key, status: "rolled_back", seq: null, error: rejection };
         }
         this.queue.push(p);
+        // NAMED, not adopted — see {@link MutationResult.entityId}. The adapter created a row for
+        // a press that carried none and the send is on the wire about it; the durable send record
+        // binds the row so a reload does not read it as an ordinary draft and mint a second one.
         // Re-assert the durable entry. Normally redundant with `mutate()`'s write, but it is
         // the belt for the one window where it is not: a 410 reset wiped the store while this
         // request was in flight, and without this line the queued verb would be memory-only
         // again — the exact state the durable outbox exists to retire. It also persists the
         // counter and the delay, which is what makes the bound survive a restart.
         await this.putOutbox(p);
-        return { id: p.id, key: p.key, status: "queued", seq: null, error: rejection };
+        return {
+          id: p.id, key: p.key, status: "queued", seq: null, error: rejection,
+          ...(rejection.entityId ? { entityId: rejection.entityId } : {}),
+        };
       }
       // EXPLICIT REFUSAL: the local effect rolls back VISIBLY, once — the overlay drops, the
       // row reverts, and the rejection (with the server's own sentence) rides the result for
@@ -5385,7 +5399,12 @@ export class OhmailEngine {
       }
       this.overlayRev++;
       this.notify();
-      return { id: p.id, key: p.key, status: "rolled_back", seq: null, error: rejection };
+      // The refusal's own row rides the result for the same reason the queued arm's does: an
+      // `unverified` send names the row the server marked, and nothing else in this client can.
+      return {
+        id: p.id, key: p.key, status: "rolled_back", seq: null, error: rejection,
+        ...(rejection.entityId ? { entityId: rejection.entityId } : {}),
+      };
     }
   }
 

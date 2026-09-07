@@ -1906,10 +1906,31 @@ export class HttpAdapter implements EngineAdapter {
       // forever; the user decides whether to compose a fresh send, with the warning on
       // screen. An automatic resend here would be the second delivery this whole path is
       // built to make impossible: one press is one delivery.
+      //
+      // ── THE ROW GOES OUT WITH THE REFUSAL, AND IT IS READ OFF *BEFORE* THE FORGETTING ───────
+      //
+      // `draftId` at this point is the row this send was about — the caller's, or the one created
+      // for it a few lines above when the press carried none. The second case is the one that
+      // mattered: the server marked THAT row `unverified`, this client was never told which row it
+      // was, and it therefore sat in Drafts looking like an ordinary draft. Opening it took the
+      // recovery door and one press delivered the message a second time (measured live, recipient
+      // total 2). Naming it here is what lets the durable send record park the message.
+      //
+      // Read before `draftForKey.delete`, deliberately: `draftId` is a local, but the ORDER of
+      // these two statements is the thing a later edit would get wrong, and a refusal that names
+      // no row is indistinguishable from one whose row nobody created.
+      const unverifiedRow = draftId;
       this.draftForKey.delete(idempotencyKey);
       throw new MutationRejectedError(
-        wire.message ?? "We couldn't confirm this send. Check your Sent folder before retrying.",
-        { status: res.status, code: "send_unverified", retryable: false },
+        // The fallback matches the shell's own sentence for this state: the send is HELD under the
+        // key it went out under, so the honest instruction is to look rather than to press again —
+        // pressing again is refused, which a sentence inviting it would not explain.
+        wire.message
+          ?? "We couldn't confirm this send. It's held under the same send — check your Sent folder to see whether it arrived.",
+        {
+          status: res.status, code: "send_unverified", retryable: false,
+          entityId: unverifiedRow ?? null,
+        },
       );
     }
 
@@ -1936,6 +1957,10 @@ export class HttpAdapter implements EngineAdapter {
           // A server that names an interval is obeyed even here: this arm is a WAIT, and the
           // client's own cadence is not better information than the server's.
           retryAfterMs: retryAfterMsOf(res),
+          // The row this accepted send is about — see the `unverified` arm above. A reload inside
+          // the queued window otherwise came back unable to name it, read it as an ordinary draft
+          // and minted a second row for one message.
+          entityId: draftId ?? null,
         },
       );
     }
