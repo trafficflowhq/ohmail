@@ -1693,3 +1693,670 @@ describe("the reader row's three states, and the one that had no holder at all",
     }
   });
 });
+
+/**
+ * ═══ THE PANE MUST NOT SAY A FALSE THING ABOUT WHO ORGANIZES A MAILBOX ═════════════════════
+ *
+ * Six claims, each measured by walking the released 0.14.1 build. They are gathered in one
+ * describe because they share a subject — the row telling the truth about the outage, the holder
+ * and the standing asks — and because the first of them decides where the others are fixed: the
+ * report said the outage sentence never reaches a row this install only reads, and the code says
+ * the outage arm sits ABOVE the reader arm. One of those is wrong.
+ *
+ * ── HOW TO WATCH THESE FAIL ─────────────────────────────────────────────────────────────────
+ * Each case names the mutation that reddens it in its own comment. Every case here was watched
+ * red before its fix, EXCEPT the two marked as controls, which were green before anything moved —
+ * that is a finding rather than a formality, and it is asserted rather than described so it
+ * cannot rot into a claim.
+ */
+describe("the pane tells the truth about the outage, the holder and the standing asks", () => {
+  const mailboxCopy = (messages as unknown as { mailboxes: Record<string, string> }).mailboxes;
+
+  /** A reach answer for one mailbox, as `/local/mailboxes/connections` serves it. */
+  const reachAnswer = (over: Record<string, unknown>): Response => new Response(JSON.stringify({
+    items: [{ mailboxId: "mbx-1", reachable: true, unreachableSince: null, ...over }],
+  }), { status: 200, headers: { "content-type": "application/json" } });
+
+  /** Re-render the SAME root, so the pane's per-press notes survive the facts moving under them. */
+  async function repaint(door: string): Promise<void> {
+    const { DesktopMailboxes } = await import("../src/DesktopMailboxes.js");
+    await act(async () => {
+      root!.render(
+        h(
+          IntlProvider,
+          { locale: "en", messages: messages as never, timeZone: "UTC" } as never,
+          h(
+            ThemeProvider,
+            { storageKey: "ohmail.theme" } as never,
+            h(ToastHost, null, h(DesktopMailboxes, {
+              door,
+              onShellStatus: (next: { state: string; mode?: string | null }) => {
+                published.push(next);
+              },
+            })),
+          ),
+        ),
+      );
+    });
+  }
+
+  /**
+   * (1) THE GATE. The report says the outage sentence never reaches a row
+   * this install only READS — measured against a mailbox ohmail Cloud organizes, where the engine
+   * had recorded the outage and the row read "Reading only" throughout a five-minute cut.
+   *
+   * `stateOf` puts the outage arm ABOVE the reader arm and says so in a comment. MEASURED before
+   * anything below it changed: this case is GREEN. The ladder is not where the reported silence
+   * comes from, so it is not touched; what remains for the pane is the case below — the probe
+   * that maps every non-OK answer to silence.
+   *
+   * It stays as a standing case rather than being deleted, because the arm it pins has no other
+   * one: every existing outage case in this file uses the DEFAULT row, which is an organizer, so
+   * moving the outage arm below the reader arm would red nothing without this.
+   */
+  it("(1) GATE — a reader row whose server is unreachable says so, not 'Reading only'", async () => {
+    FACTS = [{
+      ...MAILBOX,
+      organizerRole: "reader",
+      organizedBy: { kind: "cloud", name: "ohmail Cloud", since: "2026-08-30T09:00:00.000Z" },
+      organizerState: "held",
+      organizeConsentedAt: null,
+    }];
+    bridgeReply = () => reachAnswer({
+      reachable: false,
+      unreachableSince: new Date(Date.now() - 20 * 60_000).toISOString(),
+    });
+
+    const text = (await render("local")).textContent ?? "";
+    expect(bridged, "the pane never asked the reach question on a reader row")
+      .toContainEqual({ url: "/local/mailboxes/connections", method: "GET" });
+    expect(text, "the outage sentence never reached a row this install only reads")
+      .toContain("Can't reach the mail server");
+    expect(text, "the outage lost its duration").toContain("20 minutes ago");
+    expect(text, "'Reading only' stood beside a dead socket, describing mail that is not moving")
+      .not.toContain(mailboxCopy.stateReading!);
+  });
+
+  /**
+   * (2) THE PROBE'S SILENCE. It maps EVERY non-OK status to `{}`,
+   * and `{}` is the pane's word for "cannot tell" — so an engine answering 500 about its own
+   * sockets renders as a mailbox that is up to date. 404 is genuinely "cannot tell" (a window
+   * newer than its engine, an ordinary state on a desktop); 401 and 5xx are the route ANSWERING,
+   * and answering badly, which is a different fact.
+   *
+   * ── AND THE SENTENCE IS ABOUT THE QUESTION, NOT ABOUT THE MAIL SERVER ────────────────────
+   *
+   * This first rendered `desktopStateUnreachable` — "Can't reach the mail server" — which is a
+   * claim about the person's PROVIDER, and nothing here has learned anything about their
+   * provider: what answered badly is the engine on this machine, asked about its own sockets. A
+   * stale bearer after an engine restart answers 401 for every poll, so every row would announce
+   * an outage at a mail server that is working perfectly, while mail carries on arriving. The
+   * honest sentence names the question that could not be answered.
+   *
+   * WATCH IT FAIL: restore the single `if (!res.ok) return {}` and this case reddens with
+   * "Up to date" over an engine that cannot say anything about its own connections; point the
+   * faulted arm back at `desktopStateUnreachable` and it reddens on the outage claim.
+   */
+  it("(2) an engine that answers BADLY about its own sockets says so, and claims no outage", async () => {
+    FACTS = [MAILBOX];
+    bridgeReply = () => new Response(null, { status: 500 });
+
+    const text = (await render("local")).textContent ?? "";
+    expect(text, "a 500 from the engine's own connection route rendered as a working mailbox")
+      .not.toContain(mailboxCopy.desktopStateUpToDate!);
+    expect(text, "the row said nothing at all about a question that was answered badly")
+      .toContain(mailboxCopy.desktopStateUnknown!);
+    expect(text, "an unanswered question was reported as the person's mail server being down")
+      .not.toContain(mailboxCopy.desktopStateUnreachable!);
+    expect(text, "a slice with no per-row answer invented a duration for the outage")
+      .not.toContain("Last answered");
+  });
+
+  /**
+   * (2c) AND ONE BAD POLL DOES NOT STICK. The faulted state is the slice the last answer
+   * produced and nothing more, so the next good poll replaces it. This is what stands in place of
+   * a debounce: the arm claims nothing that would need to be withdrawn, and a transient 5xx is
+   * one interval of "cannot check" rather than a false outage that outlives its cause.
+   */
+  it("(2c) the next good poll clears a faulted slice", async () => {
+    FACTS = [MAILBOX];
+    let answer = (): Response => new Response(null, { status: 500 });
+    bridgeReply = () => answer();
+
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const el = await render("local");
+      expect(el.textContent ?? "").toContain(mailboxCopy.desktopStateUnknown!);
+
+      answer = () => reachAnswer({ reachable: true });
+      await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+      const healed = el.textContent ?? "";
+      expect(healed, "a transient refusal outlived the poll that answered it")
+        .not.toContain(mailboxCopy.desktopStateUnknown!);
+      expect(healed).toContain(mailboxCopy.desktopStateUpToDate!);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /**
+   * (2d) A 200 THAT IS NOT A VERDICT IS NOT AN EMPTY ROSTER. `body.items ?? []` read `{}`,
+   * `{"items": null}`, a bare array and a text body as "the engine answered about no mailboxes" —
+   * the SILENT slice, one line below the status check that was added to stop exactly this: every
+   * row keeps its last ordinary state, so a dead socket goes on reading "Up to date" for as long
+   * as the malformed answer keeps arriving.
+   *
+   * The last row is the one that keeps this from being a check that fires on everything: an
+   * engine holding no runtimes answers `{"items": []}`, which IS a verdict.
+   *
+   * WATCH IT FAIL: drop the `Array.isArray(items)` half of the decision and every faulted row
+   * below reddens; drop the whole check and the empty-roster row reddens with it.
+   */
+  it("(2d) a 200 whose body is not a roster is a non-verdict, and an empty roster is not", async () => {
+    FACTS = [MAILBOX];
+    const json = (text: string): Response => new Response(text, {
+      status: 200, headers: { "content-type": "application/json" },
+    });
+
+    for (const [what, res] of [
+      ["an object with no items at all", () => json("{}")],
+      ["items explicitly null", () => json('{"items":null}')],
+      ["a bare array", () => json("[]")],
+      ["a string body", () => json('"ok"')],
+    ] as const) {
+      bridgeReply = res;
+      const text = (await render("local")).textContent ?? "";
+      expect(text, `${what} was read as an engine that answered about no mailboxes`)
+        .toContain(mailboxCopy.desktopStateUnknown!);
+      expect(text, `${what} left the row claiming it was up to date`)
+        .not.toContain(mailboxCopy.desktopStateUpToDate!);
+      await act(async () => { root!.unmount(); });
+      root = null;
+    }
+
+    // …and the genuine empty roster is a verdict: nothing is said about this row, so it keeps
+    // the state it had, and nothing on screen says the engine could not be asked.
+    bridgeReply = () => json('{"items":[]}');
+    const empty = (await render("local")).textContent ?? "";
+    expect(empty, "an engine holding no runtimes was treated as a broken answer")
+      .not.toContain(mailboxCopy.desktopStateUnknown!);
+    expect(empty).toContain(mailboxCopy.desktopStateUpToDate!);
+  });
+
+  /**
+   * (2b) THE OTHER HALF, and the one that must not move: a 404 is a window newer than its engine,
+   * which is an ordinary state on a desktop that updates on its own schedule. Reading it as an
+   * outage would tell somebody their mail had stopped every time an update landed.
+   */
+  it("(2b) CONTROL — a 404 stays 'cannot tell', and the row keeps its ordinary state", async () => {
+    FACTS = [MAILBOX];
+    bridgeReply = () => new Response(null, { status: 404 });
+
+    const text = (await render("local")).textContent ?? "";
+    expect(text, "a route this engine does not serve was read as an outage")
+      .toContain(mailboxCopy.desktopStateUpToDate!);
+    expect(text).not.toContain("Can't reach the mail server");
+    expect(text, "silence was reported as a question that could not be answered")
+      .not.toContain(mailboxCopy.desktopStateUnknown!);
+  });
+
+  /**
+   * (2e) ONE UNREADABLE ENTRY IS A FACT ABOUT ONE ROW.
+   *
+   * `const it = raw as {…}` followed by `it.mailboxId` THREW on a `null` element, and the throw
+   * left `readMailboxReachVia` entirely — past the poll's `.then`, so `setReach` was never called
+   * and whatever slice was on screen stayed. After a healthy read that means a mailbox whose
+   * socket has since died goes on saying "Up to date", and so does every row AFTER the bad
+   * element, for as long as the roster keeps carrying it. One unreadable entry silenced the
+   * answer about every other mailbox.
+   *
+   * The roster is read element by element now: an element naming a row it cannot describe marks
+   * THAT row unanswered, one naming no row at all is dropped, and the rest publish.
+   *
+   * WATCH IT FAIL: restore `const it = raw as {…}` with no object guard and the first case throws;
+   * fold the unreadable element into `reachable: false` and the second reds on the outage claim.
+   */
+  it("(2e) a bad element does not silence its neighbours, and does not speak for them", async () => {
+    const dead = new Date(Date.now() - 20 * 60_000).toISOString();
+    const roster = (...entries: unknown[]): Response => new Response(
+      JSON.stringify({ items: entries }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+
+    /* A NULL BEFORE THE DEAD ROW — the reviewer's own sequence. The element names no row, so it
+       is dropped, and the row after it publishes its outage. */
+    FACTS = [MAILBOX];
+    bridgeReply = () => roster(null, {
+      mailboxId: "mbx-1", reachable: false, unreachableSince: dead,
+    });
+    let text = (await render("local")).textContent ?? "";
+    expect(text, "an unreadable entry silenced the answer about a different mailbox")
+      .toContain("Can't reach the mail server");
+    expect(text).toContain("20 minutes ago");
+    await act(async () => { root!.unmount(); });
+    root = null;
+
+    /* AN ELEMENT THAT NAMES THIS ROW AND CANNOT BE READ speaks for it — and says the one thing
+       that is true, which is that the question went unanswered. NOT an outage: nothing here has
+       learned anything about the person's mail server. */
+    bridgeReply = () => roster({ mailboxId: "mbx-1", reachable: "yes" });
+    text = (await render("local")).textContent ?? "";
+    expect(text, "an entry that could not be read was reported as a mailbox that is fine")
+      .not.toContain(mailboxCopy.desktopStateUpToDate!);
+    expect(text, "the row said nothing about an entry it could not read")
+      .toContain(mailboxCopy.desktopStateUnknown!);
+    expect(text, "an unreadable entry claimed an outage at a server it learned nothing about")
+      .not.toContain(mailboxCopy.desktopStateUnreachable!);
+    await act(async () => { root!.unmount(); });
+    root = null;
+
+    /* AND A WELL-FORMED NEIGHBOUR IS UNAFFECTED BY EITHER — the half that says this is per-row
+       rather than a slice that gave up more quietly. */
+    FACTS = [MAILBOX, { ...MAILBOX, id: "mbx-2", address: "other@example.test" }];
+    bridgeReply = () => roster(
+      null,
+      { mailboxId: "mbx-1", reachable: "yes" },
+      { mailboxId: "mbx-2", reachable: true },
+    );
+    const el = await render("local");
+    const rows = addressRows(el);
+    expect(rows, "the pane folded the two addresses into one row").toHaveLength(2);
+    expect(rows[0]!.textContent ?? "", "the unreadable row lost its own sentence")
+      .toContain(mailboxCopy.desktopStateUnknown!);
+    expect(rows[1]!.textContent ?? "", "a healthy neighbour was dragged down by a bad element")
+      .toContain(mailboxCopy.desktopStateUpToDate!);
+  });
+
+  /**
+   * (3) A STANDING STOP WITH NO CONSENT STAMP — two reports and one defect: `offerRelease`
+   * requires `organizeConsentedAt`, and when it is false the WHOLE organizer block returns null —
+   * taking the pending sentence with it. An install that became the organizer through the gate's
+   * promotion, or one whose row predates the consent column, is exactly that shape: it organizes
+   * the mailbox, a stop can be asked for through another door, and the row says "Organizing" with
+   * nothing about the ask standing against it.
+   *
+   * WATCH IT FAIL: restore `if (role === "organizer" && !offerRelease) return null`.
+   */
+  it("(3) a standing stop request is on the row even when the consent stamp is absent", async () => {
+    FACTS = [{
+      ...MAILBOX,
+      organizerRole: "organizer",
+      organizeConsentedAt: null,
+      releaseRequestedAt: "2026-09-07T09:00:00.000Z",
+    }];
+    const el = await render("local");
+    const text = el.textContent ?? "";
+    expect(text, "a pressed stop showed no trace on a row with no consent stamp")
+      .toContain(mailboxCopy.stopOrganizingPending!);
+    expect(text, "the ordinary organized sentence stood beside a pending stop")
+      .not.toContain(mailboxCopy.stateOrganizingHere!);
+    /* THE HALF THAT WAS RIGHT. The stop CONTROL stays withheld while the flag is absent — the
+       route would refuse it — so this is a row that states its situation and offers nothing. */
+    expect(buttonSaying(el, "Stop organizing"),
+      "a control was offered on a row the route refuses").toBeNull();
+  });
+
+  /**
+   * (3b) CONTROL — a consent-less organizer with NOTHING pending still renders no block. The fix
+   * widens the exception by exactly one fact, and a block that appeared unconditionally would put
+   * a state banner and a withheld control on every legacy row.
+   */
+  it("(3b) CONTROL — a consent-less organizer with nothing pending shows no banner", async () => {
+    FACTS = [{ ...MAILBOX, organizerRole: "organizer", organizeConsentedAt: null }];
+    const el = await render("local");
+    expect(el.querySelector(".mbx-org"),
+      "a row with nothing to say about organizing grew a banner").toBeNull();
+  });
+
+  /**
+   * (3c) THE SAME WIDENING, ON THE HOSTED DOOR — pinned because it is a consequence rather than an
+   * accident, and because nothing else in this file would notice it.
+   *
+   * The release is a standalone-door CONTROL: on the hosted door these rows mirror an account whose
+   * organizing is the service's, and the browser is where that is given up. But a standing stop is
+   * a FACT about the row, not a control, and it is as true there as anywhere — so the sentence
+   * renders and the verb still does not. Suppressing it would be hiding a true standing state on
+   * the one door where this window cannot offer any way to check it.
+   */
+  it("(3c) a hosted row carrying a standing stop says so, and still offers no verb", async () => {
+    FACTS = [{
+      ...MAILBOX,
+      organizerRole: "organizer",
+      organizeConsentedAt: "2026-08-01T09:00:00.000Z",
+      releaseRequestedAt: "2026-09-07T09:00:00.000Z",
+    }];
+    const el = await render("cloud");
+    expect(el.textContent ?? "", "the hosted row said nothing about a stop that is standing")
+      .toContain(mailboxCopy.stopOrganizingPending!);
+    expect(buttonSaying(el, "Stop organizing"),
+      "the hosted door grew a release control it cannot report the outcome of").toBeNull();
+  });
+
+  /**
+   * (3d) CONTROL — and an ordinary hosted row still grows no organizer banner at all, which is
+   * what every other hosted case in this file has always seen.
+   */
+  it("(3d) CONTROL — an ordinary hosted row has no organizer banner", async () => {
+    FACTS = [{ ...MAILBOX, organizerRole: "organizer", organizeConsentedAt: "2026-08-01T09:00:00.000Z" }];
+    const el = await render("cloud");
+    expect(el.querySelector(".mbx-org"),
+      "the hosted door grew a banner about organizing that it cannot act on").toBeNull();
+  });
+
+  /**
+   * (3e) A STAMP NEVER CHANGES A ROLE — the hosted door's reclassification, which the widening
+   * above made visible.
+   *
+   * `claimable` refuses every row on the hosted door (the release is a standalone-door control),
+   * so `role` answers `organizer` for a row the WIRE calls a reader. With a retained
+   * `releaseRequestedAt` on such a row — reachable when a mailbox is organized here, a stop is
+   * asked for, and the mailbox goes back to being organized in the cloud with the stamp still on
+   * the row — this block said "Organizing · Stopping on the next pass" about the service's
+   * organizer. That attributes one install's press to another, on the door where the person has
+   * no other way to check.
+   *
+   * The stamp says a request was made; the ROLE says whose it was. The block consults the DTO's
+   * role, so a reader row with a stamp is a reader here.
+   *
+   * WATCH IT FAIL: gate the block on `m.releaseRequestedAt` alone again.
+   */
+  it("(3e) a hosted READER row with a retained stop stamp is still a reader", async () => {
+    FACTS = [{
+      ...MAILBOX,
+      organizerRole: "reader",
+      organizedBy: { kind: "cloud", name: "ohmail Cloud", since: "2026-08-30T09:00:00.000Z" },
+      organizerState: "held",
+      organizeConsentedAt: "2026-08-01T09:00:00.000Z",
+      releaseRequestedAt: "2026-09-07T09:00:00.000Z",
+    }];
+    const el = await render("cloud");
+    const said = el.textContent ?? "";
+    expect(said, "a stop asked for by another install was reported as the holder's")
+      .not.toContain(mailboxCopy.stopOrganizingPending!);
+    expect(said, "the row claimed this computer organizes a mailbox the wire calls a reader")
+      .not.toContain(mailboxCopy.stateOrganizingHere!);
+    expect(buttonSaying(el, "Stop organizing"),
+      "a reader row grew a control over somebody else's organizing").toBeNull();
+    expect(el.querySelector(".mbx-org"),
+      "the hosted reader row grew an organizer banner off a stamp").toBeNull();
+    /* THE ROW ITSELF still says what it is — the state line is not the block. */
+    expect(said, "the reader row lost its own state").toContain(mailboxCopy.stateReading!);
+  });
+
+  /**
+   * (4) THE NOTE THAT OUTLIVES ITS PRESS. The takeover note renders while
+   * `reclaimed.has(id)` and the role is not `organizer` — which is true again AFTER a stop, so an
+   * "Asked for … within a minute" note from a press that was honoured an hour ago comes back over
+   * a released row, and the same map hides the "Organize here" button behind it. The person is
+   * shown a promise about a press they have since undone, and no way to press again.
+   *
+   * WATCH IT FAIL: drop the `reclaimed` clear from the release confirm handler.
+   */
+  it("(4) a stop clears the takeover note it undoes, and leaves the way back", async () => {
+    const READER = {
+      ...MAILBOX,
+      organizerRole: "reader" as const,
+      organizedBy: null,
+      organizerState: null,
+      organizeConsentedAt: "2026-08-01T09:00:00.000Z",
+      organizerReleasedAt: "2026-09-07T08:00:00.000Z",
+    };
+    FACTS = [READER];
+    bridgeReply = () => new Response(JSON.stringify({ outcome: "authorized" }), {
+      status: 200, headers: { "content-type": "application/json" },
+    });
+    const el = await render("local");
+
+    // ── THE TAKEOVER, through the pane's own two-step ceremony.
+    await act(async () => { buttonSaying(el, "Organize here")!.click(); });
+    await act(async () => { buttonExactly(el, "Organize here")!.click(); });
+    expect(el.textContent ?? "", "the takeover press left no note").toContain(
+      mailboxCopy.organizeHereQueued!,
+    );
+
+    // The gate promotes: the note's promise is kept and it ends.
+    FACTS = [{
+      ...MAILBOX,
+      organizerRole: "organizer",
+      organizeConsentedAt: "2026-08-01T09:00:00.000Z",
+    }];
+    await repaint("local");
+    expect(el.textContent ?? "").not.toContain(mailboxCopy.organizeHereQueued!);
+
+    // ── AND NOW THE STOP, which is a NEWER press about the same mailbox.
+    bridgeReply = () => new Response(JSON.stringify({ outcome: "requested" }), {
+      status: 202, headers: { "content-type": "application/json" },
+    });
+    await act(async () => { buttonSaying(el, "Stop organizing")!.click(); });
+    await act(async () => { buttonExactly(el, "Stop organizing")!.click(); });
+
+    // The release lands: reader again, release stamped, nothing holds the mailbox.
+    FACTS = [READER];
+    await repaint("local");
+    const done = el.textContent ?? "";
+    expect(done, "a note promising a takeover 'within a minute' came back over a stop that undid it")
+      .not.toContain(mailboxCopy.organizeHereQueued!);
+    expect(buttonSaying(el, "Organize here"),
+      "the stale takeover note hid the only way back onto the mailbox").not.toBeNull();
+  });
+
+  /**
+   * (5) THE BLANK HOLDER. `holderOf` falls back with `??`, so an EMPTY
+   * name — a holder recorded by an install that sent no display name — renders as nothing at all:
+   * "Organized by " with the sentence ending mid-air. `readerHolder` already treats `""` as
+   * unnamed, so the row is correctly CLASSIFIED as having a holder and then names it blankly.
+   *
+   * WATCH IT FAIL: restore `m.organizedBy?.name ?? …`.
+   */
+  it("(5) a holder that sent an empty name is unnamed, not blank", async () => {
+    FACTS = [{
+      ...MAILBOX,
+      organizerRole: "reader",
+      organizedBy: { kind: "local", name: "", since: "2026-08-30T09:00:00.000Z" },
+      organizerState: "held",
+      organizeConsentedAt: null,
+    }];
+    const el = await render("local");
+    const label = (el.querySelector(".mbx-org .set-banner .lab b")?.textContent ?? "").trim();
+    const said = (el.querySelector(".mbx-org .set-banner .lab span")?.textContent ?? "").trim();
+    expect(label, "the row named its holder with an empty string").toBe(
+      mailboxCopy.readerLabel!.replace("{name}", mailboxCopy.readerHolderUnknown!),
+    );
+    /* THE NAME'S HALF ONLY: `dayStamp` renders in the app's own format register, so pinning the
+       whole sentence would test the formatter. The clause AFTER the date is the one this case is
+       about, and it opened with " · ." when the name was empty. */
+    const named = mailboxCopy.readerSinceLocal!;
+    expect(said, "the date line ended mid-sentence where the name should be")
+      .toContain(named.slice(named.indexOf("· {name}"))
+        .replace("{name}", mailboxCopy.readerHolderUnknown!));
+  });
+
+  /**
+   * (5b) CONTROL — a holder that DID send a name keeps it, on both the label and the date line.
+   */
+  it("(5b) CONTROL — a named holder is still named", async () => {
+    FACTS = [{
+      ...MAILBOX,
+      organizerRole: "reader",
+      organizedBy: { kind: "local", name: "omarchy", since: "2026-08-30T09:00:00.000Z" },
+      organizerState: "held",
+      organizeConsentedAt: null,
+    }];
+    const el = await render("local");
+    const label = (el.querySelector(".mbx-org .set-banner .lab b")?.textContent ?? "").trim();
+    expect(label).toBe(mailboxCopy.readerLabel!.replace("{name}", "omarchy"));
+    expect(el.textContent ?? "").toContain("omarchy");
+  });
+
+  /**
+   * (6) A WORD WITH NOTHING BEHIND IT. On a row nothing organizes, the button offers
+   * to organize here INSTEAD OF — and there is nothing to be instead of. The row's own sentence
+   * already names the press as "Organize here", so the catalogue and the button disagree on one
+   * screen.
+   *
+   * WATCH IT FAIL: point both arms at one key again.
+   */
+  it("(6) the press on a row nobody organizes is 'Organize here', with no 'instead'", async () => {
+    FACTS = [{
+      ...MAILBOX,
+      organizerRole: "reader",
+      organizedBy: null,
+      organizerState: null,
+      organizeConsentedAt: null,
+    }];
+    const el = await render("local");
+    const press = [...el.querySelectorAll("button")]
+      .find((b) => (b.textContent ?? "").includes("Organize here"));
+    expect(press, "the row nobody organizes offered no way to organize it").toBeTruthy();
+    expect((press!.textContent ?? "").trim(),
+      "the button offered an alternative to a holder that does not exist")
+      .toBe(mailboxCopy.organizeHere!);
+    expect((press!.textContent ?? "").toLowerCase(),
+      "'instead' on a row with nothing to be instead of").not.toContain("instead");
+  });
+
+  /**
+   * (6b) CONTROL — a row somebody else DOES organize keeps "instead", because there it is true.
+   */
+  it("(6b) CONTROL — a row with a named holder keeps 'Organize here instead'", async () => {
+    FACTS = [{
+      ...MAILBOX,
+      organizerRole: "reader",
+      organizedBy: { kind: "cloud", name: "ohmail Cloud", since: "2026-08-30T09:00:00.000Z" },
+      organizerState: "held",
+      organizeConsentedAt: null,
+    }];
+    const el = await render("local");
+    const press = [...el.querySelectorAll("button")]
+      .find((b) => (b.textContent ?? "").includes("Organize here"));
+    expect((press?.textContent ?? "").trim(),
+      "the takeover of a held mailbox lost the word that makes it a takeover")
+      .toBe(mailboxCopy.organizeHereInstead!);
+  });
+
+  /**
+   * (6c) THE SAME RESIDUE ONE PRESS DEEPER. The confirm well states what the takeover costs the
+   * other side — "{name} stops organizing it on its next pass" — and `holderOf` supplies "another
+   * install" when nothing holds the mailbox. So the row that has just been corrected to say
+   * "Organize here" opened a well describing a consequence for a machine that does not exist.
+   *
+   * WATCH IT FAIL: point the released arm back at `organizeHereWhat`.
+   */
+  it("(6c) the confirm well on a row nobody organizes names nobody", async () => {
+    FACTS = [{
+      ...MAILBOX,
+      organizerRole: "reader",
+      organizedBy: null,
+      organizerState: null,
+      organizeConsentedAt: null,
+    }];
+    const el = await render("local");
+    await act(async () => {
+      [...el.querySelectorAll("button")]
+        .find((b) => (b.textContent ?? "").includes("Organize here"))!.click();
+    });
+    const well = (el.querySelector(".mbx-handover-what")?.textContent ?? "").trim();
+    expect(well, "the well never opened").not.toBe("");
+    expect(well, "the consequence was described for an install that does not exist")
+      .toBe(mailboxCopy.organizeHereWhatNobody!);
+    expect(well.toLowerCase(), "a holder was named on a row that has none")
+      .not.toContain(mailboxCopy.readerHolderUnknown!.toLowerCase());
+  });
+
+  /**
+   * (6d) CONTROL — a row somebody DOES hold keeps the sentence about them, name and all.
+   */
+  it("(6d) CONTROL — the well still names a real holder", async () => {
+    FACTS = [{
+      ...MAILBOX,
+      organizerRole: "reader",
+      organizedBy: { kind: "cloud", name: "ohmail Cloud", since: "2026-08-30T09:00:00.000Z" },
+      organizerState: "held",
+      organizeConsentedAt: null,
+    }];
+    const el = await render("local");
+    await act(async () => {
+      [...el.querySelectorAll("button")]
+        .find((b) => (b.textContent ?? "").includes("Organize here"))!.click();
+    });
+    const well = (el.querySelector(".mbx-handover-what")?.textContent ?? "").trim();
+    expect(well).toBe(mailboxCopy.organizeHereWhat!.replace("{name}", "ohmail Cloud"));
+  });
+
+  /**
+   * (4b) THE OTHER WAY A TAKEOVER PRESS IS SUPERSEDED — a stop made somewhere else. This pane
+   * never sees the press, only its effect: the row comes back a reader with a NEW release stamp.
+   * The note's own clear (in the release handler) cannot fire here, so this is what the stamp
+   * comparison in `takeoverStanding` is for, and it is the case that makes that comparison's
+   * contrary state reachable.
+   *
+   * WATCH IT FAIL: drop the `releasedAt` comparison and answer `reclaimed.has(m.id)`.
+   */
+  it("(4b) a release recorded elsewhere ends the takeover note here too", async () => {
+    FACTS = [{
+      ...MAILBOX,
+      organizerRole: "reader",
+      organizedBy: null,
+      organizerState: null,
+      organizeConsentedAt: "2026-08-01T09:00:00.000Z",
+      organizerReleasedAt: "2026-09-07T08:00:00.000Z",
+    }];
+    bridgeReply = () => new Response(JSON.stringify({ outcome: "authorized" }), {
+      status: 200, headers: { "content-type": "application/json" },
+    });
+    const el = await render("local");
+    await act(async () => { buttonSaying(el, "Organize here")!.click(); });
+    await act(async () => { buttonExactly(el, "Organize here")!.click(); });
+    expect(el.textContent ?? "").toContain(mailboxCopy.organizeHereQueued!);
+
+    /* No press here: the row simply comes back with a release nobody at this window made. */
+    FACTS = [{
+      ...MAILBOX,
+      organizerRole: "reader",
+      organizedBy: null,
+      organizerState: null,
+      organizeConsentedAt: "2026-08-01T09:00:00.000Z",
+      organizerReleasedAt: "2026-09-07T09:30:00.000Z",
+    }];
+    await repaint("local");
+    expect(el.textContent ?? "", "a takeover promise outlived a release made elsewhere")
+      .not.toContain(mailboxCopy.organizeHereQueued!);
+    expect(buttonSaying(el, "Organize here"),
+      "the superseded note kept the way back hidden").not.toBeNull();
+  });
+
+  /**
+   * (7) CONTROL — the released row's date, checked at the PANE and green before anything moved.
+   *
+   * The walk read "Nothing organizes this mailbox" with no date after a stop. The DTO carries
+   * `organizerReleasedAt` (`mailbox-service.ts`, projected unconditionally beside its four
+   * neighbours) and the sidecar's release stamps it in the same statement that writes the reader
+   * role (`engine.ts`, the yield arm), and this case says the pane renders it. So the pane is not
+   * where that silence comes from either: what the walk photographed is a row whose wire carried
+   * no stamp.
+   *
+   * It is kept as a control because the arm has a real way to be lost — the `organizerReleasedAt`
+   * spread in `readMailboxFactsVia` — and nothing else in this file drives it.
+   */
+  it("(7) CONTROL — a released row carries the day this install let the mailbox go", async () => {
+    FACTS = [{
+      ...MAILBOX,
+      organizerRole: "reader",
+      organizedBy: null,
+      organizerState: null,
+      organizeConsentedAt: "2026-08-01T09:00:00.000Z",
+      organizerReleasedAt: "2026-09-07T09:12:00.000Z",
+    }];
+    const said = (await render("local")).textContent ?? "";
+    expect(said, "the row lost the label for the state it is in")
+      .toContain(mailboxCopy.stateNotOrganized!);
+    /* THE SENTENCE'S OPENING, not the whole string: `dayStamp` renders in the app's own format
+       register, so pinning a spelling here would test the formatter rather than the arm. The
+       DATE ITSELF is asserted by the em-dash check below, which is the failure this row is
+       about — a released row with no date in it. */
+    expect(said, "the one sentence that dates something the person here did")
+      .toContain(mailboxCopy.stateReleased!.slice(0, mailboxCopy.stateReleased!.indexOf("{when}")));
+    expect(said, "the released row printed an em dash where its date belongs")
+      .not.toContain(mailboxCopy.stateReleased!.replace("{when}", "—"));
+  });
+});
