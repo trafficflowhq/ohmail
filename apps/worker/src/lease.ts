@@ -1,5 +1,5 @@
 import {
-  CAPABILITY_REQUESTS, CAPABILITY_MOVES, deriveRequestKey,
+  CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_PROFILE, deriveRequestKey,
   DEFAULT_STALE_AFTER_MS, LeaseUnavailableError, META_FOLDER,
   ClaimReleaseError,
   isMalformed, parseClaim, runLeaseGate,
@@ -106,7 +106,9 @@ export const CLOUD_DISPLAY_NAME = "ohmail Cloud";
  * not a preference a caller may express — which keeps the guarantee the paragraph above is about
  * while letting the honest degraded mode exist.
  */
-export const ORGANIZER_CAPABILITIES: readonly string[] = [CAPABILITY_REQUESTS, CAPABILITY_MOVES];
+export const ORGANIZER_CAPABILITIES: readonly string[] = [
+  CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_PROFILE,
+];
 
 /* ── WHY `moves` JOINS THE SET HERE AND NOT EARLIER (mail 0093) ─────────────────────────────
  *
@@ -117,9 +119,10 @@ export const ORGANIZER_CAPABILITIES: readonly string[] = [CAPABILITY_REQUESTS, C
  * message sit pending until it expires — with nothing to report, because the claim was true about
  * a build that did not exist yet.
  *
- * `rules` and `profile` are deliberately still absent. Both kinds are admitted by the database and
- * both leave records STANDING in the drain, which is the honest state for a decision this build
- * cannot yet carry out; each gets its capability in the same commit as its applier, never before.
+ * `profile` joined the same way one slice later, and `rules` is deliberately still absent: that
+ * kind is admitted by the database and leaves records STANDING in the drain, which is the honest
+ * state for a decision this build cannot yet carry out. It gets its capability in the same commit
+ * as its applier, never before.
  *
  * The set is still not injectable and still passes through {@link organizerCapabilitiesFor}, so a
  * mailbox with no derived key advertises NOTHING — including `moves`. That is correct rather than

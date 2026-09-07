@@ -151,8 +151,11 @@ export {
    one action. Reaches `schema-mail.js` and `change-log.js` alone. */
 export {
   MOVE_DESTINATIONS, MOVE_DEDUP_KEY_MAX, validateMovePayload, applyMessageMove,
+  PROFILE_SIGNATURE_MAX, validateProfileUpdatePayload, applyProfileUpdate,
   type ValidatedMovePayload, type MoveRefusal,
   type ApplyMessageMoveInput, type ApplyMessageMoveResult,
+  type ValidatedProfileUpdate, type ProfileAwayUpdate,
+  type ApplyProfileUpdateInput, type ApplyProfileUpdateResult,
 } from "./request-apply.js";
 
 export {

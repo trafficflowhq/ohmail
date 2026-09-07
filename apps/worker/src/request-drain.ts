@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   applyScreenerDecision, AccountErasedError, validateRequestPayload, claimIdempotencyKey,
   applyMessageMove, validateMovePayload, type MoveRefusal,
+  applyProfileUpdate, validateProfileUpdatePayload,
   readIdempotencyKey, IDEMPOTENCY_TTL_MS, readAccountErasedAt,
   listPendingRequests, listSentRequests, markRequestsSent, markRequestsApplied,
   listStaleSentRequests, markRequestsExpired, markRequestsRefused,
@@ -125,6 +126,28 @@ const KIND_HANDLERS: Readonly<Record<string, KindHandler | undefined>> = {
          a record that quietly disappears and leaves them unable to tell "done" from "never
          happened". Mapped by name below. */
       return { applied: false, reason: MOVE_REFUSAL_REASON[r.refusal] };
+    };
+  },
+
+  /**
+   * mail 0093. The kind that existed to close a SUCCESS THAT CHANGED NOTHING: before it, a reader
+   * editing an away responder, a signature, a dormancy window or a screening posture got `200`,
+   * the write landed in the reader's own row, and the organizer's pass never read it.
+   *
+   * It has no refusal arm, and that is a property of the action rather than an omission. A move
+   * can fail to find its message; a configuration write has nothing to look up — the rows are the
+   * account's and the mailbox's, both established before the record was drained. Every outcome
+   * that is not `applied` is therefore an exception, and the enclosing transaction already turns
+   * one of those into a record left standing for the next cycle.
+   */
+  "profile.update": (payload, ctx) => {
+    const update = validateProfileUpdatePayload(payload);
+    if (!update) return null;
+    return async (tx) => {
+      await applyProfileUpdate(tx, {
+        accountId: ctx.accountId, mailboxId: ctx.mailboxId, payload: update, now: ctx.now,
+      });
+      return { applied: true };
     };
   },
 };
