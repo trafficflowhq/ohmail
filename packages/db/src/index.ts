@@ -145,6 +145,16 @@ export {
   type OrganizedBy, type OrganizerRoleRow, type RequestEligibility, type RequestRefusalReason,
 } from "./organizer-role.js";
 
+/* Mail 0093 — the appliers for the request kinds that are not a Screener decision. Same shape and
+   same reason as `screener-apply.js` beside it: ONE transactional core, reached from the
+   organizer's own door and from the request drain, so the two cannot drift into two answers about
+   one action. Reaches `schema-mail.js` and `change-log.js` alone. */
+export {
+  MOVE_DESTINATIONS, MOVE_DEDUP_KEY_MAX, validateMovePayload, applyMessageMove,
+  type ValidatedMovePayload, type MoveRefusal,
+  type ApplyMessageMoveInput, type ApplyMessageMoveResult,
+} from "./request-apply.js";
+
 export {
   allocateSeq, allocateSeqRange, recordChange, recordChanges, minRetainedSeq, seqBounds,
   CHANGE_LOG_CHANNEL, changeWakePayload, parseChangeWake,
