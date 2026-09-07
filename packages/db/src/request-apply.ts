@@ -13,12 +13,12 @@ const ledger = (tx: Tx): LedgerTx => tx as unknown as LedgerTx;
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  WHAT AN ORGANIZER DOES WITH A REQUEST THAT IS NOT A SCREENER DECISION (mail 0094)
+ *  WHAT AN ORGANIZER DOES WITH A REQUEST THAT IS NOT A SCREENER DECISION (mail 0093)
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
  * `screener-apply.ts` is the model and the sibling: one transactional core, reached from BOTH the
  * organizer's own HTTP door and the request drain, so the two cannot drift into two answers about
- * one action. This module is the same shape for the kinds that arrive with mail 0094.
+ * one action. This module is the same shape for the kinds that arrive with mail 0093.
  *
  * It lives in `@trafficflow/db` for `screener-apply.ts`'s reason, unchanged: the worker may not
  * import `@trafficflow/services` at runtime (a CJS `sanitize-html` re-entering an ESM
@@ -255,7 +255,7 @@ export async function applyMessageMove(
  *  `profile.update` — the per-mailbox configuration a reader may ask the organizer to change
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
- * ── WHY THIS KIND EXISTS AT ALL, which is the sharpest reason in mail 0094 ─────────────────
+ * ── WHY THIS KIND EXISTS AT ALL, which is the sharpest reason in mail 0093 ─────────────────
  *
  * Before it, a reader editing an away responder, a signature, a dormancy window or a screening
  * posture got `200`. The write landed — in the READER's own row, which the organizer's pass never
@@ -279,46 +279,10 @@ export async function applyMessageMove(
 /** The longest signature a request may carry. See {@link validateProfileUpdatePayload}. */
 export const PROFILE_SIGNATURE_MAX = 2_000;
 
-/**
- * The longest MARKUP a request may carry, in {@link PROFILE_SIGNATURE_MAX}'s unit.
- *
- * Sized from the column's own local cap the way the text half is: a local save is bounded at
- * 10 000 characters for whichever shape it carried (mail 0098), the travelling text takes a fifth
- * of that, and the markup takes the same fifth. An INDEPENDENT bound that happens to equal the
- * text's — the two govern different columns, so neither moves by editing the other.
- *
- * Both halves at their bounds exceed the record's own 3 072-byte JSON ceiling, which is the text
- * half's documented arrangement rather than an oversight: this bound is the sentence a person
- * reads, and the wire ceiling behind it refuses at the reader's door instead of truncating.
- */
-export const TRAVELLING_SIGNATURE_HTML_MAX_BYTES = 2_000;
-
 /** `away_responders.audience` — the closed pair the column's own CHECK enforces. */
 const AWAY_AUDIENCES: ReadonlySet<string> = new Set(["screened_in", "everyone"]);
 /** `away_responders.throttle` — the closed four `away_responders_throttle_closed` enforces. */
 const AWAY_THROTTLES: ReadonlySet<string> = new Set(["always", "per_message", "per_day", "per_week"]);
-/**
- * `away_responders.piles` — the closed pair `away_responders_piles_closed` (mail 0096) enforces.
- *
- * ── WHY THIS IS A SECOND SPELLING OF `AWAY_ANSWERABLE_PILES` AND NOT AN IMPORT ──────────────
- *
- * The canonical set is `@trafficflow/core/away-scope`'s `AWAY_ANSWERABLE_PILES`, and importing it
- * HERE does not compile: `@trafficflow/core` depends on `@trafficflow/db`, never the reverse
- * (`organizer-role.ts#CAPABILITY_REQUESTS` states the direction at length), so the import answers
- * `TS2307: Cannot find module '@trafficflow/core/away-scope'` — measured, not assumed.
- *
- * So it takes the arrangement {@link MOVE_DESTINATIONS} already documents forty lines up, for the
- * same reason and with the same obligation: the literal is restated and `request-apply.test.ts`
- * HOLDS THE TWO EQUAL. The equality is the point — a third pile added to the core set and not to
- * this one would be a scope a person can choose, that travels, and that the organizer's applier
- * then refuses as `invalid_payload`, which is a save that appears to work and changes nothing on
- * the one install whose row the responder reads.
- *
- * Exported for that guard alone. `AWAY_AUDIENCES` and `AWAY_THROTTLES` above are not exported and
- * have no such guard, which is a gap in their favour rather than a precedent: both are closed by
- * a CHECK as well, and widening either is a ruling that would come through this file anyway.
- */
-export const AWAY_PILES: ReadonlySet<string> = new Set(["INBOX", "ohmail/Reads"]);
 /** `account_settings.ohbox_policy` — the closed pair, or `null` for "the product default". */
 const OHBOX_POLICY_VALUES: ReadonlySet<string> = new Set(["people_only", "people_and_replied"]);
 
@@ -330,35 +294,12 @@ export interface ProfileAwayUpdate {
   endsAt: Date | null;
   audience: string;
   throttle: string;
-  /**
-   * WHICH PILES GET A REPLY (mail 0096), or ABSENT from an install one release older.
-   *
-   * THE ONE OPTIONAL MEMBER OF THIS INTERFACE, and it is optional for a compatibility reason
-   * rather than a stylistic one. Every other field is required because a request that carries an
-   * away responder at all carries those six; `piles` began travelling with the ruling of
-   * 2026-09-10, so a request written by a 0.15 install has an `awayResponder` and no `piles`, and
-   * refusing that record would 400 that install's every responder save — including the save that
-   * turns the responder OFF, which is the one save nobody may be prevented from making.
-   *
-   * ABSENT therefore means "this request is not about the scope", and {@link applyProfileUpdate}
-   * leaves the stored array alone. That is the recoverable direction: an existing row keeps the
-   * scope it had, and a row created by such a request takes the column's own narrow default.
-   */
-  piles?: string[];
 }
 
 /** A `profile.update` payload, validated. Every field optional; at least one present. */
 export interface ValidatedProfileUpdate {
   awayResponder?: ProfileAwayUpdate;
   signature?: string | null;
-  /**
-   * THE SIGNATURE'S MARKUP (mail 0098), or ABSENT from an install one release older.
-   *
-   * Three states, all reachable and all different: absent leaves the column alone, `null` is "this
-   * signature has no formatting" — what a plain save means, and it has to be able to say so across
-   * the wire or the holder keeps markup the words no longer match — and a string replaces.
-   */
-  signatureHtml?: string | null;
   dormancyDays?: number | null;
   screeningPreference?: string | null;
 }
@@ -398,20 +339,6 @@ export function validateProfileUpdatePayload(payload: unknown): ValidatedProfile
     out.signature = sig;
   }
 
-  /* THE MARKUP HALF, WHEN THE SENDER IS NEW ENOUGH TO HAVE ONE (ruling of 2026-09-10).
-   *
-   * `in` and not truthiness, for the text half's reason one field over: the three states above are
-   * distinguishable and mean different things. Bytes for {@link PROFILE_SIGNATURE_MAX}'s reason —
-   * markup is the longer shape of the same value, and a UTF-16 count would let a multi-byte
-   * document past a byte ceiling the record is measured against. */
-  if ("signatureHtml" in o) {
-    const html = o.signatureHtml;
-    if (html !== null && typeof html !== "string") return null;
-    if (typeof html === "string"
-      && Buffer.byteLength(html, "utf8") > TRAVELLING_SIGNATURE_HTML_MAX_BYTES) return null;
-    out.signatureHtml = html;
-  }
-
   if ("dormancyDays" in o) {
     const d = o.dormancyDays;
     if (d === null) out.dormancyDays = null;
@@ -445,32 +372,6 @@ export function validateProfileUpdatePayload(payload: unknown): ValidatedProfile
       enabled: r.enabled, body: (r.body as string | null), startsAt, endsAt,
       audience: r.audience, throttle: r.throttle,
     };
-    /* ── THE PILE SCOPE, WHEN THE SENDER IS NEW ENOUGH TO HAVE ONE (ruling of 2026-09-10) ──
-     *
-     * `in` and not a truthiness check, because the three states are distinguishable and mean
-     * different things: ABSENT is an older install that has no scope to send, and the stored
-     * array is left alone; an EMPTY array is "answer nobody", which is what unticking every box
-     * means and is a coherent thing to ask for; and a NON-MEMBER refuses the whole record.
-     *
-     * A non-member refuses rather than being filtered out. Filtering would store a NARROWER scope
-     * than the request asked for and ack it `applied`, so the person would be told their edit
-     * travelled while the responder answered a different set of mail — and the surface would then
-     * state a scope nobody chose. The refusal reaches the reader as `invalid_payload`
-     * (`request-drain.ts`), which is a decision somebody can act on.
-     */
-    if ("piles" in r) {
-      const p = r.piles;
-      if (!Array.isArray(p)) return null;
-      const piles: string[] = [];
-      for (const member of p) {
-        if (typeof member !== "string" || !AWAY_PILES.has(member)) return null;
-        /* DUPLICATES COLLAPSED, exactly as the local door's `validPiles` collapses them. The value
-           is a SET ("which piles"), the CHECK is containment and admits `{INBOX,INBOX}`, and the
-           two write paths producing different rows for the same ask is a diff nobody can read. */
-        if (!piles.includes(member)) piles.push(member);
-      }
-      out.awayResponder.piles = piles;
-    }
   }
 
   // Nothing recognised — see the header. An empty ask is not a change.
@@ -518,9 +419,6 @@ export interface ApplyProfileUpdateResult {
  * client mirrors — the organizer's own doors do not log them either, and a second answer here
  * would put rows in the feed that no client apply knows what to do with. `signature` is the
  * exception in shape only: it belongs to a mailbox, and the mailbox is not a synced entity either.
- * `signature_html` (mail 0098) owes this block the same answer and takes it: no client mirrors a
- * mailbox row, so the new column needs no client apply either, and it appears in `wrote` for the
- * drain's log line and nowhere else.
  * The profile document is how this configuration reaches other installs, and the write-behind
  * republishes it on its own dirty check — which is a FINGERPRINT over the serializer's output, so
  * writing these rows IS what makes it notice.
@@ -531,24 +429,10 @@ export async function applyProfileUpdate(
   const { accountId, mailboxId, payload, now } = input;
   const wrote: string[] = [];
 
-  /* BOTH COLUMNS IN ONE STATEMENT, each named ONLY when the payload carried it (ruling of
-     2026-09-10). One statement because the two halves are one value in two shapes: a row holding
-     the text of one signature and the markup of another is the drift the local door refuses
-     outright, and two statements is where it would come from. Named conditionally because an
-     install a release older sends no markup at all — writing NULL for it would strip formatting
-     that install's own pane never showed and never offered. */
-  const mailboxSet: Partial<typeof mailboxes.$inferInsert> = {};
   if (payload.signature !== undefined) {
-    mailboxSet.signature = payload.signature;
-    wrote.push("signature");
-  }
-  if (payload.signatureHtml !== undefined) {
-    mailboxSet.signatureHtml = payload.signatureHtml;
-    wrote.push("signature_html");
-  }
-  if (Object.keys(mailboxSet).length > 0) {
-    await tx.update(mailboxes).set(mailboxSet)
+    await tx.update(mailboxes).set({ signature: payload.signature })
       .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, accountId)));
+    wrote.push("signature");
   }
 
   if (payload.awayResponder !== undefined) {
@@ -557,33 +441,15 @@ export async function applyProfileUpdate(
        the organizer's own `put` has. `subject` is deliberately not written: the responder has been
        reply-only since mail 0087 and derives `Re: <what they wrote>`, so a request carrying one
        would be writing a dead column. */
-    const awayValues: typeof awayResponders.$inferInsert = {
+    await tx.insert(awayResponders).values({
       accountId, enabled: a.enabled, body: a.body,
       startsAt: a.startsAt, endsAt: a.endsAt, audience: a.audience, throttle: a.throttle,
-    };
-    const awaySet: Partial<typeof awayResponders.$inferInsert> = {
-      enabled: a.enabled, body: a.body, startsAt: a.startsAt, endsAt: a.endsAt,
-      audience: a.audience, throttle: a.throttle, updatedAt: now,
-    };
-    /* THE SCOPE IS NAMED IN BOTH ARMS ONLY WHEN THE REQUEST CARRIED ONE (ruling of 2026-09-10).
-     *
-     * Named in the SET as well as in `values`, and this is the half that was missing: the whole
-     * row is replaced together, so a scope present on the wire and absent from the SET is a field
-     * that travels and is ignored — the reader's pane shows the scope it asked for coming back as
-     * the old one, with the request acked `applied`.
-     *
-     * And ABSENT must leave the column untouched rather than write the default, which is why this
-     * is a conditional on the payload rather than a `?? AWAY_PILES_DEFAULT`: an older install's
-     * save would otherwise NARROW a scope its own pane never showed and never offered. The insert
-     * arm needs no such branch — an omitted column takes the table's own `'{INBOX}'`, the narrow
-     * member, which is the same value the local door infers for an omitted list. */
-    if (a.piles !== undefined) {
-      awayValues.piles = a.piles;
-      awaySet.piles = a.piles;
-    }
-    await tx.insert(awayResponders).values(awayValues).onConflictDoUpdate({
+    }).onConflictDoUpdate({
       target: awayResponders.accountId,
-      set: awaySet,
+      set: {
+        enabled: a.enabled, body: a.body, startsAt: a.startsAt, endsAt: a.endsAt,
+        audience: a.audience, throttle: a.throttle, updatedAt: now,
+      },
     });
     wrote.push("awayResponder");
   }
