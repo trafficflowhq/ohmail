@@ -657,7 +657,12 @@ export function duplicateSendSentence(firstSendStatus: string, at: Date): string
     return `An identical message was sent from this mailbox at ${when} and could not be confirmed. `
       + "Check your Sent folder; nothing was sent now.";
   }
-  return "This exact message is being sent from this mailbox right now. Nothing was sent again.";
+  // Deliberately does not promise an ending. The first attempt may still fail before it reaches the
+  // mail server, in which case this message has NOT been sent and the retry that follows will send
+  // it — so a sentence claiming the message is on its way would be a state the product cannot vouch
+  // for. The caller retries rather than settling on this.
+  return "This exact message is already being sent from this mailbox. Nothing was sent again; "
+    + "ohmail is still waiting to hear how the first attempt ended.";
 }
 
 /**
@@ -707,23 +712,50 @@ export function sendContentFingerprint(input: {
   cc: readonly EmailAddress[];
   bcc: readonly EmailAddress[];
   subject: string;
-  /** The text actually sent: the rich half when the draft is rich, else the plain body. */
-  text: string;
+  /**
+   * BOTH HALVES, SEPARATELY — never `html ?? body` collapsed into one member.
+   *
+   * Collapsing them made two genuinely different messages hash alike: a PLAIN draft whose body is
+   * the literal text `<p>Approved</p>` and a RICH draft whose markup is `<p>Approved</p>` produce
+   * the same string, so the second was refused as a copy of the first. One arrives as visible
+   * angle brackets and the other as a formatted line — different to the recipient, which is the
+   * only test that matters here.
+   */
+  html: string | null;
+  body: string;
   inReplyToMessageId: string | null;
   forwardOf: string | null;
   sendAt: Date | null;
-  attachments: ReadonlyArray<{ filename: string; contentType: string; sizeBytes: number }>;
+  /**
+   * Inline files carry a CONTENT digest; staged files carry `null` and fold by metadata alone.
+   *
+   * The metadata-only fold was wrong for inline files and the counter-example is ordinary: attach
+   * `invoice.csv` reading `amount\n100\n`, notice the figure is wrong, correct it to
+   * `amount\n900\n` and send the correction to the same person with the same subject. Same name,
+   * same type, same byte length — the digests collided and the CORRECTION never left, while the
+   * screen said the message had already been sent. Silently not sending is worse than sending
+   * twice, which is the whole ordering this guard is built on.
+   *
+   * The bytes were available all along: an inline attachment arrives decoded on the request. Staged
+   * files are the case that genuinely cannot be digested here — they live in object storage and
+   * reaching for them would put a network call inside the reserve transaction — so they keep the
+   * metadata fold, and that residual is now NAMED rather than being the silent default for both.
+   */
+  attachments: ReadonlyArray<{
+    filename: string; contentType: string; sizeBytes: number; contentSha256: string | null;
+  }>;
 }): string {
   const addrs = (xs: readonly EmailAddress[]): string[] =>
     [...new Set(xs.map((a) => a.address.trim().toLowerCase()))].sort();
   const files = input.attachments
-    .map((a) => [a.filename, a.contentType, a.sizeBytes] as const)
+    .map((a) => [a.filename, a.contentType, a.sizeBytes, a.contentSha256] as const)
     .map((t) => JSON.stringify(t))
     .sort();
   const canonical = JSON.stringify([
     addrs(input.to), addrs(input.cc), addrs(input.bcc),
     input.subject,
-    input.text,
+    input.html,
+    input.body,
     input.inReplyToMessageId ?? null,
     input.forwardOf ?? null,
     input.sendAt ? input.sendAt.toISOString() : null,
@@ -1814,15 +1846,23 @@ export class SendService {
         // The STORED text, not the assembled `msg.text`: a forward's quoted original is covered by
         // `forwardOf` below, and folding the quote in as well would make the digest depend on how
         // the original renders today.
-        text: d.html ?? d.body,
+        // BOTH halves, never collapsed — see the member's own note.
+        html: d.html ?? null,
+        body: d.body,
         inReplyToMessageId: d.inReplyToMessageId ?? null,
         forwardOf: input.forwardOf ?? null,
         sendAt: d.sendAt ?? null,
         attachments: [
+          // INLINE: the bytes are right here, decoded on the request, so they are digested. No
+          // network, no transaction cost worth naming — a hash over what the sender attached.
           ...(input.attachments ?? []).map((a) => ({
             filename: a.filename, contentType: a.contentType, sizeBytes: a.content.byteLength,
+            contentSha256: createHash("sha256").update(a.content).digest("hex"),
           })),
-          ...stagedManifest,
+          // STAGED: metadata only, and `null` says so rather than leaving the reader to infer it
+          // from an absent field. These bytes are in object storage; fetching them here would be a
+          // network call inside the reserve transaction, which this service does nowhere.
+          ...stagedManifest.map((f) => ({ ...f, contentSha256: null })),
         ],
       });
       const claimNow = ctx.now();
@@ -1893,11 +1933,27 @@ export class SendService {
           // in the recipient's inbox.
           const stale = claimNow.getTime() - held.createdAt.getTime() >= SEND_DUPLICATE_WINDOW_MS;
           if (!stale && priorStatus !== "failed") {
+            // ── RETRYABLE ONLY WHILE THE FIRST ATTEMPT IS UNSETTLED ─────────────────────────
+            //
+            // `sent` and `unverified` are terminal: something may be in the recipient's inbox and
+            // asking again can only be refused again. `pending` is NOT an outcome — it is the
+            // absence of one — and treating it as terminal loses a message.
+            //
+            // The sequence: device A reserves and stalls before SMTP; the person retries on device
+            // B and is refused with `pending`; B settles and stops asking; A then fails BEFORE
+            // submission, so its reservation ends `failed` and its claim becomes reclaimable.
+            // Nothing was ever delivered, and B is left showing "going out right now" for ever.
+            //
+            // Retryable, the retry carries the same key, and each outcome is then correct by
+            // construction: if A ended `failed` the claim is reclaimed and B's retry SENDS; if A
+            // ended `sent` or `unverified` the retry is refused terminally with that status; if A
+            // is still running it is refused as pending again, bounded by the outbox's own ceiling.
+            const stillRunning = priorStatus === "pending";
             throw new ServiceError(
               "duplicate_send", 409,
               duplicateSendSentence(priorStatus, held.createdAt),
               { firstSend: { status: priorStatus, at: held.createdAt.toISOString() } },
-              false,
+              stillRunning,
             );
           }
           // RE-POINT rather than insert a second row: one claim per piece of content, carried
