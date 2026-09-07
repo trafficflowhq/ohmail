@@ -1,13 +1,44 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import {
   accountSettings, contacts, mailboxes, messageBodies, messages, recordChanges, rules,
-  type LedgerTx, type Tx,
+  type LedgerTx, type OrganizedBy, type Tx,
 } from "@trafficflow/db";
 import { listMailboxUserFolders, listUserFolders } from "./folders.js";
 import type { ServiceContext } from "./context.js";
 import { DEFAULT_DORMANCY_DAYS } from "./consent-cutline.js";
 import { ServiceError } from "./errors.js";
 import { fenceErasedAccount } from "./erasure-fence.js";
+import { planAccountFanOut, routeMailboxWrite, writeReaderRequest } from "./reader-request.js";
+import {
+  fanOutProfileEdit, profileRequestPayload, profileTravelled,
+  TRAVELLING_SIGNATURE_MAX_CHARS, type ProfileTravel,
+} from "./profile-request.js";
+
+/**
+ * A window save's answer: the effective window and mode, plus where the edit went (mail 0093).
+ * `pending`/`travel` are absent on a one-install account, so its answer is unchanged.
+ */
+export interface DormancyResult {
+  dormancyDays: number;
+  screeningScope: "window" | "all_time";
+  pending?: true;
+  travel?: ProfileTravel;
+}
+
+/**
+ * A signature save's answer. `signature` is the column as it stands on THIS install — the saved
+ * value when the write happened here, the UNCHANGED one when the edit travelled instead.
+ *
+ * PER-MAILBOX, so there is one holder rather than a per-mailbox table: the request went to the
+ * install that holds THIS mailbox, and there is exactly one of those.
+ */
+export interface MailboxSignatureResult {
+  mailboxId: string;
+  signature: string | null;
+  pending?: true;
+  holder?: OrganizedBy;
+  requestId?: string;
+}
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 
@@ -1071,7 +1102,7 @@ export const MAILBOX_SIGNATURE_MAX_CHARS = 10_000;
  */
 export async function setMailboxSignature(
   ctx: ServiceContext, mailboxId: string, signature: string | null,
-): Promise<{ mailboxId: string; signature: string | null }> {
+): Promise<MailboxSignatureResult> {
   if (signature !== null && typeof signature !== "string") {
     throw new ServiceError("validation_failed", 400, "signature must be a string or null");
   }
@@ -1089,6 +1120,7 @@ export async function setMailboxSignature(
     throw new ServiceError("validation_failed", 400, "signature must not contain a NUL character");
   }
   const stored = signature !== null && signature.trim().length > 0 ? signature : null;
+  let travel: { pending: true; holder: OrganizedBy; requestId: string } | undefined;
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
     // ── ERASURE FENCE, FIRST — before any settings lock. `deleteAccount` stamps
     // `accounts.erased_at` at the top of its transaction; reading it FOR SHARE here is what
@@ -1101,6 +1133,40 @@ export async function setMailboxSignature(
       .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, ctx.accountId)))
       .limit(1);
     if (!mb) throw new ServiceError("not_found", 404, "no such mailbox on this account");
+
+    /* ── THE SIGNATURE IS PER MAILBOX, SO IT TAKES THE PER-MAILBOX DISPATCH (mail 0093) ────
+     *
+     * The other three settings in this family are account-scoped and fan out.
+     * `mailboxes.signature` is not: a person with two addresses has two sign-offs, and asking
+     * the account-wide question here would publish one mailbox's into the other's document.
+     * `serializeOrganizerProfile` takes a mailbox id for exactly this reason.
+     *
+     * On a mailbox this install only reads, the signature is appended to outgoing mail by the
+     * install that HOLDS it, from the published document — so this write used to land in a
+     * column nothing reads while the pane showed the new sign-off. The request travels instead;
+     * the local column is left alone, never both.
+     */
+    const route = await routeMailboxWrite(tx, ctx.accountId, mailboxId, "profile.update");
+    if (route.route === "request") {
+      /* THE TRAVELLING BOUND, and it is in CHARACTERS so the sentence is about the signature.
+         `MAILBOX_SIGNATURE_MAX_CHARS` (10 000) still governs a LOCAL write — that text never
+         crosses a wire. A travelling one does, and 10 000 characters exceeds the record's own
+         encoded ceiling, which would be refused later with a sentence about bytes. */
+      if (stored !== null && stored.length > TRAVELLING_SIGNATURE_MAX_CHARS) {
+        throw new ServiceError(
+          "validation_failed", 400,
+          `a signature that has to travel to the install organizing this mailbox must be at most `
+          + `${TRAVELLING_SIGNATURE_MAX_CHARS} characters`,
+        );
+      }
+      const sent = await writeReaderRequest(tx, ctx, {
+        mailboxId, kind: "profile.update", holder: route.holder,
+        payload: profileRequestPayload({ signature: stored }),
+      });
+      travel = { pending: true, holder: route.holder, requestId: sent.requestId };
+      return;
+    }
+
     // The stamp moves, and it moves BEFORE the mailbox row — see the header and
     // {@link setMailboxFoldersEnabled}'s identical block for the two measured reasons.
     await tx.insert(accountSettings)
@@ -1114,6 +1180,14 @@ export async function setMailboxSignature(
       .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, ctx.accountId)));
     await recordSettingsChange(tx, ctx.accountId);
   });
+  /* THE UNCHANGED COLUMN when the edit travelled — the person is looking at it and it has not
+     changed here. Read back rather than echoing `stored`, which would be the value they typed. */
+  if (travel !== undefined) {
+    const [row] = await (ctx.db as unknown as Tx).select({ signature: mailboxes.signature })
+      .from(mailboxes).where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, ctx.accountId)))
+      .limit(1);
+    return { mailboxId, signature: row?.signature ?? null, ...travel };
+  }
   return { mailboxId, signature: stored };
 }
 
@@ -1200,7 +1274,7 @@ export async function mailboxSignatures(
  */
 export async function setDormancyDays(
   ctx: ServiceContext, days: number | null | undefined, scope?: "window" | "all_time",
-): Promise<{ dormancyDays: number; screeningScope: "window" | "all_time" }> {
+): Promise<DormancyResult> {
   if (days === undefined && scope === undefined) {
     throw new ServiceError(
       "validation_failed", 400, "one of dormancyDays or screeningScope must be given",
@@ -1221,6 +1295,8 @@ export async function setDormancyDays(
   /** Did the caller NAME the window? `undefined` leaves the column exactly as it is. */
   const setsWindow = days !== undefined;
   let effective: { dormancyDays: number | null; screeningScope: string } | undefined;
+  let travel: ProfileTravel | undefined;
+  let pending = false;
   // Column-scoped upsert unchanged; the transaction adds the settings change row — see
   // {@link recordSettingsChange}.
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
@@ -1230,6 +1306,40 @@ export async function setDormancyDays(
     // order a single chain (accounts → settings → sequence row). `erasure-fence.ts` carries
     // the two-sided argument.
     await fenceErasedAccount(tx, ctx.accountId);
+
+    /* ── THE WINDOW IS APPLIED BY THE INSTALL THAT ORGANIZES (mail 0093) ─────────────────
+     *
+     * `dormancy_days` is the cutline the screening pass does arithmetic on, in the organizer's
+     * own cycle. Written where nothing organizes it is a dial wired to nothing — and this file
+     * is EXEMPTED from `organizer-role-census` on the argument that account settings are inert
+     * until something organizes, which is true and is exactly why the answer is a REQUEST
+     * rather than a refusal: the setting is not dangerous, it is just ineffective where it
+     * lands, and it can now travel to the install where it is not.
+     *
+     * The census's exemption is rewritten in the same commit as this line. What survives of it
+     * is the ONBOARDING case: 0 mailboxes held and 0 organized ADMITS the local write, because
+     * that is consent time and refusing there makes the flow that offers this dial
+     * unfinishable. `planAccountFanOut` carries that state by name.
+     */
+    const plan = await planAccountFanOut(tx, ctx.accountId, "profile.update");
+    const travelling = {
+      // Only what this request named — absence is load-bearing in the partial. `screeningScope`
+      // is deliberately NOT in the payload: it is not one of ruling 6's four fields, and adding
+      // a member is a ruling rather than a commit. Named here so the omission is a decision
+      // somebody can find rather than a field that was forgotten.
+      ...(setsWindow ? { dormancyDays: stored } : {}),
+    };
+    if (!plan.writeLocally && setsWindow) {
+      travel = await fanOutProfileEdit(tx, ctx, plan, travelling);
+      pending = true;
+      const [current] = await tx.select({
+        dormancyDays: accountSettings.dormancyDays,
+        screeningScope: accountSettings.screeningScope,
+      }).from(accountSettings).where(eq(accountSettings.accountId, ctx.accountId)).limit(1);
+      effective = current;
+      return;
+    }
+
     /* ── UPSERT, NEVER UPDATE, AND THAT IS NOT A STYLE CHOICE ────────────────────────────
        A fresh STANDALONE install has NO `account_settings` row at all — driven against a
        live local engine, where the table came back empty over a fully-imported mailbox. An
@@ -1271,6 +1381,9 @@ export async function setDormancyDays(
       });
     effective = row;
     await recordSettingsChange(tx, ctx.accountId); // AFTER the settings row — the global lock order above
+    if (profileTravelled(plan) && setsWindow) {
+      travel = await fanOutProfileEdit(tx, ctx, plan, travelling);
+    }
   });
   return {
     dormancyDays: effective?.dormancyDays ?? DEFAULT_DORMANCY_DAYS,
@@ -1278,6 +1391,8 @@ export async function setDormancyDays(
     // outside the closed set must read as the safe mode rather than reach a client as a
     // third state no surface has copy for.
     screeningScope: effective?.screeningScope === "all_time" ? "all_time" : "window",
+    ...(pending ? { pending: true as const } : {}),
+    ...(travel === undefined ? {} : { travel }),
   };
 }
 

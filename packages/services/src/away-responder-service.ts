@@ -5,6 +5,29 @@ import { AWAY_THROTTLES, type AwayThrottle } from "./away-responder-pass.js";
 import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import type { AwayResponderDTO } from "./dto/types.js";
+import { planAccountFanOut } from "./reader-request.js";
+import {
+  fanOutProfileEdit, profileTravelled, type ProfileTravel,
+} from "./profile-request.js";
+import type { Tx } from "@trafficflow/db";
+
+const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
+
+/**
+ * A responder save's answer.
+ *
+ * `responder` is the row as it stands on THIS install — the saved one when the write happened here,
+ * and the UNCHANGED one when it did not, because that is what this install still holds and showing
+ * the person the values they typed would be the false state ruling 6 exists to end.
+ *
+ * `pending` is the discriminator the route switches its status code on (202); `travel` says which
+ * mailbox got which outcome and is absent when nothing left this install.
+ */
+export interface AwayResponderPut {
+  responder: AwayResponderDTO;
+  pending?: true;
+  travel?: ProfileTravel;
+}
 
 const log = createLogger({ service: "away-responder-service" });
 
@@ -104,7 +127,7 @@ export class AwayResponderService {
   }
 
   /** PUT /away-responder — full replace / upsert of the account's single row. */
-  async put(ctx: ServiceContext, body: AwayResponderBody): Promise<AwayResponderDTO> {
+  async put(ctx: ServiceContext, body: AwayResponderBody): Promise<AwayResponderPut> {
     const enabled = body.enabled ?? false;
     const text = this.validNullableText(body.body, "body");
     const startsAt = this.validDate(body.startsAt, "startsAt");
@@ -135,21 +158,63 @@ export class AwayResponderService {
      * for the insert arm and once in SQL for the update arm, and the profile importer would need a
      * third. Two encodings of "when did this window open" is exactly the drift this column replaced.
      */
-    const [prev] = await ctx.db.select({ enabledAt: awayResponders.enabledAt })
-      .from(awayResponders).where(eq(awayResponders.accountId, ctx.accountId)).limit(1);
-    const enabledAt = nextEnabledAt(prev?.enabledAt ?? null, enabled, now);
+    /* ── THE RESPONDER TRAVELS, AND UNTIL NOW IT DID NOT ASK WHO WOULD SEND IT (mail 0093) ──
+     *
+     * This door had NO organizer gate of any kind, and that is ruling 6's Critical rather than an
+     * omission at the edge: the away responder is SENT by the install that organizes the mailbox,
+     * from the body in the published profile document. On a mailbox this install only reads, this
+     * write landed in the reader's own row, the organizer's pass never read it, and the pane showed
+     * the edit as done — so somebody set an out-of-office and no out-of-office was ever sent. Not
+     * "stopped at the organizer"; silently ineffective.
+     *
+     * ACCOUNT-scoped, so it FANS OUT: the local row for the mailboxes this install organizes, plus
+     * one request per install holding one of the others. Wrapped in a transaction it did not have
+     * before, because the plan, the local write and the request rows are now one decision — a
+     * failure between them would leave requests in flight for a row that was never written.
+     */
+    return asTx(ctx).transaction(async (tx) => {
+      const plan = await planAccountFanOut(tx as unknown as Tx, ctx.accountId, "profile.update");
 
-    const [row] = await ctx.db.insert(awayResponders).values({
-      accountId: ctx.accountId, enabled, body: text, startsAt, endsAt, audience, throttle,
-      enabledAt, updatedAt: now,
-    }).onConflictDoUpdate({
-      target: awayResponders.accountId,
-      // `subject` is NOT in the SET: the column survives one release for a rolling deploy's sake
-      // and this service neither reads nor writes it. A row that still carries one keeps it,
-      // inert, until the 0.15 contract migration drops it.
-      set: { enabled, body: text, startsAt, endsAt, audience, throttle, enabledAt, updatedAt: now },
-    }).returning();
-    return toDTO(row!);
+      const travelling = {
+        awayResponder: {
+          enabled, body: text,
+          startsAt: startsAt === null ? null : startsAt.toISOString(),
+          endsAt: endsAt === null ? null : endsAt.toISOString(),
+          audience, throttle,
+        },
+      };
+
+      if (!plan.writeLocally) {
+        /* NOTHING WRITTEN HERE. The reader's own `away_responders` row is left EXACTLY as it is —
+           that is the mutation the ruling's control watches, and keeping the local write beside the
+           request is what made the old behaviour a false state rather than a delay. */
+        const travel = await fanOutProfileEdit(tx as unknown as Tx, ctx, plan, travelling);
+        const [current] = await tx.select().from(awayResponders)
+          .where(eq(awayResponders.accountId, ctx.accountId)).limit(1);
+        return { responder: current ? toDTO(current) : DEFAULT_SHAPE, pending: true, travel };
+      }
+
+      const [prev] = await tx.select({ enabledAt: awayResponders.enabledAt })
+        .from(awayResponders).where(eq(awayResponders.accountId, ctx.accountId)).limit(1);
+      const enabledAt = nextEnabledAt(prev?.enabledAt ?? null, enabled, now);
+
+      const [row] = await tx.insert(awayResponders).values({
+        accountId: ctx.accountId, enabled, body: text, startsAt, endsAt, audience, throttle,
+        enabledAt, updatedAt: now,
+      }).onConflictDoUpdate({
+        target: awayResponders.accountId,
+        // `subject` is NOT in the SET: the column survives one release for a rolling deploy's sake
+        // and this service neither reads nor writes it. A row that still carries one keeps it,
+        // inert, until the 0.15 contract migration drops it.
+        set: { enabled, body: text, startsAt, endsAt, audience, throttle, enabledAt, updatedAt: now },
+      }).returning();
+
+      const responder = toDTO(row!);
+      if (!profileTravelled(plan)) return { responder };
+      // The mixed account — written here AND asked of every install holding one of the others.
+      const travel = await fanOutProfileEdit(tx as unknown as Tx, ctx, plan, travelling);
+      return { responder, travel };
+    });
   }
 
   /**

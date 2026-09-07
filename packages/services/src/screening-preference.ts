@@ -4,6 +4,10 @@ import { resolveOhboxPolicy, type OhboxPolicy } from "@trafficflow/core/mail";
 import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { fenceErasedAccount } from "./erasure-fence.js";
+import { planAccountFanOut } from "./reader-request.js";
+import {
+  fanOutProfileEdit, profileTravelled, type ProfileTravel,
+} from "./profile-request.js";
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 
@@ -88,6 +92,18 @@ export interface ScreeningPreference {
  * Read the account's stored preference. An absent row (most accounts) ⇒ both NULL, which every
  * reader treats as defaults. This is the RAW read for the API surface and the worker's resolution.
  */
+/**
+ * A posture save's answer: the preference as it stands HERE, plus where the edit went (mail 0093).
+ *
+ * `pending` is present only when nothing was written on this install — the route answers 202 — and
+ * the preference alongside it is the UNCHANGED one, because that is what this install still holds.
+ * Both fields are absent on a one-install account, so its answer is unchanged byte for byte.
+ */
+export interface ScreeningPreferenceResult extends ScreeningPreference {
+  pending?: true;
+  travel?: ProfileTravel;
+}
+
 export async function getScreeningPreference(ctx: ServiceContext): Promise<ScreeningPreference> {
   const [row] = await ctx.db.select({
     ohboxPolicy: accountSettings.ohboxPolicy,
@@ -115,7 +131,7 @@ export async function getScreeningPreference(ctx: ServiceContext): Promise<Scree
  */
 export async function setScreeningPreference(
   ctx: ServiceContext, update: ScreeningPreferenceUpdate,
-): Promise<ScreeningPreference> {
+): Promise<ScreeningPreferenceResult> {
   const values: typeof accountSettings.$inferInsert = { accountId: ctx.accountId };
   const set: Partial<typeof accountSettings.$inferInsert> = { updatedAt: ctx.now() };
 
@@ -185,16 +201,55 @@ export async function setScreeningPreference(
     set.screenerAutoApplyAt = on ? ctx.now() : null;
   }
 
+  /* ── THE SCREENING POSTURE IS APPLIED BY THE INSTALL THAT ORGANIZES (mail 0093) ──────────
+   *
+   * This door had no organizer gate either. `ohbox_policy` decides where NEW mail is filed and
+   * arms the backlog re-route that the worker's tidy pass performs — both on the organizer's
+   * authority, in the organizer's own cycle. Written on a mailbox this install only reads, it
+   * changed a row nothing acts on while the pane reported the new posture, which is the same
+   * silently-ineffective shape ruling 6 names for the responder.
+   *
+   * ACCOUNT-scoped (`account_settings`), so it fans out.
+   */
+  let travel: ProfileTravel | undefined;
+  let pending = false;
+
   // A transaction where a bare upsert once stood, and the fence is the reason: the FOR SHARE
   // interlock in `erasure-fence.ts` only holds until COMMIT, so fencing an autocommit statement
   // from a separate statement would guard nothing. Fence first, then the same upsert.
   await asTx(ctx).transaction(async (tx) => {
     await fenceErasedAccount(tx, ctx.accountId);
+    const plan = await planAccountFanOut(tx, ctx.accountId, "profile.update");
+
+    /* ONLY THE FIELDS THIS REQUEST NAMED. The payload is a partial and absence is load-bearing —
+       sending the whole posture would let a door that changed the bar also overwrite a policy the
+       person never touched on the machine that actually applies it. */
+    const travelling = {
+      screeningPreference: {
+        ...("ohboxPolicy" in update ? { ohboxPolicy: (update.ohboxPolicy ?? null) as string | null } : {}),
+        ...("ohboxBar" in update ? { ohboxBar: (update.ohboxBar ?? null) as string | null } : {}),
+        ...("screenerAutoApply" in update ? { screenerAutoApply: update.screenerAutoApply as boolean } : {}),
+      },
+    };
+
+    if (!plan.writeLocally) {
+      // The reader's own `account_settings` row is left untouched — never both.
+      travel = await fanOutProfileEdit(tx, ctx, plan, travelling);
+      pending = true;
+      return;
+    }
+
     await tx.insert(accountSettings).values(values)
       .onConflictDoUpdate({ target: accountSettings.accountId, set });
+    if (profileTravelled(plan)) travel = await fanOutProfileEdit(tx, ctx, plan, travelling);
   });
 
-  return getScreeningPreference(ctx);
+  const current = await getScreeningPreference(ctx);
+  return {
+    ...current,
+    ...(pending ? { pending: true as const } : {}),
+    ...(travel === undefined ? {} : { travel }),
+  };
 }
 
 /**

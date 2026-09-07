@@ -77,6 +77,34 @@ asks rather than leaving you watching a request that was never going to be picke
 does not recognise is left where it is rather than thrown away — it happens as soon as that install
 updates.
 
+### Settings that only worked on the machine you typed them into
+
+Your out-of-office, your screening posture, how far back screening looks, and the sign-off appended
+to your outgoing mail are all applied by the install that ORGANIZES a mailbox — it is the one that
+sends the replies, files the new mail and adds the signature, and it reads them from what the
+organizing install publishes.
+
+None of those four asked which install that was. On a mailbox you read rather than organize, each
+edit was written into this machine's own copy and reported as saved, and the machine actually doing
+the work never saw it. So you could set an out-of-office and no out-of-office would ever be sent.
+Nothing failed and nothing said anything, which is why this is the most serious thing in this
+release.
+
+All four now travel. On a mailbox another install organizes, the edit becomes a request that install
+carries out, and this machine's copy is deliberately left alone until it has — so what you are
+looking at is what is true here, not what you typed. On an account where some mailboxes are
+organized here and some elsewhere, one save does both: written where this install organizes, sent as
+a request to each install holding one of the others.
+
+Only the setting you changed travels. Editing your screening bar does not send your posture along
+with it, so it cannot overwrite something you never touched on the machine that applies it.
+
+The sign-off is per mailbox rather than per account — a person with two addresses has two of them —
+so it goes to the install holding THAT mailbox and to no other. A sign-off that has to travel is
+limited to 2 000 characters; one this install stores and appends itself is unchanged at 10 000.
+
+Choosing any of this before you have connected a mailbox still works, exactly as before.
+
 ### Rules on an account whose mailboxes are organized in different places
 
 Rules belong to your account, not to one mailbox, and the install that organizes a mailbox is the
