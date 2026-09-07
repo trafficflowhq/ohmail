@@ -1366,10 +1366,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
     refusal: (mailboxIds) => readerMoveRefusal(
       rosterRef.current,
       mailboxIds.map((id) => id ?? ""),
-      {
-        named: (name) => t("screener.readerMoveRefused", { name }),
-        unknown: () => t("screener.readerMoveRefusedUnknown"),
-      },
+      refusalCopy,
     ),
   });
   /**
@@ -1379,6 +1376,28 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * carry a delete to, and replaying one there would mutate a demo somebody is looking at.
    */
   useDeleteIntentReplay((m) => engine.mutate(m), () => Date.now(), !demo);
+  const refusalCopy = useMemo(
+    () => ({
+      named: (name: string) => t("screener.readerMoveRefused", { name }),
+      unknown: () => t("screener.readerMoveRefusedUnknown"),
+    }),
+    [t],
+  );
+
+  /** Which mailboxes a set of messages lives in — first-seen order, de-duplicated. An
+   *  unresolvable message contributes `""`, which the predicate refuses as an unknown id. */
+  const mailboxesOf = useCallback(
+    (ids: readonly string[]): string[] => {
+      const out: string[] = [];
+      for (const id of ids) {
+        const mb = reader.get<EngineMessage>("message", id)?.mailboxId ?? "";
+        if (!out.includes(mb)) out.push(mb);
+      }
+      return out;
+    },
+    [reader],
+  );
+
   const theme = useTheme();
   const route = useHashRoute();
   // The registry owns ⌘K (see `keymap.tsx`). Leaving the hook's own binding on as well
@@ -4850,10 +4869,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
            * `roleRef` and not `screenerRole`: the refusal answers with the role at PRESS time,
            * which is the whole reason that ref exists.
            */
-          const refusedMove = readerMoveRefusal(roleRef.current, {
-            named: (name) => t("screener.readerMoveRefused", { name }),
-            unknown: () => t("screener.readerMoveRefusedUnknown"),
-          });
+          const refusedMove = readerMoveRefusal(
+            rosterRef.current,
+            [m.mailboxId ?? ""],
+            refusalCopy,
+          );
           if (refusedMove !== null) {
             toast(refusedMove);
             break;
@@ -4949,8 +4969,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
            does not repeat it: two spellings of one verdict is the drift that helper exists to
            end. The ASK — the confirm strip for `d` and the menu item, nothing for ⌫/⌦ — has
            already happened in the view; the window is still the only dispatch site. */
-        deleting.remove(ids);
-        return true;
+        return deleting.remove(
+          ids.map((id) => ({ id, mailboxId: reader.get<EngineMessage>("message", id)?.mailboxId })),
+        );
       }
       if (action === "read" || action === "unread") {
         // The batch mutation, unchanged: one request, one transaction, one intent.
@@ -4983,11 +5004,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
         );
         return true;
       }
-      // A READER MOVES NOTHING, and hears so before anything leaves. See the header.
-      const refused = readerMoveRefusal(roleRef.current, {
-        named: (name) => t("screener.readerMoveRefused", { name }),
-        unknown: () => t("screener.readerMoveRefusedUnknown"),
-      });
+      // A READER MOVES NOTHING, and hears so before anything leaves — asked of EVERY mailbox
+      // this selection spans, through the three-state roster. The WHOLE press is refused.
+      const refused = readerMoveRefusal(rosterRef.current, mailboxesOf(ids), refusalCopy);
       if (refused !== null) {
         toast(refused);
         return false;
@@ -5069,10 +5088,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
          sentence is `readerMoveRefusal`'s, the same one the Move arm, the delete window and
          the Screener's own bar use. The confirm row is BEHIND this: a reader never reaches a
          ceremony whose commit cannot happen. */
-      const refused = readerMoveRefusal(roleRef.current, {
-        named: (name) => t("screener.readerMoveRefused", { name }),
-        unknown: () => t("screener.readerMoveRefusedUnknown"),
-      });
+      const refused = readerMoveRefusal(rosterRef.current, mailboxesOf(ids), refusalCopy);
       if (refused !== null) {
         toast(refused);
         return false;

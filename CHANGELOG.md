@@ -149,6 +149,75 @@ one toast, one Undo that takes all of it back, and one record on disk — so a t
 window commits the selection whole rather than an arbitrary part of it. A selection spanning a
 mailbox this install organizes and one it only reads is refused entirely, never the permitted half.
 
+### Selecting messages uses the same bar as reading one
+
+Picking several messages in the Ohbox used to raise a strip of its own above the list: its own
+colour, its own shape, its own idea of which verbs fit. It was a third kind of control for verbs
+that already exist elsewhere, it pushed the mail down by up to 142 pixels on a phone, and in
+German its own last button was cut off at the edge of the strip.
+
+A selection now uses the message action bar — the same rounded bar, the same grouping, the same
+More menu — standing at the foot of the list where the reading column's bar stands at the foot of
+a message. On a wide window the two sit on one line. The verbs are the ones a single message
+offers, minus the ones that mean nothing over a set: there is no Reply over eleven messages.
+
+The count is the bar's first button: "× 7 selected", in the same colour as the selected rows, and
+pressing it clears the selection. Where the bar runs out of room it drops that button's word and
+keeps the number, exactly as the message bar drops the read control's words — measured in the font
+your system is really drawing, so it behaves the same in German and on either face.
+
+Selecting is easier to do and easier to undo. Cmd-click (Ctrl-click) picks a single row without
+moving the cursor. Shift with the arrow keys, or Shift-J and Shift-K, extends the selection from
+where it started; extending only ever adds, so walking back over a row never quietly unpicks it.
+Escape clears; clicking elsewhere does not.
+
+While a selection is up, the verb keys act on it — a parks the selection, m moves it, and so on —
+and the shortcut sheet says so in those words. With nothing selected the same keys mean what they
+always did, on the message under the cursor.
+
+Delete works over a selection too, through the same undo window a single delete uses: the whole
+set goes in one press, the toast carries one Undo for all of it, and nothing is sent until the
+toast goes. The menu item and d ask first and state how many; Backspace and Delete go straight to
+the undo window.
+
+On a mailbox another ohmail install is organizing, Move, Screening and Delete are refused when you
+press them rather than after the mail has moved and come back, in the sentence the rest of the app
+uses — and the selection stays, so you do not have to build it again.
+
+That question is asked of every mailbox the selection actually spans, not of the account. A
+selection can hold mail from a mailbox this install organizes and mail from one it does not, and
+in that case the whole press is refused rather than the part of it that would have worked —
+moving four of seven and saying nothing about the other three is a result nobody asked for and no
+message could describe honestly. On a machine with no mailbox list of its own, nothing changes:
+the server remains the authority there, as it always was.
+
+Moving a single message is refused the same way, and it used to be the case that showed the
+problem most plainly: the message left the list, the server declined the request, and it
+reappeared a moment later with nothing on screen saying why.
+
+Keyboard hints no longer draw on touch screens, or in windows too narrow to hold both the hint and
+the verb it belongs to.
+
+Backspace and Delete no longer reach a selection through something opened over it. With rows
+selected and the shortcut sheet, a menu or a popover standing on top, pressing either key filed
+the selection anyway. The keys now ask what is actually on screen before they act, so anything
+standing over the list holds them off — and they work again the moment it closes. The reading
+sheet is deliberately not one of those things: deleting the message you are reading is exactly
+what the key means there.
+
+Holding Shift no longer runs a shortcut that did not ask for it. Shift-Backspace and
+Shift-Delete were reaching the ordinary delete — on Windows that combination means "delete
+permanently", and in several editors it kills a line, so anyone pressing it meant something
+other than this app's undoable delete. Any named key — Backspace, Delete, Enter, Escape, the
+arrows — now needs its shortcut to ask for Shift before a shifted press counts. Punctuation is
+unchanged, because Shift is how those characters are typed: ? still opens the shortcut sheet.
+
+On a phone, hold a row for about half a second to start a selection. Until now there was no way
+in at all on a touch screen — picking a row needed a key or a modifier — so the whole selection
+bar was desktop-only. While a selection is up, tapping a row adds it or takes it out instead of
+opening it, and the count button ends the mode. A hold that moves is a scroll, and a hold with a
+mouse does nothing: the desktop already has x and Cmd-click.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
@@ -498,67 +567,6 @@ held it; a claim written by this same deployment moments earlier, which did not 
 holding it; and a request to stop that could still be honoured after you had taken it back with
 "Organize here", clearing the newer press. Where the mailbox cannot be read, or something is still
 holding it, the request stays pending and is tried again rather than reported done.
-### Selecting messages uses the same bar as reading one
-
-Picking several messages in the Ohbox used to raise a strip of its own above the list: its own
-colour, its own shape, its own idea of which verbs fit. It was a third kind of control for verbs
-that already exist elsewhere, it pushed the mail down by up to 142 pixels on a phone, and in
-German its own last button was cut off at the edge of the strip.
-
-A selection now uses the message action bar — the same rounded bar, the same grouping, the same
-More menu — standing at the foot of the list where the reading column's bar stands at the foot of
-a message. On a wide window the two sit on one line. The verbs are the ones a single message
-offers, minus the ones that mean nothing over a set: there is no Reply over eleven messages.
-
-The count is the bar's first button: "× 7 selected", in the same colour as the selected rows, and
-pressing it clears the selection. Where the bar runs out of room it drops that button's word and
-keeps the number, exactly as the message bar drops the read control's words — measured in the font
-your system is really drawing, so it behaves the same in German and on either face.
-
-Selecting is easier to do and easier to undo. Cmd-click (Ctrl-click) picks a single row without
-moving the cursor. Shift with the arrow keys, or Shift-J and Shift-K, extends the selection from
-where it started; extending only ever adds, so walking back over a row never quietly unpicks it.
-Escape clears; clicking elsewhere does not.
-
-While a selection is up, the verb keys act on it — a parks the selection, m moves it, and so on —
-and the shortcut sheet says so in those words. With nothing selected the same keys mean what they
-always did, on the message under the cursor.
-
-Delete works over a selection too, through the same undo window a single delete uses: the whole
-set goes in one press, the toast carries one Undo for all of it, and nothing is sent until the
-toast goes. The menu item and d ask first and state how many; Backspace and Delete go straight to
-the undo window.
-
-On a mailbox another ohmail install is organizing, Move, Screening and Delete are refused when you
-press them rather than after the mail has moved and come back, in the sentence the rest of the app
-uses — and the selection stays, so you do not have to build it again.
-
-Moving a single message is refused the same way, and it used to be the case that showed the
-problem most plainly: the message left the list, the server declined the request, and it
-reappeared a moment later with nothing on screen saying why.
-
-Keyboard hints no longer draw on touch screens, or in windows too narrow to hold both the hint and
-the verb it belongs to.
-
-Backspace and Delete no longer reach a selection through something opened over it. With rows
-selected and the shortcut sheet, a menu or a popover standing on top, pressing either key filed
-the selection anyway. The keys now ask what is actually on screen before they act, so anything
-standing over the list holds them off — and they work again the moment it closes. The reading
-sheet is deliberately not one of those things: deleting the message you are reading is exactly
-what the key means there.
-
-Holding Shift no longer runs a shortcut that did not ask for it. Shift-Backspace and
-Shift-Delete were reaching the ordinary delete — on Windows that combination means "delete
-permanently", and in several editors it kills a line, so anyone pressing it meant something
-other than this app's undoable delete. Any named key — Backspace, Delete, Enter, Escape, the
-arrows — now needs its shortcut to ask for Shift before a shifted press counts. Punctuation is
-unchanged, because Shift is how those characters are typed: ? still opens the shortcut sheet.
-
-On a phone, hold a row for about half a second to start a selection. Until now there was no way
-in at all on a touch screen — picking a row needed a key or a modifier — so the whole selection
-bar was desktop-only. While a selection is up, tapping a row adds it or takes it out instead of
-opening it, and the count button ends the mode. A hold that moves is a scroll, and a hold with a
-mouse does nothing: the desktop already has x and Cmd-click.
 
 ### Text is a step larger on phones
 
