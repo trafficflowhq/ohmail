@@ -328,6 +328,24 @@ export function readMirrorAccount(dataDir: string): string | null {
   return raw === null ? null : decodeMirrorRecord(raw).account;
 }
 
+/**
+ * IS THIS DIRECTORY WAITING FOR A DISCARD THAT HAS NOT HAPPENED YET?
+ *
+ * The DURABLE answer, read from the record rather than from a flag in this process, and that
+ * distinction is the whole point: the flag says what THIS process did, and the question every
+ * caller here actually has is what state the DIRECTORY is in. A pairing stages a discard by
+ * stamping the record; until a construction performs it, the mail on disk belongs to the world
+ * being left while the record already names the world being arrived at.
+ *
+ * `false` for an absent or unreadable record, which is the ordinary state and the safe one: a
+ * directory with no record has nothing staged, and reading an unreadable one as "pending" would
+ * refuse every pairing on an install whose marker was damaged.
+ */
+export function readMirrorDiscardPending(dataDir: string): boolean {
+  const raw = readMirrorRecordRaw(dataDir);
+  return raw === null ? false : decodeMirrorRecord(raw).discardPending;
+}
+
 function readMirrorRecordRaw(dataDir: string): string | null {
   const ownerPath = join(dataDir, MIRROR_OWNER_FILE);
   if (!existsSync(ownerPath)) return null;
@@ -1173,7 +1191,14 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           // …and the OTHER reason it can be false: a pairing that has succeeded and is waiting for
           // a relaunch. See the declaration — without this the shell shows a password form or a
           // "no longer paired" card, and both are false statements about a pairing that worked.
-          restartRequired,
+          //
+          // THE RECORD IS THE AUTHORITY AND THE FLAG IS THE FAST PATH. They agree by construction
+          // today — a construction clears the stamp, so only the process that staged it can see one
+          // — and they are OR-ed rather than one being trusted, because the question is about the
+          // DIRECTORY's state and only the record can answer that. A flag alone would report an
+          // in-flight discard as an ordinary signed-out engine the moment this process was not the
+          // one that staged it.
+          restartRequired: restartRequired || readMirrorDiscardPending(config.dataDir),
         });
       }
 
@@ -1664,6 +1689,34 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
             400,
           );
         }
+        /* ── A STAGED DISCARD IS NOT DONE UNTIL A RELAUNCH HAS DONE IT ──────────────────────
+           The hole this closes, and it is the one the account comparison cannot see: a `startOver`
+           stamps the record with the NEW account, so from that moment `accountIsForeign` compares
+           B against B and answers no. An ordinary redeem in that window therefore falls straight
+           through to `activate()` — and serves the new account's session over the OLD account's
+           `pgdata`, which is still on disk because the discard has not run. That is the exact
+           mixing every other guard in this file exists to refuse, reached through the one state
+           where none of them are looking.
+
+           REFUSED BEFORE THE TOKEN IS SPENT, deliberately: a refusal after the redeem would burn a
+           single-use pairing code to tell somebody to restart, and they would need a fresh one from
+           the other machine to do the thing they were already trying to do.
+
+           A `startOver` is exempt because it is not asking to join this directory's world — it is
+           asking to replace it, and re-stamping a record that already says so is a no-op. */
+        if (!startOver && readMirrorDiscardPending(config.dataDir)) {
+          return json(
+            {
+              error: {
+                code: "restart_required",
+                message:
+                  "this install has finished pairing and is waiting to be restarted; quit ohmail " +
+                  "and open it again, then pair from there",
+              },
+            },
+            409,
+          );
+        }
         /* REQUIRED, unlike on the sign-in paths. An absent kind is read by the host as "web", so a
            desktop that omitted it appears in somebody's Devices pane as a browser — a false state
            shown on the screen where a person decides what to revoke. Refused by name instead. */
@@ -1700,7 +1753,17 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         }
 
         const recordedAccount = readMirrorAccount(config.dataDir);
-        if (startOver && accountIsForeign(recordedAccount, redeemed.accountId)) {
+        /* ── THE SECOND PRESS IS THE SAME HOLE, REACHED THE OTHER WAY ──────────────────────
+           `accountIsForeign` compares the RECORD against the answer, and a start-over has already
+           written the new account into the record — so a SECOND start-over during the window
+           compares B against B, answers no, and falls through to the ordinary path, which seals
+           and ACTIVATES over the previous world's `pgdata`. Exactly the mixing the ordinary-redeem
+           guard above refuses, reached through the one path that guard deliberately exempts.
+
+           So a pending discard is a second reason to take this arm, independent of whose account
+           it is: while a discard is staged, no redeem of any kind may activate. */
+        if (startOver && (accountIsForeign(recordedAccount, redeemed.accountId)
+          || readMirrorDiscardPending(config.dataDir))) {
           /* ── THE WAY OUT OF THE REFUSAL BELOW, AND IT IS ONLY EVER TAKEN ON PURPOSE ─────────
              Without this the mismatch is a dead end: the constructor discards on a change of
              ADDRESS or of SERVER, and a host reinstalled at the same address changes neither — so
