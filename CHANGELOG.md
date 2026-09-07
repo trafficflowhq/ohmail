@@ -77,6 +77,33 @@ asks rather than leaving you watching a request that was never going to be picke
 does not recognise is left where it is rather than thrown away — it happens as soon as that install
 updates.
 
+### Rules on an account whose mailboxes are organized in different places
+
+Rules belong to your account, not to one mailbox, and the install that organizes a mailbox is the
+one that carries them out. If you have two mailboxes and a different install organizes each, a rule
+used to be written on whichever machine you typed it into and go no further — it was reported as
+saved, and the install actually filing that mailbox's mail never heard about it. The same edit on an
+account where every mailbox is organized elsewhere was refused outright instead.
+
+A rule edit now goes to all of them. It is written where this install organizes, and it travels as a
+request to each install holding one of the others, from one press. The answer says which mailboxes
+took it, which are waiting, and which are running a version too old to accept it — rather than one
+"saved" that is only partly true.
+
+On a mailbox you only read, the rule is not written locally and the row you are looking at does not
+change until the other install has applied it. Deleting works the same way: the rule stays visible
+until it is actually gone there, because removing it here would hide a rule that is still filing
+your mail.
+
+Changing what a rule MATCHES — the sender, the domain, or a subject or body term that narrows it —
+cannot travel as an edit, and is refused with that reason. Two rules for one sender that differ only
+by a narrowing term are different rules going to different places, so "find the rule that matches
+this and change what it matches" has no single answer on the other machine. Remove the rule and add
+the one you want. On an account this install organizes, changing the match is an ordinary edit and
+is unaffected.
+
+Writing a rule before you have connected a mailbox still works, as it always did.
+
 ### Moving and deleting mail on a mailbox another install organizes
 
 Exactly one install organizes a mailbox at a time; the others read it. Moving or deleting a message

@@ -47,10 +47,21 @@ export const rulesRoutes: Route[] = [
     options: { idempotent: true },
     handler: async (req, deps) => {
       const body = await readBody<CreateRuleBody>(req);
-      const { rule, seq } = await rules(deps).create(
+      const result = await rules(deps).create(
         serviceContext(deps, req), body, { idempotency: deps.idempotency ?? null },
       );
-      return jsonResponse(rule, { status: 201, seq });
+      // 201 IS A RULE THAT EXISTS; 202 IS A RULE ASKED FOR — the Screener route's rule, and the
+      // same reason (mail 0094). On an account whose every live mailbox another install
+      // organizes, no `rules` row was written and there is nothing to hand back at 201. The
+      // service stores exactly this status for the idempotent replay, so a first press and its
+      // replay agree. `travel` says which install each request is waiting on.
+      if ("pending" in result) return jsonResponse(result, { status: 202 });
+      return jsonResponse(
+        // `travel` rides BESIDE the rule on a mixed account, never instead of it: the row exists
+        // here AND the same edit is in flight to the installs holding the other mailboxes.
+        result.travel === undefined ? result.rule : { ...result.rule, travel: result.travel },
+        { status: 201, seq: result.seq },
+      );
     },
   },
   {
@@ -73,10 +84,16 @@ export const rulesRoutes: Route[] = [
     options: { idempotent: true },
     handler: async (req, deps, params) => {
       const patch = await readBody<PatchRuleBody>(req);
-      const { rule, seq } = await rules(deps).update(
+      const result = await rules(deps).update(
         serviceContext(deps, req), params.id!, patch, { idempotency: deps.idempotency ?? null },
       );
-      return jsonResponse(rule, { status: 200, seq });
+      // 202 when the edit wrote nothing here — see the create route above. The body carries the
+      // UNCHANGED rule, because that is what this install still holds.
+      if ("pending" in result) return jsonResponse(result, { status: 202 });
+      return jsonResponse(
+        result.travel === undefined ? result.rule : { ...result.rule, travel: result.travel },
+        { status: 200, seq: result.seq },
+      );
     },
   },
   {
@@ -115,12 +132,39 @@ export const rulesRoutes: Route[] = [
           headers: seq === null ? {} : { "X-Sync-Seq": String(seq) },
         });
 
+      /**
+       * THE ANSWER FOR A DELETE THAT REMOVED NOTHING HERE (mail 0094).
+       *
+       * `204` says "it is gone". On an account whose every live mailbox another install
+       * organizes, the row is deliberately NOT removed — deleting it would take away the only
+       * visible copy of a rule that is still running on the machine that runs it, and the
+       * organizer's next published document would put it straight back — so 204 would be the one
+       * thing this route's own comment forbids: a false claim to fix a bug about wrong answers.
+       * `202` is a state the shipped 204 contract never covered rather than a change to it, and
+       * it is not a null-body status, so the pending state can ride the response itself instead
+       * of needing a second poll.
+       */
+      const asked = (travel: unknown): Response => jsonResponse({ pending: true, travel }, { status: 202 });
+
+      /**
+       * A MIXED ACCOUNT STILL ANSWERS 204, and the pending half is NOT in this response.
+       *
+       * The row IS gone here, so 204 is true, and every other DELETE in this API answers 204 —
+       * `http-adapter.ts` documents the contract in prose ("A 204 CARRIES NO BODY, SO THERE IS
+       * NOTHING TO ECHO"), so widening it would make a shipped claim false. What that costs is
+       * real and is stated rather than hidden: a caller deleting a rule on an account with one
+       * organized and one held mailbox learns nothing here about the request in flight to the
+       * other install, and has to see it on the rules surface. That surface is L-D's, and this is
+       * the one place in the family where the outcome does not ride its own response.
+       */
+      const answer = (r: { seq: number | null; travel?: unknown }): Response =>
+        r.seq === null && r.travel !== undefined ? asked(r.travel) : revoked(r.seq);
+
       // No key ⇒ nothing distinguishes a retry from a probe, so the service's plain 404 for
       // an id that is not there stands. `accountId` is belt-and-braces: `withSession` has
       // already 401'd an unauthenticated caller on this protected route.
       if (!key || !accountId) {
-        const { seq } = await rules(deps).remove(serviceContext(deps, req), params.id!);
-        return revoked(seq);
+        return answer(await rules(deps).remove(serviceContext(deps, req), params.id!));
       }
 
       const url = new URL(req.url);
@@ -141,10 +185,9 @@ export const rulesRoutes: Route[] = [
       if (found) return replay(found);
 
       try {
-        const { seq } = await rules(deps).remove(serviceContext(deps, req), params.id!, {
+        return answer(await rules(deps).remove(serviceContext(deps, req), params.id!, {
           idempotency: { key, requestHash },
-        });
-        return revoked(seq);
+        }));
       } catch (err) {
         // ── A CONCURRENT SAME-KEY DELETE ENDS IN TWO DIFFERENT WAYS ──────────────────────
         //

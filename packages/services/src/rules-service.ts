@@ -1,9 +1,13 @@
 import { and, asc, eq } from "drizzle-orm";
-import { assertAccountOrganizes, rules, recordChange, claimIdempotencyKey, type Tx } from "@trafficflow/db";
+import { rules, recordChange, claimIdempotencyKey, type OrganizedBy, type Tx } from "@trafficflow/db";
 import type { Destination } from "@trafficflow/core/mail";
+import type { RequestKind } from "@trafficflow/core/adapters/organizer-lease";
 import type { Db, ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import { materializeRule } from "./dto/materialize.js";
+import {
+  planAccountFanOut, writeReaderRequest, type AccountFanOut, type FanOutRefusal,
+} from "./reader-request.js";
 import type { Folder, RuleDTO } from "./dto/types.js";
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
@@ -98,10 +102,70 @@ export interface RuleIdempotency {
   requestHash: string;
 }
 
-/** A mutation's result: the DTO plus the change_log seq to echo as `X-Sync-Seq`. */
+/** One held mailbox that took the edit as a request. */
+export interface RuleRequestSent {
+  mailboxId: string;
+  requestId: string;
+  holder: OrganizedBy;
+}
+
+/**
+ * WHERE ONE RULE EDIT WENT, MAILBOX BY MAILBOX (mail 0094, ruling 6).
+ *
+ * A rule belongs to the ACCOUNT and TRAVELS in the organizer's profile document, and an account may
+ * hold several mailboxes with different roles. So one press is a local write for the mailboxes this
+ * install organizes AND a request to each install holding one of the others — at once. Reporting
+ * that as a single "saved" is the false state the ruling is about: on a mixed account the old
+ * behaviour wrote locally, told the person it was saved, and the install actually organizing the
+ * other mailbox never heard about the rule.
+ */
+export interface RuleTravel {
+  /** Mailboxes this install organizes — the local row IS their rule. */
+  appliedLocally: string[];
+  /** One request per held mailbox whose holder advertises `rules`. */
+  pending: RuleRequestSent[];
+  /** Held by an install that will not take a `rule.*` request, and why. */
+  refused: FanOutRefusal[];
+}
+
+/**
+ * A mutation's result: the DTO plus the change_log seq to echo as `X-Sync-Seq`.
+ *
+ * `travel` is present only when at least one live mailbox is held elsewhere — so an ordinary
+ * one-install account's answer is unchanged, byte for byte.
+ */
 export interface RuleMutation {
   rule: RuleDTO;
   seq: number;
+  travel?: RuleTravel;
+}
+
+/**
+ * THE EDIT WROTE NOTHING HERE — every live mailbox is organized by another install, so the account's
+ * own row is deliberately untouched and the edit is waiting on those installs.
+ *
+ * `pending: true` is the discriminator the route switches its status code on (202), the same shape
+ * `MessageService.move` and `ScreenerService.decide` use.
+ *
+ * `rule` is the UNCHANGED local row for `update` and `remove` — the person is looking at it and it
+ * has not changed yet, which is the honest thing to hand back — and absent for `create`, where
+ * there is no row at all until an organizer applies the request and republishes.
+ */
+export interface RuleRequestResult {
+  pending: true;
+  travel: RuleTravel;
+  rule?: RuleDTO;
+}
+
+/**
+ * A delete's result. `seq` is the emitted `delete` change, or NULL when nothing was removed here
+ * because every live mailbox is organized elsewhere — the local row stays until the organizer
+ * applies the request, and a seq for a change that did not happen would advance every client's
+ * cursor past nothing.
+ */
+export interface RuleRemoval {
+  seq: number | null;
+  travel?: RuleTravel;
 }
 
 /**
@@ -111,6 +175,140 @@ export interface RuleMutation {
  * (in-tx). Every query is scoped to `ctx.accountId`; a cross-account id
  * is indistinguishable from a missing one → 404.
  */
+/**
+ * THE WORD A RULE'S DESTINATION TRAVELS AS — never an IMAP path.
+ *
+ * Same closed table a `message.move` request uses, and for the reason `request-apply.ts` gives at
+ * length: a request is a message inside a mailbox anyone with the password can append to, and an
+ * install able to name an arbitrary folder could file mail outside the tree this product manages.
+ *
+ * `trash` is in that table for moves and is REFUSED here. A rule is account-scoped and Trash is
+ * discovered per mailbox, so "file every message from this sender to Trash" is delete-on-arrival
+ * with a different name — no door offers it, and a payload that could express it would be a
+ * capability nobody chose.
+ */
+const RULE_DESTINATION_WORDS: ReadonlyMap<string, string> = new Map([
+  ["INBOX", "inbox"],
+  ["ohmail/Screener", "screener"],
+  ["ohmail/Reads", "reads"],
+  ["ohmail/Receipts", "receipts"],
+  ["ohmail/Screened", "screened"],
+  ["ohmail/Quarantine", "quarantine"],
+]);
+
+function ruleDestinationWord(folder: string): string {
+  const word = RULE_DESTINATION_WORDS.get(folder);
+  if (word === undefined) {
+    // Unreachable from a validated request — `validDestination` admits exactly these six. A throw
+    // rather than a fallback for `destinationWord`'s reason: the fallback would put whatever
+    // string arrived into the record, which is the raw-path case the closed set exists to make
+    // unrepresentable, and it would do it silently the day a seventh folder is added here.
+    throw new ServiceError(
+      "validation_failed", 400,
+      `a rule filing to ${folder} cannot travel to the install that organizes this mailbox`,
+    );
+  }
+  return word;
+}
+
+/** The four fields that identify "the same rule" on both installs. */
+interface RuleKeyFields {
+  kind: string;
+  match: string;
+  subjectContains: string | null;
+  bodyContains: string | null;
+}
+
+/**
+ * THE NATURAL KEY A `rule.*` REQUEST TRAVELS UNDER — FOUR fields, not two.
+ *
+ * Not the rule's id: two installs of one account have separate databases and separate primary keys,
+ * so an id names nothing on the other side.
+ *
+ * ── AND NOT `(kind, match)` EITHER, WHICH IS THE CORRECTION THAT MATTERS ───────────────────
+ *
+ * There is no unique index on `(account_id, kind, match)`, and that is not an oversight: two rules
+ * on one sender differing only by a narrowing term are DIFFERENT rules filing to different places —
+ * *from this address AND with this in the subject* beside *from this address* alone. A two-field key
+ * collapses them, so the applier would look up one and act on the other, filing mail somewhere the
+ * person did not choose while every guard on both sides stayed green. `{ kind, match }` with both
+ * terms null is not a different key; it is the BARE (promoted-rule) case of this one.
+ *
+ * ── ONE PLACE, BECAUSE THE SHAPE IS NOT MINE ───────────────────────────────────────────────
+ *
+ * The payload is defined by the drain that applies it. Everything composed here is composed
+ * in this one function, so when that shape moves, this body changes and no door does. A payload
+ * built inline at three call sites is three places to update and two places to forget — which is
+ * exactly what would have happened to the key correction above.
+ */
+function ruleRequestPayload(
+  key: RuleKeyFields,
+  set?: Record<string, unknown>,
+  applyRetro?: boolean,
+): Record<string, unknown> {
+  return {
+    key: {
+      kind: key.kind, match: key.match,
+      subjectContains: key.subjectContains, bodyContains: key.bodyContains,
+    },
+    ...(set === undefined ? {} : { set }),
+    ...(applyRetro === undefined ? {} : { applyRetro }),
+  };
+}
+
+/**
+ * A `rule.update` MAY NOT CHANGE WHAT A RULE MATCHES — refused WHOLE, never partly applied.
+ *
+ * The four key fields identify the rule to the other install. A `set` naming one of them would ask
+ * the applier to find a rule by a key and then change that key, which is two operations wearing
+ * one: on this install it is an UPDATE, on the other it is "no such rule" or, worse, a rule that
+ * now collides with an existing one. Changing what a rule matches is a delete plus a create, and
+ * saying so is more honest than accepting a request whose two halves would diverge.
+ *
+ * Refused whole rather than filtered: silently dropping the key fields from `set` would apply the
+ * REST of a mixed patch and report success, so the person's destination change lands and their
+ * match change vanishes with nothing said.
+ */
+const RULE_KEY_FIELDS = ["kind", "match", "subjectContains", "bodyContains"] as const;
+
+function assertSetIsNotAKeyChange(set: Record<string, unknown>): void {
+  const named = RULE_KEY_FIELDS.filter((f) => f in set);
+  if (named.length > 0) {
+    throw new ServiceError(
+      "validation_failed", 400,
+      `this change alters what the rule matches (${named.join(", ")}), and on a mailbox another `
+      + "install organizes that has to be a delete and a new rule rather than an edit — "
+      + "remove the rule and add the one you want",
+    );
+  }
+}
+
+/**
+ * SEND ONE REQUEST PER CAPABLE HOLDER and report what happened to every mailbox.
+ *
+ * Shared by the three doors so that "which mailboxes did this reach" is answered once. The
+ * refusals ride back rather than throwing: on a mixed account some mailboxes took the edit and one
+ * did not, and a throw would discard the successes and tell the person nothing happened.
+ */
+async function fanOutRuleEdit(
+  tx: Tx, ctx: ServiceContext, plan: AccountFanOut, kind: RequestKind,
+  payload: Record<string, unknown>,
+): Promise<RuleTravel> {
+  const pending: RuleRequestSent[] = [];
+  for (const target of plan.requestTo) {
+    const sent = await writeReaderRequest(tx, ctx, {
+      mailboxId: target.mailboxId, kind, payload, holder: target.holder,
+    });
+    pending.push({ mailboxId: target.mailboxId, requestId: sent.requestId, holder: target.holder });
+  }
+  return { appliedLocally: plan.organized, pending, refused: plan.refused };
+}
+
+/** Whether anything left this install — the discriminator for including `travel` at all. */
+function travelled(plan: AccountFanOut): boolean {
+  return plan.requestTo.length > 0 || plan.refused.length > 0;
+}
+
 export class RulesService {
   async list(ctx: ServiceContext): Promise<RuleDTO[]> {
     const rows = await ctx.db.select({ id: rules.id }).from(rules)
@@ -132,7 +330,7 @@ export class RulesService {
   async create(
     ctx: ServiceContext, body: CreateRuleBody,
     opts: { idempotency?: RuleIdempotency | null } = {},
-  ): Promise<RuleMutation> {
+  ): Promise<RuleMutation | RuleRequestResult> {
     const kind = this.validKind(body.kind);
     const destination = this.validDestination(body.destination);
     const match = this.validMatch(body.match);
@@ -142,19 +340,41 @@ export class RulesService {
     const bodyContains = this.validBodyContains(body.bodyContains, kind);
 
     return asTx(ctx).transaction(async (tx) => {
-      /* -- A READER'S ACCOUNT WRITES NO RULES (mail 0083) ---------------------------------
+      /* -- A RULE GOES WHEREVER THE ACCOUNT'S MAILBOXES ARE ORGANIZED (mail 0083, then 0094) --
        *
        * A rule is not a note: `evaluateRules` is the router, `rule-retro.ts` re-files the backlog
        * a new rule covers, and both run on the organizer's authority inside the organizer's own
        * cycle. A rule written where nothing organizes is an instruction that is never carried
        * out — and worse than inert, because the person is told their mail will be filed that way.
        *
-       * ACCOUNT-SCOPED, not per-mailbox: rules apply to the account and travel in the profile
-       * document, so the question is whether this install organizes ANYTHING. On a one-mailbox
-       * standalone that collapses to "all refused", which is the honest answer for a door whose
-       * effect would be nil.
+       * Mail 0083 answered that with ONE account-wide question ("does this install organize
+       * anything") and a refusal. Ruling 6 replaces it with a per-mailbox dispatch, because the
+       * account-wide answer was wrong in both directions: on a MIXED account it PERMITTED the
+       * write and nothing travelled, so the install actually organizing the other mailbox never
+       * heard about the rule while the person was told it was saved; and on an all-reader account
+       * it refused where a request could have gone. `planAccountFanOut` carries the three states,
+       * the onboarding one included.
        */
-      await assertAccountOrganizes(tx as unknown as Tx, ctx.accountId);
+      const plan = await planAccountFanOut(tx as unknown as Tx, ctx.accountId, "rule.create");
+
+      if (!plan.writeLocally) {
+        /* NOTHING TO WRITE HERE — every live mailbox is organized elsewhere, and at least one
+           holder took the request (a plan with neither has already thrown). No `rules` row and no
+           `change_log`: a row written here is the dead instruction above, and it would also be
+           DUPLICATED when the organizer applies the request and republishes its document. */
+        const travel = await fanOutRuleEdit(
+          tx as unknown as Tx, ctx, plan, "rule.create",
+          ruleRequestPayload(
+            { kind, match, subjectContains, bodyContains },
+            {
+              destination: ruleDestinationWord(destination),
+              priority, enabled: body.enabled ?? true,
+            },
+            applyRetro,
+          ),
+        );
+        return this.claimRequestReplay(tx, ctx, opts, { pending: true, travel });
+      }
 
       const [row] = await tx.insert(rules).values({
         accountId: ctx.accountId,
@@ -202,8 +422,52 @@ export class RulesService {
         if (!claimed) throw new IdempotencyRaceLost(ctx.accountId, opts.idempotency.key);
       }
 
-      return { rule, seq: Number(seq) };
+      /* THE MIXED ACCOUNT: the row above IS the rule for the mailboxes this install organizes, and
+         the same edit travels to each install holding one of the others. Both halves, from one
+         press, reported separately — never one "saved". */
+      if (!travelled(plan)) return { rule, seq: Number(seq) };
+      const travel = await fanOutRuleEdit(
+        tx as unknown as Tx, ctx, plan, "rule.create",
+        ruleRequestPayload(
+          { kind, match, subjectContains, bodyContains },
+          {
+            destination: ruleDestinationWord(destination),
+            priority, enabled: body.enabled ?? true,
+          },
+          applyRetro,
+        ),
+      );
+      return { rule, seq: Number(seq), travel };
     });
+  }
+
+  /**
+   * THE REPLAY CLAIM FOR AN EDIT THAT WROTE NOTHING LOCALLY — the request-shaped answer.
+   *
+   * Same contract as every door's own claim: a lost response must not queue a SECOND set of
+   * requests for one press. `responseStatus: 202` because that is what the live call returns, and
+   * a route whose replay disagreed with its first answer is the one thing an idempotent route may
+   * not do. `seq: null` because nothing changed in this store — a seq here would advance every
+   * client's cursor past a change that does not exist.
+   */
+  private async claimRequestReplay(
+    tx: Tx, ctx: ServiceContext,
+    opts: { idempotency?: RuleIdempotency | null },
+    result: RuleRequestResult,
+  ): Promise<RuleRequestResult> {
+    if (opts.idempotency) {
+      const claimed = await claimIdempotencyKey(tx, {
+        accountId: ctx.accountId,
+        key: opts.idempotency.key,
+        requestHash: opts.idempotency.requestHash,
+        responseStatus: 202,
+        responseJson: result,
+        seq: null,
+        now: ctx.now(),
+      });
+      if (!claimed) throw new IdempotencyRaceLost(ctx.accountId, opts.idempotency.key);
+    }
+    return result;
   }
 
   /**
@@ -253,7 +517,7 @@ export class RulesService {
   async update(
     ctx: ServiceContext, id: string, patch: PatchRuleBody,
     opts: { idempotency?: RuleIdempotency | null } = {},
-  ): Promise<RuleMutation> {
+  ): Promise<RuleMutation | RuleRequestResult> {
     const set: Record<string, unknown> = { updatedAt: ctx.now() };
     if (patch.kind !== undefined) set.kind = this.validKind(patch.kind);
     if (patch.destination !== undefined) set.destination = this.validDestination(patch.destination);
@@ -275,7 +539,9 @@ export class RulesService {
        * standalone that collapses to "all refused", which is the honest answer for a door whose
        * effect would be nil.
        */
-      await assertAccountOrganizes(tx as unknown as Tx, ctx.accountId);
+      // The per-mailbox dispatch that replaces the account-wide refusal — see `create`'s own note
+      // for why the one question was wrong in both directions.
+      const plan = await planAccountFanOut(tx as unknown as Tx, ctx.accountId, "rule.update");
 
       // Read the CURRENT destination before the write, inside the transaction, so "did the
       // destination change" is answered against the row this update is about to replace rather
@@ -286,9 +552,14 @@ export class RulesService {
       // `validSubjectContains` refuses a term on anything but `sender` and a PATCH need not carry
       // the kind at all — validating against the caller's absent field instead of the stored row
       // is how a domain rule acquires a subject term the API says it will not accept.
+      //
+      // `match` joins them for mail 0094: it is the second of the FOUR fields that identify this
+      // rule to another install, and the key must name the rule as it stands NOW — a request
+      // keyed on the caller's new value would ask the applier to find a rule that does not exist
+      // there yet.
       const [before] = await tx.select({
         destination: rules.destination, kind: rules.kind, subjectContains: rules.subjectContains,
-        bodyContains: rules.bodyContains,
+        bodyContains: rules.bodyContains, match: rules.match,
       }).from(rules)
         .where(and(eq(rules.id, id), eq(rules.accountId, ctx.accountId))).limit(1);
 
@@ -327,6 +598,44 @@ export class RulesService {
         set.retroMoved = 0;
       }
 
+      /* ── THE REQUEST'S KEY AND ITS `set`, COMPOSED FROM THE ROW AS IT STANDS ──────────────
+       *
+       * Only when something has to travel. On a single-install account changing what a rule
+       * matches is an ordinary UPDATE and stays one — the refusal below is about a request, not
+       * about the product. Placed BEFORE every write on this path so a refused mixed patch leaves
+       * nothing behind, here or anywhere. */
+      let travel: RuleTravel | undefined;
+      if (travelled(plan)) {
+        assertSetIsNotAKeyChange(set);
+        if (!before) throw new ServiceError("not_found", 404, "rule not found");
+      }
+      const keyOf = (): RuleKeyFields => ({
+        kind: before!.kind, match: before!.match,
+        subjectContains: before!.subjectContains, bodyContains: before!.bodyContains,
+      });
+      const travelSet = (): Record<string, unknown> => ({
+        ...(set.destination === undefined
+          ? {} : { destination: ruleDestinationWord(set.destination as string) }),
+        ...(set.priority === undefined ? {} : { priority: set.priority }),
+        ...(set.enabled === undefined ? {} : { enabled: set.enabled }),
+      });
+
+      if (!plan.writeLocally) {
+        /* NOTHING TO UPDATE HERE. The local row is left EXACTLY as it is and handed back
+           unchanged: the person is looking at it, it has not changed yet, and showing them the
+           value they typed would be the false state ruling 6 exists to end. It converges when the
+           organizer applies the request and republishes its document. */
+        travel = await fanOutRuleEdit(
+          tx as unknown as Tx, ctx, plan, "rule.update",
+          ruleRequestPayload(keyOf(), travelSet(), applyRetro),
+        );
+        const unchanged = await materializeRule(asDb(tx), ctx.accountId, id);
+        if (!unchanged) throw new ServiceError("not_found", 404, "rule not found");
+        return this.claimRequestReplay(tx, ctx, opts, {
+          pending: true, travel, rule: unchanged,
+        });
+      }
+
       // Scope the UPDATE to the account: a cross-account id matches 0 rows.
       const updated = await tx.update(rules).set(set)
         .where(and(eq(rules.id, id), eq(rules.accountId, ctx.accountId)))
@@ -358,7 +667,13 @@ export class RulesService {
         if (!claimed) throw new IdempotencyRaceLost(ctx.accountId, opts.idempotency.key);
       }
 
-      return { rule, seq: Number(seq) };
+      // The mixed account — the row above is the rule here, and the same edit travels.
+      if (!travelled(plan)) return { rule, seq: Number(seq) };
+      travel = await fanOutRuleEdit(
+        tx as unknown as Tx, ctx, plan, "rule.update",
+        ruleRequestPayload(keyOf(), travelSet(), applyRetro),
+      );
+      return { rule, seq: Number(seq), travel };
     });
   }
 
@@ -386,21 +701,51 @@ export class RulesService {
   async remove(
     ctx: ServiceContext, id: string,
     opts: { idempotency?: RuleIdempotency | null } = {},
-  ): Promise<{ seq: number }> {
-    const seq = await asTx(ctx).transaction(async (tx) => {
-      /* -- A READER'S ACCOUNT WRITES NO RULES (mail 0083) ---------------------------------
+  ): Promise<RuleRemoval> {
+    const out = await asTx(ctx).transaction(async (tx): Promise<RuleRemoval> => {
+      /* -- A RULE GOES WHEREVER THE ACCOUNT'S MAILBOXES ARE ORGANIZED (0083, then 0094) -----
        *
        * A rule is not a note: `evaluateRules` is the router, `rule-retro.ts` re-files the backlog
        * a new rule covers, and both run on the organizer's authority inside the organizer's own
-       * cycle. A rule written where nothing organizes is an instruction that is never carried
-       * out — and worse than inert, because the person is told their mail will be filed that way.
+       * cycle. A rule deleted where nothing organizes removes nothing that was ever running.
        *
-       * ACCOUNT-SCOPED, not per-mailbox: rules apply to the account and travel in the profile
-       * document, so the question is whether this install organizes ANYTHING. On a one-mailbox
-       * standalone that collapses to "all refused", which is the honest answer for a door whose
-       * effect would be nil.
+       * The account-wide refusal is replaced by the per-mailbox dispatch — see `create`'s note.
        */
-      await assertAccountOrganizes(tx as unknown as Tx, ctx.accountId);
+      const plan = await planAccountFanOut(tx as unknown as Tx, ctx.accountId, "rule.delete");
+
+      /* THE KEY IS READ BEFORE THE ROW GOES, and it has to be: after the DELETE there is nothing
+         left to name the rule to the other install. `returning({ id })` was enough while the
+         delete stayed local; it is not enough now. */
+      const [before] = await tx.select({
+        kind: rules.kind, match: rules.match,
+        subjectContains: rules.subjectContains, bodyContains: rules.bodyContains,
+      }).from(rules)
+        .where(and(eq(rules.id, id), eq(rules.accountId, ctx.accountId))).limit(1);
+
+      if (!plan.writeLocally) {
+        /* THE LOCAL ROW STAYS. Nothing here organizes anything, so deleting it would remove the
+           person's only visible copy of a rule that is still live on the machine that runs it —
+           and the organizer's next published document would put it straight back. It goes when
+           the organizer applies the request. */
+        if (!before) throw new ServiceError("not_found", 404, "rule not found");
+        const travel = await fanOutRuleEdit(
+          tx as unknown as Tx, ctx, plan, "rule.delete", ruleRequestPayload(before),
+        );
+        if (opts.idempotency) {
+          const claimed = await claimIdempotencyKey(tx, {
+            accountId: ctx.accountId,
+            key: opts.idempotency.key,
+            requestHash: opts.idempotency.requestHash,
+            responseStatus: 202,
+            responseJson: travel,
+            seq: null,
+            now: ctx.now(),
+          });
+          if (!claimed) throw new IdempotencyRaceLost(ctx.accountId, opts.idempotency.key);
+        }
+        return { seq: null as number | null, travel };
+      }
+
       const deleted = await tx.delete(rules)
         .where(and(eq(rules.id, id), eq(rules.accountId, ctx.accountId)))
         .returning({ id: rules.id });
@@ -430,9 +775,14 @@ export class RulesService {
         if (!claimed) throw new IdempotencyRaceLost(ctx.accountId, opts.idempotency.key);
       }
 
-      return emitted;
+      // The mixed account: gone here, and asked of every install that holds one of the others.
+      if (!travelled(plan)) return { seq: Number(emitted) as number | null };
+      const travel = await fanOutRuleEdit(
+        tx as unknown as Tx, ctx, plan, "rule.delete", ruleRequestPayload(before!),
+      );
+      return { seq: Number(emitted) as number | null, travel };
     });
-    return { seq: Number(seq) };
+    return out;
   }
 
   private validKind(v: unknown): string {

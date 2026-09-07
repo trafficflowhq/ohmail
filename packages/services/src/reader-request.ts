@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
+import { and, eq, ne } from "drizzle-orm";
 import {
   insertOrganizerRequest, readRequestEligibility, readAccountErasedAt,
-  AccountErasedError, OrganizedElsewhereError, MailboxNotFoundError,
-  type OrganizedBy, type Tx,
+  AccountErasedError, OrganizedElsewhereError, MailboxNotFoundError, mailboxes,
+  type OrganizedBy, type RequestRefusalReason, type Tx,
 } from "@trafficflow/db";
 import {
   capabilityForKind, REQUEST_PAYLOAD_MAX_BYTES, type RequestKind,
@@ -44,11 +45,10 @@ import { ServiceError } from "./errors.js";
  *  · PER-MAILBOX ({@link routeMailboxWrite}) — the write is about ONE mailbox's mail or one
  *    mailbox's own column. `message.move` and the mailbox signature. The question is "who holds
  *    THIS mailbox", and there is exactly one answer.
- *  · FAN-OUT — the write is ACCOUNT-scoped configuration (rules, the away responder, the screening
- *    preference, the dormancy window) that TRAVELS to whoever holds each mailbox. One press can
- *    therefore be a local write AND several requests at once. That shape lands with the rules
- *    family; this module carries the per-mailbox half first so the two do not have to be reviewed
- *    together.
+ *  · FAN-OUT ({@link planAccountFanOut}) — the write is ACCOUNT-scoped configuration (rules, the
+ *    away responder, the screening preference, the dormancy window) that TRAVELS to whoever holds
+ *    each mailbox. One press can therefore be a local write AND several requests at once, and the
+ *    answer has to say which mailbox got which — see that function's header.
  */
 
 /**
@@ -118,6 +118,117 @@ export async function routeMailboxWrite(
     );
   }
   return { route: "request", holder: eligibility.by };
+}
+
+/** A held mailbox whose holder will take this kind — one request goes to it. */
+export interface FanOutTarget { mailboxId: string; holder: OrganizedBy }
+
+/** A held mailbox whose holder will NOT, and why. Reported, never thrown, when others succeeded. */
+export interface FanOutRefusal {
+  mailboxId: string;
+  holder: OrganizedBy;
+  reason: RequestRefusalReason;
+}
+
+/**
+ * WHAT ONE PRESS ON ACCOUNT-SCOPED CONFIGURATION ACTUALLY DOES, PER MAILBOX.
+ *
+ * Never one word. An account may hold several mailboxes with different roles, so a single edit is
+ * a local write for the ones this install organizes AND a request to each install that holds one of
+ * the others — at the same time, from one press.
+ */
+export interface AccountFanOut {
+  /** Write the account's own row. False means the write would be dead here — see the planner. */
+  writeLocally: boolean;
+  /** The mailboxes this install organizes, which is WHY the local write is live. */
+  organized: string[];
+  /** One request each. */
+  requestTo: FanOutTarget[];
+  /** Held elsewhere by an install that cannot take this kind. */
+  refused: FanOutRefusal[];
+}
+
+/**
+ * PLAN THE FAN-OUT for an ACCOUNT-SCOPED door: rules, the away responder, the screening preference,
+ * the dormancy window (mail 0093, ruling 6).
+ *
+ * ── WHAT THIS REPLACES, AND WHY IT IS NOT JUST A WIDER REFUSAL ─────────────────────────────
+ *
+ * `assertAccountOrganizes` asked one question — "does this account organize ANYTHING" — and refused
+ * when the answer was no. That was right when a refusal was the only alternative to a dead write.
+ * It has two costs now. On a MIXED account (one mailbox organized here, one held elsewhere) it
+ * PERMITTED the write and nothing travelled, so the install holding the other mailbox never learned
+ * the rule and the person was told their mail would be filed that way on both. And on an
+ * all-reader account it refused where a request could have travelled.
+ *
+ * So the account-wide yes/no becomes a per-mailbox dispatch, and the caller reports the per-mailbox
+ * outcome rather than one "saved".
+ *
+ * ── THE THREE STATES, AND THE ONBOARDING ONE IS THE EASY ONE TO GET WRONG ──────────────────
+ *
+ *  · ≥1 mailbox organized here ⇒ WRITE LOCALLY, plus a request to every capable holder.
+ *  · 0 organized and ≥1 held   ⇒ NO local write. The row would be an instruction this install never
+ *    carries out. Requests to the capable holders; if there are none, {@link OrganizedElsewhereError}
+ *    naming the first holder we can name.
+ *  · 0 organized and 0 held    ⇒ WRITE LOCALLY. This is CONSENT TIME — an account with no mailbox,
+ *    or none live — and it is the state a fail-closed rule gets wrong. `organizer-role-census`'s own
+ *    exemption for `consent-seed.ts` was written about exactly this: refusing here means a person
+ *    cannot choose a window, name a tag or write a rule until they have connected a mailbox, which
+ *    is precisely the moment nothing is organized yet. Account configuration is INERT until
+ *    something organizes, and inert is not dangerous; what is dangerous is configuration that
+ *    reaches an organizer which is somebody else's. It is a POSITIVE case by name in the suite,
+ *    not an implicit fall-through.
+ *
+ * ── PER-MAILBOX READS RATHER THAN ONE PASS, DELIBERATELY ───────────────────────────────────
+ *
+ * `assertAccountOrganizes` projected everything it needed in a single SELECT. This asks
+ * `readRequestEligibility` once per live mailbox instead, which is one round trip per mailbox on an
+ * account that has one or two of them. The reason is that `capable` is not a column: it is a
+ * conjunction over `status`, `organizer_state` and a parsed capability list, and re-deriving that
+ * conjunction here would be a second implementation of the eligibility rule that could drift from
+ * the one every per-mailbox door uses. One rule, asked N times, beats two rules asked once each.
+ */
+export async function planAccountFanOut(
+  tx: Tx, accountId: string, kind: RequestKind,
+): Promise<AccountFanOut> {
+  // Live mailboxes only. A tombstone organizes nothing — `assertAccountOrganizes`' own reason: the
+  // row keeps whatever `organizer_role` it had at removal, so counting it would let an account
+  // whose only mailbox was deleted be told it still organizes something.
+  const live = await tx.select({ id: mailboxes.id })
+    .from(mailboxes)
+    .where(and(eq(mailboxes.accountId, accountId), ne(mailboxes.status, "disabled")));
+
+  const organized: string[] = [];
+  const requestTo: FanOutTarget[] = [];
+  const refused: FanOutRefusal[] = [];
+
+  for (const { id } of live) {
+    const e = await readRequestEligibility(tx, accountId, id, capabilityForKind(kind));
+    // A row that vanished between the two statements: it is not live any more, so it is not a
+    // reason to refuse and not a place to send anything.
+    if (!e || e.status === "disabled") continue;
+    if (e.role === "organizer") { organized.push(id); continue; }
+    if (e.capable) { requestTo.push({ mailboxId: id, holder: e.by }); continue; }
+    refused.push({
+      mailboxId: id, holder: e.by,
+      reason: e.by.kind === null ? "no_organizer" : "organizer_outdated",
+    });
+  }
+
+  const heldElsewhere = requestTo.length + refused.length;
+  const writeLocally = organized.length > 0 || heldElsewhere === 0;
+
+  /* NOTHING THIS PRESS COULD DO ANYWHERE. Every live mailbox is held by an install that will not
+     take this kind, so there is no local write to make and no request to send — the one state that
+     is still a refusal. Named from the first holder we can name, which is how the copy layer gets
+     a machine into the sentence; a reader whose holder columns are still NULL yields
+     `by.kind === null` and a different sentence. */
+  if (!writeLocally && requestTo.length === 0) {
+    const named = refused.find((r) => r.holder.kind !== null) ?? refused[0]!;
+    throw new OrganizedElsewhereError(named.mailboxId, named.holder, named.reason);
+  }
+
+  return { writeLocally, organized, requestTo, refused };
 }
 
 /**

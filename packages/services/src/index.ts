@@ -58,6 +58,9 @@ export {
 export {
   RulesService, rulesService,
   type CreateRuleBody, type PatchRuleBody, type RuleMutation,
+  /* Mail 0094 — where a rule edit went, mailbox by mailbox. The panes that render "waiting on
+     <machine>" read these, so they are exported rather than left inside the service. */
+  type RuleTravel, type RuleRequestSent, type RuleRequestResult, type RuleRemoval,
 } from "./rules-service.js";
 
 // Consent: the sent-mail seed, the dormancy cutline, and putting an account back to unscreened.
@@ -67,7 +70,7 @@ export {
   setBlockRemoteImages, setBlockTrackingPixels, setDormancyDays, setFoldersEnabled,
   setLocale, setMailboxFoldersEnabled, setMailboxSignature, setThemeFace,
   setOnboardingCompleted,
-  mailboxSignatures, MAILBOX_SIGNATURE_MAX_CHARS,
+  mailboxSignatures, mailboxSignatureHtmls, MAILBOX_SIGNATURE_MAX_CHARS,
   isMachineSent, isRobotAddress, parseAddressList,
   type SeedCandidate, type SeedConfirmResult, type SeedExclusionReason, type SeedReview,
 } from "./consent-seed.js";
@@ -129,10 +132,20 @@ export {
   type MarkSeenBody, type MarkSeenResult,
   type MoveBody, type MoveIdempotency, type MoveResult, type MoveRequestResult, type PatchResult,
 } from "./message-service.js";
-/* THE READER'S WRITE-DOOR DISPATCH (mail 0093) — one branch for four families. See the module. */
+/* THE READER'S VIEW OF SETTINGS IT DOES NOT OWN (mail 0094) — the mirror row, no dial. */
 export {
-  routeMailboxWrite, writeReaderRequest,
+  readMailboxProfile, type MailboxProfileView,
+} from "./profile-mirror-read.js";
+/* The profile family's one payload, and the signature's travelling bound. */
+export {
+  profileRequestPayload, fanOutProfileEdit, profileTravelled, TRAVELLING_SIGNATURE_MAX_CHARS,
+  type ProfileUpdatePayload, type ProfileTravel, type ProfileRequestSent,
+} from "./profile-request.js";
+/* THE READER'S WRITE-DOOR DISPATCH (mail 0094) — one branch for four families. See the module. */
+export {
+  routeMailboxWrite, writeReaderRequest, planAccountFanOut,
   type MailboxRoute, type PendingRequest,
+  type AccountFanOut, type FanOutTarget, type FanOutRefusal,
 } from "./reader-request.js";
 export {
   ThreadService, threadService, THREAD_MERGE_MAX_IDS,
@@ -141,7 +154,9 @@ export {
 export {
   SearchService, searchService, SEARCH_SORTS, isSearchSort,
   SEARCH_QUERY_MAX_CHARS,
+  ADDRESS_DIRECTIONS, ADDRESS_DIRECTIONS_SERVED, isAddressSearchDirection,
   type SearchOptions, type SearchFilters, type SearchResult, type Facets, type SearchSort,
+  type AddressSearchDirection, type AddressSearchOptions, type AddressSearchResult,
 } from "./search-service.js";
 export {
   PrivacyService, makePrivacyService, nodeRemoteFetch, makeNodeRemoteFetch,
