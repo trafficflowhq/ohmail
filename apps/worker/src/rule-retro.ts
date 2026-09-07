@@ -305,6 +305,14 @@ export async function ruleRetroPass(
 
     let pages = 0;
     let exhausted = false;
+    /**
+     * The fence as this pass last left it — `null` until a page commits one.
+     *
+     * Read from the rule row INSIDE each page transaction rather than remembered from the owed
+     * probe, so it is the value the walk actually resumed from even when another driver moved it
+     * between the probe and the page. The completion decision compares against it; see there.
+     */
+    let walkedTo: string | null = null;
     for (; pages < maxPages; pages++) {
       if (result.moved >= budget) { result.capped = true; break; }
 
@@ -335,7 +343,9 @@ export async function ruleRetroPass(
           ))
           .limit(1)
           .for("update");
-        if (!live) return { gone: true, rows: 0, moved: 0, kept: 0, cursor: null, done: false };
+        if (!live) {
+          return { gone: true, rows: 0, moved: 0, kept: 0, cursor: null, resumedFrom: null, done: false };
+        }
 
         const rule = live as OwedRule;
 
@@ -417,19 +427,62 @@ export async function ruleRetroPass(
         // neither lose a page's work nor replay it. `retro_moved` is `+=` rather than a computed
         // total: the pass is resumable, and a total would need a second scan to be honest.
         if (lastId !== null) {
+          /* ── THE CURSOR ADVANCE IS A COMPARE-AND-SET; THE COUNTER IS NOT ────────────────
+           *
+           * A promotion clears `retro_cursor` for every owed rule on the account in the same
+           * transaction as the role flip (`mailboxes.ts#clearOwedRetroFences`), because a fence
+           * written while a mailbox was a READER never offered a single row of it. This page must
+           * not put that fence back: it advances the cursor only while the value is still the one
+           * this page transaction READ under the rule's own `FOR UPDATE`, so a reset that landed
+           * in between wins and the walk starts over next cycle — which is what the reset means.
+           *
+           * `is not distinct from` and not `=`, because the resting value is NULL (a first page)
+           * and `null = null` is null, which would refuse every first page's advance.
+           *
+           * ── AND IT CANNOT FIRE TODAY, WHICH IS WRITTEN DOWN RATHER THAN LEFT TO BE READ AS A
+           *    GUARANTEE ─────────────────────────────────────────────────────────────────────
+           *
+           * Measured: deleting this `case` and writing `retro_cursor = lastId` leaves all 42 cases
+           * of `rule-retro.test.ts` green. The reason is the lock taken at the top of this same
+           * transaction for a different purpose — the rule row is re-read `FOR UPDATE` as the
+           * revoke check — so a reset's `UPDATE` on that row BLOCKS until this page commits and
+           * lands after it. The lock already orders them, and the place the lock does NOT reach is
+           * the completion decision below, which is why the compare-and-set that CAN be watched
+           * fail is the one there.
+           *
+           * It is kept because the ordering is an accident of where the lock is taken: move this
+           * write out of the page transaction, or drop the `FOR UPDATE`, and a reset would be
+           * silently overwritten with no test able to say so. What it must not be read as is a
+           * defence against a race that exists today — it is the thing that keeps the sentence
+           * above true if the structure changes.
+           *
+           * `retro_moved` is advanced UNCONDITIONALLY: it counts desired-state rows this rule's
+           * pass has written, those writes are committed in this transaction, and a reset re-opens
+           * the WALK, not the history. One statement, so the two cannot disagree about the row.
+           */
           await tx.update(rulesTbl)
-            .set({ retroCursor: lastId, retroMoved: sql`${rulesTbl.retroMoved} + ${moved}` })
+            .set({
+              retroCursor: sql`case when ${rulesTbl.retroCursor} is not distinct from ${rule.cursor}
+                               then ${lastId}::uuid else ${rulesTbl.retroCursor} end`,
+              retroMoved: sql`${rulesTbl.retroMoved} + ${moved}`,
+            })
             .where(eq(rulesTbl.id, rule.id));
         }
 
         return {
           gone: false, rows: candidates.length, moved, kept, cursor: lastId,
+          // The fence this page RESUMED from, read under the rule's own lock — the honest
+          // starting point for the decision's compare-and-set when this page advanced nothing.
+          resumedFrom: rule.cursor,
           // A short page that was not cut short by the budget is the end of the backlog.
           done: !capped && candidates.length < batch,
         };
       });
 
       if (page.gone) { exhausted = false; break; }
+      // What the decision below compares the fence against: the value the pass resumed from when
+      // no page advanced it, and the last committed page's own cursor when one did.
+      walkedTo = page.cursor ?? page.resumedFrom;
       result.examined += page.rows;
       result.moved += page.moved;
       result.kept += page.kept;
@@ -541,6 +594,21 @@ export async function ruleRetroPass(
      * The alternative — remembering which mailboxes have been walked — needs a column, and a
      * freeze fix does not add one.
      */
+    /* ── THE STAMP ALSO YIELDS TO A RESET, AND THIS IS THE HALF THE PAGE CAS CANNOT COVER ────
+     *
+     * The page write above is inside the transaction that holds the rule row `FOR UPDATE`, so a
+     * concurrent reset blocks and lands after it. This statement is not: it runs after the loop,
+     * outside every transaction, and the whole point of it is that the backlog is finished. If a
+     * promotion's reset lands between the last page and here, the walk that just ended is exactly
+     * the fenced walk the reset exists to discard — and stamping it would write "finished" over a
+     * mailbox this pass never offered a row of.
+     *
+     * So the stamp arm additionally requires that the fence is still the one this pass left. It is
+     * a compare-and-set on the same column the reset writes: `walkedTo` is the cursor as of this
+     * pass's last committed page (or the value it started from, when no page advanced it), and a
+     * reset makes it distinct. The rule then stays owed with the reset's NULL cursor, and the next
+     * cycle walks the whole account from the start and stamps that.
+     */
     const outside = aLiveMailboxIsOutsideTheWalk(row.accountId);
     /* ── THE STAMP IS BOUND AS AN ISO STRING WITH A CAST, AND THAT IS NOT COSMETIC ────────────
      *
@@ -561,7 +629,11 @@ export async function ruleRetroPass(
      */
     const [decided] = await db.update(rulesTbl)
       .set({
-        retroDoneAt: sql`case when ${outside} then ${rulesTbl.retroDoneAt} else ${now.toISOString()}::timestamptz end`,
+        retroDoneAt: sql`case
+          when ${outside} then ${rulesTbl.retroDoneAt}
+          when ${rulesTbl.retroCursor} is distinct from ${walkedTo === null ? sql`null` : sql`${walkedTo}::uuid`}
+            then ${rulesTbl.retroDoneAt}
+          else ${now.toISOString()}::timestamptz end`,
         retroCursor: sql`case when ${outside} then null else ${rulesTbl.retroCursor} end`,
       })
       .where(and(eq(rulesTbl.id, row.id), isNull(rulesTbl.retroDoneAt)))

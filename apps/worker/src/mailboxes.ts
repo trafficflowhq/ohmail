@@ -2,6 +2,7 @@ import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, sql, type SQL } fro
 import {
   mailboxes, mailboxCredentials, isOrganizerRole, organizerDisplayName, capabilitiesColumn, type Tx,
   type OrganizerRole, type OrganizerKind, type OrganizerState,
+  rules,
 } from "@trafficflow/db";
 import { makeDb } from "@trafficflow/db/cloud";
 import { workerHeartbeats, accountsWithSyncDisabled } from "@trafficflow/db/cloud";
@@ -1042,19 +1043,75 @@ function lifecycleWhere(mailboxId: string, fence?: LeaderFence): SQL {
 async function applyFenced(
   db: WorkerDb, mailboxId: string, fence: LeaderFence | undefined,
   write: (db: WorkerDb) => Promise<Array<{ id: string }>>,
+  /**
+   * A CONSEQUENCE OF THE WRITE, IN THE SAME TRANSACTION — run only if the write landed.
+   *
+   * Present only for the promotion (see {@link clearOrganizerStandDown}), whose consequence must
+   * not be able to land without the role flip or the flip without it. Its presence FORCES the
+   * transaction even with no fence, because "same transaction" is the whole property: two
+   * statements outside one would leave a role flipped with its consequence missing whenever the
+   * process dies between them, and that is a state nothing would ever repair.
+   */
+  also?: (db: WorkerDb) => Promise<void>,
 ): Promise<boolean> {
-  if (!fence) return (await write(db)).length > 0;
+  if (!fence && !also) return (await write(db)).length > 0;
   return db.transaction(async (tx) => {
     // The claim. `.for("update")` is the point of the statement; the columns are irrelevant.
     // A row that has vanished is refused here rather than by the write that follows.
-    const held = await tx.select({ id: mailboxes.id }).from(mailboxes)
-      .where(eq(mailboxes.id, mailboxId)).for("update");
-    if (held.length === 0) return false;
+    if (fence) {
+      const held = await tx.select({ id: mailboxes.id }).from(mailboxes)
+        .where(eq(mailboxes.id, mailboxId)).for("update");
+      if (held.length === 0) return false;
+    }
     // The same cast the services layer uses between a `Db` and a `Tx`: the transaction exposes
     // the query surface these writers use, and typing every one of them against both would say
     // nothing the callers do not already state.
-    return (await write(tx as unknown as WorkerDb)).length > 0;
+    const landed = (await write(tx as unknown as WorkerDb)).length > 0;
+    if (landed && also) await also(tx as unknown as WorkerDb);
+    return landed;
   });
+}
+
+/**
+ * A PROMOTION RE-OPENS EVERY OWED RETRO WALK ON THE ACCOUNT — one statement, at the event.
+ *
+ * `rules.retro_cursor` is the resume point of "apply this rule to existing mail": the last
+ * `messages.id` of the last committed page. `messages.id` is a RANDOM uuid, so that cursor is not
+ * a point in time — it is a fence across the id space, and it is only trustworthy for the set of
+ * mailboxes the walk was allowed to look at when it was written.
+ *
+ * A promotion changes that set. `rule-retro.ts`'s candidate query skips every mailbox this install
+ * does not organize, so a walk that ran while this mailbox was a READER laid its fence down having
+ * never offered a single row of it. Promote the mailbox and the rows become candidates — but the
+ * ones sorting BELOW the fence are already behind the walk, so the next pass reads a short page as
+ * the end of the backlog, stamps `retro_done_at`, and the older half of that mailbox's matching
+ * mail is never filed. Nothing errors and nobody is told.
+ *
+ * So the fence comes down HERE, where the set actually changes, rather than being second-guessed
+ * by the pass: at this moment we know exactly which mailbox joined and that every owed walk on its
+ * account predates it. `retro_requested_at IS NOT NULL AND retro_done_at IS NULL` is the one
+ * definition of owed work in the system (`schema-mail.ts`), and a rule that is not owed has no
+ * walk to re-open — a finished rule's cursor is spent and stays as it is.
+ *
+ * The account comes from the mailbox in the statement itself: one round trip, and no window in
+ * which a caller could pass an account that no longer owns this mailbox.
+ *
+ * ── WHAT IS DELIBERATELY NOT HERE: CONNECTING A NEW MAILBOX ────────────────────────────────
+ *
+ * A mailbox created after the rule (`organizer_role` defaults to `'organizer'`) also joins the
+ * candidate set, and its below-fence mail is skipped in exactly the same way — but its mail is
+ * routed by that rule AT ARRIVAL, because ingest consults the rules for every mailbox this
+ * install organizes. A promoted mailbox's existing mail is the case with no second chance: it
+ * arrived while this install was a reader, which decides nothing.
+ */
+export async function clearOwedRetroFences(db: WorkerDb, mailboxId: string): Promise<void> {
+  await db.update(rules)
+    .set({ retroCursor: null })
+    .where(sql`${rules.retroRequestedAt} is not null
+                 and ${rules.retroDoneAt} is null
+                 and ${rules.accountId} = (
+                   select mb.account_id from ${mailboxes} mb where mb.id = ${mailboxId}
+                 )`);
 }
 
 /**
@@ -1614,7 +1671,15 @@ export async function clearOrganizerStandDown(
       organizerEventAt: opts.now ?? new Date(),
     })
     .where(lifecycleWhere(mailboxId, opts.fence))
-    .returning({ id: mailboxes.id }));
+    .returning({ id: mailboxes.id }),
+  // ── AND THE CONSEQUENCE THE ROLE FLIP HAS FOR WORK ALREADY OWED ────────────────────────
+  //
+  // Becoming the organizer widens what every owed "apply to existing mail" walk may look at, and
+  // those walks carry a resume point that predates this mailbox. See
+  // {@link clearOwedRetroFences} for what a stale one costs. In the SAME transaction, because a
+  // role flipped without it is precisely the state that loses mail, and it must not be reachable
+  // by a crash between two statements.
+  (w) => clearOwedRetroFences(w, mailboxId));
 }
 
 /**
