@@ -592,12 +592,30 @@ is still believed, which is the case that matters -- treating a machine that is 
 gone is how two computers both decide they are the organizer.
 
 And a wrong date could push a working organizer out. Because the age of a record was judged against
-the newest date in the mailbox, a date far in the future -- pulled back only as far as a clock
-difference could explain -- was still far enough that a record written seconds ago read as expired
-beside it. A computer that was organizing the mailbox and checking in normally could be taken over
-by another, on the strength of a wrong date in a third record. Dates beyond that tolerance are no
-longer used to judge anything at all, so a record carrying one cannot expire a computer that is
-working.
+the newest date in the mailbox, a date in the future dragged that comparison forward, and a record
+written seconds ago could read as expired beside it -- so a computer that was organizing the mailbox
+and checking in normally could be taken over by another, on the strength of a wrong date in a third
+record. It did not take an absurd date: a few minutes ahead was enough. Dates are no longer used to
+judge how old OTHER records are once they run ahead of the reading computer's own clock, and a date
+beyond what a clock difference could explain is not used for anything. A machine whose clock runs a
+little fast is still believed to be alive, which is the case that has to keep working; it simply no
+longer ages its neighbours.
+
+Two more ways a mailbox could get stuck, both of which needed a second record to appear.
+
+**A mailbox with two abandoned records stayed stuck when either one alone would have recovered.**
+The age of a record was measured against the newest record present, and with two old records the
+newest was itself old -- so each looked recent beside the other and the mailbox refused every
+takeover for ever. Whether a mailbox has been abandoned is now decided for the mailbox as a whole,
+against the clock of the computer reading it, before any record is compared with any other. If
+nothing has checked in for ten minutes, nothing in that mailbox is holding it.
+
+**And a computer that was organizing could be reported as stopped, letting a second one start.**
+When one computer left two records behind -- the ordinary result of a renewal that was interrupted
+-- the screen described it by the newer record alone, which could be the leftover rather than the
+live one. It was then shown as stopped, and the record of who was organizing could be cleared while
+that computer was still working. Both the screen and the clearing now look at every record a
+computer has left, not just the newest.
 
 Two things deliberately did not change. A record that is genuinely still being renewed refuses a
 takeover exactly as before, and a record with an unusable date sitting beside one that is being

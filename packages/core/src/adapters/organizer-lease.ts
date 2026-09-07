@@ -1086,7 +1086,8 @@ function isRenewalEvidence(heartbeat: Date, now: Date, staleAfterMs: number): bo
  */
 interface FolderClock {
   /**
-   * The newest BELIEVABLE heartbeat present, `-Infinity` when no claim carries one.
+   * The newest believable heartbeat present, CAPPED AT `now`, `-Infinity` when no claim carries a
+   * believable one.
    *
    * ── AND IT IS NOT THE NEWEST CLAMPED ONE, WHICH IS A TWO-ORGANIZER FIX RATHER THAN TIDYING ──
    *
@@ -1103,8 +1104,23 @@ interface FolderClock {
    * already decided says nothing about renewal (see {@link isBelievableHeartbeat}) cannot lapse
    * anything either. The tolerance itself is untouched — a stamp INSIDE it is believable, enters
    * the reference at its own value, and can still lapse a claim by up to one window, which is the
-   * price of believing a peer whose clock runs ahead and is the trade `MAX_FUTURE_SKEW_MS`
-   * exists to make.
+   * price of believing a peer whose clock runs ahead — and that price turned out to be a
+   * two-organizer bug, which is why the value is capped.
+   *
+   * ── CAPPED AT `now`: BELIEVING A SKEWED PEER IS ALIVE IS NOT BELIEVING ITS CLOCK ────────────
+   *
+   * Excluding stamps BEYOND the tolerance was not enough. A stamp one millisecond INSIDE it still
+   * dragged the reference nearly a whole window forward, and an organizer renewing at `now − 10 s`
+   * was then more than a window behind that reference and read STALE — so rule 1/2 did not refuse
+   * the press, and rule 6 put the LIVE record it could not rank into `displace`. Two organizers,
+   * and an expunge of a claim we cannot read, from an unrelated residue with a slightly fast clock.
+   * Measured against this decision table, not inferred.
+   *
+   * The tolerance exists for exactly one purpose: so that a peer whose clock runs ahead is not
+   * treated as GONE. It was never meant to let that peer's stamp age everybody else. Capping the
+   * reference at `now` keeps the first and removes the second — the skewed record is still LIVE
+   * itself (its own heartbeat is ahead of the cap, so the difference is negative), and it can no
+   * longer lapse a neighbour.
    */
   newestHeartbeat: number;
   /**
@@ -1131,7 +1147,9 @@ function readFolderClock(
     // reference nor the renewal evidence. Two separate conditions here is how the reference came
     // to admit what the evidence excluded.
     if (!isBelievableHeartbeat(c.heartbeat, now)) continue;
-    newestHeartbeat = Math.max(newestHeartbeat, c.heartbeat.getTime());
+    // The REFERENCE is capped at `now`; the renewal EVIDENCE is not. A peer ahead of us is alive
+    // (`isFresh` reads its raw stamp and says so) and its stamp still may not age anybody else.
+    newestHeartbeat = Math.max(newestHeartbeat, Math.min(c.heartbeat.getTime(), now.getTime()));
     if (isFresh(c.heartbeat, now, staleAfterMs)) renewing = true;
   }
   return { newestHeartbeat, renewing };
@@ -1170,47 +1188,58 @@ function readFolderClock(
  * two expressions that happened to be written by different hands. A stale unrankable record is
  * residue and displaces exactly as a stale rankable one does; a live one still refuses everything.
  *
- * ── AND AN UNBELIEVABLE STAMP IS NOT A CLOCK EITHER ───────────────────────────────────────────
+ * ── AND THE BOUND BELONGS TO THE FOLDER, NOT TO ITS FRESHEST CLAIM ───────────────────────────
  *
- * The reader-clock arm alone would hand the same permanence straight back on one shape. A stamp
- * beyond `now + MAX_FUTURE_SKEW_MS` is AHEAD of the reader's clock, so `now − heartbeat` is
- * negative and the claim is "fresh" at every real instant — a lone record dated 2099 would refuse
- * every press for ever, which is the seventy-three-year lockout with the folder-relative step
- * taken out of it. `Election.quiet` has always excluded such stamps; rules 1/2 did not, and the
- * two therefore described different worlds for exactly that folder.
+ * Judging only the folder's NEWEST claim by the reader's clock was the wrong shape, and it failed
+ * with two records where it worked with one. Two records both stale by a year — an unrankable one
+ * at 09:00:00, any believable residue at 09:00:01 — put the unrankable one below the newest, so it
+ * was judged by the folder-relative arm against a reference that was itself a year old, saw a
+ * one-second difference, and read LIVE. Rule 1/2 refused every authorized press for ever. Adding
+ * an OLDER sibling made a recoverable mailbox unrecoverable, which is nobody's mental model.
  *
- * So {@link isBelievableHeartbeat} decides which question is asked, and the ruling behind it is
- * that an unbelievable stamp is NO EVIDENCE OF RENEWAL. A claim carrying one is live only while
- * something believable in the same folder is being renewed — `FolderClock.renewing`, the value
- * `quiet` is the negation of. The boundary is narrow on purpose: a heartbeat inside the tolerance
- * is still fresh and still refuses, and a fresh believable claim beside the 2099 record still makes
- * that record refuse — because then something IS organizing the mailbox and we still cannot rank
- * the record. What it no longer does is hold a mailbox nobody is renewing.
+ * So the reader's clock decides ONE thing about the folder as a whole — has anything believable
+ * renewed here within a window (`FolderClock.renewing`) — and if the answer is no, every record in
+ * the folder is residue regardless of which is newest. Only when the folder IS being renewed does
+ * the folder-relative comparison mean anything, and there it does exactly what it was written for:
+ * two readers with two clocks judge the same set the same way.
  *
- * ── NOTHING IS CLAMPED HERE, AND THE ABSENCE IS THE FIX ───────────────────────────────────────
+ * That gate makes the old reader-clock arm provably dead, which is why it is gone rather than kept
+ * "for clarity": the newest believable claim is fresh by the reader's clock EXACTLY when `renewing`
+ * is true (it is the maximum, so if any believable claim is fresh, it is), so the arm could only
+ * ever return the value the gate above it had already established.
  *
- * There was a ceiling on both sides of the comparison. On the claim being JUDGED it could never
- * change the answer — the unbelievable case is taken by the arm above, so the arms below only ever
- * see a heartbeat at or below the ceiling, where a `min` is the identity. On the REFERENCE it
- * changed the answer in the wrong direction: see {@link FolderClock.newestHeartbeat}, where a
- * clamped 2099 stamp lapsed a living organizer at ship values and cost two organizers. The
- * reference is now taken over believable heartbeats only, so there is no clamp left on either
- * side, and `MAX_FUTURE_SKEW_MS` is read in exactly one place for the heartbeat — the
- * believability test — instead of two that had to agree.
+ * ── AN UNBELIEVABLE STAMP IS NO EVIDENCE OF RENEWAL, AND THIS FUNCTION NEVER MENTIONS IT ──────
+ *
+ * A stamp beyond `now + MAX_FUTURE_SKEW_MS` is AHEAD of the reader's clock, so `now − heartbeat`
+ * is negative and such a record read "fresh" at every real instant — a lone record dated 2099
+ * refused every press for ever, which is the seventy-three-year lockout by another route.
+ * `Election.quiet` had always excluded such stamps; rules 1/2 had not. A record carrying one now
+ * rides on the FOLDER's evidence and never on its own: live while something believable here is
+ * renewing, residue otherwise.
+ *
+ * **That happens without a branch for it, and the absence is deliberate.** {@link readFolderClock}
+ * excludes an unbelievable stamp from the reference, so the reference is at most `now`, and such a
+ * heartbeat is by definition greater than `now + MAX_FUTURE_SKEW_MS` — the difference below is
+ * therefore negative and the record is live exactly while the gate above lets anything be live. An
+ * explicit `if (!isBelievableHeartbeat(…)) return true;` sat here for one round and was removed
+ * after being MEASURED as unobservable: deleting it left all 149 rows green and the build clean,
+ * and changing its body to the reader-clock test changed no answer either. A line no fixture can
+ * make matter is read by the next author as a guarantee, so it is gone and this paragraph plus two
+ * rows carry the property instead — "still refuses a press over a 2099 claim beside a genuinely
+ * fresh record" and "admits a press over a 2099 claim beside a record that also lapsed". The
+ * load-bearing exclusion is the `continue` in {@link readFolderClock}, which has its own mutation.
+ *
+ * A heartbeat INSIDE the tolerance is a different case and is handled by the arithmetic: it is
+ * ahead of the capped reference, so its own difference is negative and it stays live, which is the
+ * tolerance doing its job for the claim that owns the stamp and for nobody else.
  */
 function isClaimLive(
   c: OrganizerClaim,
   clock: FolderClock,
-  now: Date,
   staleAfterMs: number,
 ): boolean {
-  if (!isBelievableHeartbeat(c.heartbeat, now)) return clock.renewing;
-  const hb = c.heartbeat.getTime();
-  // `>=` rather than `===`: `newestHeartbeat` is a maximum, so for a set that CONTAINS this claim
-  // the two tests are the same one, and `>=` additionally does the right thing for a caller whose
-  // maximum was taken over a set this claim is not in.
-  if (hb >= clock.newestHeartbeat) return isFresh(c.heartbeat, now, staleAfterMs);
-  return clock.newestHeartbeat - hb < staleAfterMs;
+  if (!clock.renewing) return false;
+  return clock.newestHeartbeat - c.heartbeat.getTime() < staleAfterMs;
 }
 
 /**
@@ -1544,7 +1573,7 @@ export function decideLease(input: DecideLeaseInput): LeaseVerdict {
   // on its own without the other covering for it — a ceiling nobody can watch fail. `clampFuture`
   // keeps its own job, which is bounding what `compareStrength` ranks.
   const rawIsLive = (c: OrganizerClaim): boolean =>
-    isClaimLive(c, election.clock, now, staleAfterMs);
+    isClaimLive(c, election.clock, staleAfterMs);
   /** Unambiguously this process's current claim, by VALUE — the raw list's `isOurs`. */
   const rawOurs = (c: OrganizerClaim): boolean =>
     c.installId === self.installId && (self.lastNonce === null || c.nonce === self.lastNonce);
@@ -1814,10 +1843,26 @@ export function peekLease(input: PeekLeaseInput): LeasePeek {
   // This is the seam the two copies of the folder-relative test hid from each other.
   const rawValid = input.claims.filter((c): c is OrganizerClaim => !isMalformed(c));
   const clock = readFolderClock(rawValid, input.now, staleAfterMs);
+  /* ── AN INSTALL IS RENEWING IF ANY OF ITS RAW RECORDS SAYS SO ──────────────────────────────
+   *
+   * Coalesce keeps the newest heartbeat per install, and a 2099 cleanup residue IS the newest — so
+   * an install renewing honestly at `now − 5 s` beside its own residue was REPRESENTED by the
+   * residue and reported `fresh: false`. That is not only a wrong screen: `apps/worker/src/index.ts`
+   * certifies a mailbox release only when no holder is fresh and nothing is unreadable, so it
+   * stamped the mailbox RELEASED while another install was demonstrably renewing it, while the
+   * gate — which reads the raw list — said `stand_down` about the same folder at the same instant.
+   *
+   * The clock above already reads the raw list. This is the same lesson applied to the per-HOLDER
+   * projection, which is the half that had been left behind. */
+  const renewingInstalls = new Set(
+    rawValid
+      .filter((c) => isRenewalEvidence(c.heartbeat, input.now, staleAfterMs))
+      .map((c) => c.installId),
+  );
   const unrankableInstalls = new Set(
     rawValid
       .filter((c) => (c.protocol > CLAIM_PROTOCOL || c.kind === "unknown")
-        && isClaimLive(c, clock, input.now, staleAfterMs))
+        && isClaimLive(c, clock, staleAfterMs))
       .map((c) => c.installId),
   );
 
@@ -1828,14 +1873,13 @@ export function peekLease(input: PeekLeaseInput): LeasePeek {
       displayName: c.displayName,
       heartbeat: c.heartbeat,
       claimedAt: c.claimedAt,
-      /* `isRenewalEvidence`, not the bare reader-clock test: a stamp beyond the skew tolerance is
-         no evidence that this machine is alive, so reporting it as fresh named a live organizer
-         for a record the gate had already stopped defending — the preview said `held` and offered
-         a takeover of a mailbox the gate would have granted outright. The unrankable arm beside it
-         stays, because a record we cannot READ is reported as held while the gate refuses over
-         it, which is a different sentence about a different thing. */
-      fresh: isRenewalEvidence(c.heartbeat, input.now, staleAfterMs)
-        || unrankableInstalls.has(c.installId),
+      /* Per INSTALL, over its raw records — see `renewingInstalls`. `isRenewalEvidence` rather
+         than the bare reader-clock test, because a stamp beyond the skew tolerance is no evidence
+         that this machine is alive, and reporting it as fresh named a live organizer for a record
+         the gate had already stopped defending. The unrankable arm beside it stays: a record we
+         cannot READ is reported as held while the gate refuses over it, which is a different
+         sentence about a different thing. */
+      fresh: renewingInstalls.has(c.installId) || unrankableInstalls.has(c.installId),
       /* Reported for the holder the coalesce KEPT — the newest claim per install — because that is
          the build currently running there. An older duplicate advertising less is residue of a
          renew this same install is about to expunge, and reporting the weaker set would tell a
