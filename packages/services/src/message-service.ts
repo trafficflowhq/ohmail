@@ -697,6 +697,9 @@ export class MessageService {
     const seq = await asTx(ctx).transaction(async (tx) => {
       const [msg] = await tx.select({
         id: messages.id, unread: messages.unread, nativeLocator: messages.nativeLocator,
+        // Which mailbox this message is in, so the `folder` half below can ask about the right
+        // row. Mail 0083 added this to `move`'s and `delete`'s own selects for the same reason.
+        mailboxId: messages.mailboxId,
       }).from(messages)
         .where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId))).limit(1);
       if (!msg) throw new ServiceError("not_found", 404, "message not found");
@@ -722,6 +725,32 @@ export class MessageService {
       }
 
       if (folder !== undefined) {
+        /* ── THIS IS THE MOVE DOOR UNDER ANOTHER NAME, AND IT WAS NOT GATED ─────────────────
+         *
+         * `move` and this branch write the SAME row the SAME way — `desired_folder` with
+         * `last_set_by: 'us'`, plus a `move` change — and the reconciler turns either into a
+         * physical IMAP move. Mail 0083 gated `move` (:877) and `delete` (:969) and missed this
+         * one, so a reader could re-file mail by spelling the request differently: the row was
+         * written, the DTO and the mirror both said the message had moved, and the mailbox knew
+         * nothing about it.
+         *
+         * Two harms, and the second is the one with teeth — a false state shown now, and a QUEUE
+         * of desired moves that fires the instant this install is ever promoted, moving mail on a
+         * decision taken when it had no right to take it. That second sentence is written out at
+         * `move`'s own branch as the reason the refusal belongs at the door rather than only in
+         * `reconcileFolders`' skip; it was true here too.
+         *
+         * `organizer-role-census.test.ts` could not see it: that census asks whether a FILE calls
+         * the refusal, and this file does, twice, at the other two doors. It now pins the number
+         * of call sites per file, which is what makes a fourth unguarded door red.
+         *
+         * The `unread` half above is deliberately NOT inside this branch. `\Seen` is the reader's
+         * one legitimate IMAP write — `reconcileFlags` runs on a reader cycle on purpose — so
+         * gating the whole door would take away a reader's ability to mark its own mail read,
+         * with every refusal test still green. The two halves are permitted separately and
+         * therefore decided separately.
+         */
+        await assertOrganizerRole(tx as unknown as Tx, ctx.accountId, msg.mailboxId);
         const observed = await this.observedFolder(tx, id, msg.nativeLocator);
         await this.upsertDesired(tx, id, observed, folder, ctx.now());
         last = await recordChange(tx, {

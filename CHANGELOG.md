@@ -21,6 +21,22 @@ mailbox on its own, and the chooser now says so in one sentence, in English and 
 three doors. It appears at first run and on the "Add a server" panel, which is where somebody who
 has already connected one server goes looking.
 
+### Re-filing mail on a mailbox another install organizes
+
+Exactly one install organizes a mailbox at a time; the others read it. A message can be re-filed
+either by asking to move it or by amending it and naming a folder, and underneath the two do the
+same thing — they record where the message should be, and the regular sync pass performs the move on
+the server. Only the first checked whether this install is the one organizing that mailbox.
+
+So on a mailbox you read rather than organize, amending a message's folder wrote the change down and
+reported success. The message appeared in its new place and the mail server was never told. What you
+were shown was not true, and the change stayed on file to be carried out if this install ever became
+the one organizing that mailbox — moving mail on a decision made when it had no business making it.
+
+Both ways of re-filing now answer the same way, and the refusal names the machine that holds the
+mailbox. Marking mail read is untouched: that is something an install reading a mailbox is genuinely
+allowed to do, and it still happens immediately.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
