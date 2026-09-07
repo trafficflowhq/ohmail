@@ -301,18 +301,26 @@ words gets past both, and the person receives the message twice. There is no tak
 
 So the account now claims the message itself. When a send is reserved, the server records a digest
 of what a recipient would perceive: the recipients, the subject, the text that goes out, the reply
-or forward it belongs to, the scheduled time, and the names, types and sizes of any attachments. For
-an hour, a second send of exactly that message from the same address is refused — whatever key it
-arrives under, and whatever draft it names. Nothing is submitted, the draft is left untouched and
-ready to send, and the composer says what became of the first attempt: whether it is known to have
-been sent, could not be confirmed, or is going out right now. Those are three different facts and
-they get three different sentences.
+or forward it belongs to, the scheduled time, and the contents of any files attached in the
+composer. For an hour, a second send of exactly that message from the same address is refused —
+whatever key it arrives under, and whatever draft it names. Nothing is submitted, the draft is left
+untouched and ready to send, and the composer says what became of the first attempt: whether it is
+known to have been sent, could not be confirmed, or is going out right now. Those are three
+different facts and they get three different sentences.
+
+**A message carrying an UPLOADED attachment is not covered by this.** Large files are uploaded before
+the message goes, and their contents are not readable at the moment a send is reserved — only the
+name, type and size are, and those do not identify a file: a corrected version of the same size
+would have been mistaken for the original and refused. Rather than claim a protection it does not
+have, such a message is left out of this check. It keeps the two defences it always had: the key the
+app holds for that send, which does account for attached file contents, and the rule that a message
+already on its way cannot be sent again from the same draft.
 
 Anything a recipient would notice makes it a different message and it sends: one character of the
-text, one more person on the copy line, a different file attached, a different message forwarded. So
-does sending it again once the hour has passed, and so does sending it again after an attempt that
-definitely failed — the ordinary "the mail server was unreachable, try again" retry, which must keep
-working.
+text, one more person on the copy line, a different file attached in the composer, a different
+message forwarded. So does sending it again once the hour has passed, and so does sending it again
+after an attempt that definitely failed — the ordinary "the mail server was unreachable, try again"
+retry, which must keep working.
 
 ### Still to come
 
