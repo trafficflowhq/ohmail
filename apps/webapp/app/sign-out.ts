@@ -1,7 +1,7 @@
 import { clearAllMirrors } from "@ohmail/client-engine";
 import { auth } from "./api-client";
 import { clearBootCaches, dropLocalStorageKeys } from "./shell/boot-cache";
-import { COMPOSE_DRAFT_PREFIX, LEGACY_COMPOSE_DRAFT_KEY } from "./shell/compose";
+import { COMPOSE_DRAFT_PREFIX, COMPOSE_SESSION_PREFIX, LEGACY_COMPOSE_DRAFT_KEY } from "./shell/compose";
 import { REPLY_DRAFT_PREFIX, REPLY_META_PREFIX } from "./shell/mail-send";
 import {
   NOTIFICATION_SUBSCRIPTION_PREFIX, revokeWakeRegistration,
@@ -198,6 +198,10 @@ export async function forgetThisBrowser(
     SCREENER_INTENTS_PREFIX,
     COMPOSE_DRAFT_PREFIX,
     LEGACY_COMPOSE_DRAFT_KEY,
+    // The compose session id, which names the message the scratch buffer holds. It goes with the
+    // buffer: left behind, it would still name a message-in-progress that has been swept, so the
+    // next sign-in could inherit an identity for mail that is no longer there.
+    COMPOSE_SESSION_PREFIX,
     // The reply scratch buffers, which are the same thing one surface along and are WORSE:
     // keyed by message id and lane only, never by owner, so unlike the compose buffer they were
     // never account-scoped in the first place. They hold the reply body.
