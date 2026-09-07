@@ -338,7 +338,6 @@ export async function foldAndSweepSetupSpends(
              select d.rows > e.raw_rows
                from credit_usage_daily d
               where d.day = e.day and d.pool = 'setup' and d.account_id = e.account_id
-                and d.computed_at > e.day + make_interval(days => ${SETUP_SPEND_RETENTION_DAYS})
            ), false) as frozen
       from elig e
      order by 1 asc`));
@@ -363,7 +362,6 @@ export async function foldAndSweepSetupSpends(
     ...workableDays.filter((d) => !taken.has(d)),
     ...frozenPerDay.keys(),
   ]);
-  const backlogDays = waiting.size;
 
   let pairsFolded = 0;
   let rowsSwept = 0;
@@ -413,13 +411,30 @@ export async function foldAndSweepSetupSpends(
     // population test makes the within-pass self-freeze unreachable (statement 1 writes
     // rows == population, so the comparison is false immediately afterwards), and a condition
     // whose contrary state cannot be reached is one a later reader mistakes for a guarantee.
+    //
+    // AND NEITHER IS THE HORIZON A CONDITION HERE, which round two established the expensive way.
+    // The first version also required the stamp to sit more than 30 days after the day began, on
+    // the reasoning that only a fold stamps a day that old — so only a fold's own row could
+    // freeze a pair. That let through the state a deployment MIGRATING to this code actually
+    // holds: the pre-0031 sweep took rows by a CLOCK, so it could half-empty a day whose two
+    // draws sat on grants expiring either side of its cutoff, and if the day loop had aggregated
+    // that day while it was fresh, the surviving aggregate carries a DAY-LOOP stamp of day+1.
+    // Reproduced: a day whose truthful figure was -2 over two draws, one row swept by the old
+    // code, re-folded here to -1 over 1 — the missing draw's spend gone, `backlogDays` 0 and
+    // `frozenPairsSkipped` 0, the loss wearing a clean drain's numbers.
+    //
+    // So the question is only ever about the POPULATION: does the aggregate already account for
+    // more rows than are present? If it does, rows have gone and re-folding can only shrink a
+    // figure that was right — and it does not matter which writer stamped it. Dropping the
+    // horizon changes nothing else: inside the recompute window the day loop keeps the stamp in
+    // step with the population, and a refund makes the stamp SMALLER than the total row count,
+    // never larger.
     const notFrozen = sql`
       select e.account_id from (${eligibleForDay}) e
        where not exists (
          select 1 from credit_usage_daily d
           where d.day = ${key}::date and d.pool = 'setup'
             and d.account_id = e.account_id
-            and d.computed_at > ${key}::date + make_interval(days => ${SETUP_SPEND_RETENTION_DAYS})
             and d.rows > e.raw_rows
        )`;
 
@@ -479,12 +494,22 @@ export async function foldAndSweepSetupSpends(
        where (s.created_at at time zone 'utc')::date = ${key}::date
          and s.account_id in (${notFrozen})
       returning 1 as swept`);
-    rowsSwept += rowsOf(swept).length;
+    const sweptNow = rowsOf(swept).length;
+    rowsSwept += sweptNow;
+    // A day this pass TOOK, folded pairs on, and swept nothing from is still waiting — and it
+    // has to say so. The population can shrink between the fold and the sweep (an account erased
+    // mid-pass is the reachable one), and the pair then reads frozen at the delete while the
+    // survey had already counted the day as workable. Without this, such a pass reports
+    // `rowsSwept: 0` beside `backlogDays: 0`: a drained console over a drain that moved nothing,
+    // which is the whole failure this figure exists to make visible.
+    if (foldedNow > 0 && sweptNow === 0) waiting.add(key);
   }
 
   // Frozen pairs found by the SURVEY count too, not only ones a folded day happened to reveal:
   // a day whose every eligible pair is frozen is never taken, so the loop above never sees it.
   for (const n of frozenPerDay.values()) frozenPairsSkipped += n;
+  // Read AFTER the loop: the loop can add a day that was taken and yielded nothing.
+  const backlogDays = waiting.size;
   return { daysFolded: take.length, pairsFolded, rowsSwept, backlogDays, frozenPairsSkipped };
 }
 
