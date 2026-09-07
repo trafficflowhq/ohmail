@@ -143,6 +143,8 @@ export async function authorizeOrganizerTakeover(
       // the winner's claim goes away.
       organizerReleasedAt: mailboxes.organizerReleasedAt,
       organizeConsentedAt: mailboxes.organizeConsentedAt,
+      /* The countermand's own term — see the precondition below. */
+      releaseRequestedAt: mailboxes.releaseRequestedAt,
     })
     .from(mailboxes)
     .where(input.mailboxId
@@ -163,7 +165,30 @@ export async function authorizeOrganizerTakeover(
   // Already the organizer AND already consented ⇒ nothing to ask for. Both terms: a mailbox that
   // is nominally an organizer but has never been consented to is exactly the FIRST-consent case
   // this ceremony now serves, and refusing it here would leave that case with no door.
-  if (row.organizerRole !== "reader" && row.organizeConsentedAt !== null) {
+  /* ── A PENDING RELEASE IS CLAIM-BACK-ELIGIBLE, AND WITHOUT THIS "I CHANGED MY MIND" HAD NO DOOR ──
+   *
+   * The hosted door already rules this and argues it at length
+   * (`packages/services/src/mailbox-service.ts`, `releasePending`): *"press 'Stop organizing here';
+   * change your mind two seconds later and press 'Organize here' → 200 `already_organizing`, no
+   * stamp written, and the gate releases the mailbox a minute later anyway … The person is told the
+   * opposite of what happens, and there is no second press that helps"*, and *"they are
+   * contradictory instructions about one mailbox, and the LATER press is the one a person meant"*.
+   * That exemption was never ported to this door, so on the desktop and the standalone install the
+   * countermand was impossible: the row is still `organizer` and still consented while the release
+   * is pending, both terms below held, and the press wrote nothing.
+   *
+   * It matters more since the release stopped recording itself when the mail server would not
+   * confirm the record is gone: the request then stands until a pass can read `ohmail/_meta`, and
+   * on a server where that read keeps failing this press is the ONLY way out. Refusing it left a
+   * person unable either to stop organizing or to cancel the attempt.
+   *
+   * The precondition's own purpose is untouched: on a healthy organizer row with no request
+   * standing, a second press is still not a second becoming and still leaves no spendable stamp.
+   */
+  if (
+    row.releaseRequestedAt === null
+    && row.organizerRole !== "reader" && row.organizeConsentedAt !== null
+  ) {
     return { outcome: "already_organizing", previousReason: null, mailboxId: row.id };
   }
 
@@ -184,6 +209,12 @@ export async function authorizeOrganizerTakeover(
       // observed on this one, and it is spelled the same way on purpose.
       organizeConsentedAt: sql`coalesce(${mailboxes.organizeConsentedAt}, ${input.now.toISOString()}::timestamptz)`,
       takeoverAuthorizedAt: input.now,
+      /* AND THE REQUEST IS CANCELLED IN THE SAME WRITE, which is the half that makes the press a
+         countermand rather than a second instruction beside the first. Left standing, the poll's
+         release arm reaches it again on the very next pass and spends the stamp this write just
+         made — the press destroyed one poll later instead of immediately. The hosted door cancels
+         it in its own claim-back transaction for exactly this reason. */
+      releaseRequestedAt: null,
     })
     .where(and(eq(mailboxes.id, row.id), ne(mailboxes.status, "disabled")));
 
@@ -388,6 +419,8 @@ export async function requestOrganizerTakeover(
       // the winner's claim goes away.
       organizerReleasedAt: mailboxes.organizerReleasedAt,
       organizeConsentedAt: mailboxes.organizeConsentedAt,
+      /* The countermand's own term — see the precondition below, and its twin in the CLI arm. */
+      releaseRequestedAt: mailboxes.releaseRequestedAt,
     })
     .from(mailboxes)
     .where(eq(mailboxes.id, input.mailboxId))
@@ -398,7 +431,30 @@ export async function requestOrganizerTakeover(
   if (row.status === "disabled") {
     return { outcome: "removed", previousReason: null, mailboxId: row.id };
   }
-  if (row.organizerRole !== "reader" && row.organizeConsentedAt !== null) {
+  /* ── A PENDING RELEASE IS CLAIM-BACK-ELIGIBLE, AND WITHOUT THIS "I CHANGED MY MIND" HAD NO DOOR ──
+   *
+   * The hosted door already rules this and argues it at length
+   * (`packages/services/src/mailbox-service.ts`, `releasePending`): *"press 'Stop organizing here';
+   * change your mind two seconds later and press 'Organize here' → 200 `already_organizing`, no
+   * stamp written, and the gate releases the mailbox a minute later anyway … The person is told the
+   * opposite of what happens, and there is no second press that helps"*, and *"they are
+   * contradictory instructions about one mailbox, and the LATER press is the one a person meant"*.
+   * That exemption was never ported to this door, so on the desktop and the standalone install the
+   * countermand was impossible: the row is still `organizer` and still consented while the release
+   * is pending, both terms below held, and the press wrote nothing.
+   *
+   * It matters more since the release stopped recording itself when the mail server would not
+   * confirm the record is gone: the request then stands until a pass can read `ohmail/_meta`, and
+   * on a server where that read keeps failing this press is the ONLY way out. Refusing it left a
+   * person unable either to stop organizing or to cancel the attempt.
+   *
+   * The precondition's own purpose is untouched: on a healthy organizer row with no request
+   * standing, a second press is still not a second becoming and still leaves no spendable stamp.
+   */
+  if (
+    row.releaseRequestedAt === null
+    && row.organizerRole !== "reader" && row.organizeConsentedAt !== null
+  ) {
     /* -- ALREADY ORGANIZING, AND THE WINDOW STILL HAS TO LAND ------------------------------
      *
      * This returned here and wrote nothing, which made "How far back" DECORATIVE on every
@@ -450,6 +506,9 @@ export async function requestOrganizerTakeover(
         // observed on this one, and it is spelled the same way on purpose.
         organizeConsentedAt: sql`coalesce(${mailboxes.organizeConsentedAt}, ${input.now.toISOString()}::timestamptz)`,
         takeoverAuthorizedAt: input.now,
+        /* Cancelled here for the reason its twin in the CLI arm gives: a request left standing is
+           spent by the very next release pass, which destroys the press one poll later. */
+        releaseRequestedAt: null,
       })
       .where(and(eq(mailboxes.id, row.id), ne(mailboxes.status, "disabled")));
   });

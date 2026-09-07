@@ -3577,7 +3577,42 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              strand the request for ever on a mailbox whose claim had already aged out: there
              would be nothing left for any later poll to remove. */
           try {
-            await db.update(mailboxes)
+            /* ══ AND IT YIELDS TO A PRESS THAT LANDED WHILE IT WAS ASKING THE SERVER ═════════
+             *
+             * `releaseOwnClaim` above is an IMAP round trip, and the route that writes
+             * `takeover_authorized_at` stays answerable throughout — deliberately, and
+             * {@link observedTakeoverAt} says why: *"the route must stay answerable while a slow
+             * lease read is in flight, and making it wait on the gate would block a button press
+             * behind an IMAP timeout"*. So the gap between this pass READING the row and writing
+             * it is exactly where "organize here again" lands.
+             *
+             * Unguarded, this write answered that press by deleting it: the stamp cleared, the row
+             * recorded as released, and the person's LATER instruction reversed with nothing
+             * anywhere saying so. It is the same defect the stand-down's write two hundred lines
+             * down already guards — *"a press that landed while the lease was being read was never
+             * offered to it, and clearing it here would answer a request nothing ever considered"*
+             * — and this write never learned it.
+             *
+             * So the update is a COMPARE-AND-SET on the two columns this pass made its decision
+             * from, and it yields whole rather than in part: a release that has been overtaken
+             * records NOTHING — not the role, not the stamp, not `organizer_released_at` — because
+             * a half-applied release is the state that produced this whole round.
+             *
+             * `IS NOT DISTINCT FROM` and not `=`, for the reason the stand-down's copy gives: SQL
+             * equality on two NULLs is NULL, so `=` would make this a no-op on the ordinary case
+             * where no press has ever been made, and the release would never land at all.
+             *
+             * BOTH columns, because a press is not the only thing that can move: the door that
+             * accepts a press on a release-pending row also CANCELS the request in the same
+             * transaction (`MailboxService.organize`'s claim-back arm — *"they are contradictory
+             * instructions about one mailbox, and the LATER press is the one a person meant"*), and
+             * a request that is no longer there must not be spent by this pass either.
+             *
+             * THE CLAIM IS ALREADY OUT OF THE FOLDER when this yields, and that is not a loss: the
+             * press wants this install organizing, and the next pass's gate appends a fresh claim
+             * under the stamp that survived. What must not happen is the ROW recording a release
+             * the person has just countermanded. */
+            const [recorded] = await db.update(mailboxes)
               .set({
                 organizerRole: "reader",
                 // Nobody won this mailbox. Leaving the holder columns populated would put
@@ -3604,7 +3639,32 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 organizerReleasedAt: now(),
                 organizerEventAt: now(),
               })
-              .where(eq(mailboxes.id, mb.id));
+              .where(and(
+                eq(mailboxes.id, mb.id),
+                sql`${mailboxes.takeoverAuthorizedAt} is not distinct from ${observedTakeoverAt}`,
+                sql`${mailboxes.releaseRequestedAt} is not distinct from ${releaseRequested}`,
+              ))
+              .returning({ id: mailboxes.id });
+            if (recorded === undefined) {
+              /* THE PRESS WON. Nothing is recorded and nothing is undone — the next poll re-reads
+                 the row, finds the request gone and the stamp standing, and promotes. `organizing`
+                 is false for THIS pass because the claim did come out of the folder a moment ago:
+                 filing mail as an organizer with no claim in `ohmail/_meta` is the one state worse
+                 than a pass that arranges nothing. `unreadableSince` is carried, not cleared — see
+                 the unconfirmed arm above for why a pass that read nothing may not clear a mark. */
+              organizer = {
+                organizing: false, reason: null, heldBy: null,
+                unreadableSince: organizer.unreadableSince,
+              };
+              log("organizer_claim_release_yielded_to_press", {
+                mailboxId: mb.id,
+                reason: "this install was asked to stop organizing this mailbox and then asked to "
+                  + "organize it again while the first request was still being carried out; the "
+                  + "later press stands, nothing is recorded as released, and the next poll "
+                  + "organizes this mailbox here again",
+              });
+              return false;
+            }
             holderSeen.kind = null; holderSeen.name = null;
             holderSeen.since = null; holderSeen.state = null;
             holderSeen.capabilities = null;

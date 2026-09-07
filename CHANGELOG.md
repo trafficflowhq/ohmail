@@ -858,6 +858,18 @@ pass then looked only at the mail sorting after it, took that for the end of the
 the request done, so older mail on the mailbox that had just changed hands was never filed. The two
 are one write now, decided once.
 
+Changing your mind about stopping organizing did not work, and stopping could undo it. "Stop
+organizing here, keep the mail" is carried out on the next check rather than at the press, so there
+is a minute in which you can change your mind — and pressing "Organize here" in that minute was
+answered as though the mailbox were already being organized, with nothing written, and the mailbox
+was let go a moment later anyway. The press now cancels the request, on the desktop and on a
+standalone install as it already did on an account.
+
+The other half is the order the two can arrive in. If the press lands while the app is in the
+middle of taking the record out of the mailbox, the check that started before the press no longer
+writes over it: it records nothing at all and leaves your later instruction standing, and the next
+check organizes the mailbox here again.
+
 ## [0.14.0] — 2026-09-03
 
 A desktop install can hold more than one mailbox. Each one gets its own connection,
