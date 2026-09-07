@@ -699,6 +699,24 @@ export class ProfileUnavailableError extends Error {
 export interface RawProfileMessage {
   ref: unknown;
   raw: string;
+  /**
+   * THE FOLDER'S GENERATION THIS MESSAGE'S `ref` WAS READ UNDER — required, never optional.
+   *
+   * `ref` is a uid, and a remembered uid is a fact only under the UIDVALIDITY it was read under: a
+   * server that renumbers a folder re-issues the same small integers to different messages, so a
+   * uid carried without its generation is a confident pointer at whatever now holds that number.
+   *
+   * It is REQUIRED rather than optional because the failure of the optional form is silent. A
+   * caller that omitted it would produce a `found` result whose locator looks usable and is not,
+   * and the code downstream cannot tell that case from a genuine `null` (which means "the
+   * generation could not be learned" and correctly reads as unusable). `undefined` would make
+   * "nobody supplied one" and "the server did not say" the same value.
+   *
+   * The io stamps every message in one call from ONE `generationOf(client)` taken inside the same
+   * mailbox lock as the fetch, so the pair is consistent by construction rather than by a caller
+   * remembering to ask at the right moment.
+   */
+  generation: Generation;
 }
 
 /**
@@ -885,6 +903,17 @@ export function makeProfileIo(
       const lock = await client.getMailboxLock(metaPath);
       try {
         const out: RawProfileMessage[] = [];
+        /* ── ONE GENERATION FOR THE WHOLE CALL, TAKEN INSIDE THE LOCK ──────────────────────
+         *
+         * Every message below comes from one SELECT of one folder on one connection, so they share
+         * one generation by construction — and taking it here, under the same `getMailboxLock` the
+         * fetches run under, is what makes that true rather than merely likely. Read at the call
+         * site instead it would be a generation for whatever folder the adapter had selected by
+         * then, which is the manufactured pair.
+         *
+         * The same `generationOf(client)` the memo read below already uses, so a document's
+         * locator and the anchor written from it can never disagree about the epoch. */
+        const generation = generationOf(client);
         /* ── A NOOP CANNOT PROVE A REFRESH, SO NOTHING HERE RESTS ON ONE ────────────────────
          *
          * This NOOP'd and treated the call resolving as proof the cached count was current. The
@@ -1198,7 +1227,7 @@ export function makeProfileIo(
             held += size;
             const raw = got.source.toString("utf8");
             if (!looksLikeProfile(raw)) continue;
-            win.push({ rec: { ref: got.uid, raw }, size });
+            win.push({ rec: { ref: got.uid, raw, generation }, size });
             while (win.length > PROFILE_MESSAGES_MAX_PER_FETCH) {
               if (complete) {
                 throw new ProfileUnavailableError(
@@ -1387,6 +1416,23 @@ export type ProfileReadResult =
   | {
     state: "found"; doc: OrganizerProfileDoc; installId: string | null; ref: unknown;
     /**
+     * THE GENERATION `ref` WAS READ UNDER (mail 0093's mirror writer needs it).
+     *
+     * `ref` alone is a uid, and storing one without its generation is the defect this pair exists
+     * to prevent — a renumbered folder makes the memo a stale fact the code then trusts. A caller
+     * that wants to REMEMBER where this document was has to store both, and this is the only
+     * place it can get a generation that is actually the one the uid was read under.
+     *
+     * Fetching a generation separately at the call site is NOT equivalent and is the manufactured
+     * pair: the reader's own adapter selects other folders between calls, so a generation read
+     * after the fact may describe a different folder entirely, and one read before may be stale by
+     * the time the uid is issued. This value comes from the same lock as the fetch.
+     *
+     * `null` means the server did not report one, which reads as "this locator is not usable" and
+     * never as "any generation will do".
+     */
+    generation: Generation;
+    /**
      * Profile records in the folder BESIDE the chosen one — crash residue, or the loser of a
      * transient organizer overlap. Zero in the steady state; a caller that owns the mailbox
      * heals a non-zero residue by rewriting, which expunges everything but its own document.
@@ -1503,6 +1549,36 @@ export async function readOrganizerProfile(io: ProfileIo): Promise<ProfileReadRe
 
   if (records.length === 0) return { state: "none" };
 
+  /* ── THE CALL'S GENERATION, AND IT MUST BE ONE ────────────────────────────────────────────
+   *
+   * Every message in one `listProfileMessages()` comes from one SELECT of one folder on one
+   * connection, so they share one generation. Reading it off the messages rather than asking the
+   * connection again is the whole point: the value that reaches `found` is then the one the uids
+   * were actually issued under, not one fetched after the adapter moved on.
+   *
+   * A set reporting MORE THAN ONE distinct generation is not a folder state — it is evidence that
+   * whatever produced these messages is manufacturing the pair, which is the defect this field
+   * exists to prevent. Refused as unreadable rather than resolved by picking one: picking would
+   * hand back a locator that looks usable and is not, which is the failure that reports itself as
+   * health.
+   *
+   * Normalised through `generationOf`'s own vocabulary — anything that is not a number or a bigint
+   * is `null`, meaning "the server did not say", which reads as an unusable locator and never as
+   * "any generation will do". So an io that supplies nothing degrades to unusable rather than to
+   * wrong.
+   */
+  const generations = new Set(messages.map((m) => (
+    typeof m.generation === "number" || typeof m.generation === "bigint" ? m.generation : null
+  )));
+  if (generations.size > 1) {
+    return {
+      state: "unreadable",
+      reason: "the settings messages disagree about the folder's generation, so no locator among "
+        + "them can be trusted",
+    };
+  }
+  const generation: Generation = [...generations][0] ?? null;
+
   const newer = records.filter((r): r is ParsedProfileMessage => !isMalformedProfile(r) && r.status === "newer");
   if (newer.length > 0) {
     return { state: "newer", v: Math.max(...newer.map((r) => r.v)) };
@@ -1556,6 +1632,10 @@ export async function readOrganizerProfile(io: ProfileIo): Promise<ProfileReadRe
 
   return {
     state: "found", doc: newest.doc!, installId: newest.installId, ref: newest.ref,
+    /* THE ONE THE UID WAS READ UNDER — see the field's own comment. Taken from the messages this
+       read parsed, never from the connection at this moment, because by now the caller's adapter
+       may have selected another folder entirely. */
+    generation,
     residue: records.length - 1,
   };
 }
