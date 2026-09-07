@@ -51,7 +51,7 @@ export const rulesRoutes: Route[] = [
         serviceContext(deps, req), body, { idempotency: deps.idempotency ?? null },
       );
       // 201 IS A RULE THAT EXISTS; 202 IS A RULE ASKED FOR — the Screener route's rule, and the
-      // same reason (mail 0094). On an account whose every live mailbox another install
+      // same reason (mail 0093). On an account whose every live mailbox another install
       // organizes, no `rules` row was written and there is nothing to hand back at 201. The
       // service stores exactly this status for the idempotent replay, so a first press and its
       // replay agree. `travel` says which install each request is waiting on.
@@ -133,7 +133,7 @@ export const rulesRoutes: Route[] = [
         });
 
       /**
-       * THE ANSWER FOR A DELETE THAT REMOVED NOTHING HERE (mail 0094).
+       * THE ANSWER FOR A DELETE THAT REMOVED NOTHING HERE (mail 0093).
        *
        * `204` says "it is gone". On an account whose every live mailbox another install
        * organizes, the row is deliberately NOT removed — deleting it would take away the only

@@ -2,32 +2,24 @@ import { and, asc, desc, eq, gt, inArray, isNull, lt, or, sql, type SQL } from "
 import { randomUUID } from "node:crypto";
 import {
   assertOrganizerRole,
-  mailboxes, mailboxFolders, messages, folderState, messageBodies, messageStates, claimIdempotencyKey,
-  recordChange, upsertDesiredSeen, ringFilingDoorbell, type LedgerTx, type OrganizedBy, type Tx,
+  mailboxes, messages, folderState, messageBodies, messageStates, claimIdempotencyKey, recordChange,
+  upsertDesiredSeen, type LedgerTx, type OrganizedBy, type Tx,
 } from "@trafficflow/db";
 import type { Destination, NativeLocator } from "@trafficflow/core/mail";
-import { createLogger, httpsUnsubscribeUri, unsubscribeHeaderState } from "@trafficflow/core/mail";
+import { httpsUnsubscribeUri, unsubscribeHeaderState } from "@trafficflow/core/mail";
 import type { Db, ServiceContext } from "./context.js";
 import { foldersEnabled, userFolderById } from "./folders.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
-import { materializeMessage, materializeMessages } from "./dto/materialize.js";
+import { materializeMessage } from "./dto/materialize.js";
 import {
-  clampLimit, clampPageLimit, decodeKeysetCursor, decodeListCursor, decodeNullableKeysetCursor,
-  encodeListCursor, encodeNullableKeysetCursor,
+  clampLimit, clampPageLimit, decodeListCursor, decodeNullableKeysetCursor, encodeListCursor,
+  encodeNullableKeysetCursor,
 } from "./pagination.js";
 import { requireUuid } from "./ids.js";
 import {
   moveDestinationWord, routeMailboxWrite, writeReaderRequest, type PendingRequest,
 } from "./reader-request.js";
-import type {
-  Folder, MessageBodyBatchItem, MessageBodyDTO, MessageDTO, Page, TrashRowDTO, WithheldMarker,
-} from "./dto/types.js";
-
-/**
- * Where a best-effort filing doorbell reports a throw. Module scope and not injected: it is a
- * single warn line on a path whose failure costs one rotation, and nothing reads it back.
- */
-const doorbellLog = createLogger({ service: "filing" });
+import type { Folder, MessageBodyBatchItem, MessageBodyDTO, MessageDTO, Page, WithheldMarker } from "./dto/types.js";
 
 /**
  * The stored row's withheld marker as the wire carries it — the CLOSED set, projected verbatim
@@ -161,7 +153,7 @@ export interface MoveResult {
 
 /**
  * A move or delete that became a REQUEST — this install reads the mailbox, another one organizes
- * it, and the press is now waiting on that install (mail 0094).
+ * it, and the press is now waiting on that install (mail 0093).
  *
  * ── `dto` IS THE MESSAGE UNMOVED, AND THAT IS THE POINT ────────────────────────────────────
  *
@@ -191,7 +183,7 @@ export interface PatchResult {
   dto: MessageDTO;
   seq: number | null;
   /**
-   * PRESENT WHEN THE `folder` HALF BECAME A REQUEST (mail 0094) — this install reads the mailbox
+   * PRESENT WHEN THE `folder` HALF BECAME A REQUEST (mail 0093) — this install reads the mailbox
    * and another one organizes it, so the re-file is waiting on {@link PendingRequest.holder}.
    *
    * The two halves of a patch are decided SEPARATELY because they are separately permitted:
@@ -464,47 +456,6 @@ export class MessageService {
         filters,
       });
     }
-    /* ── TRASH — MAIL THIS ACCOUNT DELETED IN OHMAIL (mail 0099) ────────────────────────────
-     *
-     * BEFORE `validView`, because Trash is not one of the seven views: it is not a
-     * `folder_state.desired_folder` this product organizes into, it is the PROVIDER's folder,
-     * and its rows are TOMBSTONED — every other read here excludes `deleted_at IS NOT NULL` by
-     * construction and this one must not.
-     *
-     * ── WHAT IS IN IT, AND WHAT IS DELIBERATELY NOT ─────────────────────────────────────────
-     *
-     * Rows whose desired folder IS this row's own mailbox's Trash path. The join to `mailboxes`
-     * is what makes that per-mailbox rather than per-account: two connected mailboxes can name
-     * their Trash differently ("Trash", "INBOX.Trash", "Deleted Messages"), and a single literal
-     * would show one mailbox's deletions and hide the other's.
-     *
-     * NOT in it, and neither is an accident:
-     *
-     *  · a message the expunge reaper tombstoned because it left every watched folder. It has
-     *    `deleted_at` and its desired folder is wherever it last was — never Trash — so the
-     *    predicate excludes it. That is right: nobody deleted it here, and this list's whole
-     *    claim is "mail you deleted in ohmail".
-     *  · mail trashed in ANOTHER client. The worker never reads the provider's Trash
-     *    (`passiveFolderExclusion` gives it no cursor), so the server does not know it is there.
-     *    The view's foot line says so rather than pretending otherwise.
-     *  · mail whose FOLDER was deleted. `tombstoneFolderMessages` stamps `deleted_at`, drops the
-     *    locator and DELETES the `folder_state` row — it never writes desired = trash — so those
-     *    rows are outside this predicate. Measured, not assumed; the scope sentence is written
-     *    for the message-delete verb alone.
-     *
-     * ── ORDERED BY DELETION, NOT BY DATE ────────────────────────────────────────────────────
-     *
-     * `folder_state.updated_at desc` — the instant the delete wrote the desired folder, which is
-     * the order a person looking for what they just deleted expects. Every other view orders by
-     * the message's own date; here that would bury a mail from last year that was deleted a
-     * second ago under everything deleted last month. The cursor is the same tuple, so the walk
-     * and the sort cannot disagree.
-     *
-     * NO `foldersEnabled` GATE. Trash is the provider's own system folder, present in every
-     * mailbox this product will connect to; the flag governs whether the account's OWN folders
-     * are a surface, which is a different question.
-     */
-    if (opts.view === "trash") return this.listTrash(ctx, opts);
     const view = this.validView(opts.view);
     const limit = clampLimit(opts.limit);
     const desiredFolder = VIEW_FOLDER[view];
@@ -541,115 +492,6 @@ export class MessageService {
     const last = pageRows[pageRows.length - 1];
     const nextCursor = rows.length > limit && last ? encodeMsgCursor(last.date, last.id) : null;
     return { items, nextCursor };
-  }
-
-  /**
-   * ONE KEYSET PAGE OF TRASH — see the block at {@link MessageService.list}'s `trash` arm for
-   * what is in this list, what is deliberately not, and why it is ordered by deletion time.
-   *
-   * A METHOD OF ITS OWN and not an inline arm, because it is the only read here whose row type
-   * is wider than `MessageDTO`: a caller that wants `trashedAt`/`restoreTo` typed asks for this
-   * directly, and `list` delegates so the route keeps one door.
-   */
-  async listTrash(ctx: ServiceContext, opts: ListMessagesOptions): Promise<Page<TrashRowDTO>> {
-    const limit = clampLimit(opts.limit);
-    const filters = [
-      eq(messages.accountId, ctx.accountId),
-      // The row's OWN mailbox's Trash path — see the block above for why this is a join and
-      // not a literal. A mailbox with NO Trash folder has `trash_folder` null and the
-      // comparison is null, so its rows are absent: correct, since a delete there is refused
-      // 422 up front and nothing was ever filed.
-      sql`${folderState.desiredFolder} = ${mailboxes.trashFolder}`,
-    ];
-    if (opts.cursor) {
-      const { millis, id } = decodeKeysetCursor(opts.cursor);
-      filters.push(or(
-        lt(folderState.updatedAt, new Date(millis)),
-        and(eq(folderState.updatedAt, new Date(millis)), lt(messages.id, id)),
-      )!);
-    }
-    const rows = await ctx.db
-      .select({ id: messages.id, trashedAt: folderState.updatedAt, trashedFrom: folderState.trashedFrom, mailboxId: messages.mailboxId })
-      .from(messages)
-      .innerJoin(folderState, eq(folderState.messageId, messages.id))
-      .innerJoin(mailboxes, eq(mailboxes.id, messages.mailboxId))
-      .where(and(...filters))
-      .orderBy(desc(folderState.updatedAt), desc(messages.id))
-      .limit(limit + 1);
-    const pageRows = rows.slice(0, limit);
-    /* `deleted: "include"` — the whole point. Without it every row this predicate found
-       materializes null and the list is empty, which is exactly what a suite with no
-       tombstoned fixture would call a pass. */
-    const dtos = await materializeMessages(
-      ctx.db, ctx.accountId, pageRows.map((r) => r.id), { deleted: "include" },
-    );
-    const items: TrashRowDTO[] = [];
-    for (const r of pageRows) {
-      const dto = dtos.get(r.id);
-      if (!dto) continue;
-      items.push({
-        ...dto,
-        trashedAt: r.trashedAt.toISOString(),
-        restoreTo: await this.resolveRestoreTarget(ctx, r.mailboxId, r.trashedFrom),
-      });
-    }
-    const last = pageRows[pageRows.length - 1];
-    const nextCursor = rows.length > limit && last
-      ? encodeListCursor(`${last.trashedAt.getTime()}:${last.id}`)
-      : null;
-    return { items, nextCursor };
-  }
-
-  /**
-   * WHERE A RESTORE PUTS THIS MESSAGE — the stored origin, resolved, or INBOX.
-   *
-   * ── WHY THE STORED VALUE IS NEVER TRUSTED ──────────────────────────────────────────────────
-   *
-   * `trashed_from` is a folder PATH written at the delete. Between then and the restore the
-   * folder can be renamed away or deleted outright — mail sits in Trash precisely while somebody
-   * reorganises — and a desired folder naming a folder the server does not have is a move the
-   * reconciler will refuse for ever (`no_such_folder`), with the message stuck pending and the
-   * filing strip counting it. So the value is CHECKED, and the fallback is INBOX.
-   *
-   * INBOX and not a refusal: a person looking at a row in Trash pressed Restore, and answering
-   * "the folder that used to hold this is gone" with nothing is worse than putting the mail
-   * where mail arrives, from where they can file it anywhere in one press. Stated on the row
-   * itself — `restoreTo` travels with every item, so the destination is on screen before the
-   * press and the toast names it after.
-   *
-   * ── WHAT COUNTS AS A LIVE TARGET ───────────────────────────────────────────────────────────
-   *
-   *  · INBOX and the five `ohmail/*` folders — the product's own spine, present by construction
-   *    (`ensureFolders` creates them), so no inventory read is needed or wanted.
-   *  · a path `mailbox_folders` still carries for THIS mailbox. That table is the worker's cursor
-   *    list: a row exists because the sync actually reads that folder.
-   *
-   * The `mailbox_folders` read here deliberately does NOT apply the "Use folders" participation
-   * filter that `userFolderById` applies. That filter answers "is this folder a SURFACE in this
-   * account's interface"; this asks "does the mail server have this folder", which is a different
-   * question with a different consequence. A message deleted out of a user folder in a mailbox
-   * whose folders were later switched off still belongs back in that folder — the folder is
-   * still there, the mail was still in it — and restoring it to INBOX instead would move
-   * somebody's mail somewhere it had never been because of an interface toggle.
-   *
-   * Account-scoped through the `mailboxes` join, so a `trashed_from` value from another account's
-   * row could not resolve here even if one somehow reached this argument.
-   */
-  private async resolveRestoreTarget(
-    ctx: ServiceContext, mailboxId: string, trashedFrom: string | null,
-  ): Promise<string> {
-    if (trashedFrom === null || trashedFrom === "") return "INBOX";
-    if (FOLDER_SET.has(trashedFrom)) return trashedFrom;
-    const [live] = await ctx.db.select({ id: mailboxFolders.id })
-      .from(mailboxFolders)
-      .innerJoin(mailboxes, eq(mailboxes.id, mailboxFolders.mailboxId))
-      .where(and(
-        eq(mailboxFolders.mailboxId, mailboxId),
-        eq(mailboxFolders.folder, trashedFrom),
-        eq(mailboxes.accountId, ctx.accountId),
-      ))
-      .limit(1);
-    return live ? trashedFrom : "INBOX";
   }
 
   /**
@@ -891,10 +733,6 @@ export class MessageService {
     const glance = this.validVia(body.via);
     let pending: PendingRequest | undefined;
 
-    /* WHICH MAILBOX NOW OWES A MOVE — captured inside the transaction and rung AFTER it commits.
-       `null` when this request wrote no desired folder: an `unread`-only patch owes the organizer
-       nothing new, and ringing for it would wake the worker for work that does not exist. */
-    let filed: string | null = null;
     const seq = await asTx(ctx).transaction(async (tx) => {
       const [msg] = await tx.select({
         id: messages.id, unread: messages.unread, nativeLocator: messages.nativeLocator,
@@ -928,7 +766,7 @@ export class MessageService {
       }
 
       if (folder !== undefined) {
-        /* ── THIS IS THE MOVE DOOR UNDER ANOTHER NAME, AND IT WAS NOT GATED (mail 0094) ───────
+        /* ── THIS IS THE MOVE DOOR UNDER ANOTHER NAME, AND IT WAS NOT GATED (mail 0093) ───────
          *
          * `move` and this branch write the SAME row the SAME way — `desired_folder` with
          * `last_set_by: 'us'`, plus a `move` change — and the reconciler turns either into a
@@ -965,12 +803,7 @@ export class MessageService {
           // lock, so a demotion can commit between the two.
           await assertOrganizerRole(tx as unknown as Tx, ctx.accountId, msg.mailboxId);
           const observed = await this.observedFolder(tx, id, msg.nativeLocator);
-          // The mailbox that now owes a move, rung AFTER this transaction commits.
-          filed = msg.mailboxId;
-          // `null` — a filing is not a delete, and this write CLEARS any origin the row carried
-          // from an earlier delete. See `upsertDesired`'s own parameter block. The request branch
-          // above writes no `folder_state` row, so there is nothing there to clear.
-          await this.upsertDesired(tx, id, observed, folder, ctx.now(), null);
+          await this.upsertDesired(tx, id, observed, folder, ctx.now());
           last = await recordChange(tx, {
             accountId: ctx.accountId, entityType: "message", entityId: id, op: "move",
             meta: { from: observed, to: folder },
@@ -996,10 +829,6 @@ export class MessageService {
 
       return last;
     });
-    /* THE DOORBELL, AFTER THE COMMIT. See {@link MessageService.ringFiledMailbox}: inside the
-       transaction this deadlocked against every other writer of the mailbox row — measured on
-       real Postgres as `40P01`, with a 500 to one of two concurrent decisions. */
-    if (filed !== null) await this.ringFiledMailbox(ctx, filed);
 
     const dto = await materializeMessage(ctx.db, ctx.accountId, id);
     if (!dto) throw new ServiceError("internal", 500, "message vanished after write");
@@ -1112,22 +941,18 @@ export class MessageService {
   ): Promise<MoveResult | MoveRequestResult> {
     const folder = this.validFolder(body.folder);
 
-    /* WHICH MAILBOX NOW OWES A MOVE — captured inside the transaction and rung AFTER it commits.
-       `null` when this request wrote no desired folder, so the organizer is not woken for work
-       that does not exist. */
-    let filed: string | null = null;
-    const answer = await asTx(ctx).transaction(async (tx) => {
+    return asTx(ctx).transaction(async (tx) => {
       const [msg] = await tx.select({
         id: messages.id, nativeLocator: messages.nativeLocator,
         // Mail 0083 — which mailbox this message is in, so the role is asked about the right row.
         mailboxId: messages.mailboxId,
-        // Mail 0094 — the name BOTH installs have for this message. A request travels between two
+        // Mail 0093 — the name BOTH installs have for this message. A request travels between two
         // stores with different primary keys, so the record names the message by its dedup key.
         dedupKey: messages.dedupKey,
       }).from(messages)
         .where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId))).limit(1);
       if (!msg) throw new ServiceError("not_found", 404, "message not found");
-      /* -- A READER MOVES NOTHING HERE — IT ASKS (mail 0083, then mail 0094) ----------------
+      /* -- A READER MOVES NOTHING HERE — IT ASKS (mail 0083, then mail 0093) ----------------
        *
        * The most direct case of the whole rule: this door writes `folder_state.desired_folder`
        * with `last_set_by='us'`, and the reconciler turns that into a physical IMAP move. On a
@@ -1135,7 +960,7 @@ export class MessageService {
        * exactly what the lease exists to prevent, reached through a button rather than through a
        * sync loop.
        *
-       * Mail 0083 refused that outright. Mail 0094 keeps the refusal of the LOCAL WRITE — nothing
+       * Mail 0083 refused that outright. Mail 0093 keeps the refusal of the LOCAL WRITE — nothing
        * below this branch runs for a reader — and replaces the dead end with a request the holder
        * applies. What has NOT changed is the thing the 0083 comment was protecting: no
        * `folder_state` row is written here, so a later promotion inherits no queue of moves
@@ -1164,10 +989,7 @@ export class MessageService {
       // and PRESERVE it (never overwrite on conflict); the worker flips it when the
       // physical IMAP move lands. NO adapter, NO IMAP here.
       const observed = await this.observedFolder(tx, id, msg.nativeLocator);
-      filed = msg.mailboxId;
-      // `null` — see the `patch` arm above and `upsertDesired`'s parameter block: a move CLEARS
-      // the delete origin, which is what makes a second delete from a new folder honest.
-      await this.upsertDesired(tx, id, observed, folder, ctx.now(), null);
+      await this.upsertDesired(tx, id, observed, folder, ctx.now());
       let seqBig = await recordChange(tx, {
         accountId: ctx.accountId, entityType: "message", entityId: id, op: "move",
         meta: { from: observed, to: folder },
@@ -1201,13 +1023,6 @@ export class MessageService {
 
       return { dto, seq };
     });
-
-    /* THE DOORBELL, AFTER THE COMMIT. See {@link MessageService.ringFiledMailbox}: inside the
-       transaction this deadlocked against every other writer of the mailbox row — measured on
-       real Postgres as `40P01`, with a 500 to one of two concurrent decisions. */
-    if (filed !== null) await this.ringFiledMailbox(ctx, filed);
-
-    return answer;
   }
 
   /**
@@ -1240,11 +1055,7 @@ export class MessageService {
     ctx: ServiceContext, id: string,
     opts: { idempotency?: MoveIdempotency | null } = {},
   ): Promise<MoveResult | MoveRequestResult> {
-    /* WHICH MAILBOX NOW OWES A MOVE — captured inside the transaction and rung AFTER it commits.
-       `null` when this request wrote no desired folder, so the organizer is not woken for work
-       that does not exist. */
-    let filed: string | null = null;
-    const answer = await asTx(ctx).transaction(async (tx) => {
+    return asTx(ctx).transaction(async (tx) => {
       const [msg] = await tx.select({
         id: messages.id, nativeLocator: messages.nativeLocator, mailboxId: messages.mailboxId,
         dedupKey: messages.dedupKey,
@@ -1252,11 +1063,11 @@ export class MessageService {
         .where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId))).limit(1);
       if (!msg) throw new ServiceError("not_found", 404, "message not found");
 
-      /* -- A READER DELETES NOTHING HERE — IT ASKS (mail 0083 v1, then mail 0094) -----------
+      /* -- A READER DELETES NOTHING HERE — IT ASKS (mail 0083 v1, then mail 0093) -----------
        *
        * A delete is a move to Trash plus a tombstone, so the argument above applies unchanged: no
        * local `folder_state` write, no tombstone, nothing for a later promotion to inherit. What
-       * mail 0094 adds is that the press now travels as a `message.move` whose destination is the
+       * mail 0093 adds is that the press now travels as a `message.move` whose destination is the
        * WORD `trash`.
        *
        * ── AND THE TRASH LOOKUP BELOW IS DELIBERATELY NOT REACHED ON THIS PATH ──────────────
@@ -1300,35 +1111,14 @@ export class MessageService {
       }
 
       const now = ctx.now();
-      /* WHERE IT CAME FROM — read BEFORE the desired write, because that write is what makes
-         `observed` stop being the answer moments later (the organizer flips it to Trash when
-         the physical move lands). Hoisted out of the branch below so the change row can carry
-         it: a message with no server copy has no folder it rode from, so both stay null.
-
-         `observed === trash` means the message is ALREADY in the Trash path — a delete pressed
-         twice, or mail the organizer had filed there. There is nothing to remember, and
-         remembering Trash as an origin would make a restore put it back where it is. */
-      let observed: string | null = null;
       if (hasCopy && trash !== null) {
-        observed = await this.observedFolder(tx, id, msg.nativeLocator);
-        filed = msg.mailboxId;
-        await this.upsertDesired(
-          tx, id, observed, trash as Folder, now,
-          observed === trash ? null : observed,
-        );
+        const observed = await this.observedFolder(tx, id, msg.nativeLocator);
+        await this.upsertDesired(tx, id, observed, trash as Folder, now);
       }
       await tx.update(messages).set({ deletedAt: now, updatedAt: now })
         .where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId)));
       let seqBig = await recordChange(tx, {
-        accountId: ctx.accountId, entityType: "message", entityId: id, op: "delete",
-        /* HISTORY ONLY, and NOTHING READS IT (mail 0099). The `move` verb beside this one has
-           always recorded `{from, to}`; the delete recorded `null`, so the two verbs' history
-           read differently for no reason. This closes that, and it is deliberately not the
-           restore's operand — `change_log` has a retention horizon (`change-log.ts`), so a
-           restore reading it would work for a week and then silently stop. `folder_state`
-           .trashed_from is the durable answer. `null` for a message with no server copy: there
-           was no move, so there is no from and no to. */
-        meta: observed !== null && trash !== null ? { from: observed, to: trash } : null,
+        accountId: ctx.accountId, entityType: "message", entityId: id, op: "delete", meta: null,
       });
       // Deleting is dealing with a resurfaced row, exactly as re-filing is.
       const spent = await this.spendResurface(tx, ctx, [id]);
@@ -1353,119 +1143,6 @@ export class MessageService {
 
       return { dto, seq };
     });
-
-    /* THE DOORBELL, AFTER THE COMMIT. See {@link MessageService.ringFiledMailbox}: inside the
-       transaction this deadlocked against every other writer of the mailbox row — measured on
-       real Postgres as `40P01`, with a 500 to one of two concurrent decisions. */
-    if (filed !== null) await this.ringFiledMailbox(ctx, filed);
-
-    return answer;
-  }
-
-  /**
-   * RESTORE — PUT A DELETED MESSAGE BACK WHERE IT WAS (mail 0099).
-   *
-   * ══ IT DOES NOT UN-DELETE ANYTHING, AND THAT IS THE DESIGN ═════════════════════════════════
-   *
-   * This writes ONE thing: `folder_state.desired_folder = <the resolved origin>`, pending, `us`,
-   * with `trashed_from` cleared. It does NOT clear `messages.deleted_at` and it emits NO change
-   * that resurrects the row in any client's mirror.
-   *
-   * That is not an omission — it is the mailbox-is-the-master rule applied to the one verb where
-   * the temptation to break it is strongest. The message is IN the provider's Trash. Clearing the
-   * tombstone here would put the row back in somebody's Ohbox while the mail server still has it
-   * in Trash, and if the reconciler then refused the move (the folder went away, the server said
-   * read-only, the copy was purged) the mirror would show mail in a place it is not. A false
-   * state shown now is the failure this product's whole desired/observed split exists to prevent.
-   *
-   * So the sequence is the ordinary one, and every step of it already exists:
-   *
-   *   1. this write records the intent;
-   *   2. the organizer's `reconcileMailbox` performs the physical IMAP move on its next turn
-   *      (the doorbell below asks it to come sooner);
-   *   3. the passive read then OBSERVES the message in the target folder;
-   *   4. `clearDeletedOnAdopt` (the pipeline's own "a re-appearance un-deletes") clears
-   *      `deleted_at` and the arrival emits a change carrying the live entity, which the client
-   *      apply contract upserts — the row is back in its pile because the SERVER has it back.
-   *
-   * Between (1) and (4) the row is a pending `folder_state` row like any other filing, so the
-   * filing strip's existing sentence is what the person sees. It has left this list already
-   * (its desired folder is no longer Trash), which is the honest render: the decision is taken,
-   * the mail server has not caught up.
-   *
-   * ── WHAT IT REFUSES, AND WHY EACH REFUSAL IS HERE ──────────────────────────────────────────
-   *
-   *  · A READER restores nothing. Identical to the argument at `move` and `delete`: this writes
-   *    a desired folder with `last_set_by='us'` and the reconciler turns it into a real IMAP
-   *    move, so on a mailbox another install organizes it is two organizers moving one person's
-   *    mail. Asked FIRST, before the state check, so a reader is refused for the reason that is
-   *    true rather than for the row not being in Trash.
-   *  · 409 `not_in_trash` for a message whose desired folder is not this mailbox's Trash path.
-   *    Every shape reaches it: a message that was never deleted, one already restored (so the
-   *    verb is IDEMPOTENT in the way that matters — pressing twice cannot move mail a second
-   *    time), and one filed elsewhere by another client in the meantime. 409 rather than 404,
-   *    because the message exists and the caller may read it; what is wrong is its state.
-   *  · 404 for a message this account does not own, exactly as every other door here.
-   *  · 422 `no_trash_folder` is unreachable and deliberately not written: a row can only be in a
-   *    mailbox's Trash path if that path exists.
-   *
-   * ── THE CHANGE ROW IS HISTORY AND NOTHING READS IT ─────────────────────────────────────────
-   *
-   * `op: "move"` with `{from: trash, to: target}`. It is recorded so the audit trail of the
-   * message reads truthfully — this account moved it out of Trash at this instant — and NOT to
-   * drive any client: the projection would re-materialize the row, find it still tombstoned, and
-   * emit a `delete` tombstone (`sync-service.ts` turns a null entity into one whatever the
-   * original op was), which is precisely the correct answer while the server still has the
-   * message in Trash. The client learns about the restore at step (4).
-   */
-  async restore(
-    ctx: ServiceContext, id: string,
-  ): Promise<{ restoreTo: string; pending: true; seq: number }> {
-    let filed: string | null = null;
-    const answer = await asTx(ctx).transaction(async (tx) => {
-      const [msg] = await tx.select({
-        id: messages.id, nativeLocator: messages.nativeLocator, mailboxId: messages.mailboxId,
-      }).from(messages)
-        .where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId))).limit(1);
-      if (!msg) throw new ServiceError("not_found", 404, "message not found");
-
-      // A READER RESTORES NOTHING — see the header. First, so the sentence is the true one.
-      await assertOrganizerRole(tx as unknown as Tx, ctx.accountId, msg.mailboxId);
-
-      const [mb] = await tx.select({ trashFolder: mailboxes.trashFolder }).from(mailboxes)
-        .where(eq(mailboxes.id, msg.mailboxId)).limit(1);
-      const trash = mb?.trashFolder ?? null;
-      const [fs] = await tx.select({
-        desiredFolder: folderState.desiredFolder, trashedFrom: folderState.trashedFrom,
-      }).from(folderState).where(eq(folderState.messageId, id)).limit(1);
-      /* THE ONE PREDICATE — "is this message in this mailbox's Trash". A missing `folder_state`
-         row, a mailbox with no Trash path, and a desired folder that is anything else all answer the
-         same 409, because all three mean the same thing to a caller: there is nothing here to
-         restore. */
-      if (trash === null || !fs || fs.desiredFolder !== trash) {
-        throw new ServiceError("not_in_trash", 409, "this message is not in Trash");
-      }
-
-      const target = await this.resolveRestoreTarget(ctx, msg.mailboxId, fs.trashedFrom);
-      const now = ctx.now();
-      filed = msg.mailboxId;
-      /* `trashed_from: null` — the origin has been spent. A message restored and deleted again
-         records its NEW origin at that delete; leaving this set would let the second delete
-         inherit the first one's answer. Passed explicitly because `upsertDesired` requires it. */
-      await this.upsertDesired(tx, id, trash, target, now, null);
-      const seq = Number(await recordChange(tx, {
-        accountId: ctx.accountId, entityType: "message", entityId: id, op: "move",
-        meta: { from: trash, to: target },
-      }));
-      return { restoreTo: target, pending: true as const, seq };
-    });
-
-    /* THE DOORBELL, AFTER THE COMMIT — {@link MessageService.ringFiledMailbox}'s measured rule.
-       A restore is the one filing where the wait is most visible: the row has left Trash and has
-       not arrived anywhere, so asking the organizer to come sooner is worth a statement. */
-    if (filed !== null) await this.ringFiledMailbox(ctx, filed);
-
-    return answer;
   }
 
   // ── helpers ──
@@ -1527,95 +1204,16 @@ export class MessageService {
   // Screener's mark-read-on-dismiss and the worker's read-state retro pass write the same
   // intent, and a second copy would be a second answer to when a `\Seen` round trip is owed.
 
-  /**
-   * Upsert folder_state desired=<folder>, pending, us — preserving observedFolder on conflict.
-   *
-   * IT DOES NOT RING THE WORKER'S DOORBELL, and that is a correction rather than an omission:
-   * {@link MessageService.ringFiledMailbox} does, after the transaction commits, for the measured
-   * reason written out there.
-   */
-  private async upsertDesired(
-    tx: Tx, id: string, observed: string, folder: string, now: Date,
-    /**
-     * WHERE THIS MESSAGE CAME FROM, for a delete — and `null` for everything else (mail 0099).
-     *
-     * REQUIRED rather than optional, and that is the whole design of this parameter. The column
-     * has to be CLEARED by every non-Trash desired write, or a message filed out of Trash and
-     * deleted again from somewhere else would restore to the origin of its previous life. An
-     * optional argument makes forgetting the clear the default: a new door would write
-     * `desired_folder` and leave a stale origin behind, and nothing would fail. Required, a
-     * caller cannot write the desired folder without saying what this becomes.
-     */
-    trashedFrom: string | null,
-  ): Promise<void> {
-
+  /** Upsert folder_state desired=<folder>, pending, us — preserving observedFolder on conflict. */
+  private async upsertDesired(tx: Tx, id: string, observed: string, folder: string, now: Date): Promise<void> {
     await tx.insert(folderState).values({
       messageId: id, desiredFolder: folder, observedFolder: observed,
-      lastSetBy: "us", reconcileStatus: "pending", conflict: false, trashedFrom,
+      lastSetBy: "us", reconcileStatus: "pending", conflict: false,
     }).onConflictDoUpdate({
       target: folderState.messageId,
       // observedFolder deliberately omitted → preserved (worker owns it).
-      // `trashedFrom` is deliberately NOT omitted: it is written on every conflict, which is
-      // what makes "every non-trash write clears it" true of an existing row and not only of a
-      // fresh one. See the parameter's own block.
-      set: { desiredFolder: folder, lastSetBy: "us", reconcileStatus: "pending", conflict: false, updatedAt: now, trashedFrom },
+      set: { desiredFolder: folder, lastSetBy: "us", reconcileStatus: "pending", conflict: false, updatedAt: now },
     });
-  }
-
-  /**
-   * ═══ ASK THE ORGANIZER TO COME SOONER — AFTER THE COMMIT, NEVER INSIDE IT ═══════════════════
-   *
-   * A filing decision writes `folder_state` and returns; the organizer performs the IMAP move on
-   * its next turn. What decides how long that takes is the ROTATION — a tick queues one serialized
-   * pass and each mailbox gets one bounded turn in it — so one pending move waited the rest of the
-   * running pass plus its own turn, which is minutes. Folder operations ring this doorbell, a send
-   * rings it, the pull verb rings it, the Not-junk rescue rings it; the move door, the most common
-   * write in the product, did not.
-   *
-   * ── IT WAS INSIDE THE TRANSACTION AND THAT DEADLOCKED. MEASURED, NOT ARGUED ────────────────
-   *
-   * The first version stamped the column inside the deciding transaction, on the ground that a
-   * doorbell for a decision that rolled back is a lie. That reasoning is sound and the cost is
-   * higher: the transaction already holds row locks on `messages` and `folder_state` — and, on the
-   * Screener's verdict, on `rules` and the account's settings — so adding a `mailboxes` row lock at
-   * the end of that chain closed a cycle against the other writers of that row.
-   *
-   * Real Postgres answered `40P01 deadlock detected`, "while updating tuple in relation
-   * `mailboxes`", for two concurrent decisions over ONE mailbox — and one of the two reached its
-   * caller as a 500. Three pg suites caught it; PGlite saw none of it, which is the whole reason
-   * those twins exist.
-   *
-   * ── POST-COMMIT AND BEST-EFFORT, WHICH IS THIS COLUMN'S OWN PRECEDENT ─────────────────────
-   *
-   * `junk-window.ts` already rings the same column this way after the Not-junk rescue, in its own
-   * words: "Best-effort — the poll is the floor beneath it either way." That is exactly the trade.
-   * A single-statement transaction of its own cannot deadlock with anything; a crash between the
-   * commit and the ring costs ONE ROTATION, which is the behaviour that shipped before this
-   * existed; and a throw is swallowed, because a decision that has already committed must not be
-   * reported as failed by the thing that was only trying to make it faster.
-   *
-   * The stamp was never "proof the decision committed" and nothing reads it that way. It says COME
-   * SOONER, and the reconcile pass reads the pending rows itself.
-   */
-  private async ringFiledMailbox(ctx: ServiceContext, mailboxId: string): Promise<void> {
-    try {
-      await ringFilingDoorbell(ctx.db as unknown as Tx, mailboxId, ctx.now());
-    } catch (err) {
-      /* SWALLOWED FOR THE CALLER, NEVER FOR THE LOG. The decision has committed and the poll is
-         the floor beneath this either way — so the throw must not reach the person who filed the
-         message. What it must not do is vanish: a bare `catch {}` here makes a doorbell that
-         THREW and a doorbell that was never rung read identically from outside, which is the
-         shape that turns a slow rotation into an unfalsifiable report. One warn line, and the
-         `err` field rather than a hand-extracted class: this logger derives `errorClass` and the
-         cause at the emit site and refuses the driver's own message by design. */
-      doorbellLog.warn("filing_doorbell_failed", {
-        accountId: ctx.accountId,
-        mailboxId,
-        err,
-        reason: "the filing itself COMMITTED; only the ask-the-organizer-sooner stamp failed, so "
-          + "the move lands on the next rotation instead of within seconds",
-      });
-    }
   }
 
   private validView(v: string): MessageView {
