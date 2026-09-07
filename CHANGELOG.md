@@ -343,9 +343,7 @@ mailbox that is no longer its to organize, and two copies of ohmail filing the s
 thing the whole design exists to prevent. So it asks first, and if the mailbox has moved it stands
 down and says so.
 
-While the server is out of reach, Settings → Mailboxes says so and says how long, instead of
-claiming to be up to date. Nothing is signed out, nothing is deleted, and no password is needed:
-the app is re-dialling on its own, and the row goes back to normal on the first good cycle.
+Nothing is signed out, nothing is deleted, and no password is needed: the app re-dials on its own.
 
 ### Two smaller fixes underneath it
 
