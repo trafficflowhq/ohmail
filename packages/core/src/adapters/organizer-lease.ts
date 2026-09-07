@@ -558,8 +558,77 @@ export const CLAIM_PROTOCOL = 1;
  */
 export const DEFAULT_STALE_AFTER_MS = 10 * 60 * 1000;
 
-/** Who is holding a claim. A closed set — an unrecognised value is foreign-and-unknown. */
+/**
+ * Who is holding a claim, AS THIS BUILD CAN RANK ONE. A closed set — an unrecognised value is
+ * foreign-and-unknown ({@link readClaim}'s parse arm answers `"unknown"` for anything else).
+ *
+ * Deliberately NARROWER than {@link OrganizerKindWritten}: see that type for the asymmetry.
+ */
 export type OrganizerKind = "local" | "cloud";
+
+/**
+ * WHAT A CLAIM WRITER MAY STAMP into `X-Ohmail-Organizer-Kind` — the read set plus `mobile`.
+ *
+ * ── A SEPARATE TYPE, BECAUSE WRITING A KIND AND RANKING ONE ARE DIFFERENT QUESTIONS ──────────
+ *
+ * The phone's engine composition stamps `mobile`, so the value has to be spellable before a phone
+ * can claim at all. Everything that READS a kind must go on refusing it, and that is what makes
+ * the two halves shippable apart:
+ *
+ *  · the parse arm still admits only `local` and `cloud`, so a `mobile` claim reads as `unknown`;
+ *  · `reasonFor` falls through to `organized_elsewhere:unknown`;
+ *  · the database's own closed set (`ORGANIZER_KINDS`, `packages/db/src/organizer-role.ts`, with
+ *    `mailboxes_organized_by_kind_closed` behind it) does not carry `mobile` either.
+ *
+ * So an install carrying this change reads a phone's claim exactly as an install without it does —
+ * a LIVE claim by a peer it cannot rank, which stands down and refuses an authorized takeover.
+ * That is the safe direction, and it is why the reader-side admission is a protocol change with a
+ * migration attached that lands on desktop and Cloud BEFORE any phone is allowed to claim.
+ *
+ * WIDENING {@link OrganizerKind} ITSELF WAS TRIED FIRST AND IS THE WRONG SHAPE: the parse result
+ * flows into the database's narrower column type and into `OrganizerHolderDTO`, so four reader
+ * sites in `apps/worker` and `packages/api` stopped compiling — a type error standing in for the
+ * fact that those sites are the protocol change, not this one. Keeping the read type narrow means
+ * a reader CANNOT be handed `mobile` by the type system, so nothing downstream can quietly start
+ * admitting it ahead of the migration.
+ *
+ * The consequence to state rather than discover: until that lands, a desktop looking at a mailbox
+ * a phone is organizing shows `organized_elsewhere: unknown` rather than naming the phone.
+ */
+export type OrganizerKindWritten = OrganizerKind | "mobile";
+
+/**
+ * THE DIFFERENCE BETWEEN THE TWO SETS IS EXACTLY `"mobile"`, ASSERTED AT COMPILE TIME — AND THIS
+ * ASSERTION IS WRITTEN TO STOP COMPILING THE DAY THE PROTOCOL SLICE LANDS.
+ *
+ * It lives in `src` rather than in a test on purpose. This package's tsconfig includes `src` only,
+ * so a type-level claim parked in `packages/core/test` is never compiled and never guards anything
+ * — a guard that silently does not guard, which this project has paid for before, and why one
+ * package here carries a second compiler program whose only job is to compile its type-level
+ * claims. Here it is part of the build instead.
+ *
+ * What it pins: adding a THIRD writable kind, or widening the readable set by anything other than
+ * `mobile`, fails the build with a type error at this line rather than passing quietly and letting
+ * a reader be handed a value its parse arm answers `"unknown"` for.
+ *
+ * ── AND IT IS THE INSTRUCTION TO DELETE ITSELF ────────────────────────────────────────────
+ *
+ * When the protocol slice teaches {@link OrganizerKind} the `mobile` member — the migration, the
+ * database's `ORGANIZER_KINDS`, the `mailboxes_organized_by_kind_closed` CHECK and the parse arm,
+ * all together — `Exclude<OrganizerKindWritten, OrganizerKind>` collapses to `never`, this
+ * assignment stops compiling, and that failure is the instruction: the two names have become one
+ * set, so delete {@link OrganizerKindWritten}, put `OrganizerKind` back on `LeaseSelf.kind` and
+ * `ClaimInput.kind`, and delete this block. A guard that has to be removed by hand is a guard
+ * nobody removes; this one asks.
+ */
+type WritableOnlyKinds = Exclude<OrganizerKindWritten, OrganizerKind>;
+type OnlyMobileIsWriteOnly = "mobile" extends WritableOnlyKinds
+  ? WritableOnlyKinds extends "mobile"
+    ? true
+    : { error: "a writable organizer kind exists that no reader can rank"; found: WritableOnlyKinds }
+  : { error: "OrganizerKind has learned `mobile` — collapse OrganizerKindWritten and delete this" };
+const _onlyMobileIsWriteOnly: OnlyMobileIsWriteOnly = true;
+void _onlyMobileIsWriteOnly;
 
 /**
  * A HUMAN ASKED FOR THIS INSTALL, AND WHEN.
@@ -659,7 +728,8 @@ export function isMalformed(c: ClaimRecord): c is MalformedClaim {
  */
 export interface LeaseSelf {
   installId: string;
-  kind: OrganizerKind;
+  /** WRITTEN, not ranked — see {@link OrganizerKindWritten}. */
+  kind: OrganizerKindWritten;
   displayName: string;
   /** The nonce of our last write this process, or `null` on a fresh start. */
   lastNonce: string | null;
@@ -804,7 +874,8 @@ function headerSafe(v: string): string {
 
 export interface ClaimInput {
   installId: string;
-  kind: OrganizerKind;
+  /** WRITTEN, not ranked — see {@link OrganizerKindWritten}. */
+  kind: OrganizerKindWritten;
   displayName: string;
   heartbeat: Date;
   claimedAt: Date;
