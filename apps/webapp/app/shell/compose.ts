@@ -257,9 +257,47 @@ export function writeComposeDraft(f: ComposeFields): void {
   }
 }
 
+/**
+ * ── WHICH MESSAGE-IN-PROGRESS THIS COMPOSE SURFACE IS HOLDING ────────────────────────────────
+ *
+ * There is one compose lane for every message this browser will ever write, so a lane is not an
+ * identity for anything. A DRAFT ROW is, once one exists — and a new message has no row until
+ * autosave gives it one, which is exactly the window `send-lock.ts` needs an identity in: a send
+ * whose outcome the server could not confirm has to keep blocking THAT message and nothing else.
+ *
+ * The fingerprint cannot be that identity, because the person is free to edit what they wrote and
+ * it is still the same message. So the identity is a session id minted beside the scratch draft
+ * and cleared with it. That gives it exactly the lifetime the message-in-progress has: it survives
+ * typing and it survives a reload (the scratch buffer does), and it is gone the moment the compose
+ * is delivered or abandoned — which is when the next press is a genuinely new message.
+ *
+ * Owner-keyed and wrapped like every other door in this file. A blocked jar answers `null`, which
+ * callers must read as "this browser cannot name the message", never as "a new one".
+ */
+export const COMPOSE_SESSION_PREFIX = "ohmail.compose.session.";
+
+export function composeSessionKey(owner: string | null = storageOwner()): string {
+  return `${COMPOSE_SESSION_PREFIX}${owner ?? "local"}`;
+}
+
+export function composeSessionId(owner: string | null = storageOwner()): string | null {
+  try {
+    const held = window.localStorage.getItem(composeSessionKey(owner));
+    if (held !== null && held.length > 0) return held;
+    const minted = crypto.randomUUID();
+    window.localStorage.setItem(composeSessionKey(owner), minted);
+    return minted;
+  } catch {
+    return null; // private mode, or a full quota — see the header on what `null` means
+  }
+}
+
 export function clearComposeDraft(owner: string | null = storageOwner()): void {
   try {
     window.localStorage.removeItem(composeDraftKey(owner));
+    // The session id goes with the buffer it names: the message-in-progress is over, so the next
+    // press is a new message and must not inherit this one's identity.
+    window.localStorage.removeItem(composeSessionKey(owner));
     // AND the un-owned key a browser upgraded from an earlier bundle may still hold. This is
     // the only line that touches it: it is drained on the next clear and never read back.
     window.localStorage.removeItem(LEGACY_COMPOSE_DRAFT_KEY);

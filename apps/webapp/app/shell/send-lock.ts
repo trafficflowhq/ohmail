@@ -35,11 +35,16 @@
  * ── WHAT THIS IS NOT ────────────────────────────────────────────────────────────────────────
  *
  * It is not a queue and it is not a retry record — the durable outbox is both of those and owns
- * the verb from the moment `mutate` is called. This holds exactly one fact per lane: *the key this
- * lane's unsettled send is going out under*. It is released on any terminal outcome the session
- * observes (confirmed, failed, unverified), because those are the states where the next press is a
- * genuinely new send and must get a genuinely new key — resuming a spent key would replay the old
- * outcome for ever, which is a wedged Send button rather than a duplicate mail, but is still wrong.
+ * the verb from the moment `mutate` is called. This holds one fact per SEND: *the key that send is
+ * going out under*, with the subject and the fingerprint that say which message it was.
+ *
+ * A lane therefore holds at most one ordinary claim and every UNRESOLVED record it has collected.
+ * That is a change from the one-per-lane rule this paragraph used to state, and the reason is that
+ * the two kinds of record have different lifetimes: an ordinary claim is spent by the next press,
+ * while an unresolved one is the only evidence a message may already be out there and must outlive
+ * every press after it. `confirmed` and `failed` release the record for the message they settle —
+ * resuming a spent key would replay the old outcome for ever, a wedged Send button rather than a
+ * duplicate mail, but still wrong. `unverified` does NOT release: nobody knows what it did.
  *
  * Owner-keyed, wrapped, `"local"`-defaulted: the same three rules `composeDraftKey` states one file
  * over, for the same reasons. A blocked jar means the lock is only as durable as the tab, which is
@@ -60,6 +65,12 @@ export interface SendLock {
   at: number;
   /** The draft row the send names, when it has one — diagnostic, never used to choose a key. */
   draftId: string | null;
+  /**
+   * WHICH MESSAGE THIS SEND IS OF — {@link sendSubject}. Absent on a record written before the
+   * subject existed; such a record parks nothing by subject and is read by fingerprint alone,
+   * which is what it was written under.
+   */
+  subject?: string;
   /** {@link sendFingerprint} of the message this key was minted for. */
   fp: string;
   /**
@@ -100,10 +111,26 @@ export interface SendLock {
 export function sendFingerprint(m: MailSend): string {
   const addrs = (xs: ReadonlyArray<{ address: string }> | undefined): string =>
     (xs ?? []).map((a) => a.address.toLowerCase()).join(",");
+  /**
+   * ── EVERY FIELD THE WIRE CARRIES, AND THE TWO THAT WERE MISSING ─────────────────────────────
+   *
+   * This hashed `html ?? body` and left `threadId` out. Both are the same defect: a field the
+   * SERVER is given that the fingerprint cannot see, so two different messages hash alike.
+   *
+   *  · `html ?? body` — a rich message carries BOTH, and the plain-text half is what a recipient
+   *    whose client refuses HTML actually reads. It also hid the signature on a rich send: the
+   *    signature is appended to `body` and to `html` (`withSignature`), so a plain-text-only
+   *    change to it was invisible.
+   *  · `threadId` — sent, and never hashed.
+   *
+   * `sendFingerprintFieldsCovered` in the test dir is the census that keeps this list equal to the
+   * mutation's own fields, so a field added to the wire cannot quietly stay out of the identity.
+   */
   const parts = [
     m.inReplyTo ?? "", m.forwardOf ?? "", m.draftId ?? "", m.mailboxId ?? "",
+    m.threadId ?? "",
     addrs(m.to), addrs(m.cc), addrs(m.bcc),
-    m.subject ?? "", m.html ?? m.body ?? "", m.sendAt ?? "",
+    m.subject ?? "", m.body ?? "", m.html ?? "", m.sendAt ?? "",
     (m.attachments ?? []).map((a) => `${a.filename}:${a.contentType}:${a.contentBase64.length}`).join("|"),
   ].join("\u0000");
   // FNV-1a, 32-bit, unsigned, base36 — short enough to read in a jar dump and stable across builds.
@@ -294,16 +321,37 @@ export function allSendLocks(nowMs: number, owner: string | null = storageOwner(
  * lane-only defect this file's header describes.
  */
 export interface SendIntent {
-  /** The draft row the send named, or `null` for a compose that never autosaved. */
-  draftId: string | null;
+  /** {@link sendSubject} of the message the key was minted for, when the record names one. */
+  subject: string | undefined;
   /** {@link sendFingerprint} of the message the key was minted for. */
   fp: string;
 }
 
-/** Does this message belong to that unresolved send? See {@link SendIntent} for both halves. */
-export function sendIntentMatches(intent: SendIntent, m: MailSend): boolean {
-  if (intent.fp === sendFingerprint(m)) return true;
-  return intent.draftId !== null && intent.draftId === (m.draftId ?? null);
+/**
+ * ── WHAT A SEND IS *OF* — the identity an unresolved attempt parks ───────────────────────────
+ *
+ * Not the fingerprint. The fingerprint changes the moment the person edits what they wrote, and an
+ * edited reply is the same reply — so keying the park on it was a designed escape from the lock:
+ * type one character into a reply whose outcome nobody knows, press Send, and a fresh key goes out
+ * for a message that may already have been delivered.
+ *
+ * The subject is the thing being answered or written, which an edit does not change:
+ *  · a reply — the parent message;
+ *  · a forward — the message being forwarded;
+ *  · a draft-backed compose — the draft row;
+ *  · a new compose with no row yet — the compose session (`composeSessionId`), which lives exactly
+ *    as long as the message-in-progress does. `null` here means this browser cannot name it, and
+ *    that is NOT "a new message": see the fail-closed arm in `canSend`.
+ *
+ * The fingerprint keeps its own job, which is a different question: whether a stored key may be
+ * RESUMED for the content in hand. Two messages with one subject (an edit) must not share a key;
+ * one message pressed twice must.
+ */
+export function sendSubject(m: MailSend, session: string | null = null): string | undefined {
+  if (typeof m.forwardOf === "string" && m.forwardOf.length > 0) return `fwd:${m.forwardOf}`;
+  if (m.inReplyTo !== null) return `reply:${m.inReplyTo}`;
+  if (m.draftId !== undefined && m.draftId !== null && m.draftId.length > 0) return `draft:${m.draftId}`;
+  return session === null ? undefined : `compose:${session}`;
 }
 
 /**
@@ -326,7 +374,7 @@ export function sendIntentMatches(intent: SendIntent, m: MailSend): boolean {
 export function unverifiedSendIntents(lane: string, owner: string | null = storageOwner()): SendIntent[] {
   return load(owner)
     .filter((r) => r.lane === lane && r.unverified === true)
-    .map((r) => ({ draftId: r.draftId ?? null, fp: r.fp }));
+    .map((r) => ({ subject: r.subject, fp: r.fp }));
 }
 
 /**

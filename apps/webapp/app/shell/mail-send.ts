@@ -86,10 +86,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import type { EngineMessage, MutationResult, OhmailEngine } from "@ohmail/client-engine";
 import type { ToastFn } from "@ohmail/ui";
-import { clearComposeDraft, type MailSend } from "./compose";
+import { clearComposeDraft, composeSessionId, type MailSend } from "./compose";
 import {
   claimSendLock, markSendLockUnverified, readSendLock, releaseSendLock, sendFingerprint,
-  sendIntentMatches, unverifiedSendIntents, type SendIntent,
+  sendSubject, unverifiedSendIntents, type SendIntent,
 } from "./send-lock";
 import { storageOwner } from "./storage-owner";
 import { scheduleLabel } from "./format";
@@ -191,6 +191,19 @@ export interface SendState {
    * the ordinary state and locks nothing.
    */
   unresolved?: ReadonlyArray<SendIntent>;
+  /**
+   * THE SUBJECT OF THE MESSAGE THIS LANE IS HOLDING RIGHT NOW, when the mutation cannot name it.
+   *
+   * A new compose has no draft row until autosave gives it one, so `sendSubject` cannot name it
+   * from the mutation alone — the name lives beside the scratch draft (`composeSessionId`) and the
+   * hook reads it. Reply and forward name themselves and never need this.
+   *
+   * ABSENT and PRESENT are different statements. Present is the answered case. Absent means the
+   * lane's subject could not be read — a jar this browser cannot write, a state assembled by hand
+   * — and a message whose subject nobody can name is not evidence that it is a NEW one, so the
+   * refusal below fails closed on it whenever the lane holds anything unresolved.
+   */
+  session?: string;
 }
 
 export interface MailSendApi {
@@ -485,7 +498,30 @@ export function sendVerb(
  */
 function unresolvedNames(state: SendState, m: MailSend): boolean {
   if (state.unresolved === undefined) return state.phase === "unverified";
-  return state.unresolved.some((i) => sendIntentMatches(i, m));
+  if (state.unresolved.length === 0) return false;
+  /**
+   * BY SUBJECT, NOT BY FINGERPRINT — see {@link sendSubject}. The fingerprint answers "may this
+   * stored key be resumed for this content"; the subject answers "is this the message whose
+   * outcome nobody knows", and only the second may decide a refusal. Keying the refusal on the
+   * fingerprint made an EDIT an escape from the lock, which is a second delivery by construction.
+   */
+  const subject = sendSubject(m, state.session ?? null);
+  /**
+   * FAIL CLOSED, AND THE TWO STATES THIS DISTINGUISHES ARE NAMED. `undefined` here means the
+   * subject could not be read at all — no draft row yet AND no session id (a blocked jar, a
+   * hand-built state). With something unresolved on this lane, a message we cannot name is not
+   * evidence that it is a different one, and the cost of guessing wrong is a duplicate delivery.
+   */
+  if (subject === undefined) return true;
+  /**
+   * A RECORD WITH NO SUBJECT PARKS BY THE ONLY IDENTITY IT HAS, which is the fingerprint it was
+   * written under. Such a record was stored before the subject existed; comparing its absent
+   * subject against a real one is false for every message, so it would have parked NOTHING — a
+   * fail-open direction on a duplicate-delivery guard, and one the record's own docblock does not
+   * claim. Weaker than the subject, and it is what that record can answer.
+   */
+  const fp = sendFingerprint(m);
+  return state.unresolved.some((i) => (i.subject === undefined ? i.fp === fp : i.subject === subject));
 }
 
 /**
@@ -809,6 +845,16 @@ export function useMailSend(
    */
   const owner = useRef<string | null>(storageOwner());
 
+  /**
+   * The compose session id, read only for a message that has no subject of its own. A reply or a
+   * forward never touches storage for this, and neither does a draft-backed compose.
+   */
+  const sessionOf = useCallback(
+    (m: MailSend): string | null =>
+      sendSubject(m, null) === undefined ? composeSessionId(owner.current) : null,
+    [],
+  );
+
   const absorb = useCallback(
     (key: string, m: MailSend, res: MutationResult) => {
       let next = phaseFor(res);
@@ -858,7 +904,7 @@ export function useMailSend(
         // the lane it was written on — `canSend` reads it, and a reload reads it back off disk.
         else {
           markSendLockUnverified(key, fp, owner.current);
-          next = { ...next, unresolved: [{ draftId: m.draftId ?? null, fp }] };
+          next = { ...next, unresolved: [{ subject: sendSubject(m, sessionOf(m)), fp }] };
         }
       }
       // A confirmation is the only outcome that does anything beyond the phase, and `settle`
@@ -896,7 +942,7 @@ export function useMailSend(
        * because the intent is out there under it and a second press would be a second delivery.
        */
     },
-    [settle, setPhase],
+    [settle, setPhase, sessionOf],
   );
 
   const flush = useCallback(async (): Promise<void> => {
@@ -970,7 +1016,11 @@ export function useMailSend(
     // holds every one this owner still has open, including sends this mount never saw.
     const named = [...(base.unresolved ?? [])];
     for (const i of unresolved) if (!named.some((x) => x.fp === i.fp)) named.push(i);
-    return named.length > 0 ? { ...base, unresolved: named } : base;
+    if (named.length === 0) return base;
+    // The lane's own subject rides along, because the compose surface's message cannot name
+    // itself until autosave gives it a row — see `SendState.session`.
+    const session = key === COMPOSE_SEND_KEY ? composeSessionId(owner.current) : null;
+    return session === null ? { ...base, unresolved: named } : { ...base, unresolved: named, session };
   }, [states]);
 
   const send = useCallback(
@@ -1001,10 +1051,16 @@ export function useMailSend(
        */
       const now = Date.now();
       const fp = sendFingerprint(m);
+      const subject = sendSubject(m, sessionOf(m));
       const resumed = readSendLock(key, fp, now, owner.current);
       const sendKey = resumed ?? crypto.randomUUID();
       if (!resumed) {
-        claimSendLock({ v: 1, lane: key, key: sendKey, at: now, draftId: m.draftId ?? null, fp }, owner.current);
+        claimSendLock({
+          v: 1, lane: key, key: sendKey, at: now, draftId: m.draftId ?? null, fp,
+          // Recorded at the press, from the mutation AS SENT — the same value `canSend` compares
+          // against, so the UI and the wire cannot come to disagree about which message this is.
+          ...(subject !== undefined ? { subject } : {}),
+        }, owner.current);
       }
 
       locked.current.add(key);
@@ -1031,7 +1087,7 @@ export function useMailSend(
           setPhase(key, { phase: "failed", reason: String(err) });
         });
     },
-    [engine, stateFor, setPhase, absorb, arm],
+    [engine, stateFor, setPhase, absorb, arm, sessionOf],
   );
 
   return useMemo(
