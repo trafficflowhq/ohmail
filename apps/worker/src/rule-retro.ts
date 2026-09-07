@@ -542,9 +542,26 @@ export async function ruleRetroPass(
      * freeze fix does not add one.
      */
     const outside = aLiveMailboxIsOutsideTheWalk(row.accountId);
+    /* ── THE STAMP IS BOUND AS AN ISO STRING WITH A CAST, AND THAT IS NOT COSMETIC ────────────
+     *
+     * `${now}` inside a raw `sql` fragment binds a JS `Date` with no column to take its type
+     * from. `drizzle`'s column-aware path (`set({ retroDoneAt: now })`) knows the column is
+     * `timestamptz` and serializes it; a fragment does not, and the real driver then refuses the
+     * value outright — `postgres@3`'s `bytes.js`: *The "string" argument must be of type string or
+     * an instance of Buffer or ArrayBuffer. Received an instance of Date*.
+     *
+     * PGlite accepted it, so the whole PGlite suite was green while every pg file that reaches
+     * this statement failed (7 of them, in `rule-retro-body.pg` and `rule-retro-subject.pg`). This
+     * is the "PGlite green means nothing for transactional code" rule with a different edge: the
+     * two backends disagree about PARAMETER SERIALIZATION, not about transactions, and a fragment
+     * is where that disagreement becomes reachable.
+     *
+     * The `null` in the cursor arm needs no cast — it is a literal, and Postgres takes its type
+     * from the other arm (`retro_cursor`, uuid).
+     */
     const [decided] = await db.update(rulesTbl)
       .set({
-        retroDoneAt: sql`case when ${outside} then ${rulesTbl.retroDoneAt} else ${now} end`,
+        retroDoneAt: sql`case when ${outside} then ${rulesTbl.retroDoneAt} else ${now.toISOString()}::timestamptz end`,
         retroCursor: sql`case when ${outside} then null else ${rulesTbl.retroCursor} end`,
       })
       .where(and(eq(rulesTbl.id, row.id), isNull(rulesTbl.retroDoneAt)))
