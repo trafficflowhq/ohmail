@@ -83,6 +83,24 @@ export interface ConnectAuth {
   fetch: (url: string, init?: RequestInit) => Promise<Response>;
 }
 
+/**
+ * THE ENGINE RUNNING IN THIS APP — present only on a standalone install, absent on every other.
+ *
+ * A paired phone talks to a desktop or to the hosted service over the network. A STANDALONE phone
+ * organizes its own mailbox, and the engine doing that runs in this same runtime — so there is no
+ * network hop, and the client's transport is a function call.
+ *
+ * Two members, and they are the whole seam: `handle` is `Request → Response` over the engine's own
+ * local API, and `sessionToken` is the per-launch bearer it mints for the shell that started it.
+ * The adapter is composed against both exactly as it is composed against a real server's, which is
+ * the point — the client does not learn a second way to talk to a mailbox.
+ */
+export interface LocalEngineDoor {
+  handle(req: Request): Promise<Response>;
+  /** In memory, per launch. Never stored, never sent anywhere but into this same process. */
+  readonly sessionToken: string;
+}
+
 /** What the pairing seam — or the tests, over a static token — supplies. */
 export interface ConnectConfig {
   /** `https://mail.example.org`, `http://192.168.1.20:8028`, … — no trailing slash needed. */
@@ -120,7 +138,35 @@ export interface ConnectConfig {
   accountId: string;
   /** Override the identity probe's deadline (tests). Absent, {@link IDENTITY_PROBE_DEADLINE_MS}. */
   identityDeadlineMs?: number;
+  /**
+   * THE STANDALONE ARM: the engine in this app, instead of a server on the network.
+   *
+   * Present ⇒ this install organizes its own mailbox and the transport is a call into
+   * {@link LocalEngineDoor.handle}. Absent ⇒ every existing door is unchanged, which is the
+   * property that matters most here: the three doors this app already has must not acquire a
+   * branch, and the diff below is one `if` and one pair of seams.
+   *
+   * `origin` must be {@link LOCAL_ENGINE_ORIGIN} when this is present, and is REFUSED otherwise
+   * rather than corrected. A standalone install whose mirror was keyed by some other string would
+   * silently hold a second copy of the same mailbox, and a caller passing both a local engine and a
+   * remote address has not decided which one it is talking to.
+   */
+  localEngine?: LocalEngineDoor;
 }
+
+/**
+ * THE ADDRESS OF AN ENGINE THAT IS NOT ON A NETWORK.
+ *
+ * Absolute because the adapter composes URLs against it and a relative base has no meaning in a
+ * runtime with no document. The host is a name that cannot resolve anywhere — nothing dials it, the
+ * transport never reaches a socket, and a request that somehow escaped this seam would fail rather
+ * than leave the device.
+ *
+ * It is also the mirror's owner key on this door (`mirrorOwnerKey(origin, accountId)`), so it is a
+ * fixed string rather than a generated one: a key that varied per launch would fork one install's
+ * copy of its own mailbox on every start.
+ */
+export const LOCAL_ENGINE_ORIGIN = "http://sidecar";
 
 /**
  * HOW LONG THE IDENTITY PROBE MAY HOLD THE DRAIN ROUTES SHUT. Every sync chains on the
@@ -512,19 +558,41 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
       reason: refuse("bootApiBaseOffOrigin", apiBase, origin),
     };
   }
+  const local = config.localEngine;
+  if (local !== undefined && origin !== LOCAL_ENGINE_ORIGIN) {
+    return {
+      kind: "refused",
+      reason:
+        `a standalone install's engine is reached at "${LOCAL_ENGINE_ORIGIN}", not at ` +
+        `"${origin}" — a caller passing both a local engine and a remote address has not decided ` +
+        "which of the two it is talking to",
+    };
+  }
   const token = config.token?.trim() ?? "";
   const accountId = config.accountId.trim();
-  if ((!token && !config.auth) || !accountId) {
+  /* The local door mints its own per-launch bearer, so a standalone install needs no credential
+     from a caller — it needs an account id, which still keys the mirror. */
+  if ((!token && !config.auth && local === undefined) || !accountId) {
     return { kind: "refused", reason: refuse("bootNeedsCredential") };
   }
   // The credential, behind two seams (headers + fetch). The manager supplies both; the
   // static path composes the same shapes from the pasted token, so everything below is one
   // code path and the rotating credential cannot diverge from the tested one.
-  const authHeaders = config.auth?.headers ?? (() => ({ authorization: `Bearer ${token}` }));
-  const fetchImpl =
-    config.auth?.fetch ??
-    deps.fetch ??
-    (globalThis.fetch.bind(globalThis) as NonNullable<MobileEngineDeps["fetch"]>);
+  const authHeaders = local !== undefined
+    /* READ PER REQUEST, like the rotating credential's: the engine's token is stable for a launch,
+       and stamping it per request rather than capturing it keeps this seam identical in shape to
+       the one a paired door uses. */
+    ? (): Record<string, string> => ({ authorization: `Bearer ${local.sessionToken}` })
+    : config.auth?.headers ?? (() => ({ authorization: `Bearer ${token}` }));
+  const fetchImpl = local !== undefined
+    /* THE WHOLE TRANSPORT, on this door: a function call. `new Request(url, init)` because the
+       engine's door is written against the same `Request`/`Response` pair the network one is —
+       that is what lets the desktop's own API serve a client in this app without a second
+       protocol. */
+    ? (async (url: string, init?: RequestInit): Promise<Response> => local.handle(new Request(url, init)))
+    : config.auth?.fetch ??
+      deps.fetch ??
+      (globalThis.fetch.bind(globalThis) as NonNullable<MobileEngineDeps["fetch"]>);
 
   // The claimed id is checked against the credential wherever the server can be asked — see
   // {@link verifyAccountId} — but NOT here, and not awaited: the probe rides behind the
@@ -533,8 +601,23 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
   // settle OPENS the drain routes (`identityCleared` — the guard above holds them shut until
   // then), so the caller's sequence is verify → drain, and a drain fired early is a loud
   // refusal rather than a mirror a wrong bearer could move.
-  let identityCleared = false;
+  /**
+   * ON THE STANDALONE DOOR THE PROBE IS ALREADY ANSWERED, and skipping it is the correct answer
+   * rather than a shortcut.
+   *
+   * The probe exists to catch a bearer that belongs to a DIFFERENT account than the one the mirror
+   * is keyed by — a remote server's answer against a locally stored id. A standalone install has no
+   * remote server: the engine in this runtime minted the bearer for this launch, and there is
+   * exactly one account. Running it anyway would ask the local door a question about itself and
+   * hold the drain routes shut for the full eight-second deadline on every launch when it had no
+   * route to answer with.
+   *
+   * The per-entity account guard stays armed either way — that is the rule every door lives under
+   * permanently, and it is what still refuses a page naming another account's mail.
+   */
+  let identityCleared = local !== undefined;
   const verifyIdentity = async (): Promise<IdentityVerdict> => {
+    if (local !== undefined) return { kind: "unverified" };
     // BOUNDED — see {@link IDENTITY_PROBE_DEADLINE_MS}: a probe the server accepts and never
     // answers times out into `unverified` (the timer is cleared when the probe wins).
     const deadline = config.identityDeadlineMs ?? IDENTITY_PROBE_DEADLINE_MS;
