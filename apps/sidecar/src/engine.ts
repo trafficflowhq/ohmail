@@ -5871,8 +5871,23 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
     }
     log("local_roster_attached", {
       count: runtimes.size,
-      reason: "every mailbox this install holds has a runtime: its own connection, its own poll "
-        + "timer and its own organizer claim",
+      /* ── IT COUNTS RUNTIMES, AND IT USED TO CLAIM THEY HELD CLAIMS ────────────────────────
+       *
+       * The sentence ended "…and its own organizer claim", and attaching does not dial — `start()`
+       * is what opens connections, as the block above this loop says. So the count is runtimes, and
+       * the clause was printed verbatim for a mailbox this install is a READER of: one that has no
+       * claim in `ohmail/_meta` and, while its row says `reader`, never will.
+       *
+       * It cost a release investigation. An empty `ohmail/_meta` beside `count: 1` was read as this
+       * install believing it held a claim, because this line said so, and the search went looking
+       * for a gate that had refused to write rather than for the row that says who organizes. A log
+       * line that overstates is the same fault as a comment that overstates, and dearer, because it
+       * is what somebody reads at three in the morning with no code in front of them.
+       *
+       * Whether this install organizes a mailbox is the lease's answer, per mailbox, and it has its
+       * own lines. */
+      reason: "every mailbox this install holds has a runtime: its own connection and its own poll "
+        + "timer; whether it also organizes that mailbox is the lease's answer, logged per mailbox",
     });
 
     /* THE REPAIRS RUN AFTER THE ATTACH, and the order is the whole of whether they ever fire.
