@@ -1,4 +1,8 @@
 import type { CreateMailboxBody, UpdateMailboxBody } from "@trafficflow/services/mail";
+/* The mirror read (mail 0093). From `/mail`, the LOCAL barrel — this route is mounted by the
+   desktop engine too, and naming the root barrel here would pull the hosted schema into a shipped
+   app (the rule at the top of `packages/db/src/index.ts`). */
+import { readMailboxProfile } from "@trafficflow/services/mail";
 import {
   ProfileUnavailableError, readOrganizerProfile, type ProfileReadResult,
 } from "@trafficflow/core/adapters/organizer-profile";
@@ -182,6 +186,33 @@ export const mailboxRoutes: Route[] = [
     handler: async (req, deps, params) => {
       const dto = await mailbox(deps).get(serviceContext(deps, req), params.id!);
       return jsonResponse(dto);
+    },
+  },
+  {
+    /**
+     * §5.1 — THE SETTINGS THAT ARE ACTUALLY IN FORCE ON A MAILBOX THIS INSTALL READS (mail 0093).
+     *
+     * On a mailbox another install organizes, this install's own responder/rules/window/signature
+     * rows are NOT the answer — the ones in force are in that install's published document, and
+     * rendering the local copies is ruling 6's Critical: a reader was shown its own dead rows as
+     * though they were live.
+     *
+     * `read`, and it means it: one indexed row out of `mailbox_profile_mirror`, written by the
+     * reader's own cycle. NO IMAP and deliberately no per-request dial — `profile-import` dials and
+     * spends a slot from the per-mailbox connection cap, which is the wrong price for opening a
+     * settings pane, and it would make this route's cost class a lie.
+     *
+     * The four states it distinguishes (this install organizes / a document is mirrored / a holder
+     * is known but nothing read yet / nobody known) are argued in `readMailboxProfile`. They must
+     * not collapse: an absent document and "this install owns the settings" want different copy,
+     * and a `null` meaning both is the failure this repository has already shipped once.
+     */
+    method: "GET",
+    pattern: "/mailboxes/:id/profile",
+    cost: "read",
+    handler: async (req, deps, params) => {
+      const view = await readMailboxProfile(serviceContext(deps, req), params.id!);
+      return jsonResponse(view);
     },
   },
   {

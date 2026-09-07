@@ -149,8 +149,18 @@ export {
   MessageService, messageService, MARK_SEEN_MAX_IDS, BODIES_IDS_MAX,
   type MessageView, type ListMessagesOptions, type MessagePatchBody,
   type MarkSeenBody, type MarkSeenResult,
-  type MoveBody, type MoveIdempotency, type MoveResult, type PatchResult,
+  type MoveBody, type MoveIdempotency, type MoveResult, type MoveRequestResult, type PatchResult,
 } from "./message-service.js";
+/* THE READER'S DISPATCH AND ITS MIRROR READ (mail 0093). In the LOCAL barrel because the doors
+   that use them are mounted by the desktop engine as well as by the hosted API. */
+export {
+  routeMailboxWrite, writeReaderRequest, planAccountFanOut,
+  type MailboxRoute, type PendingRequest,
+  type AccountFanOut, type FanOutTarget, type FanOutRefusal,
+} from "./reader-request.js";
+export {
+  readMailboxProfile, type MailboxProfileView,
+} from "./profile-mirror-read.js";
 export {
   ThreadService, threadService, THREAD_MERGE_MAX_IDS,
   type ThreadPatchBody, type ThreadRenameBody, type ThreadMergeBody,
