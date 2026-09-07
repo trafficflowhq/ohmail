@@ -1164,8 +1164,25 @@ export function DesktopMailboxes(
     /* WHAT THIS ROW IS, in the vocabulary the block renders. `released` is not merely "reader
        with no holder": a mailbox nobody has ever agreed to organize is a fresh connection whose
        next screen is the agreement, and putting "nothing organizes this" over it would be a
-       sentence about a state it was never in. `claimable` keeps that rule. */
-    const holder = Boolean(m.organizedBy && (m.organizedBy.kind || m.organizedBy.name));
+       sentence about a state it was never in. `claimable` keeps that rule.
+
+       ── AND "HOLDER" IS THE OBJECT'S PRESENCE, NOT `kind || name` ────────────────────────────
+       This read `Boolean(m.organizedBy && (m.organizedBy.kind || m.organizedBy.name))`, so an
+       `organizedBy` OBJECT whose `kind` and `name` are both empty — a peek that read a lease it
+       could not attribute, a claim written before those columns — was classified `released`, and
+       this pane said "Nothing organizes this mailbox" over a row that has a holder record while
+       the browser's rows said "Organized by another install" for the same wire. The holder
+       columns travel together and the projection emits the object only when one of them was
+       written (`mailbox-service.ts`, the `organizedBy` field: "NULL as a whole when nothing is
+       named, rather than an object of three nulls"), so the object's PRESENCE is the recorded
+       -holder fact, and `readerHolder` is the one place that says so.
+
+       NOT the routing predicate. `deriveOnboardingStep`'s row 3 keeps its own `kind || name`
+       test on purpose — it decides whether to put a whole SCREEN in front of somebody, and its
+       comment argues that case. This decides which of three sentences is true on a row that is
+       already on screen. Same fact, two questions, and only this one was disagreeing with the
+       browser. */
+    const holder = readerHolder(m.organizedBy) !== "nobody";
     /* THE LEGACY ARM IS TESTED BEFORE THE HOLDER, and getting that order wrong is not cosmetic.
        A pre-role engine records a stand-down as `disabled` + a reason and carries NO holder
        columns at all, so it looks exactly like a mailbox nobody organizes — and it is the
@@ -1229,14 +1246,14 @@ export function DesktopMailboxes(
                      fact somebody here needs, which is that nothing is organizing the mailbox
                      and which press changes that.
 
-                     `readerHolder` and not `organizedBy?.since`: the discriminator is whether a
-                     holder was RECORDED at all, and the wire emits the object only when one of
-                     its columns was written. A row that carries a `since` and nothing else has a
-                     real date, and keeps the dated sentence. Shared with both `FirstRun`
-                     surfaces so one state cannot be described three ways. */
-                  : readerHolder(m.organizedBy) === "nobody"
-                    ? t("readerNobodyReads")
-                    : t("readerSinceUnknown", { since: day(m.organizedBy?.since ?? null) }))
+                     UNCONDITIONAL, and it was a `readerHolder(...) === "nobody"` test until the
+                     classification above started using the same helper. `released` now MEANS no
+                     holder was recorded — that is the one thing it is — so the other side of that
+                     test could not be reached by any row, and a condition whose contrary state
+                     cannot occur is read by the next person as a guarantee the code is keeping.
+                     A row that carries a `since` and nothing else IS a holder now, is classified
+                     `reader` above, and keeps its dated sentence there. */
+                  : t("readerNobodyReads"))
               /* ── A LEGACY STAND-DOWN IS FROZEN, AND SAYING IT READS WOULD CONTRADICT ITS OWN ROW ──
                  The modern reader is CONNECTED AND SYNCING, which is what every sentence below is
                  about. A pre-role engine's stand-down did the opposite: it closed the IMAP handle and
@@ -1253,6 +1270,20 @@ export function DesktopMailboxes(
                    that organized for eight months and stopped this morning was reported absent for
                    eight months. The fact worth stating is that it stopped. */
                 ? t("readerStopped", { name: holderOf(m) })
+                /* ── NO DATE LINE WITHOUT A DATE, and the em dash is why this arm exists ───────
+                   `day(null)` is "—" deliberately: these strings are interpolated into sentences
+                   and `format.ts` argues that a dash reads better than "Invalid Date". That is
+                   right for a stamp somebody hovers and wrong for the one clause that PROMISES a
+                   date — a real holder whose `since` column was never written announced "Since —
+                   · ohmail Cloud", which reads as a fault in the mailbox. Every arm below opens
+                   with the date, so with no date there is nothing for any of them to open with,
+                   and the holder's name is not lost with it: the label carries it.
+
+                   ABOVE the kind and BELOW `readerStopped`, which carries no date by design and
+                   would lose its own sentence to this one. The browser's two reader surfaces
+                   select the same arm in the same position, from the same key. */
+                : !m.organizedBy?.since
+                ? t("readerReadsOnly")
                 /* EVERY KIND ON ITS OWN BRANCH. `unknown` is a legal kind and a reader may have no
                    holder recorded at all, and both used to fall through to the CLOUD sentence — so a
                    row whose wire says nothing about Cloud announced "ohmail Cloud". The third

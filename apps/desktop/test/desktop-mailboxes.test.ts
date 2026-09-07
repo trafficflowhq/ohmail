@@ -1552,6 +1552,35 @@ describe("the reader row's three states, and the one that had no holder at all",
   const mailboxCopy = (messages as unknown as { mailboxes: Record<string, string> }).mailboxes;
   /** The sentence every "since" line ends with — the half that must not survive state (a). */
   const READS_MAILBOX = mailboxCopy.readerSinceUnknown!.replace("Since {since}. ", "");
+  /** How every dated sentence on this pane opens. Absent from both holder-less states. */
+  const SINCE = "Since ";
+
+  /**
+   * THE ROW'S OWN LABEL AND DESCRIPTION, exactly. `toContain` cannot separate the undated
+   * sentence from the dated one — `readerReadsOnly` IS `readerSinceUnknown` minus its date
+   * clause, so it is a substring of it and a containment check passes for both states.
+   */
+  const orgRow = (el: HTMLElement): { label: string; description: string } => {
+    const node = el.querySelector(".mbx-org .set-banner");
+    if (!node) {
+      throw new Error("no organizer banner on the row; banners: "
+        + [...el.querySelectorAll(".set-banner .lab b")]
+          .map((b) => JSON.stringify(b.textContent)).join(", "));
+    }
+    return {
+      label: (node.querySelector(".lab b")?.textContent ?? "").trim(),
+      description: (node.querySelector(".lab span")?.textContent ?? "").trim(),
+    };
+  };
+
+  /** A reader row, with the holder columns each case is about. */
+  const readerWith = (organizedBy: MailboxFacts["organizedBy"]): MailboxFacts => ({
+    ...MAILBOX,
+    organizerRole: "reader",
+    organizedBy,
+    organizerState: "held",
+    organizeConsentedAt: null,
+  });
 
   it("(a) NOBODY holds it → no date line, and the press is named", async () => {
     FACTS = [{
@@ -1599,5 +1628,68 @@ describe("the reader row's three states, and the one that had no holder at all",
     expect(said).toContain(mailboxCopy.readerLabel!.replace("{name}", "omarchy"));
     expect(said).toContain(READS_MAILBOX);
     expect(said).not.toContain(mailboxCopy.readerNobodyReads!);
+  });
+
+  it("(a) CONTROL: the no-holder row carries the READS SENTENCE, not just the label", async () => {
+    /* Asked at review whether this pane shows only the label. It does not: the banner's
+       description is the same sentence the browser's rows render, from the same key. Asserted by
+       EQUALITY on the rendered node so "it is in there somewhere" cannot stand in for it. */
+    FACTS = [readerWith(null)];
+    expect(orgRow(await render("local"))).toEqual({
+      label: mailboxCopy.stateNotOrganized!,
+      description: mailboxCopy.readerNobodyReads!,
+    });
+  });
+
+  it("a holder recorded with NO kind and NO name is a holder, not 'nothing organizes this'", async () => {
+    /* THE CLASSIFICATION DEFECT. `organizedBy` exists — something wrote a holder column — and
+       both `kind` and `name` are empty, which the old `kind || name` test read as "no holder".
+       The pane then said "Nothing organizes this mailbox" over a row that has one, and offered
+       the takeover as the primary verb on a mailbox somebody else is organizing. */
+    FACTS = [readerWith({ kind: null, name: null, since: "2026-08-30T09:00:00.000Z" })];
+    const row = orgRow(await render("local"));
+    expect(row.label, "a recorded holder was reported as nobody")
+      .toBe(mailboxCopy.readerLabel!.replace("{name}", mailboxCopy.readerHolderUnknown!));
+    expect(row.label).not.toBe(mailboxCopy.stateNotOrganized!);
+    expect(row.description, "the holder-less sentence over a row with a holder")
+      .not.toBe(mailboxCopy.readerNobodyReads!);
+    expect(row.description, "a recorded date was dropped").toContain(SINCE);
+    expect(row.description, "the date printed as an em dash").not.toContain("Since —");
+  });
+
+  it("a real holder with NO DATE gets the undated sentence, not an em dash", async () => {
+    /* THE DATE DEFECT, and it is the em dash the walk photographed one row over: `day(null)` is
+       "—" by design (it is interpolated into sentences, and a dash is readable), which is right
+       for a tooltip and wrong for the one clause that promises a date. */
+    FACTS = [readerWith({ kind: "cloud", name: "ohmail Cloud", since: null })];
+    let row = orgRow(await render("local"));
+    expect(row.description, "a date line with no date in it").not.toContain(SINCE);
+    expect(row).toEqual({
+      label: mailboxCopy.readerLabel!.replace("{name}", "ohmail Cloud"),
+      description: mailboxCopy.readerReadsOnly!,
+    });
+
+    FACTS = [readerWith({ kind: "local", name: "omarchy", since: null })];
+    row = orgRow(await render("local"));
+    expect(row.description, "a date line with no date in it").not.toContain(SINCE);
+    expect(row).toEqual({
+      label: mailboxCopy.readerLabel!.replace("{name}", "omarchy"),
+      description: mailboxCopy.readerReadsOnly!,
+    });
+  });
+
+  it("CONTROL: a DATED holder keeps its date, on both kinds", async () => {
+    // The other half of the rule: the undated arm is chosen by the date's absence and nothing
+    // else, so a row that has one still opens with it.
+    for (const kind of ["cloud", "local"] as const) {
+      const name = kind === "cloud" ? "ohmail Cloud" : "omarchy";
+      FACTS = [readerWith({ kind, name, since: "2026-08-30T09:00:00.000Z" })];
+      const row = orgRow(await render("local"));
+      expect(row.label).toBe(mailboxCopy.readerLabel!.replace("{name}", name));
+      expect(row.description, `the ${kind} holder lost its date`).toContain(SINCE);
+      expect(row.description).not.toContain("Since —");
+      expect(row.description, `the ${kind} holder took the undated sentence`)
+        .not.toBe(mailboxCopy.readerReadsOnly!);
+    }
   });
 });

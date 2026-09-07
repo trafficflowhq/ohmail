@@ -723,6 +723,24 @@ export function FirstRun({
    */
   const held = readerHolder(facts.mailbox?.organizedBy);
   /**
+   * IS THERE A DATE TO PRINT — the second fact the two reader surfaces below select on, and the
+   * second one that was being answered by something else.
+   *
+   * `AppShell` withholds {@link FirstRunProps.organizedSince} when the DTO names no instant, and
+   * says so where it mounts this screen: the sites are to "keep their own 'we do not know' arm
+   * instead of printing an empty one". They had no such arm. Both interpolated
+   * `organizedSince ?? ""` into a template that opens with the date, so a real holder whose
+   * `since` column was never written rendered "Since . This computer reads the mailbox…" and
+   * "Since  · ohmail Cloud." — a sentence that reads as a fault in the mailbox rather than as
+   * missing copy, and the same shape as the em dash the desktop pane printed for it.
+   *
+   * The rule is the holder's rule one field over: no date line where there is no date.
+   * `readerReadsOnly` is the dated sentence with its date clause removed, so the two states
+   * cannot come to say different things about what this computer actually does. The holder's NAME
+   * is not lost with the date — the label carries it, on every arm.
+   */
+  const dated = Boolean(organizedSince);
+  /**
    * IS THIS INSTALL THE ORGANIZER — the one fact the summary is allowed to report work on.
    *
    * `!== "reader"` and not `=== "organizer"`, on {@link OnboardingMailbox.organizerRole}'s own
@@ -1078,13 +1096,19 @@ export function FirstRun({
                      deliberately not persisted. The copy dropped the placeholder and this kept
                      feeding it, which is a prop with a caller and no consumer. */
                   ? tm("readerStopped", { name: holderName(facts) ?? tm("readerHolderUnknown") })
-                  : held === "unnamed"
-                    ? tm("readerSinceUnknown", { since: organizedSince ?? "" })
-                    : facts.mailbox?.organizedBy?.kind === "cloud"
-                      ? tm("readerSinceCloud", { since: organizedSince ?? "" })
-                      : tm("readerSinceLocal", {
-                        since: organizedSince ?? "", name: holderName(facts)!,
-                      })}
+                  /* UNDATED BEFORE THE THREE DATED ONES, and ahead of the kind: every arm below
+                     opens with the date, so with no date there is nothing for any of them to
+                     open with. `readerStopped` stays above this — it carries no date by design
+                     and would lose its own sentence to this one. */
+                  : !dated
+                    ? tm("readerReadsOnly")
+                    : held === "unnamed"
+                      ? tm("readerSinceUnknown", { since: organizedSince ?? "" })
+                      : facts.mailbox?.organizedBy?.kind === "cloud"
+                        ? tm("readerSinceCloud", { since: organizedSince ?? "" })
+                        : tm("readerSinceLocal", {
+                          since: organizedSince ?? "", name: holderName(facts)!,
+                        })}
               />
               <SettingsChoice
                 name={`${ids}-elsewhere`} ariaLabel={t("elsewhereTitle")} value={elsewhereChoice}
@@ -1417,13 +1441,17 @@ export function FirstRun({
                        exist, one line under a sentence saying this computer moves nothing. */
                     description={held === "nobody"
                       ? tm("readerNobodyReads")
-                      : held === "unnamed"
-                        ? tm("readerSinceUnknown", { since: organizedSince ?? "" })
-                        : facts.mailbox?.organizedBy?.kind === "cloud"
-                          ? tm("readerSinceCloud", { since: organizedSince ?? "" })
-                          : tm("readerSinceLocal", {
-                            since: organizedSince ?? "", name: holderName(facts)!,
-                          })}
+                      /* THE SAME UNDATED ARM AS THE BANNER, in the same position. This row has no
+                         stopped arm to sit under, so it is second. */
+                      : !dated
+                        ? tm("readerReadsOnly")
+                        : held === "unnamed"
+                          ? tm("readerSinceUnknown", { since: organizedSince ?? "" })
+                          : facts.mailbox?.organizedBy?.kind === "cloud"
+                            ? tm("readerSinceCloud", { since: organizedSince ?? "" })
+                            : tm("readerSinceLocal", {
+                              since: organizedSince ?? "", name: holderName(facts)!,
+                            })}
                   />
                   <SettingsRow label={t("doneReaderClaim")} description={t("doneReaderClaimWhy")} />
                 </>

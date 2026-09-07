@@ -2201,6 +2201,7 @@
     "readerSinceCloud": "Since {since} · ohmail Cloud. This computer reads the mailbox; it moves nothing and screens nothing.",
     "readerSinceLocal": "Since {since} · {name}. This computer reads the mailbox; it moves nothing and screens nothing.",
     "readerSinceUnknown": "Since {since}. This computer reads the mailbox; it moves nothing and screens nothing.",
+    "readerReadsOnly": "This computer reads the mailbox; it moves nothing and screens nothing.",
     "readerLabelLegacy": "Organized by another install",
     "readerNobodyReads": "This computer reads it; it moves nothing and screens nothing until you press Organize here.",
     "readerLegacyStandDown": "This copy of ohmail stopped opening the mailbox when it stood down, so it is not reading it either. Organizing here again takes a restart.",

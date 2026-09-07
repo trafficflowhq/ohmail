@@ -932,10 +932,16 @@ and we have no name for them" were being used for "nothing organizes this at all
 were decided by the holder's name being missing. Whether a holder exists is now read from whether
 one was recorded, and the state where none was gets its own sentence: nothing organizes this
 mailbox, this computer reads it and moves and screens nothing, and pressing Organize here changes
-that. No date line is shown where there is no date. A mailbox another install does organize reads
-exactly as it did, named or unnamed. The setup summary, the "already organized elsewhere" screen and
-Settings → Mailboxes take that sentence from one place, so they cannot describe one state three
-ways.
+that. The setup summary, the "already organized elsewhere" screen and Settings → Mailboxes take
+that sentence from one place, so they cannot describe one state three ways.
+
+The same rule now covers a mailbox that IS organized elsewhere. No date line is shown where there
+is no date: an organizer whose start date was never recorded says what this computer does with the
+mailbox and stops there, instead of opening on a date printed as a dash or as nothing at all. And
+an organizer recorded without a kind or a name is an organizer — the desktop read that record as
+nobody and offered to take a mailbox it said nothing was organizing, while the same record in the
+browser was named. Both now read it the same way. An organizer that is known, with a date, reads
+exactly as it did.
 
 ## [0.14.0] — 2026-09-03
 
