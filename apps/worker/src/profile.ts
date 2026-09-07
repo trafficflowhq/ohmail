@@ -3,12 +3,14 @@ import {
   PROFILE_FOUND_AUDIT_ACTION, auditLog, latestProfileFoundMarker, profileImportResolutionExists,
   type Tx,
 } from "@trafficflow/db";
+import { describeError } from "@trafficflow/core";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import { serializeOrganizerProfile } from "@trafficflow/core/adapters/organizer-profile-store";
 import {
   PROFILE_VERSION, ProfileUnavailableError, isEmptyProfilePayload, makeProfileDoc, profileFingerprint,
   readOrganizerProfile, writeOrganizerProfile,
-  type OrganizerProfileDoc, type OrganizerProfilePayload, type ProfileIo, type ProfileReadResult,
+  type OrganizerProfileDoc, type OrganizerProfilePayload, type ProfileIo, type ProfileOp,
+  type ProfileReadResult,
 } from "@trafficflow/core/adapters/organizer-profile";
 
 /**
@@ -183,8 +185,99 @@ export class OrganizerProfileSync {
   /** When the preflight last completed a read — the seeded never-owned re-probe's clock. */
   private lastPreflightAt = 0;
   private inFlight = false;
+  /**
+   * THE FAILURE THIS ATTACHMENT HAS ALREADY REPORTED, or null while nothing is wrong.
+   *
+   * Both arms below run on the DRAIN's cadence — fifteen seconds on a desktop install — and both
+   * used to log `organizer_profile_write_failed` from a per-tick catch. A condition that lasts
+   * therefore logged for as long as it lasted: measured on the release candidate, 2026-09-07, a
+   * mailbox taken over from another door produced `op: "list_profiles"` every fifteen seconds
+   * for as long as anybody watched. A line that fires on a cadence is a line people learn to
+   * skip, and the next real profile fault then arrives in a log already full of this one.
+   *
+   * So the line says a STATE. `(op, errorClass)` is the state's identity: a different operation
+   * or a different class is a DIFFERENT fault and is worth saying, which is what keeps the latch
+   * from becoming a mute button. Both are read the way the logger reads them — `ProfileOp` off
+   * the engine's own error, the class through {@link describeError} — so this cannot come to
+   * disagree with the line it suppresses.
+   */
+  private lastFailure: { op: ProfileOp | null; errorClass: string } | null = null;
+  /**
+   * HOW MANY FAILURES THIS OBJECT HAS NOTED, ever. Not a metric — a NESTING GUARD.
+   *
+   * {@link onOrganize} calls {@link armHoldFromFolder} inside its own try, and that arm has its
+   * own catch. Without this counter the outer tick would return normally after the inner arm had
+   * just recorded a failure, and its `finally` would announce a recovery in the same drain that
+   * reported the fault. A tick claims success only when the count it entered with is the count
+   * it leaves with.
+   */
+  private failuresNoted = 0;
 
   constructor(private readonly deps: OrganizerProfileSyncDeps) {}
+
+  /**
+   * REPORT A FAILURE, ONCE PER STATE — the one place either arm records one.
+   *
+   * ── THE THROWN VALUE IS NORMALIZED HERE, AND ONLY FOR THE VALUES THAT CARRY NOTHING ──────
+   *
+   * `describeError` reduces a thrown value to `name`/`constructor.name` and `code`. An object
+   * has both, so it is passed through untouched — wrapping one would DISCARD the `code` the
+   * logger reads. A PRIMITIVE has neither: a thrown string arrives as `errorClass: "String",
+   * errorCode: null` and nothing else, so the one diagnosis it carries — its text — is destroyed
+   * at the point of recording it (measured on the Omarchy guest, 2026-09-07, on this very
+   * event). For those, and only those, the value is wrapped so the text survives.
+   */
+  private noteFailure(
+    err: unknown,
+    log: (event: string, detail: Record<string, unknown>) => void,
+  ): void {
+    const { deps } = this;
+    const thrown = typeof err === "object" && err !== null ? err : new Error(String(err));
+    const op = err instanceof ProfileUnavailableError ? err.op : null;
+    const errorClass = describeError(thrown).errorClass;
+    const previous = this.lastFailure;
+    this.lastFailure = { op, errorClass };
+    this.failuresNoted += 1;
+    if (previous !== null && previous.op === op && previous.errorClass === errorClass) return;
+    log("organizer_profile_write_failed", {
+      mailboxId: deps.mailboxId, accountId: deps.accountId,
+      ...(op === null ? {} : { op }),
+      err: thrown,
+    });
+  }
+
+  /**
+   * A TICK COMPLETED WITHOUT FAILING, so a standing failure is over — said exactly once.
+   *
+   * A latch with no recovery line would be worse than the noise it replaces: a reader would have
+   * no way to tell a fault that is still standing from one that ended twenty minutes ago, and
+   * the silence would mean both.
+   *
+   * ── CALLED FROM THE TICK, NEVER FROM THE PREFLIGHT, AND THE ASYMMETRY IS THE POINT ───────
+   *
+   * {@link armHoldFromFolder} is a narrow READ that runs beside and inside the tick. Its success
+   * proves the folder can be listed; it does not prove the profile is being maintained — a
+   * mailbox whose `ohmail/_meta` reads fine and whose CREATE is refused fails only in the tick's
+   * write path. If the preflight announced recovery there, every drain would print a recovery
+   * and then a failure, for ever: two lines per drain where the defect this replaces printed
+   * one. So the preflight NOTES failures into the shared latch and never clears it, and the
+   * tick — the whole operation — is what says the condition is over.
+   */
+  private noteTickSucceeded(
+    log: (event: string, detail: Record<string, unknown>) => void,
+  ): void {
+    const { deps } = this;
+    const previous = this.lastFailure;
+    if (previous === null) return;
+    this.lastFailure = null;
+    log("organizer_profile_recovered", {
+      mailboxId: deps.mailboxId, accountId: deps.accountId,
+      ...(previous.op === null ? {} : { op: previous.op }),
+      reason: "the portable settings document was read and maintained again after a failure " +
+        "that had been reported once and then held silent; the line exists so a reader can tell " +
+        "a standing fault from one that is over",
+    });
+  }
 
   /**
    * FORGET EVERYTHING THIS PROCESS BELIEVED ABOUT OWNING THIS MAILBOX'S DOCUMENT.
@@ -223,6 +316,10 @@ export class OrganizerProfileSync {
     this.lastPreflightAt = 0;
     this.lastOpenAnswer = false;
     this.everEvaluated = false;
+    /* THE LATCH GOES WITH THE LIFE. A demotion ends the role this failure was reported under,
+       and a re-promotion is a new organizing life that has said nothing yet — carrying the latch
+       across would let a standing fault go unannounced for the whole of it. */
+    this.lastFailure = null;
   }
 
   /**
@@ -538,11 +635,9 @@ export class OrganizerProfileSync {
       });
       await this.writeMarker({ state: "found", doc: read.doc, fingerprint: fp, heldForImport: true }, log);
     } catch (err) {
-      log("organizer_profile_write_failed", {
-        mailboxId: deps.mailboxId, accountId: deps.accountId,
-        ...(err instanceof ProfileUnavailableError ? { op: err.op } : {}),
-        err,
-      });
+      /* NOTED, NEVER CLEARED. See {@link noteTickSucceeded} for why this arm may report a
+         failure and may not announce that one is over. */
+      this.noteFailure(err, log);
     }
   }
 
@@ -725,6 +820,7 @@ export class OrganizerProfileSync {
     const interval = deps.flushIntervalMs ?? DEFAULT_PROFILE_FLUSH_INTERVAL_MS;
     if (this.seeded && now.getTime() - this.lastAttemptAt < interval) return;
     this.inFlight = true;
+    const failuresAtEntry = this.failuresNoted;
     try {
       this.lastAttemptAt = now.getTime();
       /* THE PINNED CONNECTION, not the live getter — see the parameter. Correct wherever this
@@ -958,14 +1054,19 @@ export class OrganizerProfileSync {
       // refusal in its `cause` were discarded at this call site, and a live provider's every
       // profile failure logged as a bare "String" (measured at RC3). The comment above was the
       // claim; the ternary was the contradiction.
-      log("organizer_profile_write_failed", {
-        mailboxId: deps.mailboxId, accountId: deps.accountId,
-        ...(err instanceof ProfileUnavailableError ? { op: err.op } : {}),
-        err,
-      });
+      //
+      // THE LINE ITSELF MOVED into {@link noteFailure} (0.14.2), with the arm beside it, so the
+      // latch and the wrapping are decided in one place rather than twice. What the value slot
+      // carries is unchanged; what changed is how often it is written.
+      this.noteFailure(err, log);
       // A seed that threw is retried by the next tick; nothing was marked seeded.
     } finally {
       this.inFlight = false;
+      /* THE TICK'S OWN VERDICT, and it counts failures rather than watching for a throw: the
+         `armHoldFromFolder` call inside this try has its own catch, so a tick can complete
+         normally with a failure recorded a few frames down. Comparing the count is what stops a
+         recovery being announced in the same drain that reported the fault. */
+      if (this.failuresNoted === failuresAtEntry) this.noteTickSucceeded(log);
     }
   }
 
