@@ -1857,6 +1857,41 @@ describe("the pane tells the truth about the outage, the holder and the standing
   });
 
   /**
+   * (3c) THE SAME WIDENING, ON THE HOSTED DOOR — pinned because it is a consequence rather than an
+   * accident, and because nothing else in this file would notice it.
+   *
+   * The release is a standalone-door CONTROL: on the hosted door these rows mirror an account whose
+   * organizing is the service's, and the browser is where that is given up. But a standing stop is
+   * a FACT about the row, not a control, and it is as true there as anywhere — so the sentence
+   * renders and the verb still does not. Suppressing it would be hiding a true standing state on
+   * the one door where this window cannot offer any way to check it.
+   */
+  it("(3c) a hosted row carrying a standing stop says so, and still offers no verb", async () => {
+    FACTS = [{
+      ...MAILBOX,
+      organizerRole: "organizer",
+      organizeConsentedAt: "2026-08-01T09:00:00.000Z",
+      releaseRequestedAt: "2026-09-07T09:00:00.000Z",
+    }];
+    const el = await render("cloud");
+    expect(el.textContent ?? "", "the hosted row said nothing about a stop that is standing")
+      .toContain(mailboxCopy.stopOrganizingPending!);
+    expect(buttonSaying(el, "Stop organizing"),
+      "the hosted door grew a release control it cannot report the outcome of").toBeNull();
+  });
+
+  /**
+   * (3d) CONTROL — and an ordinary hosted row still grows no organizer banner at all, which is
+   * what every other hosted case in this file has always seen.
+   */
+  it("(3d) CONTROL — an ordinary hosted row has no organizer banner", async () => {
+    FACTS = [{ ...MAILBOX, organizerRole: "organizer", organizeConsentedAt: "2026-08-01T09:00:00.000Z" }];
+    const el = await render("cloud");
+    expect(el.querySelector(".mbx-org"),
+      "the hosted door grew a banner about organizing that it cannot act on").toBeNull();
+  });
+
+  /**
    * (4) THE NOTE THAT OUTLIVES ITS PRESS. The takeover note renders while
    * `reclaimed.has(id)` and the role is not `organizer` — which is true again AFTER a stop, so an
    * "Asked for … within a minute" note from a press that was honoured an hour ago comes back over
