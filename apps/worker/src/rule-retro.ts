@@ -455,9 +455,83 @@ export async function ruleRetroPass(
     // re-running is safe because the candidate query is itself the idempotency. The predicate
     // means two drivers finishing at once produce exactly one stamp — same construction, same
     // reason, as `markKickstarted` and `sensitive_rescreen_at`.
-    await db.update(rulesTbl).set({ retroDoneAt: now })
-      .where(and(eq(rulesTbl.id, row.id), isNull(rulesTbl.retroDoneAt)));
-    result.completed++;
+    // ── AND IT IS ONE STAMP FOR AN ACCOUNT THAT CAN HOLD SEVERAL MAILBOXES ─────────────────
+    //
+    // The owed probe is per ACCOUNT (`exists … organizer_role = 'organizer'`, above) and the
+    // candidate query is per MAILBOX (`not exists … organizer_role <> 'organizer'`, below), so on
+    // an account where this install organizes A and only READS B the two disagree by design: the
+    // rule is selected, A's backlog is walked to its end, and B's mail was never a candidate. An
+    // unconditional stamp here called that "finished". Promoting B afterwards honoured nothing,
+    // because nothing was owed any more — the same swallowed PRESS the `exists` clause above was
+    // written for, one mailbox further in.
+    //
+    // So completion is the COMPLEMENT of the candidate gate, asked of the account's live
+    // mailboxes: the backlog is finished only when there is no live mailbox this install does not
+    // organize. It is a predicate over the mailboxes and not a second flag, and it is IN THE
+    // `WHERE` beside `retro_done_at IS NULL` for that clause's own reason — a mailbox demoted
+    // between a read and the stamp would otherwise be stamped over.
+    //
+    // `status = 'disabled'` is not "live": a disabled mailbox is one nothing will ever reconcile
+    // (the candidate query's own argument), so it neither contributes candidates nor holds the
+    // press open. `error` IS live — a mailbox that failed a cycle is still ours to organize.
+    const stamped = await db.update(rulesTbl).set({ retroDoneAt: now })
+      .where(and(
+        eq(rulesTbl.id, row.id),
+        isNull(rulesTbl.retroDoneAt),
+        sql`not ${aLiveMailboxIsOutsideTheWalk(row.accountId)}`,
+      ))
+      .returning({ id: rulesTbl.id });
+    if (stamped.length > 0) {
+      // Counted from the stamp the database actually wrote, not from reaching this line: a rule
+      // re-run with `force` is already done and stamps nothing, and two drivers finishing at once
+      // produce one stamp between them. `RuleRetroResult.completed` says "finished and stamped".
+      result.completed++;
+      continue;
+    }
+
+    /* ── THE RULE STAYS OWED, AND THE CURSOR HAS TO COME BACK WITH IT ─────────────────────────
+     *
+     * Withholding the stamp is only half the repair. `retro_cursor` is the last `messages.id` of
+     * the last committed page and `messages.id` is a RANDOM uuid, so the cursor is not a point in
+     * time — it is a fence across the id space. B's rows sit on both sides of it: the ones below
+     * are already behind the walk, and holding the rule owed with the fence in place would honour
+     * the press for whichever of B's messages happen to sort high. Nothing about the outcome would
+     * be wrong-looking; it would just quietly be a fraction of the mailbox.
+     *
+     * So a backlog that ends while a live mailbox is still outside the walk resets the cursor. The
+     * next cycle re-offers every row to the candidate query, which is where the idempotency lives:
+     * a message this pass has already moved is desired into the destination and is no longer a
+     * candidate, so a re-walk moves nothing twice. It is also not a new state — it is exactly what
+     * `RulesService.update` writes when a rule is retargeted (`retro_done_at` and `retro_cursor`
+     * both NULL), the common path for a person changing their mind.
+     *
+     * WHAT IT COSTS, named rather than discovered: the rows a re-walk re-reads are the ones the
+     * router DECLINED to move (a higher-priority deny rule, a message the user triaged), because
+     * everything it moved has dropped out of the candidate set. For an account that holds a reader
+     * mailbox indefinitely that read repeats every cycle, bounded by `RULE_RETRO_MAX_PAGES` pages.
+     * The alternative — remembering which mailboxes have been walked — needs a column, and a
+     * freeze fix does not add one.
+     *
+     * `retro_done_at IS NULL` in the `WHERE` is what keeps `force` honest: a re-run of a FINISHED
+     * rule must not reset its cursor, which the flag's docblock promises by name. `retro_cursor IS
+     * NOT NULL` keeps the write (and the log line) to the cycles where there was a fence to lift.
+     */
+    const reopened = await db.update(rulesTbl).set({ retroCursor: null })
+      .where(and(
+        eq(rulesTbl.id, row.id),
+        isNull(rulesTbl.retroDoneAt),
+        isNotNull(rulesTbl.retroCursor),
+        aLiveMailboxIsOutsideTheWalk(row.accountId),
+      ))
+      .returning({ id: rulesTbl.id });
+    if (reopened.length > 0) {
+      log.info("rule_retro_owed_pending_mailbox", {
+        ruleId: row.id, accountId: row.accountId,
+        reason: "the backlog is finished for the mailboxes this install organizes, and a live " +
+          "mailbox of the account is not one of them — `retro_done_at` is NOT written and " +
+          "`retro_cursor` is cleared, so a promotion re-walks that mailbox's mail from the start",
+      });
+    }
   }
 
   if (result.moved > 0 || result.completed > 0) {
@@ -467,6 +541,25 @@ export async function ruleRetroPass(
     });
   }
   return result;
+}
+
+/**
+ * A LIVE MAILBOX OF THIS ACCOUNT THAT THIS INSTALL DOES NOT ORGANIZE — the exact complement of
+ * {@link selectCandidates}' mailbox gate, written once because it is asked twice.
+ *
+ * The candidate query drops a message whose mailbox is `disabled` OR not `organizer`; this asks
+ * whether such a mailbox EXISTS while still being live. `true` therefore means "this pass cannot
+ * see all of the account's mail", which is the one fact that decides whether a finished walk is a
+ * finished BACKLOG. Written as the negation of the other predicate rather than as its own
+ * sentence so an edit to one cannot silently disagree with the other.
+ */
+function aLiveMailboxIsOutsideTheWalk(accountId: string) {
+  return sql`exists (
+    select 1 from ${mailboxes} mb
+     where mb.account_id = ${accountId}
+       and mb.status <> 'disabled'
+       and mb.organizer_role <> 'organizer'
+  )`;
 }
 
 /**

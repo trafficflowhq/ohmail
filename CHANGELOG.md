@@ -394,6 +394,11 @@ apply to existing mail can reach it. And a request to apply a rule to existing m
 install was not organizing, is now kept until it is, instead of being marked done with nothing
 moved.
 
+A request like that covers every mailbox on the account. Where the account has more than one and
+this install organizes only some of them, the request is no longer finished once the mail on those
+is done — it stays open until every mailbox has been gone through, so a mailbox you start
+organizing later still has its existing mail considered.
+
 ### Screener decisions from a reader no longer buy advice nobody can use
 
 Asking for an AI suggestion on a mailbox you only read used to spend credits whatever the state of
