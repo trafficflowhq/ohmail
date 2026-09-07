@@ -789,6 +789,19 @@ confirmation after a message is scheduled. Every other date on your mail — the
 headings in Belege, the Screener's stamps, and the day rows in both the send-later and resurface
 pickers — is in the language the app is in.
 
+### Corrections inside this release
+
+Two changes made during this release were wrong in ways that never reached 0.14.0, and are fixed
+here rather than carried into it.
+
+Undoing a move before the first one had been confirmed could let the first one win. A change sent
+to the server is kept until it is answered, and the app stops waiting for an answer that takes too
+long — the request is still running and still owns that change. Expressing a newer change for the
+same message retires the older one, and that only looked at changes still waiting to be sent, so
+moving a message and moving it straight back could end with the first move sent a second time
+after the second one, leaving the message in the folder you had already taken it out of. A newer
+change now retires an older one whether it is waiting or already on its way.
+
 ## [0.14.0] — 2026-09-03
 
 A desktop install can hold more than one mailbox. Each one gets its own connection,

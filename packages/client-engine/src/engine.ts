@@ -4883,7 +4883,6 @@ export class OhmailEngine {
      * awaits it before it dispatches.
      */
     const marked = this.supersedeAbandoned(m);
-    if (this.queue.length === 0) return { retired, narrowed, undo, marked };
     const key = supersedeKey(m);
     const readIds = m.kind === "mark_seen" || m.kind === "feed_mark_seen"
       ? new Set(m.messageIds ?? [])
@@ -4894,13 +4893,28 @@ export class OhmailEngine {
      * Its request is running; the newer verb cannot un-send it. What it can do is say that when
      * that request comes back retryable, the verb must NOT rejoin the queue: replaying it then
      * would put the older value over the newer one that has since landed.
+     *
+     * ── THE WIRE IS SCANNED BEFORE THE EMPTY-QUEUE RETURN, AND THAT ORDER IS THE RULE ────────
+     *
+     * This scan used to sit BELOW `if (this.queue.length === 0) return …`, which made it
+     * unreachable in the one case it was written for. A verb whose request outran its deadline is
+     * owned by that request and belongs to NO collection but {@link inFlight} — see
+     * `dispatchWithDeadline` and `mutate`'s `timedOut` arm, which deliberately do not put it back
+     * on the queue. So the queue is EMPTY exactly while a verb is on the wire, and the first
+     * reversal a person makes — move a message, then move it back before the first move has been
+     * answered — read `queue.length === 0`, returned, and marked nothing. The older request then
+     * came back retryable, rejoined the queue at `:5266`, and the next drive replayed the older
+     * destination over the newer intent, with both requests reporting success.
+     *
+     * The QUEUE's loop is what an empty queue may skip. The wire's is not, and the emptiness of
+     * the queue is not evidence about it.
      */
     for (const q of this.inFlight.values()) {
-      if (q.mutation.kind === m.kind && supersedeKey(q.mutation) !== null
-        && supersedeKey(q.mutation) === supersedeKey(m)) {
+      if (q.mutation.kind === m.kind && key !== null && supersedeKey(q.mutation) === key) {
         q.supersededInFlight = true;
       }
     }
+    if (this.queue.length === 0) return { retired, narrowed, undo, marked };
     let changed = false;
     for (let i = this.queue.length - 1; i >= 0; i--) {
       const q = this.queue[i]!;
