@@ -333,6 +333,14 @@ function ActionBar({
    * Hoisted out of the render conditional below because the effect beside it has to ask the SAME
    * question, and two spellings of "may this strip be drawn" is exactly how the strip and the state
    * that says it is open come to disagree. One derivation, read from both places.
+   *
+   * `foldersEnabled` ABSENT is a different state from `false` and both read false here, which is
+   * the right answer for each rather than a collapse that happens to work: absent is a shell with
+   * no folders verb at all (the desktop, a bare mount), and there the delete panel is unreachable
+   * — the only door is the menu item this same predicate gates, and such a shell provides no
+   * `setBarPanel` for the `d` key to write through either. So the effect below has nothing to
+   * withdraw there, and if it ever did, withdrawing is still the correct answer, because a strip
+   * that may not be drawn is not a question anybody can see.
    */
   const deleteConfirmAdmitted =
     chrome.foldersEnabled === true && chrome.mirrorHolds?.(message.id) !== false;

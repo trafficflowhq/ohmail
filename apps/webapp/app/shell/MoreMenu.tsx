@@ -192,7 +192,13 @@ export function MoreMenu({
     const next =
       all.slice(at + 1).find((el) => standing.includes(el))
       ?? all.slice(0, Math.max(at, 0)).reverse().find((el) => standing.includes(el));
-    (next ?? standing[0]).focus();
+    /* Optional because `find` is, and NOT because there is a case where nothing is found: every
+       member of `standing` came from the same query as `all`, and a forward search that finds
+       nothing means `held` is the last item — so a survivor is behind it. A `?? standing[0]`
+       fallback stood here for one revision and was removed: it declared a behaviour (jump to the
+       top of the list) for a state that cannot arise, which the next reader would have taken for
+       a guarantee this code keeps. */
+    next?.focus();
   });
 
   /**
