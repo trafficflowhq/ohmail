@@ -600,6 +600,10 @@ jobs:
               # ceremonies on the web, and the Settings pane opens this address
               # through the same fixed link table as the entries around it.
               'https://ohmail.app/mailbox?settings=mailboxes#/settings'*) : ;;
+              # The devices pane hand-off, admitted for the same reason. Minting and
+              # revoking a device is a step-up ceremony on the hosted door, and the
+              # Settings pane reaches that pane by key through the same fixed table.
+              'https://ohmail.app/mailbox?settings=devices#/settings'*) : ;;
               'https://ohmail.app/link-desktop'*) : ;;
               'https://ohmail.app/privacy'*) : ;;
               'https://ohmail.app/subprocessors'*) : ;;
@@ -1155,6 +1159,10 @@ jobs:
               # ceremonies on the web, and the Settings pane opens this address
               # through the same fixed link table as the entries around it.
               'https://ohmail.app/mailbox?settings=mailboxes#/settings'*) : ;;
+              # The devices pane hand-off, admitted for the same reason. Minting and
+              # revoking a device is a step-up ceremony on the hosted door, and the
+              # Settings pane reaches that pane by key through the same fixed table.
+              'https://ohmail.app/mailbox?settings=devices#/settings'*) : ;;
               'https://ohmail.app/link-desktop'*) : ;;
               'https://ohmail.app/privacy'*) : ;;
               'https://ohmail.app/subprocessors'*) : ;;
@@ -1710,6 +1718,7 @@ jobs:
               'https://ohmail.example.com'*) : ;;
               'https://ohmail.app/mailbox#/settings'*) : ;;
               'https://ohmail.app/mailbox?settings=mailboxes#/settings'*) : ;;
+              'https://ohmail.app/mailbox?settings=devices#/settings'*) : ;;
               'https://ohmail.app/link-desktop'*) : ;;
               'https://ohmail.app/privacy'*) : ;;
               'https://ohmail.app/subprocessors'*) : ;;

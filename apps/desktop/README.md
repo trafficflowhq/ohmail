@@ -266,7 +266,7 @@ a time.** Every URL in the binary naming `ohmail` or `trafficflow` must be one o
 |---|---|
 | `https://github.com/trafficflowhq/ohmail/releases/latest/download/latest.json` | the pinned update feed — the one endpoint this build reaches on its own. Prefix match, because a Rust literal has no terminator in rodata. |
 | `https://api.ohmail.app` | the hosted service, reached only after somebody signs in to it. Exact match, because it comes from a quote-terminated JavaScript literal. |
-| `https://ohmail.app/mailbox#/settings`, `…/link-desktop`, `…/privacy`, `…/subprocessors` | the fixed table in `src-tauri/src/engine.rs` of pages the app may hand to **your own browser**. The window selects one by key and can never name an address itself, so these are compiled in. Prefix match, same rodata reason. |
+| `https://ohmail.app/mailbox#/settings`, `https://ohmail.app/mailbox?settings=mailboxes#/settings`, `https://ohmail.app/mailbox?settings=devices#/settings`, `https://ohmail.app/link-desktop`, `https://ohmail.app/privacy`, `https://ohmail.app/subprocessors` | the fixed table in `src-tauri/src/engine.rs` of pages the app may hand to **your own browser**, listed here in the order that table lists them. The window selects one by key and can never name an address itself, so these are compiled in. The two carrying `?settings=` open a named Settings pane on the hosted door rather than its first one — the key is what the window passes, the whole address is decided in the table. Prefix match, same rodata reason. |
 
 Anything else naming this project fails the job. The extracted list is re-split on
 `http` before it is judged, because adjacent Rust literals come back from `grep`
