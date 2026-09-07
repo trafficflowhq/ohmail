@@ -5,8 +5,8 @@ import {
   type KekEnvIdentity, type KeyProvider, type Logger, type OpenSendAdapter, type SendAdapter,
 } from "@trafficflow/core/mail";
 import {
-  ImapAdapter, ImapConnectionClosedError, buildImapAuth,
-  type ImapConfig, type MailboxAdapter, type CredMetaAuth,
+  ImapAdapter, ImapConnectionClosedError, WORKER_NET_TIMEOUTS, buildImapAuth,
+  type ImapConfig, type MailboxAdapter, type CredMetaAuth, type NetTimeouts,
 } from "@trafficflow/core/adapters/imap";
 import { makeDrizzleRepo, type WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 // The engine's OWN resolution of the Ohbox posture, never a second reading of it. `rules.ts` owns
@@ -970,6 +970,45 @@ export const LOCAL_CONNECTION_DEAD_AFTER_MS = 120_000;
  * where the same shape would be a re-attach storm across every account on a shard.
  */
 export const LOCAL_CONNECTION_DEAD_AFTER_CYCLES = 8;
+
+/**
+ * THE DEADLINES THIS PROCESS DIALS WITH — the persistent-process set, never the serverless one.
+ *
+ * `ImapAdapter` resolves `{ ...DEFAULT_NET_TIMEOUTS, ...config.timeouts }`, and
+ * `DEFAULT_NET_TIMEOUTS.socketMs` is 25 s — a number its own comment says was chosen against a
+ * 60-second serverless invocation ceiling. The sidecar was passing no `timeouts` at all, so a
+ * desktop app that holds its connections for the life of the window inherited a deadline sized
+ * for a function that has to finish inside a minute.
+ *
+ * `socketMs` is Node's socket INACTIVITY timer, and imapflow only auto-idles 15 s after the last
+ * command and only with a mailbox SELECTED — so the fatal window is a long stretch with a live
+ * connection, nothing on the wire and no IDLE armed, which is exactly what a first sync of a
+ * large mailbox produces between fetches. Measured on the phone build of this same engine: a
+ * small mailbox finishes its first sync, and larger ones die with `NoConnection` at 31 s and at
+ * 69 s — the quiet stretch grows with the size of the mailbox, so the failure appears past a
+ * threshold rather than everywhere. The desktop clears the same bar only by being several times
+ * faster per message, which makes it a property of the LINK and the mailbox size rather than of
+ * the platform — a slow connection on a desktop is the identical shape.
+ *
+ * ── THE SAME VALUES AS THE WORKER'S, AND DELIBERATELY NOT A SECOND LITERAL ────────────────
+ *
+ * {@link WORKER_NET_TIMEOUTS} states the whole argument for 120 s (8× imapflow's auto-idle
+ * delay, above the bounded stretches a cycle produces, below imapflow's own 300 s default), and
+ * every clause of it is about a process that is not serverless and holds its connections — which
+ * is what this is. A copy of the number here would be a second place for it to drift; the alias
+ * gives a desktop reader a name that says "sidecar" without inventing a second decision. The
+ * dial test asserts the two are still equal, so a divergence has to be somebody's choice.
+ *
+ * ── AND IT REACHES THE SYNC DIAL ONLY, WHICH IS THE POINT ────────────────────────────────
+ *
+ * The two other sockets this package opens build their own configurations and are untouched:
+ * `makeImapProbe`/`makeSmtpProbe` serve a person waiting at a form, where a SHORT deadline is
+ * the right answer and a two-minute one would be a connect dialog that appears to hang; and the
+ * send transport is resolved per mailbox from that mailbox's own `smtp` credential row
+ * (`makeSendAdapter`), never from this config. What is widened here is the connection the drain
+ * holds — the only one that legitimately goes quiet for minutes.
+ */
+export const SIDECAR_NET_TIMEOUTS: NetTimeouts = WORKER_NET_TIMEOUTS;
 
 /** First wait after a dial that failed for a reason that may pass. Doubles; see {@link REDIAL_BACKOFF_MAX_MS}. */
 export const REDIAL_BACKOFF_BASE_MS = 15_000;
@@ -2580,7 +2619,18 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * connection rather than by re-pointing a live one — which is the same guarantee, reached
        * without making a connected socket's credentials mutable.
        */
-      const imapConfig: ImapConfig = { ...mbImap, auth: { user: mbImap.auth.user, pass: login.pass ?? "" } };
+      const imapConfig: ImapConfig = {
+        ...mbImap,
+        auth: { user: mbImap.auth.user, pass: login.pass ?? "" },
+        /* HERE AND NOT AT THE `new ImapAdapter`, for two reasons. The adapter reads its deadlines
+           off the CONFIG (`imapFlowOptions`), not off its options bag; and this config is what
+           every dial of this mailbox is built from — the seed's and mailboxes #2..N's alike — so
+           a value set at the one construction site would have missed an injected factory and any
+           later caller. MERGED rather than assigned, so a caller that configured its own
+           deadlines keeps them, and an explicitly-undefined key cannot clobber ours the way a
+           plain spread order would. See {@link SIDECAR_NET_TIMEOUTS}. */
+        timeouts: { ...SIDECAR_NET_TIMEOUTS, ...(mbImap.timeouts ?? {}) },
+      };
       /* THIS MAILBOX'S REQUEST KEY, from the credential on the line above — the one the socket is
        * opened with. Deriving it anywhere else is how it comes to disagree with the other installs
        * that share this mailbox; see the note where the old process-wide helper used to be. `null`
