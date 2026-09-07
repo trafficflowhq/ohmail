@@ -18,6 +18,51 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.14.2] — 2026-09-08
+
+### Settings → Mailboxes says what it knows, and stops naming what it does not
+
+Five sentences on the mailbox rows described a state the install was not in.
+
+**A mail server it could not ask about read as a working one.** The app asks its own mail engine,
+once a minute, which of your mailboxes it can currently reach. If that question came back refused
+or failed — not unanswered, but answered badly — the pane treated it as no answer at all and every
+row went on saying "Up to date", while nothing could be said about whether any mail was moving. It
+now says the mail server cannot be reached, with no "last answered" time on it, because none is
+known. An engine too old to be asked the question at all is still silence, and the rows keep the
+state they had: a desktop updates on its own schedule, and a window newer than its engine must not
+announce an outage.
+
+**"Stop organizing here" left no trace on some mailboxes.** The row that says what this computer
+does with a mailbox — and carries the stop — was withheld entirely on installs that took the
+mailbox over through the organizing hand-off rather than through the setup flow, and on mailboxes
+connected before that record existed. Pressing stop from anywhere else then showed nowhere: the row
+read as an ordinary organized mailbox with nothing pending. The row now says "Stopping on the next
+pass" whenever a stop is standing, whichever install it was asked from.
+
+**A takeover you had since undone came back on screen.** After "Organize here", the note saying the
+change was asked for ended when this computer became the organizer — and only then. Pressing "Stop
+organizing here" afterwards moved the row out of organizer again, and the old note reappeared,
+promising a takeover "within a minute" over a mailbox you had just given up. The same record hid the
+button that would ask for it again, so the row offered no way back. A press is the newest word only
+until another press is made.
+
+**A row could say "Organized by" and then name nobody.** When the install holding a mailbox reports
+no name for itself, the sentence was left to end where the name belongs. It now reads "another
+install", which is what the row means.
+
+**On a mailbox nothing organizes, the button offered an alternative to nobody.** It read "Organize
+here instead" while the sentence beside it names the press as "Organize here", and the confirmation
+one press deeper described what the takeover costs "another install". Both now say what is true of a
+mailbox with no organizer.
+
+### First run stops asking about an install that is not there
+
+"Already organized elsewhere" asks one question — let the other install keep the mailbox, or take it
+from here — and every sentence on that screen is about that install. If the mailbox was released
+while you were reading it, the screen stayed, offering a choice between two installs when there was
+one. Setup now moves on to the next thing it needs as soon as nothing holds the mailbox.
+
 ## [0.14.1] — 2026-09-04
 
 **The phone's 0.14.1 build went out first; this desktop and web release completes 0.14.1.**
@@ -4625,6 +4670,7 @@ no network in any of them.
   step, and that is a real cost of a preview rather than something to gloss over.
 
 [Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.14.1...HEAD
+[0.14.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.14.2
 [0.14.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.14.1
 [0.14.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.14.0
 [0.13.8]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.13.8
