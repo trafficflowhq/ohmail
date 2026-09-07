@@ -2395,7 +2395,16 @@ export const outboundSendFingerprints = pgTable("outbound_send_fingerprints", {
   /** SHA-256 of the canonical member list, lowercase hex — closed by shape, never free text. */
   fingerprint: text("fingerprint").notNull(),
   /** The reservation that currently owns this content. Re-pointed on a reclaim. */
-  sendId: uuid("send_id").notNull().references(() => outboundSends.id),
+  /**
+   * CASCADE — a claim has no meaning without the reservation it points at.
+   *
+   * A plain reference blocked every path that removes a reservation, and there are three: the
+   * desktop mirror wipe, the local mirror's per-draft cleanup, and account erasure. All failed
+   * 23503; the desktop's handler catches its own failure and answers 200, so a mailbox removal
+   * looked successful while leaving the rows behind, and re-adding it showed the old mail twice.
+   * Erasure failed outright.
+   */
+  sendId: uuid("send_id").notNull().references(() => outboundSends.id, { onDelete: "cascade" }),
   /** Restamped on a reclaim — this is the window's clock, not the row's birthday. */
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({

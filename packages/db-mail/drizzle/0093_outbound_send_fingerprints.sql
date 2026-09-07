@@ -68,7 +68,20 @@ CREATE TABLE IF NOT EXISTS "outbound_send_fingerprints" (
   "account_id" uuid NOT NULL,
   "mailbox_id" uuid NOT NULL,
   "fingerprint" text NOT NULL,
-  "send_id" uuid NOT NULL REFERENCES "outbound_sends"("id"),
+  -- ── ON DELETE CASCADE, AND THE REASON IS THREE BROKEN CLEANUP PATHS ────────────────────────
+  --
+  -- A plain reference made this row block every path that removes a reservation, and all three
+  -- delete `outbound_sends` directly: the desktop's own mirror wipe, the local mirror's per-draft
+  -- cleanup, and account erasure. Each failed with SQLSTATE 23503, and the desktop's wipe handler
+  -- catches its failure and answers 200 — so removing a mailbox APPEARED to succeed, left the rows
+  -- behind, and re-adding the mailbox showed the old mail beside its newly synced copy. Erasure
+  -- failed outright, which is worse than a duplicate row: an account that cannot be erased is a
+  -- promise this product makes and would not have kept.
+  --
+  -- CASCADE rather than a delete added to each caller, because a claim has no meaning without the
+  -- reservation it points at — it is not data anybody would want to keep once that row is gone —
+  -- and three callers today means a fourth tomorrow that nobody remembers to change.
+  "send_id" uuid NOT NULL REFERENCES "outbound_sends"("id") ON DELETE CASCADE,
   "created_at" timestamp with time zone DEFAULT now() NOT NULL
 );--> statement-breakpoint
 

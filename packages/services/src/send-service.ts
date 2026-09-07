@@ -727,7 +727,9 @@ export function sendContentFingerprint(input: {
   forwardOf: string | null;
   sendAt: Date | null;
   /**
-   * Inline files carry a CONTENT digest; staged files carry `null` and fold by metadata alone.
+   * Inline files, digested by CONTENT. Staged files never reach here — a send carrying them is
+   * excluded from the content claim entirely (see {@link SendService.reserve}), because metadata is
+   * not an identity and a ticket id is not one either.
    *
    * The metadata-only fold was wrong for inline files and the counter-example is ordinary: attach
    * `invoice.csv` reading `amount\n100\n`, notice the figure is wrong, correct it to
@@ -736,10 +738,12 @@ export function sendContentFingerprint(input: {
    * screen said the message had already been sent. Silently not sending is worse than sending
    * twice, which is the whole ordering this guard is built on.
    *
-   * The bytes were available all along: an inline attachment arrives decoded on the request. Staged
-   * files are the case that genuinely cannot be digested here — they live in object storage and
-   * reaching for them would put a network call inside the reserve transaction — so they keep the
-   * metadata fold, and that residual is now NAMED rather than being the silent default for both.
+   * The bytes were available all along: an inline attachment arrives decoded on the request.
+   *
+   * Staged files cannot be digested here at all — they live in object storage and reaching for them
+   * would put a network call inside the reserve transaction. Folding them by metadata was measured
+   * refusing a corrected 5 MiB file that kept its name, type and size, so a staged send is now
+   * excluded from the claim outright rather than covered by an identity that is not one.
    */
   attachments: ReadonlyArray<{
     filename: string; contentType: string; sizeBytes: number; contentSha256: string | null;
@@ -1840,6 +1844,42 @@ export class SendService {
       // CONFLICT branch returns before reaching here, and that branch is idempotent REPLAY — a
       // client retrying its own key after a send that SUCCEEDED must be handed the stored result,
       // not told it is a duplicate of itself.
+      // ── A SEND CARRYING STAGED FILES IS NOT COVERED BY THE CONTENT CLAIM, AND SAYS SO ──────
+      //
+      // Staged bytes live in object storage. Nothing in this transaction can see them — fetching
+      // them would be a network call inside the reserve tx, which this service does nowhere — so
+      // the only identity available for them is the metadata the mint recorded: name, type, size.
+      //
+      // That is not an identity, and treating it as one was a HIGH defect measured end to end:
+      // change one byte of a 5 MiB attachment, keep its name, type and size, send the correction
+      // under a fresh key, and the digests collided. The correction was refused as already sent and
+      // only the original was ever delivered. A silently unsent correction is the worst ending this
+      // path has, and it is worse than the duplicate the claim exists to prevent.
+      //
+      // Folding staged files by their TICKET ID instead would cure that and buy nothing: a re-send
+      // under a fresh key RE-STAGES, so the ids always differ and the claim would never match. The
+      // effect is identical to not having a claim, dressed up as though there were one — and a
+      // guard that looks like protection and is not is worse than an absent one, because the next
+      // reader stops looking.
+      //
+      // So a staged send is EXCLUDED, explicitly. It keeps the two defences it always had — the
+      // client's own durable key, which now fingerprints content, and the refusal of any draft not
+      // in `draft` status. What it does not get is the content claim, until a staged file can carry
+      // a content digest of its own; that needs the upload to record one at mint time and is filed
+      // rather than faked here.
+      if (stagedIds.length > 0) {
+        const now = ctx.now();
+        await tx.update(drafts).set({ status: "sending", updatedAt: now })
+          .where(and(eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId)));
+        const seq = await recordChange(tx, {
+          accountId: ctx.accountId, entityType: "draft", entityId: draftId, op: "update", meta: null,
+        });
+        return {
+          kind: "new", sendId: inserted[0]!.id, mintedMessageId, mailboxId: d.mailboxId, msg,
+          seq: Number(seq), ...(forward ? { forward } : {}),
+        };
+      }
+
       const fingerprint = sendContentFingerprint({
         to, cc, bcc,
         subject: d.subject,
@@ -1859,10 +1899,9 @@ export class SendService {
             filename: a.filename, contentType: a.contentType, sizeBytes: a.content.byteLength,
             contentSha256: createHash("sha256").update(a.content).digest("hex"),
           })),
-          // STAGED: metadata only, and `null` says so rather than leaving the reader to infer it
-          // from an absent field. These bytes are in object storage; fetching them here would be a
-          // network call inside the reserve transaction, which this service does nowhere.
-          ...stagedManifest.map((f) => ({ ...f, contentSha256: null })),
+          // No staged entries here BY CONSTRUCTION: a send carrying staged files returns above,
+          // before this digest is computed. `stagedManifest` is still collected for the size cap,
+          // which is a different question and does not pretend to be an identity.
         ],
       });
       const claimNow = ctx.now();
@@ -1948,7 +1987,26 @@ export class SendService {
             // construction: if A ended `failed` the claim is reclaimed and B's retry SENDS; if A
             // ended `sent` or `unverified` the retry is refused terminally with that status; if A
             // is still running it is refused as pending again, bounded by the outbox's own ceiling.
-            const stillRunning = priorStatus === "pending";
+            // ── A WAIT IS ONLY HONEST WHILE THE FIRST ATTEMPT COULD STILL BE RUNNING ────────
+            //
+            // Bounded by `SEND_STALE_AFTER_MS`, and the bound is what stops a WAIT becoming a
+            // second delivery. Without it: A is pending, B's retry is told to wait and QUEUES,
+            // A then DELIVERS, B reconnects more than an hour later, the claim has aged past
+            // `SEND_DUPLICATE_WINDOW_MS` and is reclaimed — and B's still-queued verb is admitted
+            // and delivers the same message again, with nobody having pressed Send a second time.
+            // Measured by review: the same queued key produced delivery 2 on its own.
+            //
+            // The two horizons are what make that reachable: a wait with no age limit outlives the
+            // window it is waiting inside. So the wait ends where this codebase already says an
+            // invocation cannot still be alive — past `SEND_STALE_AFTER_MS` the reconciler owns
+            // that reservation, "wait" stops being a true answer, and the refusal becomes terminal
+            // so the queued verb settles instead of surviving to the reclaim.
+            //
+            // A PERSON pressing Send again after the hour is unaffected: that is a fresh key and a
+            // fresh press, which is exactly what the window is for. This closes the automatic path
+            // only.
+            const claimAgeMs = claimNow.getTime() - held.createdAt.getTime();
+            const stillRunning = priorStatus === "pending" && claimAgeMs < SEND_STALE_AFTER_MS;
             throw new ServiceError(
               "duplicate_send", 409,
               duplicateSendSentence(priorStatus, held.createdAt),
