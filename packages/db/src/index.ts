@@ -152,10 +152,14 @@ export {
 export {
   MOVE_DESTINATIONS, MOVE_DEDUP_KEY_MAX, validateMovePayload, applyMessageMove,
   PROFILE_SIGNATURE_MAX, validateProfileUpdatePayload, applyProfileUpdate,
+  RULE_TERM_MAX, RULE_MATCH_MAX, validateRulePayload, applyRuleRequest,
   type ValidatedMovePayload, type MoveRefusal,
   type ApplyMessageMoveInput, type ApplyMessageMoveResult,
   type ValidatedProfileUpdate, type ProfileAwayUpdate,
   type ApplyProfileUpdateInput, type ApplyProfileUpdateResult,
+  type RuleKey, type RuleRefusal, type ValidatedRuleRequest,
+  type ValidatedRuleCreate, type ValidatedRuleUpdate, type ValidatedRuleDelete,
+  type ApplyRuleRequestInput, type ApplyRuleRequestResult,
 } from "./request-apply.js";
 
 export {

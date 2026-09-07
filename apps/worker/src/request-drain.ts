@@ -3,6 +3,7 @@ import {
   applyScreenerDecision, AccountErasedError, validateRequestPayload, claimIdempotencyKey,
   applyMessageMove, validateMovePayload, type MoveRefusal,
   applyProfileUpdate, validateProfileUpdatePayload,
+  applyRuleRequest, validateRulePayload, type RuleRefusal,
   readIdempotencyKey, IDEMPOTENCY_TTL_MS, readAccountErasedAt,
   listPendingRequests, listSentRequests, markRequestsSent, markRequestsApplied,
   listStaleSentRequests, markRequestsExpired, markRequestsRefused,
@@ -90,6 +91,26 @@ const MOVE_REFUSAL_REASON: Readonly<Record<MoveRefusal, RequestRefusalReason>> =
   no_trash_folder: "no_trash_folder",
 };
 
+/** The rule applier's own word, mapped the same way and for the same reason. */
+const RULE_REFUSAL_REASON: Readonly<Record<RuleRefusal, RequestRefusalReason>> = {
+  no_such_rule: "no_such_rule",
+};
+
+/**
+ * ONE HANDLER FOR THE THREE `rule.*` KINDS, because they share one applier and one table — which
+ * is also why they share one capability. The kind is passed through to the validator, so a
+ * `rule.delete` carrying a create's body is refused rather than half-read.
+ */
+const ruleHandler = (kind: string): KindHandler => (payload, ctx) => {
+  const req = validateRulePayload(kind, payload);
+  if (!req) return null;
+  return async (tx) => {
+    const r = await applyRuleRequest(tx, { accountId: ctx.accountId, payload: req, now: ctx.now });
+    if (r.applied) return { applied: true };
+    return { applied: false, reason: RULE_REFUSAL_REASON[r.refusal] };
+  };
+};
+
 const KIND_HANDLERS: Readonly<Record<string, KindHandler | undefined>> = {
   "screener.decide": (payload, ctx) => {
     const decision = validateRequestPayload(payload);
@@ -140,6 +161,10 @@ const KIND_HANDLERS: Readonly<Record<string, KindHandler | undefined>> = {
    * that is not `applied` is therefore an exception, and the enclosing transaction already turns
    * one of those into a record left standing for the next cycle.
    */
+  "rule.create": ruleHandler("rule.create"),
+  "rule.update": ruleHandler("rule.update"),
+  "rule.delete": ruleHandler("rule.delete"),
+
   "profile.update": (payload, ctx) => {
     const update = validateProfileUpdatePayload(payload);
     if (!update) return null;

@@ -1,5 +1,5 @@
 import {
-  CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_PROFILE, deriveRequestKey,
+  CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_PROFILE, CAPABILITY_RULES, deriveRequestKey,
   DEFAULT_STALE_AFTER_MS, LeaseUnavailableError, META_FOLDER,
   ClaimReleaseError,
   isMalformed, parseClaim, runLeaseGate,
@@ -107,7 +107,7 @@ export const CLOUD_DISPLAY_NAME = "ohmail Cloud";
  * while letting the honest degraded mode exist.
  */
 export const ORGANIZER_CAPABILITIES: readonly string[] = [
-  CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_PROFILE,
+  CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_PROFILE, CAPABILITY_RULES,
 ];
 
 /* ── WHY `moves` JOINS THE SET HERE AND NOT EARLIER (mail 0093) ─────────────────────────────
@@ -119,10 +119,15 @@ export const ORGANIZER_CAPABILITIES: readonly string[] = [
  * message sit pending until it expires — with nothing to report, because the claim was true about
  * a build that did not exist yet.
  *
- * `profile` joined the same way one slice later, and `rules` is deliberately still absent: that
- * kind is admitted by the database and leaves records STANDING in the drain, which is the honest
- * state for a decision this build cannot yet carry out. It gets its capability in the same commit
- * as its applier, never before.
+ * `profile` joined the same way one slice later, and `rules` the slice after that — each in the
+ * same commit as its own applier, never before. The set is COMPLETE for the kinds mail 0093
+ * admits: every member of `REQUEST_KINDS` now has an entry in the drain's dispatch table, so the
+ * standing path is reached only by a kind from a FUTURE build rather than by one this build is
+ * merely behind on. `request-drain.test.ts` keeps a case for that, using a kind no build has.
+ *
+ * The three `rule.*` kinds share ONE capability because they share one applier and one table: a
+ * build that can create a rule can delete one, and advertising them apart would invite a reader
+ * to reason about a split that does not exist.
  *
  * The set is still not injectable and still passes through {@link organizerCapabilitiesFor}, so a
  * mailbox with no derived key advertises NOTHING — including `moves`. That is correct rather than

@@ -106,8 +106,8 @@
 --      intended AUTHOR of.
 --   2. `mailbox_profile_mirror` — created with the same six columns. `uidvalidity` is `INTEGER` in
 --      SQLite, which is 64-bit there and so holds the same range as `bigint` here.
---   3. `organizer_requests.refused_reason` — the CHECK widened by `no_such_message` and
---      `no_trash_folder`. This is the one easiest to miss, because it is the only one a phone
+--   3. `organizer_requests.refused_reason` — the CHECK widened by `no_such_message`,
+--      `no_trash_folder` and `no_such_rule`. This is the one easiest to miss, because it is the only one a phone
 --      needs as a READER RECEIVING an answer rather than as an author: the organizer writes the
 --      refusal, and the reader stores what came back. A phone whose constraint still holds eight
 --      words rejects the row at the moment it records why its own move did not happen — a failure
@@ -162,6 +162,10 @@ CREATE INDEX IF NOT EXISTS "mailbox_profile_mirror_account_idx"
 --   `no_trash_folder`  — the destination was `trash` and no Trash path has been discovered for
 --                        this mailbox. ohmail never expunges, so there is nowhere to put it and no
 --                        default that would not be a lie about where the mail went.
+--   `no_such_rule`     — a `rule.update` or `rule.delete` named a rule this organizer's store does
+--                        not hold. Deleted here since, or never travelled. Same class as
+--                        `no_such_message`: a fact about this store the reader could not have
+--                        known, and one it has to be told rather than left to infer.
 --
 -- They live here rather than in a migration of their own because they exist ONLY because
 -- `message.move` exists, and that is this file. A separate migration for two words of one feature
@@ -187,5 +191,5 @@ ALTER TABLE "organizer_requests" ADD CONSTRAINT "organizer_requests_refused_reas
   CHECK ("refused_reason" IS NULL OR "refused_reason" IN (
     'unauthenticated', 'conflict', 'wrong_mailbox', 'invalid_payload',
     'malformed', 'unhandled_kind', 'stale', 'account_erased',
-    'no_such_message', 'no_trash_folder'
+    'no_such_message', 'no_trash_folder', 'no_such_rule'
   ));

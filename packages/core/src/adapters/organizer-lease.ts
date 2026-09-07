@@ -5036,6 +5036,12 @@ export const REQUEST_REFUSAL_REASONS = [
    * where the mail went — the same refusal the organizer's own delete door gives.
    */
   "no_trash_folder",
+  /**
+   * mail 0093. An `update` or `delete` named a rule this organizer's store does not hold —
+   * deleted here since, or never travelled. Not a fault of the record: named back so the person
+   * is told, on `no_such_message`'s reasoning exactly.
+   */
+  "no_such_rule",
 ] as const;
 export type RequestRefusalReason = (typeof REQUEST_REFUSAL_REASONS)[number];
 
