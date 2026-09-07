@@ -184,6 +184,44 @@ export interface PhoneEngine {
   stop(): Promise<void>;
 }
 
+/**
+ * ONE-CLICK UNSUBSCRIBE, REFUSED BY NAME — because on this build it cannot work, and the way it
+ * fails today is a module error.
+ *
+ * The chain, read end to end: `UnsubscribeService` posts through `pinnedHttpRequest`, which reaches
+ * `node:http`/`node:https`, which on a phone are thrower stubs. The engine's own comment says
+ * production "passes nothing and gets `nodeOneClickPost`" — so without this arm a person tapping
+ * unsubscribe on a standalone phone gets a sentence about a Node process rather than an answer about
+ * their mail.
+ *
+ * ── A REFUSAL, NOT A HALF-WIRED IMPLEMENTATION ────────────────────────────────────────────
+ *
+ * The platform HAS a working HTTP client, so a pass-through looks like a one-line fix. It is not.
+ * The URL a `List-Unsubscribe` header names is the SENDER's choice, and the desktop refuses one
+ * pointing at a LAN address for a reason that applies here more strongly rather than less: a phone
+ * sits inside somebody's home network. That refusal is enforced by an SSRF gate that resolves DNS,
+ * and DNS on this build is a thrower too — so honouring the header safely needs a device resolver
+ * and a ruling about what the gate means on a device. Both belong to the door's own slice.
+ *
+ * Until then the honest answer is a refusal that says so. It THROWS rather than answering a status,
+ * and the service's own error path is what makes that correct: it records the attempt as `failed`,
+ * does NOT retry it (at-most-once, because nothing can tell whether the sender received it), and
+ * re-throws. So the bookkeeping is right and the sentence reaches the person.
+ *
+ * NOTHING LEAVES THE DEVICE. No client is constructed, no address is resolved, no request is made —
+ * asserted by a control rather than by this paragraph.
+ */
+export const phoneOneClickPost = {
+  async post(_url: string, _pin: readonly string[]): Promise<{ status: number }> {
+    throw new Error(
+      "one-click unsubscribe is not available on this phone yet. The link a sender puts in an " +
+        "unsubscribe header has to be checked before anything is sent to it — a link pointing " +
+        "inside your own network must be refused — and that check is not built for this app yet. " +
+        "Nothing was sent.",
+    );
+  },
+};
+
 /** The knobs that only mean something on a machine that serves a door to another device. */
 const HOST_ONLY_KEYS = ["hostMode", "hostOrigin", "hostPort", "hostAssetsDir", "lanBind"] as const;
 
@@ -391,6 +429,9 @@ export async function startPhoneEngine(deps: PhoneEngineDeps): Promise<PhoneEngi
       : {}),
     // The store, already open. This is the line the whole file exists for.
     store: async () => store,
+    /* See {@link phoneOneClickPost}: refused by name, so the failure is about the person's mail
+       rather than about a missing Node module. */
+    oneClickPost: phoneOneClickPost,
   });
 
   return {
