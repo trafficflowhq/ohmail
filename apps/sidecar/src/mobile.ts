@@ -190,6 +190,15 @@ const HOST_ONLY_KEYS = ["hostMode", "hostOrigin", "hostPort", "hostAssetsDir", "
 const KEK_HEX_RE = /^[0-9a-f]{64}$/i;
 
 /**
+ * HOW LONG A TRANSACTION MAY WAIT FOR THE ONE AHEAD OF IT BEFORE IT REFUSES BY NAME.
+ *
+ * Generous against any honest transaction on a device store — a drain page is milliseconds and the
+ * slowest measured single-row write is about 90 ms — and short enough that the failure it exists to
+ * name is diagnosable rather than a frozen screen.
+ */
+export const TRANSACTION_WAIT_MS = 30_000;
+
+/**
  * NO TWO TRANSACTIONS IN FLIGHT ON THIS STORE, EVER — an install-wide mutex on `transaction`.
  *
  * ── THE FAILURE, MEASURED ON THE DEVICE'S BINDING RATHER THAN ARGUED ──────────────────────
@@ -210,15 +219,24 @@ const KEK_HEX_RE = /^[0-9a-f]{64}$/i;
  * request arriving during a drain is the same overlap from the other direction.
  *
  * So it goes at the one place every transaction on this store funnels through, whoever started it:
- * the handle's own `transaction` method. Nested transactions (drizzle renders them as savepoints
- * on the transaction OBJECT, not on the handle) are inside the lock already and are untouched —
- * routing them through this would deadlock on the mutex their parent holds.
+ * the handle's own `transaction` method.
  *
- * The engine is UNCHANGED by this. It goes on calling `db.transaction(...)` exactly as it does
- * against the desktop's store, and the difference in what that store guarantees is absorbed here
- * rather than pushed into five thousand lines of composition.
+ * ── AND A MUTEX ON A RE-ENTRANT CALL IS A DEADLOCK, SO THE WAIT IS BOUNDED AND NAMED ──────
+ *
+ * Drizzle renders a NESTED transaction as a savepoint on the transaction OBJECT (`tx.transaction`),
+ * which never reaches this method and is correct as it stands. But a caller that reaches for the
+ * outer HANDLE from inside a transaction body — `db.transaction(...)` within `db.transaction(...)`
+ * — would queue behind a transaction that cannot finish until the inner one returns. That is a
+ * hang, and a hang is the worst of the three possible outcomes: it is indistinguishable from a slow
+ * mail server, it holds the store for every later caller, and it names nothing.
+ *
+ * So the queue wait is bounded by {@link TRANSACTION_WAIT_MS} and the refusal SAYS WHAT TO LOOK
+ * FOR. The entry stays in the chain rather than being dropped — dropping it would let the next
+ * transaction start while the one ahead is still running, which is the invariant this whole
+ * function exists for — so the outer transaction proceeds, its body receives the named rejection,
+ * and its rollback releases the queue. Bounded, diagnosable, and self-healing rather than fatal.
  */
-export function oneTransactionAtATime<T extends object>(db: T): T {
+export function oneTransactionAtATime<T extends object>(db: T, waitMs = TRANSACTION_WAIT_MS): T {
   const handle = db as T & {
     transaction?: (fn: unknown, config?: unknown) => Promise<unknown>;
   };
@@ -226,14 +244,31 @@ export function oneTransactionAtATime<T extends object>(db: T): T {
   if (typeof inner !== "function") return db;
   let tail: Promise<unknown> = Promise.resolve();
   handle.transaction = function serialized(fn: unknown, config?: unknown): Promise<unknown> {
-    const next = tail.then(
-      () => inner.call(handle, fn, config),
-      () => inner.call(handle, fn, config),
+    let started = false;
+    const run = tail.then(
+      () => { started = true; return inner.call(handle, fn, config); },
+      () => { started = true; return inner.call(handle, fn, config); },
     );
-    // The CHAIN swallows, the CALLER does not: one transaction's failure must not reject the next
-    // caller's turn, and it still reaches whoever started it through `next`.
-    tail = next.catch(() => undefined);
-    return next;
+    // The CHAIN keeps the entry whatever the caller is told, and swallows so that one transaction's
+    // failure does not reject the next caller's turn.
+    tail = run.catch(() => undefined);
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (started) return;   // it is running; a slow transaction is not this failure
+        reject(new Error(
+          "this store allows one transaction at a time, and this one waited " +
+            `${waitMs} ms without its turn. The usual cause is a transaction opened on the ` +
+            "database handle from INSIDE another transaction's body: a nested transaction must be " +
+            "opened on the transaction object it is nested in, which the driver renders as a " +
+            "savepoint, not on the handle — the handle's turn cannot come round until the outer " +
+            "one returns.",
+        ));
+      }, waitMs);
+      run.then(
+        (value) => { clearTimeout(timer); resolve(value); },
+        (err: unknown) => { clearTimeout(timer); reject(err); },
+      );
+    });
   };
   return db;
 }
@@ -247,7 +282,11 @@ export function oneTransactionAtATime<T extends object>(db: T): T {
  * factory the next factory does not copy. The journal is the DEVICE's, never the server's — the
  * server's is adopted by `db.ts`, which this bundle does not contain.
  */
-export async function openPhoneStore(exec: PhoneSqlExecutor): Promise<OpenLocalDb> {
+export async function openPhoneStore(
+  exec: PhoneSqlExecutor,
+  /** TEST SEAM. Production takes {@link TRANSACTION_WAIT_MS}; a guard cannot wait thirty seconds. */
+  transactionWaitMs = TRANSACTION_WAIT_MS,
+): Promise<OpenLocalDb> {
   await migrateSqlite({
     run: async (statement: string): Promise<void> => { await exec.run(statement, []); },
     /* The migrator reads BY NAME (`version`, `compile_options`), so the positional rows are zipped
@@ -283,7 +322,7 @@ export async function openPhoneStore(exec: PhoneSqlExecutor): Promise<OpenLocalD
     },
   );
 
-  const branded = brandDialect(oneTransactionAtATime(db), "sqlite") as unknown as LocalDb;
+  const branded = brandDialect(oneTransactionAtATime(db, transactionWaitMs), "sqlite") as unknown as LocalDb;
   return {
     db: branded,
     dataDir: "",

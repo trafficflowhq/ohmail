@@ -1,4 +1,9 @@
 import { sql } from "drizzle-orm";
+/* THE SEAM THAT DECIDES WHETHER THE SCHEMA CENSUS BELOW CAN BE ASKED AT ALL. Branched on the
+   handle's own brand rather than on a `typeof` probe or an environment variable — the same rule
+   every other reader of the two stores follows, and the only one a caller cannot get wrong by
+   forgetting to set something. */
+import { dialect, dialectOf } from "@trafficflow/db/dialect";
 import { kekEnvIdentity } from "@trafficflow/core/mail";
 import { fullSchemaCensus } from "./health-census.js";
 import { API_VERSION } from "../version.js";
@@ -2031,6 +2036,28 @@ export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0102_sync_blocked_reason_read_lim
 export type HealthProbe =
   | { kind: "unreachable"; dbLatencyMs: number; errorCode: string | null }
   | { kind: "empty"; dbLatencyMs: number }
+  /**
+   * REACHABLE, AND THE SCHEMA CENSUS DOES NOT APPLY TO THIS STORE.
+   *
+   * The census below reads five Postgres catalogs — `information_schema.columns`, `pg_indexes`,
+   * `pg_constraint`, `pg_get_constraintdef` and `pg_proc`. A device store has none of them; its
+   * catalog is `sqlite_master` and `pragma table_info`, which is a different question rather than a
+   * different spelling, and its schema is guaranteed by a different journal run by a different
+   * migrator.
+   *
+   * ── WHY THIS ARM EXISTS RATHER THAN THE STORE READING AS UNREACHABLE ──────────────────────
+   *
+   * It read as unreachable, and that was measured on a working phone: `/health` answered 503
+   * `database_unreachable` with `dbLatencyMs: 0` while the very same composition answered `/hello`
+   * 200 and served mail. The census statement throws on the device store, the `catch` below owns
+   * every failure, and "the query did not run" is indistinguishable there from "the database is
+   * gone". A person would be shown a false state about their own mail, which is the one thing a
+   * health endpoint must never do.
+   *
+   * So liveness is asked FIRST and asked in a way both stores answer, and the census runs only
+   * where its catalogs exist. `ok` on this arm means what it says: the store answered.
+   */
+  | { kind: "live"; dbLatencyMs: number }
   | { kind: "probed"; dbLatencyMs: number; pgTrgm: boolean; schemaOk: boolean; markersFound: number };
 
 export async function probeDatabase(
@@ -2065,6 +2092,68 @@ export async function probeDatabase(
   functionDefinitionMarkers: ReadonlyArray<FunctionDefinitionMarker> = [],
 ): Promise<HealthProbe> {
   const started = Date.now();
+  /**
+   * ── THE DEVICE STORE'S ARM, AND IT IS DELIBERATELY *BEFORE* EVERYTHING ELSE ───────────────
+   *
+   * The Postgres path below is left byte-for-byte as it was, including its single statement and
+   * what `dbLatencyMs` therefore measures. That is not tidiness: the hosted `/health` body is
+   * published and its test must stay identical, so the safest possible shape for this change is
+   * one that does not execute a line of new code on a Postgres host. This branch returns before
+   * any of it.
+   *
+   * `select 1` and nothing else, through the dialect seam so it renders on either store. The
+   * question is "does the store answer", which is the only question a health endpoint can ask a
+   * store whose schema it cannot census.
+   */
+  /**
+   * ── THE TEST IS "IS IT THE DEVICE STORE", NOT "IS IT NOT POSTGRES", AND THE CONTROL SAID SO ──
+   *
+   * Written first as `dialectOf(db) !== "pg"`, which fails on an UNBRANDED handle — `dialectOf`
+   * refuses one by design — and the hosted `/health` suite hands this function hand-built fakes
+   * that carry no brand. Six of its cases went red, which is precisely what that suite is for:
+   * it is the control that says whether Postgres behaviour moved, and it said yes.
+   *
+   * So the Postgres path is the DEFAULT and only a handle that positively identifies itself as the
+   * device store takes the branch below. Fail-open is the right direction here because of what the
+   * decision actually is — whether to ask five Postgres catalogs a question — and because an
+   * unbranded handle reaching a store at all is a violation the seam refuses in its own right
+   * (every factory that opens one brands it).
+   */
+  let deviceStore = false;
+  try {
+    deviceStore = dialectOf(db) === "sqlite";
+  } catch {
+    /* Unbranded: not this branch's business to diagnose. The seam refuses it at the first
+       statement it composes, with a message naming the factory that owes the brand. */
+    deviceStore = false;
+  }
+  if (deviceStore) {
+    try {
+      const alive = await dialect(db).exec(db, sql`select 1 as one`);
+      const dbLatencyMs = Date.now() - started;
+      /**
+       * READ POSITIONALLY, because that is what the seam guarantees on this store.
+       *
+       * The device arm of `exec` answers an array of ARRAYS — the column names are gone by the time
+       * a caller sees them, which is the same positional contract the device store's whole binding
+       * rests on. Written first as `row.one`, it read `undefined`, `Number(undefined)` is `NaN`,
+       * and a live store reported `database_probe_empty`: a false state, arrived at by asking a
+       * named question of an unnamed answer. The object arm is kept as the fallback so this stays
+       * correct if it is ever reached with a handle whose `exec` answers rows by name.
+       */
+      const first = rowsOf<unknown>(alive)[0];
+      const one = Array.isArray(first) ? first[0] : (first as { one?: unknown } | undefined)?.one;
+      if (Number(one) !== 1) return { kind: "empty", dbLatencyMs };
+      return { kind: "live", dbLatencyMs };
+    } catch (err) {
+      const code = (err as { code?: unknown } | null)?.code;
+      return {
+        kind: "unreachable",
+        dbLatencyMs: Date.now() - started,
+        errorCode: typeof code === "string" ? code : null,
+      };
+    }
+  }
   const indexMarkers = [...SCHEMA_INDEX_MARKERS, ...extraIndexMarkers];
   const expected =
     columnMarkers.length + indexMarkers.length + SCHEMA_CHECK_MARKERS.length +
@@ -2340,6 +2429,37 @@ export const healthRoutes: Route[] = [
           entitlements,
           ...pager,
           ...staffFaults,
+        });
+      }
+
+      /**
+       * THE DEVICE STORE ANSWERED, and there is no schema census to report for it.
+       *
+       * `schemaOk` and the marker counts are Postgres-catalog readings, so they are ABSENT here
+       * rather than reported as zero — a `found: 0, expected: 47` body would read as a broken
+       * schema on a store whose schema is fine, which is the false state this arm exists to stop
+       * being shown. `pgTrgm` is absent for the same reason: it names a Postgres extension.
+       *
+       * The key faults that are NOT store-shaped still apply, which is why this goes through
+       * `healthFault` rather than returning 200 flat: a missing install key or a broken build is
+       * as wrong on a phone as anywhere else.
+       */
+      if (probe.kind === "live") {
+        const liveFault = healthFault({
+          schemaOk: true, markersFound: 0, kekError, buildError, expected: 0, through,
+        });
+        return healthResponse(liveFault ? 503 : 200, {
+          ok: liveFault === null,
+          version,
+          buildSource,
+          dbLatencyMs: probe.dbLatencyMs,
+          cookieAuth: deps.allowCookieAuth !== false,
+          kek,
+          dbProvider,
+          billing,
+          ...pager,
+          ...staffFaults,
+          ...(liveFault ?? {}),
         });
       }
 

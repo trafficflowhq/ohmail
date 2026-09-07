@@ -142,6 +142,7 @@ import { runSenderNameBackfill } from "@trafficflow/worker/sender-name-backfill"
 import { createLocalAi, type LocalAi } from "./ai-provider.js";
 import { localAiRoutes } from "./ai-routes.js";
 import { localAutoSuggestRoutes } from "./auto-suggest-routes.js";
+import { dialectOf } from "@trafficflow/db/dialect";
 import { openLocalDb, type LocalDb, type LocalDbOpenPhase, type OpenLocalDb } from "./db.js";
 
 /**
@@ -1871,7 +1872,24 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       // `schemaTier: "mail"` because this install migrated the mail journal and nothing else
       // (`db.ts`). Without it `/health` probes for the hosted billing ledger and answers 503
       // `schema_incomplete` for ever — about a database that is complete for what it is.
-      health: { version: API_VERSION, kek: kekIdentity, schemaTier: "mail" },
+      health: {
+        version: API_VERSION, kek: kekIdentity, schemaTier: "mail",
+        /**
+         * WHICH STORE THIS INSTALL ACTUALLY OPENED, named rather than left null.
+         *
+         * It was null on every local install, which was harmless while there was only one possible
+         * answer and stops being harmless now there are two: `/health` on a phone reports no
+         * schema census (there are no Postgres catalogs to census), so the provider is the only
+         * thing in the body that says WHY — and a null there reads as "this host does not know",
+         * which is worse than either true answer.
+         *
+         * Read from the handle's own brand, so it cannot disagree with the store that answered the
+         * request. Generic rather than a package name on purpose: the device store is expo-sqlite
+         * on a phone and `node:sqlite` in the harness, and a body that named one of those would be
+         * false in the other place while looking more precise.
+         */
+        dbProvider: dialectOf(db) === "sqlite" ? "sqlite" : "pglite",
+      },
       /**
        * What `GET /hello` answers — this install's capability statement, on `health`'s
        * injection pattern. `flavor: "local"` is what a client's server picker reads to learn it
