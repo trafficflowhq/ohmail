@@ -136,6 +136,18 @@ server would not answer, the mailbox stays organized here with the request still
 goes on reading the mailbox, and files and sends nothing while the request is outstanding, and the
 next check asks the server again. Pressing "Organize here" cancels the request, as before.
 
+Finding the record does not depend on the server being willing to search for it. One real provider
+refuses that kind of search — every time, not transiently — which would have left the button unable
+to finish, ever. The app reads the folder itself, picks out its own records from what came back,
+takes them out, and reads again to confirm they are gone; a folder too full to read whole is
+refused with a named reason rather than half-answered.
+
+And the wait has an end. The record expires on its own once the app stops renewing it — and an app
+with a standing stop request renews nothing — after which every install treats it as expired and
+can take the mailbox past it. If the server still has not confirmed the removal by then, the
+mailbox is recorded as no longer organized here, rather than promising for ever a confirmation the
+server will not give.
+
 ### Every control on a phone is a 44-pixel target
 
 Controls drawn smaller than a fingertip were smaller than a fingertip to press, too. Segmented

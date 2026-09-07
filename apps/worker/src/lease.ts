@@ -1,8 +1,10 @@
 import {
   CAPABILITY_REQUESTS, deriveRequestKey,
   DEFAULT_STALE_AFTER_MS, LeaseUnavailableError, META_FOLDER,
+  ClaimReleaseError,
   isMalformed, parseClaim, runLeaseGate,
   type LeaseIo, type LeaseOp, type LeaseSelf, type LeaseVerdict, type OrganizerClaim,
+  type RawClaimMessage,
   type TakeoverAuthorization,
 } from "@trafficflow/core/adapters/organizer-lease";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
@@ -370,56 +372,66 @@ export async function releaseMailboxClaim(
    * and the next install waits out the staleness window before it may take the mailbox — on the
    * lapse, stop-organizing and remove-mailbox paths, which are precisely the moments a person has
    * just said they want this install to let go. */
-  /* ── ASK FOR OUR OWN RECORDS BY ID, NOT FOR A WINDOW THAT MIGHT CONTAIN THEM ─────────────
+  /* ── LOCATE FROM A CURRENT READ, DELETE THE PAIRS THAT READ NAMED, CONFIRM BY RE-READ ────
    *
-   * The bounded read below covers the NEWEST records, and this install's own claim is normally
-   * among them because a claim is renewed by APPENDING. "Normally" is not the guarantee a release
-   * needs. Two ways one of ours sits outside that window, and neither is exotic: crash residue from
-   * an interrupted append-then-expunge, which is older by construction; and a claim buried by a
-   * ceiling's worth of later arrivals in a folder anyone with append rights can write to.
+   * `findOwnRecords` was a server-side header search, and a real provider refused it on EVERY
+   * poll (RC3, 38 failed passes in one session, surviving a restart) while a plain current-folder
+   * delete of the same record succeeded each time — so the search's reach was paid for with a
+   * release that could be refused for ever. It is now a COMPLETE, CURRENT read of the folder
+   * under its current UIDVALIDITY (`makeLeaseIo` says how and what that trades away), the
+   * selection below is made by the same parser the gate decides with, and the refs handed to the
+   * delete are facts from that same read — `removeClaims` refuses refs from another numbering.
    *
-   * Missing one is worse than it sounds, because this function RETURNS A COUNT and the caller reads
-   * that as the release having happened. So an incomplete pass reports success while a claim of
-   * ours goes on holding the mailbox against the next install until it goes stale.
+   * A read that could not be complete does not become a shorter answer: the io throws
+   * {@link ClaimReleaseError} with a code (`over_ceiling`, `unreadable`), and a double's `null`
+   * converts to the same class here, because this function RETURNS A COUNT and every caller reads
+   * a count as the release having happened. Every caller already logs the failure as
+   * `organizer_claim_release_failed`, whose copy says the true consequence — the claim ages out
+   * of the folder on its own — and the caller's lapse bound is what keeps that from meaning
+   * "for ever".
    *
-   * `findOwnRecords` asks the SERVER which messages carry our id, so position stops mattering and
-   * the answer is a handful of records rather than a folder.
+   * ── AND THE DELETE IS NOT THE PROOF — THE RE-READ IS ─────────────────────────────────────
    *
-   * ── AND THERE IS NO WINDOW FALLBACK LEFT, BY EITHER DOOR ─────────────────────────────────
-   *
-   * There used to be one, taken when the search was REFUSED or when the adapter had no search at
-   * all. The refused case was closed first and the absent one was left beside it, which made the
-   * excuse the difference rather than the outcome: either way the window is not a complete answer,
-   * records of ours outside it are not removed, and the function still returns a COUNT that every
-   * caller reads as the mailbox released. A claim left behind holds it against the next install
-   * until it goes stale — the delayed handover this whole path exists to prevent.
-   *
-   * "This adapter cannot search" is a better excuse than "the server refused" and it is not a
-   * better outcome, so both now report the same thing: the release did not happen. Every caller
-   * already wraps this and logs `organizer_claim_release_failed`, whose copy says the true
-   * consequence — the claim ages out of the folder on its own.
-   *
-   * The fallback is DELETED rather than left unreachable. Every adapter this product builds
-   * provides the capability (`makeLeaseIo` defines it), so the branch could only ever have been
-   * taken by a test double, and code that only a double can reach is a place where a double's
-   * convenience quietly becomes the product's behaviour. */
-  const found = typeof io.findOwnRecords === "function"
-    ? await io.findOwnRecords(installId)
-    : null;
-  if (found === null) {
-    throw new Error(
-      `the records this install owns in ${META_FOLDER} could not be enumerated — this connection `
-      + "cannot ask for them by id, or the server refused — so a complete release cannot be told "
-      + "from a partial one, and nothing was removed on this pass",
-    );
-  }
-  const messages = found;
-  const ours = messages
+   * `removeClaims` proves the uids it was handed are gone. What it cannot see is a record of ours
+   * the locate never named — measured live as the uid-REWRITE shape: the same claim reappearing
+   * at a new uid under a constant UIDVALIDITY, so every delete succeeded and the claim stood. The
+   * confirm re-reads the folder and requires NONE of ours to remain; survivors are
+   * `still_present`, which no caller may read as released, and the next pass locates afresh from
+   * whatever the folder holds then. */
+  const locate = async (): Promise<RawClaimMessage[]> => {
+    const found = typeof io.findOwnRecords === "function"
+      ? await io.findOwnRecords(installId)
+      : null;
+    if (found === null) {
+      throw new ClaimReleaseError(
+        "search_refused",
+        `the records this install owns in ${META_FOLDER} could not be enumerated — this connection `
+        + "cannot ask for them, or the server refused — so a complete release cannot be told "
+        + "from a partial one, and nothing was removed on this pass",
+      );
+    }
+    return found;
+  };
+  /* `parseClaim` rather than a header grep — one parser, the gate's own, so a folded header
+   * cannot be ours to one layer and a stranger's to another. A profile document never parses as
+   * a claim, which is what keeps the mailbox's settings out of the expunge below. */
+  const ownRefsIn = (messages: RawClaimMessage[]): unknown[] => messages
     .map((m) => ({ ref: m.ref, claim: parseClaim(m.raw, m.ref) }))
     .filter((c) => c.claim !== null && !isMalformed(c.claim) && c.claim.installId === installId)
     .map((c) => c.ref);
+
+  const ours = ownRefsIn(await locate());
   if (ours.length === 0) return 0;
   await io.removeClaims(ours);
+  const remaining = ownRefsIn(await locate());
+  if (remaining.length > 0) {
+    throw new ClaimReleaseError(
+      "still_present",
+      `${remaining.length} record(s) of this install's still stand in ${META_FOLDER} after the `
+      + `delete removed ${ours.length} — the folder moved under the release, so it is not `
+      + "confirmed and the next pass locates afresh",
+    );
+  }
   return ours.length;
 }
 
@@ -792,6 +804,7 @@ export async function acquireLeasePermit(input: LeasePermitInput): Promise<Lease
 }
 
 /** Re-exported so the worker's `catch` arms name one class, imported from one place. */
-export { LeaseUnavailableError, DEFAULT_STALE_AFTER_MS, META_FOLDER };
+export { LeaseUnavailableError, ClaimReleaseError, DEFAULT_STALE_AFTER_MS, META_FOLDER };
+export type { ClaimReleaseFailureCode } from "@trafficflow/core/adapters/organizer-lease";
 export type { LeaseSelf, OrganizerClaim, LeaseOp };
 export type { LeasePeek, LeaseHolder, LeaseOccupancy } from "@trafficflow/core/adapters/organizer-lease";

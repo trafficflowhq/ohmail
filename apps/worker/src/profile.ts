@@ -541,7 +541,7 @@ export class OrganizerProfileSync {
       log("organizer_profile_write_failed", {
         mailboxId: deps.mailboxId, accountId: deps.accountId,
         ...(err instanceof ProfileUnavailableError ? { op: err.op } : {}),
-        err: err instanceof Error ? err.message : String(err),
+        err,
       });
     }
   }
@@ -950,10 +950,18 @@ export class OrganizerProfileSync {
       // One failure arm for the whole tick, and the event names the feature rather than the
       // step: `err` reduces to class + code in `log.ts`, and `ProfileUnavailableError.op` names
       // the step when there is one.
+      //
+      // THE THROWN VALUE ITSELF, never `err.message` (0.14.1). This slot carried the MESSAGE
+      // STRING, so the logger — whose whole job is reducing a thrown value to class + code +
+      // causeClass — was handed a string and truthfully reported `errorClass:"String"
+      // errorCode:null` with nothing else: a real `ProfileUnavailableError` and the provider's
+      // refusal in its `cause` were discarded at this call site, and a live provider's every
+      // profile failure logged as a bare "String" (measured at RC3). The comment above was the
+      // claim; the ternary was the contradiction.
       log("organizer_profile_write_failed", {
         mailboxId: deps.mailboxId, accountId: deps.accountId,
         ...(err instanceof ProfileUnavailableError ? { op: err.op } : {}),
-        err: err instanceof Error ? err.message : String(err),
+        err,
       });
       // A seed that threw is retried by the next tick; nothing was marked seeded.
     } finally {
@@ -1192,7 +1200,7 @@ export class OrganizerProfileSync {
       this.markerPending = fact;
       log("organizer_profile_marker_failed", {
         mailboxId: deps.mailboxId, accountId: deps.accountId,
-        err: err instanceof Error ? err.message : String(err),
+        err,
       });
     }
   }

@@ -1897,22 +1897,25 @@ export interface LeaseIo {
   /** STORE `\Deleted` + EXPUNGE the given messages. */
   removeClaims(refs: readonly unknown[]): Promise<void>;
   /**
-   * EVERY record in the folder bearing this install id, however far back it sits — asked of the
-   * SERVER, not filtered out of a window.
+   * THE RECORDS A RELEASE MAY DECIDE FROM — a complete, current read of the folder, or a refusal.
    *
-   * Optional for `uidValidity`'s reason, and the absence resolves the same safe way: a caller that
-   * cannot ask falls back to the bounded window and reports that it could not see the whole folder,
-   * which is what it did before this existed.
+   * Since 0.14.1 this is a CURRENT FOLDER READ under the folder's current UIDVALIDITY, not a
+   * server search: a real provider refused the header search on every poll, so a release that
+   * could only locate its own records through a verb the server may decline was refusable for
+   * ever (see the implementation in {@link makeLeaseIo}). A read that covered the folder whole is
+   * a complete answer to "which of these are mine"; one that could not be throws
+   * {@link ClaimReleaseError} with a code (`over_ceiling`, `unreadable`) rather than returning a
+   * slice, because the caller deletes what comes back and reports a count.
    *
-   * It exists because RELEASE and ELECTION ask different questions of one folder. The election asks
-   * "who holds this mailbox", which a partial read cannot answer, so it refuses. A release asks
-   * "which of these are MINE" — answerable per record, but only over records it can SEE, and the
-   * newest-first window does not cover crash residue or a claim buried by later arrivals. Searching
-   * by the id answers it completely and returns a handful of records rather than a folder.
+   * `null` remains in the signature as a double's refusal shape — "could not enumerate at all" —
+   * and callers convert it to the same typed error. An adapter without the method resolves the
+   * same way.
    *
-   * The result is CANDIDATES, not claims: the settings document carries the same install-id header,
-   * so the caller must still parse each one and keep only the claims. Returning them unparsed keeps
-   * one parser in this module rather than two.
+   * The result is CANDIDATES, not claims, and MAY carry records of other installs: the selection
+   * — "which of these are MINE" — is the CALLER's, made with the same parser the gate decides
+   * with, so a folded header cannot be read two ways by two layers. The settings document carries
+   * the install-id header too; expunging it here would delete the mailbox's settings, which is
+   * the other reason selection stays with the parser.
    */
   findOwnRecords?(installId: string): Promise<RawClaimMessage[] | null>;
   /**
@@ -2628,6 +2631,52 @@ export function ackSweepCutoff(before: Date): Date {
 const OWN_RECORDS_MAX = 5_000;
 
 /**
+ * WHY A RELEASE OF THIS INSTALL'S OWN RECORDS DID NOT HAPPEN — typed, with a code callers can
+ * branch on and operators can read.
+ *
+ * The shape it replaces was measured on a real provider at RC3: the release threw a BARE `Error`
+ * (`errorClass:"Error" errorCode:null`) on every poll, 38 times in one session, and the log
+ * carried nothing that distinguished "the server refused the enumeration" from "the folder is too
+ * full to read whole" from "the connection died mid-read" — three states with three different
+ * remedies, indistinguishable for two days.
+ *
+ * The codes are the release's own taxonomy, and each names the state rather than the verb that hit
+ * it:
+ *
+ *  · `search_refused`   — the io could not enumerate at all (an adapter with no capability, or a
+ *                          double reporting the refusal the old server search produced);
+ *  · `over_ceiling`     — the folder holds more records than one bounded read may take, so a
+ *                          complete answer cannot be told from a partial one and nothing was
+ *                          removed. The ceiling STAYS: it is what bounds this read's work, and the
+ *                          caller's lapse bound is what keeps a mailbox in this state from being
+ *                          stuck for ever;
+ *  · `unreadable`       — the read itself failed (the connection, the SELECT, the FETCH); the
+ *                          provider's failure rides in `cause`, where the logger reduces it to
+ *                          class + code and never its text;
+ *  · `renumbered`       — the folder's UIDVALIDITY moved between the read that produced the refs
+ *                          and the delete, so the refs name nothing that can be trusted and
+ *                          nothing was expunged;
+ *  · `still_present`    — the delete ran, and a re-read still finds records of ours: the folder
+ *                          moved under the release (the uid-rewrite shape), so the release is not
+ *                          confirmed and the next pass locates afresh.
+ *
+ * Every code is retryable by the same means — the next pass asks again from a current read — and
+ * none of them is "released": the one thing this class exists to make impossible is a caller
+ * reading any of these five as a count.
+ */
+export type ClaimReleaseFailureCode =
+  "search_refused" | "over_ceiling" | "unreadable" | "renumbered" | "still_present";
+
+export class ClaimReleaseError extends Error {
+  readonly code: ClaimReleaseFailureCode;
+  constructor(code: ClaimReleaseFailureCode, message: string, opts?: { cause?: unknown }) {
+    super(message, opts);
+    this.name = "ClaimReleaseError";
+    this.code = code;
+  }
+}
+
+/**
  * ── THE SEARCH ITSELF IS BOUNDED, NOT ONLY WHAT IS DONE WITH ITS ANSWER ───────────────────────
  *
  * Capping the uid list after it arrives bounds the FETCH and nothing else: the reply to a bare
@@ -3046,23 +3095,62 @@ export function makeLeaseIo(
       }
     },
 
-    async findOwnRecords(installId: string): Promise<RawClaimMessage[] | null> {
-      // The settings document carries this header too, so these are CANDIDATES: the caller parses
-      // each and keeps only claims. Expunging a profile here would delete the mailbox's settings.
+    async findOwnRecords(_installId: string): Promise<RawClaimMessage[] | null> {
+      /* ── A CURRENT FOLDER READ, NOT A SERVER SEARCH (0.14.1) ─────────────────────────────
+       *
+       * This was a windowed `UID SEARCH HEADER X-Ohmail-Install-Id <id>`, and a real provider
+       * refused that search on EVERY poll — measured at RC3: `organizer_claim_release_failed`
+       * 38 times in one session, surviving a restart, while a plain current-folder delete of the
+       * same record succeeded every time. A release that can only locate its own records through
+       * a verb the server may decline is a release that can be refused for ever, and "stop
+       * organizing here" is the one instruction that must always be able to finish.
+       *
+       * So the locate is now the SAME bounded read the gate itself decides from
+       * ({@link readMetaFolderWindow}): the folder's newest records, fetched under the caller's
+       * lock and the folder's CURRENT UIDVALIDITY, with the selection — "which of these are
+       * MINE" — made CLIENT-SIDE by the caller's parser rather than by the server. A window that
+       * covered the folder whole (`truncated: false`) is a complete answer to that question by
+       * construction; one that could not be is refused with a code, never sliced, because the
+       * caller deletes what comes back and reports a count.
+       *
+       * What this deliberately gives up is the search's reach PAST the window: crash residue
+       * buried under more than a window's worth of later arrivals is no longer locatable here,
+       * and such a folder refuses `over_ceiling` on every pass. That state is unreadable to the
+       * GATE too (its `listClaims` refuses the same window), and the caller's lapse bound is what
+       * ends a release the folder will not confirm — bounded honesty over unbounded reach.
+       *
+       * The result is CANDIDATES, not claims: the settings document and every other record in the
+       * window come back too, and the caller keeps only claims bearing its id — one parser, in
+       * the caller, exactly where "is this ours" is decided everywhere else.
+       */
       const metaPath = await meta.path();
       const lock = await client.getMailboxLock(metaPath);
       try {
-        /* EXHAUSTIVE, and refused rather than sliced when it cannot be. The caller deletes what
-         * comes back and reports a count, so a short answer here is a claim left holding the
-         * mailbox while the log says it was released. {@link OWN_RECORDS_MAX} is a ceiling on
-         * work rather than on correctness: it is far above any honest folder, and crossing it
-         * returns `null` — "could not enumerate" — which the release reports as a refusal. */
-        return await searchHeaders(
-          client,
-          metaPath,
-          { header: { [H.installId]: installId } },
-          { max: OWN_RECORDS_MAX, refuseWhenOver: true },
-        );
+        let read: MetaFolderRead;
+        try {
+          read = await readMetaFolderWindow(client, metaPath);
+        } catch (err) {
+          /* The read itself died — the connection, the SELECT, the FETCH. The provider's failure
+           * rides in `cause`, where the logger reduces it to class + code and never its text. */
+          throw new ClaimReleaseError(
+            "unreadable",
+            `the records in ${META_FOLDER} could not be read on this connection, so a complete `
+            + "release cannot be told from a partial one and nothing was removed",
+            { cause: err },
+          );
+        }
+        /* Beside the records, inside the lock — the refs below are facts only under THIS
+         * generation, and `removeClaims` refuses refs from another one. */
+        sampleGeneration();
+        if (read.truncated) {
+          throw new ClaimReleaseError(
+            "over_ceiling",
+            `${META_FOLDER} holds ${read.total ?? "more"} records where one read may take `
+            + `${META_RECORDS_MAX_PER_FETCH}, so a complete release cannot be told from a partial `
+            + "one and nothing was removed",
+          );
+        }
+        return read.records.map((m) => ({ ...m }));
       } finally {
         lock.release();
       }
@@ -3153,6 +3241,28 @@ export function makeLeaseIo(
       if (uids.length === 0) return;
       const lock = await client.getMailboxLock(await meta.path());
       try {
+        /* ── A UID IS A FACT ONLY UNDER THE NUMBERING IT WAS READ UNDER ─────────────────────
+         *
+         * Every ref handed here came out of a read that sampled the folder's generation beside
+         * the records (`sampleGeneration`, in `listClaims` and `findOwnRecords`). If the folder
+         * was replaced between that read and this lock — a delete-and-recreate, the one thing
+         * that moves UIDVALIDITY — the numbering starts again from one, and these uids now name
+         * whatever happens to sit at them: another install's live claim, or the settings
+         * document. Expunging by them would be deleting strangers on a stale map.
+         *
+         * Only a PROVEN mismatch refuses — both generations known and different. An unknowable
+         * one proceeds as it always has: a connection that hides UIDVALIDITY gave these refs
+         * minutes ago under the same selection, and the release path's confirm-by-re-read is the
+         * backstop for what a proof cannot cover. `String(…)` because one side may be a bigint
+         * and the other a number for the same generation. */
+        const gen = currentGeneration();
+        if (generationAtLastRead !== null && gen !== null && String(gen) !== String(generationAtLastRead)) {
+          throw new ClaimReleaseError(
+            "renumbered",
+            `${META_FOLDER} was renumbered between the read that named these ${uids.length} `
+            + "record(s) and the delete, so the refs cannot be trusted and nothing was expunged",
+          );
+        }
         // imapflow's `messageDelete` RESOLVES `false` when the server refuses the STORE/EXPUNGE
         // — it does not reject. Swallowing that made a refused removal indistinguishable from a
         // done one, and the gate's takeover path is now load-bearing on the difference: a

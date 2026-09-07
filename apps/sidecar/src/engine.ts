@@ -99,7 +99,7 @@ import { runSyncCycle, type SyncDeps } from "@trafficflow/worker/sync";
 // not doing it: a fresh claim nobody holds stands another install down for the whole staleness
 // window, at exactly the moment somebody has chosen to leave.
 import {
-  readMailboxLease, releaseMailboxClaim, LeaseUnavailableError,
+  readMailboxLease, releaseMailboxClaim, LeaseUnavailableError, DEFAULT_STALE_AFTER_MS,
 } from "@trafficflow/worker/lease";
 // The APPEND-LESS read, straight from core: an install that has not been asked to organize must
 // still be able to say who does, and `runLeaseGate` cannot answer that question without taking
@@ -2939,6 +2939,24 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        *  resumption work. See `LeaseSelf` in the engine. */
       let leaseNonce: string | null = null;
       /**
+       * WHEN THIS PROCESS LAST RENEWED ITS CLAIM — the fact the release's LAPSE bound is computed
+       * from, and in memory deliberately.
+       *
+       * The claim's own heartbeat is the instant handed to `readMailboxLease` below, so this is
+       * the newest heartbeat any reader of `ohmail/_meta` can see from this install. Once it is
+       * `staleAfter` old, every other install already reads the claim as stale and takes the
+       * mailbox past it — which is what makes the lapse an END of a release the server would not
+       * confirm, rather than a guess about one.
+       *
+       * On restart the memory is gone and the bound falls back to `release_requested_at`, which is
+       * later than any renewal this install can have written after it: the release arm returns
+       * ahead of the lease read on every pass that sees the request. The one renewal that can
+       * postdate the request — a pass whose row read raced the button — lives in this process and
+       * is therefore in this memory; only a restart inside that single pass loses it, and the cost
+       * is a flip early by at most one pass's duration.
+       */
+      let lastLeaseRenewalAt: Date | null = null;
+      /**
        * A STAND-DOWN RECORDED ON THE ROW OUTLIVES THE PROCESS, and that is what makes a lapsed
        * Cloud subscription leave the desktop stood down rather than auto-resuming.
        *
@@ -3533,7 +3551,40 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            * the row already names it, and a peek is one more read of a folder that has just
            * refused one.
            */
+          /* ══ …AND THE RETRY IS BOUNDED BY THE LAPSE, OR "STOP" CAN NEVER FINISH (0.14.1) ═══
+           *
+           * Measured on a real provider at RC3: the enumeration was refused on EVERY poll — 38
+           * failed/unconfirmed pairs in one session, surviving a restart — so the arm below, right
+           * per pass, was unbounded as a whole. The person could never stop organizing, and while
+           * the request stood every pass arranged nothing and renewed nothing: a mailbox nothing
+           * was organizing, reported as organized here, for ever.
+           *
+           * The bound is the lease's own arithmetic. The claim's heartbeat is the instant this
+           * install last renewed it ({@link lastLeaseRenewalAt}), and a pass with a pending
+           * request never renews — so once that instant is `staleAfter` old, every reader of the
+           * folder already treats the claim as STALE and takes the mailbox past it. From that
+           * moment "the claim is still in the folder" blocks nobody: the handover the person asked
+           * for is available everywhere, and the truthful record is that the organizing here has
+           * ended. The row flips exactly as a confirmed release flips it — same compare-and-set,
+           * same yield to a live press — and the log names the lapse rather than a deletion.
+           *
+           * INSIDE the window the arm below stands unchanged: flipping early would tell the person
+           * the mailbox was let go while the claim is still fresh enough to stand their other
+           * machine down — the exact false state the unconfirmed arm exists to prevent.
+           *
+           * On restart the memory is gone and `release_requested_at` bounds instead — later than
+           * any renewal this install can have written after it, since this arm returns ahead of
+           * the lease read on every pass that sees the request.
+           */
+          let releasedByLapse = false;
           if (released === null) {
+            const staleAfterMs = config.leaseStaleAfterMs ?? DEFAULT_STALE_AFTER_MS;
+            const lastRenewal = lastLeaseRenewalAt ?? releaseRequested;
+            if (now().getTime() - lastRenewal.getTime() >= staleAfterMs) {
+              releasedByLapse = true;
+            }
+          }
+          if (released === null && !releasedByLapse) {
             /* THE PIPELINE IS TOLD, or a reader's gate gets an organizer's cycle. `drain` spreads
                `role: organizer.organizing ? "organizer" : "reader"` and gates `armHoldFromFolder`
                and `sendScheduled` on the same field. `reason` is NULL: nobody else holds this
@@ -3561,7 +3612,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             });
             return false;
           }
-          if (released > 0) {
+          if (released !== null && released > 0) {
             log("organizer_claim_released", {
               mailboxId: mb.id,
               claims: released,
@@ -3677,7 +3728,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           }
           takeoverAuthorized = false;
           observedTakeoverAt = null;
-          organizer = { organizing: false, reason: null, heldBy: null, unreadableSince: null };
+          /* On the lapse path this pass read nothing from the folder — the enumeration is what
+             failed — so a standing unreadable mark is carried, on the unconfirmed arm's own rule:
+             a pass that learned nothing may not clear an outage. A confirmed release DID read the
+             folder, and clears it as it always has. */
+          organizer = {
+            organizing: false, reason: null, heldBy: null,
+            unreadableSince: releasedByLapse ? organizer.unreadableSince : null,
+          };
           /* NOT `priorStandDown`. That memory answers "somebody else holds this", and it is what
              `standDownMemory` derives from the row — which now reports a released mailbox as no
              memory at all. Setting it here would make the pane say another organizer had taken the
@@ -3685,10 +3743,20 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // The RELEASE's sentence: nobody took this mailbox, so "schedule it again where the
           // mailbox is organized now" would name a place that does not exist.
           await standDownAppointments("organized_elsewhere:unknown", RELEASED_ORGANIZER_SEND_SENTENCE);
-          log("organizer_released", {
-            reason: "the person stopped organizing this mailbox here; this install keeps its login, "
-              + "its poll timer, its credentials and its mirror, and reads the mailbox from now on",
-          });
+          if (releasedByLapse) {
+            log("organizer_released_by_lapse", {
+              mailboxId: mb.id,
+              reason: "this install was asked to stop organizing this mailbox and the server never "
+                + "confirmed its record was removed; the record has now been stale for longer than "
+                + "any install honours one, so the organizing here is recorded as ended — the claim "
+                + "ages out of the folder on its own, and this install reads from now on",
+            });
+          } else {
+            log("organizer_released", {
+              reason: "the person stopped organizing this mailbox here; this install keeps its login, "
+                + "its poll timer, its credentials and its mirror, and reads the mailbox from now on",
+            });
+          }
           return false;
         }
 
@@ -3773,11 +3841,15 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          * secret. This claim then advertises nothing and a reader is refused honestly at its own
          * door — the correct answer rather than a gap.
          */
+        /* Captured once so the renewal memory records the SAME instant the gate writes into the
+           claim's heartbeat — the lapse bound below compares against what a reader of the folder
+           can actually see, not against a second clock reading taken after the round trip. */
+        const gateAskedAt = now();
         const outcome = await readMailboxLease({
           adapter,
           mailboxId: mb.id,
           self: { installId, kind: "local", displayName: machineName, lastNonce: leaseNonce },
-          now: now(),
+          now: gateAskedAt,
           hasRequestKey: requestKey !== null,
           // An explicit human choice, and the ONLY thing that distinguishes "this mailbox's last
           // organizer went quiet" from "the user wants this machine to have it". Without it the
@@ -3797,6 +3869,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         });
         if (outcome.organize) {
           leaseNonce = outcome.nonce;
+          // The gate renewed this install's claim with `gateAskedAt` as its heartbeat — the fact
+          // the release's lapse bound reads. See `lastLeaseRenewalAt`.
+          lastLeaseRenewalAt = gateAskedAt;
           // Reading the lease is what proves it: a resolved gate clears the unreadable mark.
           organizer = { organizing: true, reason: null, heldBy: null, unreadableSince: null };
           // THE MEMORY IS SPENT WITH THE STAMP. Reaching here past a remembered stand-down means a
