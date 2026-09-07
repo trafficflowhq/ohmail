@@ -218,6 +218,19 @@ bar was desktop-only. While a selection is up, tapping a row adds it or takes it
 opening it, and the count button ends the mode. A hold that moves is a scroll, and a hold with a
 mouse does nothing: the desktop already has x and Cmd-click.
 
+### Compose opens ready to type
+
+Pressing Compose puts the cursor in the To field. When the recipients are already answered — a
+reopened draft, a forward — the cursor lands where the writing resumes: the subject, or the
+message body.
+
+Letters typed while the compose form is open no longer act as keyboard shortcuts on the mailbox
+behind it. Before this, if nothing on the form had focus — after a click on empty space, say —
+each typed letter still ran its one-key mailbox verb, so writing a message could file, park or
+navigate away from mail behind the form while the form itself stayed empty. Escape, Tab, Enter
+and the modifier shortcuts (such as ⌘K) still work over the form, and so do the shortcut sheet
+(`?`) and the send-later number keys.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

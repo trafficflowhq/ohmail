@@ -6200,6 +6200,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
       chord: "?",
       group: "app",
       label: t("shortcuts.sheet"),
+      inWriting: true, // the sheet moves no mail, and it is where Compose's own chords are documented
       run: () => setShortcutsOpen((o) => !o),
     },
     /* Escape is NOT here. It is registered above, in the `overlay` scope, because an open

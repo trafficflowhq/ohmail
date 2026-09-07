@@ -84,6 +84,15 @@ export interface KeyBinding {
    */
   inInput?: boolean;
   /**
+   * Fire even while a WRITING SURFACE is mounted — see {@link useWritingSurface}. Default
+   * false: with the compose form on screen, a chord somebody could TYPE (a bare letter, a
+   * shifted one, `?`, a `g …` sequence) reaches no binding, because a blurred composer must
+   * not let prose file the message behind it. The opt-ins are the keys that belong to the
+   * writing surface's own chrome (the send-later digits) and the `?` sheet, which moves no
+   * mail and is the one place the composer's own chords are documented.
+   */
+  inWriting?: boolean;
+  /**
    * Declared and listed, but inert right now (nothing to act on). It still appears in the
    * overlay: a shortcut that vanishes from the documentation when the list is empty is a
    * shortcut nobody learns.
@@ -157,6 +166,18 @@ interface Registry {
    * — so a button and a keystroke are not merely equivalent, they are one code path.
    */
   press: (chord: string) => boolean;
+  /**
+   * A WRITING SURFACE IS ON SCREEN — the compose form's claim. While at least one claim is
+   * held, the dispatcher refuses every chord a person could TYPE (see {@link KeyBinding.inWriting})
+   * unless focus is somewhere letters already mean letters. Returns the release; the pair is
+   * held for exactly as long as the surface is mounted ({@link useWritingSurface}).
+   *
+   * It is a claim on the DISPATCHER, not a layer of bindings: the `?` sheet keeps listing what
+   * the keys would do elsewhere (the modal gate's precedent — suspension is not documentation),
+   * and `press` is untouched, because a button click that resolves through the registry is a
+   * deliberate act, not a keystroke that missed its field.
+   */
+  claimWriting: () => () => void;
 }
 
 const KeymapContext = createContext<Registry | null>(null);
@@ -175,6 +196,20 @@ export function isTypingTarget(target: EventTarget | null): boolean {
 export function chordPrefix(chord: string): string | null {
   const i = chord.indexOf(" ");
   return i < 0 ? null : chord.slice(0, i);
+}
+
+/**
+ * Could a person WRITING PROSE press this chord by accident? The test is whether the chord's
+ * first gesture produces a character: a bare key of length 1 (`r`, `?`, `/`), a shifted one
+ * (`shift+o` — Shift is how capitals are typed), or the opening key of a sequence (`g o`
+ * begins with a typed `g`). `mod` chords are excluded — ⌘/Ctrl is never a typing gesture —
+ * and NAMED keys (Escape, Enter, Tab, the arrows) have length > 1, so they pass: those are
+ * the keys the writing-surface design lets through (see {@link Registry.claimWriting}).
+ */
+function chordSpellsCharacter(chord: string): boolean {
+  const first = chord.split(" ")[0]!;
+  const parts = first.split("+");
+  return !parts.includes("mod") && parts[parts.length - 1]!.length === 1;
 }
 
 /**
@@ -325,6 +360,20 @@ export function KeymapProvider({ children }: { children: ReactNode }) {
   /** The half-typed sequence (`g`, waiting for `o`), and its expiry. */
   const pending = useRef<{ key: string; at: number } | null>(null);
 
+  /**
+   * How many writing surfaces are mounted right now. A COUNT, not a boolean, for the same
+   * reason the modal gate keeps one: two surfaces (however unlikely) must not release each
+   * other's claim. A ref rather than state because the dispatcher reads it at KEYPRESS time
+   * — nothing renders from it, so a claim must not re-render the whole provider tree.
+   */
+  const writingSurfaces = useRef(0);
+  const claimWriting = useCallback(() => {
+    writingSurfaces.current += 1;
+    return () => {
+      writingSurfaces.current -= 1;
+    };
+  }, []);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       /*
@@ -354,7 +403,25 @@ export function KeymapProvider({ children }: { children: ReactNode }) {
         return;
       }
       const typing = isTypingTarget(e.target);
-      const live = ordered().filter((b) => !b.disabled && (b.inInput || !typing));
+      /*
+       * A MOUNTED COMPOSER SUSPENDS EVERY TYPEABLE CHORD — measured on the deployed desktop,
+       * not reasoned about: the compose form opened with nothing focused, and a person who
+       * pressed Compose and started typing was running the mailbox's one-key verbs on the
+       * message selected behind the form — `e` parked it, `b` resurfaced it, letter by letter,
+       * with the placeholders still empty. Focus-on-mount (`ComposeView`) closes the common
+       * case; this closes the rest of it, because focus is one blur away from nowhere at all
+       * (a click on dead space, a dismissed dialog) and a blurred composer must still read as
+       * "I am writing", never as "the list may act". Suspended at DISPATCH, exactly as
+       * `modalIsOpen()` suspends above — the registry and the `?` sheet still know the keys.
+       * Only chords a person could TYPE are refused (`chordSpellsCharacter`); Escape, Enter,
+       * Tab and every `mod` chord keep working, and a binding the writing surface itself owns
+       * opts back in with `inWriting` (the send-later digits, the `?` sheet).
+       */
+      const writing = writingSurfaces.current > 0;
+      const live = ordered().filter((b) =>
+        !b.disabled
+        && (b.inInput || !typing)
+        && !(writing && !typing && !b.inWriting && chordSpellsCharacter(b.chord)));
       const eligible = (b: KeyBinding) => !b.when || b.when(e);
 
       // A sequence in flight wins outright: after `g`, the `o` belongs to "go to Ohbox"
@@ -418,9 +485,9 @@ export function KeymapProvider({ children }: { children: ReactNode }) {
     // `version` is the dependency that matters: it changes when a layer is added, removed
     // or reshaped, which is exactly when the overlay's content changes. `press` is NOT
     // subject to it — it resolves its handler when it is called.
-    () => ({ register, bindings: ordered(), press, mod }),
+    () => ({ register, bindings: ordered(), press, mod, claimWriting }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [register, ordered, press, mod, version],
+    [register, ordered, press, mod, claimWriting, version],
   );
 
   return <KeymapContext.Provider value={value}>{children}</KeymapContext.Provider>;
@@ -430,6 +497,19 @@ export function useKeymap(): Registry {
   const ctx = useContext(KeymapContext);
   if (!ctx) throw new Error("useKeyBindings/useKeymap outside a <KeymapProvider>");
   return ctx;
+}
+
+/**
+ * DECLARE A WRITING SURFACE for as long as the caller is mounted — the compose form's hook.
+ * While it is held, the dispatcher refuses every chord a person could type unless focus is
+ * in a field already (see {@link Registry.claimWriting} for the whole rule). The throwing
+ * `useKeymap` is deliberate: the caller is a view that declares bindings of its own, so a
+ * missing provider is already a bug there, silently — the same argument `useKeyBindings`
+ * makes.
+ */
+export function useWritingSurface(): void {
+  const { claimWriting } = useKeymap();
+  useEffect(() => claimWriting(), [claimWriting]);
 }
 
 /**

@@ -48,7 +48,7 @@ import { addressBook } from "@ohmail/client-engine";
 import type { EngineDraft, OhmailEngine } from "@ohmail/client-engine";
 import type { Editor } from "@tiptap/react";
 import { Button, Chip, Icon, Kbd, useToast } from "@ohmail/ui";
-import { chordKeys, useBinding, useKeyBindings, useModGlyph } from "../shell/keymap";
+import { chordKeys, useBinding, useKeyBindings, useModGlyph, useWritingSurface } from "../shell/keymap";
 import { go } from "../shell/routing";
 import { displayAddress } from "../shell/idn";
 import { canSend, sendStateFor, sendVerb, type SendState } from "../shell/mail-send";
@@ -337,6 +337,40 @@ export function ComposeView({
   }, []);
 
   /**
+   * ── OPENING PUTS THE CARET WHERE THE WRITING STARTS ─────────────────────────────────────
+   *
+   * This form used to open with NOTHING focused. Two failures rode on that, measured on the
+   * deployed desktop: the person who pressed `c` and started typing was typing into nowhere,
+   * and — worse — every letter was still a mailbox shortcut, so the message selected behind
+   * the form was filed, parked and resurfaced letter by letter while the placeholders stayed
+   * empty. The claim below (`useWritingSurface`) closes the shortcut half at the dispatcher;
+   * this closes the caret half.
+   *
+   * WHERE the caret goes is the first field with nothing in it, in writing order — To, then
+   * Subject, then the body (the editor's own `autoFocus`, because `immediatelyRender: false`
+   * means there is no editor to reach during this component's first effects). A fresh compose
+   * therefore lands on To; a reopened draft or a forward-shaped form with the addressing
+   * already answered lands where the writing resumes. DECIDED ONCE, at mount, in a `useState`
+   * initializer: `fields` changes on every keystroke, and a decision that re-ran would steal
+   * the caret from wherever the user has moved it since — the exact reason the effect below
+   * has no dependencies.
+   */
+  const [initialFocus] = useState<"to" | "subject" | "body">(() => {
+    if (!fields.to.trim()) return "to";
+    if (!fields.subject.trim()) return "subject";
+    return "body";
+  });
+  useWritingSurface();
+  useEffect(() => {
+    if (initialFocus === "body") return; // the editor's `autoFocus` owns that case
+    rootRef.current
+      ?.querySelector<HTMLElement>(initialFocus === "to" ? "#compose-to" : "#compose-subject")
+      ?.focus();
+    // Mount-only by design — see the decision above; a re-render must not steal the caret.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
    * ── SEND LATER (mail 0077) — the picker, inline in the foot ─────────────────────────────
    *
    * The compose-confirm's idiom on purpose: a panel above the send row, never a modal (the
@@ -464,6 +498,7 @@ export function ComposeView({
       chord: "1",
       group: "message",
       label: t("keyLaterTonight"),
+      inWriting: true,
       // Enabled WHENEVER the picker is open, even past ~17:45 when the evening preset is
       // no longer offered — a disabled binding here would fall through to the global pile
       // `1` and NAVIGATE AWAY from the message being scheduled (review finding, round 1).
@@ -478,6 +513,7 @@ export function ComposeView({
       chord: "2",
       group: "message",
       label: t("keyLaterTomorrow"),
+      inWriting: true,
       disabled: !sendLaterOpen,
       run: () => pickSendLater(tomorrowNine(openedAt)),
     },
@@ -485,6 +521,7 @@ export function ComposeView({
       chord: "3",
       group: "message",
       label: t("keyLaterMonday"),
+      inWriting: true,
       disabled: !sendLaterOpen,
       run: () => pickSendLater(nextWeekNine(openedAt)),
     },
@@ -492,6 +529,7 @@ export function ComposeView({
       chord: "4",
       group: "message",
       label: t("keyLaterPick"),
+      inWriting: true,
       disabled: !sendLaterOpen,
       run: () => {
         document.querySelector<HTMLInputElement>("#compose-send-at")?.focus();
@@ -828,6 +866,11 @@ export function ComposeView({
             className="compose-editor"
             ariaLabel={t("editorAria")}
             placeholder={t("editorPlaceholder")}
+            /* The mount-focus decision's third landing place (see `initialFocus` above): with
+               the addressing and subject already answered, writing resumes in the body — the
+               editor's own once-per-creation focus, because during this component's first
+               effects there is no editor yet (`immediatelyRender: false`). */
+            autoFocus={initialFocus === "body"}
             value={{ text: fields.body, html: fields.html }}
             /* The text is never taken away from the author, not even mid-send: a failed send
                whose draft had been cleared would be a message the user has to write twice. It
