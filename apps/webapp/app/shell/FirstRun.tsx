@@ -258,6 +258,29 @@ export function firstRunStep(
       && at !== "welcome" && at !== "mailbox" && at !== "elsewhere") {
     return "elsewhere";
   }
+  /* ── AND THE CURSOR MAY NOT KEEP THAT SCREEN UP AFTER ITS SUBJECT IS GONE ────────────────
+   *
+   * The guard above is one direction of one rule: the claim question wins over the cursor while
+   * somebody else holds the mailbox. This is the other direction, and it was missing.
+   *
+   * `elsewhere` is written for ONE situation — another install organizes this mailbox — and every
+   * sentence on it is about that install: the title, the lead, and both choices ("let them keep
+   * it" / "take it from them"). The derivation never opens it without a holder; row 3 requires
+   * one. The CURSOR does: `at` outranks the derivation for every screen, so once somebody is
+   * standing on this one the holder can go away underneath them — a release on the other machine,
+   * a claim that lapsed — and the screen stays, offering a choice between two installs when there
+   * is one. The banner inside it already tells the truth for that state, which is what makes the
+   * rest of the screen contradict itself rather than merely be wrong.
+   *
+   * The answer is not to reword four sentences into a state they were not written for: it is that
+   * this is not the screen for this state. The cursor releases and the derivation says where the
+   * run actually is — the consent statement, the window, the pull, or nothing left to do.
+   *
+   * `readerHolder` and NOT `claimPending`'s `kind || name`: those two questions differ exactly
+   * here. A holder recorded with neither kind nor name is still a holder this build cannot name,
+   * the screen's legacy label is written for it, and an empty name is not an empty mailbox.
+   */
+  const cursor = at === "elsewhere" && readerHolder(mb?.organizedBy) === "nobody" ? null : at;
   /* ── A RE-RUN IS AN INTENT, AND IT OUTRANKS THE COMPLETION STAMP ─────────────────────────
    *
    * `rerun` comes from the ROUTE (`#/first-run/again`), which is the only place it can come
@@ -273,7 +296,7 @@ export function firstRunStep(
    * account with no mailbox, where there is nothing to re-run and the flow is a first run.
    */
   if (rerun) {
-    if (at !== null) return at;
+    if (cursor !== null) return cursor;
     return facts.mailbox === null ? "mailbox" : "consent";
   }
   /* ── AN ADD IS AN INTENT TOO, AND IT OPENS ON THE CONNECT FORM ───────────────────────────
@@ -294,7 +317,7 @@ export function firstRunStep(
    * new mailbox still needs — consent, the window, or the pull.
    */
   if (add) {
-    if (at !== null) return at;
+    if (cursor !== null) return cursor;
     /* THE TWO FACTS THIS RUN IS NOT ABOUT ARE WITHHELD, and each for its own reason.
      *
      *  · `account.onboardingCompletedAt` is about the INSTALL. It is set — this install has been
@@ -332,7 +355,7 @@ export function firstRunStep(
   // completion stamp is set — cancelled or finished — and a cursor left over from the press
   // that stamped it would keep the stage on screen after the person asked to leave.
   if (derived === null) return null;
-  if (at !== null) return at;
+  if (cursor !== null) return cursor;
   // THE ONE PLACE THE OPENING SCREEN IS NOT THE DERIVED ONE. A run with no mailbox behind it
   // has nothing to resume, so it starts at the welcome; a run that resumes onto `mailbox`
   // because the mailbox was REMOVED has a history and does not need the greeting again.
@@ -1086,7 +1109,15 @@ export function FirstRun({
                    because every one of them names or dates a holder: `readerStopped` interpolates
                    the holder's name (falling back to "another install"), and the three `readerSince*`
                    sentences all open with a date. With no holder recorded there is nothing to name
-                   and no date to print, so the state gets its own sentence and NO date line. */
+                   and no date to print, so the state gets its own sentence and NO date line.
+
+                   AND IT IS A FAIL-CLOSED DEFAULT NOW, NOT A STATE THIS SCREEN IS IN. The cursor
+                   check in `firstRunStep` takes the whole screen away once nothing holds the
+                   mailbox, because the four sentences AROUND this banner — the title, the lead
+                   and both choices — all name the other install and cannot be told the truth for
+                   that state. This arm stays because the branch below it interpolates
+                   `holderName(facts)!`, and a routing bug that reached it must render a sentence
+                   rather than the word "null". */
                 description={held === "nobody"
                   ? tm("readerNobodyReads")
                   : facts.mailbox?.organizerState === "stopped"
