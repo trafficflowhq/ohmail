@@ -2764,21 +2764,45 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           return;
         }
         const ended = err instanceof ImapConnectionClosedError;
+        /* ── THE LINE COUNTS DEATHS, WHICH MEANS IT IS INSIDE THE FIRST-OBSERVATION GUARD ────
+         *
+         * One dead socket reaches here TWICE. imapflow's `_socketClose` emits `error` and then
+         * `close` in the same tick, and `guardAsyncErrors` forwards both: its `error` listener is
+         * unconditional, and its `close` listener's guard (`closing || !established`) is false for
+         * a death the server caused. Both arrivals carry the SAME generation, so the stale-report
+         * check above passes them through, and both are correct to arrive — the second is what
+         * covers a clean `BYE` that emits no `error` at all.
+         *
+         * The STATE has always been idempotent; the log call used to sit outside this block, so
+         * the line doubled. Measured on the Windows guest, 2026-09-07: two
+         * `mailbox_connection_unavailable` lines one millisecond apart for one cut cable. That
+         * makes the line count imapflow's ARRIVAL PATHS, which is not what anybody reads it for —
+         * an operator counting outages, and a release check asserting a mailbox went unreachable
+         * once, both get a number that depends on which events the provider happened to emit.
+         *
+         * The second arrival is therefore SILENT. It has nothing to add: the state it would set is
+         * already set, and `connectionDeadSince` — the instant the Settings row renders — must stay
+         * the first observation either way. The one thing that does not move is the close below,
+         * which is keyed to the reporting CONNECTION and not to the death. */
         if (connectionDeadSince === null) {
           connectionDeadSince = now();
           connectionDeadBy = "event";
+          log("mailbox_connection_unavailable", {
+            err, mailboxId: mb.id,
+            detectedBy: "event",
+            reason: ended
+              ? "the mail server connection ENDED and this process is still running, so nothing " +
+                "would have re-opened it; the next poll re-dials and re-reads the organizer lease " +
+                "before it moves anything"
+              : "the mail server connection reported an error and this process is still running; " +
+                "the next poll re-dials and re-reads the organizer lease before it moves anything",
+          });
         }
+        /* OUTSIDE the guard, and it is not the same question. `connectionDeadSince` clears on a
+           re-dial that reached a live server; `outageSince` clears only when a cycle is actually
+           SERVED (`noteCycleServed`), so the two can be in states where a later death has to
+           re-arm the person's clock while the death itself is not news. */
         outageSince ??= connectionDeadSince;
-        log("mailbox_connection_unavailable", {
-          err, mailboxId: mb.id,
-          detectedBy: "event",
-          reason: ended
-            ? "the mail server connection ENDED and this process is still running, so nothing " +
-              "would have re-opened it; the next poll re-dials and re-reads the organizer lease " +
-              "before it moves anything"
-            : "the mail server connection reported an error and this process is still running; " +
-              "the next poll re-dials and re-reads the organizer lease before it moves anything",
-        });
         // CLOSED ON THE QUEUE, never inline: a cycle may be mid-batch over this very adapter, and
         // closing it under one is how a drain re-reads mail it already had. `detach()` and the
         // re-dial take the same queue, so whichever runs first, the other sees a settled state.
