@@ -33,6 +33,7 @@ import {
   messages,
   notifyRules,
   organizerRequests,
+  outboundSendFingerprints,
   outboundSends,
   pairingTokens,
   refreshTokens,
@@ -281,6 +282,17 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
       .for("update");
 
     // ── 1. Sends and drafts (drafts reference mailboxes, threads AND messages) ──
+    //
+    // The content claim goes FIRST and EXPLICITLY, though its foreign key also cascades from
+    // `outbound_sends` below. Both, deliberately: the cascade is what makes the other two cleanup
+    // paths work (the desktop mirror wipe and the local mirror's per-draft delete, neither of which
+    // is going to grow a per-table list), and the explicit delete is what makes this service's
+    // ruling on the table READABLE — the erasure census asks for a written ruling per table, and
+    // "it happens to cascade from the row below" is not one somebody auditing this can see.
+    await drop(
+      "outbound_send_fingerprints",
+      tx.delete(outboundSendFingerprints).where(eq(outboundSendFingerprints.accountId, accountId)),
+    );
     await drop("outbound_sends", tx.delete(outboundSends).where(eq(outboundSends.accountId, accountId)));
     await drop("drafts", tx.delete(drafts).where(eq(drafts.accountId, accountId)));
 
