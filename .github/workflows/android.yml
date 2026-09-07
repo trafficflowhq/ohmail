@@ -9,11 +9,11 @@
 #     see a signing secret; there is nothing to leak and nothing to protect but minutes.
 #
 #   · build — pushing an `android-v*` tag runs the SAME native build, secretless, and uploads
-#     the (debug-signed) APK as an artifact. No signing key is present in this job.
+#     the (debug-signed) APK and App Bundle as artifacts. No signing key is present in this job.
 #
 #   · sign — a SEPARATE job that receives the release keystore and its passwords. It runs NO
 #     project code: no checkout of the tree, no `npm`, no `expo`, no Gradle. It downloads the
-#     artifact `build` produced and re-signs it with the release keystore. This isolation is
+#     artifacts `build` produced and re-signs them with the release keystore. This isolation is
 #     deliberate. If the build job and the signing job were one — as they were — then any code
 #     that ran during `npm ci`, `expo prebuild` or Gradle (a compromised lockfile lifecycle
 #     script, an Expo/Gradle plugin, a mutable-tag action) would be running on the same runner
@@ -38,11 +38,34 @@
 # to the runner's job-scoped temp directory and the passwords reach apksigner through `env:`
 # references, never as command-line literals.
 #
+# TWO ARTIFACTS, TWO SIGNERS, ONE KEY. The APK is the sideload download, and the certificate
+# fingerprint published for it is what an existing install checks an update against. It cannot go
+# to Google Play: Play has taken an Android App Bundle and nothing else since August 2021. So the
+# tag produces both, and neither is derived from the other by repackaging — they are two packaging
+# tasks over ONE Gradle invocation, `assembleRelease bundleRelease`, which is also what keeps the
+# single `mapping.txt` R8 writes unambiguous.
+#
+# They are signed by different tools because they are different formats. `apksigner` rewrites an
+# APK, replacing whatever signature was on it. An `.aab` is a JAR and carries a v1 JAR signature
+# only, which `apksigner` does not produce, so the bundle is signed with `jarsigner` — the JDK's
+# own signer, and the one Google documents for bundles. jarsigner ADDS a signature rather than
+# replacing one, so the debug signature Gradle put on the bundle is stripped before signing and
+# the job asserts that exactly ONE signer is left. Without that strip the uploaded bundle would
+# carry a throwaway debug key beside the release key, and both would verify.
+#
 # THE SIGNER IS ASSERTED, NOT JUST PRINTED. `apksigner verify` succeeds for ANY internally
 # valid signature, so printing its output proves nothing about WHICH key signed. The sign job
 # compares the certificate's SHA-256 digest and subject against the release key's known public
 # values and fails before upload on any mismatch — so a swapped or rotated keystore cannot
 # publish an APK that would strand every existing install behind a changed update identity.
+#
+# The bundle gets the same treatment from a different direction. `jarsigner -verify` prints a
+# subject and no fingerprint, and — the trap — it exits 0 on a jar that is not signed at all,
+# printing "jar is unsigned"; its status is therefore not evidence and its output is read instead.
+# The certificate itself is taken out of the bundle and put through `keytool -printcert`, whose
+# SHA256 fingerprint is SHA-256 over the DER certificate — the same number `apksigner` prints as
+# its "SHA-256 digest". So ONE published constant asserts both artifacts, which is the point: a
+# key that is right for the APK and wrong for the bundle would split the two channels silently.
 #
 # EXIT CODES ARE CAPTURED WHERE THEY HAPPEN. No pipelines around the build or the checks —
 # a pipe reports the LAST command's status, which has masked real failures in this project
@@ -120,9 +143,13 @@ jobs:
           EXPO_NO_TELEMETRY: "1"
         run: npx expo prebuild --platform android --no-install
 
-      - name: Build the release APK (debug-signed)
+      # ONE invocation, both packagings. The release variant has a single R8 run behind both
+      # tasks, and R8 writes ONE `mapping.txt`; as two separate Gradle commands, whichever ran
+      # last would own that file and a release page could end up carrying an artifact beside a
+      # mapping from a different minification. In one invocation the question does not arise.
+      - name: Build the release APK and App Bundle (debug-signed)
         working-directory: apps/mobile/android
-        run: ./gradlew assembleRelease --no-daemon
+        run: ./gradlew assembleRelease bundleRelease --no-daemon
 
       - name: The artifact is a real APK
         run: |
@@ -149,6 +176,76 @@ jobs:
       # separate "is R8 on" assertion because this one cannot pass without it.
       - name: The push registration is not in logcat
         run: bash .github/scripts/assert-log-hygiene.sh apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+
+      - name: The artifact is a real App Bundle
+        run: |
+          set -euo pipefail
+          AAB=apps/mobile/android/app/build/outputs/bundle/release/app-release.aab
+          test -f "$AAB"
+          # The magic bytes, and the three entries that make a zip a BUNDLE rather than an APK:
+          # the bundle-level config, the base module's manifest (an APK keeps its manifest at the
+          # archive root) and the base module's dex. Plus a size floor, so an "app bundle" that is
+          # an empty shell fails here rather than in a console.
+          head -c 2 "$AAB" > /tmp/aab-magic
+          test "$(cat /tmp/aab-magic)" = "PK"
+          unzip -l "$AAB" > /tmp/aab-listing
+          grep -F "BundleConfig.pb" /tmp/aab-listing
+          grep -F "base/manifest/AndroidManifest.xml" /tmp/aab-listing
+          grep -F "base/dex/classes.dex" /tmp/aab-listing
+          SIZE=$(stat -c%s "$AAB")
+          test "$SIZE" -gt 10000000
+          echo "AAB ok: $SIZE bytes"
+
+      # ── WHAT MAKES THE TWO SCANS ABOVE COVER THE BUNDLE TOO ─────────────────────────────────
+      #
+      # The claim those scripts defend — that no Google push service stands between a person's
+      # mailbox and their phone — is a claim about the code a person installs, whichever channel
+      # they installed from, so it has to hold for the bundle as well as the APK.
+      #
+      # RUNNING THEM AGAIN AGAINST THE BUNDLE IS NOT HOW TO GET THAT, and it was tried first.
+      # `assert-no-fcm.sh` does not only read dex: it also reads the APK's binary
+      # `AndroidManifest.xml` to prove the wake renderer is WIRED, and a bundle stores its manifest
+      # as protobuf under `base/manifest/`, where that parser cannot see it. Pointed at a bundle the
+      # script passes every dex check and then fails on the manifest — a scan that does not fit the
+      # artifact, which is a worse thing to have in a pipeline than no scan, because it teaches
+      # people to read a red as noise.
+      #
+      # So the coverage is established the other way round, by ASSERTING the property the single
+      # Gradle invocation above is supposed to give: the release variant runs R8 once, and both
+      # packaging tasks take that one output, so the dex inside the bundle IS the dex inside the
+      # APK. Measured on a real build of this app — three dex files, identical SHA-256 each — but a
+      # measured fact about a build tool is exactly the kind that changes under an AGP bump, so it
+      # is checked on every run rather than remembered. If it ever stops holding this goes red and
+      # says what to do about it, and no tag ships a bundle nobody has scanned.
+      - name: The bundle's code is the code the scans above read
+        run: |
+          set -euo pipefail
+          APK=apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+          AAB=apps/mobile/android/app/build/outputs/bundle/release/app-release.aab
+          rm -rf /tmp/dexcmp && mkdir -p /tmp/dexcmp/apk /tmp/dexcmp/aab
+          # `-j` flattens the bundle's `base/dex/classes*.dex` onto the names the APK uses, so the
+          # two digest lists are comparable line for line. unzip answers 11 for a pattern that
+          # matched nothing; tolerated, because the file counts below are the assertion.
+          unzip -o -q -j "$APK" 'classes*.dex' -d /tmp/dexcmp/apk || true
+          unzip -o -q -j "$AAB" 'base/dex/classes*.dex' -d /tmp/dexcmp/aab || true
+          APK_N=$(ls /tmp/dexcmp/apk | wc -l | tr -d ' ')
+          AAB_N=$(ls /tmp/dexcmp/aab | wc -l | tr -d ' ')
+          test "${APK_N:-0}" -ge 1 || { echo "no dex came out of the APK — nothing was compared" >&2; exit 1; }
+          test "${AAB_N:-0}" -ge 1 || { echo "no dex came out of the bundle — nothing was compared" >&2; exit 1; }
+          ( cd /tmp/dexcmp/apk && sha256sum classes*.dex > /tmp/dexcmp/apk.raw )
+          ( cd /tmp/dexcmp/aab && sha256sum classes*.dex > /tmp/dexcmp/aab.raw )
+          sort /tmp/dexcmp/apk.raw > /tmp/dexcmp/apk.sha
+          sort /tmp/dexcmp/aab.raw > /tmp/dexcmp/aab.sha
+          cat /tmp/dexcmp/apk.sha
+          diff -u /tmp/dexcmp/apk.sha /tmp/dexcmp/aab.sha || {
+            echo "" >&2
+            echo "The bundle's dex is NOT the APK's dex, so the two scans above say nothing about" >&2
+            echo "the artifact that would go to Play. Do not ship this bundle. It needs scans of" >&2
+            echo "its own first, and note that its manifest is protobuf under base/manifest/, so" >&2
+            echo "assert-no-fcm.sh's manifest half needs a bundle-shaped reader, not a wider glob." >&2
+            exit 1
+          }
+          echo "bundle dex identical to the scanned APK dex: $APK_N file(s)"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -218,9 +315,12 @@ jobs:
           EXPO_NO_TELEMETRY: "1"
         run: npx expo prebuild --platform android --no-install
 
-      - name: Build the release APK (debug-signed, to be re-signed by the sign job)
+      # ONE invocation, both packagings — see the build check above for why the two tasks must
+      # not be two Gradle commands. This is the tag path, so both artifacts here are published:
+      # the APK to the release page, the bundle to Play.
+      - name: Build the release APK and App Bundle (debug-signed, to be re-signed by the sign job)
         working-directory: apps/mobile/android
-        run: ./gradlew assembleRelease --no-daemon
+        run: ./gradlew assembleRelease bundleRelease --no-daemon
 
       - name: The artifact is a real APK
         run: |
@@ -247,10 +347,91 @@ jobs:
       - name: The push registration is not in logcat
         run: bash .github/scripts/assert-log-hygiene.sh apps/mobile/android/app/build/outputs/apk/release/app-release.apk
 
+      - name: The artifact is a real App Bundle
+        run: |
+          set -euo pipefail
+          AAB=apps/mobile/android/app/build/outputs/bundle/release/app-release.aab
+          test -f "$AAB"
+          # The magic bytes, and the three entries that make a zip a BUNDLE rather than an APK:
+          # the bundle-level config, the base module's manifest (an APK keeps its manifest at the
+          # archive root) and the base module's dex. Plus a size floor, so an "app bundle" that is
+          # an empty shell fails here rather than in a console.
+          head -c 2 "$AAB" > /tmp/aab-magic
+          test "$(cat /tmp/aab-magic)" = "PK"
+          unzip -l "$AAB" > /tmp/aab-listing
+          grep -F "BundleConfig.pb" /tmp/aab-listing
+          grep -F "base/manifest/AndroidManifest.xml" /tmp/aab-listing
+          grep -F "base/dex/classes.dex" /tmp/aab-listing
+          SIZE=$(stat -c%s "$AAB")
+          test "$SIZE" -gt 10000000
+          echo "AAB ok: $SIZE bytes"
+
+      # ── WHAT MAKES THE TWO SCANS ABOVE COVER THE BUNDLE TOO ─────────────────────────────────
+      #
+      # The claim those scripts defend — that no Google push service stands between a person's
+      # mailbox and their phone — is a claim about the code a person installs, whichever channel
+      # they installed from, so it has to hold for the bundle as well as the APK.
+      #
+      # RUNNING THEM AGAIN AGAINST THE BUNDLE IS NOT HOW TO GET THAT, and it was tried first.
+      # `assert-no-fcm.sh` does not only read dex: it also reads the APK's binary
+      # `AndroidManifest.xml` to prove the wake renderer is WIRED, and a bundle stores its manifest
+      # as protobuf under `base/manifest/`, where that parser cannot see it. Pointed at a bundle the
+      # script passes every dex check and then fails on the manifest — a scan that does not fit the
+      # artifact, which is a worse thing to have in a pipeline than no scan, because it teaches
+      # people to read a red as noise.
+      #
+      # So the coverage is established the other way round, by ASSERTING the property the single
+      # Gradle invocation above is supposed to give: the release variant runs R8 once, and both
+      # packaging tasks take that one output, so the dex inside the bundle IS the dex inside the
+      # APK. Measured on a real build of this app — three dex files, identical SHA-256 each — but a
+      # measured fact about a build tool is exactly the kind that changes under an AGP bump, so it
+      # is checked on every run rather than remembered. If it ever stops holding this goes red and
+      # says what to do about it, and no tag ships a bundle nobody has scanned.
+      - name: The bundle's code is the code the scans above read
+        run: |
+          set -euo pipefail
+          APK=apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+          AAB=apps/mobile/android/app/build/outputs/bundle/release/app-release.aab
+          rm -rf /tmp/dexcmp && mkdir -p /tmp/dexcmp/apk /tmp/dexcmp/aab
+          # `-j` flattens the bundle's `base/dex/classes*.dex` onto the names the APK uses, so the
+          # two digest lists are comparable line for line. unzip answers 11 for a pattern that
+          # matched nothing; tolerated, because the file counts below are the assertion.
+          unzip -o -q -j "$APK" 'classes*.dex' -d /tmp/dexcmp/apk || true
+          unzip -o -q -j "$AAB" 'base/dex/classes*.dex' -d /tmp/dexcmp/aab || true
+          APK_N=$(ls /tmp/dexcmp/apk | wc -l | tr -d ' ')
+          AAB_N=$(ls /tmp/dexcmp/aab | wc -l | tr -d ' ')
+          test "${APK_N:-0}" -ge 1 || { echo "no dex came out of the APK — nothing was compared" >&2; exit 1; }
+          test "${AAB_N:-0}" -ge 1 || { echo "no dex came out of the bundle — nothing was compared" >&2; exit 1; }
+          ( cd /tmp/dexcmp/apk && sha256sum classes*.dex > /tmp/dexcmp/apk.raw )
+          ( cd /tmp/dexcmp/aab && sha256sum classes*.dex > /tmp/dexcmp/aab.raw )
+          sort /tmp/dexcmp/apk.raw > /tmp/dexcmp/apk.sha
+          sort /tmp/dexcmp/aab.raw > /tmp/dexcmp/aab.sha
+          cat /tmp/dexcmp/apk.sha
+          diff -u /tmp/dexcmp/apk.sha /tmp/dexcmp/aab.sha || {
+            echo "" >&2
+            echo "The bundle's dex is NOT the APK's dex, so the two scans above say nothing about" >&2
+            echo "the artifact that would go to Play. Do not ship this bundle. It needs scans of" >&2
+            echo "its own first, and note that its manifest is protobuf under base/manifest/, so" >&2
+            echo "assert-no-fcm.sh's manifest half needs a bundle-shaped reader, not a wider glob." >&2
+            exit 1
+          }
+          echo "bundle dex identical to the scanned APK dex: $APK_N file(s)"
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ohmail-android-unsigned
           path: apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 1
+          if-no-files-found: error
+
+      # Its own artifact rather than a second path on the one above, for the reason spelled out
+      # under the mapping below: the sign job fetches each artifact by name and reads a known
+      # filename out of it, and giving upload-artifact two paths would re-root both under their
+      # common ancestor and quietly break that lookup.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ohmail-android-bundle-unsigned
+          path: apps/mobile/android/app/build/outputs/bundle/release/app-release.aab
           retention-days: 1
           if-no-files-found: error
 
@@ -288,7 +469,7 @@ jobs:
 
   # ── the sign job: the ONLY job that sees the key, and it runs no project code ───────────
   sign:
-    name: android · re-sign + attach the release APK
+    name: android · re-sign + attach the release APK and App Bundle
     needs: build
     if: github.repository == 'trafficflowhq/ohmail' && startsWith(github.ref, 'refs/tags/android-v')
     runs-on: ubuntu-latest
@@ -302,7 +483,8 @@ jobs:
     steps:
       # No checkout of the tree: this job builds nothing, so no source of this repository (and
       # none of its dependencies) executes on the runner that holds the key. Java is for
-      # apksigner; the Android SDK build-tools are preinstalled on ubuntu-latest.
+      # apksigner, jarsigner and keytool; the Android SDK build-tools are preinstalled on
+      # ubuntu-latest.
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
@@ -314,6 +496,12 @@ jobs:
           name: ohmail-android-unsigned
           path: unsigned
 
+      - name: Fetch the built App Bundle from the build job
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ohmail-android-bundle-unsigned
+          path: unsigned-bundle
+
       # The mapping that belongs to the APK above. Downloading a compressed text file executes
       # nothing, and this job neither builds nor compresses it — the compression happened in the
       # build job — so the key stays isolated from every piece of code that could read it. The
@@ -324,7 +512,14 @@ jobs:
           name: ohmail-android-mapping
           path: mapping
 
-      - name: Sign with the release keystore
+      # BOTH artifacts are signed in ONE step, so the decoded keystore exists on this runner for
+      # the length of one step and is deleted at the end of it. Two steps would mean decoding it
+      # twice and two chances to leave it behind.
+      #
+      # The empty-secret guard stays what it has always been: a HARD FAILURE, not a skip. A tag
+      # that produced an unsigned release quietly would be worse than one that produced nothing.
+      # Forks never reach this job at all — the repository guard above is what makes a fork inert.
+      - name: Sign the APK and the App Bundle with the release keystore
         env:
           ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -334,6 +529,7 @@ jobs:
           set -euo pipefail
           test -n "$ANDROID_KEYSTORE_B64" || { echo "ANDROID_KEYSTORE_B64 secret is not set" >&2; exit 1; }
           test -f unsigned/app-release.apk || { echo "no built APK was fetched from the build job" >&2; exit 1; }
+          test -f unsigned-bundle/app-release.aab || { echo "no built App Bundle was fetched from the build job" >&2; exit 1; }
           # Absolute tool paths: nothing this job ran could have planted a shim on PATH, but the
           # decoder that touches the key reads the key on stdin, so it is named outright.
           /usr/bin/base64 -d <<< "$ANDROID_KEYSTORE_B64" > "$RUNNER_TEMP/release.keystore"
@@ -345,7 +541,43 @@ jobs:
             --key-pass env:ANDROID_KEY_PASSWORD \
             --out ohmail-android.apk \
             unsigned/app-release.apk
-          rm -f "$RUNNER_TEMP/release.keystore"
+
+          # ── THE BUNDLE, AND WHY THE DEBUG SIGNATURE COMES OFF FIRST ─────────────────────────
+          #
+          # Expo's generated Gradle project signs the release variant with the debug keystore it
+          # mints, so the bundle arrives already JAR-signed. `apksigner` rewrites an APK and needs
+          # no equivalent; `jarsigner` ADDS a signature and leaves any existing one in place, so
+          # signing straight over it would upload a bundle carrying two signers — the release key
+          # and a throwaway debug key — and both would verify. Measured: without this strip the
+          # result holds two signature blocks.
+          #
+          # The deletion's own status is not the evidence. `zip -d` answers 12 for a pattern that
+          # matched nothing, and three of these four patterns never match; the COUNT below is what
+          # decides, and it is captured into a variable rather than piped to `grep -q`.
+          cp unsigned-bundle/app-release.aab "$RUNNER_TEMP/bundle.aab"
+          zip -q -d "$RUNNER_TEMP/bundle.aab" \
+            'META-INF/*.SF' 'META-INF/*.RSA' 'META-INF/*.DSA' 'META-INF/*.EC' || true
+          # `unzip -Z1` prints entry NAMES and nothing else, and the pattern is anchored at the
+          # archive root on purpose: a real bundle also carries `base/root/META-INF/...` entries
+          # copied out of the app's dependencies, and an unanchored match would one day count one
+          # of those as a surviving signature — red for ever, on a bundle that is perfectly signed.
+          unzip -Z1 "$RUNNER_TEMP/bundle.aab" > "$RUNNER_TEMP/aab-names"
+          LEFT=$(/usr/bin/grep -c -E '^META-INF/[^/]+\.(SF|RSA|DSA|EC)$' "$RUNNER_TEMP/aab-names" || true)
+          test "${LEFT:-0}" -eq 0 \
+            || { echo "$LEFT signature file(s) survived the strip — the bundle would ship two signers" >&2; exit 1; }
+
+          # Passwords by `:env` reference for the same reason apksigner gets `env:` ones: a
+          # command-line literal is readable in `ps` by anything else on the runner.
+          "$JAVA_HOME/bin/jarsigner" \
+            -keystore "$RUNNER_TEMP/release.keystore" \
+            -storepass:env ANDROID_KEYSTORE_PASSWORD \
+            -keypass:env ANDROID_KEY_PASSWORD \
+            -digestalg SHA-256 \
+            -signedjar ohmail-android.aab \
+            "$RUNNER_TEMP/bundle.aab" \
+            "$ANDROID_KEY_ALIAS"
+
+          rm -f "$RUNNER_TEMP/release.keystore" "$RUNNER_TEMP/bundle.aab"
 
       - name: Verify the signature IS the release key, and the artifact is real
         env:
@@ -375,6 +607,92 @@ jobs:
           test "$SIZE" -gt 10000000
           echo "signed APK ok: $SIZE bytes"
 
+      - name: Verify the bundle's signature IS the release key, and the bundle is real
+        env:
+          # The same two constants the APK is held to. If a Play upload key is ever a DIFFERENT
+          # key from the sideload release key, this pair splits into two and each artifact is
+          # checked against its own — one set for both would then be a lie about one of them.
+          EXPECTED_CERT_SHA256: "ab41b268e6837d526362917d1559dfaf5ba49eb287149dedccaf8a21ee0a071b"
+          EXPECTED_CERT_DN: "CN=ohmail android release"
+        run: |
+          set -euo pipefail
+          # `jarsigner -verify` EXITS 0 ON AN UNSIGNED JAR — it prints "jar is unsigned" and is
+          # content — so its status is not evidence of anything and the output is what gets read.
+          # `-strict` is not the answer either: it turns the self-signed-chain warning that every
+          # Android release key produces into a failure of its own.
+          VERIFY=$("$JAVA_HOME/bin/jarsigner" -verify -verbose:summary ohmail-android.aab)
+          printf '%s\n' "$VERIFY"
+          case "$VERIFY" in
+            *"jar is unsigned"*) echo "the bundle carries no signature at all" >&2; exit 1 ;;
+          esac
+          case "$VERIFY" in
+            *"jar verified."*) : ;;
+            *) echo "jarsigner did not report a verified jar" >&2; exit 1 ;;
+          esac
+
+          # WHICH key signed it. "Verified" is true of any internally consistent signature, which
+          # is the same reason apksigner's output is not taken at face value above. jarsigner
+          # prints a subject and no fingerprint, so the certificate is taken out of the bundle and
+          # hashed: `keytool -printcert`'s SHA256 is SHA-256 over the DER certificate, the same
+          # number apksigner calls its "SHA-256 digest", so the constants above assert both.
+          #
+          # unzip answers 11 for a pattern that matched nothing and two of these three never
+          # match; tolerated, because the BLOCK COUNT is the assertion. Exactly one, so a leftover
+          # signature cannot hide beside the release one.
+          rm -rf sigblock && mkdir sigblock
+          unzip -o -q -j ohmail-android.aab 'META-INF/*.RSA' 'META-INF/*.DSA' 'META-INF/*.EC' -d sigblock || true
+          BLOCKS=$(ls sigblock | wc -l | tr -d ' ')
+          test "${BLOCKS:-0}" -eq 1 \
+            || { echo "the bundle carries $BLOCKS signature block(s), not exactly 1" >&2; exit 1; }
+          "$JAVA_HOME/bin/keytool" -printcert -file sigblock/* > /tmp/aab-cert
+          cat /tmp/aab-cert
+          GOT_SHA256=$(/usr/bin/grep -m1 'SHA256:' /tmp/aab-cert | sed 's/.*SHA256:[[:space:]]*//' | tr 'A-F' 'a-f' | tr -d ' :')
+          test -n "$GOT_SHA256" || { echo "keytool printed no SHA256 fingerprint" >&2; exit 1; }
+          test "$GOT_SHA256" = "$EXPECTED_CERT_SHA256" \
+            || { echo "bundle signer SHA-256 $GOT_SHA256 is not the release key $EXPECTED_CERT_SHA256" >&2; exit 1; }
+          /usr/bin/grep -qF "$EXPECTED_CERT_DN" /tmp/aab-cert \
+            || { echo "bundle signer subject is not $EXPECTED_CERT_DN" >&2; exit 1; }
+          echo "bundle signer verified: $GOT_SHA256 ($EXPECTED_CERT_DN)"
+
+          unzip -l ohmail-android.aab > /tmp/signed-aab-listing
+          grep -F "BundleConfig.pb" /tmp/signed-aab-listing
+          grep -F "base/manifest/AndroidManifest.xml" /tmp/signed-aab-listing
+          grep -F "base/dex/classes.dex" /tmp/signed-aab-listing
+          SIZE=$(stat -c%s ohmail-android.aab)
+          test "$SIZE" -gt 10000000
+          echo "signed AAB ok: $SIZE bytes"
+
+      # bundletool is Google's own reader for this format and the only thing that can say the
+      # `.aab` is a bundle a console will take, rather than a zip with the right entries in it.
+      #
+      # IT RUNS HERE, IN ITS OWN STEP, DELIBERATELY. It is the one piece of third-party code this
+      # job executes, and the whole reason `build` and `sign` are separate jobs is that code which
+      # runs beside the key can steal it. So it runs after the signing step has deleted the
+      # keystore, and this step declares no secret in its `env:` — there is nothing here for it to
+      # read. It is fetched by URL and its SHA-256 is checked BEFORE java is pointed at it: a
+      # release asset can be replaced, and "pinned to a version tag" is exactly the mutable
+      # dependency this split exists to prevent.
+      - name: The bundle is one bundletool accepts
+        run: |
+          set -euo pipefail
+          BT_VERSION=1.18.3
+          BT_SHA256=a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29
+          curl -sSfL --retry 3 -o "$RUNNER_TEMP/bundletool.jar" \
+            "https://github.com/google/bundletool/releases/download/${BT_VERSION}/bundletool-all-${BT_VERSION}.jar"
+          GOT=$(sha256sum "$RUNNER_TEMP/bundletool.jar" | cut -d' ' -f1)
+          test "$GOT" = "$BT_SHA256" \
+            || { echo "bundletool-all-${BT_VERSION}.jar hashes $GOT, not the pinned $BT_SHA256" >&2; exit 1; }
+          "$JAVA_HOME/bin/java" -jar "$RUNNER_TEMP/bundletool.jar" \
+            validate --bundle="$PWD/ohmail-android.aab" > /tmp/bt-validate
+          # `validate` writes its whole module table to stdout — around 80 KB for this app, so
+          # only the head goes into the log. A zero exit with an empty or unrecognisable report
+          # must not read as a pass, so the report is asserted to name the base module: that is
+          # the one line that cannot be there unless bundletool actually read THIS bundle.
+          head -n 20 /tmp/bt-validate
+          echo "... bundletool printed $(wc -l < /tmp/bt-validate) lines"
+          /usr/bin/grep -qF "Feature module: base" /tmp/bt-validate \
+            || { echo "bundletool's report does not name the base module" >&2; exit 1; }
+
       - name: Attach to the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -386,44 +704,59 @@ jobs:
           if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease --verify-tag \
               --title "$TAG" \
-              --notes "Android APK for $TAG. Built and signed by this repository's Actions from the tagged tree."
+              --notes "Android APK and App Bundle for $TAG. Built and signed by this repository's Actions from the tagged tree."
           fi
           test -f mapping/ohmail-android-mapping.txt.gz \
             || { echo "no R8 mapping was fetched from the build job" >&2; exit 1; }
 
-          # ── THE INVARIANT: NO APK IS EVER ON THIS PAGE WITHOUT ITS OWN MAPPING ───────────
+          # ── THE INVARIANT: NOTHING INSTALLABLE IS ON THIS PAGE WITHOUT ITS OWN MAPPING ──
           #
           # A release has no transactional multi-asset upload. `gh release upload` puts one file
           # up, then the next, and `--clobber` DELETES an existing asset before uploading its
           # replacement — so every intermediate state is visible to anyone downloading, and the
-          # one this job must never leave behind is an installable obfuscated APK whose mapping
-          # is absent or belongs to a different build. The job going red does not undo it.
+          # one this job must never leave behind is an installable obfuscated artifact whose
+          # mapping is absent or belongs to a different build. The job going red does not undo it.
+          #
+          # Both the APK and the App Bundle are that kind of artifact, and ONE mapping retraces
+          # either — they come out of a single R8 run in a single Gradle invocation — so the rule
+          # is the same rule, applied to a set of two instead of one.
           #
           # Ordering the two uploads is not enough on its own, and the first version of this was
           # wrong for thinking it was. It holds on a first run, where the page starts empty. On a
           # RERUN — a re-run of a red job, a re-pushed tag — the release already carries the
-          # previous pair, and replacing the mapping first would delete the old APK's mapping
-          # while the old APK was still downloadable, then, if anything failed or the run were
-          # cancelled, leave it that way or leave it beside a mapping from a different build.
+          # previous set, and replacing the mapping first would delete the old artifacts' mapping
+          # while those artifacts were still downloadable, then, if anything failed or the run
+          # were cancelled, leave it that way or leave them beside a mapping from another build.
           # R8 may rename differently on any rebuild, so a mismatched mapping is not a partial
           # answer; it is a wrong one.
           #
-          # So the APK is WITHDRAWN FIRST, and everything after that happens while there is no
-          # APK to be unable to retrace. Every interruption point now leaves one of: no APK and
-          # the old mapping, no APK and the new mapping, or the complete new pair. A brief 404
-          # on a download is the cost, and it is the right side of this trade.
-          HAS_APK=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
-            --jq '[.assets[] | select(.name == "ohmail-android.apk")] | length')
-          if [ "${HAS_APK:-0}" -gt 0 ]; then
-            echo "a previous APK is attached to $TAG — withdrawing it before replacing the pair"
-            gh release delete-asset "$TAG" ohmail-android.apk --yes --repo "$GITHUB_REPOSITORY"
-          fi
+          # So BOTH installable artifacts are WITHDRAWN FIRST, and everything after that happens
+          # while there is nothing on the page to be unable to retrace. Every interruption point
+          # now leaves one of: neither artifact and the old mapping, neither artifact and the new
+          # mapping, or the complete new set. A brief 404 on a download is the cost, and it is the
+          # right side of this trade.
+          #
+          # The asset names are listed ONCE and matched locally, rather than asking the API a
+          # question per name with the name interpolated into a jq filter — one shape to get
+          # wrong instead of two. `grep -c` prints 0 and exits 1 when nothing matches, so `|| true`
+          # keeps `set -e` out of it and the COUNT is what the condition reads.
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[].name' > /tmp/release-assets
+          for ASSET in ohmail-android.apk ohmail-android.aab; do
+            HAS=$(/usr/bin/grep -c -x -F "$ASSET" /tmp/release-assets || true)
+            if [ "${HAS:-0}" -gt 0 ]; then
+              echo "a previous $ASSET is attached to $TAG — withdrawing it before replacing the set"
+              gh release delete-asset "$TAG" "$ASSET" --yes --repo "$GITHUB_REPOSITORY"
+            fi
+          done
 
-          # Separate calls, so a failure on the mapping never starts the APK upload.
+          # Separate calls, so a failure on the mapping never starts an artifact upload.
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
             mapping/ohmail-android-mapping.txt.gz
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
             ohmail-android.apk
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+            ohmail-android.aab
 
       - name: What was uploaded is what was signed
         env:
@@ -434,12 +767,20 @@ jobs:
           gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --dir uploaded \
             --pattern "ohmail-android.apk"
           cmp ohmail-android.apk uploaded/ohmail-android.apk
-          echo "release asset verified byte-for-byte"
+          echo "release APK verified byte-for-byte"
 
-          # BOTH assets, read back from the release rather than assumed from two exit codes. The
+          # The bundle read back the same way, and this is the one that matters most for it: a
+          # bundle whose bytes changed in transit is refused by the console with a signature
+          # error, days after the upload and with nothing local to compare against.
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --dir uploaded \
+            --pattern "ohmail-android.aab"
+          cmp ohmail-android.aab uploaded/ohmail-android.aab
+          echo "release App Bundle verified byte-for-byte"
+
+          # ALL THREE assets, read back from the release rather than assumed from exit codes. The
           # upload above is ordered so no harmful half-state can survive a failure, and this is
-          # the check that the pair really is on the page: an APK whose mapping is missing is an
-          # APK nobody can retrace a crash from, and without this the previous step's success is
+          # the check that the set really is on the page: an artifact whose mapping is missing is
+          # one nobody can retrace a crash from, and without this the previous step's success is
           # the only evidence there is.
           gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --dir uploaded \
             --pattern "ohmail-android-mapping.txt.gz"
