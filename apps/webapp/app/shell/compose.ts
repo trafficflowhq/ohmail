@@ -271,6 +271,20 @@ export function writeComposeDraft(f: ComposeFields): void {
  * typing and it survives a reload (the scratch buffer does), and it is gone the moment the compose
  * is delivered or abandoned — which is when the next press is a genuinely new message.
  *
+ * ── ONE SESSION IS ONE MESSAGE, WHICH MEANS EVERY DOOR RE-MINTS IT ──────────────────────────
+ *
+ * "Delivered or abandoned" was not the whole list, and the omission was load-bearing. A door that
+ * REPLACES the form with a different message — opening a draft, the contact popover's Write, an
+ * operating-system `mailto:` click — left the id alone, so one session spanned several messages
+ * and a record parking the first one parked whatever replaced it. The compose surface then showed
+ * "We couldn't confirm this send" over a message that had never been sent, with Send refused.
+ *
+ * So {@link clearComposeDraft} runs at every such door, immediately before the new form is
+ * persisted: it drops the buffer and the id together, and the next read of
+ * {@link composeSessionId} mints a fresh one. Nothing has to remember to mint — the lazy read is
+ * what makes "one door, one line" enough — and the row the account holds for the replaced message
+ * goes with it ({@link composeRowKey}), because that row is the other half of the same identity.
+ *
  * Owner-keyed and wrapped like every other door in this file. A blocked jar answers `null`, which
  * callers must read as "this browser cannot name the message", never as "a new one".
  */
@@ -292,12 +306,54 @@ export function composeSessionId(owner: string | null = storageOwner()): string 
   }
 }
 
+/**
+ * ── THE DRAFT ROW THE COMPOSE SURFACE IS HOLDING, ACROSS A RELOAD ───────────────────────────
+ *
+ * `useComposeAutosave` keeps the row in React state, and React state does not survive a reload —
+ * while the scratch buffer, which holds the TEXT of the same message, does. So a reload restored
+ * the message and lost its row: the next pause created a SECOND row for it, and the durable send
+ * record still named the first. One message under two rows is how a send whose outcome nobody
+ * could confirm read as two messages and unlocked Send for the one that may already have gone.
+ *
+ * The row is written here rather than into the buffer because it is not part of the form: it is a
+ * fact about which message the surface is holding, with the same lifetime as
+ * {@link composeSessionId} — and it is cleared by the same call, at the same doors, for the same
+ * reason. `null` clears it. A blocked jar answers `null` on read, which the hook reads as "no row
+ * to adopt", never as "there is no row".
+ */
+export const COMPOSE_ROW_PREFIX = "ohmail.compose.row.";
+
+export function composeRowKey(owner: string | null = storageOwner()): string {
+  return `${COMPOSE_ROW_PREFIX}${owner ?? "local"}`;
+}
+
+export function readComposeRow(owner: string | null = storageOwner()): string | null {
+  try {
+    const held = window.localStorage.getItem(composeRowKey(owner));
+    return held !== null && held.length > 0 ? held : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeComposeRow(id: string | null, owner: string | null = storageOwner()): void {
+  try {
+    if (id === null) window.localStorage.removeItem(composeRowKey(owner));
+    else window.localStorage.setItem(composeRowKey(owner), id);
+  } catch {
+    /* private mode, or a full quota — the row is as durable as the tab, as it was before */
+  }
+}
+
 export function clearComposeDraft(owner: string | null = storageOwner()): void {
   try {
     window.localStorage.removeItem(composeDraftKey(owner));
     // The session id goes with the buffer it names: the message-in-progress is over, so the next
     // press is a new message and must not inherit this one's identity.
     window.localStorage.removeItem(composeSessionKey(owner));
+    // AND the row that message had on the account — the other half of the identity, and the half
+    // a reload used to lose on its own. See `composeRowKey`.
+    window.localStorage.removeItem(composeRowKey(owner));
     // AND the un-owned key a browser upgraded from an earlier bundle may still hold. This is
     // the only line that touches it: it is drained on the next clear and never read back.
     window.localStorage.removeItem(LEGACY_COMPOSE_DRAFT_KEY);

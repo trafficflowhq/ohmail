@@ -3719,6 +3719,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
         })(),
       };
       setCompose(seeded);
+      /* A DIFFERENT MESSAGE, SO A DIFFERENT COMPOSE SESSION — both branches. The id is what parks
+         an unresolved send (`compose.ts`), and leaving it in place made one session span every
+         draft this surface opened: a send of the FIRST one that came back unverified then parked
+         whichever draft replaced it, with the warning above a refused Send button. Cleared before
+         the new buffer is written, so the next read of `composeSessionId` mints a fresh id — and
+         the recovery branch below is a door in exactly the same sense: the text of a stranded row
+         seeded into a compose that will write its own row is a new message-in-progress. */
+      clearComposeDraft();
       writeComposeDraft(seeded);
       if (d.status === "draft") {
         recoverySeed.current = null;
@@ -3923,6 +3931,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
       autosave.release();
       recoverySeed.current = null; // the form's contents are replaced, a recovery included
       setCompose(seeded);
+      // A NEW message, so a new compose session — see `openDraft` and `compose.ts`. Without it
+      // this message inherited the identity of whatever the form last held, and an unresolved
+      // send of THAT message parked this one: the unconfirmed warning, and Send refused, over a
+      // message nobody had ever pressed Send on.
+      clearComposeDraft();
       writeComposeDraft(seeded);
       // An open inline reply would otherwise sit under the compose the route change opens —
       // one editor at a time.
@@ -3961,6 +3974,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
     autosave.release();
     recoverySeed.current = null;
     setCompose(seeded);
+    // A new compose session, for the reason `writeTo` states — this door is the same one, opened
+    // by the operating system rather than by a click inside the app.
+    clearComposeDraft();
     writeComposeDraft(seeded);
     setReplyTo(null);
     go("compose");

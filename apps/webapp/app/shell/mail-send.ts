@@ -553,26 +553,32 @@ function unresolvedNames(state: SendState, m: MailSend): boolean {
   let legacyFp: string | null = null;
   const legacyFpOf = (): string => (legacyFp ??= legacySendFingerprint_0_14_0(m));
   /**
-   * A DRAFT ROW OUTRANKS THE SESSION WHEN BOTH SIDES HAVE ONE, and that is the limit of the
-   * session's authority rather than an exception to it.
+   * ── A SESSION MATCH IS FINAL. NEITHER THE ROW NOR THE FINGERPRINT OVERRIDES IT ─────────────
    *
-   * The session bridges the window in which a message has NO row — the window the duplicate
-   * delivery was reachable in. It must not go further than that: one compose surface reopens one
-   * draft after another under a single session, so a record naming `draft:30` and a message
-   * naming `draft:40` are two different messages, and parking the second on the shared session
-   * would lock the surface for every other draft in the account. That is the defect the
-   * subject-scoped park was introduced to fix, arrived at from the other side.
+   * A rule used to stand here: where BOTH sides named a draft row and the rows differed, they
+   * were two messages and the row decided. It was written for one compose surface reopening one
+   * draft after another under a SINGLE session — under which a record naming `draft:30` really
+   * would have parked a message naming `draft:40`. The premise is what has been fixed instead:
+   * every door that replaces the compose form re-mints the session (`clearComposeDraft` before
+   * the seed, in `openDraft`, `writeTo` and the mailto seam), so one session names exactly one
+   * message-in-progress and two messages cannot share one.
    *
-   * A row is the server's identity for one message, so where both sides name one it decides. Where
-   * only one side does — the row appeared after the press, or the row the send consumed is gone —
-   * the session is the only name they share and it is the one that answers.
+   * With the premise gone the rule was a hole, in two shapes, both of them a second delivery:
+   *
+   *  · THE ROW MOVES UNDER ONE MESSAGE. A send from saved draft `d1` comes back unverified; the
+   *    reload restores the same message but the composer's autosave had forgotten `d1` and made
+   *    `d2`. Two rows, one message, one session — and the row rule read that as two messages and
+   *    unlocked Send for a message that may already be in somebody's inbox. (`d1` is now adopted
+   *    on mount, `compose-autosave.ts`, so the row does not move at all; this is the other half.)
+   *  · THE CONTENT MOVES. Any rule that lets a fingerprint difference unlock is the escape the
+   *    park exists to close: type one character into a message whose outcome nobody knows, and
+   *    the press mints a fresh key at `crypto.randomUUID()` below.
+   *
+   * So the intersection is the whole answer. The one weaker comparison is a record that names
+   * NOTHING — see the fingerprint arm's own note above; it is what that record can answer.
    */
-  const rowOf = (names: ReadonlyArray<string>): string | undefined => names.find((s) => s.startsWith("draft:"));
-  const myRow = rowOf(subjects);
   return state.unresolved.some((i) => {
     if (i.subjects.length === 0) return i.fp === legacyFpOf() || i.fp === fpOf();
-    const itsRow = rowOf(i.subjects);
-    if (myRow !== undefined && itsRow !== undefined && myRow !== itsRow) return false;
     return i.subjects.some((s) => subjects.includes(s));
   });
 }

@@ -44,7 +44,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { OhmailEngine } from "@ohmail/client-engine";
 import type { ComposeFields } from "./compose";
 import { writeReplyMeta } from "./mail-send";
-import { parseRecipients } from "./compose";
+import { parseRecipients, readComposeRow, writeComposeRow } from "./compose";
 
 /** How long the form must be still before it is written to the account. */
 export const AUTOSAVE_DELAY_MS = 2_000;
@@ -166,6 +166,9 @@ export function useComposeAutosave(opts: {
   const adopt = useCallback((id: string, f: ComposeFields) => {
     epoch.current += 1;
     setDraftId(id);
+    // DURABLY, because this hook's state does not survive a reload and the scratch buffer holding
+    // the same message's text does — see `composeRowKey`.
+    writeComposeRow(id);
     saved.current = signatureOf(f);
     savedMailbox.current = f.fromMailboxId;
   }, []);
@@ -173,9 +176,83 @@ export function useComposeAutosave(opts: {
   const release = useCallback(() => {
     epoch.current += 1;
     setDraftId(null);
+    writeComposeRow(null);
     saved.current = null;
     savedMailbox.current = null;
   }, []);
+
+  /**
+   * ── THE ROW THIS SURFACE WAS HOLDING WHEN THE TAB DIED, ADOPTED ON MOUNT ───────────────────
+   *
+   * A reload restores the message's TEXT from the scratch buffer and used to restore nothing
+   * about its row, so the first pause afterwards CREATED one. The durable send record still named
+   * the row the press had carried, and one message under two rows is what unlocked Send for a
+   * send whose outcome nobody could confirm — the reviewed sequence: send from saved draft `d1`,
+   * unverified, reload, autosave mints `d2`, press, second delivery.
+   *
+   * ── IT ADOPTS ONLY WHAT THE MIRROR CALLS A DRAFT ───────────────────────────────────────────
+   *
+   * The same rule {@link ComposeAutosave.adopt} states, applied to an id nobody re-checked. The
+   * mirror is the authority for two different refusals and both matter here: an id it does not
+   * know at all resolves an update to no effects and the engine answers `not_found` without going
+   * near the wire (a row another device deleted must not be resurrected by a PUT), and a row past
+   * `draft` — `unverified`, or a stranded `sending` — is one the server refuses to send under any
+   * key, so adopting it would point every autosave PUT and the Send press at that refusal.
+   *
+   * Not adopting is safe rather than merely tolerable: the compose SESSION is what parks an
+   * unresolved send (`mail-send.ts`), and it survives the reload whether or not a row does.
+   *
+   * ── AND "THE MIRROR HAS NOT LOADED YET" IS NOT "THERE IS NO SUCH ROW" ─────────────────────
+   *
+   * The two look identical through `get`, which answers nothing for both — and on the path this
+   * exists for, a reload, the mirror is EMPTY at mount: the shell starts the engine in an effect
+   * and the rows arrive from storage afterwards. A first version of this asked once and threw the
+   * stored id away on a miss, which is the fix defeating itself on precisely the cold start it
+   * was written for. So an absent answer WAITS — the engine's own notifications drive the
+   * retry — and only a row the mirror can positively name, in a status this surface may not write
+   * to, is dropped. Waiting for ever is the safe direction: the stored id is cleared by every
+   * door that replaces the form and by a confirmed send, so nothing accumulates.
+   *
+   * Once. The stored id is the state the reload came back to; anything after that is this hook's
+   * own doing and is already in `draftId`.
+   */
+  const adopted = useRef(false);
+  useEffect(() => {
+    if (adopted.current) return;
+    const held = readComposeRow();
+    if (held === null) {
+      adopted.current = true;
+      return;
+    }
+    /** `true` = the question is answered, whichever way; `false` = the mirror cannot say yet. */
+    const settle = (): boolean => {
+      const row = engine.read().get<{ status?: string }>("draft", held);
+      if (row === null || row === undefined) return false;
+      adopted.current = true;
+      if (row.status !== "draft") {
+        // Named, and not this hook's row to write to. Dropped, so no later mount asks again, and
+        // the surface behaves as it did before this adoption existed: the next pause makes a row.
+        writeComposeRow(null);
+        return true;
+      }
+      epoch.current += 1;
+      setDraftId(held);
+      // `saved` stays `null` on purpose: what the account holds for this row is not known to this
+      // mount, so the first change writes an UPDATE to it rather than being deduped away.
+      return true;
+    };
+    if (settle()) return;
+    let off: (() => void) | null = engine.subscribe(() => {
+      if (settle()) {
+        off?.();
+        off = null;
+      }
+    });
+    return () => {
+      off?.();
+      off = null;
+    };
+  }, [engine]);
 
   const discard = useCallback(async () => {
     const id = draftId;
@@ -253,7 +330,11 @@ export function useComposeAutosave(opts: {
           // ADOPTED, not assumed. `entityId` is the server's id and is present only on a
           // confirmed create; without it the next pass would create a second row, which is the
           // whole failure this hook exists to avoid.
-          if (draftId === null && result.entityId) setDraftId(result.entityId);
+          if (draftId === null && result.entityId) {
+            setDraftId(result.entityId);
+            // Beside the state, for the reload — see the adoption effect above.
+            writeComposeRow(result.entityId);
+          }
           saved.current = signature;
           if (mailboxId) savedMailbox.current = mailboxId;
         } catch {

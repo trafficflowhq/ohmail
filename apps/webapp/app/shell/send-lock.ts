@@ -312,12 +312,56 @@ function isLock(x: unknown): x is SendLock {
     && (r.unverified === undefined || typeof r.unverified === "boolean");
 }
 
+/**
+ * ── THE 0.14.0 RECORD IS REWRITTEN ONCE, HERE, AND IT NEVER RESUMES A KEY ───────────────────
+ *
+ * A record in the pre-0.14.1 shape ({@link mayMatchLegacy}) is an unsettled send from the
+ * RELEASED build: 0.14.0 deleted a record at a terminal outcome exactly as this build does, so
+ * one that is still in the jar is a send whose fate nobody observed. What this build cannot do
+ * is decide that such a record names the message in hand.
+ *
+ * It used to try. The press decoded the record with 0.14.0's own algebra and, on a match,
+ * RESUMED its key — and 0.14.0's algebra is blind in four places this one is not: recipients by
+ * address alone (no display name), `html ?? body` as one field, no `threadId`, and an attachment
+ * by its byte LENGTH rather than its content. So a message the person had CHANGED in any of those
+ * four ways hashed as the unchanged one, was handed the old key, and the server — which never
+ * sends twice under a key it has reserved — replayed the first send's stored result at it. The
+ * editor read `confirmed`, cleared the scratch and said "Sent." about a message that never left.
+ * A silently unsent mail is the worse half of the pair this file exists to prevent.
+ *
+ * The blind spots cannot be narrowed from this side: the record carries one hash and no evidence
+ * of which fields produced it. So the decode answers a smaller question than it used to. The
+ * record becomes an UNRESOLVED record of this build's shape carrying its 0.14.0 fingerprint and
+ * NO name — no `subject`, no `session`, because 0.14.0 recorded neither and inventing one here
+ * would park the wrong message. A nameless unresolved record parks by the only identity it has
+ * (`unresolvedNames` in `mail-send.ts` compares BOTH algebras against it), so the surface shows
+ * the unconfirmed warning for that message and Send is refused for it. The person checks their
+ * Sent folder and decides; a message they change is a different message, gets a key of its own,
+ * and goes out once.
+ *
+ * ── WHY AT `load`, AND WHY IT IS IDEMPOTENT ────────────────────────────────────────────────
+ *
+ * Every reader comes through here, so the park is established before any press rather than by
+ * one — the press is the thing being refused. `v` moves to this build's format, which is what
+ * makes {@link mayMatchLegacy} false on the next pass: the rewrite happens once and the second
+ * read takes the ordinary path. The fingerprint is NOT touched, and that is deliberate: it is
+ * still a 0.14.0 hash and the reader that compares it knows so.
+ */
 function load(owner: string | null = storageOwner()): SendLock[] {
   try {
     const raw = window.localStorage.getItem(sendLocksKey(owner));
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.filter(isLock) : [];
+    if (!Array.isArray(parsed)) return [];
+    const rows: SendLock[] = parsed.filter(isLock);
+    let decoded = false;
+    const out = rows.map((r) => {
+      if (!mayMatchLegacy(r)) return r;
+      decoded = true;
+      return { ...r, v: SEND_LOCK_FORMAT, unverified: true };
+    });
+    if (decoded) save(out, owner);
+    return out;
   } catch {
     return [];
   }
@@ -356,6 +400,19 @@ function save(rows: SendLock[], owner: string | null = storageOwner()): void {
  * unverified locks and the other did not, and the one that did not also persisted its own answer.
  */
 function isLive(r: SendLock, nowMs: number): boolean {
+  /**
+   * A RECORD FROM A LATER FORMAT IS NOT AGED OUT, and this arm is why the answer is not simply
+   * the two below it.
+   *
+   * `at` is the only field of a newer shape this build may read, and the age limit acts on the
+   * FILTERED list: both readers persist what they keep, so a downgrade that ran eight days after a
+   * newer install left an unresolved record would have deleted the one thing naming the key that
+   * send went under — and re-upgrading would then mint a fresh key for a message that may already
+   * have been delivered. `unverified` cannot answer for such a record either: the flag means
+   * whatever the build that wrote it decided, so reading it is a guess. The record is carried, as
+   * everywhere else in this file.
+   */
+  if (r.v > SEND_LOCK_FORMAT) return true;
   return r.unverified === true || nowMs - r.at <= SEND_LOCK_TTL_MS;
 }
 
@@ -377,34 +434,24 @@ export function resumeSendLock(
    * gone under), so the lane now carries the unresolved ones alongside whichever ordinary claim
    * is current. Reading by `(lane, fingerprint)` is what keeps them apart — see
    * {@link unverifiedSendIntents} for the other half.
-   */
-  const exact = live.find((r) => r.lane === lane && r.fp === id.fp);
-  /**
-   * ── THE 0.14.0 RECORD, DECODED RATHER THAN DISCARDED ───────────────────────────────────────
    *
-   * No current-format match. Before treating the record as spent, ask whether it was written by
-   * the RELEASED build under the algebra that build used: {@link legacySendFingerprint_0_14_0} of
-   * the very same message in hand. On a match the key is resumed exactly as a current record's
-   * would be, and the record is REWRITTEN in this build's shape so the decode happens once.
+   * ── ONE COMPARISON, IN THIS BUILD'S ALGEBRA, AND NO DECODE ─────────────────────────────────
    *
-   * Guarded by `mayMatchLegacy`, and only when the two fingerprints actually differ — so the
-   * fingerprint-only door below (which passes one fingerprint for both) can never take this
-   * branch, and neither can a record from a format newer than this build's.
+   * A press never decodes a 0.14.0 record and never resumes its key — see {@link load}, which
+   * rewrites such a record into a nameless UNRESOLVED one before any reader sees it. That record
+   * is then exempt from the spent-record sweep below (it is `unverified`), it parks its own
+   * message at the surface, and it is not offered here to any message at all.
    */
-  const legacy = exact !== undefined || id.legacyFp === id.fp
-    ? undefined
-    : live.find((r) => r.lane === lane && r.fp === id.legacyFp && mayMatchLegacy(r));
-  const found = exact ?? legacy;
+  const found = live.find((r) => r.lane === lane && r.fp === id.fp);
   // A different fingerprint means the key does not name THIS content, so it cannot be resumed and
   // the record is spent — EXCEPT an unverified one, which is kept regardless. Deleting it is how
   // reopening a draft and editing it turned into a fresh key for a message that may already have
   // been delivered. A record from a LATER format is exempt too: this build cannot read what its
   // fingerprint means, and a downgrade must not delete a newer install's evidence.
-  const kept = live.filter((r) => r === legacy || !(
+  const kept = live.filter((r) => !(
     r.lane === lane && r.fp !== id.fp && r.unverified !== true && r.v <= SEND_LOCK_FORMAT
   ));
-  const migrated = legacy === undefined ? kept : kept.map((r) => (r === legacy ? rewritten(r, id) : r));
-  if (legacy !== undefined || kept.length !== rows.length) save(migrated, owner);
+  if (kept.length !== rows.length) save(kept, owner);
   return found?.key ?? null;
 }
 
@@ -421,33 +468,15 @@ export function resumeSendLock(
  * such a browser has no writable jar (`sendSubject` answers `undefined` only when the session id
  * could not be read, which is the same failure that stops the record being saved), so it is not a
  * state that reaches storage. `v < SEND_LOCK_FORMAT` is required as well, which keeps this off
- * anything this build or a later one wrote.
+ * anything this build or a later one wrote — and it is what makes {@link load}'s rewrite happen
+ * once: the rewrite moves `v`, so the next read is no longer a legacy read.
+ *
+ * WHAT IT NO LONGER DOES is guard a resume. It named the records whose key a press was allowed to
+ * take over, which is the decision {@link load}'s header withdraws: this predicate now only says
+ * "the outcome of this send was never observed and this build cannot name what it was of".
  */
 function mayMatchLegacy(r: SendLock): boolean {
   return r.v < SEND_LOCK_FORMAT && r.subject === undefined && r.session === undefined;
-}
-
-/**
- * THE SAME CLAIM, IN THIS BUILD'S SHAPE — a decoded 0.14.0 record, migrated in place.
- *
- * The key, the mint time and the unresolved flag are the record's own facts and are carried
- * verbatim; nothing about the send changed, only how this build spells what it is of. The
- * fingerprint and the names become the current message's, which is exactly what the match just
- * established they belong to, and `v` moves so the next reader takes the ordinary path.
- *
- * The draft row is taken from the message when it has one and from the record otherwise, because
- * a 0.14.0 record's `draftId` is the row the send actually used and is worth more than nothing.
- */
-function rewritten(r: SendLock, id: SendIdentity): SendLock {
-  const subject = id.subjects[0];
-  return {
-    ...r,
-    v: SEND_LOCK_FORMAT,
-    fp: id.fp,
-    draftId: id.draftId ?? r.draftId,
-    ...(subject !== undefined ? { subject } : {}),
-    ...(id.session !== null ? { session: id.session } : {}),
-  };
 }
 
 /**
@@ -459,7 +488,14 @@ function rewritten(r: SendLock, id: SendIdentity): SendLock {
 export interface SendIdentity {
   /** {@link sendFingerprint} — this build's algebra. */
   fp: string;
-  /** {@link legacySendFingerprint_0_14_0} — the released 0.14.0 algebra, for decoding its records. */
+  /**
+   * {@link legacySendFingerprint_0_14_0} — the released 0.14.0 algebra.
+   *
+   * NOT a resume comparison any more: no press decodes a 0.14.0 record (see {@link load}). It is
+   * the identity's second spelling, carried so a reader comparing this message against a NAMELESS
+   * unresolved record — whose fingerprint is in that algebra and is the only identity it has — has
+   * both hashes from the one assembly rather than re-hashing every attachment to get the second.
+   */
   legacyFp: string;
   /** {@link sendSubjects} — every name the message answers to. */
   subjects: ReadonlyArray<string>;

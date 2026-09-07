@@ -870,26 +870,48 @@ draft. A new message you are writing has no draft saved to your account until th
 which it does a couple of seconds after you stop typing — and the block identified the message by
 that draft, so a message blocked before the draft existed stopped being recognised the instant it
 appeared. Send lit up again with nothing typed, and pressing it sent the mail a second time: the
-recipient held two copies, while your own Sent folder held one, so neither side showed it. The
-message you are writing is now identified for as long as you are writing it, whether or not a
-draft has been saved yet and whether the app replaces that draft afterwards, so the block stands
-until the send is resolved or you discard the message. Two different saved drafts are still two
-different messages, and sending one is not blocked by the other.
+recipient held two copies, while your own Sent folder held one, so neither side showed it.
 
-A send left unconfirmed by 0.14.0 keeps its identity after the update. The record of such a send
-is stored in your browser, and 0.14.1 changed how a message is recognised from it — so a record
-written by 0.14.0 would not have been matched to the message it belongs to, and the next press
-would have started a second send of mail that may already have gone. The web app updates every
-open browser at once, so this affects anyone whose send was unresolved at that moment. 0.14.1 now
-reads a 0.14.0 record the way 0.14.0 wrote it, keeps the identity that send went out under, and
-rewrites the record in the current form once. The record also carries a version from now on, so
-the next change of form cannot repeat this.
+A message you are writing is now identified by the composing session it belongs to, for as long as
+you are writing it — whether or not a draft has been saved yet, and whether the draft it is saved
+to changes underneath it. A reload no longer loses which draft the composer is holding: it takes
+that draft back up rather than writing a second one, which is what used to make one message look
+like two.
 
-One limit worth stating: this can only recognise a message that still looks the way it did when
-0.14.0 recorded it, including which saved draft it belongs to. A new message whose draft was
-written after the update is not recognisable by any means, because nothing that identified it then
-identifies it now. Such a message shows the unconfirmed warning and can be sent again if you
-choose to; check your Sent folder first.
+Nothing about the message itself lifts the block: not a saved draft appearing, not the draft
+changing, and not an edit. What does is replacing the message — opening another draft, writing to
+a contact from their card, or following a mail link from outside the app. Each of those starts a
+new composing session, so the message that replaces the unconfirmed one sends normally, while the
+unconfirmed one stays blocked whenever you come back to it, until it is resolved or discarded.
+
+A send left unconfirmed by 0.14.0 is still recognised after the update, and it is never sent again
+without you asking. The record of such a send is stored in your browser, and 0.14.1 changed how a
+message is recognised from it — so a record written by 0.14.0 would not have been matched to the
+message it belongs to at all, and the next press would have started a second send of mail that may
+already have gone. The web app updates every open browser at once, so this affects anyone whose
+send was unresolved at that moment.
+
+Such a record is now read on the first look after the update and rewritten in the current form,
+once. What it does not do is hand that send's identity to the message on your screen. The way
+0.14.0 recognised a message could not tell certain changes apart — a replacement attachment of the
+same size, a corrected name beside an address, a change to the plain-text half of a formatted
+message — so treating a match as certain could have sent the earlier message's identity out for
+the new one. The server never sends twice under an identity it already holds, so it would have
+answered that the mail was sent while the message in front of you was quietly dropped, which is
+worse than the duplicate this is all here to prevent. Instead the message that record belongs to
+shows the unconfirmed warning and Send stays blocked for it: check your Sent folder, and any
+change you make to the message makes it a message of its own, which sends once.
+
+One limit worth stating: a 0.14.0 record names neither a saved draft nor a composing session, so
+the only thing it can be matched against is the message as it stood when the record was written. A
+message that has changed since is not matched by it and shows no warning.
+
+Records carry the form they were written in from now on, and a record in a form this version does
+not know is left alone rather than read or removed — including by the clean-up that clears records
+nobody will ever resolve, which used to delete such a record after a week and take the only
+evidence of that send with it. Installing an older version and updating again therefore keeps it.
+While the older version is running it shows no warning for that one message, because it cannot
+read what the record says.
 
 A rule applied to existing mail could stop early if a mailbox changed hands at the wrong moment.
 The request stays open while any mailbox on the account is one this install is not organizing, and
