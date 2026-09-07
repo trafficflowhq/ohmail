@@ -2445,6 +2445,16 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * server's — so the saved draft would be read and then silently discarded.
    */
   const [compose, setCompose] = useState<ComposeFields>(EMPTY_COMPOSE);
+  /**
+   * THE FORM, READ BY A CALLBACK THAT OUTLIVES THE RENDER IT WAS MADE IN.
+   *
+   * `openDraft` has to know whether there is unsaved text on screen before it opens a held row
+   * over it, and putting `compose` in that callback's dependency array would rebuild it on every
+   * keystroke — a memoized callback pins its whole render scope, and this file is where a
+   * megabyte-per-hour retention chain was measured. The ref is the shape that rule prescribes.
+   */
+  const composeRef = useRef<ComposeFields>(EMPTY_COMPOSE);
+  composeRef.current = compose;
   useEffect(() => {
     const saved = readComposeDraft();
     if (saved.to || saved.subject || saved.body) setCompose(saved);
@@ -3772,7 +3782,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
          writing a row on the way through. So the reopen is REFUSED and says why. Only against
          unsaved text, and only for a row this composer is not already holding: reopening the very
          row on screen changes nothing about it. */
-      if (parked && autosave.draftId !== d.id && worthSaving(compose)) {
+      if (parked && autosave.draftId !== d.id && worthSaving(composeRef.current)) {
         toast(t("drafts.heldReopenBlocked"));
         return;
       }
@@ -3843,7 +3853,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
       }
       go("compose");
     },
-    [draftRepliesHere, autosave, go, reader, version, compose, engine, toast, t],
+    [draftRepliesHere, autosave, go, reader, version, compose.sig, engine, toast, t],
   );
   /**
    * ── THE SCHEDULED SENDS (mail 0077), and their two verbs ────────────────────────────────
