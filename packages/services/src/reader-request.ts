@@ -170,12 +170,30 @@ export function moveDestinationWord(folder: string): string {
 }
 
 /**
+ * How many message ids one `IN` predicate carries.
+ *
+ * Postgres refuses a statement with more than 65 535 bind parameters, and the predicate below
+ * binds one per id plus the account — so a single-statement version is refused at about 65 534
+ * ids. That is not a theoretical number here: neither caller's array is bounded by anything. The
+ * Hey migration's re-route pass names every message in the account whose sender or domain matches
+ * a migrated observation, and a workflow undo names one id per recorded step, both from reads with
+ * no `limit`. The failure would therefore arrive on the largest accounts and nowhere else, which
+ * is the shape that reaches people rather than tests.
+ *
+ * Five hundred is `consent-seed.ts`'s `WRITE_CHUNK`, chosen there for the same arithmetic and kept
+ * the same here so that "how many values fit in a statement" has one answer in this codebase.
+ */
+const READ_CHUNK = 500;
+
+/**
  * REFUSE A BULK MOVE ON A READER, BY NAME, AND REFUSE IT WHOLE (mail 0093).
  *
  * Two doors move MANY messages from one press: `WorkflowsService.undoRun` (one move per recorded
- * step of a run, unbounded) and the Hey migration's undo (a bulk snapshot of the whole account).
- * Both wrote `folder_state.desired_folder` with `last_set_by: 'us'` and asked nothing about who
- * organizes the mailboxes involved.
+ * step of a run, unbounded) and the Hey migration's RE-ROUTE PASS — `rerouteToMatchRules`, the
+ * opt-in second half of the FORWARD verb, which walks every message in the account and files each
+ * one whose sender or domain matches a migrated observation. Not the migration's UNDO, which removes
+ * `provenance:'migrated'` rules and moves no mail at all. Both wrote `folder_state.desired_folder`
+ * with `last_set_by: 'us'` and asked nothing about who organizes the mailboxes involved.
  *
  * ── WHY THEY REFUSE RATHER THAN TRAVEL, WHICH IS A RULING AND NOT A PREFERENCE ─────────────
  *
@@ -205,12 +223,24 @@ export async function refuseBulkMoveOnReader(
   if (messageIds.length === 0) return;
   /* The DISTINCT mailboxes of the affected messages, account-scoped — a message id is not an
      authorisation. Distinct rather than per-message: an account holds one or two mailboxes, and
-     asking the role once per message would be N reads for a question with N-of-two answers. */
-  const rows = await tx.selectDistinct({ mailboxId: messages.mailboxId })
-    .from(messages)
-    .where(and(eq(messages.accountId, accountId), inArray(messages.id, [...messageIds])));
+     asking the role once per message would be N reads for a question with N-of-two answers.
 
-  for (const { mailboxId } of rows) {
+     READ IN CHUNKS, AND UNION THE ANSWERS. The question this asks — "which distinct mailboxes do
+     these ids sit on" — is answered exactly by asking it of each slice and taking the union, so
+     chunking costs a few round trips and changes no answer. The account fence is inside EVERY
+     chunk's `where` rather than hoisted anywhere: a chunk is a whole statement, and a statement
+     that asks about ids without saying whose account they belong to is the shape that leaks one
+     account's mailbox id into another's refusal. */
+  const mailboxIds = new Set<string>();
+  for (let i = 0; i < messageIds.length; i += READ_CHUNK) {
+    const chunk = messageIds.slice(i, i + READ_CHUNK);
+    const rows = await tx.selectDistinct({ mailboxId: messages.mailboxId })
+      .from(messages)
+      .where(and(eq(messages.accountId, accountId), inArray(messages.id, chunk)));
+    for (const { mailboxId } of rows) mailboxIds.add(mailboxId);
+  }
+
+  for (const mailboxId of mailboxIds) {
     const e = await readRequestEligibility(
       tx, accountId, mailboxId, capabilityForKind("message.move"),
     );
