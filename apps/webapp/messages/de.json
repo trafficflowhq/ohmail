@@ -1333,9 +1333,6 @@
   "palette": {
     "placeholder": "Befehl eingeben …",
     "empty": "Kein Befehl — probier „screener“, „tag“, „erscheinungsbild“ …",
-    "goOhbox": "Zur Ohbox",
-    "goReads": "Zu Reads",
-    "goReceipts": "Zu den Belegen",
     "openScreener": "Screener öffnen",
     "screenerScreened": "Screener: Aussortiert",
     "screenerSpam": "Screener: Spam",

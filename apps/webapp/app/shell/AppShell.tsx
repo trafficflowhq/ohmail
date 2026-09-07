@@ -6211,9 +6211,15 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
   /* ── the palette command map (every command from the prototype) ── */
   const commands: Command[] = useMemo(() => {
     const list: Command[] = [
-      { id: "go-ohbox", label: t("palette.goOhbox"), keys: ["g", "o"], run: () => go("ohbox") },
-      { id: "go-reads", label: t("palette.goReads"), keys: ["g", "r"], run: () => go("reads") },
-      { id: "go-receipts", label: t("palette.goReceipts"), keys: ["g", "e"], run: () => go("receipts") },
+      /* THE DESTINATION ROWS READ THE REGISTRY'S OWN WORDING (`shortcuts.*`), not a second copy
+         of it. The palette and the `?` sheet are two lists of the same instruction, and while
+         each had its own message they drifted: the palette said "Go to Ohbox" and the sheet said
+         "Go to the Ohbox", one word apart, reported as the two lists disagreeing. Reads and
+         Receipts were byte-identical twins waiting to do the same thing. One message per
+         destination, in the namespace the binding labels live in. */
+      { id: "go-ohbox", label: t("shortcuts.goOhbox"), keys: ["g", "o"], run: () => go("ohbox") },
+      { id: "go-reads", label: t("shortcuts.goReads"), keys: ["g", "r"], run: () => go("reads") },
+      { id: "go-receipts", label: t("shortcuts.goReceipts"), keys: ["g", "e"], run: () => go("receipts") },
       { id: "go-screener", label: t("palette.openScreener"), keys: ["g", "s"], run: () => go("screener") },
       { id: "scn-screened", label: t("palette.screenerScreened"), run: () => goScreener("screened") },
       { id: "scn-spam", label: t("palette.screenerSpam"), run: () => goScreener("spam") },

@@ -1333,9 +1333,6 @@
   "palette": {
     "placeholder": "Type a command…",
     "empty": "No command — try “screener”, “tag”, “theme”…",
-    "goOhbox": "Go to Ohbox",
-    "goReads": "Go to Reads",
-    "goReceipts": "Go to Receipts",
     "openScreener": "Open Screener",
     "screenerScreened": "Screener: Screened out",
     "screenerSpam": "Screener: Spam",

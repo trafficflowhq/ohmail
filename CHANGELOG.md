@@ -267,6 +267,10 @@ the start of a new question. Escape now clears the search and puts the caret bac
 corrected in an earlier release; the hint under the demo on ohmail.app was typed by hand and kept
 saying "⌘K" to everyone. It reads the visitor's own keyboard now, like the caps inside the app.
 
+**One name for the Ohbox, in both lists that name it.** The command palette said "Go to Ohbox"
+and the shortcut list said "Go to the Ohbox" — the same instruction, one word apart, in the two
+places you go looking for it. Both read the same sentence now, and so do Reads and Receipts.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
