@@ -245,6 +245,20 @@ const EN = {
     + `reinstalled there. Starting over discards the mail held here for that other account and `
     + `reads ${host}'s mailbox fresh. Your mail on the server is not touched. You will need a new `
     + "pairing link, because the one you just used has been spent.",
+  /* ── A PAIRING ATTEMPTED WHILE AN EARLIER START-OVER IS STILL PENDING ────────────────────
+     NOT the success card's sentence, and the difference is the whole of this key. That card says
+     "Pairing finished — this computer is now paired with {host}", which on this arm is false in
+     both halves: nothing was paired, and the pairing that IS waiting is a different one the
+     person asked for earlier.
+
+     "Your pairing link has not been used" is a fact about the engine's ordering rather than a
+     reassurance: it refuses this before spending the token, precisely so a restart does not cost
+     somebody a single-use code. Saying so is what stops a person going back to the other computer
+     for a link they do not need. */
+  hostRefuseRestartFirst: (host: string) =>
+    `Nothing was paired. This computer is still finishing an earlier start over — quit ohmail and `
+    + `open it again, then pair with ${host}. Your pairing link has not been used, so it will `
+    + "still work.",
   hostStartOver: "Start over",
   hostStartingOver: "Starting over…",
   hostRefuseSpent:
@@ -588,6 +602,7 @@ export const DOOR_COPY: typeof EN = liveCopy("desktopDoor", EN, {
   hostRefuseNotOhmail: ["host"],
   hostRefuseNotServing: ["host"],
   hostRefuseAccountMismatch: ["host"],
+  hostRefuseRestartFirst: ["host"],
   hostRefuseServer: ["host"],
   hostRefuseUnreachable: ["host"],
   hostFootStale: ["host"],

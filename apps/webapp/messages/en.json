@@ -3346,6 +3346,7 @@
     "hostRefuseManaged": "That link is from ohmail Cloud, not from a computer of yours. Go back and choose “ohmail Cloud”.",
     "hostRefuseServer": "{host} is a server you run, not a computer sharing its mail. Go back and choose “Your own server”.",
     "hostRefuseAccountMismatch": "This computer holds mail from a different account on {host} — it looks like ohmail was reinstalled there. Starting over discards the mail held here for that other account and reads {host}'s mailbox fresh. Your mail on the server is not touched. You will need a new pairing link, because the one you just used has been spent.",
+    "hostRefuseRestartFirst": "Nothing was paired. This computer is still finishing an earlier start over — quit ohmail and open it again, then pair with {host}. Your pairing link has not been used, so it will still work.",
     "hostStartOver": "Start over",
     "hostStartingOver": "Starting over…",
     "hostRefuseSpent": "That link has already been used or has expired. Make a new one from Settings → Devices on that computer.",

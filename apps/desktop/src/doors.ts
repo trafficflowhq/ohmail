@@ -716,6 +716,9 @@ export const HOST_REFUSAL_KINDS = [
   "managed",
   "selfhost",
   "pairing_invalid",
+  /* AN EARLIER START-OVER IS STILL PENDING. Not the success above: nothing was paired, the token
+     was not spent, and the app must be reopened before this can be tried again. */
+  "restart_required",
   /* THE HOST WAS REINSTALLED AT THE SAME ADDRESS — a different account behind a familiar name.
      It is on this list rather than falling through to the engine's own words because it is the
      one refusal with a VERB attached: the sentence has to name what Start over costs, and a
@@ -1042,16 +1045,16 @@ async function redeemPairing(
     };
   }
 
+  /* ── A REDEEM ATTEMPTED WHILE A DISCARD IS PENDING IS A REFUSAL, NOT THE SUCCESS ──────────
+     These two states share a restart and nothing else, and collapsing them put a false sentence
+     on screen: the success card reads "Pairing finished — this computer is now paired with
+     {host}", and on this arm NOTHING was paired. What is pending is an EARLIER start-over, and
+     the app has to be reopened before this pairing can even be attempted.
+     The engine refuses this one BEFORE spending the token, deliberately — so the link in the
+     person's hand still works after the restart, which is the opposite of the account-mismatch
+     refusal and worth saying. It stays a refusal here and gets its own sentence. */
   const refusal = await refusalOf(res);
-  if (refusal !== null) {
-    /* A REDEEM ATTEMPTED WHILE A DISCARD IS PENDING. The engine may answer this either as a
-       refusal by name or as the staged 200 below; both mean the same thing to a person, so both
-       route to the relaunch card and this lane does not depend on which the engine chose. */
-    if (refusal.kind === "restart_required") {
-      return { status: settled, refusal: null, problem: null, restartRequired: true };
-    }
-    return { status: settled, refusal, problem: null };
-  }
+  if (refusal !== null) return { status: settled, refusal, problem: null };
 
   /* ── `res.ok` IS NOT "PAIRED AND READY", AND TREATING IT AS SUCH WAS THE DEFECT ────────────
      A start-over answers 200 — the pairing genuinely succeeded, the code is spent and the session

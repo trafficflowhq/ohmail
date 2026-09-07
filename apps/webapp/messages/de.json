@@ -3346,6 +3346,7 @@
     "hostRefuseManaged": "Dieser Link kommt von ohmail Cloud, nicht von einem Computer von dir. Geh zurück und wähle „ohmail Cloud“.",
     "hostRefuseServer": "{host} ist ein Server, den du betreibst, kein Computer, der seine Post teilt. Geh zurück und wähle „Dein eigener Server“.",
     "hostRefuseAccountMismatch": "Dieser Computer hat Post von einem anderen Konto auf {host} — offenbar wurde ohmail dort neu installiert. Bei einem Neuanfang wird die hier liegende Post dieses anderen Kontos verworfen und das Postfach von {host} neu gelesen. Deine Post auf dem Server bleibt unberührt. Du brauchst einen neuen Kopplungslink, denn der eben benutzte ist verbraucht.",
+    "hostRefuseRestartFirst": "Es wurde nichts gekoppelt. Dieser Computer schließt noch einen früheren Neuanfang ab — beende ohmail, öffne es erneut und kopple dann mit {host}. Dein Kopplungslink wurde nicht verbraucht und funktioniert weiterhin.",
     "hostStartOver": "Neu anfangen",
     "hostStartingOver": "Neuanfang läuft…",
     "hostRefuseSpent": "Dieser Link wurde schon benutzt oder ist abgelaufen. Erstelle unter Einstellungen → Geräte auf dem anderen Computer einen neuen.",

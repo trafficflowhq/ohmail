@@ -1121,6 +1121,7 @@ export function sentenceForKind(kind: HostLinkRefusal | string, host: string): s
     case "managed": return DOOR_COPY.hostRefuseManaged;
     case "selfhost": return DOOR_COPY.hostRefuseServer(host);
     case "pairing_invalid": return DOOR_COPY.hostRefuseSpent;
+    case "restart_required": return DOOR_COPY.hostRefuseRestartFirst(host);
     case "pair_account_mismatch": return DOOR_COPY.hostRefuseAccountMismatch(host);
     case "unreachable": return DOOR_COPY.hostRefuseUnreachable(host);
     /* NOT A DEFAULT SENTENCE. `null` is what sends the caller to the engine's own words; a

@@ -103,17 +103,36 @@ describe("a 200 is not always a finished pairing", () => {
     expect(result.status?.state).toBe("serving");
   });
 
-  /* THE ENGINE MAY ANSWER THE SAME SITUATION AS A REFUSAL BY NAME. Both mean one thing to a
-     person, so both route to the relaunch card and this window does not depend on which the
-     engine chose. */
-  it("a `restart_required` refusal is the same state, not an error", async () => {
+  /**
+   * A `restart_required` IS A REFUSAL AND NOT THE SUCCESS ABOVE — the two share a restart and
+   * nothing else.
+   *
+   * This used to collapse into the staged-200 outcome, which put a false sentence on screen: the
+   * success card says "Pairing finished — this computer is now paired with {host}", and on this
+   * arm NOTHING was paired. What is pending is an EARLIER start-over the person asked for, and the
+   * app has to be reopened before this pairing can even be attempted.
+   *
+   * The engine also refuses it BEFORE spending the token, so the link in the person's hand still
+   * works afterwards — the opposite of the account-mismatch refusal, and the reason the two need
+   * different sentences rather than one hedged one.
+   */
+  it("a `restart_required` is a refusal, NOT the finished pairing", async () => {
     shell((url) =>
       url === "/cloud/pair-redeem"
         ? encode(409, '{"error":{"code":"restart_required","message":"reopen ohmail"}}', "Conflict")
         : encode(200, '{"ok":true}'));
     const result = await pairAgainWithHost(link);
-    expect(result.restartRequired).toBe(true);
-    expect(result.refusal, "the relaunch state was reported as a refusal").toBeNull();
+    expect(result.restartRequired, "a refusal was reported as a finished pairing").toBeFalsy();
+    expect(result.refusal?.kind).toBe("restart_required");
+    /* AND ITS SENTENCE IS ITS OWN. Both halves asserted, because the defect was that one sentence
+       served two states: this one must say nothing was paired, and must NOT claim the pairing
+       finished. */
+    const said = sentenceForKind("restart_required", "kestrel")!;
+    expect(said).toContain("Nothing was paired.");
+    expect(said).toMatch(/quit ohmail and open it again/i);
+    expect(said).toMatch(/link has not been used/i);
+    expect(said, "the refusal borrowed the success card's claim").not.toMatch(/now paired with/i);
+    expect(said).not.toBe(DOOR_COPY.gateRestart("kestrel"));
   });
 });
 

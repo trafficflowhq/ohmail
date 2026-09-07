@@ -156,3 +156,100 @@ describe("a pinned pairing link in the self-hosted address field", () => {
       .toBeGreaterThan(0);
   });
 });
+
+/**
+ * ═══ THE 409 DRIVEN THROUGH THE ROUTE, NOT THE FUNCTION ════════════════════════════════════
+ *
+ * The unit case beside this one asserts that `pairAgainWithHost` reports a `restart_required` as a
+ * refusal. That is necessary and it is not sufficient: what a person actually meets is the CARD,
+ * and the defect this exists for was a correct function feeding a card that said the opposite.
+ *
+ * "Pairing finished — this computer is now paired with {host}" is false on this arm in both
+ * halves: nothing was paired, and the pairing that IS waiting is a different one, asked for
+ * earlier. So the assertion is about the sentence on screen, and it asserts the ABSENCE of the
+ * success wording as well as the presence of the refusal — a card that showed both would satisfy
+ * a presence-only check.
+ */
+describe("a redeem refused while an earlier start over is pending", () => {
+  const PIN2 = "E".repeat(43);
+  const LINK2 = `https://192.168.1.24:8443/pair#k1.${PIN2}.tok_pending`;
+
+  /** A shell that proves the link, then refuses the redeem with `restart_required`. */
+  function stagedShell(): { calls: string[] } {
+    const calls: string[] = [];
+    const encode = (status: number, body: string, statusText = "OK"): Uint8Array => {
+      const meta = new TextEncoder().encode(JSON.stringify({ status, statusText, h: [] }));
+      const payload = new TextEncoder().encode(body);
+      const out = new Uint8Array(4 + meta.byteLength + payload.byteLength);
+      new DataView(out.buffer).setUint32(0, meta.byteLength, false);
+      out.set(meta, 4);
+      out.set(payload, 4 + meta.byteLength);
+      return out;
+    };
+    host.__TAURI_INTERNALS__ = {
+      invoke: async (command, payload) => {
+        const url = (payload as { url?: string } | undefined)?.url ?? "";
+        calls.push(`${command} ${url}`.trim());
+        if (command === "engine_configure") return { state: "starting", mode: "cloud" };
+        if (command === "engine_status") {
+          return { state: "serving", mode: "cloud", flavor: "desktop-host", mailboxId: "m1" };
+        }
+        if (command === "engine_request") {
+          if (url === "/cloud/pair-redeem") {
+            return encode(
+              409,
+              '{"error":{"code":"restart_required","message":"waiting to be restarted"}}',
+              "Conflict",
+            );
+          }
+          return encode(200, '{"ok":true,"base":"https://192.168.1.24:8443"}');
+        }
+        throw new Error(`unexpected ${command}`);
+      },
+    };
+    return { calls };
+  }
+
+  it("shows the refusal's own sentence, and never the finished-pairing one", async () => {
+    const { DoorChooser } = await import("../src/DoorChooser.js");
+    stagedShell();
+    mount = document.createElement("div");
+    document.body.append(mount);
+    root = createRoot(mount);
+    await act(async () => {
+      root!.render(
+        h(
+          NextIntlClientProvider,
+          { locale: "en", messages: en as never, timeZone: "Europe/Zurich" },
+          h(DoorChooser, { start: "host", onEntered: () => {} }),
+        ),
+      );
+    });
+    const el = mount;
+
+    /* Prove the link, then press Pair — the whole route a person walks. */
+    await type(el, "host-link", LINK2);
+    await submit(el);
+    expect(el.textContent, "the link step did not complete").toContain("Reached 192.168.1.24");
+    await submit(el);
+
+    /* THE SENTENCE THE PERSON READS. */
+    expect(el.textContent).toContain("Nothing was paired.");
+    expect(el.textContent).toMatch(/quit ohmail and open it again/i);
+    expect(el.textContent).toMatch(/link has not been used/i);
+
+    /* AND NOT THE SUCCESS CARD'S CLAIM — asserted as an absence, because a card showing both
+       would pass a presence-only check while still telling somebody their pairing worked. */
+    expect(el.textContent, "the refused pairing was reported as finished")
+      .not.toMatch(/Pairing finished/i);
+    expect(el.textContent).not.toMatch(/now paired with/i);
+
+    /* AND NO START-OVER VERB. That belongs to the account-mismatch refusal, which is a different
+       situation with a different cost; offering it here would invite somebody to discard mail to
+       fix a restart. */
+    expect(
+      [...el.querySelectorAll("button")].map((b) => b.textContent ?? ""),
+      "the start-over verb was offered for a refusal that only needs a restart",
+    ).not.toContain("Start over");
+  });
+});
