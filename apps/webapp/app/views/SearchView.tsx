@@ -176,6 +176,19 @@ function orderMerged(items: MergedHit[], sort: ServerSearchSort, mailboxRank: So
   return out;
 }
 
+/**
+ * THE QUERY BOX ITSELF, when this view has to put the caret back in it.
+ *
+ * A query rather than a ref because `SearchBox` is a `@ohmail/ui` composite that forwards none
+ * — and because the selector is now read from TWO places (the mount-time select, and Escape's
+ * clear), which is precisely when a hand-repeated selector string starts to drift. One
+ * function, one selector, both callers.
+ */
+function searchBox(): HTMLInputElement | null {
+  if (typeof document === "undefined") return null;
+  return document.querySelector<HTMLInputElement>(".view-search .search-box input");
+}
+
 export function SearchView({
   engine,
   version,
@@ -557,7 +570,7 @@ export function SearchView({
    */
   useEffect(() => {
     if (typeof document === "undefined") return;
-    const box = document.querySelector<HTMLInputElement>(".view-search .search-box input");
+    const box = searchBox();
     if (box && box.value.trim() !== "") box.select();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -590,8 +603,23 @@ export function SearchView({
       inInput: true,
       disabled: (trimmed === "" && onExit == null) || zone !== "list",
       run: () => {
-        if (trimmed !== "") onQuery("");
-        else onExit?.();
+        if (trimmed !== "") {
+          onQuery("");
+          /* ── AND THE CARET GOES BACK IN THE BOX, WHICH CLEARING ALONE DOES NOT DO ────────
+           *
+           * The sentence this binding is documented by is "clear the search — again to leave",
+           * and clearing is only half of it: the person who got here with ↓ has focus on a HIT
+           * ROW, and clearing the query removes every row from the DOM. Focus then falls to
+           * `<body>`, where `isTypingTarget` is false — so the next letter typed is not typed
+           * at all, it is dispatched as a BINDING. Measured: after Escape on a non-empty
+           * result, typing the next question ran the shell's global verbs (`c` opened Compose)
+           * instead of asking it.
+           *
+           * So the box is re-focused whenever the query is what was cleared. Not on the
+           * LEAVE arm: that hands the screen back to the view `/` was pressed in, and focusing
+           * a box on a view being unmounted is a caret in a field nobody can see. */
+          searchBox()?.focus();
+        } else onExit?.();
       },
     },
     {

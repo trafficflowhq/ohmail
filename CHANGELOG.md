@@ -256,6 +256,13 @@ lost it: the arrow keys stopped working, and the next letter typed acted on the 
 instead. The keyboard now moves to the nearest verb still in the menu, or back to the button if the
 menu has emptied — and while a menu is open, a letter belongs to the menu.
 
+### Clearing a search, a keyboard hint on the demo, and one name for the Ohbox
+
+**Escape in Search leaves the caret in the box.** Pressing Escape clears the question, and after
+arrowing down to a result it used to leave the keyboard focused on nothing: the highlighted row went
+away with the rest of the results, and the next letter typed was read as a shortcut instead of as
+the start of a new question. Escape now clears the search and puts the caret back where you type.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
