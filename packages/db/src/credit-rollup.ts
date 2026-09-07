@@ -250,6 +250,15 @@ export function isNightlyRollupSlot(now: Date, lastNightlyAt: Date | null): bool
   return utcDayStart(lastNightlyAt).getTime() < utcDayStart(now).getTime();
 }
 
+/**
+ * The advisory-lock key that makes the fold single-writer.
+ *
+ * Clear of every key already in use: `LEADER_LOCK_KEY` 4207270001 (+ shard),
+ * `MIGRATION_LOCK_KEY` 4207279001, `SETUP_TOKEN_LOCK_KEY` 4207279101. Sharing any of those would
+ * either block behind an unrelated holder or take a key something else is waiting on.
+ */
+export const CREDIT_ROLLUP_FOLD_LOCK_KEY = 4207279201n;
+
 /** What one fold-and-sweep did. Folded into {@link CreditRollupReport} by the caller. */
 export interface SetupFoldReport {
   /** Whole days this pass folded and swept. */
@@ -300,17 +309,48 @@ export interface SetupFoldReport {
  * derived by SUBTRACTION (eligible minus folded), so it is measured by the fold's own effect and
  * cannot report a refusal that did not happen.
  *
- * ## NO TRANSACTION, AND ORDER IS THE MECHANISM
+ * ## ONE TRANSACTION, ONE WRITER — and the earlier argument here was wrong
  *
- * The caller hands us a pool, not a transaction, and the statements autocommit. That is
- * deliberate: a death between the fold and the delete leaves rows whose pair the next pass folds
- * again, identically, because the fold is a full recompute over the pair's population and not an
- * increment. The reverse order has no such recovery, which is why the order is the invariant and
- * a transaction is not needed to protect it.
+ * This paragraph used to say a transaction was unnecessary because ORDER was the invariant: a
+ * death between the fold and the delete would leave rows the next pass re-folded identically. Two
+ * things were wrong with that. The frozen arm refused exactly that pair on the next pass, which
+ * round one found; and it left two passes able to interleave, which round two showed loses BOTH
+ * the aggregate and the source — the day's spend in neither place, which is the whole loss this
+ * function exists to prevent.
+ *
+ * So the fold now runs inside ONE transaction whose first statement takes
+ * {@link CREDIT_ROLLUP_FOLD_LOCK_KEY} as a `pg_advisory_xact_lock`. Both halves of that sentence
+ * are load-bearing and neither works alone:
+ *
+ *  · the LOCK makes a second fold wait rather than interleave. It must be an `xact` lock inside a
+ *    transaction, because `change-log.ts` states the trap in its own words — *"a lock taken on a
+ *    top-level handle is released at the end of its own statement and serializes nothing"* — and
+ *    {@link Tx} IS such a handle. A bare `select pg_advisory_xact_lock(…)` here would have been a
+ *    guard that cannot fire.
+ *  · the TRANSACTION pins one connection, without which a pool would run the fold's later
+ *    statements on backends that never took the lock; and it makes fold-then-sweep atomic, so the
+ *    interrupted state stops being reachable going forward.
+ *
+ * WHAT IT COSTS, STATED: a failure on one day rolls the whole pass back rather than keeping the
+ * days already done. That is the right trade here because the pass is idempotent over an
+ * append-only population — the next run recomputes the same days and reaches the same numbers —
+ * so the cost is one night of latency, never a wrong figure. The alternative, a transaction per
+ * day, keeps partial progress and gives up the single-writer property, because a pool cannot hold
+ * one connection across several transactions.
+ *
+ * The recovery path is KEPT and still tested: a database written by the previous version can
+ * already hold an interrupted fold, and this function has to finish it.
  */
 export async function foldAndSweepSetupSpends(
   db: Tx, opts: { now: Date; computedAt: string; capDays?: number },
 ): Promise<SetupFoldReport> {
+  // ONE TRANSACTION, and its FIRST statement is the lock — see the header. A second fold
+  // waits here rather than interleaving with this one.
+  return db.transaction(async (tx) => {
+    // postgres.js takes bigint at runtime; its published types omit it. `migrate.ts`'s cast,
+    // for migrate.ts's reason: the 64-bit key must stay exact.
+    await tx.execute(sql`select pg_advisory_xact_lock(${CREDIT_ROLLUP_FOLD_LOCK_KEY as unknown as number})`);
+
   const { now, computedAt } = opts;
   const capDays = Math.max(0, Math.floor(opts.capDays ?? CREDIT_ROLLUP_SWEEP_CAP_DAYS));
   const floor = new Date(now.getTime() - SETUP_SPEND_RETENTION_DAYS * DAY_MS).toISOString();
@@ -321,7 +361,7 @@ export async function foldAndSweepSetupSpends(
   // the SESSION's zone, so on a server not set to UTC it would disagree with `dayKey` — and the
   // disagreement would be invisible except within a few hours of midnight, which is the shape
   // that reads as flakiness rather than as a defect.
-  const pairs = rowsOf<{ day: string; account_id: string; frozen: boolean }>(await db.execute(sql`
+  const pairs = rowsOf<{ day: string; account_id: string; frozen: boolean }>(await tx.execute(sql`
     with elig as (
       select (s.created_at at time zone 'utc')::date as day,
              s.account_id as account_id,
@@ -444,7 +484,7 @@ export async function foldAndSweepSetupSpends(
     // model faulted on and gave the credit back for, so it is not spend. `coalesce(..., 0)`
     // because a pair whose every draw was refunded still gets a row — the row is what records
     // that the day was folded, and it is what the frozen check reads next time.
-    const folded = await db.execute(sql`
+    const folded = await tx.execute(sql`
       insert into credit_usage_daily
              (day, account_id, pool, reason, credits, rows, computed_at)
       select ${key}::date, s.account_id, 'setup', 'debit_classify',
@@ -478,7 +518,7 @@ export async function foldAndSweepSetupSpends(
     // Here it can only fire if a setup row for one of these pairs carries a reason this build no
     // longer writes, which is a migration's leavings rather than a live case — kept because the
     // statement that makes a stale row unrepresentable costs one indexed delete a day.
-    await db.execute(sql`
+    await tx.execute(sql`
       delete from credit_usage_daily
        where day = ${key}::date and pool = 'setup'
          and computed_at < ${computedAt}::timestamptz
@@ -489,7 +529,7 @@ export async function foldAndSweepSetupSpends(
     // Its predicate is the pair set, never a clock. That is what makes "deleted but never
     // aggregated" unrepresentable rather than merely untested: reaching this statement for a pair
     // means statement 1 wrote that pair's aggregate a moment ago, in the same pass.
-    const swept = await db.execute(sql`
+    const swept = await tx.execute(sql`
       delete from setup_grant_spends s
        where (s.created_at at time zone 'utc')::date = ${key}::date
          and s.account_id in (${notFrozen})
@@ -510,8 +550,11 @@ export async function foldAndSweepSetupSpends(
   for (const n of frozenPerDay.values()) frozenPairsSkipped += n;
   // Read AFTER the loop: the loop can add a day that was taken and yielded nothing.
   const backlogDays = waiting.size;
+
   return { daysFolded: take.length, pairsFolded, rowsSwept, backlogDays, frozenPairsSkipped };
+  });
 }
+
 
 /**
  * Recompute the daily aggregates, and — when asked — the totals, the divergence count and the
