@@ -885,6 +885,20 @@ middle of taking the record out of the mailbox, the check that started before th
 writes over it: it records nothing at all and leaves your later instruction standing, and the next
 check organizes the mailbox here again.
 
+Replacing an attached file with a different one of the same size could report a message as sent
+without it. Every send carries an identity, so that pressing Send twice — or pressing it again
+after a reload, when the app never learned what became of the first attempt — delivers one mail
+and not two. That identity was built from each attached file's name, type and size rather than
+from what is in the file. Swapping a file for a different one of the same size under the same
+name, which is what happens when the image-quality setting re-encodes a photo in place, left the
+new message looking identical to the first: it went out under the first message's identity, and
+where that first attempt had already reached the server, the server recognised the identity as one
+it had already handled and answered with the earlier result — so the app reported the message as
+sent although the file just attached never left. The identity is now read from the contents of each
+file. It also now takes in the names written beside the addresses a message is going to, which are
+sent with the message and were not being read either. An unchanged message keeps the identity it
+had, so pressing Send again after an answer went missing still delivers exactly once.
+
 ## [0.14.0] — 2026-09-03
 
 A desktop install can hold more than one mailbox. Each one gets its own connection,

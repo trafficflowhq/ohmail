@@ -86,6 +86,21 @@ export interface SendLock {
 }
 
 /**
+ * FNV-1a, 32-bit, unsigned, base36 — short enough to read in a jar dump and stable across builds.
+ *
+ * Shared by the envelope and by each attachment's content rather than written twice, because the
+ * two copies would be two chances for them to drift into different hashes of the same bytes.
+ */
+function fnv1a(s: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    hash ^= s.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(36);
+}
+
+/**
  * WHICH MESSAGE THIS KEY BELONGS TO — the guard that stops a resumed key from swallowing a
  * DIFFERENT message, which is the worse defect a naive durable lock would introduce.
  *
@@ -104,13 +119,42 @@ export interface SendLock {
  * schedule, which is a message being sent twice on purpose. What it has to do is CHANGE when the
  * user changes what they wrote, and it does.
  *
- * The attachments are folded in by name, type and byte length rather than by content: hashing
- * megabytes of base64 on every press to detect an edit nobody makes silently (you cannot alter a
- * picked file in place) is a cost with no case behind it.
+ * ── THE ATTACHMENTS ARE FOLDED IN BY CONTENT, AND THE ARGUMENT FOR LENGTH WAS WRONG ─────────
+ *
+ * This hashed each attachment's name, type and byte LENGTH, on the reasoning that content hashing
+ * was "a cost with no case behind it" because "you cannot alter a picked file in place". The
+ * premise is false in this codebase. `ComposeAttach` re-encodes a picked picture in place under
+ * its ORIGINAL filename when the quality control moves, and a regenerated document keeps its
+ * name — so two different files of the same length under one name were one message. Two sends
+ * then shared an Idempotency-Key, and because the server never sends twice under a key it has
+ * reserved, the second one had the first's stored result replayed at it: the editor said "Sent."
+ * about a file that never left. A silently unsent mail is the worse half of the pair this file
+ * exists to prevent, so the content is hashed.
+ *
+ * The cost is one pass over the base64 per press, bounded by the surface's own cap — 3 MB, or
+ * 40 MB for a client permitted to stage. Both the length AND the content hash are folded in, so a
+ * collision needs agreement on both.
  */
 export function sendFingerprint(m: MailSend): string {
-  const addrs = (xs: ReadonlyArray<{ address: string }> | undefined): string =>
-    (xs ?? []).map((a) => a.address.toLowerCase()).join(",");
+  /**
+   * THE DISPLAY NAME IS PART OF THE RECIPIENT, because it is part of what goes out.
+   *
+   * This read the address alone. The adapter puts the whole `EmailAddress` on the wire — `PUT
+   * /drafts/:id` and `POST /drafts` both send `to: m.to ?? []` — and the name is what the
+   * recipient's client shows, so a message whose only correction was the name it addresses
+   * somebody by hashed as the uncorrected one and could be handed its key.
+   *
+   * `JSON.stringify` over a pair per recipient rather than a delimiter join: a name is free text
+   * and may contain whatever the join used, which would let two different lists agree on one
+   * string. An absent name and a `null` one collapse to the same value on purpose — both record
+   * "no display name", which is the fact the wire carries either way.
+   *
+   * The address keeps its lowercasing: a mailbox is not case-sensitive to the sender's typing,
+   * and a re-send of the same message with the address retyped in another case is the same
+   * message, which is exactly the press that must resume its key.
+   */
+  const addrs = (xs: ReadonlyArray<{ name?: string | null; address: string }> | undefined): string =>
+    JSON.stringify((xs ?? []).map((a) => [a.name ?? null, a.address.toLowerCase()]));
   /**
    * ── EVERY FIELD THE WIRE CARRIES, AND THE TWO THAT WERE MISSING ─────────────────────────────
    *
@@ -131,15 +175,15 @@ export function sendFingerprint(m: MailSend): string {
     m.threadId ?? "",
     addrs(m.to), addrs(m.cc), addrs(m.bcc),
     m.subject ?? "", m.body ?? "", m.html ?? "", m.sendAt ?? "",
-    (m.attachments ?? []).map((a) => `${a.filename}:${a.contentType}:${a.contentBase64.length}`).join("|"),
+    // BY CONTENT — see the header. The length rides along beside the content hash rather than
+    // instead of it, so telling two files apart no longer depends on them differing in size.
+    // Hashed per attachment rather than concatenated into `parts`, which would allocate a second
+    // copy of every byte the person attached.
+    JSON.stringify((m.attachments ?? []).map((a) => [
+      a.filename, a.contentType, a.contentBase64.length, fnv1a(a.contentBase64),
+    ])),
   ].join("\u0000");
-  // FNV-1a, 32-bit, unsigned, base36 — short enough to read in a jar dump and stable across builds.
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < parts.length; i++) {
-    hash ^= parts.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-  }
-  return hash.toString(36);
+  return fnv1a(parts);
 }
 
 /**

@@ -520,8 +520,18 @@ function unresolvedNames(state: SendState, m: MailSend): boolean {
    * fail-open direction on a duplicate-delivery guard, and one the record's own docblock does not
    * claim. Weaker than the subject, and it is what that record can answer.
    */
-  const fp = sendFingerprint(m);
-  return state.unresolved.some((i) => (i.subject === undefined ? i.fp === fp : i.subject === subject));
+  /**
+   * COMPUTED ONLY IF A RECORD ACTUALLY NEEDS IT, and that is a cost note rather than a behaviour
+   * change: the predicate below reads `fp` in one branch only. `sendFingerprint` now hashes each
+   * attachment's CONTENT (it identified a file by byte length, so a replacement of the same size
+   * shared an Idempotency-Key), and this function runs on the render path that decides whether
+   * Send is pressable — so hashing megabytes of base64 for every record that parks by subject,
+   * which is every record a current build writes, would put the whole attachment through a hash
+   * on each keystroke. Lazy, memoised for the length of the call, same answer.
+   */
+  let fp: string | null = null;
+  const fpOf = (): string => (fp ??= sendFingerprint(m));
+  return state.unresolved.some((i) => (i.subject === undefined ? i.fp === fpOf() : i.subject === subject));
 }
 
 /**
