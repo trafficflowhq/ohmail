@@ -5022,6 +5022,20 @@ export const REQUEST_REFUSAL_REASONS = [
   "stale",
   /** The account has been erased; there is nothing left to apply it to. */
   "account_erased",
+  /**
+   * mail 0093. The record was valid, verified and understood, and the message it names is not in
+   * THIS organizer's store — never synced here, or since deleted. Not an error and not a fault of
+   * the record: two installs of one mailbox legitimately hold different subsets of it. It is a
+   * refusal to the READER because the alternative is a record that quietly disappears, leaving
+   * them unable to tell "done" from "never happened".
+   */
+  "no_such_message",
+  /**
+   * mail 0093. The destination was `trash` and this mailbox has no Trash folder discovered. ohmail
+   * never expunges, so there is nowhere to put it and no default that would not be a lie about
+   * where the mail went — the same refusal the organizer's own delete door gives.
+   */
+  "no_trash_folder",
 ] as const;
 export type RequestRefusalReason = (typeof REQUEST_REFUSAL_REASONS)[number];
 

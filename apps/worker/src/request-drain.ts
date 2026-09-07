@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   applyScreenerDecision, AccountErasedError, validateRequestPayload, claimIdempotencyKey,
+  applyMessageMove, validateMovePayload, type MoveRefusal,
   readIdempotencyKey, IDEMPOTENCY_TTL_MS, readAccountErasedAt,
   listPendingRequests, listSentRequests, markRequestsSent, markRequestsApplied,
   listStaleSentRequests, markRequestsExpired, markRequestsRefused,
@@ -16,6 +17,118 @@ import {
   type RequestRefusalReason,
 } from "@trafficflow/core/adapters/organizer-lease";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  THE DISPATCH TABLE — one entry per kind this build can actually carry out (mail 0093)
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * ── WHY THE ENTRY RETURNS A CLOSURE RATHER THAN A VALIDATED VALUE ─────────────────────────
+ *
+ * A handler validates the payload and hands back the APPLIER ALREADY BOUND TO IT. The obvious
+ * alternative — validate to a value, then switch on the kind again to choose an applier — has the
+ * validated payload and the function entitled to read it as two separate things, so "this kind's
+ * applier receives that kind's payload" becomes a property somebody has to keep true. Here it is
+ * not expressible: the only thing that ever sees a validated move payload is the closure the move
+ * handler made, and the drain cannot reach inside it.
+ *
+ * `null` means the payload failed that kind's own validation, and the caller answers
+ * `invalid_payload` — the same word, for every kind, as before this table existed.
+ *
+ * ── WHAT IS DELIBERATELY MISSING ──────────────────────────────────────────────────────────
+ *
+ * `rule.create`, `rule.update`, `rule.delete` and `profile.update`. All four are members of
+ * `REQUEST_KINDS` and all four are admitted by the database, because a widening migration ships
+ * ahead of the code that writes the member. A kind with no entry here leaves the record STANDING —
+ * not refused, not expunged — which is the disposition for a decision a newer install on this
+ * account made and this organizer cannot yet carry out. Adding the entry is what makes it
+ * appliable; the capability advertisement follows the entry, never precedes it.
+ */
+interface HandlerContext {
+  accountId: string;
+  mailboxId: string;
+  requestId: string;
+  now: Date;
+}
+
+/** Applied, or not applied for a named reason the reader is told. */
+type ApplyOutcome = { applied: true } | { applied: false; reason: RequestRefusalReason };
+
+/** Runs inside the drain's own transaction, after the fence and the idempotency claim. */
+type BoundApplier = (tx: Tx) => Promise<ApplyOutcome>;
+
+/** Validate this kind's payload and bind its applier, or `null` for `invalid_payload`. */
+type KindHandler = (payload: unknown, ctx: HandlerContext) => BoundApplier | null;
+
+/**
+ * An applier that ran and could not carry the action out. THROWN rather than returned so the
+ * enclosing transaction rolls back — the idempotency key claimed moments earlier must not outlive
+ * an apply that wrote nothing, or the next cycle reads the key, concludes the record was already
+ * taken, and acks the reader `applied` for something that never happened.
+ */
+class ApplierRefusedError extends Error {
+  constructor(readonly reason: RequestRefusalReason) {
+    super(`the applier refused: ${reason}`);
+    this.name = "ApplierRefusedError";
+  }
+}
+
+/**
+ * THE APPLIER'S OWN WORD, MAPPED ONTO THE CHANNEL'S CLOSED VOCABULARY.
+ *
+ * A `Record` over `MoveRefusal` rather than a cast or a passthrough: the applier's outcomes and
+ * the wire's refusal words are two closed sets that happen to agree today, and a new applier
+ * outcome without a decision about what the reader is told would otherwise compile. Both members
+ * are `REQUEST_REFUSAL_REASONS` members since mail 0093, and the database's own CHECK is what
+ * holds that true — `request-refusal-closed.pg.test.ts` reads the vocabulary from this code, so a
+ * word added here and not to the constraint is red on a real server rather than a row rejected at
+ * the moment the drain tries to record a refusal.
+ */
+const MOVE_REFUSAL_REASON: Readonly<Record<MoveRefusal, RequestRefusalReason>> = {
+  no_such_message: "no_such_message",
+  no_trash_folder: "no_trash_folder",
+};
+
+const KIND_HANDLERS: Readonly<Record<string, KindHandler | undefined>> = {
+  "screener.decide": (payload, ctx) => {
+    const decision = validateRequestPayload(payload);
+    if (!decision) return null;
+    return async (tx) => {
+      await applyScreenerDecision(tx, {
+        accountId: ctx.accountId,
+        mailboxId: ctx.mailboxId,
+        scope: decision.scope,
+        address: decision.address,
+        appliedFolder: decision.appliedFolder,
+        decision: decision.decision,
+        triggeringActionId: `screener:request:${ctx.requestId}`,
+        now: ctx.now,
+        // The drain never stamps `screening_baseline_at`. See
+        // `ApplyScreenerDecisionInput.stampBaseline`'s own doc comment for why.
+        stampBaseline: false,
+      });
+      return { applied: true };
+    };
+  },
+
+  "message.move": (payload, ctx) => {
+    const move = validateMovePayload(payload);
+    if (!move) return null;
+    return async (tx) => {
+      const r = await applyMessageMove(tx, {
+        accountId: ctx.accountId, mailboxId: ctx.mailboxId, payload: move, now: ctx.now,
+      });
+      if (r.applied) return { applied: true };
+      /* The applier's two outcomes are not refusals OF THE RECORD — the record was valid and
+         verified — they are facts about this organizer's own store that the reader could not have
+         known when it decided. They are still `refused` to the reader, because the alternative is
+         a record that quietly disappears and leaves them unable to tell "done" from "never
+         happened". Mapped by name below. */
+      return { applied: false, reason: MOVE_REFUSAL_REASON[r.refusal] };
+    };
+  },
+};
+
 
 /**
  * `Tx` (`@trafficflow/db`'s `PgDatabase<any, any, any>`), NOT the hosted worker's own narrower
@@ -917,7 +1030,21 @@ export async function applyMetaRequests(
       });
       continue;
     }
-    if (e.kind !== "screener.decide") {
+    /* ── (3c) WHICH APPLIER RUNS — one table, keyed by kind (mail 0093) ─────────────────────
+     *
+     * This was `if (e.kind !== "screener.decide")` while there was one applier. The table is the
+     * same statement for N of them, and it keeps the property that mattered about the `if`: a kind
+     * this build has no entry for LEAVES THE RECORD STANDING rather than refusing or expunging it.
+     * It is a decision a person made, written by a newer install on the same account, and it
+     * becomes applicable the moment this organizer updates.
+     *
+     * `rule.create|update|delete` and `profile.update` are deliberately ABSENT from the table in
+     * this slice, so they take exactly that path. They are in `REQUEST_KINDS` and admitted by the
+     * database, because the widening migration ships ahead of the code that writes them — being
+     * representable and being appliable are different facts, and this is the gap between them.
+     */
+    const handler = KIND_HANDLERS[e.kind];
+    if (!handler) {
       standing++;
       log("organizer_request_standing", {
         mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: e.requestId,
@@ -970,9 +1097,18 @@ export async function applyMetaRequests(
       continue;
     }
 
-    // ── (7) AND VALIDATE WHAT CAME OUT ───────────────────────────────────────────────────────
-    const decision = validateRequestPayload((decoded as RequestRecord).payload);
-    if (!decision) {
+    /* ── (7) AND VALIDATE WHAT CAME OUT, BY THE KIND'S OWN RULES ────────────────────────────
+     *
+     * The handler returns the APPLIER BOUND TO ITS VALIDATED VALUE, not the value — so the
+     * validated payload cannot be separated from the function entitled to read it, and a kind
+     * whose applier is handed another kind's payload is not expressible here. `null` is
+     * `invalid_payload` for every kind, exactly as before.
+     */
+    const runApply = handler(
+      (decoded as RequestRecord).payload,
+      { accountId: rt.accountId, mailboxId: rt.mailboxId, requestId: e.requestId, now },
+    );
+    if (!runApply) {
       settle(e, "refused", "invalid_payload");
       refused++;
       log("organizer_request_refused", {
@@ -1035,19 +1171,17 @@ export async function applyMetaRequests(
           throw new AlreadyAppliedError(e.requestId);
         }
 
-        await applyScreenerDecision(tx, {
-          accountId: rt.accountId,
-          mailboxId: rt.mailboxId,
-          scope: decision.scope,
-          address: decision.address,
-          appliedFolder: decision.appliedFolder,
-          decision: decision.decision,
-          triggeringActionId: `screener:request:${e.requestId}`,
-          now,
-          // The drain never stamps `screening_baseline_at`. See
-          // `ApplyScreenerDecisionInput.stampBaseline`'s own doc comment for why.
-          stampBaseline: false,
-        });
+        /* THE KIND'S OWN APPLIER, inside the SAME idempotency arm every kind shares. The fence,
+           the content comparison, the claim and the lost-claim re-read above are properties of
+           the CHANNEL rather than of any one action, so a kind that brought its own copy of them
+           would be a second answer to "has this record already been taken". */
+        const outcome = await runApply(tx);
+        /* A REFUSAL FROM THE APPLIER ROLLS THE TRANSACTION BACK, and that is the point: the
+           idempotency key claimed a few lines above must not survive an apply that did nothing,
+           or the next cycle would read the key, conclude the record was already taken, and ack
+           the reader `applied` for a move that never happened. Thrown rather than returned for
+           exactly that reason — the throw is what undoes the claim. */
+        if (!outcome.applied) throw new ApplierRefusedError(outcome.reason);
       });
       settle(e, "applied");
       applied++;
@@ -1064,6 +1198,19 @@ export async function applyMetaRequests(
         log("organizer_request_refused", {
           mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: e.requestId,
           reason: "conflict",
+        });
+        continue;
+      }
+      if (err instanceof ApplierRefusedError) {
+        /* THE RECORD WAS PERFECTLY VALID AND THE ACTION COULD NOT BE CARRIED OUT — a message this
+           organizer never synced, a mailbox with no Trash discovered. Acked with the applier's own
+           word so the person is told which of those it was, rather than left to infer it from a
+           record that quietly went away. */
+        settle(e, "refused", err.reason);
+        refused++;
+        log("organizer_request_refused", {
+          mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: e.requestId,
+          reason: err.reason, kind: e.kind,
         });
         continue;
       }

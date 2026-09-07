@@ -141,4 +141,43 @@ CREATE TABLE IF NOT EXISTS "mailbox_profile_mirror" (
 -- key above has a different leading column, so it does not serve them — a different leading column
 -- is a different index, and the miss is invisible to every test.
 CREATE INDEX IF NOT EXISTS "mailbox_profile_mirror_account_idx"
-  ON "mailbox_profile_mirror" ("account_id");
+  ON "mailbox_profile_mirror" ("account_id");--> statement-breakpoint
+
+-- ── (3) TWO MORE WORDS A REFUSAL MAY CARRY, FOR THE KIND THIS MIGRATION ADMITS ────────────────
+--
+-- 0091 closed `refused_reason` to eight words. `message.move` has two outcomes none of them can
+-- say, and both are things the reader could not have known when it decided:
+--
+--   `no_such_message`  — the message is not in THIS organizer's store. Never synced here, or since
+--                        deleted. Two installs of one mailbox legitimately hold different subsets
+--                        of it, so this is not a fault of the record and not an error.
+--   `no_trash_folder`  — the destination was `trash` and no Trash path has been discovered for
+--                        this mailbox. ohmail never expunges, so there is nowhere to put it and no
+--                        default that would not be a lie about where the mail went.
+--
+-- They live here rather than in a migration of their own because they exist ONLY because
+-- `message.move` exists, and that is this file. A separate migration for two words of one feature
+-- is worse history, not safer.
+--
+-- WHY THEY MUST BE WORDS RATHER THAN NULL. NULL already means "a refusal whose named cause this
+-- build does not recognise", which is the honest answer for a NEWER organizer's vocabulary — and
+-- it is the wrong answer here, where this build knows exactly which of the two happened. A reader
+-- told nothing cannot tell "the message is not on that machine" from "that machine has no Trash",
+-- and those want different things from the person.
+--
+-- WIDENED, NEVER NARROWED, on 0091's own rule: the eight existing members are re-stated verbatim
+-- and two are added, so every row an older build wrote still satisfies the constraint. No DML —
+-- there is nothing to repair, because no write path could have put either word there before this.
+--
+-- `request-refusal-closed.pg.test.ts` reads the vocabulary FROM THE CODE, so this constraint and
+-- `REQUEST_REFUSAL_REASONS` cannot drift apart quietly: a word in one and not the other is red on
+-- a real server rather than a row the database rejects at the instant the drain records a refusal.
+
+ALTER TABLE "organizer_requests" DROP CONSTRAINT IF EXISTS "organizer_requests_refused_reason_closed";--> statement-breakpoint
+
+ALTER TABLE "organizer_requests" ADD CONSTRAINT "organizer_requests_refused_reason_closed"
+  CHECK ("refused_reason" IS NULL OR "refused_reason" IN (
+    'unauthenticated', 'conflict', 'wrong_mailbox', 'invalid_payload',
+    'malformed', 'unhandled_kind', 'stale', 'account_erased',
+    'no_such_message', 'no_trash_folder'
+  ));
