@@ -1,7 +1,7 @@
 import { clearAllMirrors } from "@ohmail/client-engine";
 import { auth } from "./api-client";
 import { clearBootCaches, dropLocalStorageKeys } from "./shell/boot-cache";
-import { COMPOSE_DRAFT_PREFIX, COMPOSE_SESSION_PREFIX, LEGACY_COMPOSE_DRAFT_KEY } from "./shell/compose";
+import { COMPOSE_DRAFT_PREFIX, COMPOSE_ROW_PREFIX, COMPOSE_SESSION_PREFIX, LEGACY_COMPOSE_DRAFT_KEY } from "./shell/compose";
 import { REPLY_DRAFT_PREFIX, REPLY_META_PREFIX } from "./shell/mail-send";
 import {
   NOTIFICATION_SUBSCRIPTION_PREFIX, revokeWakeRegistration,
@@ -202,6 +202,12 @@ export async function forgetThisBrowser(
     // buffer: left behind, it would still name a message-in-progress that has been swept, so the
     // next sign-in could inherit an identity for mail that is no longer there.
     COMPOSE_SESSION_PREFIX,
+    // And the draft row that session was holding, for the same reason and one step further: it is
+    // an id on the DEPARTED ACCOUNT. Left behind, the next sign-in's composer would ask the mirror
+    // about a row belonging to somebody else's account — which answers nothing, so the visible
+    // cost is small, but a stale account id surviving a sign-out is the thing this sweep exists to
+    // refuse, and the composer is the one reader that would act on it.
+    COMPOSE_ROW_PREFIX,
     // The reply scratch buffers, which are the same thing one surface along and are WORSE:
     // keyed by message id and lane only, never by owner, so unlike the compose buffer they were
     // never account-scoped in the first place. They hold the reply body.
