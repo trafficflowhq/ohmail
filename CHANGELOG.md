@@ -121,6 +121,21 @@ The removal itself still goes through; it is not something this step may block. 
 whether the record was actually taken out, and Settings → Mailboxes says so when it was not.
 Nothing is ever deleted from the mailbox itself.
 
+### Stopping organizing waits until the record is out of the mailbox
+
+"Stop organizing here, keep the mail" takes out the same record inside the mailbox as removing it
+does, and the same ask of the mail server can be refused, answered short, or cover less than the
+folder holds. On this path the app went ahead regardless: the mailbox was marked as no longer
+organized here and the day was recorded, while the record stayed in the folder. So the computer you
+were handing the mailbox to went on refusing it, and the one you pressed the button on told you the
+handover was complete.
+
+It now records the change only when the record is confirmed out — because this install took it out,
+or because a complete read of the folder found nothing of this install's left in it. Where the
+server would not answer, the mailbox stays organized here with the request still standing; the app
+goes on reading the mailbox, and files and sends nothing while the request is outstanding, and the
+next check asks the server again. Pressing "Organize here" cancels the request, as before.
+
 ### Every control on a phone is a 44-pixel target
 
 Controls drawn smaller than a fingertip were smaller than a fingertip to press, too. Segmented

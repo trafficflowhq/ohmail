@@ -3489,7 +3489,79 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             "the claim ages out of the mailbox on its own; until it does, another "
               + "install that tries to take this mailbox over stands itself down again",
           );
-          if (released !== null && released > 0) {
+          /* ══ "COULD NOT LOOK" IS NOT "RELEASED", AND THIS ARM IS THE WHOLE OF THAT ═══════
+           *
+           * `releaseOwnClaim` has three answers and only two of them are outcomes — its own
+           * docblock says so, forty lines into this file: a COUNT of this install's records the
+           * pass removed (`> 0`), a COMPLETE read that found none of ours (`0`, which is an
+           * answer — a claim that aged out, or another client's expunge), and `null`, which is
+           * "the search was refused, or the walk came back short, or the folder is over its
+           * enumeration ceiling". All three are ordinary things a mail server does to a folder
+           * anybody with append rights can grow.
+           *
+           * What stood here read all three as the same thing: the log was gated on `> 0` and the
+           * WRITE below was not gated at all. So the one answer that means "this install may
+           * still hold the claim" produced a row byte-identical to a completed release — role
+           * `reader`, the five holder columns null, the request cleared, `organizer_released_at`
+           * stamped. The pane then said the mailbox had been let go while the claim went on
+           * standing in `ohmail/_meta`, and every OTHER install connecting that mailbox stood
+           * itself down against a claim nothing was honouring, for the length of the staleness
+           * window, with the one machine that could have removed it now believing it had. A
+           * person who presses "Stop organizing here" to hand the mailbox to their other computer
+           * watched that computer refuse it and was told by this one that it was done.
+           *
+           * So `null` RECORDS NOTHING. `release_requested_at` stays exactly where the route wrote
+           * it, and that is what makes the retry ordinary: the next poll reaches this arm again
+           * and asks the server again. Nothing loops in here — a folder that refused a search
+           * refuses it for reasons that do not clear inside one pass.
+           *
+           * AND THE PASS STILL CEASES TO ORGANIZE, which is the half that is easy to get wrong in
+           * the other direction. Falling through to the lease read would RENEW the claim this
+           * install has just been told to give up — the exact act this arm is placed ahead of the
+           * lease to prevent, and it would advertise a machine that has been told to stop, once
+           * per poll, in somebody's mailbox — and it would go on arranging their mail after they
+           * pressed the button that ends that. Returning does neither and leaves the row alone:
+           * `organizer_role` still says `organizer` and the request is still pending, which is
+           * the truthful pair, and it is what the pane reads — the mailbox organized here with
+           * the release still asked for, rather than a release that had not happened.
+           *
+           * `takeover_authorized_at` IS DELIBERATELY NOT SPENT. It is cleared below as part of a
+           * release that happened; clearing it here would consume a person's press on the failure
+           * of an unrelated one, and the press is the only thing that takes the mailbox back.
+           *
+           * `notePeekedHolder` is not called either: the holder of this mailbox is this install,
+           * the row already names it, and a peek is one more read of a folder that has just
+           * refused one.
+           */
+          if (released === null) {
+            /* THE PIPELINE IS TOLD, or a reader's gate gets an organizer's cycle. `drain` spreads
+               `role: organizer.organizing ? "organizer" : "reader"` and gates `armHoldFromFolder`
+               and `sendScheduled` on the same field. `reason` is NULL: nobody else holds this
+               mailbox, and naming a holder would put "another install has claimed this mailbox"
+               in front of somebody whose own release simply has not finished.
+
+               `unreadableSince` IS CARRIED, NOT CLEARED, and that is the one field here that is
+               not a fresh literal. This pass did not read the lease — it returns ahead of it — so
+               it has learned nothing that could clear a standing mark, and writing `null` would be
+               the defect `dialAndGate` names forty lines from its own `leaseRead: false`: a pass
+               that reported success cleared the outage and told the person their mailbox was
+               healthy while nothing was being filed. It is not SET here either: "the server would
+               not enumerate this install's own records" is not the same sentence as "we cannot
+               see who organizes this mailbox", and this arm knows exactly who does. */
+            organizer = {
+              organizing: false, reason: null, heldBy: null,
+              unreadableSince: organizer.unreadableSince,
+            };
+            log("organizer_claim_release_unconfirmed", {
+              mailboxId: mb.id,
+              reason: "this install was asked to stop organizing this mailbox and could not "
+                + "confirm its claim is out of the mailbox, so nothing is recorded as released: "
+                + "the mailbox stays organized here with the request still standing, this pass "
+                + "arranges nothing and renews nothing, and the next poll asks the server again",
+            });
+            return false;
+          }
+          if (released > 0) {
             log("organizer_claim_released", {
               mailboxId: mb.id,
               claims: released,
@@ -3498,6 +3570,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 + "staleness window",
             });
           }
+          /* AND `0` FALLS THROUGH TO THE SAME WRITE, with no line of its own. A complete read
+             that found none of ours means nothing of this install's is holding the mailbox — the
+             thing the person asked for — so it is a release, and it is silent because there is no
+             count to report and nothing an operator would act on. Treating it as a failure would
+             strand the request for ever on a mailbox whose claim had already aged out: there
+             would be nothing left for any later poll to remove. */
           try {
             await db.update(mailboxes)
               .set({
@@ -4975,15 +5053,16 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             }
             return { leaseRead: true };
           }
-          if (!permitted && stopped) {
-            // THE MAILBOX WAS REMOVED — the only `false` that still means "do nothing".
-            // `mayOrganize` has already cleared the timer and closed the login on that arm; there
-            // is no mirror to grow and nothing to schedule.
-            //
-            // `leaseRead: true` — the lease WAS read; it said this mailbox is gone. That is an
-            // answer, not an outage, and a caller must not treat it as one.
-            return { leaseRead: true };
-          }
+          /* AND THERE IS NO SECOND `stopped` CHECK BELOW THIS, DELIBERATELY.
+           *
+           * `if (!permitted && stopped)` stood here, returning the same `{ leaseRead: true }` for
+           * the removal case. The arm above returns on `stopped` whatever the gate answered, so
+           * its contrary state — stopped, and not yet returned — is unreachable: the condition
+           * could never be true, could never be watched fail, and read to the next person as a
+           * promise this code does not keep. The removal case it named is handled by the arm
+           * above, on the same `leaseRead: true`, and `mayOrganize` has already cleared the timer
+           * and closed the login on that path.
+           */
           // Before the first cycle of an ORGANIZER, always: the pipeline routes into `ohmail/*`
           // and a move to a folder the server does not have fails. The hosted sync worker does the
           // same thing at attach time.
