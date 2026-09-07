@@ -1451,7 +1451,20 @@ export async function startWorkerWithLock(
       const peek = (adapter as Partial<LeasePeekCapableAdapter>).leasePeekIo;
       if (typeof peek !== "function") return;
       try {
-        const seen = await readLeasePeek({ io: peek.call(adapter), now: new Date() });
+        /* ── THE CONFIGURED WINDOW, and omitting it was a real divergence ─────────────────────
+         *
+         * The gate below is given `organizerStaleAfterMs`; both previews used to default to ten
+         * minutes. With a 24-hour configured window and two installs each carrying a record 14–15
+         * minutes old, the gate answered `stand_down` — held, per the configuration — while the
+         * preview answered `stopped`, so this row was refreshed to say nobody organizes a mailbox
+         * the same pass had just stood down from. The release certification below had the same
+         * omission and the same cause, with a WRITE at the end of it. One window per mailbox, read
+         * from one place; the sidecar already forwards its own (`engine.ts:3267`, `:3657`), which
+         * is what made the difference legible. */
+        const seen = await readLeasePeek({
+          io: peek.call(adapter), now: new Date(),
+          ...(organizerStaleAfterMs !== undefined ? { staleAfterMs: organizerStaleAfterMs } : {}),
+        });
         // FRESHEST FIRST, and the freshest is the one a person means by "who organizes this".
         // `holders` is already sorted that way by `peekLease`; an empty list means the folder
         // holds no readable claim, which is reported as "nobody named" rather than invented.
@@ -1643,7 +1656,15 @@ export async function startWorkerWithLock(
           const peek = (adapter as Partial<LeasePeekCapableAdapter>).leasePeekIo;
           if (typeof peek === "function") {
             try {
-              const seen = await readLeasePeek({ io: peek.call(adapter), now: new Date() });
+              /* The CONFIGURED window, for the reason given at the reader-holder refresh above —
+                 and it matters more here, because this read decides whether to STAMP the mailbox
+                 released. Defaulting to ten minutes against a longer configured window reported no
+                 fresh holder for a mailbox the gate still considers held, and `mayMark` below then
+                 certified a release while another install was inside its own lease. */
+              const seen = await readLeasePeek({
+                io: peek.call(adapter), now: new Date(),
+                ...(organizerStaleAfterMs !== undefined ? { staleAfterMs: organizerStaleAfterMs } : {}),
+              });
               /* ANY LIVE CLAIM STOPS THIS, INCLUDING ONE CARRYING OUR OWN ID. Excluding our own
                  was wrong in a way the word "foreign" hid: `releaseMailboxClaim` removes the
                  claims it SAW in its own `listClaims`, so a claim appended after that read —

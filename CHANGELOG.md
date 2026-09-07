@@ -617,6 +617,25 @@ live one. It was then shown as stopped, and the record of who was organizing cou
 that computer was still working. Both the screen and the clearing now look at every record a
 computer has left, not just the newest.
 
+Three smaller corrections in the same area.
+
+**A mailbox set to wait longer than the default before treating an organizer as gone was not
+waiting that long everywhere.** The setting reached the part that decides whether this computer may
+organize, and not the part that reports who is organizing -- so on a mailbox configured to wait a
+day, the report could say nobody was organizing while the decision still said somebody was, and the
+record of who held the mailbox could be cleared while another computer was well inside its own
+time. Both now use the mailbox's own setting.
+
+**The screen could name the wrong computer.** When two computers had each left an extra record
+behind with an unusable date, the name shown was chosen by whichever unusable date happened to be
+later -- which could be the computer that had just stood down rather than the one organizing. The
+name is now chosen the same way the decision chooses, so the screen and the button agree about
+which machine they mean.
+
+**And a mailbox told to wait no time at all now waits no time at all.** A record dated slightly in
+the future was still counted as current under a zero wait. That setting is unusual, and it now
+means what it says.
+
 Two things deliberately did not change. A record that is genuinely still being renewed refuses a
 takeover exactly as before, and a record with an unusable date sitting beside one that is being
 renewed refuses too, because then something is organizing the mailbox even if we cannot tell what.

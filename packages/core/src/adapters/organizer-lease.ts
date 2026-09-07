@@ -1077,7 +1077,17 @@ function isBelievableHeartbeat(heartbeat: Date, now: Date): boolean {
  * evidence, and calling this afterwards would test believability twice.
  */
 function isRenewalEvidence(heartbeat: Date, now: Date, staleAfterMs: number): boolean {
-  return isBelievableHeartbeat(heartbeat, now) && isFresh(heartbeat, now, staleAfterMs);
+  // CAPPED AT `now`, exactly as the reference is, and for the same reason: a stamp ahead of us is
+  // evidence that the writer is ALIVE, not evidence about how much time has passed. For every
+  // positive window the cap changes nothing — an ahead stamp gives `now − now = 0`, which is fresh
+  // either way — and at `staleAfterMs = 0`, which the worker's configuration accepts, the two
+  // spellings disagree: an uncapped residue at `now + 5 min` satisfied `isFresh` and reported the
+  // mailbox HELD for five minutes under a zero window. Two spellings of one question that agree
+  // everywhere except one accepted configuration is the shape that gets found by a grid rather
+  // than by reading, so they are now one spelling.
+  if (!isBelievableHeartbeat(heartbeat, now)) return false;
+  const capped = new Date(Math.min(heartbeat.getTime(), now.getTime()));
+  return isFresh(capped, now, staleAfterMs);
 }
 
 /**
@@ -1886,7 +1896,27 @@ export function peekLease(input: PeekLeaseInput): LeasePeek {
          reader its live organizer had gone backwards. */
       capabilities: c.capabilities,
     }))
-    .sort((a, b) => b.heartbeat.getTime() - a.heartbeat.getTime());
+    /* ── ORDERED BY BELIEVABLE RECENCY, BECAUSE `holders[0]` IS READ AS "THE ORGANIZER" ───────
+     *
+     * The worker, the sidecar and the API all take the first holder as the machine to NAME
+     * (`index.ts` reader refresh, `engine.ts` reader polling, `organizer-peek.ts`'s projection).
+     * Sorting on the raw heartbeat let a stamp nobody believes decide that name: with two installs
+     * each carrying a live record and a 2099 duplicate, the election chose A on incumbency while
+     * the preview put B first — because B's residue happened to be one day later in 2099 — so the
+     * screen named the election's LOSER as the organizer.
+     *
+     * An unbelievable stamp sorts as `now`, which is the same cap the reference and the renewal
+     * evidence use: it keeps such a holder ahead of genuinely older ones (it may well be the live
+     * organizer; we cannot tell) without letting the size of the lie order the list. Ties break on
+     * the install id so two readers of one folder produce the same order rather than whichever
+     * order the server happened to hand the messages over in. */
+    .sort((a, b) => {
+      const rank = (h: LeaseHolder): number =>
+        Math.min(h.heartbeat.getTime(), input.now.getTime());
+      const byRecency = rank(b) - rank(a);
+      if (byRecency !== 0) return byRecency;
+      return a.installId < b.installId ? -1 : a.installId > b.installId ? 1 : 0;
+    });
 
   const state: LeaseOccupancy =
     holders.some((h) => h.fresh) ? "held"
