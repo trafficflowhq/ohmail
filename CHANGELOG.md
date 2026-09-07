@@ -84,6 +84,21 @@ arrive after the one that showed it — and it says exactly what a current answe
 now compares when each answer was last true of the mailbox and ignores the older one, so the
 question is not taken away by news that has been overtaken.
 
+### A long quiet stretch no longer drops the connection
+
+Syncing a large mailbox for the first time could stop partway with a lost-connection error, and
+the bigger the mailbox the more likely it was. The app was dialling with a set of network
+deadlines meant for a server that has to finish a request inside a minute — twenty-five seconds
+of silence on the socket and the connection is considered gone. But ohmail stays open, and while
+it is working through a big first sync there are legitimate stretches with nothing on the wire
+that grow with the amount of mail. Past a certain size, every run hit one.
+
+It now dials with the deadlines of a program that stays running: two minutes of silence before a
+connection is considered lost. Testing a connection from the settings form is unchanged and still
+gives up quickly, because someone is waiting at that form.
+
+If your first sync has been stopping short, this is why.
+
 ## [0.14.1] — 2026-09-04
 
 **The phone's 0.14.1 build went out first; this desktop and web release completes 0.14.1.**
