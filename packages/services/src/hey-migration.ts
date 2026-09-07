@@ -8,6 +8,7 @@ import type {
 import { applyReconcileAction, scanFoldersForMigration, reconcile } from "@trafficflow/core";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { ServiceContext } from "./context.js";
+import { refuseBulkMoveOnReader } from "./reader-request.js";
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 const domainOf = (addr: string): string => { const i = addr.indexOf("@"); return i >= 0 ? addr.slice(i + 1) : ""; };
@@ -235,6 +236,29 @@ export class HeyMigrationService {
     }).from(messages)
       .innerJoin(folderState, eq(folderState.messageId, messages.id))
       .where(eq(messages.accountId, ctx.accountId));
+
+    /* ── REFUSED WHOLE ON A READER, BEFORE THE FIRST ROW IS TOUCHED (mail 0093) ────────────
+     *
+     * This pass writes `folder_state.desired_folder` with `last_set_by: 'us'` for every matching
+     * message in the account and hands each to the reconciler, which performs a real IMAP move. It
+     * is the largest single mail-moving act in the product, and it asked nothing about who
+     * organizes the mailboxes involved.
+     *
+     * It REFUSES rather than travelling for the reason `refuseBulkMoveOnReader` sets out: one press
+     * here is thousands of `message.move` records, a shape ruling 6 does not have and whose flood
+     * LB1's drain explicitly guards against. Refused WHOLE, and AHEAD of the loop —
+     * `applyReconcileAction` reaches the mail server per row, so a refusal discovered mid-walk
+     * would already have moved somebody's mail.
+     *
+     * Only the messages this pass would actually TOUCH: a row with no matching observation is
+     * skipped below and cannot block a migration it was never part of. Computed with the same
+     * lookup the loop uses, so the two cannot disagree about which rows are in scope.
+     */
+    const willMove = rows.flatMap((r) => {
+      const from = r.fromAddress.toLowerCase();
+      return (bySender.get(from) ?? byDomain.get(domainOf(from))) ? [r.messageId] : [];
+    });
+    await refuseBulkMoveOnReader(asTx(ctx), ctx.accountId, willMove);
 
     const repo = makeDrizzleRepo(ctx.db as unknown as Tx);
     let moved = 0;

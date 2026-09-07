@@ -77,6 +77,27 @@ asks rather than leaving you watching a request that was never going to be picke
 does not recognise is left where it is rather than thrown away — it happens as soon as that install
 updates.
 
+### Approving a sender, on a mailbox another machine organizes
+
+Approving somebody out of the screener files their mail. On a mailbox this install only reads, it
+filed that mail here and then went to the mail server itself — from the machine that is not the one
+holding the mailbox. It now becomes a request the organizing install carries out, the same way
+moving a message by hand does, and this machine no longer touches the mail server for it. What you
+see afterwards is the message where it still is, marked as pending, rather than where it is going to
+be.
+
+### Two actions that move a lot of mail at once now say which mailbox is holding them up
+
+Undoing a workflow run, and the opt-in re-route offered when you bring rules over from Hey, both
+move many messages from a single press. On a mailbox another install organizes, they wrote those
+moves down here and no mail ever moved. They now refuse, and name the mailbox and the install
+holding it, instead of reporting work that was never going to happen. On an account with some
+mailboxes organized here and some elsewhere, the whole action refuses rather than doing the half it
+can — half of an undo is worse than none of it.
+
+Sending that many moves across to another install is a piece of work in its own right, and it is not
+in this release. Refusing plainly is the part that could not wait.
+
 ### A machine that reads a mailbox now knows what settings are in force on it
 
 The install that organizes a mailbox publishes its settings into the mailbox itself. An install that

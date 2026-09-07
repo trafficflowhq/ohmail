@@ -13,6 +13,7 @@ import {
 import type { WorkflowInverse } from "@trafficflow/core/mail";
 import type { ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
+import { refuseBulkMoveOnReader } from "./reader-request.js";
 import { clampLimit, decodeKeysetCursor, encodeListCursor } from "./pagination.js";
 import { requireUuid } from "./ids.js";
 import type { Page, WorkflowDTO, WorkflowRunDTO } from "./dto/types.js";
@@ -280,6 +281,27 @@ export class WorkflowsService {
           sql`${auditLog.payload}->>'runId' = ${runId}`,
         ))
         .orderBy(sql`(${auditLog.payload}->>'stepIndex')::int desc`);
+
+      /* ── REFUSED WHOLE ON A READER, BEFORE THE FIRST INVERSE RUNS (mail 0093) ────────────
+       *
+       * `applyInverse`'s `file_message` arm re-sets `folder_state.desired_folder` with
+       * `last_set_by: 'us'`, which the reconciler turns into a physical IMAP move — so an undo
+       * moves mail, once per recorded step, and it asked nothing about who organizes the
+       * mailboxes involved.
+       *
+       * It REFUSES rather than travelling because N records from one press is a shape ruling 6
+       * does not have; `refuseBulkMoveOnReader` carries that argument and the 0.17 design it is
+       * waiting on. Placed AHEAD of the loop so a refused undo leaves nothing half-applied —
+       * inside it, the steps before the blocking one would already have been written.
+       */
+      const moved = rows.flatMap((r) => {
+        const inv = r.inverse as WorkflowInverse | null;
+        /* `tool`, not `kind` — the union discriminates on `tool` (`workflow-shapes.ts:63`), and
+           only `file_message` moves mail. A `draft_reply` or `add_kb_entry` inverse touches no
+           mailbox, so neither can block an undo. */
+        return inv && inv.tool === "file_message" ? [inv.messageId] : [];
+      });
+      await refuseBulkMoveOnReader(tx as unknown as Tx, ctx.accountId, moved);
 
       for (const r of rows) {
         if (r.inverse) await this.applyInverse(tx, ctx, r.inverse as WorkflowInverse);

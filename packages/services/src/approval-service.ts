@@ -7,6 +7,9 @@ import { applyReconcileAction } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { Db, ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
+import {
+  moveDestinationWord, routeMailboxWrite, writeReaderRequest, type PendingRequest,
+} from "./reader-request.js";
 import { LearningService } from "./learning-service.js";
 import { patternKeyFor } from "./learning-service.js";
 import { materializeApproval } from "./dto/materialize.js";
@@ -97,16 +100,29 @@ export class ApprovalService {
 
     // Resolve the target folder + the message's current native location (reads before the tx, step 1).
     const target = extractFolder(appr.payload);
-    let msg: { id: string; fromAddress: string; locator: NativeLocator; observedFolder: string } | null = null;
+    let msg: {
+      id: string; fromAddress: string; locator: NativeLocator; observedFolder: string;
+      mailboxId: string; dedupKey: string;
+    } | null = null;
+    /* WHETHER THE APPROVED MOVE TRAVELLED INSTEAD OF LANDING. Read after the transaction by the
+       IMAP apply at the foot of this method — see there for why it is the sharpest line here. */
+    let movePending: PendingRequest | null = null;
     if (appr.messageId) {
       const [m] = await ctx.db.select({
         id: messages.id, fromAddress: messages.fromAddress, nativeLocator: messages.nativeLocator,
         observedFolder: folderState.observedFolder,
+        /* Mail 0094 — which mailbox this message is in, so the approve arm can ask who organizes
+           it, and the name BOTH installs have for the message, so a request can address it. */
+        mailboxId: messages.mailboxId, dedupKey: messages.dedupKey,
       }).from(messages).leftJoin(folderState, eq(folderState.messageId, messages.id))
         .where(and(eq(messages.id, appr.messageId), eq(messages.accountId, ctx.accountId))).limit(1);
       if (m) {
         const loc = (m.nativeLocator as NativeLocator | null) ?? { folder: m.observedFolder ?? "INBOX", ref: "0:0" };
-        msg = { id: m.id, fromAddress: m.fromAddress, locator: loc, observedFolder: m.observedFolder ?? loc.folder };
+        msg = {
+          id: m.id, fromAddress: m.fromAddress, locator: loc,
+          observedFolder: m.observedFolder ?? loc.folder,
+          mailboxId: m.mailboxId, dedupKey: m.dedupKey,
+        };
       }
     }
 
@@ -165,17 +181,45 @@ export class ApprovalService {
       let lastSeq = await recordChange(tx, { accountId: ctx.accountId, entityType: "approval", entityId: id, op: "update", meta: null });
 
       if (approve && msg && target) {
-        await tx.insert(folderState).values({
-          messageId: msg.id, desiredFolder: target, observedFolder: msg.observedFolder,
-          lastSetBy: "us", reconcileStatus: "pending", conflict: false,
-        }).onConflictDoUpdate({
-          target: folderState.messageId,
-          set: { desiredFolder: target, lastSetBy: "us", reconcileStatus: "pending", conflict: false, updatedAt: ctx.now() },
-        });
-        lastSeq = await recordChange(tx, {
-          accountId: ctx.accountId, entityType: "message", entityId: msg.id, op: "move",
-          meta: { from: msg.observedFolder, to: target },
-        });
+        /* ── AN APPROVED MOVE IS A MOVE, SO IT ASKS WHO ORGANIZES THE MAILBOX (mail 0094) ─────
+         *
+         * This arm writes `folder_state.desired_folder` with `last_set_by: 'us'` and the
+         * reconciler turns that into a physical IMAP move — the same row, the same way, as
+         * `MessageService.move`. It had no organizer check of any kind, so on a mailbox this
+         * install only reads, approving a card filed somebody's mail on a machine that was not
+         * arranging it, and the card reported the move as done.
+         *
+         * THE APPROVAL ITSELF STILL RESOLVES HERE. The person decided, the row records their
+         * decision, and the learning signal below is about their judgement rather than about
+         * mail moving — only the MOVE travels. Splitting it that way is what keeps a reader's
+         * Approvals list usable instead of refusing every card on it.
+         */
+        const route = await routeMailboxWrite(
+          tx as unknown as Tx, ctx.accountId, msg.mailboxId, "message.move",
+        );
+        if (route.route === "request") {
+          movePending = await writeReaderRequest(tx as unknown as Tx, ctx, {
+            mailboxId: msg.mailboxId, kind: "message.move", holder: route.holder,
+            payload: { dedupKey: msg.dedupKey, destination: moveDestinationWord(target) },
+          });
+          /* NO `folder_state`, NO `move` change — a request writes desired state on the machine
+             that holds the mailbox and nothing on this one. And nothing here spends a seq:
+             the approval's own `update` change above is what moved, and emitting a `move` for a
+             message that did not move would tell every client to re-render it in a folder it is
+             not in. */
+        } else {
+          await tx.insert(folderState).values({
+            messageId: msg.id, desiredFolder: target, observedFolder: msg.observedFolder,
+            lastSetBy: "us", reconcileStatus: "pending", conflict: false,
+          }).onConflictDoUpdate({
+            target: folderState.messageId,
+            set: { desiredFolder: target, lastSetBy: "us", reconcileStatus: "pending", conflict: false, updatedAt: ctx.now() },
+          });
+          lastSeq = await recordChange(tx, {
+            accountId: ctx.accountId, entityType: "message", entityId: msg.id, op: "move",
+            meta: { from: msg.observedFolder, to: target },
+          });
+        }
       }
 
       if (msg && target) {
@@ -231,7 +275,18 @@ export class ApprovalService {
     // deferred move is EXACTLY the adapter-less shape this path already ships and converges on.
     // Throwing turned it into a 500 over an approval that had committed — and the idempotency
     // claim stored the 200, so the retry replayed success for a request the user saw fail.
-    if (approve && msg && target && this.deps.adapter) {
+    /* ── AND `movePending` GATES THE PHYSICAL MOVE, WHICH IS THE SHARPEST LINE IN THIS FILE ──
+     *
+     * Everything above writes rows; THIS reaches the person's mail server. On a mailbox another
+     * install organizes, running it would be this install performing an IMAP move on a mailbox it
+     * does not hold — two organizers moving one person's mail, which is precisely what the lease
+     * exists to prevent, and no amount of care in the transaction above would undo it.
+     *
+     * The transaction's refusal is not enough on its own here: this block reads `msg` and `target`
+     * from BEFORE the transaction, so without the flag it would fire on exactly the path that
+     * decided not to move anything. It is also the reason the request path returns a value rather
+     * than a boolean — the holder is worth having, and a bare `true` would have read as "handled". */
+    if (approve && msg && target && this.deps.adapter && movePending === null) {
       const repo = makeDrizzleRepo(ctx.db as unknown as Tx);
       await applyReconcileAction(
         { repo, adapter: this.deps.adapter, accountId: ctx.accountId, mailboxId: "" },

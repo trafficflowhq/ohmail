@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, inArray, ne } from "drizzle-orm";
 import {
   insertOrganizerRequest, readRequestEligibility, readAccountErasedAt,
   AccountErasedError, OrganizedElsewhereError, MailboxNotFoundError, mailboxes,
+  MOVE_DESTINATIONS, messages,
   type OrganizedBy, type RequestRefusalReason, type Tx,
 } from "@trafficflow/db";
 import {
@@ -13,7 +14,7 @@ import { ServiceError } from "./errors.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  THE READER'S WRITE DOORS — one dispatch, four families (mail 0093)
+ *  THE READER'S WRITE DOORS — one dispatch, four families (mail 0094)
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
  * On a mailbox this install organizes, a write door writes. On a mailbox another install holds,
@@ -25,7 +26,7 @@ import { ServiceError } from "./errors.js";
  * ── EXTRACTED FROM `ScreenerService.requestAsReader`, WHICH WAS THE ONLY ONE ────────────────
  *
  * 0.14.1 shipped this shape for a single kind (`screener.decide`) inside the Screener's own
- * service. Mail 0093 adds three families — moves, rules and profile edits — and the alternative to
+ * service. Mail 0094 adds three families — moves, rules and profile edits — and the alternative to
  * extracting was four copies of "read the eligibility, decide the branch, fence the account, write
  * the row". Four copies of a security branch is how one of them ends up asking a slightly
  * different question: the version that forgets the erasure fence, or the one that passes the wrong
@@ -120,6 +121,143 @@ export async function routeMailboxWrite(
   return { route: "request", holder: eligibility.by };
 }
 
+/**
+ * THE SYMBOLIC WORD FOR A CANONICAL FOLDER — the inverse of `MOVE_DESTINATIONS` (mail 0094).
+ *
+ * A `message.move` request names a WORD, never an IMAP path: the applier resolves it against the
+ * mailbox on the machine that is actually connected, and a reader writing a path would be writing
+ * its guess about somebody else's server. `request-apply.ts#MOVE_DESTINATIONS` carries the full
+ * argument; the one with teeth is that a raw path is an instruction to file a person's mail outside
+ * ohmail's own tree, where nothing here would ever look for it again.
+ *
+ * DERIVED from that map rather than typed out beside it, so the two cannot drift.
+ *
+ * ── HERE, AND NOT PRIVATE TO ONE DOOR ─────────────────────────────────────────────────────
+ *
+ * It began as a private method on `MessageService`. The moment a SECOND door needed it — the
+ * approval decision, whose approve arm is a move — copying it would have been exactly the drift
+ * that method's own comment warns about, with two inversions of one map free to disagree about a
+ * folder rename. One place, both callers.
+ *
+ * `trash` is deliberately absent: it maps to `null` in the source map because it is discovered per
+ * mailbox, and the delete door names the word directly rather than looking a path up.
+ */
+const DESTINATION_WORDS: ReadonlyMap<string, string> = new Map(
+  [...MOVE_DESTINATIONS].flatMap(
+    ([word, path]) => (path === null ? [] : [[path, word] as [string, string]]),
+  ),
+);
+
+/**
+ * The word for a canonical folder, or a 400.
+ *
+ * A THROW rather than a `?? folder` fallback, and that is the whole point: the fallback would put
+ * whatever string arrived into the record's `destination`, which is the raw-path case the closed
+ * set exists to make unrepresentable — and it would do it silently on the day somebody adds a
+ * seventh folder and forgets the map. Every caller validates the folder first, so this is
+ * unreachable from a well-formed request; failing loudly is the only version that stays true.
+ */
+export function moveDestinationWord(folder: string): string {
+  const word = DESTINATION_WORDS.get(folder);
+  if (word === undefined) {
+    throw new ServiceError(
+      "validation_failed", 400,
+      `${folder} cannot travel to the install that organizes this mailbox — it is not one of the `
+      + "places a request may name",
+    );
+  }
+  return word;
+}
+
+/**
+ * How many message ids one `IN` predicate carries.
+ *
+ * Postgres refuses a statement with more than 65 535 bind parameters, and the predicate below
+ * binds one per id plus the account — so a single-statement version is refused at about 65 534
+ * ids. That is not a theoretical number here: neither caller's array is bounded by anything. The
+ * Hey migration's re-route pass names every message in the account whose sender or domain matches
+ * a migrated observation, and a workflow undo names one id per recorded step, both from reads with
+ * no `limit`. The failure would therefore arrive on the largest accounts and nowhere else, which
+ * is the shape that reaches people rather than tests.
+ *
+ * Five hundred is `consent-seed.ts`'s `WRITE_CHUNK`, chosen there for the same arithmetic and kept
+ * the same here so that "how many values fit in a statement" has one answer in this codebase.
+ */
+const READ_CHUNK = 500;
+
+/**
+ * REFUSE A BULK MOVE ON A READER, BY NAME, AND REFUSE IT WHOLE (mail 0094).
+ *
+ * Two doors move MANY messages from one press: `WorkflowsService.undoRun` (one move per recorded
+ * step of a run, unbounded) and the Hey migration's RE-ROUTE PASS — `rerouteToMatchRules`, the
+ * opt-in second half of the FORWARD verb, which walks every message in the account and files each
+ * one whose sender or domain matches a migrated observation. Not the migration's UNDO, which removes
+ * `provenance:'migrated'` rules and moves no mail at all. Both wrote `folder_state.desired_folder`
+ * with `last_set_by: 'us'` and asked nothing about who organizes the mailboxes involved.
+ *
+ * ── WHY THEY REFUSE RATHER THAN TRAVEL, WHICH IS A RULING AND NOT A PREFERENCE ─────────────
+ *
+ * Converting them would mean N `message.move` records from ONE press. LB1's drain already carries
+ * the guard against exactly that flood — it bounds appends to the headroom measured on the cycle
+ * and leaves the rest `pending`, because *"filling the folder this way is a state that does not
+ * heal on its own"*. A whole-account migration undo on a reader would therefore either sit
+ * half-appended across many cycles or drive `ohmail/_meta` toward the ceiling from one button, and
+ * a folder past that ceiling is unreadable by EVERY install. Ruling 6 gives `message.move` a
+ * per-message natural key and no bulk form, no bound and no DTO for "pending n of m", so the bulk
+ * shape is owed a design (0.17 `messages.move_many`) rather than an improvisation here.
+ *
+ * Deferring the TRAVEL is not deferring the TRUTH: until that design lands, these doors say no on
+ * a mailbox this install only reads, and say which mailbox and who holds it.
+ *
+ * ── WHOLE, ON A MIXED ACCOUNT, AND THAT IS THE DELIBERATE PART ─────────────────────────────
+ *
+ * If ANY message the operation would move sits on a mailbox this install reads, the whole
+ * operation is refused — including the moves that WOULD have been legal. A partial undo is worse
+ * than a refused one: an undo is a single act in the person's head ("put this back the way it
+ * was"), and half of one leaves a state nobody chose and no surface describes. It also runs before
+ * any write, so a refusal leaves nothing behind.
+ */
+export async function refuseBulkMoveOnReader(
+  tx: Tx, accountId: string, messageIds: readonly string[],
+): Promise<void> {
+  if (messageIds.length === 0) return;
+  /* The DISTINCT mailboxes of the affected messages, account-scoped — a message id is not an
+     authorisation. Distinct rather than per-message: an account holds one or two mailboxes, and
+     asking the role once per message would be N reads for a question with N-of-two answers.
+
+     READ IN CHUNKS, AND UNION THE ANSWERS. The question this asks — "which distinct mailboxes do
+     these ids sit on" — is answered exactly by asking it of each slice and taking the union, so
+     chunking costs a few round trips and changes no answer. The account fence is inside EVERY
+     chunk's `where` rather than hoisted anywhere: a chunk is a whole statement, and a statement
+     that asks about ids without saying whose account they belong to is the shape that leaks one
+     account's mailbox id into another's refusal. */
+  const mailboxIds = new Set<string>();
+  for (let i = 0; i < messageIds.length; i += READ_CHUNK) {
+    const chunk = messageIds.slice(i, i + READ_CHUNK);
+    const rows = await tx.selectDistinct({ mailboxId: messages.mailboxId })
+      .from(messages)
+      .where(and(eq(messages.accountId, accountId), inArray(messages.id, chunk)));
+    for (const { mailboxId } of rows) mailboxIds.add(mailboxId);
+  }
+
+  for (const mailboxId of mailboxIds) {
+    const e = await readRequestEligibility(
+      tx, accountId, mailboxId, capabilityForKind("message.move"),
+    );
+    // A row that vanished, or a tombstone: not a mailbox this operation can move mail on, and not
+    // a reason to refuse either — there is nothing there to organize or to read.
+    if (!e || e.status === "disabled") continue;
+    if (e.role === "organizer") continue;
+    /* NAMED. `by` carries kind/name/since, so the sentence names the machine that holds it —
+       "<that laptop> organizes this mailbox" — rather than "something else has one of these".
+       No `reason` is passed: this is not a
+       reader asking whether its press may become a request — there is no request shape for it yet —
+       so the finer `organizer_outdated` / `no_organizer` distinction would answer a question
+       nobody asked and would imply a channel that does not exist. */
+    throw new OrganizedElsewhereError(mailboxId, e.by);
+  }
+}
+
 /** A held mailbox whose holder will take this kind — one request goes to it. */
 export interface FanOutTarget { mailboxId: string; holder: OrganizedBy }
 
@@ -150,7 +288,7 @@ export interface AccountFanOut {
 
 /**
  * PLAN THE FAN-OUT for an ACCOUNT-SCOPED door: rules, the away responder, the screening preference,
- * the dormancy window (mail 0093, ruling 6).
+ * the dormancy window (mail 0094, ruling 6).
  *
  * ── WHAT THIS REPLACES, AND WHY IT IS NOT JUST A WIDER REFUSAL ─────────────────────────────
  *
