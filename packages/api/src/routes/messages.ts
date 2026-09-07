@@ -133,7 +133,12 @@ export const messageRoutes: Route[] = [
     cost: "work",
     handler: async (req, deps, params) => {
       const body = await readBody<MessagePatchBody>(req);
-      const { dto, seq } = await message(deps).patch(serviceContext(deps, req), params.id!, body);
+      const { dto, seq, pending } = await message(deps).patch(serviceContext(deps, req), params.id!, body);
+      // A `folder` half that became a request is a 202, exactly as `POST /messages/:id/move` is —
+      // this route is the same door under another name. The DTO and `seq` still describe what
+      // this store actually did (an `unread` half in the same patch lands locally), and `pending`
+      // says what is waiting on the install that organizes the mailbox.
+      if (pending) return jsonResponse({ ...pending, dto }, { status: 202, seq });
       return jsonResponse(dto, { status: 200, seq });
     },
   },

@@ -101,6 +101,17 @@ An install running an older version cannot carry any of this out, and is no long
 answer says so and names the machine, rather than leaving you waiting for something that was never
 going to happen.
 
+**One way of re-filing a message was not covered by any of this, and moved mail it should not
+have.** The app can re-file a message either by asking to move it or by amending it, and the two do
+exactly the same thing underneath. Only the first was checked. On a mailbox you read rather than
+organize, amending a message's folder wrote the change down and reported success — the message
+appeared in its new place, and the mailbox itself was never told. Two things were wrong with that:
+what you were shown was not true, and the change sat waiting to be carried out if this install ever
+became the one organizing that mailbox, moving mail on a decision made when it had no business
+making it. Both ways of re-filing now go down the same path. Marking mail read is untouched — that
+is something an install that reads a mailbox is genuinely allowed to do, and it still happens
+immediately.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
