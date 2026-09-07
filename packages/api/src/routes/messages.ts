@@ -189,10 +189,15 @@ export const messageRoutes: Route[] = [
     options: { idempotent: true },
     handler: async (req, deps, params) => {
       const body = await readBody<MoveBody>(req);
-      const { dto, seq } = await message(deps).move(serviceContext(deps, req), params.id!, body, {
+      const result = await message(deps).move(serviceContext(deps, req), params.id!, body, {
         idempotency: deps.idempotency ?? null,
       });
-      return jsonResponse(dto, { status: 200, seq });
+      // 200 IS A MOVE MADE; 202 IS A MOVE ASKED FOR — the Screener route's rule (mail 0093), and
+      // it is the same rule for the same reason: on a mailbox this install merely reads, nothing
+      // has moved and the honest code is 202. `requestMove` stores exactly this status for the
+      // idempotent replay, so the first press and its replay agree.
+      if ("pending" in result) return jsonResponse(result, { status: 202 });
+      return jsonResponse(result.dto, { status: 200, seq: result.seq });
     },
   },
   {
@@ -204,10 +209,12 @@ export const messageRoutes: Route[] = [
     cost: "work",
     options: { idempotent: true },
     handler: async (req, deps, params) => {
-      const { dto, seq } = await message(deps).delete(serviceContext(deps, req), params.id!, {
+      const result = await message(deps).delete(serviceContext(deps, req), params.id!, {
         idempotency: deps.idempotency ?? null,
       });
-      return jsonResponse(dto, { status: 200, seq });
+      // 202 when the delete became a request — see the move route above.
+      if ("pending" in result) return jsonResponse(result, { status: 202 });
+      return jsonResponse(result.dto, { status: 200, seq: result.seq });
     },
   },
 ];

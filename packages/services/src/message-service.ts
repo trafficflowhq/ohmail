@@ -1,8 +1,9 @@
 import { and, asc, desc, eq, gt, inArray, isNull, lt, or, sql, type SQL } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
 import {
   assertOrganizerRole,
   mailboxes, messages, folderState, messageBodies, messageStates, claimIdempotencyKey, recordChange,
-  upsertDesiredSeen, type LedgerTx, type Tx,
+  upsertDesiredSeen, MOVE_DESTINATIONS, type LedgerTx, type OrganizedBy, type Tx,
 } from "@trafficflow/db";
 import type { Destination, NativeLocator } from "@trafficflow/core/mail";
 import { httpsUnsubscribeUri, unsubscribeHeaderState } from "@trafficflow/core/mail";
@@ -15,6 +16,7 @@ import {
   encodeNullableKeysetCursor,
 } from "./pagination.js";
 import { requireUuid } from "./ids.js";
+import { routeMailboxWrite, writeReaderRequest } from "./reader-request.js";
 import type { Folder, MessageBodyBatchItem, MessageBodyDTO, MessageDTO, Page, WithheldMarker } from "./dto/types.js";
 
 /**
@@ -39,6 +41,26 @@ const FOLDERS: Destination[] = [
   "ohmail/Receipts", "ohmail/Screened", "ohmail/Quarantine",
 ];
 const FOLDER_SET = new Set<string>(FOLDERS);
+
+/**
+ * THE SYMBOLIC WORD FOR A CANONICAL FOLDER — the inverse of `MOVE_DESTINATIONS` (mail 0093).
+ *
+ * A `message.move` request names a WORD, never an IMAP path: the applier resolves it against the
+ * mailbox on the machine that is actually connected, and a reader writing a path would be writing
+ * its guess about somebody else's server. `request-apply.ts#MOVE_DESTINATIONS` states the full
+ * argument — the third reason is the one with teeth, that a raw path is an instruction to file a
+ * person's mail outside ohmail's own tree where nothing here would ever look for it again.
+ *
+ * DERIVED from that map rather than typed out beside it, so the two cannot drift: a word added
+ * there is usable here on the same commit, and a path renamed there cannot leave a stale literal
+ * in this file. `trash` is deliberately absent — it maps to `null` in the source map because it is
+ * discovered per mailbox, and `delete` names the word directly rather than looking a path up.
+ */
+const DESTINATION_WORDS: ReadonlyMap<string, string> = new Map(
+  [...MOVE_DESTINATIONS].flatMap(
+    ([word, path]) => (path === null ? [] : [[path, word] as [string, string]]),
+  ),
+);
 
 /**
  * The seven client "views". Five map directly to a `folder_state.desiredFolder`;
@@ -145,6 +167,30 @@ export interface MoveIdempotency {
 export interface MoveResult {
   dto: MessageDTO;
   seq: number;
+}
+
+/**
+ * A move or delete that became a REQUEST — this install reads the mailbox, another one organizes
+ * it, and the press is now waiting on that install (mail 0093).
+ *
+ * ── `dto` IS THE MESSAGE UNMOVED, AND THAT IS THE POINT ────────────────────────────────────
+ *
+ * Invariant #3 (organize-in-place): a request writes DESIRED state on the machine that holds the
+ * mailbox, and NOTHING here. So the DTO this returns is the row exactly as it stood before the
+ * press — same folder, same everything — and the client renders "waiting for <holder>" beside a
+ * message that has not moved, rather than moving it optimistically and un-moving it when the
+ * organizer refuses. A DTO showing the destination would be the false state ruling 6 exists to
+ * end.
+ *
+ * There is no `seq`: nothing changed in this install's store, so there is no change to echo. A
+ * `seq` here would advance every client's cursor past a change that does not exist.
+ */
+export interface MoveRequestResult {
+  pending: true;
+  requestId: string;
+  holder: OrganizedBy;
+  /** The message as it still stands, unmoved. */
+  dto: MessageDTO;
 }
 
 /**
@@ -878,7 +924,7 @@ export class MessageService {
   async move(
     ctx: ServiceContext, id: string, body: MoveBody,
     opts: { idempotency?: MoveIdempotency | null } = {},
-  ): Promise<MoveResult> {
+  ): Promise<MoveResult | MoveRequestResult> {
     const folder = this.validFolder(body.folder);
 
     return asTx(ctx).transaction(async (tx) => {
@@ -886,10 +932,13 @@ export class MessageService {
         id: messages.id, nativeLocator: messages.nativeLocator,
         // Mail 0083 — which mailbox this message is in, so the role is asked about the right row.
         mailboxId: messages.mailboxId,
+        // Mail 0093 — the name BOTH installs have for this message. A request travels between two
+        // stores with different primary keys, so the record names the message by its dedup key.
+        dedupKey: messages.dedupKey,
       }).from(messages)
         .where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId))).limit(1);
       if (!msg) throw new ServiceError("not_found", 404, "message not found");
-      /* -- A READER MOVES NOTHING (mail 0083) ----------------------------------------------
+      /* -- A READER MOVES NOTHING HERE — IT ASKS (mail 0083, then mail 0093) ----------------
        *
        * The most direct case of the whole rule: this door writes `folder_state.desired_folder`
        * with `last_set_by='us'`, and the reconciler turns that into a physical IMAP move. On a
@@ -897,12 +946,29 @@ export class MessageService {
        * exactly what the lease exists to prevent, reached through a button rather than through a
        * sync loop.
        *
-       * The refusal is here and not only in `reconcileFolders`' skip, because the two protect
-       * different things: the skip stops a reader EXECUTING an intent, this stops one being
-       * RECORDED. Without it a demotion would leave a queue of desired moves that fire the
-       * instant the install is ever promoted — mail moved by a decision taken when this install
-       * had no right to take it.
+       * Mail 0083 refused that outright. Mail 0093 keeps the refusal of the LOCAL WRITE — nothing
+       * below this branch runs for a reader — and replaces the dead end with a request the holder
+       * applies. What has NOT changed is the thing the 0083 comment was protecting: no
+       * `folder_state` row is written here, so a later promotion inherits no queue of moves
+       * decided when this install had no right to decide them.
+       *
+       * The refusal that remains is still not only `reconcileFolders`' skip: the skip stops a
+       * reader EXECUTING an intent, this stops one being RECORDED.
        */
+      const route = await routeMailboxWrite(
+        tx as unknown as Tx, ctx.accountId, msg.mailboxId, "message.move",
+      );
+      if (route.route === "request") {
+        return this.requestMove(tx, ctx, {
+          messageId: id, mailboxId: msg.mailboxId, dedupKey: msg.dedupKey,
+          destination: this.destinationWord(folder), holder: route.holder,
+        }, opts);
+      }
+      /* THE LOCKED RE-CHECK, AND IT IS NOT REDUNDANT WITH THE BRANCH ABOVE.
+       * `routeMailboxWrite` is a PLAIN read — right for choosing a branch, and not evidence about
+       * a write that has not started. Under READ COMMITTED the worker's lease gate can commit a
+       * demotion between the two, so the share lock is what actually stands between this write and
+       * a reader crossing the door. See `assertOrganizerRole`'s own header for the interleaving. */
       await assertOrganizerRole(tx as unknown as Tx, ctx.accountId, msg.mailboxId);
 
       // Write DESIRED state only. observedFolder is the worker's truth — read
@@ -974,27 +1040,46 @@ export class MessageService {
   async delete(
     ctx: ServiceContext, id: string,
     opts: { idempotency?: MoveIdempotency | null } = {},
-  ): Promise<MoveResult> {
+  ): Promise<MoveResult | MoveRequestResult> {
     return asTx(ctx).transaction(async (tx) => {
       const [msg] = await tx.select({
         id: messages.id, nativeLocator: messages.nativeLocator, mailboxId: messages.mailboxId,
+        dedupKey: messages.dedupKey,
       }).from(messages)
         .where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId))).limit(1);
       if (!msg) throw new ServiceError("not_found", 404, "message not found");
 
-      /* -- A READER DELETES NOTHING (mail 0083, v1) -----------------------------------------
+      /* -- A READER DELETES NOTHING HERE — IT ASKS (mail 0083 v1, then mail 0093) -----------
        *
-       * A delete is a move to Trash plus a tombstone, so the argument above applies unchanged.
-       * It is on the refused list even though the reader's one IMAP verb argument might have
-       * admitted a `\Deleted` flag: keeping the reader's write surface to `setFlags` alone is
-       * what makes it auditable in one sentence, and a delete against mail another install is
-       * arranging is the least reversible thing this product does. Named as a follow-up rather
-       * than a permanent rule.
+       * A delete is a move to Trash plus a tombstone, so the argument above applies unchanged: no
+       * local `folder_state` write, no tombstone, nothing for a later promotion to inherit. What
+       * mail 0093 adds is that the press now travels as a `message.move` whose destination is the
+       * WORD `trash`.
        *
-       * Placed before the Trash lookup so a reader is refused for the reason that is true rather
-       * than for a missing Trash folder — a true sentence about the wrong thing is the failure
-       * mode the probe refusals were rewritten to end.
+       * ── AND THE TRASH LOOKUP BELOW IS DELIBERATELY NOT REACHED ON THIS PATH ──────────────
+       *
+       * `mailboxes.trash_folder` is discovered at connect by the install that is CONNECTED. A
+       * reader's copy of that column is its own guess about somebody else's server, and it is
+       * routinely NULL — so asking it here would refuse a perfectly deliverable request with
+       * `422 no_trash_folder`, a true-sounding sentence about the wrong machine. The word travels
+       * unresolved and `applyMessageMove` resolves it on the organizer, which is the only place
+       * the answer exists; if THAT mailbox has no Trash, the drain reports `no_trash_folder` back
+       * as a refusal a person is told about.
+       *
+       * Placed before the Trash lookup for the same reason mail 0083 placed the refusal there: a
+       * true sentence about the wrong thing is the failure mode the probe refusals were rewritten
+       * to end.
        */
+      const route = await routeMailboxWrite(
+        tx as unknown as Tx, ctx.accountId, msg.mailboxId, "message.move",
+      );
+      if (route.route === "request") {
+        return this.requestMove(tx, ctx, {
+          messageId: id, mailboxId: msg.mailboxId, dedupKey: msg.dedupKey,
+          destination: "trash", holder: route.holder,
+        }, opts);
+      }
+      // The locked re-check — see `move`'s note on why the plain read above does not replace it.
       await assertOrganizerRole(tx as unknown as Tx, ctx.accountId, msg.mailboxId);
 
       const hasCopy = (msg.nativeLocator as NativeLocator | null) !== null;
@@ -1129,6 +1214,78 @@ export class MessageService {
       throw new ServiceError("validation_failed", 400, "folder is not a canonical folder");
     }
     return v as Folder;
+  }
+
+  /**
+   * THE WORD FOR A CANONICAL FOLDER — see {@link DESTINATION_WORDS}.
+   *
+   * `validFolder` has already refused anything that is not one of the six, so the miss below is
+   * unreachable from a request today. It is a THROW and not a `?? folder` fallback precisely
+   * because of that: the fallback would put whatever string arrived into the record's
+   * `destination`, which is the raw-path case the whole symbolic set exists to make
+   * unrepresentable, and it would do it silently on the day somebody adds a seventh folder here
+   * and forgets the map. Failing loudly at the door is the only version of this that stays true.
+   */
+  private destinationWord(folder: Folder): string {
+    const word = DESTINATION_WORDS.get(folder);
+    if (word === undefined) {
+      throw new ServiceError(
+        "validation_failed", 400,
+        `${folder} cannot travel to the install that organizes this mailbox — it is not one of the `
+        + "places a request may name",
+      );
+    }
+    return word;
+  }
+
+  /**
+   * WRITE THE MOVE REQUEST AND ANSWER `pending`. No local write of any kind happens here.
+   *
+   * Shared by `move` and `delete` because the two differ only in which word they name, and two
+   * copies of "compose the payload, claim the idempotency key, materialize the unmoved row" is how
+   * one of them ends up claiming the key with the wrong status.
+   *
+   * The idempotency claim stores `202` — the status the live call returns — so a replay answers
+   * what the first press answered. `seq: null` because nothing changed in this store; a seq here
+   * would advance every client's cursor past a change that does not exist.
+   */
+  private async requestMove(
+    tx: Tx, ctx: ServiceContext,
+    r: {
+      messageId: string; mailboxId: string; dedupKey: string; destination: string;
+      holder: OrganizedBy;
+    },
+    opts: { idempotency?: MoveIdempotency | null },
+  ): Promise<MoveRequestResult> {
+    const requestId = randomUUID();
+    const pending = await writeReaderRequest(tx, ctx, {
+      mailboxId: r.mailboxId,
+      kind: "message.move",
+      // EXACTLY what `validateMovePayload` re-checks on the other side, and nothing else. The
+      // payload crosses an install boundary through a header another machine wrote, so the
+      // organizer validates it again independently — this is the door's half of that pair.
+      payload: { dedupKey: r.dedupKey, destination: r.destination },
+      holder: r.holder,
+      requestId,
+    });
+
+    const dto = await materializeMessage(asDb(tx), ctx.accountId, r.messageId);
+    if (!dto) throw new ServiceError("internal", 500, "message vanished after write");
+    const result: MoveRequestResult = { ...pending, dto };
+
+    if (opts.idempotency) {
+      const claimed = await claimIdempotencyKey(tx, {
+        accountId: ctx.accountId,
+        key: opts.idempotency.key,
+        requestHash: opts.idempotency.requestHash,
+        responseStatus: 202,
+        responseJson: result,
+        seq: null,
+        now: ctx.now(),
+      });
+      if (!claimed) throw new IdempotencyRaceLost(ctx.accountId, opts.idempotency.key);
+    }
+    return result;
   }
 
   /**

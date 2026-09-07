@@ -127,8 +127,13 @@ export {
   MessageService, messageService, MARK_SEEN_MAX_IDS,
   type MessageView, type ListMessagesOptions, type MessagePatchBody,
   type MarkSeenBody, type MarkSeenResult,
-  type MoveBody, type MoveIdempotency, type MoveResult, type PatchResult,
+  type MoveBody, type MoveIdempotency, type MoveResult, type MoveRequestResult, type PatchResult,
 } from "./message-service.js";
+/* THE READER'S WRITE-DOOR DISPATCH (mail 0093) — one branch for four families. See the module. */
+export {
+  routeMailboxWrite, writeReaderRequest,
+  type MailboxRoute, type PendingRequest,
+} from "./reader-request.js";
 export {
   ThreadService, threadService, THREAD_MERGE_MAX_IDS,
   type ThreadPatchBody, type ThreadRenameBody, type ThreadMergeBody,

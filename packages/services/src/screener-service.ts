@@ -33,6 +33,7 @@ import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
    advertise (mail 0094). Imported rather than spelled as a constant here so that this door and
    the record it writes cannot disagree about what `screener.decide` requires. */
 import { capabilityForKind } from "@trafficflow/core/adapters/organizer-lease";
+import { writeReaderRequest } from "./reader-request.js";
 import type { ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import { getScreeningPreference } from "./screening-preference.js";
@@ -1428,24 +1429,24 @@ export class ScreenerReadService {
 
     try {
       await asTx(ctx).transaction(async (tx) => {
-        // FENCE FIRST, as the first statement of this transaction — `erasure-fence.ts`'s own rule
-        // for every writer of account-scoped state, `applyScreenerDecision` included. A reader
-        // with a stale page open could otherwise queue a request against an account whose erasure
-        // has already committed; the request would sit in `organizer_requests` until the
-        // organizer's drain reached it and (correctly) fenced there too, but the row itself
-        // should never be written.
-        const erasedAt = await readAccountErasedAt(tx, ctx.accountId);
-        if (erasedAt != null) throw new AccountErasedError(ctx.accountId);
-
-        await insertOrganizerRequest(tx, {
-          id: requestId,
-          accountId: ctx.accountId,
+        /* THE ERASURE FENCE AND THE INSERT NOW BELONG TO `reader-request.ts` (mail 0093).
+         *
+         * They were written here first, for the one kind that existed in 0.14.1. The three new
+         * families need the identical sequence, and four copies of "fence the account, then write
+         * the row" is how one of them ends up without the fence — so the sequence moved to the one
+         * helper every door calls and this door became its first caller rather than its only
+         * implementation. What is still HERE is what is genuinely the Screener's: the payload's
+         * shape, and the idempotency claim below.
+         */
+        await writeReaderRequest(tx, ctx, {
           mailboxId: v.target.mailboxId,
           kind: "screener.decide",
           // Exactly what the drain needs to call `applyScreenerDecision` again, unchanged — see
           // that function's `ApplyScreenerDecisionInput`. `match` rides along for
           // `listOutstandingForAccount`'s own read; the drain does not use it.
           payload: { scope, address, appliedFolder, decision, match },
+          holder: eligibility.by,
+          requestId,
           decidedAt,
         });
 

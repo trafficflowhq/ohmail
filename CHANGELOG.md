@@ -77,6 +77,30 @@ asks rather than leaving you watching a request that was never going to be picke
 does not recognise is left where it is rather than thrown away — it happens as soon as that install
 updates.
 
+### Moving and deleting mail on a mailbox another install organizes
+
+Exactly one install organizes a mailbox at a time; the others read it. Moving or deleting a message
+on a mailbox you only read used to be refused outright — the message stayed where it was, and the
+answer said only that something else was organizing it. The press now travels instead: it becomes a
+request the organizing install carries out on its next pass, and the answer names the install it is
+waiting on.
+
+Nothing moves on this machine, deliberately. The install holding the mailbox is the one connected to
+the mail server, so a move recorded here would either do nothing or fire later — moving mail on a
+decision taken when this install had no right to take it. The message therefore stays exactly where
+it is until the other install has actually moved it, rather than appearing to move and then coming
+back.
+
+Deleting works the same way, and it has stopped asking a question only the other machine can answer.
+Every provider spells its Trash folder differently and the app learns the real name when it
+connects; an install that merely reads a mailbox has usually never learned it, and the delete used
+to be refused for that reason — a true sentence about the wrong computer. The request now says
+"trash" and the connected install works out what that means there.
+
+An install running an older version cannot carry any of this out, and is no longer asked to. The
+answer says so and names the machine, rather than leaving you waiting for something that was never
+going to happen.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
