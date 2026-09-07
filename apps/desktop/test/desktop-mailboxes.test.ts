@@ -1529,3 +1529,75 @@ describe("a standing stop request is on the row, and the pane's notes end when t
     expect(el.textContent ?? "").toContain(mailboxCopy.stateOrganizingHere!);
   });
 });
+
+/**
+ * ═══ THE READER ROW'S THREE STATES — "ORGANIZED BY ANOTHER INSTALL" WITH NO OTHER INSTALL ═══
+ *
+ * MEASURED on the released build: a mailbox connected on this computer with no organizing
+ * consent, `ohmail/_meta` empty (read three times), so the four holder columns are unwritten and
+ * the wire's `organizedBy` is `null`. This pane's row then said *"Since —. This computer reads
+ * the mailbox; it moves nothing and screens nothing"* — a date line with no date, and a sentence
+ * about reading that stops one clause short of the fact somebody in that state needs: nothing is
+ * organizing the mailbox, and one press changes that.
+ *
+ * The cause is the same on all three reader surfaces: the state "nobody holds it" fell through to
+ * a sentence written for "a holder we cannot name". `reader-holder.ts` is the shared answer, and
+ * the two `FirstRun` surfaces carry the other two cases (`apps/webapp/test/reader-row-states`).
+ *
+ * WATCH IT FAIL: restore `readerSinceUnknown` as the released arm's fallback and the first case
+ * goes red with the em-dash date line, which is the released behaviour exactly. The other two are
+ * green either way — they are what says this changed the holder-less state and nothing else.
+ */
+describe("the reader row's three states, and the one that had no holder at all", () => {
+  const mailboxCopy = (messages as unknown as { mailboxes: Record<string, string> }).mailboxes;
+  /** The sentence every "since" line ends with — the half that must not survive state (a). */
+  const READS_MAILBOX = mailboxCopy.readerSinceUnknown!.replace("Since {since}. ", "");
+
+  it("(a) NOBODY holds it → no date line, and the press is named", async () => {
+    FACTS = [{
+      ...MAILBOX,
+      organizerRole: "reader",
+      organizedBy: null,
+      organizerState: null,
+      organizeConsentedAt: null,
+    }];
+    const el = await render("local");
+    const said = el.textContent ?? "";
+    expect(said, "a date line over a holder that was never recorded")
+      .not.toContain(READS_MAILBOX);
+    expect(said, "the state nobody organizes the mailbox in has no sentence of its own")
+      .toContain(mailboxCopy.readerNobodyReads!);
+    expect(said, "the row lost the label for the state it is in")
+      .toContain(mailboxCopy.stateNotOrganized!);
+  });
+
+  it("(b) CONTROL: a recorded holder with no name still names the install and the date", async () => {
+    FACTS = [{
+      ...MAILBOX,
+      organizerRole: "reader",
+      organizedBy: { kind: "local", name: null, since: "2026-08-30T09:00:00.000Z" },
+      organizerState: "held",
+      organizeConsentedAt: null,
+    }];
+    const said = (await render("local")).textContent ?? "";
+    expect(said).toContain(
+      mailboxCopy.readerLabel!.replace("{name}", mailboxCopy.readerHolderUnknown!),
+    );
+    expect(said, "an unnamed holder was demoted to nobody")
+      .not.toContain(mailboxCopy.readerNobodyReads!);
+  });
+
+  it("(c) CONTROL: a NAMED holder is unchanged", async () => {
+    FACTS = [{
+      ...MAILBOX,
+      organizerRole: "reader",
+      organizedBy: { kind: "local", name: "omarchy", since: "2026-08-30T09:00:00.000Z" },
+      organizerState: "held",
+      organizeConsentedAt: null,
+    }];
+    const said = (await render("local")).textContent ?? "";
+    expect(said).toContain(mailboxCopy.readerLabel!.replace("{name}", "omarchy"));
+    expect(said).toContain(READS_MAILBOX);
+    expect(said).not.toContain(mailboxCopy.readerNobodyReads!);
+  });
+});

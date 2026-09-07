@@ -925,6 +925,18 @@ file. It also now takes in the names written beside the addresses a message is g
 sent with the message and were not being read either. An unchanged message keeps the identity it
 had, so pressing Send again after an answer went missing still delivers exactly once.
 
+A mailbox nobody organizes said it was organized by another install. Connect a mailbox on this
+computer and give nothing permission to organize it, and no install holds it — but the row about it
+named one anyway, over a date line reading "Since —". The words for "somebody else organizes this
+and we have no name for them" were being used for "nothing organizes this at all", because both
+were decided by the holder's name being missing. Whether a holder exists is now read from whether
+one was recorded, and the state where none was gets its own sentence: nothing organizes this
+mailbox, this computer reads it and moves and screens nothing, and pressing Organize here changes
+that. No date line is shown where there is no date. A mailbox another install does organize reads
+exactly as it did, named or unnamed. The setup summary, the "already organized elsewhere" screen and
+Settings → Mailboxes take that sentence from one place, so they cannot describe one state three
+ways.
+
 ## [0.14.0] — 2026-09-03
 
 A desktop install can hold more than one mailbox. Each one gets its own connection,

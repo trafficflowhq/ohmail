@@ -2202,6 +2202,7 @@
     "readerSinceLocal": "Seit {since} · {name}. Dieser Computer liest das Postfach; er verschiebt nichts und sortiert nichts aus.",
     "readerSinceUnknown": "Seit {since}. Dieser Computer liest das Postfach; er verschiebt nichts und sortiert nichts aus.",
     "readerLabelLegacy": "Organisiert von einer anderen Installation",
+    "readerNobodyReads": "Dieser Computer liest es; er verschiebt nichts und sortiert nichts aus, bis Sie „Hier organisieren“ drücken.",
     "readerLegacyStandDown": "Diese Kopie von ohmail hat das Postfach beim Zurücktreten nicht mehr geöffnet, sie liest es also auch nicht. Hier wieder zu organisieren erfordert einen Neustart.",
     "readerHolderUnknown": "eine andere Installation",
     "readerStopped": "{name} meldet sich nicht mehr. Bis etwas dieses Postfach organisiert, wartet neue Post im Posteingang.",

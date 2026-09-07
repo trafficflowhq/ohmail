@@ -95,6 +95,7 @@ import { agoStamp, dayStamp } from "../../webapp/app/shell/format";
 import { activeFormatLocale, activeFormatZone } from "../../webapp/app/shell/locale";
 import { useMailState } from "../../webapp/app/shell/MailStateProvider";
 import { goFirstRun } from "../../webapp/app/shell/routing";
+import { readerHolder } from "../../webapp/app/shell/reader-holder";
 import { bridgeFetch, engineLogout, type EngineStatus } from "./bridge-fetch.js";
 import { firstRunDoorFor } from "./doors.js";
 import { openWeb } from "./native.js";
@@ -1219,7 +1220,23 @@ export function DesktopMailboxes(
                    date. */
                 ? (m.organizerReleasedAt
                   ? t("stateReleased", { when: day(m.organizerReleasedAt) })
-                  : t("readerSinceUnknown", { since: day(m.organizedBy?.since ?? null) }))
+                  /* ── NO HOLDER MEANS NO DATE LINE, AND THIS ROW PRINTED ONE ANYWAY ──────
+                     MEASURED on the released build, on a mailbox connected here and never
+                     agreed to: the four holder columns are unwritten, so `day(null)` is an em
+                     dash and the row read *"Since —. This computer reads the mailbox; it moves
+                     nothing and screens nothing"*. Both halves were wrong for this state — a
+                     date the row does not have, and a sentence that stops one clause before the
+                     fact somebody here needs, which is that nothing is organizing the mailbox
+                     and which press changes that.
+
+                     `readerHolder` and not `organizedBy?.since`: the discriminator is whether a
+                     holder was RECORDED at all, and the wire emits the object only when one of
+                     its columns was written. A row that carries a `since` and nothing else has a
+                     real date, and keeps the dated sentence. Shared with both `FirstRun`
+                     surfaces so one state cannot be described three ways. */
+                  : readerHolder(m.organizedBy) === "nobody"
+                    ? t("readerNobodyReads")
+                    : t("readerSinceUnknown", { since: day(m.organizedBy?.since ?? null) }))
               /* ── A LEGACY STAND-DOWN IS FROZEN, AND SAYING IT READS WOULD CONTRADICT ITS OWN ROW ──
                  The modern reader is CONNECTED AND SYNCING, which is what every sentence below is
                  about. A pre-role engine's stand-down did the opposite: it closed the IMAP handle and

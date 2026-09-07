@@ -50,6 +50,7 @@ import {
 } from "./onboarding";
 import type { FirstRunHost, FirstRunMailboxInput, FirstRunProbeOk } from "./first-run-host";
 import { pullEtaMs, pullRate, pullRemaining, pullSampleStep, type PullSample } from "./pull-rate";
+import { readerHolder } from "./reader-holder";
 import "./first-run.css";
 
 /**
@@ -712,6 +713,16 @@ export function FirstRun({
    */
   const elsewhereChoice: "here" | "read" = elsewhereChoicePicked ?? "here";
   /**
+   * WHETHER ANYBODY HOLDS THIS MAILBOX, AND WHETHER THEY HAVE A NAME — read once, for the two
+   * surfaces below, from `organizedBy` rather than from the display name.
+   *
+   * The name cannot answer it: it is absent both when a holder exists unnamed and when NOBODY
+   * holds the mailbox, and the two branches here used to treat the second as the first — so a
+   * consent-less reader on a mailbox no install has ever claimed was told "Organized by another
+   * install · Since —". `reader-holder.ts` carries the measurement and the wire's own contract.
+   */
+  const held = readerHolder(facts.mailbox?.organizedBy);
+  /**
    * IS THIS INSTALL THE ORGANIZER — the one fact the summary is allowed to report work on.
    *
    * `!== "reader"` and not `=== "organizer"`, on {@link OnboardingMailbox.organizerRole}'s own
@@ -1048,17 +1059,26 @@ export function FirstRun({
               <h1 id={`${ids}-title`}>{t("elsewhereTitle")}</h1>
               <p className="sub">{t("elsewhereLead")}</p>
               <SettingsBanner
-                label={holderName(facts) === null
-                  ? tm("readerLabelLegacy")
-                  : tm("readerLabel", { name: holderName(facts)! })}
-                description={facts.mailbox?.organizerState === "stopped"
+                label={held === "nobody"
+                  ? tm("stateNotOrganized")
+                  : held === "unnamed"
+                    ? tm("readerLabelLegacy")
+                    : tm("readerLabel", { name: holderName(facts)! })}
+                /* NOBODY IS TESTED FIRST, ahead of the stopped arm and both "since" sentences,
+                   because every one of them names or dates a holder: `readerStopped` interpolates
+                   the holder's name (falling back to "another install"), and the three `readerSince*`
+                   sentences all open with a date. With no holder recorded there is nothing to name
+                   and no date to print, so the state gets its own sentence and NO date line. */
+                description={held === "nobody"
+                  ? tm("readerNobodyReads")
+                  : facts.mailbox?.organizerState === "stopped"
                   /* NO AGE, and the prop that carried one is gone with it. `readerStopped` took a
                      `{when}` and was handed `organizedBy.since` — which is when that install
                      BECAME the organizer, not when it was last seen; the heartbeat is
                      deliberately not persisted. The copy dropped the placeholder and this kept
                      feeding it, which is a prop with a caller and no consumer. */
                   ? tm("readerStopped", { name: holderName(facts) ?? tm("readerHolderUnknown") })
-                  : holderName(facts) === null
+                  : held === "unnamed"
                     ? tm("readerSinceUnknown", { since: organizedSince ?? "" })
                     : facts.mailbox?.organizedBy?.kind === "cloud"
                       ? tm("readerSinceCloud", { since: organizedSince ?? "" })
@@ -1385,16 +1405,25 @@ export function FirstRun({
                       sentences the elsewhere screen and Settings → Mailboxes render, so the three
                       surfaces cannot describe one state differently. */}
                   <SettingsRow
-                    label={holderName(facts) === null
-                      ? tm("readerLabelLegacy")
-                      : tm("readerLabel", { name: holderName(facts)! })}
-                    description={holderName(facts) === null
-                      ? tm("readerSinceUnknown", { since: organizedSince ?? "" })
-                      : facts.mailbox?.organizedBy?.kind === "cloud"
-                        ? tm("readerSinceCloud", { since: organizedSince ?? "" })
-                        : tm("readerSinceLocal", {
-                          since: organizedSince ?? "", name: holderName(facts)!,
-                        })}
+                    label={held === "nobody"
+                      ? tm("stateNotOrganized")
+                      : held === "unnamed"
+                        ? tm("readerLabelLegacy")
+                        : tm("readerLabel", { name: holderName(facts)! })}
+                    /* THE SAME ORDER AS THE BANNER ABOVE, and for the same reason: with no holder
+                       recorded there is no install to name and no date to promise. This row is
+                       where the false pair was photographed — a fresh standalone connect that
+                       declined to organize reported a relationship with a machine that does not
+                       exist, one line under a sentence saying this computer moves nothing. */
+                    description={held === "nobody"
+                      ? tm("readerNobodyReads")
+                      : held === "unnamed"
+                        ? tm("readerSinceUnknown", { since: organizedSince ?? "" })
+                        : facts.mailbox?.organizedBy?.kind === "cloud"
+                          ? tm("readerSinceCloud", { since: organizedSince ?? "" })
+                          : tm("readerSinceLocal", {
+                            since: organizedSince ?? "", name: holderName(facts)!,
+                          })}
                   />
                   <SettingsRow label={t("doneReaderClaim")} description={t("doneReaderClaimWhy")} />
                 </>
@@ -1513,11 +1542,19 @@ function firstSentence(s: string): string {
 /**
  * WHO ORGANIZES THIS MAILBOX, by name, or `null` when nobody is NAMED.
  *
- * `null` is not the same as "nobody organizes it" — the mailbox has a holder (that is what put
- * the elsewhere screen on screen), and this build simply has no name for them: a claim written
- * by a version that recorded none, or a row from a server that does not send the field. The
- * copy has a legacy label for exactly that, and inventing "another install" as the NAME would
- * put quotation marks around a phrase and read as a machine called "another install".
+ * `null` is not the same as "nobody organizes it", and THIS COMMENT USED TO ARGUE THAT IT WAS
+ * SAFE TO TREAT THEM AS ONE — *"the mailbox has a holder (that is what put the elsewhere screen
+ * on screen)"* — which is true of the elsewhere screen and false of every other caller. The
+ * summary's reader row is reached on a consent-less reader whose mailbox nothing has ever
+ * claimed, and it read this `null` as "a holder we cannot name": "Organized by another install ·
+ * Since —", with no other install anywhere. A guarantee a function cannot make is worse than no
+ * comment, because the next caller believes it.
+ *
+ * So `null` here means only what the name says: no NAME. Whether a holder exists at all is
+ * {@link readerHolder}'s question, and the surfaces ask that one first.
+ *
+ * A `null` name is still not "another install" as a NAME: inventing one would read as a machine
+ * called "another install". The copy has a legacy label for exactly that state.
  */
 function holderName(facts: OnboardingFacts): string | null {
   const by = facts.mailbox?.organizedBy;
