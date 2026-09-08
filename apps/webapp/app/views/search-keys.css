@@ -5,10 +5,12 @@
  * `/`. ↑/↓ and ↵ are the fix; this is the other half of it, because a cursor nobody can see
  * is not a keyboard path, it is a keyboard rumour.
  *
- * A WRAPPER RATHER THAN A PROP. `SearchHit` is a `@ohmail/ui` primitive with no `selected`
- * in its contract, and widening a shared design-system component for one view's cursor is
- * the trade `OhboxView.onRangeClickCapture` already refused for the same reason. The
- * wrapper carries `aria-current` too, so the state is announced and not merely drawn.
+ * A WRAPPER RATHER THAN A PROP. The row carries no `selected` of its own, and widening a
+ * shared component for one view's cursor is the trade `OhboxView.onRangeClickCapture` already
+ * refused for the same reason. (`@ohmail/ui` did export a `SearchHit` when this was written; it
+ * has since been retired, having never been rendered by a product surface — the shipped row is
+ * `SearchHitRow` in `SearchView.tsx`. The wrapper's reason is unchanged either way.) The wrapper
+ * carries `aria-current` too, so the state is announced and not merely drawn.
  *
  * The treatment is the list row's, deliberately: `.row.sel` in `app.css` marks the cursor
  * with `--accent-soft` and an inset accent rule on the leading edge. A search result under

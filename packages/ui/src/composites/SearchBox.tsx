@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { Icon } from "../icons.js";
 import { Kbd } from "../primitives/Kbd.js";
 import { TextField } from "../primitives/TextField.js";
@@ -94,28 +93,24 @@ export function Facets({ groups, onPick, className }: FacetsProps) {
   );
 }
 
-export interface SearchHitProps {
-  who: string;
-  where: string;
-  /** Subject; pass rich children to include <mark> highlights. */
-  subject: ReactNode;
-  /** Fuzzy-match annotation capsule. */
-  fuzzyNote?: string;
-  onPress?: () => void;
-}
-
-/** One search result row. */
-export function SearchHit({ who, where, subject, fuzzyNote, onPress }: SearchHitProps) {
-  return (
-    <button type="button" className="hit" onClick={onPress}>
-      <span className="top" style={{ display: "flex" }}>
-        <span className="who">{who}</span>
-        <span className="where">{where}</span>
-      </span>
-      <span className="subj" style={{ display: "block" }}>
-        {subject}
-        {fuzzyNote ? <span className="fuzzy">{fuzzyNote}</span> : null}
-      </span>
-    </button>
-  );
-}
+/* ── `SearchHit` IS RETIRED, AND `search.css` IS NOT ───────────────────────────────────────
+ *
+ * There was a `SearchHit` here: one `<button class="hit">` holding a who/where line and a
+ * subject. No product surface ever rendered it. The webapp's own result row grew a second
+ * control — the sender's address, which opens everything from and to that address — and a
+ * button may not hold interactive content, so the shipped row is a `<div class="hit">` with a
+ * stretched `<button class="hit-open">` inside it. That row is `SearchHitRow` in
+ * `apps/webapp/app/views/SearchView.tsx`, and this component could not become it without
+ * becoming a different component.
+ *
+ * An export with no consumer is a claim that outlives the code: it compiles, the smoke test
+ * renders it, the showcase advertises it as the way this design system draws a result, and
+ * nobody can reach it in the product. So it is deleted rather than left as a second answer to
+ * a question the product has already answered once.
+ *
+ * `search.css` stays and is still imported below. Its `.hit` rules — the radius, the padding,
+ * the hover lift, `.who` / `.where` / `.subj` / `mark` — are what the webapp's row is built on,
+ * and it reaches them through this file's import of `SearchBox`. Deleting the stylesheet with
+ * the component would have taken the ground out from under the shipped row, which is the kind of
+ * deletion that renders as a design regression with every test green.
+ */

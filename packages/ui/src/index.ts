@@ -123,13 +123,8 @@ export { CommandPalette } from "./composites/CommandPalette.js";
 export type { CommandPaletteProps, Command } from "./composites/CommandPalette.js";
 export { ProtectedBlock } from "./composites/ProtectedBlock.js";
 export type { ProtectedBlockProps } from "./composites/ProtectedBlock.js";
-export { SearchBox, Facets, SearchHit } from "./composites/SearchBox.js";
-export type {
-  SearchBoxProps,
-  FacetsProps,
-  FacetGroup,
-  SearchHitProps,
-} from "./composites/SearchBox.js";
+export { SearchBox, Facets } from "./composites/SearchBox.js";
+export type { SearchBoxProps, FacetsProps, FacetGroup } from "./composites/SearchBox.js";
 export {
   SettingsSection,
   SettingsSubhead,
