@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import { dialect } from "@trafficflow/db/dialect";
 import { accountSettings, type Tx } from "@trafficflow/db";
 import { resolveOhboxPolicy, type OhboxPolicy } from "@trafficflow/core/mail";
 import type { ServiceContext } from "./context.js";
@@ -218,7 +219,7 @@ export async function setScreeningPreference(
   // interlock in `erasure-fence.ts` only holds until COMMIT, so fencing an autocommit statement
   // from a separate statement would guard nothing. Fence first, then the same upsert.
   await asTx(ctx).transaction(async (tx) => {
-    await fenceErasedAccount(tx, ctx.accountId);
+    await fenceErasedAccount(tx, dialect(ctx.db), ctx.accountId);
     const plan = await planAccountFanOut(tx, ctx.accountId, "profile.update");
 
     /* ONLY THE FIELDS THIS REQUEST NAMED. The payload is a partial and absence is load-bearing —
@@ -271,7 +272,7 @@ export async function requestOhboxTidy(ctx: ServiceContext): Promise<void> {
   // Fenced in a transaction for `setScreeningPreference`'s reason: the FOR SHARE interlock
   // lives and dies with the transaction, so the fence and the upsert must share one.
   await asTx(ctx).transaction(async (tx) => {
-    await fenceErasedAccount(tx, ctx.accountId);
+    await fenceErasedAccount(tx, dialect(ctx.db), ctx.accountId);
     await tx.insert(accountSettings)
       .values({ accountId: ctx.accountId, ohboxTidyRequestedAt: ctx.now(), ohboxTidyCursor: null })
       .onConflictDoUpdate({

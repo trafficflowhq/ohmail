@@ -1,4 +1,5 @@
 import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
+import { dialect } from "@trafficflow/db/dialect";
 import {
   assertOrganizerRole,
   contacts, folderState, junkSweepCandidateWhere, mailboxes, messageBodies, messages, recordChange,
@@ -730,7 +731,7 @@ export async function rescueJunk(
    * own stated discipline: `allowSender` below commits a rule change, and a refusal after it
    * would leave somebody's screening altered by a request that then failed.
    */
-  await assertOrganizerRole(deps.db as unknown as Tx, accountId, args.mailboxId);
+  await assertOrganizerRole(deps.db as unknown as Tx, dialect(deps.db), accountId, args.mailboxId);
   await requireFolders(deps, accountId);
   const [box] = await junkMailboxesOf(deps, accountId, args.mailboxId);
   if (!box || box.junkFolder === null) {
@@ -1001,7 +1002,7 @@ export async function requestJunkSweep(deps: ApiDeps, ctx: ServiceContext): Prom
    * reports success for mailboxes it skipped.
    */
   for (const id of targets) {
-    await assertOrganizerRole(deps.db as unknown as Tx, accountId, id);
+    await assertOrganizerRole(deps.db as unknown as Tx, dialect(deps.db), accountId, id);
   }
   await deps.db.update(mailboxes)
     .set({ junkSweepRequestedAt: ctx.now(), syncRequestedAt: ctx.now() })

@@ -9,7 +9,7 @@ import {
   listStaleSentRequests, markRequestsExpired, markRequestsRefused,
   type Tx,
 } from "@trafficflow/db";
-import { carryDialect } from "@trafficflow/db/dialect";
+import { carryDialect, dialect } from "@trafficflow/db/dialect";
 import {
   parseRequestEnvelope, isMalformedRequest, formatRequest, formatAck, canonicalRequest,
   requestEnvelopesIn, acksIn, verifyRequestEnvelope, decodeRequestPayload,
@@ -1182,7 +1182,7 @@ export async function applyMetaRequests(
         // fence is exactly the lock order `deleteAccount` depends on to close its own race
         // (`accounts FOR SHARE` first, always). Read here too, so the CATCH below sees it before
         // any other write in this transaction has touched a row.
-        const erasedAt = await readAccountErasedAt(tx, rt.accountId);
+        const erasedAt = await readAccountErasedAt(tx, dialect(tx), rt.accountId);
         if (erasedAt != null) throw new AccountErasedError(rt.accountId);
 
         // THE CONTENT COMPARISON, and it happens before the claim so the common conflict is

@@ -296,7 +296,7 @@ export class TagsService {
        * differently, on whether the account organizes anything at all. Naming a colour is not a
        * statement about one mailbox; putting that colour on one message is.
        */
-      await assertOrganizerRole(tx as unknown as Tx, ctx.accountId, msg.mailboxId);
+      await assertOrganizerRole(tx as unknown as Tx, dialect(ctx.db), ctx.accountId, msg.mailboxId);
 
       let resolved = tagId;
       let tagSeq: bigint | null = null;
@@ -324,31 +324,36 @@ export class TagsService {
           // Share-locked for the same reason as the plain-id branch below: the winner of the
           // name race must not be deleted out from under this assign between here and the
           // insert.
-          const [existing] = await tx.select({ id: tags.id }).from(tags)
-            .where(and(eq(tags.accountId, ctx.accountId), sql`lower(${tags.name}) = lower(${name})`))
-            .for("share")
-            .limit(1);
+          const [existing] = await dialect(ctx.db).forUpdate(
+            tx.select({ id: tags.id }).from(tags)
+              .where(and(eq(tags.accountId, ctx.accountId), sql`lower(${tags.name}) = lower(${name})`))
+              .limit(1),
+            { mode: "share" });
           if (!existing) throw new ServiceError("conflict", 409, "tag id already in use");
           resolved = existing.id;
         }
       } else {
-        // `FOR SHARE`, AND THE LOCK IS THE WHOLE POINT — a plain SELECT here is a bug that
+        // A SHARED LOCK, AND THE LOCK IS THE WHOLE POINT — a plain SELECT here is a bug that
         // `tags.pg.test.ts` caught on real Postgres and PGlite could never have shown.
         //
         // Under READ COMMITTED an unlocked read sees a tag whose DELETE has not yet committed,
         // waves the assign through, and the INSERT then blocks on the FK's own parent-row lock
         // and finally raises `23503` — a 500 for what is really "that tag is gone". Taking the
         // share lock at CHECK time moves the wait one statement earlier: this select blocks on
-        // the deleter's `FOR UPDATE`, and when the delete commits the row is simply not there,
+        // the deleter's exclusive lock, and when the delete commits the row is simply not there,
         // so the caller gets the truthful 404.
         //
         // SHARE and not UPDATE: share locks are compatible with each other, so concurrent
         // assigns of the same tag still run in parallel. Only the exclusive lock `remove` takes
         // conflicts with it, which is exactly the pair that must be ordered.
-        const [tag] = await tx.select({ id: tags.id }).from(tags)
-          .where(and(eq(tags.id, tagId), eq(tags.accountId, ctx.accountId)))
-          .for("share")
-          .limit(1);
+        // The STRENGTH travels with the call: this is share and must stay share. Promoting it to
+        // the exclusive lock while porting would serialize concurrent assigns of one tag, which is
+        // exactly what the paragraph above says must keep running in parallel.
+        const [tag] = await dialect(ctx.db).forUpdate(
+          tx.select({ id: tags.id }).from(tags)
+            .where(and(eq(tags.id, tagId), eq(tags.accountId, ctx.accountId)))
+            .limit(1),
+          { mode: "share" });
         if (!tag) throw new ServiceError("not_found", 404, "tag not found");
       }
 

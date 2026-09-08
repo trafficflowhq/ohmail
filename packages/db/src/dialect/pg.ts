@@ -8,7 +8,7 @@
  * being written.
  */
 import { sql, type SQL } from "drizzle-orm";
-import { assertComparable, assertDistinct, type Dialect, type LockOptions, type SearchArm, type SearchCorpus } from "./index.js";
+import { type LockMode, assertComparable, assertDistinct, type Dialect, type LockOptions, type SearchArm, type SearchCorpus } from "./index.js";
 
 // Re-exported because it was defined here first and the server arm's tests import it by this
 // path; the refusal itself belongs to both arms and now lives in the contract.
@@ -30,13 +30,23 @@ export function pgDialect(): Dialect {
     castUuid: (v) => sql`(${v})::uuid`,
     castJsonb: (v) => sql`(${v})::jsonb`,
 
+    /**
+     * THE MODE IS PASSED THROUGH, so a port keeps the strength the site chose.
+     *
+     * Defaulting to `"update"` is what every existing caller already gets. What the parameter buys
+     * is the three sites that are NOT exclusive: a shared read and a key-share read let other
+     * traffic past on purpose, and porting them to this member without carrying the mode would
+     * have promoted them to exclusive — a change to what the statement does on the SERVER, made
+     * while teaching it about a second store. That is the substitution this seam exists to
+     * prevent, so the mode travels rather than being decided here.
+     */
     forUpdate: <Q>(q: Q, opts: LockOptions = {}): Q => {
-      const builder = q as { for?: (mode: "update", cfg?: object) => Q };
+      const builder = q as { for?: (mode: LockMode, cfg?: object) => Q };
       if (typeof builder.for !== "function") return q;
       const cfg: Record<string, unknown> = {};
       if (opts.of !== undefined) cfg.of = opts.of;
       if (opts.skipLocked === true) cfg.skipLocked = true;
-      return builder.for("update", Object.keys(cfg).length > 0 ? cfg : undefined);
+      return builder.for(opts.mode ?? "update", Object.keys(cfg).length > 0 ? cfg : undefined);
     },
 
     skipLocked: <Q>(q: Q, opts: Omit<LockOptions, "skipLocked"> = {}): Q =>

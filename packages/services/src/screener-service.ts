@@ -23,7 +23,7 @@ import {
  * answers. This service names a gate it may be handed; it never builds one, and it must
  * compile in a deployment where no gate and no ledger exist. */
 import type { AiCreditGate, SpendPort } from "@trafficflow/db";
-import { carryDialect } from "@trafficflow/db/dialect";
+import { carryDialect, dialect } from "@trafficflow/db/dialect";
 import type { AdapterPort, ClassifierPort, Destination, NativeLocator, OhboxPolicy } from "@trafficflow/core/mail";
 import {
   applyReconcileAction, askScreeningQuestion, CLASSIFY_DESTINATIONS, createLogger,
@@ -1277,12 +1277,12 @@ export class ScreenerReadService {
       // AFTER the erasure fence and not before: `applyScreenerDecision` takes `accounts FOR SHARE`
       // as its first statement, and `deleteAccount` takes the same row first — so this transaction
       // must reach `accounts` before it reaches `mailboxes`, or the two orders cross and deadlock.
-      const erasedAt = await readAccountErasedAt(tx, ctx.accountId);
+      const erasedAt = await readAccountErasedAt(tx, dialect(ctx.db), ctx.accountId);
       if (erasedAt != null) {
         throw new ServiceError("account_erased", 410,
           "this account has been deleted; its settings cannot be changed");
       }
-      const locked = await readOrganizerRole(tx, ctx.accountId, target.mailboxId, { lock: true });
+      const locked = await readOrganizerRole(tx, dialect(ctx.db), ctx.accountId, target.mailboxId, { lock: true });
       if (!locked) throw new MailboxNotFoundError(target.mailboxId);
       if (locked.status === "disabled") throw new MailboxNotFoundError(target.mailboxId);
       if (locked.role !== "organizer") throw new OrganizedElsewhereError(target.mailboxId, locked.by);

@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import type { Dialect } from "./dialect/index.js";
 import { accounts } from "./schema-mail.js";
 import type { Tx } from "./change-log.js";
 
@@ -31,12 +32,18 @@ import type { Tx } from "./change-log.js";
  * MUST be the FIRST statement in the caller's transaction — see the module header for the lock
  * order this holds against `deleteAccount`'s own first statement.
  */
-export async function readAccountErasedAt(tx: Tx, accountId: string): Promise<Date | null | undefined> {
-  const [row] = await tx.select({ erasedAt: accounts.erasedAt })
-    .from(accounts)
-    .where(eq(accounts.id, accountId))
-    .limit(1)
-    .for("share");
+export async function readAccountErasedAt(
+  tx: Tx, d: Dialect, accountId: string,
+): Promise<Date | null | undefined> {
+  // SHARE, and the strength travels: every caller of this fence reads it concurrently and must
+  // keep doing so — only the erasure itself takes the exclusive lock they have to be ordered
+  // against.
+  const [row] = await d.forUpdate(
+    tx.select({ erasedAt: accounts.erasedAt })
+      .from(accounts)
+      .where(eq(accounts.id, accountId))
+      .limit(1),
+    { mode: "share" });
   if (row === undefined) return undefined;
   return row.erasedAt;
 }

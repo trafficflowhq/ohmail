@@ -1,4 +1,5 @@
 import { and, eq, sql } from "drizzle-orm";
+import { dialect } from "@trafficflow/db/dialect";
 import {
   assertAccountOrganizes,
   accountSettings, contacts, folderState, learningSignals, messages, recordChange,
@@ -128,7 +129,7 @@ export async function resetScreeningState(ctx: ServiceContext): Promise<ResetRes
   return asTx(ctx).transaction(async (tx) => {
     // ── ERASURE FENCE, FIRST — before the settings lock below. The chain is accounts →
     // settings → sequence row; `erasure-fence.ts` states why it must be the first lock.
-    await fenceErasedAccount(tx, ctx.accountId);
+    await fenceErasedAccount(tx, dialect(ctx.db), ctx.accountId);
     /* -- A READER'S ACCOUNT DOES NOT RESET SCREENING (mail 0083) --------------------------
      *
      * This one nearly escaped the reader ruling, because "reset" reads like a local clear. It is

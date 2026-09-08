@@ -369,7 +369,7 @@ export async function applyScreenerDecision(
   } = input;
   const domain = domainOf(address);
 
-  const erasedAt = await readAccountErasedAt(tx, accountId);
+  const erasedAt = await readAccountErasedAt(tx, dialect(tx), accountId);
   if (erasedAt != null) throw new AccountErasedError(accountId);
 
   if (decision === "yes") {

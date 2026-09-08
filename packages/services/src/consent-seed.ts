@@ -1,4 +1,5 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { dialect } from "@trafficflow/db/dialect";
 import {
   accountSettings, contacts, mailboxes, messageBodies, messages, recordChanges, rules,
   type LedgerTx, type OrganizedBy, type Tx,
@@ -635,7 +636,7 @@ export async function confirmSeed(
     // stops this write recreating erased rows, and taking it FIRST is what keeps the lock
     // order a single chain (accounts → settings → sequence row). `erasure-fence.ts` carries
     // the two-sided argument.
-    await fenceErasedAccount(tx, ctx.accountId);
+    await fenceErasedAccount(tx, dialect(ctx.db), ctx.accountId);
     // ── THE LOCK. FIRST STATEMENT, AND THE ONLY THING STANDING BETWEEN A DOUBLE-CLICK AND
     //    TWO RULES PER PERSON. See the note above.
     //
@@ -918,7 +919,7 @@ export async function setAutoSuggest(
     // stops this write recreating erased rows, and taking it FIRST is what keeps the lock
     // order a single chain (accounts → settings → sequence row). `erasure-fence.ts` carries
     // the two-sided argument.
-    await fenceErasedAccount(tx, ctx.accountId);
+    await fenceErasedAccount(tx, dialect(ctx.db), ctx.accountId);
     await tx.insert(accountSettings)
       .values({ accountId: ctx.accountId, autoSuggestAt: at, updatedAt: ctx.now() })
       .onConflictDoUpdate({
@@ -966,7 +967,7 @@ export async function setFoldersEnabled(
     // stops this write recreating erased rows, and taking it FIRST is what keeps the lock
     // order a single chain (accounts → settings → sequence row). `erasure-fence.ts` carries
     // the two-sided argument.
-    await fenceErasedAccount(tx, ctx.accountId);
+    await fenceErasedAccount(tx, dialect(ctx.db), ctx.accountId);
     await tx.insert(accountSettings)
       .values({ accountId: ctx.accountId, foldersEnabledAt: at, updatedAt: ctx.now() })
       .onConflictDoUpdate({
@@ -1029,7 +1030,7 @@ export async function setMailboxFoldersEnabled(
     // stops this write recreating erased rows, and taking it FIRST is what keeps the lock
     // order a single chain (accounts → settings → sequence row). `erasure-fence.ts` carries
     // the two-sided argument.
-    await fenceErasedAccount(tx, ctx.accountId);
+    await fenceErasedAccount(tx, dialect(ctx.db), ctx.accountId);
     const [mb] = await tx.select({ id: mailboxes.id })
       .from(mailboxes)
       .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, ctx.accountId)))
@@ -1201,7 +1202,7 @@ export async function setMailboxSignature(
     // stops this write recreating erased rows, and taking it FIRST is what keeps the lock
     // order a single chain (accounts → settings → sequence row). `erasure-fence.ts` carries
     // the two-sided argument.
-    await fenceErasedAccount(tx, ctx.accountId);
+    await fenceErasedAccount(tx, dialect(ctx.db), ctx.accountId);
     const [mb] = await tx.select({ id: mailboxes.id })
       .from(mailboxes)
       .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, ctx.accountId)))
@@ -1415,7 +1416,7 @@ export async function setDormancyDays(
     // stops this write recreating erased rows, and taking it FIRST is what keeps the lock
     // order a single chain (accounts → settings → sequence row). `erasure-fence.ts` carries
     // the two-sided argument.
-    await fenceErasedAccount(tx, ctx.accountId);
+    await fenceErasedAccount(tx, dialect(ctx.db), ctx.accountId);
 
     /* ── THE WINDOW IS APPLIED BY THE INSTALL THAT ORGANIZES (mail 0094) ─────────────────
      *
@@ -1551,7 +1552,7 @@ export async function setBlockRemoteImages(
     // stops this write recreating erased rows, and taking it FIRST is what keeps the lock
     // order a single chain (accounts → settings → sequence row). `erasure-fence.ts` carries
     // the two-sided argument.
-    await fenceErasedAccount(tx, ctx.accountId);
+    await fenceErasedAccount(tx, dialect(ctx.db), ctx.accountId);
     await tx.insert(accountSettings)
       .values({ accountId: ctx.accountId, blockRemoteImagesAt: at, updatedAt: ctx.now() })
       .onConflictDoUpdate({
@@ -1603,7 +1604,7 @@ export async function setBlockTrackingPixels(
     // stops this write recreating erased rows, and taking it FIRST is what keeps the lock
     // order a single chain (accounts → settings → sequence row). `erasure-fence.ts` carries
     // the two-sided argument.
-    await fenceErasedAccount(tx, ctx.accountId);
+    await fenceErasedAccount(tx, dialect(ctx.db), ctx.accountId);
     await tx.insert(accountSettings)
       .values({ accountId: ctx.accountId, loadTrackingPixelsAt: at, updatedAt: ctx.now() })
       .onConflictDoUpdate({
@@ -1666,7 +1667,7 @@ export async function setBlockAutoUnsubscribe(
     // stops this write recreating erased rows, and taking it FIRST is what keeps the lock
     // order a single chain (accounts → settings → sequence row). `erasure-fence.ts` carries
     // the two-sided argument.
-    await fenceErasedAccount(tx, ctx.accountId);
+    await fenceErasedAccount(tx, dialect(ctx.db), ctx.accountId);
     await tx.insert(accountSettings)
       .values({ accountId: ctx.accountId, blockAutoUnsubscribeAt: at, updatedAt: ctx.now() })
       .onConflictDoUpdate({
@@ -1746,7 +1747,7 @@ export async function setLocale(
     // stops this write recreating erased rows, and taking it FIRST is what keeps the lock
     // order a single chain (accounts → settings → sequence row). `erasure-fence.ts` carries
     // the two-sided argument.
-    await fenceErasedAccount(tx, ctx.accountId);
+    await fenceErasedAccount(tx, dialect(ctx.db), ctx.accountId);
     await tx.insert(accountSettings)
       .values({ accountId: ctx.accountId, locale: stored, updatedAt: ctx.now() })
       .onConflictDoUpdate({
@@ -1796,7 +1797,7 @@ export async function setThemeFace(
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
     // Erasure fence FIRST — the single lock chain (accounts → settings → sequence row) that
     // every settings writer keeps; `erasure-fence.ts` carries the two-sided argument.
-    await fenceErasedAccount(tx, ctx.accountId);
+    await fenceErasedAccount(tx, dialect(ctx.db), ctx.accountId);
     await tx.insert(accountSettings)
       .values({ accountId: ctx.accountId, themeFace, updatedAt: ctx.now() })
       .onConflictDoUpdate({
@@ -1850,7 +1851,7 @@ export async function setOnboardingCompleted(
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
     // Erasure fence FIRST — the single lock chain (accounts → settings → sequence row) every
     // settings writer keeps; `erasure-fence.ts` carries the two-sided argument.
-    await fenceErasedAccount(tx, ctx.accountId);
+    await fenceErasedAccount(tx, dialect(ctx.db), ctx.accountId);
     await tx.insert(accountSettings)
       .values({ accountId: ctx.accountId, onboardingCompletedAt: at, updatedAt: at })
       .onConflictDoUpdate({

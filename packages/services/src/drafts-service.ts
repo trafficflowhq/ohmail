@@ -2,6 +2,7 @@ import { and, eq, inArray, isNull, ne } from "drizzle-orm";
 import {
   claimIdempotencyKey, drafts, mailboxes, messages, outboundSends, recordChange, threads, type Tx,
 } from "@trafficflow/db";
+import { dialect } from "@trafficflow/db/dialect";
 import type { EmailAddress } from "@trafficflow/core/mail";
 import type { ServiceContext } from "./context.js";
 import { IdempotencyRaceLost, ServiceError } from "./errors.js";
@@ -273,9 +274,14 @@ export class DraftsService {
       // Same order and same ownership rule as `update`: the reply-target thread is read
       // (key-share) BEFORE the draft row exists, and another account's thread id is a 404.
       if (body.threadId) {
-        const t = await tx.select({ id: threads.id }).from(threads)
-          .where(and(eq(threads.id, body.threadId), eq(threads.accountId, ctx.accountId)))
-          .for("key share");
+        // KEY SHARE, and the strength travels with the call: it blocks a DELETE of the parent
+        // without blocking ordinary updates to it, which is the whole reason this read is not the
+        // exclusive lock. Promoting it while porting would serialize traffic this deliberately
+        // lets past.
+        const t = await dialect(ctx.db).forUpdate(
+          tx.select({ id: threads.id }).from(threads)
+            .where(and(eq(threads.id, body.threadId), eq(threads.accountId, ctx.accountId))),
+          { mode: "key share" });
         if (t.length === 0) throw new ServiceError("not_found", 404, "thread not found");
       }
       await this.requireOwnedReplyTarget(tx, ctx, body.inReplyToMessageId ?? null);
@@ -369,9 +375,10 @@ export class DraftsService {
       // read is also the OWNERSHIP check the column never had: account isolation is absolute,
       // so another account's thread id is a 404, not a stored reference.
       if (patch.threadId) {
-        const t = await tx.select({ id: threads.id }).from(threads)
-          .where(and(eq(threads.id, patch.threadId), eq(threads.accountId, ctx.accountId)))
-          .for("key share");
+        const t = await dialect(ctx.db).forUpdate(
+          tx.select({ id: threads.id }).from(threads)
+            .where(and(eq(threads.id, patch.threadId), eq(threads.accountId, ctx.accountId))),
+          { mode: "key share" });
         if (t.length === 0) throw new ServiceError("not_found", 404, "thread not found");
       }
       await this.requireOwnedReplyTarget(tx, ctx, patch.inReplyToMessageId ?? null);
@@ -805,9 +812,10 @@ export class DraftsService {
     tx: Tx, ctx: ServiceContext, messageId: string | null,
   ): Promise<void> {
     if (!messageId) return;
-    const m = await tx.select({ id: messages.id }).from(messages)
-      .where(and(eq(messages.id, messageId), eq(messages.accountId, ctx.accountId)))
-      .for("key share");
+    const m = await dialect(ctx.db).forUpdate(
+      tx.select({ id: messages.id }).from(messages)
+        .where(and(eq(messages.id, messageId), eq(messages.accountId, ctx.accountId))),
+      { mode: "key share" });
     if (m.length === 0) throw new ServiceError("not_found", 404, "reply target not found");
   }
 

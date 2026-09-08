@@ -1,5 +1,5 @@
 import { and, asc, eq, inArray, isNotNull, ne, sql } from "drizzle-orm";
-import { carryDialect } from "@trafficflow/db/dialect";
+import { carryDialect, dialect } from "@trafficflow/db/dialect";
 import {
   assertOrganizerRole,
   mailboxes, mailboxCredentials, mailboxFolders, folderState, messages, accountSettings,
@@ -2020,7 +2020,7 @@ export class MailboxService {
      * its own mirror by other means, and the honest answer to "the mirror looks wrong" on a
      * reader is that the ORGANIZER owns the repair.
      */
-    await assertOrganizerRole(asTx(ctx), ctx.accountId, id);
+    await assertOrganizerRole(asTx(ctx), dialect(ctx.db), ctx.accountId, id);
     await asTx(ctx).update(mailboxFolders)
       .set({ highestmodseq: null, deltaToken: null, updatedAt: ctx.now() })
       .where(eq(mailboxFolders.mailboxId, id));

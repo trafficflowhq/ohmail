@@ -5,6 +5,7 @@ import {
   mailboxes, mailboxFolders, messages, folderState, messageBodies, messageStates, claimIdempotencyKey,
   recordChange, upsertDesiredSeen, ringFilingDoorbell, type LedgerTx, type OrganizedBy, type Tx,
 } from "@trafficflow/db";
+import { dialect } from "@trafficflow/db/dialect";
 import type { Destination, NativeLocator } from "@trafficflow/core/mail";
 import { createLogger, httpsUnsubscribeUri, unsubscribeHeaderState } from "@trafficflow/core/mail";
 import type { Db, ServiceContext } from "./context.js";
@@ -963,7 +964,7 @@ export class MessageService {
         } else {
           // The locked re-check, on `move`'s argument exactly — the routing read above takes no
           // lock, so a demotion can commit between the two.
-          await assertOrganizerRole(tx as unknown as Tx, ctx.accountId, msg.mailboxId);
+          await assertOrganizerRole(tx as unknown as Tx, dialect(ctx.db), ctx.accountId, msg.mailboxId);
           const observed = await this.observedFolder(tx, id, msg.nativeLocator);
           // The mailbox that now owes a move, rung AFTER this transaction commits.
           filed = msg.mailboxId;
@@ -1158,7 +1159,7 @@ export class MessageService {
        * a write that has not started. Under READ COMMITTED the worker's lease gate can commit a
        * demotion between the two, so the share lock is what actually stands between this write and
        * a reader crossing the door. See `assertOrganizerRole`'s own header for the interleaving. */
-      await assertOrganizerRole(tx as unknown as Tx, ctx.accountId, msg.mailboxId);
+      await assertOrganizerRole(tx as unknown as Tx, dialect(ctx.db), ctx.accountId, msg.mailboxId);
 
       // Write DESIRED state only. observedFolder is the worker's truth — read
       // and PRESERVE it (never overwrite on conflict); the worker flips it when the
@@ -1283,7 +1284,7 @@ export class MessageService {
         }, opts);
       }
       // The locked re-check — see `move`'s note on why the plain read above does not replace it.
-      await assertOrganizerRole(tx as unknown as Tx, ctx.accountId, msg.mailboxId);
+      await assertOrganizerRole(tx as unknown as Tx, dialect(ctx.db), ctx.accountId, msg.mailboxId);
 
       const hasCopy = (msg.nativeLocator as NativeLocator | null) !== null;
       let trash: string | null = null;
@@ -1439,7 +1440,7 @@ export class MessageService {
       if (!msg) throw new ServiceError("not_found", 404, "message not found");
 
       // A READER RESTORES NOTHING — see the header. First, so the sentence is the true one.
-      await assertOrganizerRole(tx as unknown as Tx, ctx.accountId, msg.mailboxId);
+      await assertOrganizerRole(tx as unknown as Tx, dialect(ctx.db), ctx.accountId, msg.mailboxId);
 
       const [mb] = await tx.select({ trashFolder: mailboxes.trashFolder }).from(mailboxes)
         .where(eq(mailboxes.id, msg.mailboxId)).limit(1);

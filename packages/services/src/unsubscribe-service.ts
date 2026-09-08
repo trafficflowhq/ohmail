@@ -1,4 +1,5 @@
 import { and, eq, gte, inArray, isNull } from "drizzle-orm";
+import { dialect } from "@trafficflow/db/dialect";
 import {
   assertOrganizerRole,
   accountSettings, messages, messageBodies, folderState, unsubscribeRecords, type Tx,
@@ -443,7 +444,7 @@ export class UnsubscribeService {
      * PER MAILBOX: `row.mailboxId` is already loaded and is used one line below for the trust
      * set, so this costs one indexed read on a row this request has already touched.
      */
-    await assertOrganizerRole(asTx(ctx), ctx.accountId, row.mailboxId);
+    await assertOrganizerRole(asTx(ctx), dialect(ctx.db), ctx.accountId, row.mailboxId);
 
     // Per-mailbox trust, resolved for the mailbox that HOLDS this message — see
     // {@link UnsubscribeDeps.trustedAuthservIdsFor}. Held rather than inlined because its SIZE is

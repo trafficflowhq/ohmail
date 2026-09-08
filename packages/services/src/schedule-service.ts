@@ -119,7 +119,7 @@ export class ScheduleService {
        * sentence than a reader one: "reconnect it" is actionable, "another install organizes it"
        * would be true and useless about a mailbox with no credentials.
        */
-      await assertOrganizerRole(tx as unknown as Tx, ctx.accountId, d.mailboxId);
+      await assertOrganizerRole(tx as unknown as Tx, dialect(ctx.db), ctx.accountId, d.mailboxId);
 
       await tx.update(drafts).set({
         status: "scheduled",

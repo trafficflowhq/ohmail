@@ -349,7 +349,7 @@ export class FolderOpsService {
      * The row lock is already held by the seam's lock above, so the share lock the helper
      * takes is free here and the pair is genuinely atomic against a demotion.
      */
-    await assertOrganizerRole(tx, ctx.accountId, mailboxId);
+    await assertOrganizerRole(tx, dialect(ctx.db), ctx.accountId, mailboxId);
     return mb;
   }
 

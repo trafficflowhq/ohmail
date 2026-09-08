@@ -1,4 +1,5 @@
 import { and, eq, ne } from "drizzle-orm";
+import type { Dialect } from "./dialect/index.js";
 import { mailboxes } from "./schema-mail.js";
 import { isMailboxDisabledReason, type MailboxDisabledReason } from "./mailbox-errors.js";
 import type { Tx } from "./change-log.js";
@@ -434,7 +435,7 @@ export interface OrganizerRoleRow {
  * a no-op — {@link assertOrganizerRole} makes it a 404.
  */
 export async function readOrganizerRole(
-  tx: Tx, accountId: string, mailboxId: string,
+  tx: Tx, d: Dialect, accountId: string, mailboxId: string,
   /**
    * `lock: true` takes `FOR SHARE` on the mailbox row — see {@link assertOrganizerRole} for why a
    * share lock and not an exclusive one. Absent for the PLAIN READS (a DTO projection, a banner),
@@ -453,7 +454,9 @@ export async function readOrganizerRole(
     .from(mailboxes)
     .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, accountId)))
     .limit(1);
-  const [row] = await (opts.lock === true ? q.for("share") : q);
+  const [row] = await (opts.lock === true
+    ? d.forUpdate(q, { mode: "share" })
+    : q);
   if (!row) return null;
   return {
     // COERCED, never trusted: the column is NOT NULL with a CHECK behind it, so an unrecognised
@@ -513,9 +516,9 @@ export async function readOrganizerRole(
  * are stated at their call sites as narrow rather than left to look atomic.
  */
 export async function assertOrganizerRole(
-  tx: Tx, accountId: string, mailboxId: string,
+  tx: Tx, d: Dialect, accountId: string, mailboxId: string,
 ): Promise<OrganizerRoleRow> {
-  const row = await readOrganizerRole(tx, accountId, mailboxId, { lock: true });
+  const row = await readOrganizerRole(tx, d, accountId, mailboxId, { lock: true });
   if (!row) throw new MailboxNotFoundError(mailboxId);
   if (row.role !== "organizer") throw new OrganizedElsewhereError(mailboxId, row.by);
   return row;

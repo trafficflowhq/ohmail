@@ -107,7 +107,7 @@ export class TriageService {
        * — one organized here, one organized on somebody's laptop — and the question this door
        * asks is about the message in front of it.
        */
-      await assertOrganizerRole(tx as unknown as Tx, ctx.accountId, msg.mailboxId);
+      await assertOrganizerRole(tx as unknown as Tx, dialect(ctx.db), ctx.accountId, msg.mailboxId);
 
       // The state being LEFT — read before the upsert overwrites it (serialized by the message
       // row lock above). Only the `none` transition consumes it (the re-homing below).

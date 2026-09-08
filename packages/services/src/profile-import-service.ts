@@ -1,4 +1,5 @@
 import { and, asc, eq, sql } from "drizzle-orm";
+import { dialect } from "@trafficflow/db/dialect";
 import {
   assertOrganizerRole,
   awayResponders, contacts, mailboxes, notifyRules, rules, tags,
@@ -457,7 +458,7 @@ export class ProfileImportService {
      *
      * PER MAILBOX, because the document belongs to one mailbox's `_meta` folder.
      */
-    await assertOrganizerRole(asTx(ctx), ctx.accountId, mailboxId);
+    await assertOrganizerRole(asTx(ctx), dialect(ctx.db), ctx.accountId, mailboxId);
     const fingerprint = body.fingerprint;
     if (typeof fingerprint !== "string" || fingerprint.length === 0) {
       throw new ServiceError("validation_failed", 400, "fingerprint is required");

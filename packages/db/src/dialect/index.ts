@@ -135,12 +135,26 @@ export function dialectOf(db: unknown): DialectName {
   );
 }
 
+/**
+ * HOW STRONG A ROW LOCK IS — the four strengths the server distinguishes.
+ *
+ * Absent means `"update"`, which is the exclusive one and the one most callers want. The others
+ * are here because SITES ALREADY USE THEM and a port may not quietly promote one: a shared lock
+ * lets other readers through and a key-share lock only blocks changes to the key, so rewriting
+ * either as `"update"` would serialize traffic the site deliberately does not serialize. That is a
+ * change to what the statement DOES on the server, made while porting it to a second store — which
+ * is exactly the substitution a seam exists to prevent.
+ */
+export type LockMode = "update" | "share" | "key share" | "no key update";
+
 /** A row-locking request, in the terms both dialects can be asked in. */
 export interface LockOptions {
   /** Restrict the lock to these tables, the way `FOR UPDATE OF <table>` does. */
   readonly of?: unknown;
   /** Skip rows another transaction already holds instead of waiting for them. */
   readonly skipLocked?: boolean;
+  /** How strong. Absent is `"update"` — see {@link LockMode}. */
+  readonly mode?: LockMode;
 }
 
 /** The two text-search arms, each as the predicate that selects and the expression that ranks. */
@@ -186,13 +200,14 @@ export interface Dialect {
   castJsonb(value: SQL | unknown): SQL;
 
   /**
-   * Take the rows this query returns for the rest of the transaction.
+   * Take the rows this query returns for the rest of the transaction, at {@link LockMode} strength.
    *
-   * On SQLite this is the identity, and that is not a weakening: the engine store is reached
-   * through ONE serialized connection, so there is no second writer for a lock to exclude. A
-   * second connection to the same file does not contend, it fails — `database is locked` — so
-   * the serialization is the guarantee, and row locking would be a second mechanism for
-   * something already true.
+   * On SQLite this is the identity for EVERY mode, and that is not a weakening: the engine store is
+   * reached through ONE serialized connection, so there is no second writer for a lock to exclude.
+   * A second connection to the same file does not contend, it fails — `database is locked` — so
+   * the serialization is the guarantee, and row locking would be a second mechanism for something
+   * already true. The mode is meaningless there for the same reason: the strengths differ only in
+   * WHICH other writers they admit, and there are none.
    */
   forUpdate<Q>(q: Q, opts?: LockOptions): Q;
 

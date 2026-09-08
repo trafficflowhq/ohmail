@@ -1,4 +1,5 @@
 import { readAccountErasedAt, type Tx } from "@trafficflow/db";
+import type { Dialect } from "@trafficflow/db/dialect";
 import { ServiceError } from "./errors.js";
 
 /**
@@ -65,10 +66,10 @@ import { ServiceError } from "./errors.js";
  * pre-erasure session should be told the account was removed rather than sent hunting for a
  * typo'd id.
  */
-export async function fenceErasedAccount(tx: Tx, accountId: string): Promise<void> {
+export async function fenceErasedAccount(tx: Tx, d: Dialect, accountId: string): Promise<void> {
   // `readAccountErasedAt` is `@trafficflow/db`'s primitive — see its own header for why the read
   // moved and why this function is not a second implementation of it.
-  const erasedAt = await readAccountErasedAt(tx, accountId);
+  const erasedAt = await readAccountErasedAt(tx, d, accountId);
   if (erasedAt === undefined) {
     // No accounts row is PROOF the account was never erased, not a suspicious absence: erasure
     // KEEPS the row (the pseudonymous billing subject) and stamps it — a deleted row is the one

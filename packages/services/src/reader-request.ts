@@ -6,6 +6,7 @@ import {
   MOVE_DESTINATIONS, messages,
   type OrganizedBy, type RequestRefusalReason, type Tx,
 } from "@trafficflow/db";
+import { dialect } from "@trafficflow/db/dialect";
 import {
   capabilityForKind, REQUEST_PAYLOAD_MAX_BYTES, type RequestKind,
 } from "@trafficflow/core/adapters/organizer-lease";
@@ -422,7 +423,7 @@ export async function writeReaderRequest(
   },
 ): Promise<PendingRequest> {
   assertPayloadFits(input.kind, input.payload);
-  const erasedAt = await readAccountErasedAt(tx, ctx.accountId);
+  const erasedAt = await readAccountErasedAt(tx, dialect(ctx.db), ctx.accountId);
   if (erasedAt != null) throw new AccountErasedError(ctx.accountId);
 
   const requestId = input.requestId ?? randomUUID();
