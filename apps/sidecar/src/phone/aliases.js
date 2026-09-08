@@ -117,6 +117,12 @@ const PACKAGE_ALIASES = {
  * substitute for something CALLED AT BOOT answers, and only an unreachable one refuses.
  */
 const SIDECAR_SUBSTITUTES = {
+  /* `createSidecar` builds a local AI provider unconditionally, and the real one opens a store
+     file through `path.join` at the top of that call — so the engine died during composition on a
+     build that does not offer the feature at all. The twin answers the same interface with no disk
+     and no network, and substituting it here takes three vendor transports out of the artifact as
+     well. See `phone/ai-provider.ts`. */
+  "./ai-provider.js": path.join(PHONE, "ai-provider.ts"),
   "./db.js": path.join(PHONE, "db.ts"),
   "./host-listener.js": path.join(PHONE, "host-listener.ts"),
   "./host-lan.js": path.join(PHONE, "host-lan.ts"),
