@@ -229,6 +229,114 @@ function rowsOf<T>(res: unknown): T[] {
   return Array.isArray(bag?.rows) ? (bag!.rows as T[]) : [];
 }
 
+/**
+ * ── THE CLOUD 0031 DEPLOY GATE, DEFINED ONCE ──────────────────────────────────────────────
+ *
+ * `0031_credit_rollup_sweep_backlog` adds `credit_rollup_runs.setup_sweep_backlog` and
+ * `credit_rollup_runs.duration_ms`, in that order, and the run-row INSERT below names both. A
+ * host deployed ahead of the migration therefore 42703s inside a write whose failure is
+ * swallowed by contract — a pass that did its work must not report as one that did nothing —
+ * so the only symptom is a run ledger that quietly stops gaining rows, while the console reads
+ * its freshness stamp off the newest row and calls the aggregates stale, which is the one thing
+ * they are not.
+ *
+ * THE MARKER NAMES THE SECOND COLUMN, which is the whole point: statements inside one migration
+ * apply in order, so a database holding `duration_ms` holds `setup_sweep_backlog` too, and the
+ * implication runs that way and only that way. A marker on the first column is satisfied by a
+ * database that ran statement one and not statement two — exactly the state that then fails
+ * every run-row insert.
+ *
+ * ── WHY THESE THREE VALUES LIVE HERE AND NOT IN THE API ROUTE ─────────────────────────────
+ *
+ * The API's `/health` census (`packages/api/src/routes/health-cloud.ts`) answered
+ * `503 schema_incomplete` on this marker while the WORKER, which is the process that runs the
+ * pass, probed nothing — it could activate against an 0030 database and swallow the write. Both
+ * halves of the deploy gate now read the SAME table/column pair and the SAME journal tag from
+ * here, so they cannot drift.
+ *
+ * It is this module and not the route because the worker's dependency boundary forbids it the
+ * other way round: `apps/worker/src` may import `@trafficflow/core` and `@trafficflow/db` and
+ * nothing else from the workspace, enforced by the worker's dependency test. The route imports
+ * these three names; the worker imports the probe and the error. `@trafficflow/db/cloud` is the
+ * leaf both reach for, so no barrel edge is created and nothing about the desktop engine's
+ * bundle changes — `health-cloud.ts` is loaded by the HOSTED route table alone.
+ */
+export const CLOUD_LEDGER_JOURNAL_TAG = "0031_credit_rollup_sweep_backlog";
+
+/** The one column whose presence means {@link CLOUD_LEDGER_JOURNAL_TAG} was applied. */
+export const CLOUD_LEDGER_RUN_MARKER = {
+  table: "credit_rollup_runs", column: "duration_ms",
+} as const;
+
+/**
+ * The named refusal, one string, shared by the worker's boot gate and by the run-row insert.
+ *
+ * It is a CONSTANT and not a formatted message because both producers and the test that watches
+ * them compare it exactly: a reason an operator can grep for is worth more than a sentence, and
+ * a sentence assembled at two sites is two sentences eventually.
+ */
+export const CLOUD_LEDGER_SCHEMA_BEHIND = "schema_behind: cloud 0031 not applied";
+
+/** This host is running ahead of the cloud ledger's migration. See {@link CLOUD_LEDGER_SCHEMA_BEHIND}. */
+export class CloudLedgerSchemaBehindError extends Error {
+  constructor() {
+    super(CLOUD_LEDGER_SCHEMA_BEHIND);
+    this.name = "CloudLedgerSchemaBehindError";
+  }
+}
+
+/**
+ * True for {@link CloudLedgerSchemaBehindError} however it arrived.
+ *
+ * By NAME and not `instanceof`, deliberately: the worker and the API load `@trafficflow/db`
+ * through different resolutions (the built `dist` in the deployed image, the source through the
+ * vitest alias), and an `instanceof` across two copies of one class is false while the error is
+ * the same error. The message is checked too, so a same-named class from somewhere else cannot
+ * satisfy it. `cause` is followed one level because a driver wrapper is the ordinary shape.
+ */
+export function isCloudLedgerSchemaBehind(err: unknown): boolean {
+  const named = (e: unknown): boolean => {
+    const o = e as { name?: unknown; message?: unknown } | null;
+    return o?.name === "CloudLedgerSchemaBehindError" && o?.message === CLOUD_LEDGER_SCHEMA_BEHIND;
+  };
+  if (named(err)) return true;
+  return named((err as { cause?: unknown } | null)?.cause);
+}
+
+/**
+ * Postgres `42703 undefined_column`, which is what a host ahead of its migration gets back.
+ *
+ * The code and not the message text: the message is localised and the wording has changed
+ * between server versions, while `SQLSTATE` is the contract. `cause` is followed one level
+ * because postgres.js reports the server error directly and PGlite wraps it.
+ */
+function isUndefinedColumn(err: unknown): boolean {
+  const code = (e: unknown): unknown => (e as { code?: unknown } | null)?.code;
+  return code(err) === "42703" || code((err as { cause?: unknown } | null)?.cause) === "42703";
+}
+
+/**
+ * IS THIS DATABASE CURRENT ENOUGH TO RECORD A ROLL-UP RUN? — the shared deploy-gate probe.
+ *
+ * `information_schema.columns` and not `drizzle_cloud.__drizzle_migrations`, for the reason
+ * `alertSchemaReadable` already records: `harden-staff-role.sql` leaves the runtime role without
+ * USAGE on the migrator's schema, so a journal read raises 42501 on every hardened deployment
+ * and any catch around it turns the whole gate into decoration. `information_schema` needs no
+ * grant and shows each role the objects it already has privileges on.
+ *
+ * It answers a BOOLEAN and throws nothing of its own: a caller that cannot reach the database at
+ * all is a different fault with a different remedy, and it is the caller's to classify.
+ */
+export async function cloudLedgerSchemaReady(db: Tx): Promise<boolean> {
+  const rows = rowsOf<{ n: number | string }>(await db.execute(
+    sql`select count(*)::int as n from information_schema.columns
+        where table_schema = 'public'
+          and table_name = ${CLOUD_LEDGER_RUN_MARKER.table}
+          and column_name = ${CLOUD_LEDGER_RUN_MARKER.column}`,
+  ));
+  return Number(rows[0]?.n ?? 0) > 0;
+}
+
 /** Midnight UTC of the day `at` falls in. */
 function utcDayStart(at: Date): Date {
   return new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), at.getUTCDate()));
@@ -603,10 +711,17 @@ export async function foldAndSweepSetupSpends(
  * Recompute the daily aggregates, and — when asked — the totals, the divergence count and the
  * setup-pool sweep.
  *
- * NEVER THROWS. A roll-up is a read path's cache; a deployment whose aggregates are an hour
- * stale is a console with an honest freshness stamp, and a deployment whose maintenance tail
- * aborts is a worker that stops sweeping idempotency keys too. A failure is recorded on
- * `credit_rollup_runs` with a scrubbed class and returned in {@link CreditRollupReport.error}.
+ * THROWS FOR EXACTLY ONE CAUSE, and returns every other failure. A roll-up is a read path's
+ * cache; a deployment whose aggregates are an hour stale is a console with an honest freshness
+ * stamp, and a deployment whose maintenance tail aborts is a worker that stops sweeping
+ * idempotency keys too. So a failure is recorded on `credit_rollup_runs` with a scrubbed class
+ * and returned in {@link CreditRollupReport.error}.
+ *
+ * The exception is {@link CloudLedgerSchemaBehindError}: this host is running ahead of
+ * {@link CLOUD_LEDGER_JOURNAL_TAG} and the run row itself cannot be written, so there is no
+ * record to carry the report and nothing a later pass can repair. That is a deployment fault
+ * rather than a stale cache, and the caller is expected to escalate it — see the run-row
+ * insert's catch below. It used to say NEVER THROWS and the swallow it described was the defect.
  */
 export async function runCreditRollupPass(
   db: Tx, opts: CreditRollupOptions,
@@ -874,7 +989,19 @@ export async function runCreditRollupPass(
       values (${computedAt}::timestamptz, ${daysRecomputed}, ${rowsWritten},
               ${divergentAccounts}, ${prunedSetupSpends},
               ${setupSweepBacklog}, ${durationMs}, ${error})`);
-  } catch {
+  } catch (err) {
+    // A MISSING COLUMN IS NOT A FAILED WRITE — it is this host running ahead of its migration,
+    // and it is the ONE failure here that must not be swallowed. The swallow above it is right
+    // for everything else (a lock timeout, a statement timeout: a pass that did its work must
+    // not report as one that did nothing), and it was wrong for 42703 in a way nothing could
+    // see: the API's `/health` census refuses a deployment on this exact column while the worker
+    // wrote its run row into a `catch {}` and carried on, so the run ledger stopped gaining rows
+    // and the console read the resulting gap as stale aggregates.
+    //
+    // Thrown rather than folded into the report's `error`, because a report is a log line and
+    // this is a deployment fault: the worker's supervisor turns it into the same named fatal its
+    // boot gate raises, health goes 503, and the platform replaces the instance.
+    if (isUndefinedColumn(err)) throw new CloudLedgerSchemaBehindError();
     /* the report below still carries the truth for the caller's log */
   }
 

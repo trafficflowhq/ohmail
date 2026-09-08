@@ -64,6 +64,7 @@ import {
   anyDegradedCause, type DegradedCauses, type UnservedBreakdown,
 } from "./health.js";
 import { acquireLeaderLock, leaderLockKeyFor, LockLostError, type LeaderLock } from "./leader-lock.js";
+import { reportRollupFailure } from "./schema-gate.js";
 import { startApiCron, type ApiCronHandle, type ApiCronTargetHealth } from "./api-cron.js";
 import { runSyncCycle, LeaderFencedError, type SyncDeps } from "./sync.js";
 import {
@@ -277,6 +278,17 @@ export interface WorkerHooks {
    * purely the signal for the supervisor to stop advertising leadership and go 503.
    */
   onLockLost?: (err: LockLostError) => void;
+  /**
+   * The database is older than this bundle: the credit roll-up cannot write its run row, so
+   * this worker would do its work and be unable to record that it did, on every pass, for as
+   * long as it is deployed. The API's `/health` census refuses a deployment in exactly this
+   * state; the worker's own health check is memory-only and cannot, so the pass's throw is the
+   * only place the condition can be observed from in-process.
+   *
+   * Unlike {@link onLockLost} the worker has NOT quiesced when this fires — it is the
+   * supervisor's to decide, and it treats it as the same fatal its boot gate raises.
+   */
+  onSchemaBehind?: (err: Error) => void;
 }
 
 /** A mailbox that connected successfully and is now part of the sync rotation. */
@@ -5340,10 +5352,13 @@ export async function startWorkerWithLock(
             }
           }
         } catch (err) {
-          // Unreachable by contract (`runCreditRollupPass` catches its own), and caught anyway:
-          // an unexpected throw here would take the whole maintenance tail with it, including
-          // the sweeps above that have already run.
-          log.error("credit_rollup_threw", { err });
+          // ONE PREDICATE, in `schema-gate.ts`, so this site has no second opinion about which
+          // throws are deployment faults. The pass returns ordinary failures in its report and
+          // throws for exactly one cause — this host ahead of the cloud ledger's migration —
+          // which is escalated to the supervisor's fatal rather than logged, because a run
+          // ledger that cannot gain rows is not a stale cache. Everything else stays a logged
+          // error, so an unexpected throw cannot take the maintenance tail with it.
+          reportRollupFailure(err, log, hooks.onSchemaBehind);
         }
       }
 

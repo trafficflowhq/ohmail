@@ -243,6 +243,11 @@ export {
   runCreditRollupPass, isNightlyRollupSlot,
   CREDIT_ROLLUP_HOURLY_DAYS, CREDIT_ROLLUP_NIGHTLY_DAYS, CREDIT_ROLLUP_NIGHTLY_HOUR_UTC,
   SETUP_SPEND_RETENTION_DAYS,
+  // The cloud 0031 deploy gate, defined once and read by BOTH halves of it: the API's
+  // `/health` census and the worker's supervisor. The worker may not import the API route,
+  // so the values live beside the column they are about — see the constants' header.
+  CLOUD_LEDGER_JOURNAL_TAG, CLOUD_LEDGER_RUN_MARKER, CLOUD_LEDGER_SCHEMA_BEHIND,
+  CloudLedgerSchemaBehindError, isCloudLedgerSchemaBehind, cloudLedgerSchemaReady,
   type CreditRollupOptions, type CreditRollupReport,
 } from "./credit-rollup.js";
 

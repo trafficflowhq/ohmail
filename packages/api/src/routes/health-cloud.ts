@@ -1,3 +1,4 @@
+import { CLOUD_LEDGER_JOURNAL_TAG, CLOUD_LEDGER_RUN_MARKER } from "@trafficflow/db/cloud";
 import {
   MAIL_SCHEMA_MARKERS, SCHEMA_INDEX_MARKERS, SCHEMA_CHECK_MARKERS,
   MAIL_SCHEMA_MARKER_JOURNAL_TAG, type SchemaMarker, type CheckDefinitionMarker,
@@ -302,7 +303,15 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   //
   // `loadRollupState` also SELECTs `setup_sweep_backlog` on the staff connection, so the Billing
   // board's read 42703s outright without it. Deploy order: migration → API → worker → admin.
-  ["credit_rollup_runs", "duration_ms"],
+  //
+  // THE PAIR IS NOT SPELLED HERE ANY MORE, and that is the fix rather than tidiness. This census
+  // refused an API deployed ahead of 0031 and the WORKER — the process that actually runs the
+  // pass and writes the run row — probed nothing at all, because the platform's own health check
+  // is memory-only and never reaches a database. So the deploy gate held on one of the two hosts
+  // it claims to hold on. The worker's supervisor now reads the same pair from the same place
+  // before it announces leadership; `@trafficflow/db/cloud` is where they meet, because the
+  // worker's dependency boundary forbids it importing an API route.
+  [CLOUD_LEDGER_RUN_MARKER.table, CLOUD_LEDGER_RUN_MARKER.column],
 ] as const;
 
 /**
@@ -572,7 +581,7 @@ export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;
  * The tag moves for its own reason: what this constant asserts is "the markers were reconciled
  * against the newest entry", and a stale tag beside an unchanged list is the state the assertion
  * exists to refuse — it cannot tell "nothing needed adding" from "nobody looked". */
-export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0031_credit_rollup_sweep_backlog";
+export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = CLOUD_LEDGER_JOURNAL_TAG;
 
 /** The journal entries {@link SCHEMA_MARKERS} was last reconciled against (asserted by a test). */
 export const SCHEMA_MARKER_JOURNAL_TAG =

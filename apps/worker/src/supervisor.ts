@@ -6,6 +6,7 @@ import {
 } from "./config.js";
 import { evaluateHealth, startHealthServer, type HealthServer } from "./health.js";
 import { acquireLeaderLock, leaderLockKeyFor, type LockLostError } from "./leader-lock.js";
+import { cloudLedgerSchemaGate, CloudLedgerSchemaBehindError } from "./schema-gate.js";
 import { startWorkerWithLock, type RunningWorker } from "./index.js";
 
 export type SupervisorState = "standby" | "leader" | "failed" | "stopped";
@@ -42,7 +43,21 @@ export interface SupervisedWorker {
  */
 export async function runWorkerSupervised(
   config: WorkerConfig,
-  hooks: { onFatal?: (err: unknown) => void } = {},
+  hooks: {
+    onFatal?: (err: unknown) => void;
+    /**
+     * TEST SEAM for the schema deploy gate. ABSENT means "use the real probe", which is the only
+     * state production is ever in — it is not a tri-state and there is no "not answered yet":
+     * the gate is asked exactly once, before the first lock attempt, and its answer is a boolean
+     * or a thrown connection fault.
+     *
+     * It exists because the real probe opens a Postgres connection, and the three cases worth
+     * watching here — refused, admitted, and a fatal raised mid-life — are decisions of this
+     * state machine rather than of the database. The probe's own SQL is the API census's, proven
+     * against a real server there.
+     */
+    schemaGate?: (databaseUrl: string) => Promise<boolean>;
+  } = {},
 ): Promise<SupervisedWorker> {
   const shards = config.shards ?? DEFAULT_SHARDS;
   const shardIndex = config.shardIndex ?? 0;
@@ -181,6 +196,28 @@ export async function runWorkerSupervised(
     },
   });
 
+  /**
+   * THE SAME FATAL THE BOOT GATE RAISES, reached the other way round.
+   *
+   * The boot gate refuses a worker deployed ahead of cloud 0031. This is the arm for a database
+   * that falls behind AFTER a healthy start — the roll-up's run-row insert 42703s, the pass
+   * throws, and `reportRollupFailure` escalates it here. It must not be a log line: the run row
+   * is how "the roll-up has stopped" is answerable by something other than the roll-up, so a
+   * worker that cannot write it is serving a console a freshness stamp it has not earned.
+   *
+   * Identical treatment to a lost lock — 503, `hooks.onFatal`, the platform replaces the
+   * instance — because the remedy is identical: this instance must stop being the leader.
+   */
+  function onSchemaBehind(err: Error): void {
+    if (isStopped()) return;
+    fatal = err;
+    state = "failed";
+    log.error("schema_behind_after_takeover", {
+      err, reason: "the credit roll-up could not write its run row; health is now 503",
+    });
+    hooks.onFatal?.(err);
+  }
+
   /** The leader lost its advisory lock: the worker already quiesced, so stop advertising. */
   function onLockLost(err: LockLostError): void {
     if (isStopped()) return;
@@ -207,7 +244,8 @@ export async function runWorkerSupervised(
     // the platform replaces it. A failure to even reach the lock stays a standby retry.
     if (isStopped()) { await lock.release(); return; }          // raced with stop()
     lockWon = true;
-    const started = await startWorkerWithLock(config, lock, { onLockLost });   // releases the lock if it throws
+    // releases the lock if it throws
+    const started = await startWorkerWithLock(config, lock, { onLockLost, onSchemaBehind });
     // stop() may have been called WHILE we were taking over (a SIGTERM landing during a
     // standby's promotion). Publishing leadership now would leak this worker and its lock:
     // stop() already saw `worker === null` and returned.
@@ -250,13 +288,46 @@ export async function runWorkerSupervised(
     }, retryMs);
   }
 
-  // The FIRST attempt is awaited so a genuinely broken config (bad KEK, dead DB) still
-  // fails the boot loudly instead of hiding behind a healthy-looking standby.
-  try {
-    await runAttempt();
-  } catch (err) {
-    await health.close();
-    throw err;
+  // ── THE SCHEMA DEPLOY GATE, BEFORE THE LOCK AND THEREFORE BEFORE LEADERSHIP ──────────────
+  //
+  // The API refuses a deployment whose database lacks `credit_rollup_runs.duration_ms`; this is
+  // the same refusal on the worker, which is the process that actually writes that row. It could
+  // not come from `/health`: that endpoint is memory-only by design, so the platform's check on
+  // this process never reaches a database and a worker ahead of cloud 0031 activated, took the
+  // lock, and then swallowed the insert's 42703 on every pass — a stationary run ledger behind an
+  // instance reporting 200.
+  //
+  // BEFORE `runAttempt()` and not inside it, so no lock is taken and `announceLeader()` is
+  // unreachable: a refused worker never becomes the leader even for the instant it would take to
+  // discover the fault. The health server is already up, so the refusal is READABLE — the
+  // snapshot carries `error` and answers 503, which is what a deploy gate reads. Throwing here
+  // instead would close the endpoint and leave the platform with a dead port and no reason.
+  //
+  // A gate that THROWS (the database is unreachable) is deliberately NOT caught: that is the
+  // "genuinely broken config" case the first attempt already fails loudly for, and collapsing it
+  // into a migration verdict would name the wrong fault.
+  const gate = hooks.schemaGate ?? cloudLedgerSchemaGate;
+  const schemaReady = await gate(config.databaseUrl);
+  if (!schemaReady) {
+    const err = new CloudLedgerSchemaBehindError();
+    fatal = err;
+    state = "failed";
+    log.error("schema_behind", {
+      err,
+      reason: "this worker is deployed ahead of the cloud ledger's migration; it will not take " +
+        "the leader lock, and health answers 503 so the deployment fails rather than running " +
+        "passes whose run rows cannot be written",
+    });
+    hooks.onFatal?.(err);
+  } else {
+    // The FIRST attempt is awaited so a genuinely broken config (bad KEK, dead DB) still
+    // fails the boot loudly instead of hiding behind a healthy-looking standby.
+    try {
+      await runAttempt();
+    } catch (err) {
+      await health.close();
+      throw err;
+    }
   }
 
   return {
