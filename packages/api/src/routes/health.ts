@@ -1084,8 +1084,7 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // rather than waved off, since the FK is the half that turns a discard into a 23503.
   ["outbound_sends", "resolved_by"],
   // mail 0096_away_piles — TWO columns, because the migration adds two, and BOTH are read on a
-  // path that selects them by name. **These are the newest entries, so `0096_away_piles` is also
-  // the tag below.**
+  // path that selects them by name.
   //
   // `away_responders.piles` is WHICH PILES the away responder answers. The pass's probe selects it
   // by name for every live responder, so an API or a send clock ahead of the migration raises
@@ -1105,6 +1104,24 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // to a dead address once per throttle interval, each attempt returning a bounce into this
   // account's own Ohbox. That is the state this migration was written to end.
   ["away_sender_state", "undeliverable_at"],
+  // mail 0097_folder_state_last_error_class — ONE column, because the migration adds one.
+  // **It is the newest entry, so it is also the tag below.** The 0096 paragraph above carried that
+  // sentence until this migration landed behind it; `MAIL_SCHEMA_MARKER_JOURNAL_TAG` is
+  // single-valued, so the sentence moves with the tag rather than standing in two places — the
+  // docblock's own rule, and leaving both would have shipped a false claim with every gate green.
+  //
+  // `folder_state.last_error_class` is WHY the mail server refused a filing, as one of four words
+  // this codebase chose. It is probed because the API READS it: the mailbox projection selects it
+  // in the filtered aggregate that reports what a mailbox still owes, so an API ahead of the
+  // migration raises Postgres 42703 on `GET /mailboxes` — which the shell polls every thirty
+  // seconds for its status line, on every open tab.
+  //
+  // That is the whole cost and it is enough: a route the whole product's status depends on would
+  // fail for every account until the migration landed, and a database certified healthy without
+  // this marker is a database that lets that deploy through. The CHECK that closes the column to
+  // the four words gets no marker of its own — a constraint that gained a set cannot be detected
+  // by reading a column name, the same rule the refusal vocabulary above records.
+  ["folder_state", "last_error_class"],
 ] as const;
 
 /* THE CLOUD HALF OF THE MARKER CENSUS MOVED TO `./health-cloud.js`.
@@ -1910,7 +1927,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0096_away_piles";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0097_folder_state_last_error_class";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */
