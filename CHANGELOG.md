@@ -325,6 +325,90 @@ message forwarded. So does sending it again once the hour has passed, and so doe
 after an attempt that definitely failed — the ordinary "the mail server was unreachable, try again"
 retry, which must keep working.
 
+### A computer that stopped organizing no longer holds the mailbox for ever
+
+Organizing a mailbox means keeping a record inside the mailbox itself saying which install is doing
+it, so that a second computer can see the mailbox is taken. A record nobody has renewed for ten
+minutes has lapsed, and from then on you can press Organize here on another computer and take the
+mailbox over.
+
+That was not true of a record this version cannot read — one written in a newer format, or naming a
+kind of organizer this release does not know about. The app refuses to take a mailbox from an
+organizer it cannot place, which is right for as long as that organizer is still there, and the
+refusal was meant to end when the record lapsed. It never ended. The age of a record was measured
+against the newest record in the same mailbox, so a mailbox holding only one record measured that
+record against itself and read it as current whatever its date said. A computer that stopped
+organizing months ago and left its record behind refused every takeover, from every other computer,
+with no way out short of deleting the message by hand.
+
+The newest record in a mailbox is now measured against the clock of the computer reading it, and
+every older record is still measured against that newest one -- which is what keeps two computers
+with two clocks from disagreeing about who holds the mailbox.
+
+A second way to hold a mailbox for ever came out of closing the first. A date far enough in the
+future is ahead of any reader's clock, so it reads as current at every real moment, and a machine
+with a dead clock battery could hold a mailbox on nothing but a wrong date. A date beyond the
+tolerance for ordinary differences between two machines' clocks is now taken to say nothing at all
+about when the record was last renewed: such a record holds the mailbox only while something
+believable in the same mailbox is still being renewed. Inside the tolerance a clock that runs ahead
+is still believed, which is the case that matters -- treating a machine that is slightly ahead as
+gone is how two computers both decide they are the organizer.
+
+And a wrong date could push a working organizer out. Because the age of a record was judged against
+the newest date in the mailbox, a date in the future dragged that comparison forward, and a record
+written seconds ago could read as expired beside it -- so a computer that was organizing the mailbox
+and checking in normally could be taken over by another, on the strength of a wrong date in a third
+record. It did not take an absurd date: a few minutes ahead was enough. Dates are no longer used to
+judge how old OTHER records are once they run ahead of the reading computer's own clock, and a date
+beyond what a clock difference could explain is not used for anything. A machine whose clock runs a
+little fast is still believed to be alive, which is the case that has to keep working; it simply no
+longer ages its neighbours.
+
+Two more ways a mailbox could get stuck, both of which needed a second record to appear.
+
+**A mailbox with two abandoned records stayed stuck when either one alone would have recovered.**
+The age of a record was measured against the newest record present, and with two old records the
+newest was itself old -- so each looked recent beside the other and the mailbox refused every
+takeover for ever. Whether a mailbox has been abandoned is now decided for the mailbox as a whole,
+against the clock of the computer reading it, before any record is compared with any other. If
+nothing has checked in for ten minutes, nothing in that mailbox is holding it.
+
+**And a computer that was organizing could be reported as stopped, letting a second one start.**
+When one computer left two records behind -- the ordinary result of a renewal that was interrupted
+-- the screen described it by the newer record alone, which could be the leftover rather than the
+live one. It was then shown as stopped, and the record of who was organizing could be cleared while
+that computer was still working. Both the screen and the clearing now look at every record a
+computer has left, not just the newest.
+
+Three smaller corrections in the same area.
+
+**A mailbox set to wait longer than the default before treating an organizer as gone was not
+waiting that long everywhere.** The setting reached the part that decides whether this computer may
+organize, and not the part that reports who is organizing -- so on a mailbox configured to wait a
+day, the report could say nobody was organizing while the decision still said somebody was, and the
+record of who held the mailbox could be cleared while another computer was well inside its own
+time. Both now use the mailbox's own setting.
+
+**The screen could name the wrong computer.** When two computers had each left an extra record
+behind with an unusable date, the name shown was chosen by whichever unusable date happened to be
+later -- which could be the computer that had just stood down rather than the one organizing. The
+name is now chosen the same way the decision chooses, so the screen and the button agree about
+which machine they mean.
+
+**And a mailbox told to wait no time at all now waits no time at all.** A record dated slightly in
+the future was still counted as current under a zero wait. That setting is unusual, and it now
+means what it says.
+
+Two things deliberately did not change. A record that is genuinely still being renewed refuses a
+takeover exactly as before, and a record with an unusable date sitting beside one that is being
+renewed refuses too, because then something is organizing the mailbox even if we cannot tell what.
+And a computer that finds only its own record in a mailbox still resumes organizing without asking
+anybody, however long it has been asleep.
+
+The screen that tells you who is organizing a mailbox reads the same rule as the button beside it.
+It no longer names a live organizer for a record the app had already stopped defending, and no
+longer offers to stop a computer that has already stopped.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
@@ -561,90 +645,6 @@ A mailbox that cannot send no longer reports a send in progress; the refusal is 
 The row of actions under a message is as wide as the buttons standing in it. Where the column is
 too narrow for all of them the rest still move into the ⌄ menu at its end, but the row no longer
 keeps its full width with an empty gap where they were.
-
-### A computer that stopped organizing no longer holds the mailbox for ever
-
-Organizing a mailbox means keeping a record inside the mailbox itself saying which install is doing
-it, so that a second computer can see the mailbox is taken. A record nobody has renewed for ten
-minutes has lapsed, and from then on you can press Organize here on another computer and take the
-mailbox over.
-
-That was not true of a record this version cannot read — one written in a newer format, or naming a
-kind of organizer this release does not know about. The app refuses to take a mailbox from an
-organizer it cannot place, which is right for as long as that organizer is still there, and the
-refusal was meant to end when the record lapsed. It never ended. The age of a record was measured
-against the newest record in the same mailbox, so a mailbox holding only one record measured that
-record against itself and read it as current whatever its date said. A computer that stopped
-organizing months ago and left its record behind refused every takeover, from every other computer,
-with no way out short of deleting the message by hand.
-
-The newest record in a mailbox is now measured against the clock of the computer reading it, and
-every older record is still measured against that newest one -- which is what keeps two computers
-with two clocks from disagreeing about who holds the mailbox.
-
-A second way to hold a mailbox for ever came out of closing the first. A date far enough in the
-future is ahead of any reader's clock, so it reads as current at every real moment, and a machine
-with a dead clock battery could hold a mailbox on nothing but a wrong date. A date beyond the
-tolerance for ordinary differences between two machines' clocks is now taken to say nothing at all
-about when the record was last renewed: such a record holds the mailbox only while something
-believable in the same mailbox is still being renewed. Inside the tolerance a clock that runs ahead
-is still believed, which is the case that matters -- treating a machine that is slightly ahead as
-gone is how two computers both decide they are the organizer.
-
-And a wrong date could push a working organizer out. Because the age of a record was judged against
-the newest date in the mailbox, a date in the future dragged that comparison forward, and a record
-written seconds ago could read as expired beside it -- so a computer that was organizing the mailbox
-and checking in normally could be taken over by another, on the strength of a wrong date in a third
-record. It did not take an absurd date: a few minutes ahead was enough. Dates are no longer used to
-judge how old OTHER records are once they run ahead of the reading computer's own clock, and a date
-beyond what a clock difference could explain is not used for anything. A machine whose clock runs a
-little fast is still believed to be alive, which is the case that has to keep working; it simply no
-longer ages its neighbours.
-
-Two more ways a mailbox could get stuck, both of which needed a second record to appear.
-
-**A mailbox with two abandoned records stayed stuck when either one alone would have recovered.**
-The age of a record was measured against the newest record present, and with two old records the
-newest was itself old -- so each looked recent beside the other and the mailbox refused every
-takeover for ever. Whether a mailbox has been abandoned is now decided for the mailbox as a whole,
-against the clock of the computer reading it, before any record is compared with any other. If
-nothing has checked in for ten minutes, nothing in that mailbox is holding it.
-
-**And a computer that was organizing could be reported as stopped, letting a second one start.**
-When one computer left two records behind -- the ordinary result of a renewal that was interrupted
--- the screen described it by the newer record alone, which could be the leftover rather than the
-live one. It was then shown as stopped, and the record of who was organizing could be cleared while
-that computer was still working. Both the screen and the clearing now look at every record a
-computer has left, not just the newest.
-
-Three smaller corrections in the same area.
-
-**A mailbox set to wait longer than the default before treating an organizer as gone was not
-waiting that long everywhere.** The setting reached the part that decides whether this computer may
-organize, and not the part that reports who is organizing -- so on a mailbox configured to wait a
-day, the report could say nobody was organizing while the decision still said somebody was, and the
-record of who held the mailbox could be cleared while another computer was well inside its own
-time. Both now use the mailbox's own setting.
-
-**The screen could name the wrong computer.** When two computers had each left an extra record
-behind with an unusable date, the name shown was chosen by whichever unusable date happened to be
-later -- which could be the computer that had just stood down rather than the one organizing. The
-name is now chosen the same way the decision chooses, so the screen and the button agree about
-which machine they mean.
-
-**And a mailbox told to wait no time at all now waits no time at all.** A record dated slightly in
-the future was still counted as current under a zero wait. That setting is unusual, and it now
-means what it says.
-
-Two things deliberately did not change. A record that is genuinely still being renewed refuses a
-takeover exactly as before, and a record with an unusable date sitting beside one that is being
-renewed refuses too, because then something is organizing the mailbox even if we cannot tell what.
-And a computer that finds only its own record in a mailbox still resumes organizing without asking
-anybody, however long it has been asleep.
-
-The screen that tells you who is organizing a mailbox reads the same rule as the button beside it.
-It no longer names a live organizer for a record the app had already stopped defending, and no
-longer offers to stop a computer that has already stopped.
 
 ### Signing in, signing out, and a browser that two people share
 
