@@ -5630,14 +5630,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 "four attempts a minute at a server that has already said no, which providers " +
                 "throttle and some answer by locking the account",
             });
-          } else {
-            redialAttempts += 1;
-            const step = Math.min(
-              REDIAL_BACKOFF_BASE_MS * 2 ** (redialAttempts - 1), REDIAL_BACKOFF_MAX_MS,
-            );
-            /* JITTERED, so several mailboxes on one server do not knock in unison after an
-               outage — the thundering herd every backoff without one produces. */
-            redialNotBefore = Date.now() + Math.round(step * (0.8 + Math.random() * 0.4));
+          } else if (force) {
             /* ONLY A FORCED ATTEMPT ARMS THE PRESS'S FLOOR, and the `if` is the whole of it.
                An earlier version armed this on ANY failed dial, which reads harmless and is not:
                during an outage the POLL fails on its own cadence, so the floor would be re-armed
@@ -5646,11 +5639,26 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                press-through-the-route control, which went red the moment it ran beside the rest
                of the file.
 
-               UNJITTERED AND FIXED AT THE BASE STEP, unlike the line above. The jitter exists to
-               stop several mailboxes knocking in unison after an outage, which is a property of
-               the AUTOMATIC cadence; a person pressing a button is not a herd, and a floor that
-               moved would make "press again in fifteen seconds" a thing nobody could state. */
-            if (force) forcedNotBefore = Date.now() + REDIAL_BACKOFF_BASE_MS;
+               UNJITTERED AND FIXED AT THE BASE STEP, unlike the ladder's line in the arm below.
+               The jitter exists to stop several mailboxes knocking in unison after an outage,
+               which is a property of the AUTOMATIC cadence; a person pressing a button is not a
+               herd, and a floor that moved would make "press again in fifteen seconds" a thing
+               nobody could state. */
+            forcedNotBefore = Date.now() + REDIAL_BACKOFF_BASE_MS;
+          } else {
+            /* AND ONLY THE POLL CLIMBS THE LADDER — a press is one dial, not evidence about the
+               server's schedule; see the contract above. A failed forced attempt used to run
+               these two lines as well, which widened the AUTOMATIC wait and restarted it from
+               the press: the app's own next attempt then came later than it would have if
+               nobody had pressed, so the one control the product offers for a slow heal made
+               the heal slower, and six presses walked the wait to the five-minute cap. */
+            redialAttempts += 1;
+            const step = Math.min(
+              REDIAL_BACKOFF_BASE_MS * 2 ** (redialAttempts - 1), REDIAL_BACKOFF_MAX_MS,
+            );
+            /* JITTERED, so several mailboxes on one server do not knock in unison after an
+               outage — the thundering herd every backoff without one produces. */
+            redialNotBefore = Date.now() + Math.round(step * (0.8 + Math.random() * 0.4));
           }
           log("mailbox_reconnect_failed", {
             err, mailboxId: mb.id,
