@@ -226,6 +226,36 @@ held message that was a **reply** opened in the inline reply editor with Send li
 reply path did not ask whether the row was held before opening it — so the one message that must not
 be sent twice was the one that opened ready to send. It opens as the held message it is.
 
+### The away responder answers the piles you choose
+
+"Who gets a reply" is a fact about a SENDER: somebody you let past the Screener once, and true of
+them from then on. It said nothing about where their later mail lands, and that gap is what people
+actually met. A shop let in to send one order confirmation is still somebody you let in when its
+newsletter files itself to Reads six months later — so the responder answered it, along with
+notification and developer senders nobody meant to be writing to.
+
+There is a second setting now: which piles get a reply. It defaults to your Ohbox alone, with Reads
+available if you want it. Receipts, the Screener and Spam are never answered.
+
+**This narrows what a responder already switched on will do.** From this release it stops answering
+mail that files itself to Reads or Receipts. That is deliberate: a reply already sent to somebody
+you did not mean cannot be recalled, so the setting nobody chose is the one that reaches fewest
+people. If you want the wider reach, Reads is one press.
+
+The Ohbox banner says the scope now. "People you've let in get a reply at most once a day" was true
+over a responder answering eight shops, because it named who and the surprise was which mail.
+
+### A bounce stops the replies to that address
+
+If an away reply went to an address that does not accept mail, the bounce came back into your own
+Ohbox — and nothing recorded what it meant. The next message from the same correspondent produced
+another reply and another bounce, once a day for the length of the trip.
+
+A bounce is now remembered against that correspondent, and no further automatic reply is sent to
+them. Somebody who simply REPLIES to an away reply is unaffected: their message looks similar in
+the one place that matters, so the check requires the message to actually be a delivery report
+before anybody's address is written off.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
