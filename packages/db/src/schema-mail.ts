@@ -2395,11 +2395,37 @@ export const outboundSends = pgTable("outbound_sends", {
   id: uuid("id").defaultRandom().primaryKey(),
   accountId: uuid("account_id").notNull(),
   idempotencyKey: text("idempotency_key").notNull(),
-  draftId: uuid("draft_id").notNull().references(() => drafts.id),
+  // ── Mail 0095 — NULLABLE, `ON DELETE SET NULL`. Which draft the attempt was ABOUT, and it
+  // stops being an answerable question when the person discards the text. The reservation's
+  // identity is `UNIQUE(account_id, idempotency_key)` — the replay gate that makes a same-key
+  // retry replay instead of delivering a second copy — and that gate does not mention this
+  // column, so the record of the attempt outlives the draft rather than cascading with it.
+  //
+  // It was `NOT NULL … ON DELETE NO ACTION`, which is why `DraftsService.remove` answered a named
+  // 409 for ANY row here: the DELETE reached the constraint and raised `23503` (measured for a
+  // `failed`, `sent` and `unverified` row alike), and that reaches a caller as `internal` 500.
+  // A draft whose send definitively failed was therefore undeletable, permanently. The migration
+  // file carries the full reasoning, including why CASCADE and a soft-delete marker were refused.
+  //
+  // A `pending` row cannot be orphaned: `pending` is inside `sendOnRecord`, so the delete is
+  // refused while one exists, under a `FOR UPDATE` that serializes against the reservation's own
+  // `FOR KEY SHARE`. That matters because `send-reconcile-pass.ts` reaches its rows through
+  // `INNER JOIN drafts` — a NULL here would be invisible to the reconciler AND to the stuck-send
+  // alarm, i.e. a `pending` row nobody would ever drain.
+  draftId: uuid("draft_id").references(() => drafts.id, { onDelete: "set null" }),
   mintedMessageId: text("minted_message_id").notNull(),      // `<uuid@domain>` minted up front
   providerMessageId: text("provider_message_id"),            // the delivered Message-ID (null until sent)
   status: text("status").notNull().default("pending"),       // pending|sent|failed|unverified
   sentAt: timestamp("sent_at", { withTimezone: true }),
+  // ── Mail 0095 — WHO settled an ambiguous attempt, and WHEN. `'person'` is the only value any
+  // build writes: a reader who looked in their Sent folder and told us what they found. The
+  // distinction this records is testimony vs observation — a send the reconciler finalized and one
+  // a person resolved both end at `status = 'sent'`, and a later reader has to be able to tell
+  // those apart. Free text rather than CHECK-closed so the first other resolver is not an
+  // unwritable row on the day it ships; tainted in the content census for that reason, and
+  // deliberately outside the column-scoped `ohmail_admin` grant (no staff surface reads it).
+  resolvedBy: text("resolved_by"),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({
   uqKey: unique().on(t.accountId, t.idempotencyKey),         // the per-account idempotency reservation gate

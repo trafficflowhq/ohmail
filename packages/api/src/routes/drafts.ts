@@ -1,7 +1,7 @@
 import {
   ServiceError, SEND_ATTACHMENT_FIELD_MAX_CHARS, SEND_MAX_ATTACHMENT_PARTS, dedupeStagedIds,
   requireUuid,
-  type CreateDraftBody, type PatchDraftBody,
+  type CreateDraftBody, type PatchDraftBody, type SendResolution,
 } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
 import { jsonResponse } from "../responses.js";
@@ -240,6 +240,35 @@ export const draftsRoutes: Route[] = [
     handler: async (req, deps, params) => {
       const { seq } = await drafts(deps).remove(serviceContext(deps, req), params.id!);
       return new Response(null, { status: 204, headers: { "X-Sync-Seq": String(seq) } });
+    },
+  },
+  {
+    /**
+     * A PERSON ANSWERS FOR A SEND WE COULD NOT CONFIRM — `{ outcome: 'arrived' | 'not_arrived' }`.
+     *
+     * The one exit from the held state. `unverified` means this server genuinely does not know
+     * whether the mail went out, and the reader is the only party who can look in the folder that
+     * settles it — so this route carries their answer and nothing else. `arrived` records the
+     * delivery and takes the row out of Drafts; `not_arrived` returns it to an ordinary draft that
+     * can be edited, sent again under a fresh key, or discarded.
+     *
+     * `cost: "work"` and NOT `connection`: no socket is opened. This is a state transition on two
+     * rows, and the reader's own eyes are the network call.
+     *
+     * Deliberately NOT idempotent-marked, on `/schedule`'s terms — the service's compare-and-swap
+     * on `unverified` makes a repeat converge by itself (the second call is the asked-for state,
+     * answered 200 with the row as it stands), so the generic verbatim cache would be storing a
+     * response for a verb that is already idempotent in the database.
+     */
+    method: "POST",
+    pattern: "/drafts/:id/resolve",
+    cost: "work",
+    handler: async (req, deps, params) => {
+      const body = await readBody<{ outcome?: unknown }>(req);
+      const { draft, seq } = await drafts(deps).resolve(
+        serviceContext(deps, req), params.id!, body.outcome as SendResolution,
+      );
+      return jsonResponse(draft, { status: 200, seq });
     },
   },
   {

@@ -1,4 +1,4 @@
-import { and, eq, isNull, ne } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne } from "drizzle-orm";
 import {
   claimIdempotencyKey, drafts, mailboxes, messages, outboundSends, recordChange, threads, type Tx,
 } from "@trafficflow/db";
@@ -199,7 +199,53 @@ export interface DraftMutation {
  * tombstoning. Every query is scoped to `ctx.accountId`; a cross-account id
  * â 404. `create` validates the `mailboxId` belongs to the account.
  */
+/**
+ * THE OUTCOMES A PERSON CAN REPORT for a send this server could not confirm.
+ *
+ * Not a general "set the status" verb: these are the only two things a reader is in a position to
+ * know, from the one place they can look. `arrived` means they found it in their Sent folder;
+ * `not_arrived` means they looked and it is not there.
+ */
+export type SendResolution = "arrived" | "not_arrived";
+
+/**
+ * THE STATUSES THAT MEAN "AN ATTEMPT IS STILL ON RECORD", and the reason there is exactly one list.
+ *
+ * `pending` is an invocation that is live right now (or one that died holding the reservation);
+ * `unverified` is the ambiguous ending — SMTP said nothing conclusive and the minted Message-ID was
+ * not in Sent. Both are open questions about mail that may or may not have gone out, and while one
+ * stands, the draft is the account's only copy of a message somebody may have received.
+ *
+ * `sent` and `failed` are NOT here, and that is the correction this list exists to record. They are
+ * LEDGER ENTRIES ABOUT THE PAST — one delivery this server watched succeed, one it watched fail —
+ * and neither is a reason to keep the text. The predicate used to be "does a row exist", which
+ * conflated the two kinds of fact and made a definitively-failed send's draft undeletable for ever.
+ */
+const SEND_ON_RECORD_STATUSES = ["pending", "unverified"] as const;
+
 export class DraftsService {
+  /**
+   * IS AN ATTEMPT STILL ON RECORD FOR THIS DRAFT? One predicate, three callers.
+   *
+   * Takes `tx` rather than `ctx` because every caller asks INSIDE the transaction that is about to
+   * act on the answer, and after taking `FOR UPDATE` on the draft row. That order is the whole
+   * race: `SendService.reserve` inserts its reservation in another transaction, and that INSERT
+   * takes `FOR KEY SHARE` on the draft for the foreign key. `FOR UPDATE` is the one row-lock mode
+   * that conflicts with it, so a reserve committing concurrently either lands before this read
+   * (and is seen) or blocks until after the caller has committed. A predicate that read this table
+   * without that lock held would answer about the past.
+   */
+  private async sendOnRecord(tx: Tx, accountId: string, draftId: string): Promise<boolean> {
+    const [row] = await tx.select({ id: outboundSends.id }).from(outboundSends)
+      .where(and(
+        eq(outboundSends.draftId, draftId),
+        eq(outboundSends.accountId, accountId),
+        inArray(outboundSends.status, [...SEND_ON_RECORD_STATUSES]),
+      ))
+      .limit(1);
+    return row !== undefined;
+  }
+
   async get(ctx: ServiceContext, id: string): Promise<DraftDTO> {
     const dto = await materializeDraft(ctx.db, ctx.accountId, id);
     if (!dto) throw new ServiceError("not_found", 404, "draft not found");
@@ -329,6 +375,35 @@ export class DraftsService {
         if (t.length === 0) throw new ServiceError("not_found", 404, "thread not found");
       }
       await this.requireOwnedReplyTarget(tx, ctx, patch.inReplyToMessageId ?? null);
+      /**
+       * ── AN ATTEMPT STILL ON RECORD FREEZES THE WORDS, for the reason it blocks the discard ──
+       *
+       * `remove` and `update` ask the SAME question ({@link sendOnRecord}) because a message whose
+       * fate is unknown has one property that decides both: somebody may already be holding a
+       * copy of exactly these words. Editing them would leave the account's only record of what
+       * was sent saying something that was never sent — and if the reader then resolves the row
+       * `arrived`, the lie is what gets filed as delivered.
+       *
+       * `failed` and `sent` are not on record ({@link SEND_ON_RECORD_STATUSES}), so this refuses
+       * nothing it used to allow except the one case it is about: an `unverified` row. Resolve it
+       * first — `not_arrived` returns the row to an ordinary draft and editing is open again.
+       *
+       * AFTER the thread read and BEFORE the UPDATE, deliberately. The class takes thread rows
+       * before draft rows (the merge paths hold a thread `FOR UPDATE` while repointing drafts) and
+       * the reversed order is a deadlock both sides pay as a 500 — so the draft lock cannot move
+       * above `patch.threadId`'s key-share. It has to be a `FOR UPDATE` and not a plain read for
+       * `remove`'s reason: `SendService.reserve` takes `FOR KEY SHARE` on this row, and only
+       * `FOR UPDATE` serializes against it.
+       */
+      const [locked] = await tx.select({ id: drafts.id }).from(drafts)
+        .where(and(eq(drafts.id, id), eq(drafts.accountId, ctx.accountId)))
+        .for("update").limit(1);
+      if (locked && await this.sendOnRecord(tx, ctx.accountId, id)) {
+        throw new ServiceError(
+          "send_recorded", 409,
+          "this message has a send we could not confirm; resolve it before editing it",
+        );
+      }
       // Scope the UPDATE to the account: a cross-account id matches 0 rows. A mailbox move
       // additionally requires `status = 'draft'` IN THE PREDICATE â not in a prior read â
       // because the send path flips the row to `sending` in its own transaction, and a check
@@ -385,27 +460,158 @@ export class DraftsService {
     return this.finish(ctx, id, seq);
   }
 
+  /**
+   * A PERSON ANSWERS FOR A SEND THIS SERVER COULD NOT CONFIRM.
+   *
+   * ── WHY THE PRODUCT NEEDED A VERB HERE AT ALL ───────────────────────────────────────────────
+   *
+   * `finalizeUnverified` is the honest ending for an attempt whose outcome is genuinely unknown:
+   * SMTP said nothing conclusive and the minted Message-ID was not in Sent. It leaves the draft at
+   * `unverified` and the row says so — *"it may not have been delivered … check your Sent folder."*
+   *
+   * That sentence asks the reader a question, and until now there was nowhere to put the answer.
+   * The row was frozen: Discard refused it, the client parked it, and the state was permanent
+   * because it was keyed on STATUS and nothing ever moved the status. A reader who checked their
+   * Sent folder, found the message, and came back had no way to say so — which is the whole defect.
+   * `SEND_LOCK_TTL_MS` does not help: a 7-day lock expiring does not decide what happened.
+   *
+   * ── ONE TRANSACTION, AND THE LOCK ORDER IS THE DRAFT THEN ITS SENDS ─────────────────────────
+   *
+   * `FOR UPDATE` on the draft first, exactly as `remove` does and for the same reason: it is the
+   * row `SendService.reserve` takes `FOR KEY SHARE` on, so taking it here serializes this verb
+   * against a reservation arriving concurrently. Then the sends, so a second resolve (or a
+   * reconciling pass) cannot interleave between the read and the write.
+   *
+   * ── AND EVERY WRITE IS A COMPARE-AND-SWAP ON `unverified` ───────────────────────────────────
+   *
+   * The three finalizers all guard their writes on the status they expect to find
+   * (`SendService.finalizeSent`'s rule: exactly one resolver writes a terminal state), and this is
+   * a fourth resolver, so it obeys the same discipline. `'unverified' → …` in the predicate means:
+   *
+   *  · a REPEATED resolve matches nothing and is the asked-for state — idempotent success, on
+   *    `ScheduleService.cancel`'s terms. It answers 200 with the row as it stands rather than an
+   *    error about a decision that has already been made, because the honest reading of a
+   *    double-tap or a retry after a blip is that the caller wants the state it asked for.
+   *  · the OTHER outcome arriving second cannot reopen the first. Without the predicate,
+   *    `not_arrived` after `arrived` would turn a delivery the person had already confirmed back
+   *    into an unsent draft — the one direction that manufactures a duplicate send.
+   *  · a reconciler that finalizes `sent` while a person is answering `not_arrived` wins or loses
+   *    cleanly; neither overwrites the other's terminal word.
+   *
+   * The draft's own status write is guarded on `unverified` for the same reason: winning the
+   * ledger's CAS says what became of the SEND, and this says the row is still the held one nobody
+   * has moved.
+   *
+   * ── WHAT EACH OUTCOME LEAVES BEHIND ─────────────────────────────────────────────────────────
+   *
+   * `arrived` → the ledger row is `sent` and the draft is `sent`. The draft row is NOT deleted:
+   * the mail itself is the copy in the user's Sent folder, and this row is the account's record of
+   * having sent it, which is what every other terminal send leaves too. It leaves the Drafts list
+   * because the list shows `draft`/`unverified`/interrupted rows, not sent ones.
+   *
+   * `not_arrived` → the ledger row is `failed` and the draft is an ORDINARY DRAFT again: editable,
+   * discardable, and `send_error` cleared because the sentence was about an appointment that is no
+   * longer pending. The next Send mints a fresh key rather than replaying this one, because
+   * `failed` is terminal for this key and the client releases the durable key on any terminal
+   * outcome — so "it didn't arrive, send it again" is a genuinely new delivery and not a replay of
+   * a refusal.
+   *
+   * Neither outcome touches the IMAP mailbox. The mailbox is the master, and a person reporting
+   * what they saw in it is not a licence to write to it.
+   */
+  async resolve(ctx: ServiceContext, id: string, outcome: SendResolution): Promise<DraftMutation> {
+    if (outcome !== "arrived" && outcome !== "not_arrived") {
+      throw new ServiceError(
+        "validation_failed", 400, "outcome must be 'arrived' or 'not_arrived'",
+      );
+    }
+    const now = ctx.now();
+    const seq = await asTx(ctx).transaction(async (tx) => {
+      // The draft first — see the header: this is the row a concurrent reservation takes
+      // `FOR KEY SHARE` on, and `FOR UPDATE` is the mode that conflicts with it.
+      const [row] = await tx.select({ status: drafts.status }).from(drafts)
+        .where(and(eq(drafts.id, id), eq(drafts.accountId, ctx.accountId)))
+        .for("update").limit(1);
+      if (!row) throw new ServiceError("not_found", 404, "draft not found");
+
+      const ledgerStatus = outcome === "arrived" ? "sent" : "failed";
+      const settled = await tx.update(outboundSends)
+        .set({ status: ledgerStatus, resolvedBy: "person", resolvedAt: now })
+        .where(and(
+          eq(outboundSends.draftId, id),
+          eq(outboundSends.accountId, ctx.accountId),
+          // THE COMPARE-AND-SWAP. Only an ambiguous attempt is a person's to settle.
+          eq(outboundSends.status, "unverified"),
+        ))
+        .returning({ id: outboundSends.id });
+
+      // Nothing ambiguous was on record: already resolved, or never held. The asked-for state, so
+      // it is reported as success — and the `change_log` row is still emitted, because the caller
+      // is entitled to a seq it can drain against whether or not this call was the one that moved
+      // the row (`ScheduleService.cancel`'s idempotent arm does exactly this).
+      if (settled.length === 0) {
+        return recordChange(tx, {
+          accountId: ctx.accountId, entityType: "draft", entityId: id, op: "update", meta: null,
+        });
+      }
+
+      await tx.update(drafts)
+        .set({
+          status: outcome === "arrived" ? "sent" : "draft",
+          // An appointment's failure sentence does not survive a resolution: it was about a
+          // scheduled send that is now definitively over, and leaving it would put a stale
+          // explanation on a row that has just become an ordinary draft.
+          sendError: null,
+          sendAt: null,
+          sendKey: null,
+          updatedAt: now,
+        })
+        .where(and(
+          eq(drafts.id, id), eq(drafts.accountId, ctx.accountId),
+          // The draft's OWN compare-and-swap — `finalizeSent`'s rule. A row somebody has already
+          // recovered by hand must not be dragged back out of the state it is in.
+          eq(drafts.status, "unverified"),
+        ));
+
+      return recordChange(tx, {
+        accountId: ctx.accountId, entityType: "draft", entityId: id, op: "update", meta: null,
+      });
+    });
+
+    return this.finish(ctx, id, seq);
+  }
+
   async remove(ctx: ServiceContext, id: string): Promise<{ seq: number }> {
     const seq = await asTx(ctx).transaction(async (tx) => {
       /**
-       * ── A MESSAGE WITH A SEND ON RECORD IS REFUSED BY NAME, NOT BY A FOREIGN KEY ──────────
+       * ── A SEND WE COULD NOT CONFIRM IS REFUSED BY NAME; A FINISHED ONE IS NOT REFUSED AT ALL ──
        *
-       * `outbound_sends.draft_id` references this table `ON DELETE no action`
-       * (`packages/db-mail/drizzle/0013_outbound_sends.sql`), and the reservation deliberately
-       * OUTLIVES every terminal outcome: `finalizeSent` clears `send_at`/`send_key` and moves the
-       * row to `sent`, the ambiguous ending moves it to `unverified`, and a failed attempt puts it
-       * back at `draft` — in all three the `outbound_sends` row stays, because it is the guard that
-       * makes a same-key retry replay instead of delivering a second copy.
+       * The reservation deliberately OUTLIVES every terminal outcome: `finalizeSent` clears
+       * `send_at`/`send_key` and moves the row to `sent`, the ambiguous ending moves it to
+       * `unverified`, and a failed attempt puts it back at `draft` — in all three the
+       * `outbound_sends` row stays, because it is the guard that makes a same-key retry replay
+       * instead of delivering a second copy.
        *
-       * The delete below excludes only `scheduled` and a standing `send_key`, which none of those
-       * three states carries. So the statement reached the constraint, Postgres raised
+       * THIS USED TO ASK WHETHER A ROW EXISTED, which conflated two different kinds of fact and
+       * is the defect the resolution verb exists to close. A `pending` or `unverified` row is an
+       * OPEN QUESTION about mail that may be in somebody's inbox. A `sent` or `failed` row is a
+       * LEDGER ENTRY ABOUT THE PAST. Only the first is a reason to keep the words, and asking the
+       * cruder question made a definitively-FAILED send's draft undeletable for ever — a row whose
+       * own `send_error` says it never went out, that could not be thrown away.
+       *
+       * NOTHING CASCADES. `outbound_sends.draft_id` is nullable `ON DELETE SET NULL` (mail 0095),
+       * so the delete below clears the reference and the ledger row survives without it: the
+       * reservation's identity is `UNIQUE(account_id, idempotency_key)` — the replay gate — and
+       * that gate does not mention the draft. Deleting the reservation to make the delete succeed
+       * would hand the next press of the same key a clean slate for a message that may already
+       * have been delivered; leaving it in place with a NULL reference keeps the gate and honours
+       * what the person asked for, which was that the TEXT go away.
+       *
+       * Before that migration the statement reached the constraint, Postgres raised
        * `23503 outbound_sends_draft_id_drafts_id_fk`, and — not being a {@link ServiceError} — it
-       * left the router as `internal` 500. Somebody discarding a send that could not be confirmed
-       * was told the application had broken, and the row stayed in Drafts either way.
-       *
-       * NOTHING CASCADES AND NOTHING IS DELETED. The reservation is the replay guard; removing it
-       * to make the delete succeed would hand the next press of the same key a clean slate for a
-       * message that may already be in somebody's inbox. The row stays and the sentence says so.
+       * left the router as `internal` 500. That is why the named 409 was put in front of it, and
+       * why narrowing this predicate without changing the constraint would have turned the honest
+       * refusal straight back into the fault it replaced.
        *
        * ── WHY THE ROW IS LOCKED FIRST, AND WHY THAT ORDER IS THE WHOLE RACE ─────────────────
        *
@@ -428,13 +634,10 @@ export class DraftsService {
         .where(and(eq(drafts.id, id), eq(drafts.accountId, ctx.accountId)))
         .for("update").limit(1);
       if (held && held.status !== "scheduled" && held.sendKey === null) {
-        const [reserved] = await tx.select({ id: outboundSends.id }).from(outboundSends)
-          .where(and(eq(outboundSends.draftId, id), eq(outboundSends.accountId, ctx.accountId)))
-          .limit(1);
-        if (reserved) {
+        if (await this.sendOnRecord(tx, ctx.accountId, id)) {
           throw new ServiceError(
             "send_recorded", 409,
-            "this message has a send on record; it stays in Drafts as that record",
+            "this message has a send we could not confirm; resolve it before discarding it",
           );
         }
       }

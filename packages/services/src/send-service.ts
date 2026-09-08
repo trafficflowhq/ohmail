@@ -2248,7 +2248,7 @@ export class SendService {
       return { status: "sent", providerMessageId: row.providerMessageId, draftId: row.draftId, seq: null };
     }
     if (row.status === "unverified") {
-      return { status: "unverified", providerMessageId: null, draftId: row.draftId, seq: null };
+      return { status: "unverified", providerMessageId: null, draftId: draftOfOpenAttempt(row), seq: null };
     }
     if (row.status === "failed") {
       return { status: "failed", providerMessageId: null, draftId: row.draftId, seq: null };
@@ -2276,7 +2276,7 @@ export class SendService {
     // retries — both through {@link SendService.resolveStale}, which is the single writer.
     const ageMs = ctx.now().getTime() - row.createdAt.getTime();
     if (ageMs < SEND_STALE_AFTER_MS) {
-      return { status: "in_flight", providerMessageId: null, draftId: row.draftId, seq: null };
+      return { status: "in_flight", providerMessageId: null, draftId: draftOfOpenAttempt(row), seq: null };
     }
 
     // A genuinely STALE reservation → verify-by-Sent recovery. `send` is NEVER called on this
@@ -2377,7 +2377,7 @@ export class SendService {
     if (openAdapter === null) {
       if (onMiss === "defer") {
         return {
-          status: "pending", providerMessageId: null, draftId: row.draftId, seq: null, by: "deferred",
+          status: "pending", providerMessageId: null, draftId: draftOfOpenAttempt(row), seq: null, by: "deferred",
         };
       }
       return this.settleUnverified(ctx, row, "undialable");
@@ -2432,9 +2432,9 @@ export class SendService {
     // leaving it untagged would let the reconciling pass apply its give-up to a row whose probe
     // had already spoken.
     try {
-      const seq = await this.finalizeSent(ctx, row.id, row.mintedMessageId, row.draftId, mailboxId);
+      const seq = await this.finalizeSent(ctx, row.id, row.mintedMessageId, draftOfOpenAttempt(row), mailboxId);
       if (seq === null) return await this.answerWinner(ctx, row);
-      return { status: "sent", providerMessageId: row.mintedMessageId, draftId: row.draftId, seq, by };
+      return { status: "sent", providerMessageId: row.mintedMessageId, draftId: draftOfOpenAttempt(row), seq, by };
     } catch (err) {
       throw new SettleFailed("sent", err);
     }
@@ -2447,9 +2447,9 @@ export class SendService {
     // See {@link SettleFailed} — the evidence was in; only the write failed.
     // `answerWinner` inside the try, for `settleSent`'s reason.
     try {
-      const seq = await this.finalizeUnverified(ctx, row.id, row.draftId);
+      const seq = await this.finalizeUnverified(ctx, row.id, draftOfOpenAttempt(row));
       if (seq === null) return await this.answerWinner(ctx, row);
-      return { status: "unverified", providerMessageId: null, draftId: row.draftId, seq, by };
+      return { status: "unverified", providerMessageId: null, draftId: draftOfOpenAttempt(row), seq, by };
     } catch (err) {
       throw new SettleFailed("unverified", err);
     }
@@ -2475,13 +2475,13 @@ export class SendService {
     const status = (now?.status ?? "pending") as ResolveStaleOutcome["status"];
     if (status === "pending") {
       return {
-        status: "pending", providerMessageId: null, draftId: row.draftId, seq: null, by: "deferred",
+        status: "pending", providerMessageId: null, draftId: draftOfOpenAttempt(row), seq: null, by: "deferred",
       };
     }
     return {
       status,
       providerMessageId: status === "sent" ? (now?.providerMessageId ?? row.mintedMessageId) : null,
-      draftId: row.draftId,
+      draftId: draftOfOpenAttempt(row),
       seq: null,
       by: "elsewhere",
     };
@@ -2703,6 +2703,32 @@ export class SendService {
     });
     return seq === null ? null : Number(seq);
   }
+}
+
+/**
+ * THE DRAFT A STILL-OPEN ATTEMPT IS ABOUT, which cannot be absent — and a 500 if it ever is.
+ *
+ * `outbound_sends.draft_id` became nullable `ON DELETE SET NULL` in mail 0095, so that a person
+ * can discard a draft whose send is definitively over while the record of the attempt survives.
+ * Every caller below is on a `pending` or `unverified` row, and neither state can have lost its
+ * draft: both are inside `DraftsService.sendOnRecord`, so the discard is refused while one stands,
+ * and it is refused under a `FOR UPDATE` on the draft that serializes against the reservation's
+ * own `FOR KEY SHARE`. `send-reconcile-pass` additionally reaches its rows through
+ * `INNER JOIN drafts`, so a row with no draft is invisible to it.
+ *
+ * A THROW rather than a silent fallback, and rather than an `if` nobody can watch fail. The state
+ * is unreachable by construction, which is exactly the kind of claim that rots into a comment
+ * nobody re-checks — this makes it observable: null a `pending` row's `draft_id` by hand and the
+ * recovery answers 500 instead of quietly finalizing the wrong thing or nothing at all.
+ */
+function draftOfOpenAttempt(row: { id: string; draftId: string | null }): string {
+  if (row.draftId === null) {
+    throw new ServiceError(
+      "internal", 500,
+      `send reservation ${row.id} is still open but names no draft`,
+    );
+  }
+  return row.draftId;
 }
 
 export const sendService = new SendService();

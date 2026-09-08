@@ -229,7 +229,7 @@ export {
 export {
   DraftsService, draftsService, DRAFT_MAX_RECIPIENTS,
   DRAFT_SUBJECT_MAX_CHARS, RECIPIENT_ADDRESS_MAX_CHARS, RECIPIENT_NAME_MAX_CHARS,
-  type CreateDraftBody, type PatchDraftBody, type DraftMutation,
+  type CreateDraftBody, type PatchDraftBody, type DraftMutation, type SendResolution,
 } from "./drafts-service.js";
 export {
   DraftingService, draftingService,

@@ -769,6 +769,11 @@ async function claimStale(
       status: outboundSends.status,
       sentAt: outboundSends.sentAt,
       createdAt: outboundSends.createdAt,
+      // Mail 0095 — projected so the `StaleRow` literal below stays the row's full shape. Both
+      // are NULL on everything this pass sees: it selects `pending` rows only, and a resolution
+      // is by definition a terminal outcome.
+      resolvedBy: outboundSends.resolvedBy,
+      resolvedAt: outboundSends.resolvedAt,
       mailboxId: drafts.mailboxId,
       mailboxStatus: mailboxes.status,
     })
@@ -836,6 +841,10 @@ async function claimStale(
           id: r.id, accountId: r.accountId, idempotencyKey: r.idempotencyKey, draftId: r.draftId,
           mintedMessageId: r.mintedMessageId, providerMessageId: r.providerMessageId,
           status: r.status, sentAt: r.sentAt, createdAt: r.createdAt,
+          // Mail 0095. Carried so this literal stays the row's full shape; the pass reads its
+          // rows through `INNER JOIN drafts` and only ever handles `pending`, so neither field
+          // is ever set on anything it sees.
+          resolvedBy: r.resolvedBy, resolvedAt: r.resolvedAt,
         },
         mailboxId: r.mailboxId,
         mailboxStatus: r.mailboxStatus,
