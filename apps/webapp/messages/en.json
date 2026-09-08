@@ -141,7 +141,7 @@
     "plan_solo": "Solo",
     "plan_plus": "Plus",
     "plan_pro": "Pro",
-    "trialNote": "The 14-day trial needs no card and runs the whole product — screening, filing, Reads, Receipts, Resurface — plus {credits} AI actions to try the drafts and the Screener's suggestions with. Use them up and the rules carry on; the monthly allowance starts with the subscription.",
+    "trialNote": "The 14-day trial needs no card and runs the whole product — screening, filing, Reads, Receipts, Resurface — plus {credits} credits to try the drafts and the Screener's suggestions with. Use them up and the rules carry on; the monthly allowance starts with the subscription.",
     "alreadySubscribed": "This account is on {plan} ({status}).",
     "openOhmail": "Open ohmail",
     "later": "Do this later",
@@ -159,7 +159,7 @@
     "planPrice": "${price}/mo",
     "planAfter": "after the trial",
     "planStart": "Start 14 days free →",
-    "planSub": "{mailboxes} mailboxes · ~{credits} AI actions a month",
+    "planSub": "{mailboxes} mailboxes · {credits} credits a month",
     "planLoading": "Loading plans…",
     "step_done_lead": "Your mailbox is connecting now. The first sync brings in recent mail; older mail follows in the background.",
     "planConfirmed": "Plan confirmed. Taking you to the last step…",
@@ -1665,7 +1665,7 @@
     "titleB": "No card.",
     "when": "Open now: start today and the fourteen days start with you.",
     "lede": "Every tier starts with the whole trial — your own mailboxes, the Screener, real folders, always-on sync, push and the web app. Everything the product does with rules.",
-    "terms": "It comes with 500 AI actions, so the drafts and the Screener's suggestions are yours to try; the monthly allowance begins when a subscription does. And there is nothing to cancel: give no card, and after fourteen days the trial ends on its own.",
+    "terms": "It comes with 500 credits, so the drafts and the Screener's suggestions are yours to try; the monthly allowance begins when a subscription does. And there is nothing to cancel: give no card, and after fourteen days the trial ends on its own.",
     "selfhost": "Or skip the trial and the bill: the free desktop app, or the same server on your own hardware."
   },
   "pricing": {
@@ -1686,6 +1686,7 @@
     "cloudOptional": "optional",
     "cloudShared": "The same server, run by us: your mail on the web and your phone, organized while you sleep. Push, always-on processing, AI included.",
     "perMonth": "/mo",
+    "creditsWhat": "what a credit buys",
     "trialBadge": "14-day free trial",
     "soloName": "Solo",
     "soloPrice": "$9",
@@ -1703,7 +1704,7 @@
     "proActions": "4,000 AI credits/mo",
     "proStorage": "room for roughly 400,000 emails stored for the web app — your mailbox on your own server is never counted",
     "cloudCta": "Choose {tier}",
-    "trialNote": "Every tier starts with 14 days free — no card, and 500 AI actions to try. The monthly allowance begins when the subscription does; run out and mail keeps flowing rules-only, with no overage charges.",
+    "trialNote": "Every tier starts with 14 days free — no card, and 500 credits to try. The monthly allowance begins when the subscription does; run out and mail keeps flowing rules-only, with no overage charges.",
     "storageNote": "Email counts are estimates from real use — about 25 KB of stored message text each, which is 2, 5 and 10 GB of room. Attachments stay in your mailbox and never count against your plan.",
     "annualNote": "Two months free when billed annually.",
     "footerLine": "You keep your mail either way — it lives on your server, in ordinary folders.",
@@ -1868,7 +1869,7 @@
     "q6": "Which providers work?",
     "a6": "Any IMAP mailbox: your own domain at Metanet or Infomaniak, iCloud, Gmail, Outlook, a self-hosted server. If it speaks IMAP, ohmail organizes it in place. Native Exchange sync over Microsoft Graph is on the roadmap; Microsoft 365 connects over IMAP, like every other mailbox here.",
     "q7": "Is there a trial for Cloud?",
-    "a7": "Yes — 14 days, no card. It is the whole product: rules, sync, push and the web app all run, and it comes with 500 AI actions so the drafts and the Screener's suggestions are yours to try. Spend those and mail keeps flowing rules-only; the monthly allowance begins when a subscription does. Desktop needs no trial at all; it is free.",
+    "a7": "Yes — 14 days, no card. It is the whole product: rules, sync, push and the web app all run, and it comes with 500 credits so the drafts and the Screener's suggestions are yours to try. Spend those and mail keeps flowing rules-only; the monthly allowance begins when a subscription does. Desktop needs no trial at all; it is free.",
     "q8": "Desktop or Cloud — what’s the real difference?",
     "a8": "The same model, the same vocabulary, and deliberately not the same privacy posture — that is the honest difference. Desktop is free and fully standalone: all processing local, no account, no artificial limits. It is a real mail client on all three platforms — it connects to your own IMAP server and organizes your mailbox on your machine, and because your mail is on your own disk it is there to read with the network down. Its AI, if you want one, is your own API key or a local model through Ollama — set in the app, off until you configure it. Cloud adds the web app, push notifications, always-on processing while your computer sleeps, and AI included from $9 a month — and it holds a copy of your mail on our servers to do that. The same download does either one; which door you take is a choice inside the app. Both are open today."
   },
@@ -2485,7 +2486,7 @@
     "addonNeedsActive": "Available once the subscription is active — the trial has no card on file."
   },
   "aiCredits": {
-    "trialLeft": "{count, plural, one {1 AI action} other {# AI actions}} left on your trial.",
+    "trialLeft": "{count, plural, one {1 credit} other {# credits}} left on your trial.",
     "trialSub": "Yours for the trial. These are not refilled — a plan brings a monthly allowance.",
     "trialSpent": "Your trial's AI actions are used up. Your rules keep running; a plan brings a monthly allowance.",
     "noPlan": "AI actions come with a plan. Your rules keep running without one.",

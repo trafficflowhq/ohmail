@@ -6,6 +6,7 @@ import { Reveal } from "./Reveal";
 import { markTags } from "./Mark";
 import { useSignup, type SignupTier } from "./Signup";
 import { SELF_HOST_GUIDE_URL } from "./GetOhmail";
+import { CREDIT_PRICES_ANCHOR } from "../faq-anchors";
 
 /**
  * The price list in first-sight order: the two free ways side by side, the managed tiers
@@ -221,7 +222,18 @@ function CloudTier({
         <span>{annual ? t("perYear") : t("perMonth")}</span>
       </p>
       <p className="l-tier-line num">{t(`${id}Mailboxes`)}</p>
-      <p className="l-tier-line num">{t(`${id}Actions`)}</p>
+      <p className="l-tier-line num">
+        {t(`${id}Actions`)}{" "}
+        {/* THE UNIT NEEDS ONE SENTENCE, AND THE SENTENCE ALREADY EXISTS. A credit is not an
+            action: an action costs 1 to 20 of them, so the allowance figure means nothing
+            without the schedule, and `faq.a4` three sections down states it correctly. This is
+            a link to that answer rather than a second copy of it (a second copy is a second
+            thing to keep true) and rather than a hover (a phone has no hover, and at 390 the
+            card has no room for the sentence inline). The target is derived in
+            `faq-anchors.ts` from the same list the FAQ renders, so it cannot drift onto a
+            different answer. */}
+        <a className="l-tier-what" href={`#${CREDIT_PRICES_ANCHOR}`}>{t("creditsWhat")}</a>
+      </p>
       <p className="l-tier-line num">{t(`${id}Storage`)}</p>
       <p className="l-tier-trial">{t("trialBadge")}</p>
       {publicSignup ? (

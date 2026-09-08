@@ -3180,6 +3180,24 @@ a.btn {
   font-size: 13px;
   color: var(--ink2);
 }
+/* The credits line's pointer at the FAQ answer that states what an action costs. Quieter than
+   the figure it follows and underlined so it reads as a link at 13px without a colour that
+   would compete with the price — the same register as the notify link above, and a real focus
+   ring because it is the only interactive thing inside a card body. */
+.l-tier-what {
+  font-size: 12px;
+  color: var(--ink3);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+  white-space: nowrap;
+}
+.l-tier-what:hover { color: var(--ink1); }
+.l-tier-what:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: calc(var(--r-ctl) * 4 / 8);
+}
 .l-tier-cta {
   margin-top: auto;
   justify-content: center;
@@ -3442,6 +3460,18 @@ a.btn {
 }
 .l-qa {
   border-bottom: 1px solid var(--hair-soft); /* deliberate hairline, like the Receipts rules */
+}
+/* ANOTHER SECTION LINKS STRAIGHT AT AN ANSWER (the plan card's credits line points at the one
+   that prices an AI action), and the target is the answer paragraph rather than the item, because
+   a fragment INSIDE a closed <details> is what makes the browser open it — land on the <details>
+   and it stays shut. The cost is that the jump is resolved around the expansion, so the html
+   scroll-padding at the top of this file does not hold: measured at 390, the answer came to rest
+   58px down with its own question hidden behind the 72px bar. A scroll-margin on the paragraph is
+   applied on the post-expansion settle and does hold — enough of one that the QUESTION is on
+   screen above its answer, since arriving at an answer whose question you cannot see is arriving
+   in the middle of a sentence. */
+.l-qa > p {
+  scroll-margin-top: calc(var(--l-bar) + 44px);
 }
 .l-qa summary {
   list-style: none;

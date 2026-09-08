@@ -37,6 +37,18 @@ anyone signing in to a provider rested on a line nothing checked. Both provider 
 now: each grants the pool on a first connection, reconnecting a mailbox that already exists grants
 nothing, and connecting through both grants one pool between them.
 
+### The trial note counts credits, not actions
+
+The number in "500 AI actions to try" was never a count of actions — it is a credit balance, and an
+action costs between one and twenty credits depending on what it is. Screening a sender costs one; a
+drafted reply costs fifteen. So the sentence promised as much as twenty times what the trial holds,
+to somebody it was inviting to try the drafts.
+
+Every place that puts a figure against the unit now says credits: the trial notes on the pricing
+page and in signup, the plan line in signup, the answer about the trial, and the notice in the app
+that tells you how much of a trial balance is left. The answer that states the price of each action
+was already correct and is unchanged; the plan cards now link to it.
+
 ### The phone chooser says what a phone can be
 
 The chooser offers three answers — ohmail Cloud, a server you run, or your own computer — and left
