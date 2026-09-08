@@ -57,10 +57,50 @@ export const AWAY_SCREENER_FOLDER = "ohmail/Screener";
  * "we did not answer this" needs to know which of the two happened: one is permanent and one
  * changes the moment the sender is let in.
  */
-export const AWAY_NEVER_ANSWERED_FOLDERS: readonly string[] = [
-  "ohmail/Screened",
-  "ohmail/Quarantine",
-];
+export const AWAY_NEVER_ANSWERED_FOLDERS: Readonly<Record<string, AwaySuppression>> = {
+  "ohmail/Screened": "screened_out",
+  "ohmail/Quarantine": "screened_out",
+  /**
+   * RECEIPTS (0.16 owner feedback item 4) — never answered, and it carries its OWN reason rather
+   * than borrowing `screened_out`.
+   *
+   * A receipt is machine mail about a transaction the account itself started. It is not somebody
+   * the account turned away, so reporting `screened_out` for it would be false in the log an
+   * operator reads to answer "why was this not answered" — the same "two reasons rather than one"
+   * rule the header verdicts follow one screen down.
+   *
+   * WHY IT IS HERE AND NOT MERELY ABSENT FROM {@link AWAY_ANSWERABLE_PILES}: absent from the
+   * offered piles it would be refused only for as long as the column's CHECK keeps it out of the
+   * stored array, and that is a property of a migration rather than of this module. In the map it
+   * is refused HERE, where a table test can delete the entry and watch a receipt be answered.
+   */
+  "ohmail/Receipts": "receipts_pile",
+};
+
+/**
+ * THE PILE VOCABULARY, RE-EXPORTED FROM THE LEAF THAT OWNS IT.
+ *
+ * It lives in `away-scope.ts` and not here because the settings control and the Ohbox banner need
+ * the same two members this rule refuses by, and they cannot load THIS file: {@link awayTextHash}
+ * below imports `node:crypto`. Two lists that agree today is the shape the brief's own hard stop
+ * names ("the designer's control offers a pile the engine refuses"), so there is one list and
+ * both sides import it.
+ *
+ * Re-exported rather than merely imported so that every consumer already reaching for this
+ * module's vocabulary — the pass, the service validator, the table test — keeps one import.
+ */
+export {
+  AWAY_ANSWERABLE_PILES, AWAY_PILES_DEFAULT, AWAY_PILE_VIEW, awayScopeKey, isAwayPile,
+  type AwayPile, type AwayScope,
+} from "./away-scope.js";
+
+/**
+ * The piles a responder is configured to answer, as stored. `readonly string[]` and not
+ * `readonly AwayPile[]`: the value arrives from a database column, so a member this build does
+ * not know is representable in the type — and it is then refused by the `includes` test, which
+ * is the fail-closed direction. Narrowing the parameter would move that decision to a cast.
+ */
+export type AwayPiles = readonly string[];
 
 /**
  * WHY THIS MESSAGE GETS NO AUTOMATIC REPLY, or `null` when it may have one.
@@ -92,7 +132,50 @@ export type AwaySuppression =
    */
   | "auto_reply_suppressed"
   | "null_return_path"
+  /**
+   * THE MESSAGE IS ITSELF A DELIVERY REPORT — `multipart/report; report-type=delivery-status`
+   * (RFC 6522 §3 / RFC 3464), which is the shape a bounce actually arrives in.
+   *
+   * Its own member rather than `auto_submitted`, because the two are different facts with
+   * different remediations: `auto_submitted` is a sender declaring its message automatic, and a
+   * DSN is a mail system reporting that a delivery failed. Not every MTA sets RFC 3834's header
+   * on one, and some send it from an address with no service local part and a present
+   * `Return-Path` — which is how a bounce reaches the send path with every other guard clear and
+   * earns a reply of its own.
+   */
+  | "bounce_report"
+  /**
+   * THIS CORRESPONDENT'S ADDRESS DOES NOT ACCEPT MAIL — a bounce for an earlier away reply came
+   * back, so `away_sender_state.undeliverable_at` is stamped and no further reply is ever sent.
+   *
+   * Permanent by design. A responder that keeps writing to a dead address generates one bounce
+   * per cycle into this account's own Ohbox, which is the state this member exists to end.
+   */
+  | "undeliverable"
+  /**
+   * THE MESSAGE IS IN A PILE THIS RESPONDER WAS NOT ASKED TO ANSWER — Reads under the defaults,
+   * and any folder outside {@link AWAY_ANSWERABLE_PILES}.
+   *
+   * The audience is a fact about a SENDER (let in once, past the Screener for ever); this is a
+   * fact about WHERE their mail landed. A shop let in to send one order confirmation is still
+   * "somebody I've let in" when its newsletter files to Reads months later, which is why the
+   * audience could not prevent the eight replies this member exists to stop.
+   */
+  | "wrong_pile"
+  /** A receipt — never offered as a pile. See {@link AWAY_NEVER_ANSWERED_FOLDERS}. */
+  | "receipts_pile"
   | AutoReplySuppression;
+
+/**
+ * WHY THIS MESSAGE MAY NEVER EARN AN AUTOMATIC REPLY WHATEVER THE SETTINGS — the reasons
+ * {@link neverAutoReply} can give. A subset of {@link AwaySuppression}, named so the predicate's
+ * own contract is readable without the pile and account members it knows nothing about.
+ */
+export type AwayNeverReason =
+  | AutoReplySuppression
+  | "auto_reply_suppressed"
+  | "null_return_path"
+  | "bounce_report";
 
 /** The audiences, as the closed set the service validator and this module share. */
 export type AwayAudience = "screened_in" | "everyone";
@@ -118,6 +201,17 @@ export interface AwayCandidate {
    * already heard from this mailbox about this thread.
    */
   alreadyReplied: boolean;
+  /**
+   * DID AN EARLIER AWAY REPLY TO THIS SENDER BOUNCE? — decided by the pass, passed in as a fact,
+   * for `alreadyReplied`'s reason exactly: the evidence is a row in `away_sender_state`, and a
+   * function that could reach the database would be a function a table test could not drive.
+   *
+   * REQUIRED, not optional with a `false` default. A fail-closed rule needs the state it fails
+   * closed on to be distinguishable from "this caller has no such thing", and an omitted boolean
+   * collapses "no bounce has come back" into "nobody looked" — the one shape that would let a
+   * caller who forgot to join the table keep writing to a dead address.
+   */
+  senderUndeliverable: boolean;
 }
 
 /** Every address this account owns, lowercased — including disabled and errored mailboxes. */
@@ -139,6 +233,7 @@ export function awayEligibility(
   candidate: AwayCandidate,
   audience: AwayAudience,
   ownAddresses: AwayOwnAddresses,
+  piles: AwayPiles,
 ): AwaySuppression | null {
   const sender = awayNormalizeAddress(candidate.fromAddress);
 
@@ -160,7 +255,10 @@ export function awayEligibility(
   // BEFORE the audience so that widening to `everyone` cannot reach Quarantine: the two guards read
   // the same column and only their order keeps them independent.
   const placed = candidate.desiredFolder;
-  if (placed !== null && AWAY_NEVER_ANSWERED_FOLDERS.includes(placed)) return "screened_out";
+  if (placed !== null) {
+    const never = AWAY_NEVER_ANSWERED_FOLDERS[placed];
+    if (never !== undefined) return never;
+  }
 
   // THE AUDIENCE. A message still HELD in the Screener is a stranger this account has not admitted. A
   // row with NO placement yet (ingested this cycle) is treated as NOT screened in — absent evidence
@@ -169,10 +267,83 @@ export function awayEligibility(
     return "not_screened_in";
   }
 
+  // ── THE PILE SCOPE (0.16 owner feedback item 4) ───────────────────────────────────────────
+  //
+  // AFTER the audience, and that order is the whole of how the two settings stay independent.
+  // `ohmail/Screener` is not an answerable pile, so asking this question first would refuse every
+  // stranger waiting there — silently switching off `audience: 'everyone'`, which is the entire
+  // population that setting exists for. The audience decides the Screener; this decides the rest.
+  //
+  // A row with NO placement reaches here only under `everyone` (the audience refuses it
+  // otherwise) and is refused: mail whose pile nobody has decided yet is not mail known to be in
+  // an answered pile, and absent evidence may not select the branch that sends mail. An EMPTY
+  // `piles` therefore answers nobody, which is the fail-closed reading and not "no filter" —
+  // the same distinction `AwayResponderPassDeps.mailboxIds` draws between `undefined` and `[]`,
+  // except that here there is no "no filter" reading to have.
+  // The Screener is the AUDIENCE's decision and it was already taken, one branch up. A message
+  // actually HELD there is what `everyone` exists to answer, so this rule must not re-judge it —
+  // the first version of this line did (`!piles.includes(placed ?? "")` with no exemption) and it
+  // refused every waiting stranger under the wider audience, which is this module's own
+  // Screened/Screener failure arriving from a new direction. The pre-existing control
+  // ("`everyone` answers a stranger still held in the Screener") is what caught it.
+  //
+  // A row with NO placement is deliberately NOT exempt: `null` reads as "not admitted" for the
+  // audience, and here it reads as "not known to be in an answered pile". Both fail toward
+  // silence, and they are separate readings of the same absent value rather than one shared
+  // default — which is why this tests `placed` itself rather than the audience's `??` expression.
+  if (placed !== AWAY_SCREENER_FOLDER && !piles.includes(placed ?? "")) return "wrong_pile";
+
+  // ── WHAT MAY NEVER EARN A REPLY, WHATEVER THE SETTINGS ────────────────────────────────────
+  //
+  // ONE predicate, COMPOSED — see {@link neverAutoReply}. It was tempting to write the sender
+  // classes out here; they already exist in `rules.ts` and a second copy of them is the drift
+  // that file's own header says ships an auto-reply to a mailing list.
+  const never = neverAutoReply(candidate.headers, sender);
+  if (never !== null) return never;
+
+  // ── THE TWO FACTS THE PASS HAD TO GO AND FETCH ────────────────────────────────────────────
+  //
+  // Last, on this module's cheapest-first rule, and `undeliverable` outranks `already_replied`
+  // because it is the more permanent statement about the correspondent: a thread that has been
+  // answered may earn another reply tomorrow, and an address that does not accept mail never will.
+  if (candidate.senderUndeliverable) return "undeliverable";
+  if (candidate.alreadyReplied) return "already_replied";
+
+  return null;
+}
+
+/**
+ * MAY THIS MESSAGE EVER EARN AN AUTOMATIC REPLY? — the reason it may not, or `null`.
+ *
+ * ── COMPOSED, NEVER COPIED, AND THE BRIEF THAT ASKED FOR A COPY WAS WORKING FROM A GREP ─────
+ *
+ * The slice this predicate was written for recorded that no `no-reply@` / `mailer-daemon@` /
+ * `postmaster@` / empty-`Return-Path` exclusion existed. Every one of them does, and has since
+ * 0087: `SERVICE_LOCAL_PREFIXES` + `isServiceSender` in `rules.ts`, reached through
+ * {@link autoReplySuppression}, plus the two away-only header tests that used to sit inline in
+ * {@link awayEligibility} and now live here. Measured against the built package before anything
+ * changed: `no-reply@`, `noreply@`, `no_reply@`, `do-not-reply@`, `donotreply@`,
+ * `MAILER-DAEMON@`, `mailer-daemon@`, `postmaster@`, `bounce@`, `bounces@` and
+ * `bounce-123-abc@` all answered `service_sender`.
+ *
+ * So this function ADDS one member and re-encodes nothing. The senders that actually reached the
+ * send path were `hello@`, `team@`, `updates@`, `info@`, `news@`, `support@` and `store@` — none
+ * a service local part, all of them ordinary human-ambiguous roles that `isServiceSender` is
+ * deliberately tight enough to admit — and what those messages had in common was their PILE, not
+ * their sender. The pile rule is the cure; this predicate is the floor under it.
+ *
+ * ── WHY IT IS ITS OWN EXPORTED FUNCTION ─────────────────────────────────────────────────────
+ *
+ * So that "every site that can send an away reply consults it" is a claim a census test can
+ * check by name, rather than a property of one function's control flow.
+ */
+export function neverAutoReply(
+  headers: Readonly<Record<string, unknown>>, sender: string,
+): AwayNeverReason | null {
   // LIST MAIL, RFC 3834 LOOP STOPS AND SERVICE SENDERS — the SAME implementation the router's
   // machine-sent test uses, so there is no second encoding of "this was generated, not typed" to
-  // drift. Extended below with the away-only headers; this call itself is unchanged.
-  const headerVerdict = autoReplySuppression(candidate.headers, sender);
+  // drift. This call is unchanged from when it sat inline in `awayEligibility`.
+  const headerVerdict = autoReplySuppression(headers, sender);
   if (headerVerdict !== null) return headerVerdict;
 
   // ── THE AWAY-ONLY HEADER TESTS ────────────────────────────────────────────────────────────
@@ -183,23 +354,49 @@ export function awayEligibility(
   // message; folding it in would silently start filing ordinary Exchange mail as machine-sent.
   // Same for an empty `Return-Path`, which is a bounce/notification convention and not a statement
   // about authorship. So they live here, where the decision is exactly "may we auto-reply".
-  const suppressHeader = awayHeaderValues(candidate.headers, "x-auto-response-suppress");
+  const suppressHeader = awayHeaderValues(headers, "x-auto-response-suppress");
   if (suppressHeader?.some((v) => /\b(?:oof|autoreply|all)\b/i.test(v)) ?? false) {
     return "auto_reply_suppressed";
   }
-  const precedence = awayHeaderValues(candidate.headers, "precedence");
+  const precedence = awayHeaderValues(headers, "precedence");
   if (precedence?.some((v) => /\b(?:list|junk)\b/i.test(v)) ?? false) return "list_mail";
   // AN EMPTY `Return-Path` (`<>`) is the null reverse-path: a bounce, or a notification whose
   // sender has declared it will accept no reply. Answering it is undeliverable at best and a
   // bounce loop at worst. Only an EMPTY one — a present, non-empty Return-Path is ordinary mail.
-  const returnPath = awayHeaderValues(candidate.headers, "return-path");
+  const returnPath = awayHeaderValues(headers, "return-path");
   if (returnPath?.some((v) => v.trim() === "" || v.trim() === "<>") ?? false) return "null_return_path";
 
-  // ALREADY ANSWERED — a manual reply the person sent themselves, or an earlier automatic one from
-  // any install. Last because it is the only member whose evidence the pass had to go and fetch.
-  if (candidate.alreadyReplied) return "already_replied";
+  // THE MESSAGE IS ITSELF A BOUNCE. See {@link isDeliveryReport} — the member this predicate adds.
+  if (isDeliveryReport(headers)) return "bounce_report";
 
   return null;
+}
+
+/**
+ * IS THIS MESSAGE A DELIVERY STATUS NOTIFICATION? — `Content-Type: multipart/report` carrying
+ * `report-type=delivery-status`.
+ *
+ * BOTH halves are required, and the second one is what keeps this off ordinary mail: a READ
+ * RECEIPT is also `multipart/report`, with `report-type=disposition-notification`, and it is a
+ * person's client asking for an acknowledgement rather than a mail system reporting a failure.
+ * Treating one as a bounce would silence a correspondent who did nothing but tick a box.
+ *
+ * EXPORTED, and it has a second caller for a reason worth stating: the pass reads incoming
+ * bounces to learn which correspondents are unreachable, and "is this message a bounce" must be
+ * the SAME question there as it is here. Asked twice — once in this predicate and once as a SQL
+ * `content-type LIKE` in the pass — the two would answer differently the first time a sender
+ * folded the header, and the direction of that disagreement is that a HUMAN reply to an away
+ * reply gets read as a bounce and their address is marked dead.
+ *
+ * The value is matched with the parameter quoted or bare (both are legal per RFC 2045 §5.1) and
+ * without assuming parameter order, because a `Content-Type` may be folded across lines with
+ * `boundary` between the type and the report type. `\s*` around the `=` for the same reason.
+ */
+export function isDeliveryReport(headers: Readonly<Record<string, unknown>>): boolean {
+  const ct = awayHeaderValues(headers, "content-type");
+  if (ct === null) return false;
+  return ct.some((v) => /multipart\/report/i.test(v)
+    && /report-type\s*=\s*"?delivery-status"?/i.test(v));
 }
 
 /**
