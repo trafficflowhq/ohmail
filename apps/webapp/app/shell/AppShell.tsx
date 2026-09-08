@@ -122,8 +122,7 @@ import type { ApplyFaceAllDevices } from "./FaceRow";
 import { ProfileImportCard, useProfileImport, type ProfileImportTransport } from "./ProfileImportCard";
 import {
   COMPOSE_SEND_KEY, heldRowUnverified, inlineForwardKey, SEND_IN_FLIGHT_PHASES,
-  restoredSendPending, sendPendingInOutbox, sendUnsettledFromLastSession, useMailSend,
-  readReplyDraft, writeReplyDraft,
+  sendPendingInOutbox, useMailSend, readReplyDraft, writeReplyDraft,
   readReplyMeta, writeReplyMeta,
 } from "./mail-send";
 import { attachSendLockDraft, holdOf } from "./send-lock";
@@ -3634,7 +3633,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
          queue BEFORE it is dispatched, so the outbox reads empty for the whole replay — measured —
          while the composer holds the text whose fate is being decided. The record answers it and
          releases itself at the settle. */
-      || sendUnsettledFromLastSession(COMPOSE_SEND_KEY, composeSessionId()),
+      || mailSend.restoredPending(COMPOSE_SEND_KEY),
     /* THE SURFACE HALF OF INVARIANT T's CLEAR. The hook owns the binding and ends it; emptying
        the form, dropping the reading selection and arriving at the list are this component's
        state, so they are passed in rather than moved. A SEND-LATER confirm lands on the Drafts
@@ -7301,22 +7300,15 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
                    `heldRowUnverified`, which no longer reads the row itself. The row this compose
                    is holding is the persisted one, not the hook's: a parked reopen holds a row it
                    deliberately did not adopt. */
-                /* AND A SEND RESTORED FROM THE LAST SESSION reads as what it is — still out
-                   there, answer not back — so Send is refused for it until the answer lands and
-                   the compose is cleared. Without it an edit in that window mints a fresh key for
-                   a message already on its way. */
-                send={restoredSendPending(
-                  heldRowUnverified(
-                    mailSend.stateOf(COMPOSE_SEND_KEY),
-                    readComposeRow(),
-                    holdOf(engine, {
-                      lane: COMPOSE_SEND_KEY,
-                      draftId: readComposeRow(),
-                      session: composeSessionId(),
-                    }),
-                    composeSessionId(),
-                  ),
-                  sendUnsettledFromLastSession(COMPOSE_SEND_KEY, composeSessionId()),
+                send={heldRowUnverified(
+                  mailSend.stateOf(COMPOSE_SEND_KEY),
+                  readComposeRow(),
+                  holdOf(engine, {
+                    lane: COMPOSE_SEND_KEY,
+                    draftId: readComposeRow(),
+                    session: composeSessionId(),
+                  }),
+                  composeSessionId(),
                 )}
                 onSend={sendCompose}
                 onSendLater={sendCompose}

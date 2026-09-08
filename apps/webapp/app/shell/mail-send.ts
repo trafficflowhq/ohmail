@@ -209,6 +209,15 @@ export interface SendState {
 }
 
 export interface MailSendApi {
+  /**
+   * IS A SEND THIS MOUNT DID NOT ISSUE STILL OWED AN ANSWER ON THIS LANE?
+   *
+   * Read by the shell for two things: the create gate (a row written in that window is the second
+   * one for a message already on its way) and the surface's phase (the send IS out there, so Send
+   * is refused for it). It lives on the API rather than as a free function because the answer
+   * depends on which keys THIS mount has pressed under, which only the hook knows.
+   */
+  restoredPending: (lane: string) => boolean;
   stateOf: (key: string) => SendState;
   /**
    * Press Send. A no-op while that surface's send is already in flight or queued.
@@ -255,7 +264,7 @@ export const SEND_IN_FLIGHT_PHASES: ReadonlySet<SendPhase> = new Set<SendPhase>(
  * cannot refuse the compose surface's first save.
  */
 export function sendUnsettledFromLastSession(
-  lane: string, session: string | null, owner: string | null = null,
+  lane: string, session: string | null, ownKeys: ReadonlySet<string>, owner: string | null = null,
 ): boolean {
   /**
    * ── A SEND OF THIS MESSAGE IS STILL OWED AN ANSWER, AND THIS MOUNT DID NOT ISSUE IT ─────────
@@ -279,7 +288,12 @@ export function sendUnsettledFromLastSession(
   if (session === null) return false;
   return unverifiedSendIntents(lane, owner).length === 0
     && allSendLocks(Date.now(), owner)
-      .some((r) => r.lane === lane && r.session === session);
+      // THIS MOUNT'S OWN PRESSES ARE NOT "FROM THE LAST SESSION", and leaving them in was the
+      // whole of a measured regression: every record is written by a press, so a rule that reads
+      // them all refuses the very resume the record exists for — 23 cases went red saying so, four
+      // of them the durable lock's own kill tests. The keys this mount has claimed are excluded,
+      // which leaves exactly the inherited ones.
+      .some((r) => r.lane === lane && r.session === session && !ownKeys.has(r.key));
 }
 
 export function sendPendingInOutbox(engine: OhmailEngine, lane: string): boolean {
@@ -746,35 +760,6 @@ export function heldRowUnverified(
     phase: "unverified",
     unresolved: [...(state.unresolved ?? []), { subjects, fp: "" }],
   };
-}
-
-/**
- * ── A SEND RESTORED FROM THE LAST SESSION IS STILL A SEND IN FLIGHT ─────────────────────────
- *
- * The window the two halves above cannot reach: both act when the ANSWER arrives, and this is the
- * time before it. The composer holds the message, the queue is empty (a replayed entry leaves it
- * before dispatch), and nothing in this mount's own state remembers a press it did not make — so
- * an edit changes the fingerprint, `resumeSendLock` drops the stored key as a mismatch, and the
- * press mints a fresh one. Measured: a second Idempotency-Key reaches the server. The DELIVERIES
- * inside one test timeline read as one, which is why that assertion was replaced by a count of
- * KEYS — a second key is a second copy whenever it settles.
- *
- * `queued` IS THE TRUE PHASE for it, not a borrowed one: the send is out there and its answer has
- * not come back, which is exactly what that phase means everywhere else. `canSend` already refuses
- * it, so the press is refused with no new rule, and the surface's existing sentence for it — "Not
- * sent yet. ohmail is still trying." — is true of this state word for word.
- *
- * WHAT THIS DOES NOT DO is lock the FIELDS. That needs the compose view, which this slice may not
- * touch; the text can still be edited, and the edit is simply not sendable until the answer lands
- * and the compose is cleared. The delivery route is closed; the editing surface is not, and that
- * is written down rather than implied.
- */
-export function restoredSendPending(state: SendState, pending: boolean): SendState {
-  if (!pending) return state;
-  // A LIVE PHASE WINS. A press in this mount, or an unresolved record, says something stronger
-  // and more specific than "restored from the last session"; only an idle lane is projected.
-  if (state.phase !== "idle") return state;
-  return { ...state, phase: "queued" };
 }
 
 export function canSend(state: SendState, m: MailSend): boolean {
@@ -1323,10 +1308,24 @@ export function useMailSend(
         const record = recordForSendKey(res.key, Date.now(), owner.current);
         if (record === null) continue;
         if (res.status === "confirmed") {
-          /* THE SEND COMPLETED WHILE NOBODY WAS LISTENING. The record is spent — its outcome is
-             known — and the surface bound to that message is told, with the row the send was
-             delivered from, so it can end the way a live confirmation ends it. */
-          releaseSendLock(record.lane, record.fp, owner.current);
+          /* THE SEND COMPLETED WHILE NOBODY WAS LISTENING. The surface bound to that message is
+             told, with the row the send was delivered from, so it can end the way a live
+             confirmation ends it.
+
+             AND THE RECORD IS LEFT STANDING, which is the opposite of what `flush` does on the
+             same status — measured, not chosen. Releasing here made "a reload inside the queued
+             window cannot deliver the same mail twice" deliver twice: the replay had already put
+             the mail out under key K, the release freed K, and the press that followed minted a
+             SECOND key for a message the server had no way left to recognise. Two mails to a real
+             person, from the fix meant to stop the spare draft row.
+
+             The asymmetry is the difference between the two paths, not an oversight. `flush`
+             releases because the surface that pressed is right there and clears itself in the same
+             beat, so the key can go. This pass speaks for a surface it cannot see: settling is a
+             message it sends, never a fact it can check. So the only durable evidence that this
+             message has ALREADY GONE stays in the jar, and a press of the same message resumes K
+             and is replayed rather than re-sent. A different message is unaffected — it has a
+             different fingerprint, and the next press sweeps this record as spent. */
           settledRef.current(record.lane, {
             kind: "mail_send", draftId: res.entityId ?? record.draftId ?? null,
           } as unknown as MailSend);
@@ -1346,9 +1345,15 @@ export function useMailSend(
         }
       }
     };
-    /* AND ONCE AT MOUNT, for the boot that finished its replay before this surface existed —
-       the answer waits in `lateResults` precisely so that a later reader can have it. */
-    void collect();
+    /* AND ONCE AT MOUNT, for the boot that finished its replay before this surface existed — the
+       answer waits in `lateResults` precisely so a later reader can have it.
+
+       GUARDED BY THE SAME QUESTION, and the guard is not tidiness: `flushPending()` DISPATCHES the
+       queue as well as handing back late answers, so calling it unconditionally at mount adds a
+       second delivery road beside the drive's own replay. Measured — "a reload inside the queued
+       window cannot deliver the same mail twice" went red, which is the one thing this whole seam
+       exists to prevent. Nothing is pulled unless there is an answer to pull. */
+    if (engine.hasLateResults()) void collect();
     return () => { cancelled = true; off(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine]);
@@ -1408,6 +1413,15 @@ export function useMailSend(
     return session === null ? { ...base, unresolved: named } : { ...base, unresolved: named, session };
   }, [states]);
 
+  /**
+   * EVERY IDEMPOTENCY-KEY THIS MOUNT HAS PRESSED UNDER — the discriminator for "inherited".
+   *
+   * A record is written by a press, so "a live record on this lane" cannot mean "a send from the
+   * last session": it is also every send this session just made, and refusing those refuses the
+   * resume the record exists for.
+   */
+  const ownKeys = useRef(new Set<string>());
+
   const send = useCallback(
     (m: MailSend, opts?: { surface?: "inline" }) => {
       const key = sendKeyOf(m, opts?.surface ?? "compose");
@@ -1439,21 +1453,7 @@ export function useMailSend(
         attachSendLockDraft(key, sendSubjects(m, sessionOf(key)), m.draftId ?? null, owner.current);
         return;
       }
-      /**
-       * ── AND A SEND THIS SESSION INHERITED IS STILL IN FLIGHT ─────────────────────────────────
-       *
-       * The refusal is HERE and not only in the projection the button reads, for the reason every
-       * other refusal in this function is here: a caller that is not the button — a keyboard
-       * shortcut, a future step — must not get past what the button enforces. The projection makes
-       * the state say so on screen; this makes it true of the press.
-       *
-       * The row is written onto the record on the way out, exactly as the `canSend` refusal below
-       * does it: somebody reading the jar beside a refused press needs the two connected.
-       */
-      if (sendUnsettledFromLastSession(key, sessionOf(key), owner.current)) {
-        attachSendLockDraft(key, sendSubjects(m, sessionOf(key)), m.draftId ?? null, owner.current);
-        return;
-      }
+
       if (!canSend(stateFor(key), m)) {
         /**
          * REFUSED — and the row this message has since acquired is written down on the way out.
@@ -1517,6 +1517,7 @@ export function useMailSend(
         }, owner.current);
       }
 
+      ownKeys.current.add(sendKey);
       locked.current.add(key);
       setPhase(key, { phase: "sending", since: Date.now() });
       // ACKNOWLEDGE FIRST, WORK SECOND — see {@link afterPaint}. The lock and the durable claim
@@ -1558,6 +1559,11 @@ export function useMailSend(
        */
       stateOf: stateFor,
       send,
+      /** See {@link sendUnsettledFromLastSession} — the mount's own keys are what it excludes. */
+      restoredPending: (lane: string) => sendUnsettledFromLastSession(
+        lane, lane === COMPOSE_SEND_KEY ? composeSessionId(owner.current) : null,
+        ownKeys.current, owner.current,
+      ),
     }),
     [stateFor, send],
   );
