@@ -16,7 +16,7 @@ import {
   unhuskJunkFiledBody as unhuskJunkFiledBodyTx,
   type JunkHuskIdentity, type JunkUnhuskOutcome,
 } from "../husk-restore.js";
-import { dialect, dialectOf, type Dialect } from "@trafficflow/db/dialect";
+import { dialect, type Dialect } from "@trafficflow/db/dialect";
 import { effectForDestination } from "../rules.js";
 // The Sent shape's single source — the stale-residue cleanup must never take a Sent row (its
 // export in imap-types.ts carries the watermark argument).
@@ -1966,7 +1966,12 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    * leaning on `= NULL` never matching, because the two look identical and only one is a rule.
    */
   async upsertThread(input: ThreadUpsertInput): Promise<ThreadUpsertResult> {
-    if (dialectOf(this.db) === "sqlite") return this.upsertThreadOnDeviceStore(input);
+    // THROUGH `this.d`, never `dialectOf(this.db)`. A transaction is a different object built by
+    // the query builder and inherits no brand, so asking the handle directly throws inside exactly
+    // the block this method is normally called from — the ingest's persist transaction. The getter
+    // above says this in its own words; it was written here the other way first and three pipeline
+    // cases said so.
+    if (this.d.name === "sqlite") return this.upsertThreadOnDeviceStore(input);
 
     const rows = await this.db.insert(threads).values({
       accountId: input.accountId,
