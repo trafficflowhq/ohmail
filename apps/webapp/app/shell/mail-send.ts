@@ -88,8 +88,8 @@ import type { EngineMessage, MutationResult, OhmailEngine } from "@ohmail/client
 import type { ToastFn } from "@ohmail/ui";
 import { clearComposeDraft, composeSessionId, readComposeRow, type MailSend } from "./compose";
 import {
-  attachSendLockDraft, claimSendLock, holdOf, legacySendFingerprint_0_14_0,
-  legacySendFingerprint_0_14_1, markSendLockUnverified,
+  allSendLocks, attachSendLockDraft, claimSendLock, holdOf, legacySendFingerprint_0_14_0,
+  legacySendFingerprint_0_14_1, markSendLockUnverified, recordForSendKey,
   releaseSendLock, resumeSendLock, SEND_LOCK_FORMAT, sendFingerprint, sendIdentity, sendSubject,
   sendSubjects, unverifiedSendIntents, type Hold, type SendIntent,
 } from "./send-lock";
@@ -254,6 +254,34 @@ export const SEND_IN_FLIGHT_PHASES: ReadonlySet<SendPhase> = new Set<SendPhase>(
  * Lane-scoped through `sendKeyOf`, the same derivation the press uses, so a reply's pending send
  * cannot refuse the compose surface's first save.
  */
+export function sendUnsettledFromLastSession(
+  lane: string, session: string | null, owner: string | null = null,
+): boolean {
+  /**
+   * ── A SEND OF THIS MESSAGE IS STILL OWED AN ANSWER, AND THIS MOUNT DID NOT ISSUE IT ─────────
+   *
+   * The outbox cannot answer this and it is not a near miss: a restored entry is removed from the
+   * queue BEFORE it is dispatched, so `sendPendingInOutbox` reads false for the whole window the
+   * replay is running in — measured. That window is exactly when the composer is holding text
+   * whose fate is being decided elsewhere, and a create in it is the second row.
+   *
+   * The RECORD answers it, because the press wrote it down synchronously before the verb. Two
+   * conditions, and both matter: a live record on this lane naming THIS compose session, and the
+   * record not yet settled. It is self-clearing rather than timed — the settle releases the record
+   * the moment the result arrives, which is what stops this being the rule withdrawn in an earlier
+   * round for parking a genuinely new message: a door that starts one re-mints the session, and
+   * the record then names nothing this compose answers to.
+   *
+   * THE CREATE GATE ONLY. The press is deliberately not asked: `resumeSendLock` compares the
+   * FINGERPRINT and therefore tells two messages apart, which is the check that makes a press
+   * safe. Refusing the press here would refuse a message nobody had pressed Send on.
+   */
+  if (session === null) return false;
+  return unverifiedSendIntents(lane, owner).length === 0
+    && allSendLocks(Date.now(), owner)
+      .some((r) => r.lane === lane && r.session === session);
+}
+
 export function sendPendingInOutbox(engine: OhmailEngine, lane: string): boolean {
   return engine.pendingMutations().some((p) => p.mutation.kind === "mail_send"
     && sendKeyOf(p.mutation as unknown as MailSend) === lane);
@@ -718,6 +746,35 @@ export function heldRowUnverified(
     phase: "unverified",
     unresolved: [...(state.unresolved ?? []), { subjects, fp: "" }],
   };
+}
+
+/**
+ * ── A SEND RESTORED FROM THE LAST SESSION IS STILL A SEND IN FLIGHT ─────────────────────────
+ *
+ * The window the two halves above cannot reach: both act when the ANSWER arrives, and this is the
+ * time before it. The composer holds the message, the queue is empty (a replayed entry leaves it
+ * before dispatch), and nothing in this mount's own state remembers a press it did not make — so
+ * an edit changes the fingerprint, `resumeSendLock` drops the stored key as a mismatch, and the
+ * press mints a fresh one. Measured: a second Idempotency-Key reaches the server. The DELIVERIES
+ * inside one test timeline read as one, which is why that assertion was replaced by a count of
+ * KEYS — a second key is a second copy whenever it settles.
+ *
+ * `queued` IS THE TRUE PHASE for it, not a borrowed one: the send is out there and its answer has
+ * not come back, which is exactly what that phase means everywhere else. `canSend` already refuses
+ * it, so the press is refused with no new rule, and the surface's existing sentence for it — "Not
+ * sent yet. ohmail is still trying." — is true of this state word for word.
+ *
+ * WHAT THIS DOES NOT DO is lock the FIELDS. That needs the compose view, which this slice may not
+ * touch; the text can still be edited, and the edit is simply not sendable until the answer lands
+ * and the compose is cleared. The delivery route is closed; the editing surface is not, and that
+ * is written down rather than implied.
+ */
+export function restoredSendPending(state: SendState, pending: boolean): SendState {
+  if (!pending) return state;
+  // A LIVE PHASE WINS. A press in this mount, or an unresolved record, says something stronger
+  // and more specific than "restored from the last session"; only an idle lane is projected.
+  if (state.phase !== "idle") return state;
+  return { ...state, phase: "queued" };
 }
 
 export function canSend(state: SendState, m: MailSend): boolean {
@@ -1194,6 +1251,108 @@ export function useMailSend(
     }
   }, [engine, absorb]);
 
+  /**
+   * ── THE ADOPTION PASS AT MOUNT, AND WHY IT EXISTS NOW WHEN IT DID NOT BEFORE ────────────────
+   *
+   * This file's header used to say there is deliberately no adoption pass at mount, because "a
+   * mount that adopted the lane as `queued` would lock a button whose settlement can never arrive
+   * through `flushPending`". That was true and it was a statement about the ENGINE, not about
+   * adoption: a restored entry's result was discarded by the replay, so nothing could ever arrive.
+   * The engine keeps it now (`replayOutboxInner` writes it to `lateResults`, where the timeout
+   * path already wrote), so the objection is gone and the settlement is exactly what has to be
+   * collected — because without it a send that completed on this boot leaves its message sitting
+   * in the composer, and an edit there is a second delivery.
+   *
+   * ONE CONSUMER, UNCHANGED. `flushPending()` is destructive and `useMailSend` owns it; this is
+   * that same owner, pulling on the one occasion its own maps are empty. `flush` cannot do it —
+   * it returns early when nothing is queued IN THIS MOUNT, and it skips a result whose key it does
+   * not recognise, which is every restored one.
+   *
+   * THE KEY IS TURNED BACK INTO A MESSAGE BY THE RECORD, not by guesswork: the press wrote the
+   * lane and the names down synchronously, before the verb, which is the whole reason that record
+   * exists. A result whose key names no record is left alone — it belongs to a surface this build
+   * cannot speak for, and inventing a lane for it would settle the wrong message.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    let running = false;
+    /**
+     * WHEN TO PULL, and a once-at-mount pull is the wrong answer — measured.
+     *
+     * The boot replay is asynchronous: the mount happens first and the result lands afterwards,
+     * so a single pass at mount finds an empty `lateResults` and the settlement is never
+     * collected. The trigger is therefore the engine's own notification, narrowed to the EDGE
+     * where a `mail_send` on some lane stops being pending — which is when the replay has
+     * finished with it.
+     *
+     * The edge is only a TRIGGER. What settles the compose is the RESULT this pull returns, never
+     * the queue having emptied: a drain that produced no result for us leaves everything as it
+     * was, which is the difference between "the send is over" and "nothing is queued any more".
+     */
+    const collect = async (): Promise<void> => {
+      if (running || cancelled) return;
+      running = true;
+      try {
+        await pass();
+      } finally {
+        running = false;
+      }
+    };
+    /**
+     * ASKED DIRECTLY, because the two indirect signals were both wrong and one of them silently.
+     *
+     * A falling edge on "a send is pending" never fires for the case this exists for: a replayed
+     * entry is removed from the queue BEFORE it is dispatched, so a mount that did not issue it
+     * never observes the pending state to fall from. Three pulls ran, all empty, while the answer
+     * sat in the engine's map — the same ending the engine used to have, moved one layer out.
+     * Pulling on every notification is the other bad option: `flushPending` takes the outbox gate
+     * and can dispatch the queue, so that is a poll wearing a subscription's clothes.
+     *
+     * `hasLateResults()` is the exact question and it is free. `notify()` fires immediately after
+     * an answer with no caller is recorded, so this collects on that notification and no other.
+     */
+    const off = engine.subscribe(() => {
+      if (engine.hasLateResults()) void collect();
+    });
+    const pass = async (): Promise<void> => {
+      const results = await engine.flushPending();
+      if (cancelled) return;
+      for (const res of results) {
+        // Ours only: a key this mount is already tracking is `flush`'s business, not this pass's.
+        if (queued.current.has(res.key)) continue;
+        const record = recordForSendKey(res.key, Date.now(), owner.current);
+        if (record === null) continue;
+        if (res.status === "confirmed") {
+          /* THE SEND COMPLETED WHILE NOBODY WAS LISTENING. The record is spent — its outcome is
+             known — and the surface bound to that message is told, with the row the send was
+             delivered from, so it can end the way a live confirmation ends it. */
+          releaseSendLock(record.lane, record.fp, owner.current);
+          settledRef.current(record.lane, {
+            kind: "mail_send", draftId: res.entityId ?? record.draftId ?? null,
+          } as unknown as MailSend);
+          continue;
+        }
+        if (res.error?.code === "send_unverified") {
+          /* NOBODY KNOWS, and that is the one outcome the record must outlive — see
+             `SendLock.unverified`. The row the send made for itself is bound to it here for the
+             same reason `absorb` binds it: the drafts list must be able to name the message. */
+          markSendLockUnverified(record.lane, record.fp, owner.current);
+          if (res.entityId) {
+            const names: string[] = [];
+            if (record.subject !== undefined) names.push(record.subject);
+            if (record.session !== undefined) names.push(`compose:${record.session}`);
+            attachSendLockDraft(record.lane, names, res.entityId, owner.current);
+          }
+        }
+      }
+    };
+    /* AND ONCE AT MOUNT, for the boot that finished its replay before this surface existed —
+       the answer waits in `lateResults` precisely so that a later reader can have it. */
+    void collect();
+    return () => { cancelled = true; off(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [engine]);
+
   const arm = useCallback(() => {
     if (timer.current !== null) return; // one timer for the whole queue
     const wait = BACKOFF_MS[Math.min(attempt.current, BACKOFF_MS.length - 1)]!;
@@ -1277,6 +1436,21 @@ export function useMailSend(
         session: sessionOf(key),
       }, owner.current);
       if (hold.kind === "parked") {
+        attachSendLockDraft(key, sendSubjects(m, sessionOf(key)), m.draftId ?? null, owner.current);
+        return;
+      }
+      /**
+       * ── AND A SEND THIS SESSION INHERITED IS STILL IN FLIGHT ─────────────────────────────────
+       *
+       * The refusal is HERE and not only in the projection the button reads, for the reason every
+       * other refusal in this function is here: a caller that is not the button — a keyboard
+       * shortcut, a future step — must not get past what the button enforces. The projection makes
+       * the state say so on screen; this makes it true of the press.
+       *
+       * The row is written onto the record on the way out, exactly as the `canSend` refusal below
+       * does it: somebody reading the jar beside a refused press needs the two connected.
+       */
+      if (sendUnsettledFromLastSession(key, sessionOf(key), owner.current)) {
         attachSendLockDraft(key, sendSubjects(m, sessionOf(key)), m.draftId ?? null, owner.current);
         return;
       }

@@ -1279,6 +1279,26 @@ export function attachSendLockDraft(
 }
 
 /**
+ * ── WHICH LANE AND WHICH MESSAGE AN IDEMPOTENCY-KEY BELONGS TO ──────────────────────────────
+ *
+ * The reverse of every other reader here, and it exists for the one answer that arrives with no
+ * caller: a send whose owning session died, replayed at boot and settled by the engine. That
+ * result carries the KEY it went out under and the row it was delivered from — and nothing else
+ * this browser can act on. The record is what turns the key back into a message: it was written
+ * at the press, synchronously, with the lane and the names.
+ *
+ * Live records only, and this build's format only: a key from a shape this build cannot read is
+ * one whose meaning it would be guessing at.
+ */
+export function recordForSendKey(
+  key: string, nowMs: number, owner: string | null = storageOwner(),
+): SendLock | null {
+  const rows = load(owner);
+  if (rows === null) return null;
+  return rows.find((r) => r.key === key && r.v <= SEND_LOCK_FORMAT && isLive(r, nowMs)) ?? null;
+}
+
+/**
  * Record that ONE MESSAGE's send on this lane came back unverified. See {@link SendLock.unverified}.
  *
  * Keyed by `(lane, fingerprint)` for the same reason {@link releaseSendLock} is: the lane may hold

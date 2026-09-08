@@ -2081,7 +2081,32 @@ export class OhmailEngine {
       // The drive's own drain follows this batch and carries every echo, so the reconcile this
       // dispatch defers is deliberately DROPPED rather than issued — one drain, not two. That is
       // the whole reason the deferred mode exists, and it is why `owed` is ignored here alone.
-      const { timedOut, held } = await this.dispatchOnLane(p);
+      const { timedOut, held, result } = await this.dispatchOnLane(p);
+      /**
+       * ── THE REPLAY'S ANSWER IS KEPT, EXACTLY AS A LATE ANSWER IS ─────────────────────────────
+       *
+       * This loop read `{ timedOut, held }` and threw the RESULT away, and for a restored entry
+       * that result is the only thing anyone will ever know about the verb: its owner died with
+       * the previous session, so no `mutate()` promise is waiting for it and nothing else in the
+       * engine records it.
+       *
+       * For a send that is a second delivery. Press Send before the first autosave (the mutation
+       * carries no row, so the ADAPTER makes one), lose the response, reload: this loop delivers
+       * it and drops the `sent` answer AND the `entityId` of the row it was delivered from. The
+       * composer still holds the text, the queue is now empty so the create gate opens, and the
+       * next pause writes a second row. Edit that text — nobody has been told it went out — and
+       * the fingerprint no longer matches the durable record, so the stored key is dropped as a
+       * mismatch and Send goes out under a fresh one. Two copies at the recipient.
+       *
+       * `lateResults` is where an answer with no waiting caller already belongs — see the timeout
+       * path, which writes exactly this — and `flushPending()` is its single, destructive reader.
+       * The two writers are mutually exclusive per call: a timed-out dispatch returns a `null`
+       * result here and writes from its own continuation, so nothing is recorded twice.
+       */
+      if (result !== null) {
+        this.lateResults.set(p.id, result);
+        this.notify();
+      }
       if (held) {
         // A hold armed while this batch ran. The rest stay queued in user order for the drive
         // after; this one proceeds to its drain, because reads are never hostage to a write.
@@ -5636,6 +5661,26 @@ export class OhmailEngine {
    * would read as "nothing left" and stop the very retry loop that will deliver the send once
    * the hold clears. The entries stay queued and persisted; the hold's settle nudges a drive.
    */
+  /**
+   * IS THERE AN ANSWER WAITING WITH NO CALLER? — a non-destructive read, and the only one.
+   *
+   * `flushPending()` is the road every such answer travels and it is DESTRUCTIVE by design: the
+   * entries it hands back are removed, so exactly one consumer can have them. That makes it
+   * unusable as a question. A surface that wants to know whether there is anything to collect had
+   * only two bad options — pull on every notification (a poll wearing a subscription's clothes,
+   * and it takes the outbox gate each time) or infer it from the QUEUE, which cannot work for the
+   * case that matters: a replayed entry is removed from the queue BEFORE it is dispatched, so
+   * "something is pending" is never observable on a mount that did not issue it, and a rule armed
+   * on that transition never fires. Measured, not reasoned: three pulls, all empty, and the answer
+   * still sitting in the map.
+   *
+   * So the question is asked directly. `notify()` fires immediately after a late answer is
+   * recorded, which makes "subscribe, then ask this" exact rather than periodic.
+   */
+  hasLateResults(): boolean {
+    return this.lateResults.size > 0;
+  }
+
   async flushPending(): Promise<MutationResult[]> {
     // THE HOLD IS READ BEFORE JOINING, exactly as `mutate` reads it, and for the same reason:
     // the gate WAITS OUT a standing hold before releasing, so a check inside the gated body
