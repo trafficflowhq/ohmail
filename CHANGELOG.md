@@ -13,42 +13,6 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
-### Setup credits on ohmail Cloud: whether one was granted, and why not
-
-An ohmail Cloud account on a paid plan receives a one-time pool of screening credits when it
-connects its first mailbox — a month of that plan's own allowance, held separately from the monthly
-balance and written in the same step as the mailbox itself, so a connection that fails grants
-nothing. That much is not new. What is new is that the service now records what happened each time
-it tried.
-
-Connecting a mailbox succeeds whether or not a pool was written, so an account holding no pool
-looked exactly like an account whose pool was never attempted, and the several reasons one is
-withheld looked like each other. The service now records which of four things happened — the pool
-was granted, the account already held one, it has no subscription to size one from, or its plan
-sells no credits — beside the account and the mailbox concerned. That record goes to the server's
-own log, where somebody answering a question about an account can read it. None of it is shown to
-you, and nothing about connecting a mailbox looks different. A failure to write that line can never
-become the reason a mailbox failed to connect, while a failure to write the pool itself still stops
-the connection, exactly as before.
-
-Connecting a mailbox by signing in to a provider reaches different code than connecting one with a
-password, and only the password route had ever been exercised by a test — so the pool's arrival for
-anyone signing in to a provider rested on a line nothing checked. Both provider routes are covered
-now: each grants the pool on a first connection, reconnecting a mailbox that already exists grants
-nothing, and connecting through both grants one pool between them.
-
-### The trial note counts credits, not actions
-
-The number in "500 AI actions to try" was never a count of actions — it is a credit balance, and an
-action costs between one and twenty credits depending on what it is. Screening a sender costs one; a
-drafted reply costs fifteen. So the sentence promised as much as twenty times what the trial holds,
-to somebody it was inviting to try the drafts.
-
-Every place that puts a figure against the unit now says credits: the trial notes on the pricing
-page and in signup, the plan line in signup, the answer about the trial, and the notice in the app
-that tells you how much of a trial balance is left. The answer that states the price of each action
-was already correct and is unchanged; the plan cards now link to it.
-
 ### The phone chooser says what a phone can be
 
 The chooser offers three answers — ohmail Cloud, a server you run, or your own computer — and left
@@ -56,78 +20,6 @@ the obvious next question unanswered: what if you have none of those? A phone do
 mailbox on its own, and the chooser now says so in one sentence, in English and German, under the
 three doors. It appears at first run and on the "Add a server" panel, which is where somebody who
 has already connected one server goes looking.
-
-### Re-filing mail on a mailbox another install organizes
-
-Exactly one install organizes a mailbox at a time; the others read it. A message can be re-filed
-either by asking to move it or by amending it and naming a folder, and underneath the two do the
-same thing — they record where the message should be, and the regular sync pass performs the move on
-the server. Only the first checked whether this install is the one organizing that mailbox.
-
-So on a mailbox you read rather than organize, amending a message's folder wrote the change down and
-reported success. The message appeared in its new place and the mail server was never told. What you
-were shown was not true, and the change stayed on file to be carried out if this install ever became
-the one organizing that mailbox — moving mail on a decision made when it had no business making it.
-
-Both ways of re-filing now answer the same way, and the refusal names the machine that holds the
-mailbox. Marking mail read is untouched: that is something an install reading a mailbox is genuinely
-allowed to do, and it still happens immediately.
-
-### A fault inside the local mail engine is written down
-
-When the window asks the mail engine on your own computer for something and the engine hits a
-failure it does not recognise, it answers "internal error" and the window tells you something went
-wrong. That answer used to be everything there was: the engine wrote no line about it, so
-`engine.log` — the file the app keeps for exactly this, and the one thing worth sending with a
-report — held nothing at all about the request that failed.
-
-It now records one line per such failure, naming the request it was answering and what kind of
-failure it was. As with every other line in that file, it does not carry the failure's own message,
-your address, or anything from the request. Nothing about what the window shows you changes; the
-difference is that afterwards there is something to read.
-
-### The local engine's answers carry a request id
-
-Every answer from the mail engine on your own computer now includes an `X-Request-Id`
-header — one value naming that single request. The hosted services have always sent it.
-The engine minted the id internally and never returned it, so a report about an action
-that failed carried nothing identifying which action it was.
-
-Nothing else about a response changes, and the hosted services send the same value they
-sent before.
-
-### Reading views say who else got the message
-
-A message in Reads showed who sent it and when, and nothing about who it was addressed to — so
-mail written to you alone and mail sent to a list of eleven looked exactly the same until you
-opened it.
-
-The reading views now carry the same recipients line the message header has always had: the
-people a message went to, named, under the subject. It is the same block in both places rather
-than a second one written to look like it, so a name is drawn the same way and does the same
-thing wherever you meet it — pressing one still offers to copy the address, write to that person,
-or open their screener settings.
-
-A card has one head's worth of room, so it names the first two and folds the rest into a count
-you can press; pressing it names everyone, along with the exact date and the folder the message
-sits in on your server. A message addressed to one person draws no line at all — "To: you" under
-every subject in the stream is not worth the space.
-
-### The verbs stay with you while you read a long message
-
-Opening a message in Reads or Receipts expanded the card in place and put its verbs — reply,
-forward, park, resurface, move, delete — at the very bottom of it. On a long message that is a
-screen or more below where you are reading: on a phone the row sat 2 700 pixels down an 844-pixel
-window, so answering the mail you had just read meant scrolling past all of it first.
-
-The row now rests against the bottom of the reading area while the message is taller than the
-window, and settles into place at the end of the message when you reach it. It stays inside the
-card it belongs to — it never rides over the message above or below — and it does not hide itself
-when you scroll down, which is the direction you read in. There is no scrim over the text: the row
-is an opaque capsule, the same one the reading column and the reading overlay use, and the text
-passes under it as it does there.
-
-Its More menu opens upward, and stays inside the window at every width in both languages.
 
 ### Small fixes on phones
 
@@ -148,42 +40,84 @@ on a phone left 60 pixels empty under the last line for a control that is not th
 decision buttons are at the top. It reserves what every other scrolling list in the app reserves
 instead, and allows for the home indicator, which the old number did not.
 
-### Backspace and Delete move a message to Trash
+### On the phone, message bodies read at the reader's size and long button labels wrap
 
-Press either key on the message you are looking at and it goes to the Trash folder on your own
-mail server. It is a move, never a permanent erase — ohmail does not expunge mail, and what
-happens after the move is your mail server's Trash policy. Both keys work on every list that
-shows a message with a cursor on it, and both are listed in the shortcut sheet (`?`).
+**On the phone a message body reads at the reader's size.** Opening a message on a phone opens the
+reader, and the reader sets its body a point larger than the pane the wide layout reads in, with
+more air between the lines. The phone app was setting the pane's size; it now sets the reader's,
+which is what the browser has always done at that width.
 
-The press is undoable, and the undo is real rather than cosmetic. There is no un-delete on the
-wire, so instead of sending the request and offering to take it back, the press hides the message
-and holds the request for the length of the toast. Undo inside that window cancels a delete that
-was never sent; let the toast go and it is filed. The keys share one dispatch path with the
-action bar's own confirm button, so that button now carries the same window.
+**A button label that does not fit wraps instead of crossing the panel.** Labelled buttons in the
+Screener strip and in settings kept their text on one line at any width, so a label longer than the
+space — German runs longer than the English these were laid out against — pushed past the edge of
+the panel around it. Below 640px they wrap onto a second line, and the button grows taller to hold it.
 
-The request is written to this browser's storage before the window opens, so closing the tab
-inside it does not lose the delete: what can still be sent on the way out is sent, and anything
-left is finished the next time you open ohmail. Undo removes the record along with the request.
+### The same message cannot be sent twice, even from a client that has lost its place
 
-The keys stay out of the way where a delete is not what you meant. They do nothing while you are
-typing in any text field — where Backspace is the most-pressed key on the keyboard — and nothing
-while a dialog, menu or popover stands over the app, including the first-run screens and menus
-opened on a message. That is decided by looking at what is actually on screen rather than by a
-list the app keeps of its own panels, so a panel added later is covered without anyone
-remembering to add it. The reading view is not treated as something in the way: deleting the
-message you are reading is exactly what the key is for.
+Sending has always been protected two ways: by a key the app mints and reuses when it retries, and
+by a rule that a message already on its way cannot be sent again from the same draft. Both depend on
+something the app is still holding. An app that has lost both — a fresh install, a second device, a
+browser whose storage was cleared, an older build — and that writes a new draft holding the same
+words gets past both, and the person receives the message twice. There is no taking that back.
 
-On a mailbox another ohmail install is organizing, the press is refused before it does anything
-and says so, in the same sentence the app already uses for a move made where mail is not filed
-from. The question is asked about that message's own mailbox, so an account that organizes one
-mailbox and only reads another gets the right answer for each. If the app does not yet know who
-organizes a mailbox — during startup, or while it cannot reach the server — the press is refused
-rather than guessed at. Nothing is hidden and nothing is sent in either case.
+So the account now claims the message itself. When a send is reserved, the server records a digest
+of what a recipient would perceive: the recipients, the subject, the text that goes out, the reply
+or forward it belongs to, the scheduled time, and the contents of any files attached in the
+composer. For an hour, a second send of exactly that message from the same address is refused —
+whatever key it arrives under, and whatever draft it names. Nothing is submitted, the draft is left
+untouched and ready to send, and the composer says what became of the first attempt: whether it is
+known to have been sent, could not be confirmed, or is going out right now. Those are three
+different facts and they get three different sentences. For a message known to have been sent, the
+time named is the time that send was recorded as sent — the one to look for in the Sent folder —
+rather than the time the first attempt was reserved, which can be up to an hour earlier when an
+attempt's outcome was unknown at the time and only confirmed later.
 
-One press is one undo, whatever it covers. The same window serves a press over a whole selection:
-one toast, one Undo that takes all of it back, and one record on disk — so a tab closed inside the
-window commits the selection whole rather than an arbitrary part of it. A selection spanning a
-mailbox this install organizes and one it only reads is refused entirely, never the permitted half.
+**A message carrying an UPLOADED attachment is not covered by this.** Large files are uploaded before
+the message goes, and their contents are not readable at the moment a send is reserved — only the
+name, type and size are, and those do not identify a file: a corrected version of the same size
+would have been mistaken for the original and refused. Rather than claim a protection it does not
+have, such a message is left out of this check. It keeps the two defences it always had: the key the
+app holds for that send, which does account for attached file contents, and the rule that a message
+already on its way cannot be sent again from the same draft.
+
+Anything a recipient would notice makes it a different message and it sends: one character of the
+text, one more person on the copy line, a different file attached in the composer, a different
+message forwarded. So does sending it again once the hour has passed, and so does sending it again
+after an attempt that definitely failed — the ordinary "the mail server was unreachable, try again"
+retry, which must keep working.
+
+### The verbs stay with you while you read a long message
+
+Opening a message in Reads or Receipts expanded the card in place and put its verbs — reply,
+forward, park, resurface, move, delete — at the very bottom of it. On a long message that is a
+screen or more below where you are reading: on a phone the row sat 2 700 pixels down an 844-pixel
+window, so answering the mail you had just read meant scrolling past all of it first.
+
+The row now rests against the bottom of the reading area while the message is taller than the
+window, and settles into place at the end of the message when you reach it. It stays inside the
+card it belongs to — it never rides over the message above or below — and it does not hide itself
+when you scroll down, which is the direction you read in. There is no scrim over the text: the row
+is an opaque capsule, the same one the reading column and the reading overlay use, and the text
+passes under it as it does there.
+
+Its More menu opens upward, and stays inside the window at every width in both languages.
+
+### Reading views say who else got the message
+
+A message in Reads showed who sent it and when, and nothing about who it was addressed to — so
+mail written to you alone and mail sent to a list of eleven looked exactly the same until you
+opened it.
+
+The reading views now carry the same recipients line the message header has always had: the
+people a message went to, named, under the subject. It is the same block in both places rather
+than a second one written to look like it, so a name is drawn the same way and does the same
+thing wherever you meet it — pressing one still offers to copy the address, write to that person,
+or open their screener settings.
+
+A card has one head's worth of room, so it names the first two and folds the rest into a count
+you can press; pressing it names everyone, along with the exact date and the folder the message
+sits in on your server. A message addressed to one person draws no line at all — "To: you" under
+every subject in the stream is not worth the space.
 
 ### Selecting messages uses the same bar as reading one
 
@@ -254,18 +188,62 @@ bar was desktop-only. While a selection is up, tapping a row adds it or takes it
 opening it, and the count button ends the mode. A hold that moves is a scroll, and a hold with a
 mouse does nothing: the desktop already has x and Cmd-click.
 
-### Compose opens ready to type
+### Backspace and Delete move a message to Trash
 
-Pressing Compose puts the cursor in the To field. When the recipients are already answered — a
-reopened draft, a forward — the cursor lands where the writing resumes: the subject, or the
-message body.
+Press either key on the message you are looking at and it goes to the Trash folder on your own
+mail server. It is a move, never a permanent erase — ohmail does not expunge mail, and what
+happens after the move is your mail server's Trash policy. Both keys work on every list that
+shows a message with a cursor on it, and both are listed in the shortcut sheet (`?`).
 
-Letters typed while the compose form is open no longer act as keyboard shortcuts on the mailbox
-behind it. Before this, if nothing on the form had focus — after a click on empty space, say —
-each typed letter still ran its one-key mailbox verb, so writing a message could file, park or
-navigate away from mail behind the form while the form itself stayed empty. Escape, Tab, Enter
-and the modifier shortcuts (such as ⌘K) still work over the form, and so do the shortcut sheet
-(`?`) and the send-later number keys.
+The press is undoable, and the undo is real rather than cosmetic. There is no un-delete on the
+wire, so instead of sending the request and offering to take it back, the press hides the message
+and holds the request for the length of the toast. Undo inside that window cancels a delete that
+was never sent; let the toast go and it is filed. The keys share one dispatch path with the
+action bar's own confirm button, so that button now carries the same window.
+
+The request is written to this browser's storage before the window opens, so closing the tab
+inside it does not lose the delete: what can still be sent on the way out is sent, and anything
+left is finished the next time you open ohmail. Undo removes the record along with the request.
+
+The keys stay out of the way where a delete is not what you meant. They do nothing while you are
+typing in any text field — where Backspace is the most-pressed key on the keyboard — and nothing
+while a dialog, menu or popover stands over the app, including the first-run screens and menus
+opened on a message. That is decided by looking at what is actually on screen rather than by a
+list the app keeps of its own panels, so a panel added later is covered without anyone
+remembering to add it. The reading view is not treated as something in the way: deleting the
+message you are reading is exactly what the key is for.
+
+On a mailbox another ohmail install is organizing, the press is refused before it does anything
+and says so, in the same sentence the app already uses for a move made where mail is not filed
+from. The question is asked about that message's own mailbox, so an account that organizes one
+mailbox and only reads another gets the right answer for each. If the app does not yet know who
+organizes a mailbox — during startup, or while it cannot reach the server — the press is refused
+rather than guessed at. Nothing is hidden and nothing is sent in either case.
+
+One press is one undo, whatever it covers. The same window serves a press over a whole selection:
+one toast, one Undo that takes all of it back, and one record on disk — so a tab closed inside the
+window commits the selection whole rather than an arbitrary part of it. A selection spanning a
+mailbox this install organizes and one it only reads is refused entirely, never the permitted half.
+
+### A window left open no longer holds every render's work, and a parked card can be unparked
+
+**A desktop window left open no longer holds every render's work.** The shell keeps a
+memoized callback for every action, so the same function can be handed back on renders where
+nothing it depends on has moved. One reference like that kept the entire render it was created in
+alive — including everything that render had derived over the whole mailbox — and the window
+gained one such retained render per update, releasing none of them. Better dependency lists cannot
+fix that, because the problem is not which render's function survives but that any surviving
+function holds a whole render with it. Every callback in the shell's main view now keeps a stable
+identity and reads current values through a reference, so a callback that outlives its render keeps
+nothing else alive.
+
+**A message parked from the reading pane can be unparked from the same card.** Opening a message in
+Reads or Receipts and pressing Park moved it, but the button did not change: the card was still
+holding the copy of the message it had been drawn with. Pressing Park again let that stale copy
+decide, and it still looked unparked, so the message was parked a second time instead of being put
+back. Cards are skipped when nothing they draw has changed, and messages were compared by id alone
+— right for a subject or a sender, wrong for the three fields the action bar draws and the message
+can change. Those three are now compared at the values the bar reads.
 
 ### Four small fixes in the reading pane
 
@@ -292,6 +270,19 @@ lost it: the arrow keys stopped working, and the next letter typed acted on the 
 instead. The keyboard now moves to the nearest verb still in the menu, or back to the button if the
 menu has emptied — and while a menu is open, a letter belongs to the menu.
 
+### Compose opens ready to type
+
+Pressing Compose puts the cursor in the To field. When the recipients are already answered — a
+reopened draft, a forward — the cursor lands where the writing resumes: the subject, or the
+message body.
+
+Letters typed while the compose form is open no longer act as keyboard shortcuts on the mailbox
+behind it. Before this, if nothing on the form had focus — after a click on empty space, say —
+each typed letter still ran its one-key mailbox verb, so writing a message could file, park or
+navigate away from mail behind the form while the form itself stayed empty. Escape, Tab, Enter
+and the modifier shortcuts (such as ⌘K) still work over the form, and so do the shortcut sheet
+(`?`) and the send-later number keys.
+
 ### Clearing a search, a keyboard hint on the demo, and one name for the Ohbox
 
 **Escape in Search leaves the caret in the box.** Pressing Escape clears the question, and after
@@ -306,60 +297,6 @@ saying "⌘K" to everyone. It reads the visitor's own keyboard now, like the cap
 **One name for the Ohbox, in both lists that name it.** The command palette said "Go to Ohbox"
 and the shortcut list said "Go to the Ohbox" — the same instruction, one word apart, in the two
 places you go looking for it. Both read the same sentence now, and so do Reads and Receipts.
-
-### A window left open no longer grows, and a parked card can be unparked
-
-**A desktop window left open stops growing in memory while it sits idle.** The shell keeps a
-memoized callback for every action, so the same function can be handed back on renders where
-nothing it depends on has moved. One reference like that kept the entire render it was created in
-alive — including everything that render had derived over the whole mailbox — and the window
-gained one such retained render per update, releasing none of them. Better dependency lists cannot
-fix that, because the problem is not which render's function survives but that any surviving
-function holds a whole render with it. Every callback in the shell now keeps a stable identity and
-reads current values through a reference, so a callback that outlives its render keeps nothing else
-alive.
-
-**A message parked from the reading pane can be unparked from the same card.** Opening a message in
-Reads or Receipts and pressing Park moved it, but the button did not change: the card was still
-holding the copy of the message it had been drawn with. Pressing Park again let that stale copy
-decide, and it still looked unparked, so the message was parked a second time instead of being put
-back. Cards are skipped when nothing they draw has changed, and messages were compared by id alone
-— right for a subject or a sender, wrong for the three fields the action bar draws and the message
-can change. Those three are now compared at the values the bar reads.
-
-### The same message cannot be sent twice, even from a client that has lost its place
-
-Sending has always been protected two ways: by a key the app mints and reuses when it retries, and
-by a rule that a message already on its way cannot be sent again from the same draft. Both depend on
-something the app is still holding. An app that has lost both — a fresh install, a second device, a
-browser whose storage was cleared, an older build — and that writes a new draft holding the same
-words gets past both, and the person receives the message twice. There is no taking that back.
-
-So the account now claims the message itself. When a send is reserved, the server records a digest
-of what a recipient would perceive: the recipients, the subject, the text that goes out, the reply
-or forward it belongs to, the scheduled time, and the contents of any files attached in the
-composer. For an hour, a second send of exactly that message from the same address is refused —
-whatever key it arrives under, and whatever draft it names. Nothing is submitted, the draft is left
-untouched and ready to send, and the composer says what became of the first attempt: whether it is
-known to have been sent, could not be confirmed, or is going out right now. Those are three
-different facts and they get three different sentences. For a message known to have been sent, the
-time named is the time that send was recorded as sent — the one to look for in the Sent folder —
-rather than the time the first attempt was reserved, which can be up to an hour earlier when an
-attempt's outcome was unknown at the time and only confirmed later.
-
-**A message carrying an UPLOADED attachment is not covered by this.** Large files are uploaded before
-the message goes, and their contents are not readable at the moment a send is reserved — only the
-name, type and size are, and those do not identify a file: a corrected version of the same size
-would have been mistaken for the original and refused. Rather than claim a protection it does not
-have, such a message is left out of this check. It keeps the two defences it always had: the key the
-app holds for that send, which does account for attached file contents, and the rule that a message
-already on its way cannot be sent again from the same draft.
-
-Anything a recipient would notice makes it a different message and it sends: one character of the
-text, one more person on the copy line, a different file attached in the composer, a different
-message forwarded. So does sending it again once the hour has passed, and so does sending it again
-after an attempt that definitely failed — the ordinary "the mail server was unreachable, try again"
-retry, which must keep working.
 
 ### A computer that stopped organizing no longer holds the mailbox for ever
 
@@ -445,22 +382,83 @@ The screen that tells you who is organizing a mailbox reads the same rule as the
 It no longer names a live organizer for a record the app had already stopped defending, and no
 longer offers to stop a computer that has already stopped.
 
+### Re-filing mail on a mailbox another install organizes
+
+Exactly one install organizes a mailbox at a time; the others read it. A message can be re-filed
+either by asking to move it or by amending it and naming a folder, and underneath the two do the
+same thing — they record where the message should be, and the regular sync pass performs the move on
+the server. Only the first checked whether this install is the one organizing that mailbox.
+
+So on a mailbox you read rather than organize, amending a message's folder wrote the change down and
+reported success. The message appeared in its new place and the mail server was never told. What you
+were shown was not true, and the change stayed on file to be carried out if this install ever became
+the one organizing that mailbox — moving mail on a decision made when it had no business making it.
+
+Both ways of re-filing now answer the same way, and the refusal names the machine that holds the
+mailbox. Marking mail read is untouched: that is something an install reading a mailbox is genuinely
+allowed to do, and it still happens immediately.
+
+### Setup credits on ohmail Cloud: whether one was granted, and why not
+
+An ohmail Cloud account on a paid plan receives a one-time pool of screening credits when it
+connects its first mailbox — a month of that plan's own allowance, held separately from the monthly
+balance and written in the same step as the mailbox itself, so a connection that fails grants
+nothing. That much is not new. What is new is that the service now records what happened each time
+it tried.
+
+Connecting a mailbox succeeds whether or not a pool was written, so an account holding no pool
+looked exactly like an account whose pool was never attempted, and the several reasons one is
+withheld looked like each other. The service now records which of five things happened — the pool
+was granted, the account already held one, another connection granted one first, it has no
+subscription to size one from, or its plan sells no credits — beside the account and the mailbox
+concerned. That record goes to the server's own log, where somebody answering a question about an
+account can read it. None of it is shown to you, and nothing about connecting a mailbox looks
+different. A failure to write that line can never become the reason a mailbox failed to connect,
+while a failure to write the pool itself still stops the connection, exactly as before.
+
+Signing in to a provider grants the pool exactly as connecting with a password does. Whichever way
+a mailbox is connected, a first connection grants the pool, reconnecting a mailbox that already
+exists grants nothing, and connecting one mailbox each way grants one pool between them.
+
+### The trial note counts credits, not actions
+
+The number in "500 AI actions to try" was never a count of actions — it is a credit balance, and an
+action costs between one and twenty credits depending on what it is. Screening a sender costs one; a
+drafted reply costs fifteen. So the sentence promised as much as twenty times what the trial holds,
+to somebody it was inviting to try the drafts.
+
+Every place that puts a figure against the unit now says credits: the trial notes on the pricing
+page and in signup, the plan line in signup, the answer about the trial, and the notice in the app
+that tells you how much of a trial balance is left. The answer that states the price of each action
+was already correct and is unchanged; the plan cards now link to it.
+
+### A fault inside the local mail engine is written down
+
+When the window asks the mail engine on your own computer for something and the engine hits a
+failure it does not recognise, it answers "internal error" and the window tells you something went
+wrong. That answer used to be everything there was: the engine wrote no line about it, so
+`engine.log` — the file the app keeps for exactly this, and the one thing worth sending with a
+report — held nothing at all about the request that failed.
+
+It now records one line per such failure, naming the request it was answering and what kind of
+failure it was. As with every other line in that file, it does not carry the failure's own message,
+your address, or anything from the request. Nothing about what the window shows you changes; the
+difference is that afterwards there is something to read.
+
+### The local engine's answers carry a request id
+
+Every answer from the mail engine on your own computer now includes an `X-Request-Id`
+header — one value naming that single request. The hosted services have always sent it.
+The engine minted the id internally and never returned it, so a report about an action
+that failed carried nothing identifying which action it was.
+
+Nothing else about a response changes, and the hosted services send the same value they
+sent before.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
-
-### Two more text fixes at phone width
-
-**On the phone a message body reads at the reader's size.** Opening a message on a phone opens the
-reader, and the reader sets its body a point larger than the pane the wide layout reads in, with
-more air between the lines. The phone app was setting the pane's size; it now sets the reader's,
-which is what the browser has always done at that width.
-
-**A button label that does not fit wraps instead of crossing the panel.** Labelled buttons in the
-Screener strip and in settings kept their text on one line at any width, so a label longer than the
-space — German runs longer than the English these were laid out against — pushed past the edge of
-the panel around it. Below 640px they wrap onto a second line, and the button grows taller to hold it.
 
 ## [0.14.2] — 2026-09-08
 
