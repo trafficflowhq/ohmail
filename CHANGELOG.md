@@ -129,14 +129,17 @@ until it is sent. Four ways it could end up with two are closed. One case is not
 is the same case for both promises it is stated once, under **A message still on its way is held**.
 
 Opening a compose with somebody already in the To line — from a contact, or from a mail link
-outside the app — no longer saves a draft by itself. Nothing is written to your account until you
-type a subject or a body, so Drafts stops filling with empty rows nobody wrote anything into.
+outside the app — no longer saves a draft by itself. Nothing is written to your account until the
+message has a subject or a body, typed by you or carried in by the link, so Drafts stops filling
+with rows that hold nothing but an address.
 
 Pressing Send in the couple of seconds before the first save no longer leaves a second draft
 behind. The send makes its own, and that is the one the app keeps.
 
-Coming back to a message whose send could not be confirmed no longer starts a fresh copy of it,
-whatever state the server left the original in.
+Coming back, in the composer, to a message whose send could not be confirmed no longer starts a
+fresh copy of it, whatever state the server left the original in. A reply is not covered yet:
+opened from Drafts it goes back into its message's own editor, which knows nothing of the held
+row and sends from a new one.
 
 A send that finishes while the app is still starting up now clears the message it was for. Before,
 that message stayed in the composer with nothing on screen to say it had gone, and the next thing
@@ -163,17 +166,22 @@ the only case where starting something else waits too.
 
 It stays in Drafts, it says so when you open it, and the app will not send it again — sending
 again could deliver the same mail twice, and this release has no way to tell which it would be.
-Checking the Sent folder is what settles it, and if the message did go out the app now says so
-rather than keeping the warning up.
+Checking your Sent folder is what settles it, and it is yours to do: a send the server itself
+recorded as unconfirmed is never checked again, so its warning stays. If the server instead
+reports the message as sent, the warning comes down and the composer clears.
 
-Discarding such a message says why it stays instead of reporting that something went wrong, from
-the Drafts list as well as from the composer.
-Reopening it while you are part-way through writing something else is refused too, so what is on
-screen is not replaced without asking.
+Discarding such a message from the Drafts list says why it stays instead of reporting that
+something went wrong. From the composer, Discard closes the message and leaves it in Drafts
+without saying so, and the confirmation before it still speaks of deleting.
+Reopening it while a different message is part-written in the composer is refused, so that
+message is not replaced without asking. The held message's own composer is not protected the
+same way: text typed into it after the send is not saved, and reopening its row from Drafts
+restores the row's text over it.
 
 A browser that will not let the app keep its own records can still send and still save. What it
-cannot do is decide, on evidence it does not have, to delete a draft, start a new one, or take
-over a message it may already have sent.
+cannot do is decide, on evidence it does not have, to delete a draft or take over a message it may
+already have sent. It cannot recognise a draft it reopens either: edits made there are saved as a
+new draft beside the original.
 
 The wording no longer tells you to send it again, because sending it again is refused; it still
 points you to your Sent folder, which is where the answer is, and says the message is held here.
