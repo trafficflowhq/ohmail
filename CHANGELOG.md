@@ -298,38 +298,13 @@ Saving plain text clears the formatting — saving text is saving the whole valu
 carry both shapes at once. A recipient whose mail client shows plain text only reads the same words:
 the plain version is worked out from the formatting when the signature is saved.
 
-### Looking up one address, and saying which half of it the archive can answer
-
-Groundwork for a view of everything involving one correspondent. Nothing on screen changes yet;
-what changes is that the question can be asked at all, and that the answer is honest about its
-own limits.
-
-The copy of your mail on this device could not be searched for an ADDRESS. It indexes words, and
-an address is chopped into words on the way in — `anna@example.com` became `anna`, `example` and
-`com`, three fragments other people's addresses share — so asking for one matched everybody
-called Anna and everybody at any example. It now also keeps the whole address, so mail from and
-to one person can be listed exactly, in either direction or both, counted without double-counting
-anybody who appears on both sides of the same message.
-
-The server's archive can be asked the same question, and it can only answer half of it: mail FROM
-an address is a direct lookup, and mail sent TO one is not, because of how recipients are stored.
-Extending it needs a change to the database rather than to a query, so for now the archive
-answers the half it can and REFUSES the other by name — not with an empty page, which would read
-as "you have never written to them". Whatever asks it is told which half it received, so a view
-can say so rather than presenting one direction as if it were both.
-
-Mail you have sent turns out to be on your device already, and to belong to no pile — so nothing
-has ever listed it, and it is reachable today only through a conversation. A note in the code
-claiming sent mail never reached the device at all has been corrected; it had been wrong since it
-was written, and the check that keeps it true is now part of the suite.
-
 ### Search results show the address, and an address opens everything from and to that person
 
 A search result printed its sender's name and, where the sender had one, nothing else: the address
 was invisible whenever a display name existed. Every result now carries the name on its first line
 and the address under it, in the small type the list rows already use for an address; a result with
-no name shows the address in the name's place. The address is a link. Pressing it opens a new view,
-`#/address/<address>`, listing what that address sent and what was sent to it, newest first, with a
+no name shows the address in the name's place. The address is a link. Pressing it opens a view of
+one correspondent, listing what that address sent and what was sent to it, newest first, with a
 toggle — All, From them, To them — that narrows the list to either direction and shows how many rows
 each would hold. Pressing anywhere else on a result still opens the message, as before.
 
@@ -339,15 +314,38 @@ opens the screening popover; that popover gains one row, "Everything from and to
 recipient chip in an open message gains the same entry in its own popover, and the reader's From
 block, which opens the screening popover, reaches the view through that row.
 
+Underneath, the copy of your mail on this device could not be searched for an ADDRESS at all. It
+indexes words, and an address is chopped into words on the way in — `anna@example.com` became
+`anna`, `example` and `com`, three fragments other people's addresses share — so asking for one
+matched everybody called Anna and everybody at any example. It now keeps the whole address as well,
+so mail from and to one person can be listed exactly, in either direction or both, counted without
+double-counting anybody who appears on both sides of the same message.
+
 The view states what it can and cannot see. This device answers all three directions from the mail
-it holds; the archive on the server can be searched by sender only. So the count line reads, for
-example, "3 on this device · 40 in the archive (by sender)", and under To them the archive's half is
-the sentence "the archive cannot be searched by recipient yet" rather than a number — a small (i)
-beside either carries the reason in one sentence. A message the archive returned that this device
-does not hold is marked "from the archive", as in Search, and where the archive holds more than it
-returned the line says how many are shown. A copy you sent is listed with "Sent" in its meta line.
-With no archive behind the client the line says so. Escape leaves the view; `/` still opens Search
-from it.
+it holds; the archive on the server can be searched by sender only, because of how recipients are
+stored — extending that needs a change to the database rather than to a query. So the count line
+reads, for example, "3 on this device · 40 in the archive (by sender)", and under To them the
+archive's half is the sentence "the archive cannot be searched by recipient yet" rather than a
+number — a small (i) beside either carries the reason in one sentence. The archive is never asked a
+question it cannot answer and never returns an empty page in place of one: it answers the half it
+can and refuses the other by name. Its rows appear under All and under From them, and never under
+To them, where they would be mail the address sent listed as mail sent to it. A refused search
+offers "Try again". A message the archive returned that this device does not hold is marked "from
+the archive", as in Search, and where the archive holds more than it returned the line says how many
+are shown. With no archive behind the client the line says so.
+
+Mail you have sent turns out to be on this device already, and to belong to no pile — so nothing has
+ever listed it, and until now it was reachable only through a conversation. A copy you sent is
+listed here with "Sent" in its meta line. A note in the code claiming sent mail never reached the
+device at all has been corrected; it had been wrong since it was written, and the check that keeps
+it true is now part of the suite.
+
+Escape leaves the view the way the browser's Back does — to the list the address was followed from,
+or to your Ohbox when the link was opened in a fresh window. `/` still opens Search from it.
+
+Also here: the shared interface package's unused search-result component is removed. Nothing drew
+it, and the row this release ships carries two controls rather than one, so it could not have become
+the real one. The stylesheet the real row stands on is untouched.
 
 ### Still to come
 
