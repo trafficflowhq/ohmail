@@ -332,26 +332,6 @@ export const mailboxes = pgTable("mailboxes", {
   // (`MAILBOX_SIGNATURE_MAX_CHARS`, a 400), not by a CHECK: free text closes no set, and a
   // byte bound in the database would answer 23514 to a person typing.
   signature: text("signature"),
-  // ── Mail 0098 — the signature's MARKUP half (0.16: Settings → Signatures gained the compose
-  // editor's basic formatting) ──
-  //
-  // THE AUTHORITY, and `signature` above is DERIVED FROM IT. When this is non-NULL the server
-  // wrote both columns in one statement from one value: `prepareOutboundBody` reduces the posted
-  // markup to the compose grammar and renders the text half from what survives, which is the
-  // same pair of halves a `multipart/alternative` promises and the same function that produces
-  // them for every composed message. Nothing writes `signature` by hand while this is set, so
-  // the two cannot drift.
-  //
-  // NULL is "no markup in this signature" — the state of every row that existed before this
-  // column, and of every signature typed without pressing a formatting control (the editor
-  // reports no markup for a document nobody formatted). Those rows take the pre-0.16 path
-  // unchanged: the text is escaped into one paragraph at the press (`signatureHtml`). That is
-  // what lets every reader of `signature` — the phone's composer among them, which has no
-  // formatting and sends a single `text/plain` part — keep working with no knowledge of this.
-  //
-  // Bounded at the write site with `signature`'s bound and for `signature`'s reason
-  // (`MAILBOX_SIGNATURE_MAX_CHARS`, a 400 in words), not by a CHECK.
-  signatureHtml: text("signature_html"),
   // ── Mail 0076 — THE ONE-TIME QUARANTINE→\Junk SWEEP, RECORDED AS A COMMAND (FOLDERS-SPEC.md
   // §16.1: "an optional ONE-TIME sweep offers to move the old ohmail/Quarantine pile into
   // native Junk … One press, one direction, then the offer is gone") ──
@@ -1052,20 +1032,9 @@ export const messageFailures = pgTable("message_failures", {
  * product does not discard it — a host that starts accepting the mutation next week converges then.
  * Deferral is about how OFTEN we ask, never about whether we still owe it.
  *
- * Deliberately no FREE-TEXT error column. What went wrong in the server's own words is free text
- * from someone else's mail server; it belongs in the `reconcile.move.failed` /
- * `reconcile.flags.failed` audit row, which is where it still goes. These two columns are a
- * schedule, and a schedule is a coordinate.
- *
- * ── AND ONE CLASS BESIDE THEM (mail 0097, `folder_state` only) ──────────────────────────────
- *
- * {@link folderState.lastErrorClass} is not an exception to that rule, it is that rule applied:
- * a member of a CLOSED FOUR-VALUE SET this codebase chose, with a CHECK behind it, mapped from the
- * server's structured response code by `apps/worker/src/sync.ts` — so no value a mail server
- * picked can reach a screen. It exists because the schedule alone cannot be rendered honestly:
- * "retrying at 14:20" is true and unactionable, where "the folder is not there" names the one
- * screen that fixes it. `flag_state` has no equivalent and needs none — nothing renders a
- * per-message reason for a `\Seen` push.
+ * Deliberately no error column. What went wrong is free text from someone else's mail server; it
+ * belongs in the `reconcile.move.failed` / `reconcile.flags.failed` audit row, which is where it
+ * already goes. These two columns are a schedule, and a schedule is a coordinate.
  */
 export const folderState = pgTable("folder_state", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -1080,46 +1049,6 @@ export const folderState = pgTable("folder_state", {
   attempts: integer("attempts").notNull().default(0),
   /** NULL ⇒ due now. See the block above. */
   nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
-  /**
-   * WHY the last attempt was refused, as one of `refused | no_such_folder | read_only |
-   * over_quota` — NULL while no refusal stands. See the block above for why a CLASS is not the
-   * free-text column that block forbids, and {@link RECONCILE_REFUSAL_CLASSES} in
-   * `apps/worker/src/sync.ts` for the mapping and the CHECK's membership.
-   *
-   * Written by the deferral and cleared by a fresh intent, alongside the schedule pair — one
-   * group, because a class without its schedule is a reason for nothing and a schedule without
-   * its class is the sentence this column exists to end. A TRANSPORT failure writes NEITHER: an
-   * unreachable mail host is not this message's refusal.
-   */
-  lastErrorClass: text("last_error_class"),
-  /**
-   * WHERE A DELETED MESSAGE CAME FROM — the origin a restore puts it back to (mail 0099).
-   *
-   * Written by the DELETE verb alone, in the same upsert that sets `desired_folder` to the
-   * mailbox's Trash path: the value is `observed_folder` as it stood at the press, which is the
-   * folder the message was actually in. NULL when that already equalled the Trash path (there is
-   * nothing to remember) and NULL on every row this column predates.
-   *
-   * CLEARED BY EVERY NON-TRASH DESIRED WRITE, and that is the load-bearing half: a message filed
-   * out of Trash and later deleted from somewhere else must not inherit the origin of its
-   * previous life. `MessageService.upsertDesired` takes the value as an argument for exactly that
-   * reason — a caller cannot forget to clear it, because it cannot write `desired_folder` without
-   * saying what this column becomes.
-   *
-   * ── A PATH, NEVER TRUSTED AS ONE ──────────────────────────────────────────────────────────
-   *
-   * It is a folder path and the folder may be gone by the time somebody restores: mail sits in
-   * Trash while its origin folder is deleted. `MessageService.restore` therefore resolves it —
-   * INBOX, one of the six, or a LIVE `mailbox_folders` path of that mailbox — and falls back to
-   * INBOX otherwise. No CHECK and no foreign key: a CHECK cannot know which folders exist, and an
-   * FK to `mailbox_folders` would erase this row's origin at the moment the fallback is needed.
-   *
-   * NOT a `change_log` read, which is the obvious alternative and is wrong: the log has a
-   * retention horizon (`change-log.ts`), so a restore would work for a week and then silently
-   * stop. A column has no horizon. The `delete` change row gains `meta: {from, to}` in the same
-   * slice for history's sake, and nothing reads it.
-   */
-  trashedFrom: text("trashed_from"),
 }, (t) => ({ uqMessage: unique().on(t.messageId) }));
 
 /**
