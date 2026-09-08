@@ -3,7 +3,15 @@ import {
   PROFILE_FOUND_AUDIT_ACTION, auditLog, latestProfileFoundMarker, profileImportResolutionExists,
   type Tx,
 } from "@trafficflow/db";
-import { describeError } from "@trafficflow/core";
+/* NAMED AT A LEAF, NEVER AT THE PACKAGE ROOT — this module is bundled into the desktop engine.
+   `@trafficflow/core`'s index carries `export *` lines that convey the whole AI runtime
+   (classification, the model client, drafting, the three workflow modules) and the hosted
+   database half behind them, so a value import spelled at the root puts all of it into a public
+   download. The engine census refuses over exactly that, and it did: six private-half inputs,
+   `packages/core/dist/ai/*`, from this one line. `/mail` re-exports `./log.js`, which is where
+   `describeError` lives, and the sidecar's own logger already imports from there — so this adds
+   nothing to the engine's closure. `lease.ts` carries the same warning for the same reason. */
+import { describeError } from "@trafficflow/core/mail";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import { serializeOrganizerProfile } from "@trafficflow/core/adapters/organizer-profile-store";
 import {
