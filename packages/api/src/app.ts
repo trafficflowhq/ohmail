@@ -260,6 +260,70 @@ function firstMisshapenParam(route: Route, params: RouteParams): string | null {
 export const ACCOUNT_HEADER = "X-Ohmail-Account";
 
 /**
+ * `X-Request-Id` — the id a person can quote back, on the response as well as in the log.
+ *
+ * ── THE HALF THAT WAS MISSING ────────────────────────────────────────────────────────────────
+ *
+ * `withRequestId` (`middleware.ts`) mints the id and BINDS it to whatever logger the per-request
+ * container carries, so a line written while answering names the request it belongs to. But the
+ * id only reached the CLIENT on the two hosted doors, which stamp it themselves from the value
+ * they mint before `handle` (`apps/api-vercel/src/handler.ts`, `apps/server/src/handler.ts` —
+ * both through their own `noStore`). The standalone/desktop door answers straight out of
+ * `app.handle` with no such wrapper, so nothing came back for a person to quote: a report of a
+ * 500 could name the minute and the screen, never the request.
+ *
+ * **What this does NOT by itself achieve, on that door.** The engine's container
+ * (`apps/sidecar/src/engine.ts`) injects no `logger`, so `withRequestId` binds `silentLogger`
+ * there and the request's own line is discarded before it reaches a sink. The header is therefore
+ * the client-side half of the correlation, and the id it carries selects a log line only where
+ * the container supplies a logger — today the two hosted doors. Stating it rather than implying
+ * the whole chain, because a comment that promises correlation the code does not yet deliver is
+ * the claim a later reader would trust.
+ *
+ * ── WHY HERE, AND NOT IN `withRequestId` ─────────────────────────────────────────────────────
+ *
+ * Same reason {@link ACCOUNT_HEADER} is here, one header along. This is the single exit every
+ * answer leaves through, so the 404, the 405 and the malformed-parameter 400 — all answered
+ * ABOVE the pipelines, before any middleware runs — leave through the same line as a handler's
+ * response. A middleware could not reach them at all, and `raw` and `anonymous` routes would be
+ * covered only because `withRequestId` happens to be a member of all three chains today.
+ *
+ * ── THE HOSTED DOORS' OWN LINES STAY, AND ARE NOT DUPLICATES ─────────────────────────────────
+ *
+ * Both hosts mint the id BEFORE `handle` and hand it to `deps.requestId`, which
+ * `withRequestId`'s `||` then preserves — so the value stamped here is the same value they
+ * stamp, and the same one on their log lines. Their stamping still covers what this line cannot:
+ * the malformed-path 400, the body-ceiling 413, the misconfigured 503, the `db_busy` 503 and the
+ * escaped-throw 500 are all built WITHOUT calling `handle`, so removing their header would drop
+ * the id from exactly the responses that are hardest to correlate.
+ */
+export const REQUEST_ID_HEADER = "X-Request-Id";
+
+/**
+ * Stamp {@link REQUEST_ID_HEADER} when this request has an id. The single site; the source census
+ * in `request-id-header.test.ts` asserts nothing else in `packages/api/src` sets it.
+ *
+ * **A NEW `Response`, NOT A MUTATION**, for the reason {@link nameTheAccount} and
+ * `apps/api-vercel/src/handler.ts`'s `noStore` both give: a `Response`'s header guard may forbid
+ * `set`, and a throw at this point would land above every envelope and surface as the host's
+ * generic 500. The body passes through untouched, so a stream stays a stream.
+ *
+ * **It FAILS CLOSED on an empty id, and that arm is reachable rather than theoretical.** Every
+ * pipeline runs `withRequestId`, so any response from a matched route always has one. The
+ * responses that do not are the 404/405/400 answered above the pipelines on a door that mints no
+ * id of its own — the desktop engine passes `requestId: ""` (`apps/sidecar/src/engine.ts`) — and
+ * those produce no log line either, so there would be nothing for an invented id to select. An
+ * id is never minted here: minting belongs to `withRequestId`, which is also what binds it to the
+ * logger, and a second minting site would hand a client an id that appears in no log at all.
+ */
+function stampRequestId(res: Response, deps: ApiDeps): Response {
+  if (!deps.requestId) return res;
+  const headers = new Headers(res.headers);
+  headers.set(REQUEST_ID_HEADER, deps.requestId);
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+}
+
+/**
  * Attach {@link ACCOUNT_HEADER} when a session was resolved. The single site; a source census
  * (`response-headers.test.ts`) asserts nothing else in `packages/api/src` sets it.
  *
@@ -291,15 +355,15 @@ function nameTheAccount(res: Response, deps: ApiDeps, route: Route | null): Resp
 /**
  * Build the framework-agnostic app. `handle(req, deps)` matches a route (404/405),
  * refuses a path parameter that could never name a row (400), then runs the request through the
- * appropriate middleware pipeline into the handler, and names the account it answered for
- * ({@link ACCOUNT_HEADER}). `deps` is the per-request container (PGlite in tests, pooled Postgres
- * in `apps/web`).
+ * appropriate middleware pipeline into the handler, names the account it answered for
+ * ({@link ACCOUNT_HEADER}) and stamps the request id ({@link REQUEST_ID_HEADER}). `deps` is the
+ * per-request container (PGlite in tests, pooled Postgres in `apps/web`).
  */
 export function createApp(routes: Route[]): App {
   return {
     async handle(req: Request, deps: ApiDeps): Promise<Response> {
       const { res, route } = await dispatch(routes, req, deps);
-      return nameTheAccount(res, deps, route);
+      return stampRequestId(nameTheAccount(res, deps, route), deps);
     },
   };
 }

@@ -50,6 +50,16 @@ failure it was. As with every other line in that file, it does not carry the fai
 your address, or anything from the request. Nothing about what the window shows you changes; the
 difference is that afterwards there is something to read.
 
+### The local engine's answers carry a request id
+
+Every answer from the mail engine on your own computer now includes an `X-Request-Id`
+header — one value naming that single request. The hosted services have always sent it.
+The engine minted the id internally and never returned it, so a report about an action
+that failed carried nothing identifying which action it was.
+
+Nothing else about a response changes, and the hosted services send the same value they
+sent before.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

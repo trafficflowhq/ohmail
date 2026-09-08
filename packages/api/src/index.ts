@@ -111,4 +111,4 @@ export {
 } from "./idempotency.js";
 
 // App factory.
-export { createApp, ACCOUNT_HEADER, type App } from "./app.js";
+export { createApp, ACCOUNT_HEADER, REQUEST_ID_HEADER, type App } from "./app.js";
