@@ -261,6 +261,19 @@ export function firstRunStep(
    * carrying about a moment that has passed.
    */
   heldStamp: string | null = null,
+  /**
+   * HAS THE CLAIM QUESTION BEEN ON SCREEN WITH A HOLDER ON IT IN THIS RUN, for this mailbox.
+   *
+   * The cursor is not the only way somebody arrives on that screen. The DERIVATION puts them
+   * there straight after a connect, before any press, and on that path `at` is still null — so
+   * the release rule below, written against the cursor alone, did not run at all, and a stale or
+   * empty read carried the run on to the consent statement with the question never answered.
+   *
+   * The witness is the ref the floor comes from, which is written only while the question is
+   * rendered with a holder, and keyed by mailbox. `heldStamp` itself cannot serve: it is null on
+   * a host that sends no `organizerEventAt`, which is a run that WAS asked.
+   */
+  asked = false,
 ): OnboardingStep | null {
   const derived = deriveOnboardingStep(facts);
   /**
@@ -361,11 +374,31 @@ export function firstRunStep(
    *
    * The floor is remembered by the SCREEN and not derived here, because it is a fact about this
    * run rather than about this read — see {@link heldStamp} and the ref that fills it.
+   *
+   * ── TWO WAYS THE QUESTION IS UP, AND ONE WAY IT COMES DOWN ───────────────────────
+   *
+   * All of the above was written against the CURSOR, so it only ever ran for somebody who had
+   * pressed something. The question is also put on screen by the DERIVATION — row 3, on the
+   * connect path, where `at` is still null because nothing has been pressed — and that is the
+   * ORDINARY first run: connect, the peek lands, the screen appears. There this rule did not
+   * apply, so a `nobody` prepared before the peek, or a read carrying no row for this mailbox,
+   * moved the run on to the consent statement, where Continue and then Agree authorize the
+   * takeover the choice was never kept on screen for. Measured on the 0.14.2 candidate.
+   *
+   * So the question is UP in either of two ways — the cursor names the screen, or the derivation
+   * has already put it there in this run and nobody has answered it ({@link asked}) — and it
+   * comes DOWN one way in both: a fresh, explicit `nobody`, ordered by the floor.
+   *
+   * `!claimAnswered` is what keeps the second way from becoming a loop. "Organize here instead"
+   * moves the cursor to `consent` while the holder is still recorded, and a write on that stretch
+   * clears the cursor (`setAt(null)`), which without the flag would land straight back here —
+   * the loop the guard above documents, arriving through the new door.
    */
-  const cursor = at === "elsewhere"
-    && holderVerdict(mb) === "nobody"
-    && readIsNotOlder(mb?.organizerEventAt, heldStamp)
-    ? null
+  const questionUp = at === "elsewhere" || (at === null && asked && !claimAnswered);
+  const cursor = questionUp
+    ? (holderVerdict(mb) === "nobody" && readIsNotOlder(mb?.organizerEventAt, heldStamp)
+      ? null
+      : "elsewhere")
     : at;
   /* ── A RE-RUN IS AN INTENT, AND IT OUTRANKS THE COMPLETION STAMP ─────────────────────────
    *
@@ -535,9 +568,13 @@ export function FirstRun({
   const heldStamp = heldStampRef.current !== null && heldStampRef.current.mailboxId === mailboxId
     ? heldStampRef.current.at
     : null;
+  /* AND WHETHER IT WAS SHOWN AT ALL, which is not the same question as what stamp it was shown
+     under: the ref exists on a host that stamps nothing and its `at` is null there — a run that
+     WAS asked. See `firstRunStep`'s `asked`. */
+  const asked = heldStampRef.current !== null && heldStampRef.current.mailboxId === mailboxId;
   const step = firstRunStep(
     facts, at, rerun === true, mailboxId !== null && claimAnsweredFor === mailboxId,
-    add === true, heldStamp,
+    add === true, heldStamp, asked,
   );
   useEffect(() => {
     /* ONLY WHILE THE QUESTION IS ACTUALLY ON SCREEN WITH A HOLDER ON IT. The floor is about what
