@@ -1083,6 +1083,69 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // asked, because the hazard it exists to catch is an API ahead of its database. Named here
   // rather than waved off, since the FK is the half that turns a discard into a 23503.
   ["outbound_sends", "resolved_by"],
+  // mail 0096_away_piles — TWO columns, because the migration adds two, and BOTH are read on a
+  // path that selects them by name.
+  //
+  // `away_responders.piles` is WHICH PILES the away responder answers. The pass's probe selects it
+  // by name for every live responder, so an API or a send clock ahead of the migration raises
+  // Postgres 42703 on every away cycle — and the settings pane's `PUT` writes it, so the save that
+  // turns a responder OFF fails too, which is the one save nobody may be prevented from making.
+  //
+  // The consequence of certifying a database without it is worse than a 42703 and is why this is a
+  // marker rather than "one column with a default": the column IS the scope. A build that reads it
+  // as absent has no scope to apply, and the branch an away pass falls through to when it cannot
+  // tell which piles were chosen is the branch that sends mail — to exactly the correspondents
+  // this migration exists to stop answering.
+  ["away_responders", "piles"],
+  // `away_sender_state.undeliverable_at` is the record that a bounce came back for an earlier
+  // reply. Probed for the same reason: the candidate query reads it in a correlated EXISTS by
+  // name, so a database without it 42703s the whole away pass rather than degrading — and if it
+  // ever degraded instead, the degraded reading is "this address is fine", which resumes writing
+  // to a dead address once per throttle interval, each attempt returning a bounce into this
+  // account's own Ohbox. That is the state this migration was written to end.
+  ["away_sender_state", "undeliverable_at"],
+  // mail 0097_folder_state_last_error_class — ONE column, because the migration adds one. It was
+  // the newest entry until 0098 landed below it; the tag is single-valued, so the claim moves with
+  // it rather than standing in two places.
+  //
+  // `folder_state.last_error_class` is WHY the mail server refused a filing, as one of four words
+  // this codebase chose. It is probed because the API READS it: the mailbox projection selects it
+  // in the filtered aggregate that reports what a mailbox still owes, so an API ahead of the
+  // migration raises Postgres 42703 on `GET /mailboxes` — which the shell polls every thirty
+  // seconds for its status line, on every open tab.
+  //
+  // That is the whole cost and it is enough: a route the whole product's status depends on would
+  // fail for every account until the migration landed, and a database certified healthy without
+  // this marker is a database that lets that deploy through. The CHECK that closes the column to
+  // the four words gets no marker of its own — a constraint that gained a set cannot be detected
+  // by reading a column name, the same rule the refusal vocabulary above records.
+  ["folder_state", "last_error_class"],
+  // mail 0098_signature_html — ONE column, because the migration adds one.
+  //
+  // `mailboxes.signature_html` is the markup half of a mailbox's signature. It is probed for a
+  // sharper reason than the holder columns above: `mailboxSignatures`' twin
+  // (`mailboxSignatureHtmls`) SELECTS THIS COLUMN BY NAME on every `GET /consent`, so an API
+  // ahead of the migration raises Postgres 42703 on the settings read that every client makes at
+  // boot — not on a panel somebody may never open. A database certified healthy while missing it
+  // therefore serves an account that cannot load its own settings at all.
+  //
+  // The derived text half needs no marker of its own: `mailboxes.signature` predates the split
+  // and is probed by nothing here for the same reason nothing else pre-split is.
+  ["mailboxes", "signature_html"],
+  // mail 0099_folder_state_trashed_from — ONE column, because the migration adds one.
+  // **It is the newest entry, so it is also the tag below.** The 0098 paragraph above carried that
+  // sentence until this migration landed behind it; `MAIL_SCHEMA_MARKER_JOURNAL_TAG` is
+  // single-valued, so the sentence moves with the tag rather than standing in two places — the
+  // docblock's own rule, and leaving both would have shipped a false claim with every gate green.
+  //
+  // `folder_state.trashed_from` is the folder a delete moved a message OUT of — the only durable
+  // record of where a deleted message came from, and therefore the only thing a restore has to
+  // aim at. It is probed because the API SELECTS IT BY NAME on two doors: the Trash list reads it
+  // per row to resolve each row's destination, and the restore reads it to decide where the
+  // message goes. An API ahead of the migration raises Postgres 42703 on both — so a database
+  // certified healthy without it serves an account whose Trash screen cannot load and whose
+  // Restore button cannot work, which is the whole of the feature.
+  ["folder_state", "trashed_from"],
 ] as const;
 
 /* THE CLOUD HALF OF THE MARKER CENSUS MOVED TO `./health-cloud.js`.
@@ -1870,7 +1933,13 @@ export const MAIL_EXPECTED_MARKERS =
  * columns it adds, because the send door selects the reservation row WHOLE on its replay branch
  * and the resolve verb writes both columns in one UPDATE. Its FK change is unprobeable by
  * construction (dropped and re-added under the same name), which that marker's entry records.
- * **It is the newest entry, so it is also the tag below.**
+ *
+ * `0098_signature_html` is probed as `mailboxes.signature_html` — the signature's markup half, one
+ * additive nullable field.
+ *
+ * `0099_folder_state_trashed_from` is probed as `folder_state.trashed_from` — where a delete moved
+ * a message out of, one additive nullable field, and the operand of both Trash doors. **It is the
+ * newest entry, so it is also the tag below.**
  *
  * That last sentence is the one this docblock keeps getting wrong, and it is now attached to the
  * marker that is actually newest rather than left on an older one. It stood on `0081` and then on
@@ -1889,7 +1958,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0095_outbound_send_resolution";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0099_folder_state_trashed_from";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */
