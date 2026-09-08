@@ -82,6 +82,20 @@ export function pgDialect(): Dialect {
     // a caller names an instant no row has.
     truncMs: (at) => sql`date_trunc('milliseconds', ${at})`,
 
+    /* The clause the builder would have appended, as text. `sql.raw` for the keywords because they
+       are a fixed vocabulary from {@link LockMode} and never a caller's string — the only values
+       that reach here are the four modes and a boolean. */
+    lockClause: (opts: LockOptions = {}) => sql.raw(
+      `for ${opts.mode ?? "update"}${opts.skipLocked === true ? " skip locked" : ""}`),
+
+    /* The element is the aliased relation's single column, which is why the alias is written with
+       a column list. `sql.raw` for the alias because it is a fixed identifier chosen by the
+       statement's author, never a value. */
+    jsonArrayElements: (source, alias) => ({
+      from: sql`jsonb_array_elements(${source}) as ${sql.raw(alias)}(value)`,
+      value: sql.raw(`${alias}.value`),
+    }),
+
     greatest: (...values) => {
       assertComparable(values.length);
       return sql`greatest(${sql.join(values.map((v) => sql`${v}`), sql`, `)})`;

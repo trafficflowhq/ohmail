@@ -236,6 +236,17 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
         // the same regardless of which side the address sat on — see the threshold constant
         // for the distribution it was cut from. This only ever REMOVES evidence: it can
         // starve a true join into staying split (the recoverable direction), never forge one.
+        /* THE TWO ADDRESS BAGS AS SEPARATE ARMS, rather than one over their concatenation.
+         *
+         * This read the elements of `to_addresses || cc_addresses` — a server-side document
+         * concatenation with no equivalent on the device store, where `||` is STRING joining and
+         * would have produced two JSON texts glued together and then parsed as one, which is not
+         * an error and not the right answer either. The elements of `a || b` are the elements of
+         * `a` followed by those of `b`, and this feeds a `count(distinct thread_id)` grouped by
+         * address, so a second union arm is the same set and the order was never read.
+         */
+        const to = d.jsonArrayElements(sql`m.to_addresses`, "xto");
+        const cc = d.jsonArrayElements(sql`m.cc_addresses`, "xcc");
         const spread = await db.execute(sql`
           select addr from (
             select addr, count(distinct thread_id) as spread from (
@@ -243,8 +254,12 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
               from ${messages}
               where account_id = ${group.account_id} and from_address <> ''
               union all
-              select m.thread_id, lower(x->>'address')
-              from ${messages} m, jsonb_array_elements(m.to_addresses || m.cc_addresses) x
+              select m.thread_id, lower(${to.value}->>'address')
+              from ${messages} m, ${to.from}
+              where m.account_id = ${group.account_id}
+              union all
+              select m.thread_id, lower(${cc.value}->>'address')
+              from ${messages} m, ${cc.from}
               where m.account_id = ${group.account_id}
             ) participant
             where addr is not null and addr <> ''

@@ -2597,12 +2597,14 @@ export class SendService {
       // does not ring it settles as `pending` and pages the stuck-send alarm. Whatever drizzle
       // renders for a locked builder embedded as a subquery, it is not this statement.
       //
-      // So the clause stays inline and this site is one of the three the port does NOT convert.
-      // The device half is owed and is NOT this: it needs a statement written for that store,
-      // with a case that runs there, not a translation that looks right on both.
+      // So the clause stays INLINE — and it is now emitted by the seam rather than written out,
+      // which is the distinction that measurement was about: the objection was to embedding a
+      // LOCKED BUILDER as a subquery, not to the clause itself. `lockClause` renders exactly the
+      // text that is here today on the server, and renders nothing on the device store, where one
+      // serialized writer means there is nobody to exclude and nobody to skip.
       await tx.update(mailboxes).set({ syncRequestedAt: now }).where(sql`${mailboxes.id} in (
         select ${mailboxes.id} from ${mailboxes} where ${mailboxes.id} = ${mailboxId}
-        for update skip locked
+        ${dialect(ctx.db).lockClause({ mode: "update", skipLocked: true })}
       )`);
       return recordChange(tx, {
         accountId: ctx.accountId, entityType: "draft", entityId: draftId, op: "update", meta: null,

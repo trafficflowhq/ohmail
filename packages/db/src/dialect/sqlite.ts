@@ -143,6 +143,19 @@ export function sqliteDialect(): Dialect {
        where the microseconds it drops are what a keyset cursor cannot carry. */
     truncMs: (at) => sql`${at}`,
 
+    /* EMPTY, and it must be a fragment rather than an omission at the site: the caller writes it
+       into the middle of a statement, so the seam has to hand back something that renders to
+       nothing rather than leaving the caller to decide whether to include it. */
+    lockClause: () => sql.raw(""),
+
+    /* This store's version yields a TABLE, whose element is its `value` column — so the alias
+       carries no column list and the element is named through it. Same two fragments, different
+       shapes behind them, which is the whole reason the member hands back both. */
+    jsonArrayElements: (source, alias) => ({
+      from: sql`json_each(${source}) as ${sql.raw(alias)}`,
+      value: sql.raw(`${alias}.value`),
+    }),
+
     /**
      * `max`, and the argument count is load-bearing.
      *

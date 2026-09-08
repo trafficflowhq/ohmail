@@ -309,6 +309,36 @@ export interface Dialect {
   truncMs(at: SQL | unknown): SQL;
 
   /**
+   * A row-locking clause as TEXT, for the one statement no builder can reach.
+   *
+   * {@link forUpdate} is the member to use and takes a QUERY, which is what makes it safe: it can
+   * only be attached to something the builder is composing, and it can name the table. This one
+   * emits the clause itself and is therefore the sharper tool — it exists because a subselect
+   * written as raw SQL has no builder around it to attach anything to, and the site that needs it
+   * carries a measured note saying so: embedding a locked builder there rendered something else
+   * and turned twelve of fifteen send cases red against real Postgres.
+   *
+   * On the device store the clause is EMPTY, for the same reason every lock there is the identity:
+   * one serialized writer, so there is nothing to exclude and nothing to skip.
+   */
+  lockClause(opts?: LockOptions): SQL;
+
+  /**
+   * A JSON array's elements as ROWS, joined into a statement's FROM.
+   *
+   * `from` is the source expression, `value` is how to name one element inside it — two fragments
+   * rather than one, because the two stores put the element in different places: the server's
+   * function yields the element as the aliased relation's single column, and this store's yields a
+   * table whose element is a NAMED column of it. A member returning one fragment would have made
+   * the caller spell the difference, which is the thing it exists to remove.
+   *
+   * NO ORDINALITY. Both stores can produce a position, and they spell it differently enough that a
+   * caller wanting one is a second member and its own decision — so a statement that needs element
+   * ORDER must not use this.
+   */
+  jsonArrayElements(source: SQL | unknown, alias: string): { from: SQL; value: SQL };
+
+  /**
    * The largest of two or more values, in each store's own name for it.
    *
    * TWO ARGUMENTS AT LEAST, and the refusal is not tidiness. The device store spells this `max`,

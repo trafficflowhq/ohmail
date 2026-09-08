@@ -1044,6 +1044,23 @@ export async function decryptCredential(
  * write path needs a `KeyProvider` (construct via `makeMailboxService`). Every
  * query is account-scoped: a cross-account id is a 404.
  */
+/**
+ * ONE INSTANT, IN THE FIXED WIRE FORM the pull baseline is compared in — `YYYY-MM-DDTHH:MM:SS.mmmZ`.
+ *
+ * This used to be rendered in SQL, and the reason was never that SQL had to do it. It was that the
+ * bare cast renders at the SERVER's configured date style — a space separator and a `+00` offset —
+ * which `Date.parse` is not required to accept, and a rejected format is a NaN baseline and a
+ * spinner that runs to its cap. `toISOString()` produces exactly the format that SQL was asked
+ * for, in UTC, to the same millisecond precision, for every instant there is — which is asserted
+ * against the old SQL output rather than assumed.
+ *
+ * Doing it here rather than in the statement also means the statement carries nothing only one
+ * store can render, which is what let this projection stop being a Postgres-only expression.
+ */
+export function wireInstant(at: Date | null): string | null {
+  return at === null ? null : at.toISOString();
+}
+
 export class MailboxService {
   constructor(private readonly deps: MailboxServiceDeps = {}) {}
 
@@ -2261,15 +2278,18 @@ export class MailboxService {
       // Lock the account's connected rows so the kick pass's compare-and-clear serializes with
       // this stamp — see the header. The set is an account's mailboxes (single digits), and the
       // kick's clear is one row-keyed UPDATE, so the hold is microseconds.
-      // The wire form is FIXED ISO-8601 UTC via to_char, never `::text`: the bare cast renders
-      // at the server's DateStyle (space separator, `+00` offset), which `Date.parse` is not
-      // required to accept — a rejected format is a NaN baseline and a spinner that always runs
-      // to its cap. Millisecond precision, matching the DTO's
-      // `toISOString()` on the other side of the comparison; the sub-millisecond loss floors the
-      // baseline, which is the conservative direction.
+      // THE WIRE FORM IS FIXED ISO-8601 UTC AND IS NOW MADE HERE, from the instant itself.
+      //
+      // It used to be rendered in SQL, and the reason was never that SQL had to do it: it was that
+      // the bare cast renders at the server's own DateStyle (space separator, `+00` offset), which
+      // `Date.parse` is not required to accept — a rejected format is a NaN baseline and a spinner
+      // that runs to its cap. `toISOString()` produces exactly the format that SQL was asked for,
+      // to the same millisecond precision, on every instant; `wireInstant` is the one place it is
+      // written and `mailbox-service` has the byte-for-byte comparison against the old SQL output.
+      // Doing it here also means the statement carries nothing only one store can render.
       const mine = await dialect(ctx.db).forUpdate(tx.select({
         id: mailboxes.id,
-        standing: sql<string | null>`to_char(${mailboxes.syncRequestedAt} at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`,
+        standing: mailboxes.syncRequestedAt,
       }).from(mailboxes)
         .where(and(eq(mailboxes.accountId, ctx.accountId), eq(mailboxes.status, "connected"))));
       if (mine.length === 0) return [];
@@ -2284,12 +2304,14 @@ export class MailboxService {
         ))
         .returning({
           id: mailboxes.id,
-          at: sql<string>`to_char(${mailboxes.syncRequestedAt} at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`,
+          at: mailboxes.syncRequestedAt,
         });
-      const freshly = new Map<string, string>(stamped.map((r) => [r.id, r.at]));
+      const freshly = new Map<string, string>(
+        stamped.map((r) => [r.id, wireInstant(r.at)!]).filter((e): e is [string, string] => e[1] !== null),
+      );
       return mine.map((m) => ({
         id: m.id,
-        requestedAt: freshly.get(m.id) ?? m.standing,
+        requestedAt: freshly.get(m.id) ?? wireInstant(m.standing),
       })).filter((m): m is { id: string; requestedAt: string } => m.requestedAt !== null);
     });
     const newest = rows.reduce<string | null>(
