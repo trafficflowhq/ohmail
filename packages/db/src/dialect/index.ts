@@ -296,6 +296,19 @@ export interface Dialect {
   interval(ms: number): SQL;
 
   /**
+   * A timestamp truncated to whole milliseconds.
+   *
+   * A member and NOT a deletion, which is the whole reason it exists. The server stores
+   * microseconds and the sort key it builds must round-trip through a JavaScript `Date` — which
+   * carries milliseconds — or a keyset cursor cannot name the row it stopped at: the value handed
+   * out is short by the microseconds and the comparison that resumes from it never matches. The
+   * device store keeps epoch milliseconds already, so there the answer is the value itself. Dropping
+   * the call would be correct on one store and silently wrong on the other, which is exactly the
+   * shape this seam refuses.
+   */
+  truncMs(at: SQL | unknown): SQL;
+
+  /**
    * The largest of two or more values, in each store's own name for it.
    *
    * TWO ARGUMENTS AT LEAST, and the refusal is not tidiness. The device store spells this `max`,

@@ -1625,13 +1625,28 @@ export class ScreenerReadService {
     ctx: ServiceContext,
     opts: { after: { time: number; messageId: string } | null; limit: number },
   ): Promise<ScreenerRow[]> {
-    const sortKey = sql<Date>`date_trunc('milliseconds', coalesce(${messages.date}, to_timestamp(0)))`;
+    const d = dialect(ctx.db);
+    const sortKey = d.truncMs(sql`coalesce(${messages.date}, to_timestamp(0))`) as SQL<Date>;
     const sender = sql`lower(${messages.fromAddress})`;
 
+    /* ONE HELD MESSAGE PER SENDER, AS A WINDOW ─────────────────────────────────────────────
+     *
+     * `distinct on (k) … order by k, o` and `row_number() over (partition by k order by o) = 1`
+     * pick the same row — the first in `o` within each `k`. The first spelling exists only on the
+     * server; the second is standard and both stores have it, so the representative is chosen the
+     * same way everywhere instead of by a branch.
+     *
+     * The ordering moves INSIDE the window, which is where it always belonged: the leading `k` in
+     * the old ORDER BY was there to satisfy the clause, not to order the answer. The OUTER order
+     * below is the one the caller sees and is unchanged.
+     */
     // `account_id` LEADS the predicate rather than filtering a cross-account result (no cross-account disclosure).
-    const reps = ctx.db.selectDistinctOn([sender], {
+    const reps = ctx.db.select({
       ...HELD_COLUMNS,
       sortKey: sortKey.as("sort_key"),
+      rank: sql<number>`row_number() over (
+        partition by ${sender} order by ${sortKey} desc, ${messages.id} desc
+      )`.as("rank"),
     }).from(messages)
       .innerJoin(folderState, eq(folderState.messageId, messages.id))
       .where(and(
@@ -1641,17 +1656,19 @@ export class ScreenerReadService {
         // tombstoned newest message must not stand in for a sender whose older mail is live.
         isNull(messages.deletedAt),
       ))
-      .orderBy(sender, desc(sortKey), desc(messages.id))
       .as("reps");
 
     const rows = await ctx.db.select().from(reps)
-      .where(opts.after
-        // Row comparison, which is the `date desc, id desc` keyset written as one expression:
-        // strictly "older" than the cursor tuple, with the id breaking a shared date. Bound as
-        // TYPED parameters so the comparison is the DATABASE's ordering of a `timestamptz` and
-        // a `uuid`, not a string comparison that happens to agree with it.
-        ? sql`(${reps.sortKey}, ${reps.messageId}) < (${new Date(opts.after.time).toISOString()}::timestamptz, ${opts.after.messageId}::uuid)`
-        : undefined)
+      .where(and(
+        eq(reps.rank, 1),
+        opts.after
+          // Row comparison, which is the `date desc, id desc` keyset written as one expression:
+          // strictly "older" than the cursor tuple, with the id breaking a shared date. Bound
+          // through the seam so the comparison is the STORE's ordering of its own timestamp and id
+          // types, not a string comparison that happens to agree with it.
+          ? sql`(${reps.sortKey}, ${reps.messageId}) < (${d.ts(new Date(opts.after.time))}, ${d.castUuid(opts.after.messageId)})`
+          : undefined,
+      ))
       .orderBy(desc(reps.sortKey), desc(reps.messageId))
       .limit(opts.limit);
 

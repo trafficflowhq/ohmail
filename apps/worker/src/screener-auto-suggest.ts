@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, sql, type SQL } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   accountSettings, folderState, messages,
@@ -560,11 +560,17 @@ export async function screenerAutoSuggestPass(
 async function selectCandidates(
   db: Tx, opts: { accountId: string; watermark: Date; limit: number },
 ): Promise<Candidate[]> {
-  const sortKey = sql<Date>`date_trunc('milliseconds', coalesce(${messages.date}, to_timestamp(0)))`;
+  const d = dialect(db);
+  const sortKey = d.truncMs(sql`coalesce(${messages.date}, to_timestamp(0))`) as SQL<Date>;
   const sender = sql`lower(${messages.fromAddress})`;
 
+  /* ONE HELD MESSAGE PER SENDER, AS A WINDOW — the same row `distinct on (k) … order by k, o`
+     picks, chosen by `row_number() over (partition by k order by o) = 1`, which both stores have
+     and only the server has the first of. The ordering moves inside the window, where the leading
+     `k` was never about ordering the answer. Nothing about WHICH message represents a sender
+     changes, which is what the paragraph below depends on. */
   // `account_id` LEADS the predicate rather than filtering a cross-account result.
-  const reps = db.selectDistinctOn([sender], {
+  const reps = db.select({
     messageId: messages.id,
     fromAddress: messages.fromAddress,
     subject: messages.subject,
@@ -575,13 +581,15 @@ async function selectCandidates(
     noAi: messages.noAi,
     sensitivityCategory: messages.sensitivityCategory,
     sortKey: sortKey.as("sort_key"),
+    rank: sql<number>`row_number() over (
+      partition by ${sender} order by ${sortKey} desc, ${messages.id} desc
+    )`.as("rank"),
   }).from(messages)
     .innerJoin(folderState, eq(folderState.messageId, messages.id))
     .where(and(
       eq(messages.accountId, opts.accountId),
       eq(folderState.desiredFolder, SCREENER),
     ))
-    .orderBy(sender, desc(sortKey), desc(messages.id))
     .as("reps");
 
   const rows = await db.select({
@@ -591,8 +599,10 @@ async function selectCandidates(
     snippet: reps.snippet,
   }).from(reps)
     .where(and(
+      // Only the representative — see the window above.
+      eq(reps.rank, 1),
       // (1) THE WATERMARK — consent began before this message did.
-      sql`${reps.createdAt} > ${opts.watermark.toISOString()}::timestamptz`,
+      sql`${reps.createdAt} > ${d.ts(opts.watermark)}`,
       // (2) THE PROGRESS MARKER AND THE PER-SENDER ENTITLEMENT, IN ONE PREDICATE: a SENDER this
       // account already holds advice about — bought by this pass on an earlier cycle, by the
       // client's on-open batch, or by the manual ladder — is not re-bought and not re-asked.

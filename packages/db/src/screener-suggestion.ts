@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
+import { and, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { messages, routingDecisions } from "./schema-mail.js";
 import type { Tx } from "./change-log.js";
 import type { Dialect } from "./dialect/index.js";
@@ -199,13 +199,28 @@ export async function screenerSuggestionsBySender(
   if (senders.length === 0) return out;
 
   const sender = sql<string>`lower(${messages.fromAddress})`;
-  const rows = await db.selectDistinctOn([sender], {
+  /* ONE ROW PER SENDER, AS A WINDOW RATHER THAN AS `DISTINCT ON` ─────────────────────────────
+   *
+   * `distinct on (k) … order by k, o` and `row_number() over (partition by k order by o) = 1` pick
+   * the same row: the first in `o` within each `k`. The first spelling exists only on the server;
+   * the second is standard and both stores have it, so this is one statement rather than a branch,
+   * which is what a seam is for when the answer really is shared.
+   *
+   * The ordering moves INSIDE the window, where it belongs — under `distinct on` the leading `k`
+   * in the ORDER BY was there to satisfy the clause rather than to order the result, which is the
+   * detail that makes the two look different when they are not.
+   */
+  const ranked = db.select({
     sender: sender.as("sender"),
     messageId: routingDecisions.messageId,
     destination: routingDecisions.destination,
     confidence: routingDecisions.confidence,
     rationale: routingDecisions.rationale,
     spam: routingDecisions.spam,
+    rank: sql<number>`row_number() over (
+      partition by ${sender}
+      order by ${routingDecisions.createdAt} desc, ${routingDecisions.id} desc
+    )`.as("rank"),
   }).from(routingDecisions)
     .innerJoin(messages, and(
       eq(messages.id, routingDecisions.messageId),
@@ -218,7 +233,16 @@ export async function screenerSuggestionsBySender(
       eq(routingDecisions.inputProvenance, SCREENER_SUGGESTION_PROVENANCE),
       inArray(sender, senders),
     ))
-    .orderBy(sender, desc(routingDecisions.createdAt), desc(routingDecisions.id));
+    .as("ranked");
+
+  const rows = await db.select({
+    sender: ranked.sender,
+    messageId: ranked.messageId,
+    destination: ranked.destination,
+    confidence: ranked.confidence,
+    rationale: ranked.rationale,
+    spam: ranked.spam,
+  }).from(ranked).where(eq(ranked.rank, 1));
 
   for (const r of rows) {
     out.set(r.sender, {

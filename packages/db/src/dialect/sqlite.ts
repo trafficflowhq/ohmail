@@ -137,6 +137,12 @@ export function sqliteDialect(): Dialect {
 
     interval: (ms: number) => sql`${Math.trunc(ms)}`,
 
+    /* THE IDENTITY, and that is a fact rather than a shrug: this store keeps epoch MILLISECONDS,
+       so a timestamp here is already truncated to the precision the member names. Deleting the
+       call at the site instead would have been correct here and silently wrong on the server,
+       where the microseconds it drops are what a keyset cursor cannot carry. */
+    truncMs: (at) => sql`${at}`,
+
     /**
      * `max`, and the argument count is load-bearing.
      *

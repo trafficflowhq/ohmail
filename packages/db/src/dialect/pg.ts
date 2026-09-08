@@ -77,6 +77,11 @@ export function pgDialect(): Dialect {
 
     interval: (ms: number) => sql`(${`${Math.trunc(ms)} milliseconds`}::interval)`,
 
+    // The server keeps microseconds; a sort key that must survive a round trip through a
+    // JavaScript `Date` has to lose them HERE rather than on the way out, or the cursor handed to
+    // a caller names an instant no row has.
+    truncMs: (at) => sql`date_trunc('milliseconds', ${at})`,
+
     greatest: (...values) => {
       assertComparable(values.length);
       return sql`greatest(${sql.join(values.map((v) => sql`${v}`), sql`, `)})`;
