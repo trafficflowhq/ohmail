@@ -3777,7 +3777,29 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
       const parent = d.inReplyToMessageId
         ? reader.get<EngineMessage>("message", d.inReplyToMessageId)
         : null;
-      if (parent) {
+      /**
+       * ── THE HOLD IS ASKED FIRST, AND THE REPLY ARM IS WHY ─────────────────────────────────
+       *
+       * This used to be computed BELOW the reply arm, which meant a held REPLY never reached it:
+       * a draft whose parent message is in the mirror was seeded straight into the inline reply
+       * editor with Send live, and `replySeedDrafts` marked it for discard on the next confirmed
+       * reply. So the one row that must not be re-sent — a message we could not confirm the
+       * delivery of — was the one row that opened with a Send button and a second copy of its
+       * text, while the same draft opened from the Drafts list was correctly parked. The row in
+       * the report that found this IS a reply, which is how it slipped past every check.
+       *
+       * Moving the read above the arm makes the hold a property of OPENING THE ROW rather than
+       * of which surface happens to open it. A held reply now takes the held view below — the
+       * banner, the two verbs, the frozen text — like any other held row.
+       */
+      const heldRow = readComposeRow();
+      const hold = holdOf(engine, {
+        lane: COMPOSE_SEND_KEY,
+        draftId: d.id,
+        session: heldRow !== null && heldRow === d.id ? composeSessionId() : null,
+      });
+      const parked = hold.kind !== "free";
+      if (parent && !parked) {
         /* The message's own inline editor, seeded with what was written. `openMessageRef` and
            not `openMessage` directly: that callback needs the screener row map and the consent
            partition and is therefore declared far below this one, so the reference is late-bound
@@ -3861,13 +3883,6 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
          moments later, and nothing had attached it to the record — so the row that appears in
          Drafts belonged to a parked message that the row alone could not identify. `readComposeRow`
          is the link: that row IS this compose's row, so this compose's session speaks for it. */
-      const heldRow = readComposeRow();
-      const hold = holdOf(engine, {
-        lane: COMPOSE_SEND_KEY,
-        draftId: d.id,
-        session: heldRow !== null && heldRow === d.id ? composeSessionId() : null,
-      });
-      const parked = hold.kind !== "free";
       /* ── AND IT DOES NOT OPEN OVER SOMETHING SOMEBODY IS STILL WRITING ─────────────────────
          The parked door deliberately does NOT re-mint the compose session or clear the scratch
          buffer — that is what keeps the reopened message recognisable as itself. The cost is that
@@ -3999,6 +4014,30 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
         // The row is a plain draft now, confirmed; hand `openDraft` the same reading so it
         // ADOPTS rather than treating the row as a stranded send.
         openDraft({ ...d, status: "draft", sendAt: null });
+      });
+    },
+  );
+  /**
+   * ── A PERSON ANSWERS FOR A SEND WE COULD NOT CONFIRM ────────────────────────────────────
+   *
+   * The one sanctioned exit from the hold, and the reason a held row is no longer a dead end.
+   * It asks `holdOf` NOTHING, deliberately: every other write site in this shell asks the
+   * predicate because it is about to change a message somebody may already have received, and
+   * this one is the opposite — it is how the reader tells us WHICH of those two worlds we are
+   * in. Gating it on the hold would make the hold unliftable, which is the defect.
+   *
+   * No toast on success. The row itself is the answer: it either leaves the list (`arrived`) or
+   * turns into an ordinary draft with Discard live (`not_arrived`), and saying so in a toast as
+   * well would be narrating what the reader can see. A refusal is reported, because that is the
+   * case where the screen does NOT change.
+   */
+  const resolveHeldSend = useStableCallback(
+    (draftId: string, outcome: "arrived" | "not_arrived") => {
+      void engine.mutate({ kind: "draft_resolve", draftId, outcome }).then((res) => {
+        if (res.status === "confirmed") return;
+        // A resolve that did not land leaves the row held; the overlay has already rolled back,
+        // so the note above it still reads "not confirmed" and the verbs are still there.
+        toast(t("drafts.resolveFailed"));
       });
     },
   );
@@ -7490,6 +7529,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
                 now={now}
                 onOpen={openDraft}
                 onDiscard={discardDraft}
+                onResolve={resolveHeldSend}
                 onCancelSchedule={cancelSchedule}
                 onEditScheduled={editScheduled}
                 repliesHere={draftRepliesHere}

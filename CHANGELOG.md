@@ -205,6 +205,27 @@ making it. Both ways of re-filing now go down the same path. Marking mail read i
 is something an install that reads a mailbox is genuinely allowed to do, and it still happens
 immediately.
 
+### A message we couldn't confirm no longer stays in Drafts for ever
+
+When a send finishes without a clear answer — the mail server closed the connection at the wrong
+moment, and the message was not in the Sent folder when we looked — the draft is held and the row
+says so, pointing you at your Sent folder. That was a question with nowhere to put the answer.
+Discard refused the row, because a send was on record for it, and nothing anywhere could change
+that. A held message stayed held permanently.
+
+The held row now carries the two answers you are actually in a position to give: **It arrived** or
+**It didn't arrive**. "It arrived" records the send and the row leaves Drafts, with your account's
+record of it intact. "It didn't arrive" turns the row back into an ordinary draft — you can edit it,
+send it again, or discard it, and sending again is a genuinely new send rather than a retry of the
+old one.
+
+Two related fixes came with it. A draft whose send **definitively failed** could not be discarded
+either, for the same reason and with less excuse: nothing was in flight and nothing was unknown, and
+the row still refused to go. It discards now, and the record of the failed attempt is kept. And a
+held message that was a **reply** opened in the inline reply editor with Send live, because the
+reply path did not ask whether the row was held before opening it — so the one message that must not
+be sent twice was the one that opened ready to send. It opens as the held message it is.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

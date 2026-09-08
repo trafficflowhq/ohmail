@@ -66,6 +66,7 @@ export function DraftsView({
   now,
   onOpen,
   onDiscard,
+  onResolve,
   onCancelSchedule,
   onEditScheduled,
   /**
@@ -90,6 +91,11 @@ export function DraftsView({
   now: Date;
   onOpen: (draft: EngineDraft) => void;
   onDiscard: (draftId: string) => void;
+  /**
+   * A person's answer for a send this server could not confirm. Dispatched straight to the
+   * engine by the shell; this view renders the two verbs and knows nothing about the hold.
+   */
+  onResolve: (draftId: string, outcome: "arrived" | "not_arrived") => void;
   onCancelSchedule: (draftId: string) => void;
   onEditScheduled: (draft: EngineDraft) => void;
   repliesHere: (draft: EngineDraft) => boolean;
@@ -252,6 +258,35 @@ export function DraftsView({
                       {t("discard")}
                     </button>
                   </div>
+                  {/* ── THE HELD ROW'S WAY OUT ────────────────────────────────────────────
+                      A send whose outcome could not be confirmed used to be a dead end: the
+                      note above asked the reader a question and there was nowhere to put the
+                      answer, so Discard refused the row for ever. These are that answer, and
+                      they are the only two things a reader is in a position to know — they
+                      looked in their Sent folder, and the message is either there or it is not.
+
+                      NOT offered for `interruptedNote` rows. `unverified` is the state the
+                      server can act on: `resolve` moves an `unverified` reservation and nothing
+                      else, so offering the verbs on a `sending` row would be a control whose
+                      press the server correctly ignores.
+
+                      Only the mutation is dispatched from here. Whether the row may then be
+                      discarded is not this component's judgement — it asks nothing about the
+                      hold and holds no send state; the shell's own predicate answers that on
+                      the next render, once the mirror says the row is an ordinary draft. */}
+                  {d.status === "unverified" ? (
+                    <div className="draft-resolve" role="group" aria-label={t("resolveWhat")}>
+                      <p className="set-note-inline">{t("resolveWhat")}</p>
+                      <div className="gate-actions">
+                        <Button variant="ghost" onClick={() => { onResolve(d.id, "arrived"); }}>
+                          {t("resolveArrived")}
+                        </Button>
+                        <Button variant="ghost" onClick={() => { onResolve(d.id, "not_arrived"); }}>
+                          {t("resolveNotArrived")}
+                        </Button>
+                      </div>
+                    </div>
+                  ) : null}
                   {confirming === d.id ? (
                     <div
                       ref={confirmRef}

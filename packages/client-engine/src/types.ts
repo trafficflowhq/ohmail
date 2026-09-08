@@ -1504,6 +1504,24 @@ export type EngineMutation =
    */
   | { kind: "draft_discard"; draftId: string }
   /**
+   * ANSWER FOR A SEND THIS SERVER COULD NOT CONFIRM — `POST /drafts/:id/resolve`.
+   *
+   * The one sanctioned exit from the held state, and the reason the Drafts row is no longer a
+   * dead end. A send whose outcome is unknown leaves the draft at `unverified` and the row says
+   * *"it may not have been delivered … check your Sent folder"* — a question with nowhere to put
+   * the answer, so Discard refused the row and the client parked it, permanently.
+   *
+   * `arrived` records the delivery: the row becomes `sent` and leaves the Drafts list, with the
+   * account's record of the send intact. `not_arrived` returns it to an ordinary draft that can
+   * be edited, discarded, or sent again under a fresh key.
+   *
+   * IDEMPOTENT ON THE SERVER, not merely retry-safe by convention: the transition is a
+   * compare-and-swap on `unverified`, so a repeat is the asked-for state (200, the row as it
+   * stands) and the OTHER outcome arriving second cannot reopen a resolution somebody already
+   * made. So this needs no durable key of its own, exactly as the schedule verbs need none.
+   */
+  | { kind: "draft_resolve"; draftId: string; outcome: "arrived" | "not_arrived" }
+  /**
    * REVOKE A RULE, AND CHANGE WHERE ONE FILES — the undo for the consent gate.
    *
    * ── WHY THESE ARE ENGINE MUTATIONS AND NOT `app/api-client` CALLS ───────────────────────
@@ -1685,6 +1703,7 @@ export const MUTATION_KINDS = [
   "draft_schedule_cancel",
   "draft_save",
   "draft_discard",
+  "draft_resolve",
   "rule_delete",
   "rule_update",
   "rule_create",

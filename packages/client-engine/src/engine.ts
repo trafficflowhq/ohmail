@@ -392,6 +392,7 @@ export function targetOf(m: EngineMutation): string | null {
     case "draft_discard":
     case "draft_accept":
     case "draft_schedule_cancel":
+    case "draft_resolve":
       return `draft:${m.draftId}`;
     // A send that NAMES a draft shares that draft's target: an abandoned send PUTs its stale body
     // before sending, so a newer edit must retire it. A send that names none owns nothing an older
@@ -532,6 +533,12 @@ function supersedeKey(m: EngineMutation): string | null {
       return m.draftId === null ? null : `draft_save:${m.draftId}`;
     case "draft_schedule_cancel":
       return `draft_schedule_cancel:${m.draftId}`;
+    // A person may answer "it arrived" and then "it didn't" before either reaches the server;
+    // the LAST answer is the whole intent, so an earlier one queued for the same row is
+    // superseded rather than replayed. Keyed per row, like the cancel above: two different
+    // held rows are two different intents.
+    case "draft_resolve":
+      return `draft_resolve:${m.draftId}`;
     default:
       return null;
   }

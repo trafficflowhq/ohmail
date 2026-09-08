@@ -868,6 +868,37 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
     }
 
     /**
+     * ANSWER FOR AN UNCONFIRMED SEND — the row leaves the held state on screen at once, and
+     * authoritatively on the next drain.
+     *
+     * `arrived` writes `sent`, which takes the row out of the Drafts list (the list renders
+     * `draft`/`unverified`/interrupted rows). `not_arrived` writes `draft` AND clears
+     * `sendError`: the sentence was about an appointment that is now definitively over, and
+     * leaving it would put a stale explanation on a row that has just become ordinary — the
+     * same clearing the server does in the same transaction.
+     *
+     * An unknown id yields [] ⇒ the engine rejects locally without going near the wire, the
+     * right answer for a row a concurrent drain already settled. A row the server finds already
+     * resolved is not an error there (the CAS makes a repeat the asked-for state), so this
+     * overlay converges rather than rolling back.
+     */
+    case "draft_resolve": {
+      const draft = reader.get<EngineDraft>("draft", m.draftId);
+      if (!draft) return [];
+      return [{
+        type: "draft",
+        id: draft.id,
+        entity: {
+          ...draft,
+          status: m.outcome === "arrived" ? "sent" : "draft",
+          sendError: null,
+          sendAt: null,
+          updatedAt: iso,
+        } satisfies EngineDraft,
+      }];
+    }
+
+    /**
      * CANCEL A SEND-LATER APPOINTMENT (mail 0077) — the row becomes an ordinary draft again,
      * instantly on screen and authoritatively on the next drain. An unknown id yields [] ⇒ the
      * engine rejects locally, the right answer for a row a concurrent drain already settled;

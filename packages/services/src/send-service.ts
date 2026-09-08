@@ -2244,14 +2244,43 @@ export class SendService {
     mailboxId: string,
     deps: SendDeps,
   ): Promise<SendResult> {
+    /**
+     * ── THE KEY'S MESSAGE WAS DISCARDED, SO THERE IS NOTHING TO REPLAY ────────────────────────
+     *
+     * A terminal reservation whose draft has been thrown away is a state that only exists since
+     * mail 0095: `draft_id` is nullable `ON DELETE SET NULL`, so discarding a draft whose send is
+     * definitively over keeps the attempt's record and clears its pointer.
+     *
+     * This read is keyed on `(account_id, idempotency_key)` ALONE — the caller's draft id is a
+     * separate argument — so the row here need not be about the message the caller is holding.
+     * That is what makes a fabricated answer dangerous rather than merely untidy: replying with
+     * the CALLER's `draftId` would tell the client that the draft it currently has open was
+     * already sent, which is a false state about somebody's mail, and replying with a widened
+     * `draftId: null` pushes the same question into a client that has no branch for it.
+     *
+     * A named refusal instead, and the client maps it to a terminal rollback. This costs a live
+     * client nothing, because a live client cannot produce the sequence: the durable send key is
+     * released on EVERY terminal outcome (`mail-send.ts#absorb`), so the next press mints a fresh
+     * one. Reaching this arm means a stale client is replaying a key for a message that no longer
+     * exists, and the honest answer is to say so and let it start a new send.
+     */
+    if (row.draftId === null && (row.status === "sent" || row.status === "failed")) {
+      throw new ServiceError(
+        "send_key_draft_discarded", 409,
+        "the message this send belonged to was discarded; a new send makes a new key",
+      );
+    }
     if (row.status === "sent") {
-      return { status: "sent", providerMessageId: row.providerMessageId, draftId: row.draftId, seq: null };
+      return {
+        status: "sent", providerMessageId: row.providerMessageId,
+        draftId: draftOfTerminalAttempt(row), seq: null,
+      };
     }
     if (row.status === "unverified") {
       return { status: "unverified", providerMessageId: null, draftId: draftOfOpenAttempt(row), seq: null };
     }
     if (row.status === "failed") {
-      return { status: "failed", providerMessageId: null, draftId: row.draftId, seq: null };
+      return { status: "failed", providerMessageId: null, draftId: draftOfTerminalAttempt(row), seq: null };
     }
 
     // status === "pending" → is the first attempt STILL RUNNING, or is this the wreckage of
@@ -2721,6 +2750,25 @@ export class SendService {
  * nobody re-checks — this makes it observable: null a `pending` row's `draft_id` by hand and the
  * recovery answers 500 instead of quietly finalizing the wrong thing or nothing at all.
  */
+/**
+ * The draft of a TERMINAL attempt, past the refusal that owns its absent case.
+ *
+ * Separate from {@link draftOfOpenAttempt} on purpose: there, a missing draft is unreachable and a
+ * throw records an invariant. Here it is perfectly reachable — somebody discarded the message —
+ * and `resumeExisting` answers it with a named 409 several lines above every call of this. This
+ * function therefore narrows a state that has ALREADY been refused, and says which refusal, so
+ * that deleting that arm turns this into a 500 rather than a fabricated `draftId`.
+ */
+function draftOfTerminalAttempt(row: { id: string; draftId: string | null }): string {
+  if (row.draftId === null) {
+    throw new ServiceError(
+      "internal", 500,
+      `send reservation ${row.id} has no draft and was not refused as discarded`,
+    );
+  }
+  return row.draftId;
+}
+
 function draftOfOpenAttempt(row: { id: string; draftId: string | null }): string {
   if (row.draftId === null) {
     throw new ServiceError(

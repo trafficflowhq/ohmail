@@ -1557,6 +1557,37 @@ export class HttpAdapter implements EngineAdapter {
        * actually happened. A repeat cancel is the server's idempotent 200 (the asked-for
        * state), and the echo goes to the drain like the draft verbs above it.
        */
+      /**
+       * ANSWER FOR AN UNCONFIRMED SEND — `POST /drafts/:id/resolve`.
+       *
+       * The echo is turned into a `draft` update rather than left to the drain, on
+       * {@link draft_schedule_cancel}'s terms: the row's whole visible identity changes (it
+       * either leaves the Drafts list as `sent` or becomes an ordinary draft), and a reader who
+       * has just pressed "It didn't arrive" must find Discard working immediately rather than on
+       * whatever the next drain happens to be.
+       *
+       * A REPEAT IS NOT AN ERROR HERE and the request is not marked idempotent, because the
+       * server's transition is a compare-and-swap on `unverified`: the second call finds nothing
+       * to move and answers 200 with the row as it stands. So a double-tap converges without a
+       * stored response, exactly as the schedule verbs do.
+       */
+      case "draft_resolve": {
+        const res = await this.request("POST", `/drafts/${encodeURIComponent(m.draftId)}/resolve`, {
+          body: { outcome: m.outcome },
+          idempotencyKey: opts.idempotencyKey,
+        });
+        if (!res.ok) throw await this.rejectionOf(res);
+        const seq = this.noteSeq(res);
+        const dto = (await res.json()) as { id?: string; updatedAt?: string };
+        return {
+          changes: seq === null || !dto.id ? [] : [{
+            type: "draft", op: "update", id: dto.id, seq, updatedAt: dto.updatedAt ?? "",
+            entity: dto as unknown as Record<string, unknown>,
+          }],
+          seq,
+        };
+      }
+
       case "draft_schedule_cancel": {
         const res = await this.request("DELETE", `/drafts/${encodeURIComponent(m.draftId)}/schedule`, {
           idempotencyKey: opts.idempotencyKey,
