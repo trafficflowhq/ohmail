@@ -137,3 +137,84 @@ export function compareRanked(a: RankedRow, b: RankedRow): number {
  * SQL spelling of the comparator's rule that an undated message sorts last.
  */
 export const SQL_RANK_ORDER = "{rank} desc, m.date desc nulls last, m.id desc";
+
+/**
+ * ═══ PUNCTUATION IS PART OF THE WORD ════════════════════════════════════════════════════════
+ *
+ * A reader typed `D-U-N-S` into search and was told there was nothing, while an opened message's
+ * subject read "Your D-U-N-S Number is enclosed." Nothing was broken about either door — the
+ * query simply did not survive being turned into words:
+ *
+ *  · the client index tokenized on `[\p{L}\p{N}]+` with a two-character floor, so both the
+ *    QUERY and the SUBJECT lost the same four single letters and there was nothing left to
+ *    match on either side, and
+ *  · the SQL door's `websearch_to_tsquery('english','D-U-N-S')` is a PHRASE —
+ *    `'d-u-n-' <-> 'd' <-> 'u' <-> 'n'` — which the subject's own vector does satisfy, so the
+ *    archive had the message all along, but a punctuated query IS ONE LEXEME and a lexeme match
+ *    is all-or-nothing: `Alpha/Beta merger` vectors as the single lexeme `'alpha/beta'`, and
+ *    `pha/Bet` therefore matches nothing at all however plainly its characters are in the
+ *    subject.
+ *
+ * The two doors cannot share an implementation — one tokenizes in JavaScript, the other hands
+ * the string to Postgres — so what they share is the rule, here, for the reason this module
+ * exists at all. `test/search-rank-census.test.ts` holds both to it.
+ */
+
+/**
+ * A hyphenated or dotted run of letters and digits: `d-u-n-s`, `2026-09-08`, `dnb.example`.
+ *
+ * Two separators and no more. `-` and `.` are the characters that appear INSIDE things people
+ * search for by name — reference numbers, dates, hostnames, part codes — and widening the set to
+ * every punctuation mark would start gluing `and/or` and `see:this` into single terms, which is
+ * a different rule with a different cost.
+ */
+const COMPOUND = /[\p{L}\p{N}]+(?:[-.][\p{L}\p{N}]+)+/gu;
+
+/** The floor both doors already applied to a term, restated so this module can honour it. */
+const MIN_TERM_LEN = 2;
+
+/**
+ * THE TWO EXTRA FORMS A COMPOUND IS WORTH, given the text it appears in.
+ *
+ * For each compound in `text`: the compound VERBATIM (`d-u-n-s`) and its JOINED form (`duns`).
+ * Its PARTS are deliberately not returned — the caller's ordinary word pass already produces
+ * them, under the caller's own length floor, and returning them here would make the two passes
+ * disagree about that floor.
+ *
+ * The joined form is what lets the two spellings reach each other: a subject that says
+ * `D-U-N-S` and a query that says `DUNS` share exactly this token and nothing else.
+ *
+ * Deduped and lower-cased. Order is the order of first appearance, so a caller that keeps the
+ * first match for highlighting gets the compound rather than the joined form — the compound is
+ * the one that can be found in the original string.
+ */
+export function compoundForms(text: string): string[] {
+  const found = text.toLowerCase().match(COMPOUND);
+  if (found === null) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const compound of found) {
+    for (const form of [compound, compound.replace(/[-.]/g, "")]) {
+      if (form.length < MIN_TERM_LEN || seen.has(form)) continue;
+      seen.add(form);
+      out.push(form);
+    }
+  }
+  return out;
+}
+
+/**
+ * Does this query hold a character that no word-splitter keeps?
+ *
+ * The gate on the SQL door's verbatim arm, and the reason it is a gate rather than an
+ * unconditional second predicate: a substring scan for every query would widen every search in
+ * the product to an unindexed `ILIKE`, and would also change what a MATCH means — `pha` would
+ * start finding `Alpha/Beta`, which is not what the reader asked. A query with punctuation in it
+ * is the case where the lexical arm can be confidently wrong, and it is the only case that pays.
+ *
+ * Whitespace is not punctuation here: a two-word query is two lexemes and the lexical arm
+ * handles it correctly.
+ */
+export function holdsPunctuation(q: string): boolean {
+  return /[^\p{L}\p{N}\s]/u.test(q);
+}

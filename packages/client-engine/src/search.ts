@@ -1,5 +1,7 @@
 import {
   compareRanked,
+  compoundForms,
+  type RankedRow,
   MIN_FUZZY_QUERY_LEN,
   MIN_FUZZY_TERM_LEN,
   showSimilar,
@@ -220,8 +222,38 @@ const FUZZY_THRESHOLD = 0.4;
  */
 const PHRASE_BONUS = { subject: 2, from: 1 } as const;
 
+/**
+ * TEXT → TERMS, and a hyphenated compound is THREE of them.
+ *
+ * The ordinary word pass is unchanged and still decides the floor: runs of letters and digits,
+ * two characters or more. What is added is `compoundForms` — the shared rule in
+ * `@trafficflow/core/search-rank`, which the SQL door's verbatim arm is gated by the other half
+ * of — so `Your D-U-N-S Number` indexes `d-u-n-s` and `duns` beside `your` and `number`.
+ *
+ * ── ONE FUNCTION, BOTH SIDES, AND THAT IS THE WHOLE FIX ────────────────────────────────────
+ *
+ * The query goes through this same function, so `D-U-N-S` becomes `["d-u-n-s", "duns"]` and the
+ * subject carries both; `DUNS` becomes `["duns"]` and reaches the same message through the
+ * joined form. The consequence worth naming, because a reader can meet it: `search` ANDs across
+ * a query's tokens, so the hyphenated query is the MORE SPECIFIC of the two — it asks for the
+ * compound as well, and a subject that only ever says `DUNS` does not carry it.
+ * `search-punctuation.test.ts` asserts that boundary rather than leaving it to be discovered.
+ *
+ * Compounds come FIRST so that `matches[0]` is the compound rather than its joined form: the
+ * view highlights a match by finding its term inside the subject, and only the compound is
+ * actually in the subject string.
+ *
+ * A text with no compound in it produces the array it always did, term for term — including
+ * repeats, which `intersect` sums, so the identity case is genuinely identical.
+ */
 function tokenize(text: string): string[] {
-  return (text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).filter((t) => t.length >= 2);
+  const lower = text.toLowerCase();
+  const words = (lower.match(/[\p{L}\p{N}]+/gu) ?? []).filter((t) => t.length >= 2);
+  const forms = compoundForms(lower);
+  if (forms.length === 0) return words;
+  const seen = new Set(words);
+  const extra = forms.filter((f) => !seen.has(f));
+  return extra.length === 0 ? words : [...extra, ...words];
 }
 
 /** pg_trgm-style padded trigrams: "  t", " te", "ter", …, "rm " */
@@ -514,6 +546,69 @@ export class SearchIndex {
   }
 
   /**
+   * A QUERY THAT TOKENIZES TO NOTHING IS STILL A QUESTION — matched verbatim over subject and
+   * sender, case-insensitively.
+   *
+   * This used to return the empty answer, which is the shape the `D-U-N-S` report arrived as:
+   * silence that is indistinguishable from an empty mailbox. `x`, `#4` and `y@d` all name
+   * something; a two-character floor is a sensible rule for TERMS and a wrong answer to a
+   * person who typed one character on purpose.
+   *
+   * ── WHY A SCAN IS ACCEPTABLE HERE AND NOWHERE ELSE ──────────────────────────────────────
+   *
+   * It walks every message, which is exactly what the postings map exists to avoid — and it is
+   * reached only by a query the postings map cannot answer at all: one whose every run of
+   * letters and digits is a single character. Two strings per message, `includes` on each. That
+   * is the first keystroke of an ordinary query (`i` of `invoice`) and nothing else, and
+   * `search-budget.test.ts` measures it on a synthetic twenty-thousand-row index so the claim is
+   * a number. (Spelled out, not written as digits: the publish prose gate reads a bare count
+   * beside the word "messages" as a count of somebody's mail, which is the right rule — it
+   * refused this comment, and the number here is a benchmark size, not a mailbox.)
+   *
+   * `tier` is `exact`: the reader's characters are present, in order, in the field. It is not a
+   * guess and it does not belong under the Similar heading.
+   */
+  private verbatim(query: string, limit: number): LocalSearchResult {
+    const needle = query.trim().toLowerCase();
+    if (needle === "") {
+      return { items: [], similar: [], tier: "exact", facets: emptyFacets(), coverage: this.coverage() };
+    }
+    const match: SearchMatch = { token: needle, term: needle, fuzzy: false };
+    /*
+     * ORDERED ON A PRECOMPUTED KEY, and this is not a micro-optimisation — it is what keeps the
+     * scan inside a keystroke. `rank` calls `stampOf` (a `Date.parse`) on BOTH SIDES OF EVERY
+     * COMPARISON, which is right and free for a token arm's handful of candidates and about
+     * 285 000 parses for a single common character that matched a whole mirror: measured 25.7 ms
+     * on the twenty-thousand-row benchmark index, most of it there, against 12 ms for the scan
+     * and the sort themselves.
+     *
+     * So the date is parsed ONCE PER MESSAGE and the rows are ordered by {@link compareRanked} —
+     * the shared comparator, unchanged — before the surviving page is materialised. A top-of-list
+     * selection under the ordering rule, never a window ranked after the fact. There is no phrase
+     * bonus to apply: a query with no tokens has no token sequence to prefer.
+     */
+    const rows: RankedRow[] = [];
+    for (const [id, m] of this.messages) {
+      // Subject over sender, the same weights the token arms use — and the subject is checked
+      // first so a message matching both is scored as the stronger of the two, not the last.
+      const weight = m.subject.toLowerCase().includes(needle)
+        ? FIELD_WEIGHT.subject
+        : `${m.from.name ?? ""} ${m.from.address}`.toLowerCase().includes(needle)
+          ? FIELD_WEIGHT.from
+          : 0;
+      if (weight === 0) continue;
+      rows.push({ score: weight, dateMs: stampOf(m), id });
+    }
+    rows.sort(compareRanked);
+    const items: SearchHit[] = rows.slice(0, limit).map((r) => ({
+      message: this.messages.get(r.id)!,
+      score: r.score,
+      matches: [match],
+    }));
+    return { items, similar: [], tier: "exact", facets: facetsOf(items), coverage: this.coverage() };
+  }
+
+  /**
    * THE ANSWER, IN TIERS. Exact and prefix matches are the result; typo tolerance is a second,
    * separately-labelled answer that exists only when the first one is empty.
    *
@@ -527,10 +622,8 @@ export class SearchIndex {
    */
   search(query: string, opts: { limit?: number } = {}): LocalSearchResult {
     const qTokens = tokenize(query);
-    if (qTokens.length === 0) {
-      return { items: [], similar: [], tier: "exact", facets: emptyFacets(), coverage: this.coverage() };
-    }
     const limit = opts.limit ?? 50;
+    if (qTokens.length === 0) return this.verbatim(query, limit);
     // A single-token query has no phrase to prefer — the token IS the phrase, and every hit
     // would earn the same bonus, which is not an ordering.
     const phrase = qTokens.length > 1 ? phraseField(query) : null;

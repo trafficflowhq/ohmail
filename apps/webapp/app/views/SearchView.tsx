@@ -84,6 +84,8 @@ type Archive =
   /** `tier` says whether these rows are matches or typo-tolerant guesses — see the merge below. */
   | { state: "ready"; items: EngineMessage[]; total: number; tier: "exact" | "similar" }
   | { state: "failed"; error: string }
+  /** The request has been out for {@link ARCHIVE_TIMEOUT_MS} and has not answered — see below. */
+  | { state: "timeout" }
   | { state: "unavailable" };
 
 /** A hit and where it came from — the archive-only ones are marked on screen. */
@@ -103,6 +105,27 @@ interface MergedHit {
  * typing; this covers the question.
  */
 const ARCHIVE_DEBOUNCE_MS = 250;
+
+/**
+ * HOW LONG "SEARCHING THE WHOLE ARCHIVE…" MAY STAND — the ceiling on the `searching` state.
+ *
+ * Reported: a query answered "Nothing on this device. … Searching the whole archive…" and that
+ * second sentence never resolved. The archive was not the problem — the hosted search's own
+ * tests measure the same subject matching `websearch_to_tsquery` against real Postgres — the
+ * problem was that `searching` was a state only a SETTLED promise could replace. `searchServer` never rejects (its outcome is a
+ * value), which is the right shape for a refusal and no shape at all for a request that does not
+ * come back: a dropped connection, a proxy holding the socket, a device that went to sleep
+ * mid-request. Those leave the sentence up for the rest of the session, and a reader cannot tell
+ * that from an archive that is merely slow.
+ *
+ * So a searching state can no longer outlive its request. Fifteen seconds: several times the
+ * slowest honest `GET /search` (it is four statements for the page plus the counts) and short
+ * enough that a person still has the question in mind when the answer is that there is none.
+ *
+ * A LATE answer still wins — the timer replaces the sentence, it does not cancel the request —
+ * because the sentence is about this request, not about the session.
+ */
+export const ARCHIVE_TIMEOUT_MS = 15_000;
 
 /** Rows rendered. Unchanged; it is now STATED when there are more (see `resultsShown`). */
 const SHOWN = 12;
@@ -297,6 +320,28 @@ export function SearchView({
     }
     let live = true;
     setArchive({ q: trimmed, outcome: { state: "searching" } });
+    /*
+     * THE CEILING, armed with the state it bounds — and it fires ONLY on a state that is still
+     * `searching` for this same query.
+     *
+     * That condition is the whole mechanism, and it is deliberately the only one: this used to
+     * carry a `clearTimeout(ceiling)` in the settled `.then` beside it, which is a second way of
+     * saying the same thing and was measured unwatchable — removing it left every case green,
+     * because by then the state is `ready` and the guard below refuses anyway. Two mechanisms,
+     * one behaviour, and a later reader would have taken the redundant one for a guarantee.
+     *
+     * A late answer therefore still wins (it overwrites whatever this wrote), and an answer that
+     * arrived before the ceiling is never reported as unanswered (this refuses to write over it).
+     * The cleanup below clears the timer on every query, sort and retry change.
+     */
+    const ceiling = setTimeout(() => {
+      if (!live) return;
+      setArchive((prev) =>
+        prev !== null && prev.q === trimmed && prev.outcome.state === "searching"
+          ? { q: trimmed, outcome: { state: "timeout" } }
+          : prev,
+      );
+    }, ARCHIVE_TIMEOUT_MS);
     const timer = setTimeout(() => {
       // `searchServer` never rejects — the outcome is a value the UI renders, so there is no
       // unhandled promise here and no error boundary over somebody's mailbox.
@@ -316,6 +361,7 @@ export function SearchView({
     return () => {
       live = false;
       clearTimeout(timer);
+      clearTimeout(ceiling);
     };
     // `sort` is a dependency: changing the order is a NEW QUESTION for the archive, not a
     // re-presentation of the old answer. The server holds the whole corpus and decides which
@@ -672,7 +718,7 @@ export function SearchView({
   useKeyBindings(keys);
 
   /**
-   * THE HONEST SENTENCE. One of five, and one of them is always on screen while a query is.
+   * THE HONEST SENTENCE. One of six, and one of them is always on screen while a query is.
    *
    * `scopeDevice` is the load-bearing one: it is what the view says while only local results
    * are in hand, and it names the three fields the local index actually reads.
@@ -698,7 +744,10 @@ export function SearchView({
    * sentence keeps the FACT (this device holds the full text only of what has been opened) and
    * drops the arithmetic.
    *
-   * The five arms and their order are untouched. The mid-flight → settled transition was walked
+   * The arms and their order are untouched apart from the SIXTH, `timeout`, which is the state
+   * that used to be unrepresentable: `searching` could only be replaced by a settled promise, so
+   * a request that never came back left "Searching the whole archive…" on screen for the rest of
+   * the session. See {@link ARCHIVE_TIMEOUT_MS}. The mid-flight → settled transition was walked
    * and found true at every moment; it is the part of this that works.
    */
   const device = !result || result.coverage.messages === 0 ? null : <>{t("scopeDevice")} </>;
@@ -715,6 +764,20 @@ export function SearchView({
   ) : current.state === "failed" ? (
     <>
       {t("scopeFailed", { reason: current.error })}{" "}
+      <button type="button" className="btn ghost" onClick={() => setRetryTick((n) => n + 1)}>
+        {t("scopeRetry")}
+      </button>
+    </>
+  ) : current.state === "timeout" ? (
+    /*
+     * A SIXTH ARM, and it is the one that was missing. It carries the same retry the refusal
+     * arm does: a stated dead end with no way out of it is half a sentence. `device` is kept —
+     * the local results ARE what is on screen and the reader is entitled to know what they
+     * cover, exactly as in the `searching` and `unavailable` arms.
+     */
+    <>
+      {device}
+      {t("scopeArchiveTimeout")}{" "}
       <button type="button" className="btn ghost" onClick={() => setRetryTick((n) => n + 1)}>
         {t("scopeRetry")}
       </button>

@@ -966,6 +966,7 @@
     "scopeNoArchive": "This client cannot reach the server archive, so this is everything it can search.",
     "scopeArchive": "Searched the whole archive — {total, plural, =0 {nothing matched} one {1 message matches} other {# messages match}}.",
     "scopeFailed": "The archive could not be searched — {reason} These results cover this device only.",
+    "scopeArchiveTimeout": "The archive did not answer.",
     "scopeRetry": "Search the archive again",
     "hitArchiveOnly": "from the archive",
     "hitHistory": "History",

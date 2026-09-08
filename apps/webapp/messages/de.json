@@ -966,6 +966,7 @@
     "scopeNoArchive": "Dieser Client kommt nicht an das Server-Archiv, mehr kann er also nicht durchsuchen.",
     "scopeArchive": "Das gesamte Archiv wurde durchsucht — {total, plural, =0 {nichts passt} one {1 Nachricht passt} other {# Nachrichten passen}}.",
     "scopeFailed": "Das Archiv ließ sich nicht durchsuchen — {reason} Diese Treffer betreffen nur dieses Gerät.",
+    "scopeArchiveTimeout": "Das Archiv hat nicht geantwortet.",
     "scopeRetry": "Archiv erneut durchsuchen",
     "hitArchiveOnly": "aus dem Archiv",
     "hitHistory": "Historie",

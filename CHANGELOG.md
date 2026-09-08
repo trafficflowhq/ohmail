@@ -506,6 +506,37 @@ app's own updater; the Install section of the README says why.
 CI installs the x86_64 package in a clean Fedora container on every build, starts the mail engine
 from the installed layout, and uninstalls it, so "it installs" is measured rather than assumed.
 
+### Searching for a hyphenated reference finds it
+
+A search for `D-U-N-S` answered "nothing" with those very characters sitting in a subject line on
+screen. The search index split text into runs of letters and digits and dropped anything shorter
+than two characters, so the query and the subject lost the same four single letters and there was
+nothing left on either side to compare. Any hyphenated code reads that way: a part number, a
+reference, a date written `2026-09-08`.
+
+A hyphenated or dotted run of letters and digits is now three terms rather than a handful of
+discarded ones: itself, its joined form, and its parts. The query is read by the same rule, so
+`D-U-N-S`, `d-u-n-s` and `DUNS` all reach the message. The hyphenated spelling is the narrower
+question of the two — it asks for the hyphens as well — and the joined one reaches both spellings.
+
+A query that comes out of that with no terms at all is no longer answered with silence. `x`, `#4`,
+a fragment of an address: those are matched as plain text, case-insensitively, against subjects and
+senders. They name something, and the answer to a one-character question is not "nothing".
+
+The whole-archive search gained the matching arm. Postgres reads `Alpha/Beta` as a single word, so
+a search for `pha/Bet` could not match it however plainly the letters are there — a punctuated
+query is now also compared as text against subject lines, ranked below the ordinary matches and
+never instead of them. It runs only for a query that holds punctuation, so an ordinary word search
+is unchanged.
+
+### "Searching the whole archive…" now ends
+
+That sentence could stay on screen for the rest of a session. Only an answer replaced it, so a
+request that never came back — a dropped connection, a laptop that slept mid-search — left the line
+standing with nothing behind it, and there is no way to tell that from an archive that is merely
+slow. After fifteen seconds the pane says the archive did not answer, and offers the same retry it
+already offered when the archive refuses. An answer that arrives late still replaces it.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

@@ -1,5 +1,5 @@
 import { sql, type SQL } from "drizzle-orm";
-import { showSimilar, type SearchTier } from "@trafficflow/core/search-rank";
+import { holdsPunctuation, showSimilar, type SearchTier } from "@trafficflow/core/search-rank";
 import type { ServiceContext, Db } from "./context.js";
 import { materializeMessages } from "./dto/materialize.js";
 import { clampLimit } from "./pagination.js";
@@ -350,22 +350,64 @@ export class SearchService {
     const lexRank = sql`greatest(ts_rank(m.subject_tsv, ${tsq}), ts_rank(coalesce(b.body_tsv, to_tsvector('')), ${tsq}))`;
 
     /**
+     * ── THE VERBATIM ARM: A PUNCTUATED QUERY IS ONE LEXEME, AND A LEXEME MATCH IS ALL-OR-NOTHING
+     *
+     * `to_tsvector('english','Alpha/Beta merger')` is `'alpha/beta':1 'merger':2` — one lexeme
+     * for the slashed pair — so `websearch_to_tsquery('english','pha/Bet')` (`'pha/bet'`) matches
+     * NOTHING, however plainly those characters sit in the subject. That is not a stemming
+     * near-miss the fuzzy arm should be guessing about; the reader's characters are present, in
+     * order, in the field. So they are matched as characters.
+     *
+     * Three bounds on it, and each is load-bearing:
+     *
+     *  · **Gated on punctuation** ({@link holdsPunctuation}, shared with the client index's
+     *    tokenizer). Running an unindexed `ILIKE '%…%'` for every query would widen every search
+     *    in the product to a substring scan AND change what a match means — `pha` would start
+     *    finding `Alpha/Beta`, which is not the question asked. `search-punctuation.pg.test.ts`
+     *    case (d) is the pair that tells the gate apart: the same characters, punctuation the
+     *    only difference, and the tier flips.
+     *  · **Never the only arm.** It is OR'd with `lexPred`, so it can only ever ADD rows.
+     *  · **Ranked below the lexical arm** — and the expression below is why that needed care:
+     *    `ts_rank` is NOT zero for a row the tsquery fails to match. Measured on this exact
+     *    subject: `ts_rank(to_tsvector('english','Marker xD-U-N-Sx only'), 'D-U-N-S')` is
+     *    0.0991 with `@@` false, because the rank function scores whatever query lexemes are
+     *    present and knows nothing about the phrase operator that refused. So the tier cannot be
+     *    inferred from the rank; it is stated — `1 + ts_rank` for a lexical row, `0` for a
+     *    verbatim-only one — which puts every verbatim row below every lexical one regardless of
+     *    what `ts_rank` returns, and leaves the order AMONG lexical rows exactly as it was.
+     *
+     * Subject only. `message_bodies.text` has no index that could serve this predicate and a
+     * body scan is a different cost argument; the query length is already bounded by
+     * {@link SEARCH_QUERY_MAX_CHARS}, which is what keeps the `ILIKE` itself cheap per row.
+     */
+    const verbatimPred = holdsPunctuation(q) ? sql`m.subject ilike ${like}` : null;
+    const exactPred = verbatimPred === null ? lexPred : sql`(${lexPred} or ${verbatimPred})`;
+    const exactRank = verbatimPred === null
+      ? lexRank
+      : sql`(case when ${lexPred} then 1 + ${lexRank} else 0 end)`;
+
+    /**
      * ── THE TIER IS DECIDED BEFORE A SINGLE ROW IS RANKED ──────────────────────────────────
      *
-     * The lexical arm is counted first, and that count IS `total` whenever it is non-zero — so
+     * The EXACT arm is counted first, and that count IS `total` whenever it is non-zero — so
      * in the common case (a query with an answer) this costs nothing: `total` was always going
      * to be counted, and it is now counted over one predicate instead of two. The fuzzy arm's
      * count is paid only on a query the corpus does not literally answer, which is the case a
      * reader is already waiting on a guess for.
      *
+     * "Exact" is `lexPred`, plus the verbatim arm on a punctuated query — see {@link
+     * SearchService.search}'s verbatim block above. It is deliberately the count over the
+     * predicate the ROWS come from: counting the lexical arm alone would have put a query whose
+     * only answers are verbatim into the SIMILAR tier and filed real matches as guesses.
+     *
      * `showSimilar` rather than `=== 0` so the floor exists in exactly one place; the argument
      * for its value is in `@trafficflow/core/search-rank`, measured on both doors.
      */
-    const lexTotal = await this.count(ctx, where, lexPred);
-    const tier: SearchTier = showSimilar(lexTotal) ? "similar" : "exact";
-    const matchPred = tier === "exact" ? lexPred : fuzzPred;
-    const rank = tier === "exact" ? lexRank : fuzzRank;
-    const total = tier === "exact" ? lexTotal : await this.count(ctx, where, fuzzPred);
+    const exactTotal = await this.count(ctx, where, exactPred);
+    const tier: SearchTier = showSimilar(exactTotal) ? "similar" : "exact";
+    const matchPred = tier === "exact" ? exactPred : fuzzPred;
+    const rank = tier === "exact" ? exactRank : fuzzRank;
+    const total = tier === "exact" ? exactTotal : await this.count(ctx, where, fuzzPred);
 
     /**
      * THE RELEVANCE QUERY — one arm, the tier's own, over the tier's own predicate.
