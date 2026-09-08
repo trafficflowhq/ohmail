@@ -721,12 +721,38 @@ describe("the mailbox wire is mapped with the safe default for an engine that pr
     };
   const base = { id: "m1", address: "a@example.test", status: "connected", lastSyncAt: null };
 
-  it("an absent role is an ORGANIZER, never a reader", async () => {
+  it("an absent role is an ORGANIZER, and an absent HOLDER stays absent", async () => {
     const { readMailboxFactsVia } = await import("../src/DesktopMailboxes.js");
     const [row] = await readMailboxFactsVia(answer(base) as never);
     expect(row!.organizerRole, "an engine that predates the column demoted this install").toBe("organizer");
-    expect(row!.organizedBy).toBeNull();
+    /* ── THE HOLDER LINE USED TO READ `toBeNull()`, AND ITS PREMISE WAS THE DEFECT ────────────
+     *
+     * The mapper normalized an absent `organizedBy` to `null`, which cost nothing while the only
+     * consumer was a SENTENCE: `readerHolder` maps both to "nobody" because neither names an
+     * install, so the banner reads the same either way.
+     *
+     * It is not the only consumer any more. `holderVerdict` asks whether a read ANSWERED the
+     * question — the first-run claim question routes on it, and the screen after that one is
+     * where a takeover is authorized — and for that consumer the two are opposite: the DTO
+     * declares the field non-optional and the service projects it on every row, so absent can only
+     * be an engine older than the field. Normalizing it here made the "no answer" arm unreachable
+     * and let a lagging read take the claim screen away.
+     *
+     * `organizerState` keeps its `toBeNull()` deliberately: it has no such consumer, absent and
+     * null mean one thing there ("nobody is renewing"), and only screens read it. */
+    expect("organizedBy" in row!, "a holder the engine never sent was invented as 'nobody'")
+      .toBe(false);
     expect(row!.organizerState).toBeNull();
+  });
+
+  it("…and an EXPLICIT null holder is carried as the answer it is", async () => {
+    /* The other side of the line above, and the reason it is not simply "the key is gone": an
+       engine that DOES carry the field and says nothing organizes the mailbox has answered, and
+       that answer is what moves a first run past the claim question. */
+    const { readMailboxFactsVia } = await import("../src/DesktopMailboxes.js");
+    const [row] = await readMailboxFactsVia(answer({ ...base, organizedBy: null }) as never);
+    expect("organizedBy" in row!, "the answer 'nobody organizes this' was dropped").toBe(true);
+    expect(row!.organizedBy).toBeNull();
   });
 
   it("a role the wire does send is carried through, holder and all", async () => {
