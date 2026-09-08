@@ -99,6 +99,7 @@ export function ComposeView({
   signatures,
   plan,
   send,
+  locked,
   onSend,
   onSendLater,
   onCancel,
@@ -116,6 +117,25 @@ export function ComposeView({
    * and reports a new one, which is the same division of labour as the send state machine.
    */
   from: ResolvedFrom;
+  /**
+   * THIS MESSAGE IS BEING SENT AND THE FORM MAY NOT MOVE — the hold, with the sentence to say.
+   *
+   * `send` cannot express it. That state is this mount's own React state about a press this mount
+   * made; the case here is a send made by the SESSION BEFORE, whose answer is still on its way.
+   * The composer comes up holding the text — a reload restores the scratch buffer — and an edit
+   * there changes the message, so the durable record no longer matches it and the next press mints
+   * a FRESH Idempotency-Key. The server collapses two presses only under ONE key, so that is a
+   * second copy at the recipient, reachable in seconds by anybody who returns to a tab.
+   *
+   * Held rather than warned, because a warning is something to read past and this cannot be
+   * undone. Every field goes read-only and both send buttons refuse, exactly as they do while a
+   * send from THIS mount is in flight — the same rule, a different reason, so the sentence is
+   * supplied rather than derived here.
+   *
+   * ONE PRODUCER (`AppShell`), pinned by the census: two callers deciding separately when a
+   * message is held is how the send seam came to have several answers to one question.
+   */
+  locked?: { sentence: string } | null;
   /**
    * THE HOST'S OWN CEILING on what a send from this window can carry —
    * `AppShell.sendSurfaceMaxTotalBytes`, handed with the resolved From's `SIZE` announcement
@@ -513,8 +533,13 @@ export function ComposeView({
     requestAnimationFrame(() => editorRef.current?.commands.focus("end"));
   };
 
-  const locked = !canSend(send, plan.mutation);
-  const inFlight = send.phase === "sending" || send.phase === "queued";
+  /* THE HOLD IS THE SAME ANSWER AS AN IN-FLIGHT SEND and is folded into both derivations rather
+     than given branches of its own: a message on its way is not editable and not sendable, and the
+     reason it is on its way does not change either fact. Adding a third state here is how a
+     surface comes to disagree with itself about one question. */
+  const held = locked ?? null;
+  const sendBlocked = !canSend(send, plan.mutation) || held !== null;
+  const inFlight = send.phase === "sending" || send.phase === "queued" || held !== null;
   /**
    * The state as it applies to THE MESSAGE ON SCREEN. An unresolved send parks the message it
    * belongs to and nothing else, so its warn sentence must not stand above a different one — see
@@ -949,7 +974,7 @@ export function ComposeView({
             <div className="send-row">
               <Button
                 variant="primary"
-                disabled={locked}
+                disabled={sendBlocked}
                 aria-busy={send.phase === "sending" || undefined}
                 // See `sendVerb` — the same attribute and the same word as the inline dock.
                 data-send={verb.attr}
@@ -965,14 +990,14 @@ export function ComposeView({
                 {sendChord && !sendLaterOpen ? <Kbd>{chordKeys("mod+Enter", mod).join(" ")}</Kbd> : null}
               </Button>
               {/* SEND LATER — beside Send because it is the same act on a different clock. The
-                  SAME lock (`locked`) gates it: a message that may not be sent now may not be
+                  SAME lock (`sendBlocked`) gates it: a message that may not be sent now may not be
                   scheduled either, and the one predicate must own both buttons. Disabled with
                   its reason in the title when the message carries what a draft row cannot hold
                   (files, a forward) — see the state block above. */}
               <Button
                 variant="ghost"
                 className="send-later-toggle"
-                disabled={locked || sendLaterBlocked !== null}
+                disabled={sendBlocked || sendLaterBlocked !== null}
                 aria-expanded={sendLaterOpen}
                 title={sendLaterBlocked ?? undefined}
                 onClick={toggleSendLater}
@@ -996,6 +1021,12 @@ export function ComposeView({
                   than as a modal after it. */}
               {plan.noSubject && !inFlight ? (
                 <span className="send-note">{t("noSubject")}</span>
+              ) : null}
+              {/* WHY THE FORM WILL NOT MOVE, in the row the send's own notes already live in.
+                  `role="status"` because it appears without the reader doing anything — they came
+                  back to a tab and the message is held. */}
+              {held ? (
+                <span className="send-note" role="status">{held.sentence}</span>
               ) : null}
               {/* The scratch buffer, stated exactly as strongly as it is true: this browser, not
                   the mailbox. Drafts kept on the server are not built yet. */}

@@ -7310,6 +7310,17 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
                   }),
                   composeSessionId(),
                 )}
+                /* THE HOLD, AND THIS IS ITS ONE PRODUCER — pinned by the census.
+                   The composer came up holding a message a send from the last session is still
+                   carrying. Editing it there would change what the durable record names, and the
+                   next press would mint a fresh Idempotency-Key for mail already on its way: the
+                   server collapses two presses only under ONE key, so that is a second copy at the
+                   recipient. Held rather than warned, because a warning is something to read past
+                   and this cannot be taken back. `restoredPending` is keyed on WHICH MESSAGE, so a
+                   new message started on the same lane is never held. */
+                locked={mailSend.restoredPending(COMPOSE_SEND_KEY)
+                  ? { sentence: t("compose.sendingFromLastSession") }
+                  : null}
                 onSend={sendCompose}
                 onSendLater={sendCompose}
                 onCancel={cancelCompose}

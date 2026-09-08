@@ -974,6 +974,7 @@
     "bccPlaceholder": "name@beispiel.de",
     "subject": "Betreff",
     "noSubject": "Kein Betreff",
+    "sendingFromLastSession": "Diese Nachricht wird noch aus deiner letzten Sitzung gesendet. Sie verschwindet hier, sobald sie raus ist.",
     "forwardingNote": "Die Originalnachricht und ihre Anhänge kommen beim Senden dazu.",
     "forwardRefused": "Diese Nachricht lässt sich nicht weiterleiten — sie enthält sensible Inhalte.",
     "attach": "Dateien anhängen",

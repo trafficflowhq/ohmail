@@ -974,6 +974,7 @@
     "bccPlaceholder": "name@example.com",
     "subject": "Subject",
     "noSubject": "No subject",
+    "sendingFromLastSession": "This message is still being sent from your last session. It will clear here once it has gone out.",
     "forwardingNote": "The original message and its attachments are added when you send.",
     "forwardRefused": "This message can't be forwarded — it contains sensitive content.",
     "attach": "Attach files",
