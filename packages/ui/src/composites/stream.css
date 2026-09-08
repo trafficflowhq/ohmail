@@ -76,10 +76,37 @@
 .sc-art{margin:2px 26px 16px}
 .sc-art svg{display:block;width:100%;height:auto;border-radius:var(--r-card);color:var(--ink3)}
 .sc-art figcaption{font-size:calc(11px + var(--type-up));color:var(--ink3);margin-top:7px}
+/* THE FADE IS A FACT ABOUT CLIPPING, READ OFF THE CLIP ITSELF.
+   A collapsed card's box is the clamp however long the mail (`.scast.viewer:not(.open)
+   .sc-clip{height:348px}` below), so a two-sentence letter sits at the top of the same box a
+   forty-line one fills — and this gradient used to be painted over the bottom 88px of EVERY such
+   box. Over a mail that ends inside that band it veiled the last lines of a letter that was all
+   there, and said "more below" about nothing. The fade has one job, marking the cut; a box with
+   nothing cut has no cut to mark.
+
+   `.sc-clip` is `overflow:hidden`, which makes it a scroll container — never scrolled, but with
+   scrollable overflow exactly when its content is taller than it. A scroll-driven animation
+   timeline on that container is ACTIVE under precisely that condition and inactive otherwise,
+   and an animation whose timeline is inactive applies nothing. So the keyframes set one custom
+   property, `--sc-clipped`, and the fade's opacity reads it with a fallback of 0: painted while
+   the clip has something to hide, not painted while it has not, the browser's own layout as the
+   witness — no measurement, no class, no attribute, and it follows the content as it changes
+   (the mail landing in a waiting card, the card collapsing again). Inside `@supports`, so an
+   engine without scroll timelines keeps the rule it had — the fade on every clamped box — rather
+   than losing it on the clipped cards it belongs to.
+
+   The ground under a short mail is the card's own surface, and nothing is drawn on it: the room
+   is the same room every card reserves, and the pill sits at its foot as it does on every card.
+   The band's height and the token's stops are unchanged — they were drawn for the clipped case,
+   which is now the only case they paint. */
 .sc-fade{position:absolute;left:0;right:0;bottom:0;height:88px;pointer-events:none;
   /* the one functional gradient: a fade-out mask on clamped cards — decorative gradients stay banned */
   background:var(--sc-fade);
   transition:opacity .25s var(--swift)}
+@supports (animation-timeline: scroll()){
+  .sc-fade{opacity:var(--sc-clipped,0);animation:sc-clipped linear both;animation-timeline:scroll(nearest block)}
+  @keyframes sc-clipped{from,to{--sc-clipped:1}}
+}
 .scast.open .sc-fade{opacity:0}
 .scast.short .sc-fade{display:none}
 /* The pill's clearance. It used to hang at `margin-top:-12px`, riding up INTO the last line of
@@ -99,13 +126,13 @@
 /* A card that is short ONLY because its body has not arrived keeps the pill: the text being
    short is the symptom, not the answer, so the affordance stays reachable.
 
-   IT USED TO LOSE THE FADE TOO, on the reasoning that an 88px gradient over two lines of snippet
-   reads as a rendering fault — and that was true while a waiting card was two lines tall. It is
-   not any more: a card that has asked for a body now reserves the whole clamp (see the block
-   below), so the fade sits over a full-height box exactly as it does on every other card in the
-   skim. Keeping the rule cost a measured 16px of the card's height at the moment its body
-   arrived, because the fade came back and the pill's own breathing room went away with it —
-   `566 → 550` on every hydrating card at 1440. One box, one height, before and after. */
+   It has no fade, and not by a rule of its own: `.scast.short .sc-fade{display:none}` above
+   reaches it, and under the rule the fade now follows — painted only over a clip with something
+   to hide — a two-line snippet in a reserved 348px box has nothing to hide either way. A
+   `.scast.short.pend .sc-fade{display:none}` used to stand here as well and was removed as
+   redundant; the 16px the card lost at the moment its body arrived (`566 → 550` at 1440) came
+   from the pill's extra margins below, not from the fade, which adds no height in any state.
+   One box, one height, before and after. */
 .scast.short.pend .sc-x{display:flex}
 /* The pill sits under the clamp with a negative top margin, which reads well behind the
    fade of a collapsed card. Where the fade is OFF — an expanded card, or a short-and-pending
@@ -147,9 +174,9 @@
 
 /* ── the rendered-message viewer ──────────────────────────────────────────────────────
    A card whose caller supplied a `bodySlot` renders the sanitized html viewer (the one the
-   reading pane uses) in BOTH states: COLLAPSED it stays clamped at 348 with the fade and the
-   pill, so every card in the stream is one uniform height however tall the mail; OPEN it
-   unclamps. The unclamp/fade-off/pill-force rules are therefore scoped to `.scast.viewer.open`
+   reading pane uses) in BOTH states: COLLAPSED it stays clamped at 348 with the pill at its
+   foot — and the fade where the mail overruns the clamp — so every card in the stream is one
+   uniform height however tall the mail; OPEN it unclamps. The unclamp/fade-off/pill-force rules are therefore scoped to `.scast.viewer.open`
    — a collapsed viewer keeps the base clamp. Placed after the `.short` rules above so
    equal-specificity `.sc-x`/`.sc-fade` overrides win. */
 .scast.viewer.open .sc-clip{max-height:none;overflow:visible}
@@ -174,8 +201,10 @@
 
    So a card that has ASKED for a body reserves the clamp, and a card that HAS one keeps exactly
    the clamp. Nothing about the arrival can change the card's height, so nothing below it moves.
-   The cost is a mail shorter than the clamp showing its remaining room behind the fade — which
-   is the same room every other card in the skim shows, and the reason the fade is there.
+   The cost is a mail shorter than the clamp showing its remaining room — the card's own surface,
+   the same room every other card in the skim reserves. The fade does not paint over it: it
+   follows the clip's overflow (`.sc-fade` above), so a letter that fits ends where it ends and
+   the pill stands at the box's foot, as on every card.
 
    The OPEN card is untouched (`.scast.viewer.open .sc-clip{max-height:none}` above releases it),
    and so is a text-only card with no body to fetch: `.scast.short` still gives a genuinely short

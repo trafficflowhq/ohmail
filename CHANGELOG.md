@@ -396,7 +396,9 @@ height changed twice when its message arrived — once when the message replaced
 again when the message's own content filled the clamp; a collapsed card now reserves exactly the
 room it clamps to and never changes size until you open it. And where something above you does
 still change height, the stream now absorbs it: the message at the top of the window stays where
-it is instead of the whole list sliding past.
+it is instead of the whole list sliding past. The fade-out at the foot of a collapsed card now
+appears only where the message runs past the card's fixed height; a shorter message ends where
+it ends, with the card's own surface below it and Expand in the same place as on every other card.
 
 The wheel had a second owner. A message wider than the column is laid out at its own width and
 then shrunk to fit, and shrinking is a drawing operation — the message's own document still
