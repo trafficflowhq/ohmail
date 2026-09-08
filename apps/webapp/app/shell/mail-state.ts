@@ -1954,10 +1954,17 @@ function filingReportOf(live: MailboxFacts[], now: number): FilingReport | null 
   );
   const waitedMinutes = minutesSince(oldestPendingAt, now);
   const lastPassSeconds = secondsSince(lastCycleAt, now);
+  /* NOTHING OUTSTANDING ⇒ NO REPORT, rather than a report with an arm nobody renders.
+   *
+   * The caller only attaches this once the arm has fired, so a `count: 0` report was a value that
+   * could be computed and never displayed — a state whose contrary is unreachable from any
+   * surface, which the next reader takes for a guarantee. `null` is the same answer the ABSENT
+   * case gives and the caller already handles it. */
+  if (count === 0) return null;
+
   const base = {
     count, deferred, reason, nextAttemptAt, waitedMinutes, lastPassSeconds, who: null, asOf,
   } as const;
-  if (count === 0) return { ...base, arm: "working", reason: null, who: null };
 
   /* ── WHO FILES THIS MAILBOX, WHEN IT IS NOT US ─────────────────────────────────────────────
    *
@@ -2441,10 +2448,12 @@ function climb(input: MailStateInputs): MailState {
   // saying something FALSE.
   //
   // The report is derived over the mailboxes that CARRY the aggregate, which may be a subset of
-  // `live` during a rolling deploy. `filingReportOf` returns null when none does, and the arm
-  // then renders exactly what it rendered before this field existed.
+  // `live` during a rolling deploy. `filingReportOf` returns null when none does AND when nothing
+  // is outstanding on the ones that do, so a non-null report is by itself the arm's condition and
+  // the legacy count remains the only other way in — which is what a server older than the field
+  // gives, and it then renders exactly what it rendered before.
   const report = filingReportOf(live, now);
-  if (outstanding > 0 || (report !== null && report.count > 0)) {
+  if (outstanding > 0 || report !== null) {
     return {
       ...QUIET,
       key: "filing",
