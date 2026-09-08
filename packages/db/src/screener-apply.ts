@@ -1,6 +1,7 @@
 import { and, desc, eq, isNull, sql, type SQL } from "drizzle-orm";
 import { accountSettings, contacts, folderState, messages, rules as rulesTbl } from "./schema-mail.js";
 import { recordChange, type LedgerTx, type Tx } from "./change-log.js";
+import { dialect } from "./dialect/index.js";
 import { readAccountErasedAt } from "./erasure-fence.js";
 import { recordLearningSignal } from "./learning-signal.js";
 import { upsertDesiredSeen } from "./flag-intent.js";
@@ -282,12 +283,17 @@ export async function heldRowsForSender(
 export async function heldRowsForDomain(
   tx: Tx, accountId: string, domain: string, mailboxId: string,
 ): Promise<AppliedScreenerRow[]> {
+  /* BOTH HALVES THROUGH THE SEAM. `position(x IN y)` and `substring(x FROM n)` are SQL SYNTAX and
+     not functions — the argument separator is a KEYWORD — which is why no list of function names
+     ever caught them, and why the device store answers a syntax error at the query rather than a
+     wrong result. Its own spellings take the arguments in the opposite order, so this is a member
+     rather than a shared string. */
+  const d = dialect(tx);
+  const address = sql`lower(${messages.fromAddress})`;
+  const at = d.strpos(address, sql`'@'`);
   return heldRows(tx, accountId, sql`
-    position('@' in lower(${messages.fromAddress})) > 0
-    and substring(
-      lower(${messages.fromAddress})
-      from position('@' in lower(${messages.fromAddress})) + 1
-    ) = ${domain}
+    ${at} > 0
+    and ${d.substr(address, sql`${at} + 1`)} = ${domain}
   `, mailboxId);
 }
 

@@ -16,7 +16,7 @@ import {
   unhuskJunkFiledBody as unhuskJunkFiledBodyTx,
   type JunkHuskIdentity, type JunkUnhuskOutcome,
 } from "../husk-restore.js";
-import { dialect, type Dialect } from "@trafficflow/db/dialect";
+import { dialect, pgOnly, type Dialect } from "@trafficflow/db/dialect";
 import { effectForDestination } from "../rules.js";
 // The Sent shape's single source — the stale-residue cleanup must never take a Sent row (its
 // export in imap-types.ts carries the watermark argument).
@@ -1982,7 +1982,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     }).onConflictDoUpdate({
       target: [threads.accountId, threads.rootMessageIdHeader],
       set: { updatedAt: sql`${threads.updatedAt}` },
-    }).returning({ id: threads.id, inserted: sql<number>`(xmax = 0)::int` });
+    }).returning({ id: threads.id, inserted: pgOnly(sql<number>`(xmax = 0)::int`) });
 
     const row = rows[0];
     if (!row) throw new Error("upsertThread: ON CONFLICT DO UPDATE returned no row");

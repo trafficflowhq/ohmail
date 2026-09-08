@@ -308,3 +308,32 @@ export function dialect(db: unknown): Dialect {
 export function frag(value: SQL | unknown): SQL {
   return sql`${value}`;
 }
+
+/**
+ * DECLARE that a statement is reached only on Postgres. The identity function at runtime.
+ *
+ * Where the two stores cannot share a statement the engine BRANCHES rather than abstracting, and
+ * the Postgres arm keeps the server's construct on purpose. `xmax` is the case that forced this:
+ * it is not a spelling difference but a fact about one store's row visibility — how the server, and
+ * only the server, answers "did this statement insert the row" — so there is no member this
+ * interface could grow for it, and a device arm has to answer the question a different way.
+ *
+ * ── WHY A MARKER AND NOT AN EXEMPTION ─────────────────────────────────────────────────────
+ *
+ * The census over the engine's sources allows nothing, which is right and which a branch makes
+ * unreachable: the server's arm is still in the file. The two obvious ways out are both worse. A
+ * per-token exemption list is an allowance somebody adds a line to and nobody re-reads. Deleting
+ * the arm deletes the feature.
+ *
+ * So the arm says what it is, at the site, in code. This carries no runtime cost and no type
+ * change; what it buys is that the census can PIN how many such arms each file has, exactly — so
+ * adding one is a red that names the file, and the pin is the thing a reviewer looks at. It is not
+ * an escape hatch: every pinned arm carries a device-store twin test beside it proving the OTHER
+ * arm answers the same question, and a `pgOnly(` in a file with no pin fails.
+ *
+ * Wrap the TEMPLATE, not the call around it — the census skips a template that is this function's
+ * direct argument, and nothing else.
+ */
+export function pgOnly<T>(statement: T): T {
+  return statement;
+}
