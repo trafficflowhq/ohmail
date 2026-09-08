@@ -942,6 +942,28 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
           : {}),
 
         /*
+         * ── THE ARCHIVE'S ADDRESS ARM — the same door, forwarded on the same terms ─────────
+         *
+         * `GET /search?address=&direction=from`, behind the address view. Every argument the
+         * paragraph above makes applies unchanged: one request per opened view, from a tab the
+         * user is looking at; and the same identity half, because this too asks the server for a
+         * LIST of ids rather than for something keyed on what the mirror already holds.
+         *
+         * SPREAD, and forwarded SEPARATELY from `searchServer` rather than beside it in one
+         * condition. Two capabilities, resolved independently by the engine, and an adapter can
+         * legitimately have one: pairing them here would define this one on the strength of the
+         * other being present, which is exactly the shape that makes a surface claim an archive
+         * it cannot reach — and it would do it only on the live path.
+         */
+        ...(adapter.searchAddressServer
+          ? {
+            searchAddressServer: gatedRead(
+              adapter.searchAddressServer.bind(adapter), "a server-side address search",
+            ),
+          }
+          : {}),
+
+        /*
          * ── THE WORKER DOORBELL — FORWARDED, NOT GATED, AND SPREAD ────────────────────────
          *
          * `POST /sync/pull`: the "Pull new mail" press asking the worker to scan IMAP now.

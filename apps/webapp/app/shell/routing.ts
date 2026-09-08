@@ -39,12 +39,16 @@ export const VIEWS = [
   "settings",
 ] as const;
 /**
- * `"tag"` and `"folder"` are parameterized views — one tag, or one of the mailbox's own folders,
- * across the URL as `#/tag/<id>` / `#/folder/<id>`. The folder id is the `folder` entity's id
- * (an opaque row id), never the path: a canonical path contains `/`, which would collide with
- * the `m/<messageId>` tail this router splits first.
+ * `"tag"`, `"folder"` and `"address"` are parameterized views — one tag, one of the mailbox's own
+ * folders, or one correspondent, across the URL as `#/tag/<id>` / `#/folder/<id>` /
+ * `#/address/<addr>`. The folder id is the `folder` entity's id (an opaque row id), never the
+ * path: a canonical path contains `/`, which would collide with the `m/<messageId>` tail this
+ * router splits first.
+ *
+ * `address` is the one whose parameter is not an id we minted but a string a SENDER chose, so it
+ * is the one that is percent-encoded in both directions — see {@link Route.address}.
  */
-export type ViewId = (typeof VIEWS)[number] | "tag" | "folder";
+export type ViewId = (typeof VIEWS)[number] | "tag" | "folder" | "address";
 export type ScreenerSegmentId = "waiting" | "screened" | "spam";
 /**
  * WHICH TRIAGE PILE IS OPEN — the thing the route could not say.
@@ -88,7 +92,7 @@ export type PaneId = (typeof PANE_IDS)[number];
  * unsent mail), and the Screener's rows are SENDERS, not messages, so a message id says
  * nothing its list can locate. A `m/<id>` tail on any of the excluded views normalizes away.
  */
-const MESSAGE_VIEWS: readonly string[] = ["ohbox", "reads", "receipts", "history", "search", "tag", "folder", "triage"];
+const MESSAGE_VIEWS: readonly string[] = ["ohbox", "reads", "receipts", "history", "search", "tag", "folder", "triage", "address"];
 
 /**
  * Split a raw hash path from its `m/<id>` tail — the OPEN MESSAGE, when the URL names one.
@@ -111,6 +115,28 @@ export interface Route {
   tagId: string | null;
   /** The open folder's entity id when `view === "folder"` — `tagId`'s twin, `null` elsewhere. */
   folderId: string | null;
+  /**
+   * THE CORRESPONDENT when `view === "address"` — `#/address/<addr>`, DECODED. `null` elsewhere.
+   *
+   * `tagId`'s twin with one difference that decides how it is spelled: a tag id and a folder id
+   * are opaque strings THIS PRODUCT minted, and an address is a string a stranger put in a
+   * header. So it is `decodeURIComponent`d on the way in and `encodeURIComponent`d on the way
+   * out, where the other two are carried raw.
+   *
+   * That is not tidiness. The tail split above cuts on `/`, so a `/` inside a quoted local part
+   * would become a path boundary and the view would open on half an address; a `#` would
+   * truncate the fragment before the browser ever handed it here; and `%` in a real address
+   * would round-trip wrongly if only one side escaped. The encode/decode pair is what makes
+   * `canonicalHash(parseHash(h)) === h` hold for an address, which is what stops
+   * `normalizedHash` rewriting the bar on every render.
+   *
+   * A MALFORMED escape is not a crash and not a fallback to the Ohbox: `decodeURIComponent`
+   * throws `URIError` on a lone `%`, and a hash somebody hand-edited or a link a mail client
+   * mangled must open SOMETHING. The raw segment is used as the address in that case — it will
+   * match no mail, and the view's empty state names the address, which is a true and legible
+   * answer to a broken link.
+   */
+  address: string | null;
   screenerSegment: ScreenerSegmentId;
   triagePile: TriagePileId;
   /**
@@ -221,6 +247,37 @@ function firstRunMailboxOf(query: string): string | null {
   return named === "" ? null : named;
 }
 
+/**
+ * ONE HASH SEGMENT AS AN ADDRESS — decoded, and never a throw.
+ *
+ * `decodeURIComponent` raises `URIError` on a malformed escape (a lone `%`, `%zz`), and this is
+ * reached from `parseHash`, which every render calls: an exception here would blank the whole
+ * shell for a hand-edited URL or a link a mail client half-escaped. The raw segment is the
+ * fallback — it matches no mail, so the view's empty state names it, which is a legible answer
+ * to a broken link rather than a white screen.
+ */
+function decodedAddress(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
+/**
+ * THE CANONICAL HASH FOR ONE ADDRESS — {@link decodedAddress}'s inverse, and the ONLY place this
+ * product spells that URL.
+ *
+ * Three callers: {@link canonicalHash} (so the address bar is rewritten to a form navigation
+ * itself produces), {@link goAddress} (the navigation), and `address-view.ts`'s `addressHref`
+ * (the `href` a control renders, which is what a reader hovers). They must agree byte for byte
+ * or `normalizedHash` rewrites the bar under a link that was already correct — so they are one
+ * function rather than three that match today.
+ */
+export function addressHash(address: string): string {
+  return `#/address/${encodeURIComponent(address)}`;
+}
+
 export function parseHash(hash: string): Route {
   // THE QUERY COMES OFF FIRST, ahead of the open-message tail, so every branch below reads the
   // same place-path it always did. Splitting it after the tail would leave `?mailbox=…` glued to
@@ -237,19 +294,26 @@ export function parseHash(hash: string): Route {
   const withMsg = (route: Route): Route =>
     messageId !== null && MESSAGE_VIEWS.includes(route.view) ? { ...route, messageId } : route;
   if (raw.startsWith("tag/") && raw.slice(4)) {
-    return withMsg({ view: "tag", tagId: raw.slice(4), folderId: null, screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null, firstRun: false, firstRunRerun: false, firstRunAdd: false, firstRunMailboxId: null });
+    return withMsg({ view: "tag", tagId: raw.slice(4), folderId: null, address: null, screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null, firstRun: false, firstRunRerun: false, firstRunAdd: false, firstRunMailboxId: null });
   }
   // `#/folder/<entityId>` — one of the mailbox's own folders (FOLDERS-SPEC.md §3, the rail).
   // The tag branch's shape exactly: an id the mirror does not hold falls back in the shell.
   if (raw.startsWith("folder/") && raw.slice(7)) {
-    return withMsg({ view: "folder", tagId: null, folderId: raw.slice(7), screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null, firstRun: false, firstRunRerun: false, firstRunAdd: false, firstRunMailboxId: null });
+    return withMsg({ view: "folder", tagId: null, folderId: raw.slice(7), address: null, screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null, firstRun: false, firstRunRerun: false, firstRunAdd: false, firstRunMailboxId: null });
+  }
+  // `#/address/<addr>` — everything from and to one correspondent. The tag branch's shape, with
+  // the segment DECODED: see {@link Route.address} for why this one is escaped and the other two
+  // are not. An address the mirror has no mail for falls back in the view (its empty state names
+  // the address), never 404s here — exactly as an unknown tag or folder id does.
+  if (raw.startsWith("address/") && raw.slice(8)) {
+    return withMsg({ view: "address", tagId: null, folderId: null, address: decodedAddress(raw.slice(8)), screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null, firstRun: false, firstRunRerun: false, firstRunAdd: false, firstRunMailboxId: null });
   }
   if (raw === "screener" || raw.startsWith("screener/")) {
     const sub = raw.split("/")[1];
     return {
       view: "screener",
       tagId: null,
-      folderId: null,
+      folderId: null, address: null,
       screenerSegment: sub === "screened" || sub === "spam" ? sub : "waiting",
       triagePile: "reply",
       settingsPane: null,
@@ -267,7 +331,7 @@ export function parseHash(hash: string): Route {
     return withMsg({
       view: "triage",
       tagId: null,
-      folderId: null,
+      folderId: null, address: null,
       screenerSegment: "waiting",
       triagePile: (TRIAGE_PILES as readonly string[]).includes(sub ?? "")
         ? (sub as TriagePileId)
@@ -289,7 +353,7 @@ export function parseHash(hash: string): Route {
     return {
       view: "settings",
       tagId: null,
-      folderId: null,
+      folderId: null, address: null,
       screenerSegment: "waiting",
       triagePile: "reply",
       settingsPane: (PANE_IDS as readonly string[]).includes(sub ?? "") ? (sub as PaneId) : null,
@@ -305,7 +369,7 @@ export function parseHash(hash: string): Route {
   // the flag is what puts the dialog on top of it. See {@link Route.firstRun}.
   if (raw === "first-run" || raw === "first-run/again" || raw === "first-run/add") {
     return {
-      view: "ohbox", tagId: null, folderId: null, screenerSegment: "waiting",
+      view: "ohbox", tagId: null, folderId: null, address: null, screenerSegment: "waiting",
       triagePile: "reply", settingsPane: null, messageId: null, firstRun: true,
       firstRunRerun: raw === "first-run/again",
       firstRunAdd: raw === "first-run/add",
@@ -314,7 +378,7 @@ export function parseHash(hash: string): Route {
     };
   }
   const view = (VIEWS as readonly string[]).includes(raw) ? (raw as ViewId) : "ohbox";
-  return withMsg({ view, tagId: null, folderId: null, screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null, firstRun: false, firstRunRerun: false, firstRunAdd: false, firstRunMailboxId: null });
+  return withMsg({ view, tagId: null, folderId: null, address: null, screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null, firstRun: false, firstRunRerun: false, firstRunAdd: false, firstRunMailboxId: null });
 }
 
 /**
@@ -343,6 +407,11 @@ export function canonicalHash(route: Route): string {
     route.messageId !== null && MESSAGE_VIEWS.includes(route.view) ? `/m/${route.messageId}` : "";
   if (route.view === "tag") return `#/tag/${route.tagId}${tail}`;
   if (route.view === "folder") return `#/folder/${route.folderId}${tail}`;
+  // ENCODED, matching `decodedAddress` on the way in. The pair is what makes
+  // `canonicalHash(parseHash(h)) === h` hold for an address whose local part carries a `/`, a
+  // `#` or a `%` — without it `normalizedHash` would rewrite the address bar on every render of
+  // a perfectly good URL, and the rewrite would truncate the address it was correcting.
+  if (route.view === "address") return `${addressHash(route.address ?? "")}${tail}`;
   if (route.view === "screener")
     return route.screenerSegment === "waiting" ? "#/screener" : `#/screener/${route.screenerSegment}`;
   if (route.view === "triage")
@@ -441,6 +510,18 @@ export function goTag(tagId: string): void {
 
 export function goFolder(folderId: string): void {
   window.location.hash = `#/folder/${folderId}`;
+}
+
+/**
+ * OPEN THE ADDRESS VIEW. A hash ASSIGNMENT, so it stacks in history: Back walks out of one
+ * person's mail and returns to the list the address was clicked in, which is what somebody who
+ * followed a name expects.
+ *
+ * The spelling comes from {@link addressHash}, which `canonicalHash` and `address-view.ts`'s
+ * `addressHref` also use, so the link a control renders and the hash this writes cannot differ.
+ */
+export function goAddress(address: string): void {
+  window.location.hash = addressHash(address);
 }
 
 export function goScreener(segment: ScreenerSegmentId): void {

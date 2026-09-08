@@ -3,6 +3,8 @@ import { messageBodies, messages } from "@trafficflow/db/mail";
 import {
   messageService, threadService, searchService, mailboxService, tagsService, rulesService,
   syncService, SEARCH_SORTS, isSearchSort, ServiceError,
+  ADDRESS_DIRECTIONS, isAddressSearchDirection,
+  type AddressSearchOptions,
   type SearchFilters, type SearchOptions, type ServiceContext,
 } from "@trafficflow/services/mail";
 
@@ -295,6 +297,40 @@ export const READ_ROUTES: ReadRoute[] = [
     pattern: "/search",
     handler: async (req, ctx) => {
       const url = new URL(req.url);
+
+      /**
+       * `?address=` — THE SAME ARM `packages/api/src/routes/search.ts` grew, repeated here for
+       * the reason the `sort` refusal below is repeated: this door cannot import that route
+       * table, so the two are held together by shape.
+       *
+       * And the cost of NOT repeating it is exactly the defect that comment names. `address`
+       * would fall through to the text search with `q: ""`, which `SearchService.search`
+       * answers with `emptyResult()` — so the desktop's address view would show an empty
+       * archive for a person it holds mail from, with a 200 and nothing to say why, while the
+       * web client showed the rows. A door that accepts a parameter and ignores it is worse
+       * than one that refuses it.
+       */
+      const address = url.searchParams.get("address");
+      if (address !== null) {
+        const directionRaw = url.searchParams.get("direction");
+        if (!isAddressSearchDirection(directionRaw)) {
+          return json(
+            { error: { code: "validation_failed", message: `direction must be one of ${ADDRESS_DIRECTIONS.join(", ")}` } },
+            400,
+          );
+        }
+        const addrLimit = num(url.searchParams.get("limit"));
+        // The unsupported-direction refusal is the SERVICE's and is not re-spelled here: it
+        // throws a `ServiceError` and `cloud-engine.ts`'s dispatch answers its own status and
+        // code, so both doors refuse `to` with the same sentence.
+        const addrOpts: AddressSearchOptions = {
+          address,
+          direction: directionRaw,
+          ...(addrLimit !== undefined ? { limit: addrLimit } : {}),
+        };
+        return json(await searchService.searchByAddress(ctx, addrOpts));
+      }
+
       const q = url.searchParams.get("q") ?? "";
       const limit = num(url.searchParams.get("limit"));
 

@@ -154,7 +154,9 @@ export {
 export {
   SearchService, searchService, SEARCH_SORTS, isSearchSort,
   SEARCH_QUERY_MAX_CHARS,
+  ADDRESS_DIRECTIONS, ADDRESS_DIRECTIONS_SERVED, isAddressSearchDirection,
   type SearchOptions, type SearchFilters, type SearchResult, type Facets, type SearchSort,
+  type AddressSearchDirection, type AddressSearchOptions, type AddressSearchResult,
 } from "./search-service.js";
 export {
   PrivacyService, makePrivacyService, nodeRemoteFetch, makeNodeRemoteFetch,

@@ -17,7 +17,13 @@ import {
   type UnsubscribeRefusal,
   type UnsubscribeResult,
 } from "../types.js";
-import type { ListOlderWire, ServerSearchOpts, ServerSearchWire } from "../engine.js";
+import type {
+  ListOlderWire,
+  ServerAddressOpts,
+  ServerAddressWire,
+  ServerSearchOpts,
+  ServerSearchWire,
+} from "../engine.js";
 import type { AttachmentWire, EngineAdapter, MutationOutcome, SyncParams } from "./adapter.js";
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
@@ -763,6 +769,41 @@ export class HttpAdapter implements EngineAdapter {
       // string, a deploy that predates the field — is `exact`. Read `ServerSearchWire.tier`
       // for why the unknown case takes that side rather than the cautious-looking one.
       tier: wire.tier === "similar" ? "similar" : "exact",
+    };
+  }
+
+  /**
+   * `GET /search?address=<addr>&direction=from` — every message in the archive FROM one address.
+   *
+   * **`direction=from` IS ALWAYS SENT, EXPLICITLY, and that is the opposite of the `sort`
+   * decision one method up.** `sort=relevance` is left off the wire because it is the server's
+   * default and omitting it asks an older deploy the question it always answered. There is no
+   * such default here: a deploy that predates the address arm ignores an unknown `address` and
+   * runs a TEXT search for the empty string, which answers `200` with an empty result — a client
+   * that read that as "the archive holds nothing from this person" would state it on screen.
+   * Sending the parameter does not fix that (nothing can, from this side), but the value is
+   * required by the route on every deploy that HAS the arm, and the route refuses an absent or
+   * unknown direction rather than assuming one, so no build of this client can be answered a
+   * different question than it asked.
+   *
+   * The address is NOT lowercased here. The server compares `lower(from_address) = lower($1)`,
+   * so the case-folding is one rule in one place; folding it a second time on the client would
+   * be a second place for the two to disagree about what an address is.
+   */
+  async searchAddressServer(
+    address: string, opts: ServerAddressOpts = {},
+  ): Promise<ServerAddressWire> {
+    const q = new URLSearchParams({ address, direction: "from" });
+    if (opts.limit !== undefined) q.set("limit", String(opts.limit));
+    const res = await this.request("GET", `/search?${q.toString()}`);
+    if (!res.ok) throw await this.rejectionOf(res);
+    const wire = (await res.json()) as { items?: EngineMessage[]; total?: number; direction?: string };
+    return {
+      items: Array.isArray(wire.items) ? wire.items : [],
+      total: typeof wire.total === "number" ? wire.total : (wire.items?.length ?? 0),
+      // Forward-compatible (§8): the engine re-reads this against its own vocabulary and falls
+      // back to `from`, so an unknown word never reaches a label. Passed through as-is here.
+      ...(wire.direction !== undefined ? { direction: wire.direction as ServerAddressWire["direction"] } : {}),
     };
   }
 

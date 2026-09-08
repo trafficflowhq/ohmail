@@ -677,6 +677,56 @@ export type ServerSearchFn = (
 ) => Promise<ServerSearchWire | null>;
 
 /**
+ * WHAT `GET /search?address=&direction=from` ANSWERS — the archive half of the address view.
+ *
+ * `items` are canonical `MessageDTO`s, so an {@link EngineMessage} IS one, exactly as
+ * {@link ServerSearchWire} explains. No `tier`: an address query is an EQUALITY, so there is no
+ * lexical arm to have missed and no typo-tolerant guess to label.
+ *
+ * `direction` is on the wire and is not assumed. Only `from` is answerable from an index today
+ * (the recipients are two unindexed JSONB columns — `SearchService.searchByAddress` records the
+ * measurement), so the client asks for `from` WHATEVER its toggle says and reads this field to
+ * label what came back. A client that inferred the direction from its own request would report
+ * "everything in the archive" for an answer that covers one side of it.
+ */
+export interface ServerAddressWire {
+  items: EngineMessage[];
+  /** Matches across the WHOLE corpus in the answered direction, which is more than `items.length`. */
+  total: number;
+  /** Which side the server actually searched. Absent ⇒ `from`, the only direction it serves. */
+  direction?: ServerAddressDirection;
+}
+
+/**
+ * THE DIRECTIONS THE ARCHIVE'S VOCABULARY HAS — written out here rather than imported, for the
+ * reason {@link SERVER_SEARCH_SORTS} gives one screen up: this package is the standalone desktop
+ * payload and cannot import the hosted service.
+ *
+ * `SERVED` is the subset the server answers today. The two lists are separate because the
+ * DIFFERENCE between them is a state the view has to state — "the archive cannot be searched by
+ * recipient yet" — and a single list could not express it.
+ */
+export const SERVER_ADDRESS_DIRECTIONS = ["any", "from", "to"] as const;
+export type ServerAddressDirection = (typeof SERVER_ADDRESS_DIRECTIONS)[number];
+/** The one direction `GET /search?address=` answers. See {@link ServerAddressWire.direction}. */
+export const SERVER_ADDRESS_DIRECTIONS_SERVED: readonly ServerAddressDirection[] = ["from"];
+
+/** What a caller may ask of one archive address pass. */
+export interface ServerAddressOpts {
+  limit?: number;
+}
+
+/**
+ * The transport {@link OhmailEngine.searchAddressServer} runs on. Optional everywhere, exactly
+ * as {@link ServerSearchFn} is: the demo has no server and the desktop tier has no Cloud, and
+ * both must read as "there is no archive here" rather than as broken.
+ */
+export type ServerAddressSearchFn = (
+  address: string,
+  opts: ServerAddressOpts,
+) => Promise<ServerAddressWire | null>;
+
+/**
  * The adapter capability this reaches for when no `serverSearch` was injected.
  *
  * Declared structurally HERE rather than as a member of `EngineAdapter` because the engine is
@@ -687,6 +737,16 @@ export type ServerSearchFn = (
  */
 interface ServerSearchCapableAdapter {
   searchServer?: ServerSearchFn;
+}
+
+/**
+ * The address arm of the same capability, declared separately for the same structural reason —
+ * and separately from `searchServer` because an adapter can have one and not the other: a
+ * wrapper that forwards capabilities explicitly (`sync-scheduler.ts`'s read gate) forwards them
+ * one at a time, and a build that predates this arm has the text search and not this.
+ */
+interface ServerAddressSearchCapableAdapter {
+  searchAddressServer?: ServerAddressSearchFn;
 }
 
 /**
@@ -874,6 +934,21 @@ function messageTime(m: EngineMessage): number {
 export type ServerSearchOutcome =
   | { state: "unavailable" }
   | { state: "ready"; items: EngineMessage[]; total: number; tier: SearchTier }
+  | { state: "failed"; error: string };
+
+/**
+ * THE ARCHIVE'S ANSWER ABOUT ONE ADDRESS. It never rejects — the outcome is a value the UI
+ * renders, exactly as {@link ServerSearchOutcome} is.
+ *
+ * `ready` carries the direction the server ANSWERED, which the caller may not have asked for.
+ * That is the whole reason this is not simply `ServerSearchOutcome` without the tier: a view
+ * whose toggle says "All" or "To them" is handed the FROM half and has to say so
+ * ("N in the archive, by sender"), and the field is what lets it. Inferring the direction from
+ * the request would let a client claim the archive answered a question it did not.
+ */
+export type ServerAddressOutcome =
+  | { state: "unavailable" }
+  | { state: "ready"; items: EngineMessage[]; total: number; direction: ServerAddressDirection }
   | { state: "failed"; error: string };
 
 /**
@@ -1246,6 +1321,8 @@ export interface EngineOptions {
    * without an adapter, and so a host that reaches `/search` some other way can supply it.
    */
   serverSearch?: ServerSearchFn;
+  /** The address arm's override, on `serverSearch`'s rule and for its reasons. */
+  serverAddressSearch?: ServerAddressSearchFn;
   /** Defaults to an in-memory mirror (SSR/tests); pass IndexedDbMirrorStore on web. */
   store?: MirrorStore;
   /**
@@ -1718,6 +1795,8 @@ export class OhmailEngine {
   private readonly fetchBodiesFn: FetchBodiesFn | null;
   /** The archive transport, or `null` when this client has no server behind it. */
   private readonly serverSearchFn: ServerSearchFn | null;
+  /** The archive's ADDRESS transport, or `null` — resolved by the same rule, independently. */
+  private readonly serverAddressSearchFn: ServerAddressSearchFn | null;
   /** `GET /sync/snapshot`, or `null` when this adapter has no such route — see {@link SnapshotCapableAdapter}. */
   private readonly snapshotFn: SnapshotFn | null;
   /**
@@ -1732,6 +1811,8 @@ export class OhmailEngine {
   private readonly staleResumeMs: number;
   /** In-flight archive passes by query key — see {@link OhmailEngine.searchServer}. */
   private readonly serverSearches = new Map<string, Promise<ServerSearchOutcome>>();
+  /** In-flight archive ADDRESS passes, keyed as `searchServer`'s are — see that method. */
+  private readonly serverAddressSearches = new Map<string, Promise<ServerAddressOutcome>>();
   /** `GET /messages`, or `null` when this adapter has none — see {@link ListMessagesCapableAdapter}. */
   private readonly listOlderFn: ListOlderFn | null;
   /** In-flight out-of-window pages by view+cursor — see {@link OhmailEngine.listOlder}. */
@@ -1807,6 +1888,14 @@ export class OhmailEngine {
     this.serverSearchFn =
       opts.serverSearch ??
       (opts.adapter as ServerSearchCapableAdapter).searchServer?.bind(opts.adapter) ??
+      null;
+    // The address arm, resolved by the SAME rule and INDEPENDENTLY of the text arm. Not derived
+    // from `serverSearchFn`: an adapter wrapper forwards capabilities one at a time, so a client
+    // can legitimately have the text search and not this, and deriving one from the other would
+    // make `searchAddressServer` call a method that is not there.
+    this.serverAddressSearchFn =
+      opts.serverAddressSearch ??
+      (opts.adapter as ServerAddressSearchCapableAdapter).searchAddressServer?.bind(opts.adapter) ??
       null;
     // Same resolution rule as `serverSearchFn`: the adapter's own capability, bound ONCE, so
     // nothing can answer "there is a snapshot route" differently from what `drain` will do.
@@ -5967,6 +6056,88 @@ export class OhmailEngine {
       });
 
     this.serverSearches.set(key, request);
+    return request;
+  }
+
+  /**
+   * Is there an archive behind this client that can be asked about an ADDRESS?
+   *
+   * Separate from {@link OhmailEngine.serverSearchAvailable} because the two capabilities are
+   * resolved separately — see the constructor. `false` for the demo and the desktop tier, and
+   * for a client whose adapter wrapper forwards the text search and not this one; all three are
+   * "there is no archive here", which the view states rather than hides.
+   */
+  serverAddressSearchAvailable(): boolean {
+    return this.serverAddressSearchFn !== null;
+  }
+
+  /**
+   * ASK THE ARCHIVE ABOUT ONE ADDRESS — `GET /search?address=&direction=from`.
+   *
+   * The SECOND answer, never the first, exactly as {@link OhmailEngine.searchServer} is:
+   * {@link OhmailEngine.messagesWith} has already painted from the mirror and this extends it.
+   *
+   * ── THE DIRECTION IS NOT A PARAMETER, AND THAT IS DELIBERATE ────────────────────────────
+   *
+   * The server answers `from` and refuses the other two by name, so a `direction` argument here
+   * would be a choice with one legal value and two ways to get a 400 — and the view's toggle
+   * must NOT reach the wire: switching to "To them" is a change to what is SHOWN, not a new
+   * question for an archive that cannot answer it. So this asks `from` always, and the outcome
+   * carries the direction back for the view to label. The day the recipient index lands, this
+   * grows an argument and the view stops discarding the toggle; nothing else moves.
+   *
+   * Single-flight on the address, so a view that re-renders while a pass is open joins it
+   * instead of issuing a second. THE RESULT DOES NOT GO IN THE MIRROR — `/sync` owns that, and a
+   * row from this route has no seq; the reasoning is written out in full at `searchServer`.
+   */
+  async searchAddressServer(
+    address: string, opts: ServerAddressOpts = {},
+  ): Promise<ServerAddressOutcome> {
+    const fn = this.serverAddressSearchFn;
+    if (fn === null) return { state: "unavailable" };
+    // An empty address is not a question. The server answers it empty too, so this is a saved
+    // round trip rather than a divergence — and `ready` with no items is the honest shape: this
+    // client did ask and there is nothing, which is what the count line reports.
+    if (address.trim() === "") {
+      return { state: "ready", items: [], total: 0, direction: "from" };
+    }
+    // `JSON.stringify` over a tuple, not a `\u0000`-joined string: it is unambiguous for any
+    // address a header can carry, and this repository has twice paid for a control byte used
+    // as a separator (a raw NUL in a source file makes every `grep` skip the whole file in
+    // silence). The text arm one method up still joins on the escape; this is the form to copy.
+    const key = JSON.stringify([opts.limit ?? null, address]);
+    const inFlight = this.serverAddressSearches.get(key);
+    if (inFlight) return inFlight;
+
+    const request = fn(address, opts)
+      .then((wire): ServerAddressOutcome => {
+        // `null` ⇒ this transport serves no archive, and it must not become an empty `ready`:
+        // "we searched the archive and there is nothing" is a claim, and this is the case where
+        // nothing was searched. Same rule as `searchServer`'s and `fetchBody`'s `null`.
+        if (wire === null) return { state: "unavailable" };
+        return {
+          state: "ready",
+          items: Array.isArray(wire.items) ? wire.items : [],
+          total: typeof wire.total === "number" ? wire.total : (wire.items?.length ?? 0),
+          // Absent ⇒ `from`: it is the only direction the route serves, so a server that
+          // predates the field answered `from` whatever it said. Anything the wire says that is
+          // not a known direction takes the same reading rather than being carried through — a
+          // view labelling its list with a word it does not understand is worse than the
+          // conservative one.
+          direction: (SERVER_ADDRESS_DIRECTIONS as readonly string[]).includes(wire.direction ?? "")
+            ? (wire.direction as ServerAddressDirection)
+            : "from",
+        };
+      })
+      .catch((err: unknown): ServerAddressOutcome => ({
+        state: "failed",
+        error: err instanceof Error ? err.message : String(err),
+      }))
+      .finally(() => {
+        this.serverAddressSearches.delete(key);
+      });
+
+    this.serverAddressSearches.set(key, request);
     return request;
   }
 

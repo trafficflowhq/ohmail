@@ -1,4 +1,4 @@
-import type { ServerSearchOpts, ServerSearchWire } from "../engine.js";
+import type { ServerAddressOpts, ServerAddressWire, ServerSearchOpts, ServerSearchWire } from "../engine.js";
 import type {
   EngineMutation, MessageBodyBatchWire, MessageBodyWire, SyncChange, SyncResponse, UnsubscribeResult,
 } from "../types.js";
@@ -195,6 +195,26 @@ export interface EngineAdapter {
    * never be conflated — one is a missing capability, the other is a real result.
    */
   searchServer?(query: string, opts: ServerSearchOpts): Promise<ServerSearchWire | null>;
+
+  /**
+   * `GET /search?address=&direction=from` — every message in the archive FROM one address, or
+   * absent when this client has no archive.
+   *
+   * Optional on `searchServer`'s rule, and a SEPARATE member rather than a parameter on it: the
+   * two answer different questions (an equality on one column against a tokenized full-text
+   * ranking) and return different shapes, and an adapter may legitimately have one and not the
+   * other — a wrapper that forwards capabilities explicitly forwards them one at a time, and a
+   * build that predates this arm has the text search alone. `null` means "no archive here";
+   * `{items: []}` means the archive answered and this address sent nothing. The two must never
+   * be conflated.
+   *
+   * ONLY THE `from` DIRECTION IS ANSWERABLE, so the direction is not an argument. The
+   * recipients live in two unindexed JSONB columns on the server and an `OR` across the two
+   * questions loses the sender index as well, so the route refuses the other directions by
+   * name; the implementation sends `direction=from` always and the wire says which direction
+   * came back. See {@link ServerAddressWire}.
+   */
+  searchAddressServer?(address: string, opts: ServerAddressOpts): Promise<ServerAddressWire | null>;
 
   /**
    * `POST /messages/:id/unsubscribe` — RFC 8058 one-click, performed SERVER-SIDE (the reader's

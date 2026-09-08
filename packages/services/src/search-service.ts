@@ -164,6 +164,75 @@ export interface SearchResult {
   tier: SearchTier;
 }
 
+/**
+ * ═══ THE ADDRESS ARM — one address, an EQUALITY, and only in the FROM direction ═════════════
+ *
+ * `GET /search?address=<addr>&direction=from`. It is not a filter on {@link SearchService.search}
+ * and could not be: that method requires a `q` and answers `emptyResult()` without one, because
+ * every one of its predicates is built out of the reader's words. An address query has no words.
+ *
+ * ── WHY `from` IS THE ONLY DIRECTION THIS DOOR ANSWERS ─────────────────────────────────────
+ *
+ * Measured on a private database at 20 000 rows with `EXPLAIN (ANALYZE, BUFFERS)`:
+ *
+ *   · `lower(from_address) = $1`, account-scoped   INDEX SCAN, `messages_account_from_addr_idx`,
+ *                                                  4 shared buffers.
+ *   · the recipients, either spelling               SEQ SCAN. They are two JSONB columns —
+ *     (`jsonb_array_elements(to_addresses)`,        `messages.to_addresses` / `.cc_addresses`,
+ *      or `to_addresses @> …`)                      `EmailAddress[]` — and NO index exists on
+ *                                                   either one. There is no recipients table.
+ *   · `lower(from_address) = $1 OR exists(to) …`    SEQ SCAN — **the OR loses the from-index
+ *                                                   too**, which is why this is one predicate
+ *                                                   and never a union of the two questions.
+ *
+ * A recipient index is a migration with a backfill (a lowercased `text[]` maintained at ingest
+ * plus a GIN — JSONB containment cannot case-fold, so a GIN on the JSONB columns is not the
+ * answer), and it is not this change. So this door answers the direction it can serve from an
+ * index and **REFUSES the other two BY NAME** rather than answering them partially:
+ * `search_direction_unsupported`, 400.
+ *
+ * A refusal and not an empty page, and not a silent from-only answer either. An empty list is
+ * indistinguishable from "this address never received mail from you", and a from-only answer to
+ * `direction=any` is a claim about the whole archive that is false by exactly the recipients.
+ * The client's own request builder therefore asks for `from` whatever its toggle says, and the
+ * view states the archive's half as "by sender" — see `apps/webapp/app/shell/address-view.ts`.
+ */
+export const ADDRESS_DIRECTIONS = ["any", "from", "to"] as const;
+export type AddressSearchDirection = (typeof ADDRESS_DIRECTIONS)[number];
+
+/**
+ * THE DIRECTIONS THIS SERVICE CAN SERVE FROM AN INDEX — one, today. A closed list rather than a
+ * hard-coded `=== "from"` so the day the recipient index lands, the arm and its refusal move
+ * together; a comparison spelled inline in three places is three places to forget.
+ */
+export const ADDRESS_DIRECTIONS_SERVED: readonly AddressSearchDirection[] = ["from"];
+
+/** Narrow an untrusted string to a direction. Every door that accepts one uses this. */
+export function isAddressSearchDirection(v: unknown): v is AddressSearchDirection {
+  return typeof v === "string" && (ADDRESS_DIRECTIONS as readonly string[]).includes(v);
+}
+
+export interface AddressSearchOptions {
+  /** The address, matched by `lower()` equality. Never a substring and never tokenized. */
+  address: string;
+  /** Which side of the message. Only the members of {@link ADDRESS_DIRECTIONS_SERVED} are answered. */
+  direction: AddressSearchDirection;
+  limit?: number;
+}
+
+export interface AddressSearchResult {
+  /** Newest first — `SQL_RANK_ORDER`'s key sequence with the relevance term removed. */
+  items: MessageDTO[];
+  /** How many messages match, over the whole archive rather than over this page. */
+  total: number;
+  /**
+   * WHICH DIRECTION THIS ANSWER IS ABOUT — always `"from"` today, and on the wire rather than
+   * inferred. A caller that asked for `from` and a caller whose toggle says "All" receive the
+   * same rows, and only this field lets the second one label them honestly.
+   */
+  direction: AddressSearchDirection;
+}
+
 /** Normalize the driver-specific `execute` shape: postgres-js returns an array,
  *  PGlite returns `{ rows }`. Keep every read below driver-agnostic. */
 function rowsOf<T>(result: unknown): T[] {
@@ -371,6 +440,72 @@ export class SearchService {
 
     const facets = await this.facets(ctx, where, matchPred);
     return { items, facets, total, tier };
+  }
+
+  /**
+   * EVERY MESSAGE IN THE ARCHIVE FROM ONE ADDRESS — the address view's archive half.
+   *
+   * See {@link AddressSearchOptions} for why `from` is the only direction served and why the
+   * other two are refused by name. Three properties are the whole of the query:
+   *
+   *  · `lower(m.from_address) = lower($1)` — byte-for-byte {@link SearchService.whereSql}'s
+   *    `sender` filter, so the two doors into "mail from this person" cannot answer differently,
+   *    and the index `messages_account_from_addr_idx` (`(account_id, lower(from_address), id)`)
+   *    serves it. An EQUALITY: no `like`, no `%`, no tokenizing. A substring match here would put
+   *    a stranger's mail on screen under somebody else's name, which is why the pg twin asserts
+   *    a substring returns nothing rather than merely asserting the exact match returns something.
+   *  · `whereSql` supplies the account scope and `deleted_at is null`. The account LEADS the
+   *    index for the reason that index's own comment gives: a sender address is attacker-choosable,
+   *    so it can never be a filter applied to a cross-account result.
+   *  · The order is `date desc nulls last, id desc` — `SQL_RANK_ORDER` with the relevance term
+   *    dropped, because there is none. Newest first is the view's order, and the `id` tail keeps
+   *    two rows sharing an instant from swapping between calls.
+   *
+   * An EMPTY address answers empty rather than matching the rows whose `from_address` is `''`
+   * (the column is `NOT NULL DEFAULT ''`, so those rows are real). A caller reaches this by
+   * handing the service an address it failed to parse, and the honest answer to "show me
+   * everything from nobody" is nothing.
+   */
+  async searchByAddress(
+    ctx: ServiceContext, opts: AddressSearchOptions,
+  ): Promise<AddressSearchResult> {
+    if (!ADDRESS_DIRECTIONS_SERVED.includes(opts.direction)) {
+      throw new ServiceError(
+        "search_direction_unsupported", 400,
+        `direction ${opts.direction} is not searchable in the archive yet; `
+        + `only ${ADDRESS_DIRECTIONS_SERVED.join(", ")} is`,
+      );
+    }
+    // The ceiling {@link SEARCH_QUERY_MAX_CHARS} exists for predicates whose cost is
+    // superlinear in the string's length. This one is an equality, where Postgres compares
+    // lengths before bytes — the same argument `whereSql`'s `sender` filter is deliberately
+    // unbounded on, and for the same reason: a bound here could refuse an address the product
+    // itself emitted. See the note above {@link SearchOptions}.
+    const address = opts.address;
+    if (address === "" || address.trim() === "") {
+      return { items: [], total: 0, direction: opts.direction };
+    }
+    const limit = clampLimit(opts.limit);
+    const where = this.whereSql(ctx.accountId, {});
+    const pred = sql`lower(m.from_address) = lower(${address})`;
+
+    const total = await this.count(ctx, where, pred);
+    const hitRows = rowsOf<{ id: string }>(await ctx.db.execute(sql`
+      select m.id
+      ${this.from}
+      where ${where} and ${pred}
+      order by m.date desc nulls last, m.id desc
+      limit ${limit}`));
+
+    // The batch form, for the reason {@link SearchService.search} gives at its own call site:
+    // four statements for the page instead of four per hit on a `max: 1` pool.
+    const byId = await materializeMessages(ctx.db, ctx.accountId, hitRows.map((h) => h.id));
+    const items: MessageDTO[] = [];
+    for (const h of hitRows) {
+      const dto = byId.get(h.id);
+      if (dto) items.push(dto);
+    }
+    return { items, total, direction: opts.direction };
   }
 
   // ── the user-chosen orders ────────────────────────────────────────────────
