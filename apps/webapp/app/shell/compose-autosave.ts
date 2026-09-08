@@ -45,7 +45,9 @@ import type { OhmailEngine } from "@ohmail/client-engine";
 import type { ComposeFields } from "./compose";
 import { COMPOSE_SEND_KEY, writeReplyMeta } from "./mail-send";
 import { holdOf, releaseSendLockForRow } from "./send-lock";
-import { composeSessionId, parseRecipients, readComposeRow, writeComposeRow } from "./compose";
+import {
+  clearComposeDraft, composeSessionId, parseRecipients, readComposeRow, writeComposeRow,
+} from "./compose";
 
 /** How long the form must be still before it is written to the account. */
 export const AUTOSAVE_DELAY_MS = 2_000;
@@ -98,6 +100,30 @@ function signatureOf(f: ComposeFields): string {
   return JSON.stringify([f.to, f.cc ?? "", f.bcc ?? "", f.subject, f.body, f.html ?? ""]);
 }
 
+/**
+ * HOW A BOUND COMPOSE'S MESSAGE ENDED — the input to {@link ComposeAutosave.settleCompose}.
+ *
+ * Two arms are built. The THIRD that invariant T names — the durable outbox settling a `mail_send`
+ * for this lane whose owner died — is NOT here, and its absence is deliberate and recorded: the
+ * engine keeps no settled-mutation stream a later mount can read. `replayOutboxInner` dispatches a
+ * restored entry and DISCARDS the result; `lateResults` is written only on the timeout path, for
+ * the surface that is still waiting; and `flushPending()` is a destructive pull already read by
+ * `useMailSend.flush`, so a second consumer would swallow settlements meant for the first.
+ * `mail-send.ts`'s own header states the same fact from the other side. Polling cannot recover a
+ * result that was never retained, so the seam is reported rather than worked around.
+ */
+export type ComposeFate =
+  /**
+   * The mirror shows the bound row `sent`. The server's terminal word, arriving on a mount that
+   * did not issue the send — the tab that owned the answer died before it could clear anything.
+   */
+  | { kind: "sentByMirror"; rowId: string | null; toList?: "ohbox" | "drafts" }
+  /**
+   * A discard of the bound row was refused: the server answered 409 `send_recorded` and KEPT it.
+   * The binding was never really gone, so it is restored rather than re-made.
+   */
+  | { kind: "restoredBy409"; rowId: string };
+
 export interface ComposeAutosave {
   /**
    * The row this compose IS, or `null` before the first save. Handed to `composePlan` so the
@@ -124,6 +150,22 @@ export interface ComposeAutosave {
   release: () => void;
   /** Delete the row, if there is one. Returns once the mutation has been dispatched. */
   discard: () => Promise<void>;
+  /**
+   * ── M'S FATE BECAME KNOWN — invariant T's one function ───────────────────────────────────────
+   *
+   * Every ending of a bound compose comes through here, and it exists because three of them did
+   * not. Each arrived at the same wrong state by a different road: the fate resolved, the durable
+   * record was tidied away, and the compose stayed POPULATED with the message's text behind a
+   * projection reading `idle` — after which an ordinary press minted a fresh Idempotency-Key for
+   * a message that had already gone (the mirror-`sent` reload) or an ordinary pause wrote a second
+   * row for it (the 409 that restored the row after the binding was dropped).
+   *
+   * `sentByMirror` IS THE LIVE CONFIRMED PATH, not a second implementation of it: `onSendSettled`
+   * calls this same function, so the reload arm cannot drift from the live one again — which is
+   * exactly how the two came to disagree. It deliberately does NOT show a "sent" beat; the live
+   * path does not, and a visible one is new design rather than a fix.
+   */
+  settleCompose: (fate: ComposeFate) => void;
   /**
    * A COMPOSE SEND CONFIRMED — release the row if the send used it, DELETE it if the send made
    * its own.
@@ -164,9 +206,24 @@ export function useComposeAutosave(opts: {
    * fire-time check — because an existing row is still this message's row.
    */
   sendInFlight?: boolean;
+  /**
+   * THE SURFACE HALF OF A CLEAR, injected because the hook does not own it.
+   *
+   * `settleCompose`'s `sentByMirror` arm is the live confirmed path, and that path empties the
+   * form, drops the reading selection and returns to the list — none of which is this hook's
+   * state. Passing them in as one callback keeps ONE implementation of "the compose is over"
+   * without moving `setCompose`/`go` into a hook that has no business holding them.
+   */
+  onCleared?: (toList: "ohbox" | "drafts") => void;
 }): ComposeAutosave {
   const { engine, fields, mailboxId, active } = opts;
   const sendInFlight = opts.sendInFlight ?? false;
+  /* Through a ref: `settleCompose` is handed to callbacks that outlive the render they were made
+     in, and naming the prop directly would pin that render's whole scope. */
+  const onClearedRef = useRef(opts.onCleared);
+  onClearedRef.current = opts.onCleared;
+  const fieldsRef = useRef(fields);
+  fieldsRef.current = fields;
   const [draftId, setDraftId] = useState<string | null>(null);
   /** The signature of what the account holds. `null` = nothing has been written for this form. */
   const saved = useRef<string | null>(null);
@@ -268,6 +325,12 @@ export function useComposeAutosave(opts: {
    * Once. The stored id is the state the reload came back to; anything after that is this hook's
    * own doing and is already in `draftId`.
    */
+  const settledRef = useRef<(sentDraftId: string | null) => void>(() => {});
+  /* LATE-BOUND, and not decoration: the adoption effect below is declared ABOVE `settleCompose`
+     and its dependency array is `[engine]`, so naming the callback directly would capture the
+     FIRST render's copy for the life of the mount — the temporal-dead-zone shape `AppShell` warns
+     about one file over. The ref is assigned on every render, so the effect calls the current one. */
+  const settleComposeRef = useRef<(fate: ComposeFate) => void>(() => {});
   const adopted = useRef(false);
   useEffect(() => {
     if (adopted.current) return;
@@ -300,9 +363,12 @@ export function useComposeAutosave(opts: {
          go of and the record is settled on the mirror's own word, which is what the confirmed path
          does with the answer it received. */
       if (hold.kind === "parked" && hold.status === "sent") {
+        /* INVARIANT T(b). This arm used to release the record and drop the held row and stop
+           there — which left the DELIVERED TEXT in the form with the projection reading idle, and
+           the next ordinary press minted a second Idempotency-Key for a message the mirror says
+           was already sent. It is the live confirmed path's ending now, from the same function. */
         adopted.current = true;
-        releaseSendLockForRow(COMPOSE_SEND_KEY, held, composeSessionId());
-        writeComposeRow(null);
+        settleComposeRef.current({ kind: "sentByMirror", rowId: held });
         return true;
       }
       if (hold.kind !== "free") return false;
@@ -357,6 +423,40 @@ export function useComposeAutosave(opts: {
     // `mail-send.ts`) dies with it rather than accumulating in storage.
     writeReplyMeta(`draft:${id}`, {});
   }, [draftId, engine, release]);
+
+  /**
+   * ── INVARIANT T's ONE FUNCTION ──────────────────────────────────────────────────────────────
+   *
+   * See {@link ComposeAutosave.settleCompose}. Both arms end with the compose either ADOPTING the
+   * resolving row or CLEARING the way the live path clears — never populated behind an idle
+   * projection, which is the state all three reviewed sequences arrived at.
+   */
+  const settleCompose = useCallback((fate: ComposeFate) => {
+    if (fate.kind === "restoredBy409") {
+      /* THE SERVER KEPT THE ROW, so the binding was never really gone. Re-adopted rather than
+         re-made: `adopt` restores the id AND marks the text on screen as already-saved, so the
+         pause that follows writes nothing for content the row already holds — without that the
+         "restore" would be a PUT, and on a row with a send on record a PUT is refused.
+         Only for the compose that was bound to it: a Delete pressed on some other row in the list
+         has nothing here to restore. */
+      if (draftId !== null && draftId !== fate.rowId) return;
+      adopt(fate.rowId, fieldsRef.current);
+      return;
+    }
+    /* ── sentByMirror: THE LIVE CONFIRMED PATH, and `onSendSettled` calls this same code ──────
+       Order matters and is the live one: the row is judged first (released if the send used it,
+       discarded if the send made its own and this hook adopted a phantom), then the durable record
+       for the row AND the session goes, then the held row, then the scratch buffer — which is what
+       `clearLaneScratch` does on the live path and what NOTHING did on the reload path, leaving
+       the delivered text in the form. Idempotent where the live path already did it. */
+    settledRef.current(fate.rowId);
+    if (fate.rowId !== null) {
+      releaseSendLockForRow(COMPOSE_SEND_KEY, fate.rowId, composeSessionId());
+    }
+    writeComposeRow(null);
+    clearComposeDraft();
+    onClearedRef.current?.(fate.toList ?? "ohbox");
+  }, [draftId, adopt]);
 
   const settled = useCallback(
     (sentDraftId: string | null) => {
@@ -516,5 +616,10 @@ export function useComposeAutosave(opts: {
     return () => window.clearTimeout(timer);
   }, [engine, fields, mailboxId, active, draftId, sendInFlight]);
 
-  return { draftId, adopt, release, discard, settled };
+  /* `settled` is defined below `settleCompose` and is called from inside it — through a ref, so
+     the two are not forced into one declaration order by a dependency cycle. */
+  settledRef.current = settled;
+  settleComposeRef.current = settleCompose;
+
+  return { draftId, adopt, release, discard, settled, settleCompose };
 }

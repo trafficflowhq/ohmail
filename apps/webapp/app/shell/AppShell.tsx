@@ -106,7 +106,7 @@ import { useScreenerSuggestions, type SenderSuggestion, type SuggestWire } from 
 import { AutoSuggestRow } from "./AutoSuggestRow";
 import { ScreeningSection } from "./ScreeningSection";
 import { DormancyRow } from "./DormancyRow";
-import { useComposeAutosave, worthSaving } from "./compose-autosave";
+import { useComposeAutosave, worthSaving, type ComposeFate } from "./compose-autosave";
 import { RemoteImagesRow } from "./RemoteImagesRow";
 import { TrackingPixelsRow } from "./TrackingPixelsRow";
 import { AutoUnsubscribeRow } from "./AutoUnsubscribeRow";
@@ -3264,17 +3264,23 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * that clears one.
    */
   /**
-   * THE AUTOSAVE HOOK'S `release`, THROUGH A REF, AND THE REF IS NOT DECORATION.
+   * THE AUTOSAVE HOOK'S ENDINGS, THROUGH REFS, AND THE REFS ARE NOT DECORATION.
    *
-   * `onSendSettled` is declared here and `useComposeAutosave` is called two hundred lines below
-   * it — it needs `composeMailbox`, which needs the resolved From options, which need the
-   * mailboxes. Naming `autosave` directly in the callback body would be a temporal-dead-zone
-   * reference that TypeScript accepts (it is inside a closure) and that cannot be put in the
-   * dependency array without throwing at render. The ref is assigned once the hook exists, which
-   * is the shape `attachments.ts` uses for the same reason.
+   * `onSendSettled` and `discardDraft` are declared here and `useComposeAutosave` is called two
+   * hundred lines below them — it needs `composeMailbox`, which needs the resolved From options,
+   * which need the mailboxes. Naming `autosave` directly in a callback body would be a
+   * temporal-dead-zone reference that TypeScript accepts (it is inside a closure) and that cannot
+   * be put in the dependency array without throwing at render. The refs are assigned once the hook
+   * exists, which is the shape `attachments.ts` uses for the same reason.
+   *
+   * `settleComposeRef` is invariant T's one function — every ending of a bound compose goes
+   * through it. The two beside it are the pieces `discardDraft` needs AFTER the server has
+   * answered, which is the whole of that finding: it used to read them before.
    */
-  const releaseDraft = useRef<(sentDraftId: string | null) => void>(() => {});
-  /** Late-bound for the same reason as {@link releaseDraft} — see below where it is assigned. */
+  const settleComposeRef = useRef<(fate: ComposeFate) => void>(() => {});
+  const releaseDraftIdRef = useRef<string | null>(null);
+  const releaseBindingRef = useRef<() => void>(() => {});
+  /** Late-bound for the same reason as {@link settleComposeRef} — see below where it is assigned. */
   const openMessageRef = useRef<(m: EngineMessage) => void>(() => {});
   /**
    * WHICH DRAFT ROW SEEDED WHICH REPLY EDITOR — `message id → draft id`, written by `openDraft`
@@ -3316,14 +3322,20 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
 
   const onSendSettled = useCallback((key: string, m: MailSendMutation) => {
     if (key === COMPOSE_SEND_KEY) {
-      setCompose(EMPTY_COMPOSE);
-      /* RELEASED WHEN THE SEND USED THE ROW, DISCARDED WHEN IT DID NOT — `autosave.settled`
-         judges by the settled mutation's own `draftId`. A send that carried the row turned it
-         into a sent message (`SendService` moved it to `sent`), and deleting that would destroy
-         the account's record of an outgoing mail; a send pressed while the first save was still
-         on the wire carried NO id, made its own row, and the one autosave then adopted is a
-         phantom draft — the sent message sitting in Drafts, reopenable with Send live. */
-      releaseDraft.current(m.draftId ?? null);
+      /* ── INVARIANT T(b), AND THIS IS THE ONE IMPLEMENTATION OF IT ──────────────────────────
+         The live confirmed path used to clear the compose here, in four statements, while the
+         reload path cleared it in two somewhere else — and the two drifted, which is how a
+         delivered message came to sit in the composer behind an idle projection. Both call
+         `settleCompose` now. It still RELEASES when the send used the row and DISCARDS when it
+         did not (`autosave.settled`'s judgement, unchanged, inside): a send that carried the row
+         turned it into a sent message and deleting that would destroy the account's record of an
+         outgoing mail, while a send pressed before the first save made its own row and the one
+         this hook adopted is a phantom — the sent message sitting in Drafts with Send live.
+         The surface half — emptying the form, dropping the selection, arriving at the list — is
+         passed in as `onCleared`, because it is this component's state and not the hook's. */
+      settleComposeRef.current({
+        kind: "sentByMirror", rowId: m.draftId ?? null, toList: m.sendAt ? "drafts" : "ohbox",
+      });
       /**
        * ── AND THE MESSAGE IS SENT, SO THE COMPOSE IS OVER ────────────────────────────────
        *
@@ -3348,12 +3360,6 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
        * looking for their own — and the row this arrival is about is at the top of the list,
        * unselected, exactly as arriving anywhere else in the product leaves it.
        */
-      setOhboxSel(null);
-      /* A SEND-LATER confirm lands where the appointment now lives — the Drafts view's
-         Scheduled group — because the Ohbox has nothing to show for it (no Sent copy is
-         materialised for mail that has not left) and arriving at a list that visibly holds
-         the promise is what makes "Scheduled for Fri 18:00" a fact rather than a toast. */
-      go(m.sendAt ? "drafts" : "ohbox");
       return;
     }
     /**
@@ -3623,8 +3629,21 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
        queue drains. */
     sendInFlight: SEND_IN_FLIGHT_PHASES.has(mailSend.stateOf(COMPOSE_SEND_KEY).phase)
       || sendPendingInOutbox(engine, COMPOSE_SEND_KEY),
+    /* THE SURFACE HALF OF INVARIANT T's CLEAR. The hook owns the binding and ends it; emptying
+       the form, dropping the reading selection and arriving at the list are this component's
+       state, so they are passed in rather than moved. A SEND-LATER confirm lands on the Drafts
+       view's Scheduled group — the Ohbox has nothing to show for mail that has not left, and
+       arriving at a list that visibly holds the promise is what makes "Scheduled for Fri 18:00"
+       a fact rather than a toast. */
+    onCleared: (toList) => {
+      setCompose(EMPTY_COMPOSE);
+      setOhboxSel(null);
+      go(toList);
+    },
   });
-  releaseDraft.current = autosave.settled;
+  settleComposeRef.current = autosave.settleCompose;
+  releaseDraftIdRef.current = autosave.draftId;
+  releaseBindingRef.current = autosave.release;
   /**
    * THE BLOCK STATE FOLLOWS THE ROW. While autosave holds a row, the compose
    * form's signature state mirrors into the editor meta under `draft:<rowId>` — the handle a
@@ -3691,7 +3710,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
         /* The message's own inline editor, seeded with what was written. `openMessageRef` and
            not `openMessage` directly: that callback needs the screener row map and the consent
            partition and is therefore declared far below this one, so the reference is late-bound
-           for the same reason `releaseDraft` is. */
+           for the same reason `settleComposeRef` is. */
         setReplyBody({ text: d.body, html: "" });
         setReplyTo(parent.id);
         /* REMEMBER WHICH ROW SEEDED THIS EDITOR. The inline reply has no autosave, so the send
@@ -3944,25 +3963,35 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
         toast(t("drafts.heldDiscardBlocked"));
         return;
       }
+      /* ── NOTHING IS FORGOTTEN BEFORE THE SERVER HAS ANSWERED — invariant T ─────────────────
+         The three statements below used to run the moment the mutation was dispatched, on the
+         assumption that a delete asked for is a delete done. It is not: a send can reserve the row
+         between the local check above and this request reaching the server (the service decides
+         under the row lock), and the 409 that comes back RESTORES the row in the mirror — while
+         the binding had already been dropped. The compose then sat populated with that message's
+         text holding no row, and two seconds later wrote a second one for it.
+         So the release, the block state and the reply seed all move inside the CONFIRMED branch,
+         and the refusal restores the binding instead. */
       void engine.mutate({ kind: "draft_discard", draftId }).then((res) => {
-        /* THE RACE, ANSWERED THE SAME WAY. A send can reserve the row between the read above and
-           this delete reaching the server — the service checks under the row lock, so one of the
-           two wins and the other is told. The overlay has already rolled back; saying why is the
-           half the person can act on. */
         if (res.status === "rolled_back" && res.error?.code === "send_recorded") {
+          /* THE RACE, ANSWERED THE SAME WAY the local check answers it — and the row comes back,
+             so the compose that was bound to it is bound to it again. */
+          settleComposeRef.current({ kind: "restoredBy409", rowId: draftId });
           toast(t("drafts.heldDiscardBlocked"));
+          return;
+        }
+        if (res.status !== "confirmed") return;
+        // The row's life ends; the block state keyed to it goes with it.
+        writeReplyMeta(`draft:${draftId}`, {});
+        // The compose form may be holding the very row that was just deleted — discarding from the
+        // list while it is open would otherwise leave autosave PATCHing a row that is gone, and
+        // the next pause would report a 404 nobody could act on.
+        if (releaseDraftIdRef.current === draftId) releaseBindingRef.current();
+        // The reply editor may be holding it too — a settle after this delete must not delete twice.
+        for (const [msgId, dId] of replySeedDrafts.current) {
+          if (dId === draftId) replySeedDrafts.current.delete(msgId);
         }
       });
-      // The row's life ends; the block state keyed to it goes with it.
-      writeReplyMeta(`draft:${draftId}`, {});
-      // The compose form may be holding the very row that was just deleted — discarding from the
-      // list while it is open would otherwise leave autosave PATCHing a row that is gone, and the
-      // next pause would report a 404 nobody could act on.
-      if (autosave.draftId === draftId) autosave.release();
-      // The reply editor may be holding it too — a settle after this delete must not delete twice.
-      for (const [msgId, dId] of replySeedDrafts.current) {
-        if (dId === draftId) replySeedDrafts.current.delete(msgId);
-      }
     },
     [engine, autosave, toast, t],
   );

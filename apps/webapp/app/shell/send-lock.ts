@@ -68,6 +68,27 @@
  * > jar that cannot be read answers *unknown*, on which every write site fails closed; an EMPTY
  * > jar admits.
  *
+ * ══ INVARIANT T — WHAT HAPPENS WHEN M'S FATE BECOMES KNOWN ═════════════════════════════════
+ *
+ * S says which message a compose is holding. T says what happens when that message's story ends,
+ * and it is written here because three separate sequences ended the same way: the fate arrived,
+ * the RECORD was tidied up, and the compose was left POPULATED with the delivered text behind a
+ * projection reading `idle` — so the next ordinary press or pause treated it as a new message.
+ * One of those was a second delivery.
+ *
+ * > **T.** A compose is BOUND to at most one message *M* (its row id and/or its compose session).
+ * > When *M*'s fate resolves — the mirror shows *M*'s row `sent`; the server answers 409
+ * > `send_recorded` to a discard of *M*; the durable outbox settles a `mail_send` for the
+ * > compose's lane — the bound compose either **(a) ADOPTS** the resolving row, or **(b) CLEARS**
+ * > exactly as the live confirmed path clears. It never remains populated with *M*'s text behind a
+ * > projection that would admit a fresh key.
+ *
+ * The resolution is answered by ONE function, `settleCompose(fate)` in `compose-autosave.ts` — the
+ * hook owns the binding, so it owns its ending — and every site that releases, adopts or clears a
+ * compose ON A FATE goes through it. A door that merely REPLACES the message on screen (the
+ * reopen, Write-to, a mail link) is an identity move and not a fate; those keep their own release.
+ * The census pins both lists.
+ *
  * The one predicate is {@link holdOf}. Every write site consults it — the autosave create, the
  * autosave PUT, the adopt-on-mount, `openDraft`, `writeTo`, the mailto seam, `cancelCompose`, the
  * Send press, the settled discard — and a census in the web application's own suite pins the
