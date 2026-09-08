@@ -298,6 +298,31 @@ Saving plain text clears the formatting — saving text is saving the whole valu
 carry both shapes at once. A recipient whose mail client shows plain text only reads the same words:
 the plain version is worked out from the formatting when the signature is saved.
 
+### Looking up one address, and saying which half of it the archive can answer
+
+Groundwork for a view of everything involving one correspondent. Nothing on screen changes yet;
+what changes is that the question can be asked at all, and that the answer is honest about its
+own limits.
+
+The copy of your mail on this device could not be searched for an ADDRESS. It indexes words, and
+an address is chopped into words on the way in — `anna@example.com` became `anna`, `example` and
+`com`, three fragments other people's addresses share — so asking for one matched everybody
+called Anna and everybody at any example. It now also keeps the whole address, so mail from and
+to one person can be listed exactly, in either direction or both, counted without double-counting
+anybody who appears on both sides of the same message.
+
+The server's archive can be asked the same question, and it can only answer half of it: mail FROM
+an address is a direct lookup, and mail sent TO one is not, because of how recipients are stored.
+Extending it needs a change to the database rather than to a query, so for now the archive
+answers the half it can and REFUSES the other by name — not with an empty page, which would read
+as "you have never written to them". Whatever asks it is told which half it received, so a view
+can say so rather than presenting one direction as if it were both.
+
+Mail you have sent turns out to be on your device already, and to belong to no pile — so nothing
+has ever listed it, and it is reachable today only through a conversation. A note in the code
+claiming sent mail never reached the device at all has been corrected; it had been wrong since it
+was written, and the check that keeps it true is now part of the suite.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
