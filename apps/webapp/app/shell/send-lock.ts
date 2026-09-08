@@ -581,7 +581,26 @@ function save(rows: SendLock[], owner: string | null = storageOwner()): void {
  * Shared rather than repeated because it WAS repeated, and the two copies disagreed: one exempted
  * unverified locks and the other did not, and the one that did not also persisted its own answer.
  */
-function isLive(r: SendLock, nowMs: number): boolean {
+function isLive(r: SendLock, nowMs: number, pendingLanes?: ReadonlySet<string>): boolean {
+  /**
+   * ── A LANE WHOSE SEND IS STILL IN THE OUTBOX IS NOT AGED OUT, WHATEVER THE CLOCK SAYS ───────
+   *
+   * The age limit and the durable outbox disagree about how long a send can be unresolved, and the
+   * outbox is right. It replays INDEFINITELY — an entry survives every reload until the server
+   * answers — while this record expires after seven days. Leave the tab shut for a week, come back,
+   * and the replay carries the mail out under its original key while the record naming that key has
+   * just been pruned: the composer still holds the text, nothing recognises it, and the next press
+   * mints a fresh key. The recipient gets it twice, a week apart.
+   *
+   * So the verb, not the clock, decides when this record has done its job. The exemption is exactly
+   * as wide as the evidence: only lanes with a pending `mail_send` right now, and it lapses the
+   * moment the outbox drains.
+   *
+   * IT ALSO STOPS A READ FROM DESTROYING ITS OWN ANSWER. `allSendLocks` PERSISTS the filtered list,
+   * so without this the first read after eight days deletes the record and every read after it —
+   * including the one about to ask this question — sees nothing.
+   */
+  if (pendingLanes?.has(r.lane) === true) return true;
   /**
    * A RECORD FROM A LATER FORMAT IS NOT AGED OUT, and this arm is why the answer is not simply
    * the two below it.
@@ -833,10 +852,19 @@ export function releaseSendLock(lane: string, fp: string, owner: string | null =
  * an unreachable half of a pair is a trap for whoever reaches it, and this one had a docblock
  * inviting them to.
  */
-export function allSendLocks(nowMs: number, owner: string | null = storageOwner()): SendLock[] {
+export function allSendLocks(
+  nowMs: number,
+  owner: string | null = storageOwner(),
+  /**
+   * Lanes whose send is still in the durable outbox — exempt from the age limit, and exempt from
+   * this function's own pruning. See {@link isLive}. Omitted by every caller that is not asking
+   * about an unresolved send, so the ordinary read is unchanged.
+   */
+  pendingLanes?: ReadonlySet<string>,
+): SendLock[] {
   const rows = loadOrEmpty(owner);
   if (rows.length === 0) return [];
-  const live = rows.filter((r) => isLive(r, nowMs));
+  const live = rows.filter((r) => isLive(r, nowMs, pendingLanes));
   if (live.length !== rows.length) save(live, owner);
   // RETURNED, not stored: a record from a later format stays in the jar and stays out of this
   // list, because a caller reading fields off it would be reading a shape this build never wrote.

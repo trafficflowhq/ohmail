@@ -84,6 +84,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
+import { OUTBOX_TYPE } from "@ohmail/client-engine";
 import type { EngineMessage, MutationResult, OhmailEngine } from "@ohmail/client-engine";
 import type { ToastFn } from "@ohmail/ui";
 import {
@@ -267,17 +268,23 @@ export const SEND_IN_FLIGHT_PHASES: ReadonlySet<SendPhase> = new Set<SendPhase>(
  * cannot refuse the compose surface's first save.
  */
 export function sendUnsettledFromLastSession(
-  lane: string, latchedFp: string | null, ownKeys: ReadonlySet<string>, owner: string | null = null,
+  lane: string,
+  /** The identity latched at mount, with the compose session it was taken under. See the hook. */
+  latch: { fp: string | null; session: string | null },
+  ownKeys: ReadonlySet<string>,
+  /** `sendPendingInOutbox(engine, lane)` — the verb, which two of the arms below turn on. */
+  pendingOnLane: boolean,
+  owner: string | null = null,
 ): boolean {
   /**
    * ── THE COMPOSE ON SCREEN IS THE MESSAGE A SEND IS STILL CARRYING ──────────────────────────
    *
-   * KEYED ON IDENTITY, NOT ON THE LANE, and the difference is the whole reason this holds where
-   * two earlier shapes could not. A lane is `"compose"` — the name of every message this browser
-   * will ever write. Refusing a press on the lane refuses a genuinely NEW message written after a
-   * crash, which is the worse defect of the pair: a silently unsent mail. Measured twice, in both
-   * shapes tried, against the durable lock's own kill test. Keyed on WHICH MESSAGE, a different
-   * one simply never matches, so it is never held and never refused.
+   * KEYED ON IDENTITY, NOT ON THE LANE, and the difference is why this holds where two earlier
+   * shapes could not. A lane is `"compose"` — the name of every message this browser will ever
+   * write. Refusing a press on the lane refuses a genuinely NEW message written after a crash,
+   * which is the worse defect of the pair: a silently unsent mail. Measured twice, in both shapes
+   * tried, against the durable lock's own kill test. Keyed on WHICH MESSAGE, a different one
+   * simply never matches.
    *
    * The identity is {@link composeBufferFingerprint} on both sides — the value the press recorded
    * ({@link SendLock.bfp}) against the value the buffer computes now. The sent message's own
@@ -285,38 +292,71 @@ export function sendUnsettledFromLastSession(
    * resolved sending mailbox are not in the buffer), so that comparison would match only for an
    * account with no signature.
    *
-   * THE OUTBOX CANNOT ANSWER THIS and it is not a near miss: a restored entry leaves the queue
-   * BEFORE it is dispatched, so `sendPendingInOutbox` reads false for the whole replay — measured.
-   * That window is exactly when the composer holds text whose fate is being decided elsewhere.
-   * The record answers it, because the press wrote it down synchronously before the verb.
-   *
-   * ── HOW IT ENDS, AND IT IS NEVER A TIMER ────────────────────────────────────────────────────
-   *
-   *  · THE SEND SETTLES. `settleCompose` releases the record and empties the buffer, so both
-   *    halves of the comparison stop matching at once.
-   *  · IT COMES BACK UNVERIFIED. `unverifiedSendIntents` is non-empty and this yields — the
-   *    message is then PARKED by its record with the sentence that names that state, which is the
-   *    true one. Never editable-idle, and never held under the wrong sentence.
-   * WHAT DOES **NOT** END IT is the buffer moving, and that was the first shape of this and it was
-   * self-defeating: re-comparing the live buffer here meant an edit lifted the very hold that
-   * exists to prevent the edit, so the tail case still delivered twice with the guard "working".
-   * The comparison belongs to ARMING — is the message on screen at mount the one a send is
-   * carrying — and nothing after. Once armed, only the send's own fate ends it.
+   * ── FOUR ARMS, IN THIS ORDER, AND THE ORDER IS THE RULE ─────────────────────────────────────
    */
-  if (latchedFp === null) return false;
+  /* 1. AN UNVERIFIED SEND OUTRANKS THIS. `unverified` IS an answer — the worst one: the key is
+        spent and nobody knows whether the mail left. The message parks by its record with the
+        sentence that names THAT state. Holding it under "still being sent" would be false. */
   if (unverifiedSendIntents(lane, owner).length !== 0) return false;
-  return allSendLocks(Date.now(), owner)
+
+  /* The lane's records, with the outbox exempting a pending one from the age limit — and from
+     this read's own pruning, which would otherwise delete the answer before anybody read it. */
+  const rows = allSendLocks(Date.now(), owner, pendingOnLane ? new Set([lane]) : undefined)
     // THIS MOUNT'S OWN PRESSES ARE NOT "FROM THE LAST SESSION", and leaving them in was the whole
     // of a measured regression: every record is written by a press, so a rule that reads them all
     // refuses the very resume the record exists for — 23 cases went red saying so, four of them
-    // the durable lock's own kill tests. The keys this mount has claimed are excluded, which
-    // leaves exactly the inherited ones.
-    .some((r) => r.lane === lane && r.bfp === latchedFp && !ownKeys.has(r.key));
+    // the durable lock's own kill tests.
+    .filter((r) => r.lane === lane && !ownKeys.has(r.key));
+  if (rows.length === 0) return false;
+
+  /* 2. A RECORD THIS BUILD CANNOT DISCRIMINATE WITH FAILS CLOSED WHILE ITS SEND IS PENDING.
+        A record written by the shipped previous build carries no `bfp`, so there is no way to ask
+        whether the message on screen is the one it names. The upgrade window is real: install the
+        new build with a send still waiting to go out and the old record is all there is.
+
+        So while that lane's replay is pending, everything on it is held — INCLUDING a message that
+        is genuinely different, which is the one case this arm is deliberately too strict about. It
+        is bounded by the drain (seconds), it costs a wait rather than a duplicate, and the
+        alternative is guessing with no evidence: the arm exists precisely because the evidence
+        that would tell the two apart was never written down. */
+  if (pendingOnLane && rows.some((r) => r.bfp === undefined)) return true;
+
+  /* 3. AND THE ORDINARY CASE: this build's own record, naming the message on screen.
+
+        THE LATCH IS RE-DERIVED WHEN THE COMPOSE SESSION CHANGES — see the hook — and that is what
+        keeps this arm from following the composer onto a message the hold was never taken for. A
+        SECOND check here, comparing the live session against the latched one, was written first and
+        REMOVED: it and the re-derivation each closed the case on their own, so neither could be
+        watched fail and a reader would have read the pair as one guarantee. Measured from both
+        sides — remove either and the case stayed green. The re-derivation is the one kept, because
+        it leaves the hold available to a LATER session that inherits a record of its own, where the
+        session comparison would have refused every hold for the life of the mount. */
+  return latch.fp !== null && rows.some((r) => r.bfp === latch.fp);
 }
 
 export function sendPendingInOutbox(engine: OhmailEngine, lane: string): boolean {
   return engine.pendingMutations().some((p) => p.mutation.kind === "mail_send"
     && sendKeyOf(p.mutation as unknown as MailSend) === lane);
+}
+
+/**
+ * IS A SEND OF THIS LANE STILL IN THE **DURABLE** OUTBOX — the question the QUEUE cannot answer.
+ *
+ * {@link sendPendingInOutbox} reads `engine.pendingMutations()`, which is the in-memory queue, and
+ * for a RESTORED send that list is empty at every moment a surface could look at it. Measured, at
+ * five points on a restored engine — before `start()`, immediately after, +1 ms, +11 ms, and after
+ * the drive resolved: zero, zero, zero, zero, zero. The entry is loaded and dispatched without
+ * ever being observable, so a rule built on that read is a rule that never fires. Two arms of the
+ * hold below were written on it and both were silently dead until this was measured.
+ *
+ * The STORE holds the row for the whole window — one before `start()`, one mid-flight, none once
+ * the send settles — and `OUTBOX_TYPE` is exported for exactly this kind of read. So the durable
+ * record of the verb is the evidence, and it lapses when the verb does, with no timer anywhere.
+ */
+export function sendPendingInDurableOutbox(engine: OhmailEngine, lane: string): boolean {
+  const rows = engine.read().list(OUTBOX_TYPE) as ReadonlyArray<{ mutation?: { kind?: string } }>;
+  return rows.some((r) => r.mutation?.kind === "mail_send"
+    && sendKeyOf(r.mutation as unknown as MailSend) === lane);
 }
 
 /** There is one compose surface, so its send state needs one key. */
@@ -1259,6 +1299,23 @@ export function useMailSend(
     [settle, setPhase, sessionOf],
   );
 
+  /**
+   * ── HANDING A LIVE MOUNT'S OWN LATE RESULT BACK TO IT ───────────────────────────────────────
+   *
+   * `flushPending()` is DESTRUCTIVE: whatever it returns is gone from the engine. The restore
+   * collector below used to pull everything and then SKIP any key this mount was tracking, on the
+   * reasoning that such a key is `flush`'s business — but by then the answer had been consumed and
+   * `flush` would never see it. Nothing was left anywhere: no pending mutation, no late result, no
+   * answer. The compose stayed `queued` for the rest of the session, every field and Cancel
+   * disabled, for a message that HAD been delivered — and the only exit was a reload, which is
+   * where a second Idempotency-Key comes from.
+   *
+   * So the collector routes by OWNERSHIP: a result whose key this mount owns is handed to exactly
+   * the code path its own press would have run. This is that path, kept in a ref because the
+   * collector's effect must not re-subscribe every time a callback identity moves.
+   */
+  const absorbOwn = useRef<(res: MutationResult) => boolean>(() => false);
+
   const flush = useCallback(async (): Promise<void> => {
     timer.current = null;
     if (queued.current.size === 0) return;
@@ -1281,6 +1338,23 @@ export function useMailSend(
       attempt.current = 0;
     }
   }, [engine, absorb]);
+
+  /**
+   * FLUSH'S OWN PER-RESULT WORK, reachable from the restore collector — see {@link absorbOwn}.
+   *
+   * The SAME `absorb`, and the retry timer re-armed on a still-queued answer exactly as `flush`
+   * does it, because a result handed over is a result `flush` will not see and everything `flush`
+   * would have done for it has to happen once. Assigned during render rather than in an effect so
+   * the collector never holds a stale closure over `absorb`.
+   */
+  absorbOwn.current = (res: MutationResult): boolean => {
+    const key = queued.current.get(res.key);
+    const m = inFlight.current.get(res.key);
+    if (!key || !m) return false;
+    absorb(key, m, res);
+    if (res.status === "queued") arm();
+    return true;
+  };
 
   /**
    * ── THE ADOPTION PASS AT MOUNT, AND WHY IT EXISTS NOW WHEN IT DID NOT BEFORE ────────────────
@@ -1349,8 +1423,13 @@ export function useMailSend(
       const results = await engine.flushPending();
       if (cancelled) return;
       for (const res of results) {
-        // Ours only: a key this mount is already tracking is `flush`'s business, not this pass's.
-        if (queued.current.has(res.key)) continue;
+        /* OWNERSHIP FIRST, BEFORE ANYTHING IS DECIDED ON IT. A key this mount owns belongs to the
+           live path; because the pull already consumed it, it is HANDED OVER rather than skipped —
+           skipping it is how a delivered compose came to sit `queued` for ever. */
+        if (queued.current.has(res.key)) {
+          absorbOwn.current(res);
+          continue;
+        }
         const record = recordForSendKey(res.key, Date.now(), owner.current);
         if (record === null) continue;
         if (res.status === "confirmed") {
@@ -1510,20 +1589,33 @@ export function useMailSend(
   const ownKeys = useRef(new Set<string>());
 
   /**
-   * ── THE LATCH: WHICH MESSAGE THIS COMPOSE WAS HOLDING WHEN IT CAME UP ───────────────────────
+   * ── THE LATCH: WHICH MESSAGE THIS COMPOSE WAS HOLDING WHEN THE SESSION BEGAN ─────────────────
    *
-   * Read ONCE, at mount, and never again. That is not an optimisation, it is the whole mechanism:
-   * at mount the buffer has not been touched, so what it holds is exactly what the last session
-   * pressed Send on. Every later read is of a buffer somebody may have edited, and an edit is the
-   * thing being guarded against — a hold that re-derived its own subject from the edited text
-   * would unlock itself the instant it was needed.
+   * Taken when a compose session first becomes visible to this hook, and NOT re-derived while that
+   * session lasts. That is the whole mechanism rather than an optimisation: at that moment the
+   * buffer holds exactly what was pressed Send on, and every later read is of a buffer somebody
+   * may have edited — the thing being guarded against. A hold that re-derived its own subject from
+   * the edited text would unlock itself the instant it was needed, which was the first shape of
+   * this and it was measured: the trace still delivered twice with the guard "working".
    *
-   * `useRef` with a lazy initialiser rather than an effect, because an effect runs AFTER the first
-   * render and the first render is where the compose decides whether it is editable. A hold that
-   * arrives one paint late is a hold somebody can type past.
+   * PER SESSION, NOT PER SHELL MOUNT, and that correction cost a Send button that did nothing.
+   * Latched once for the life of the mount, a hold taken for a restored message followed the
+   * composer onto whatever came next — start a new message during the replay and it stayed held
+   * after the drain, with no exit but a reload. The compose SESSION is the unit: an edit keeps it
+   * (so the hold survives, as it must), while a contact's Write, a mail link or another draft
+   * re-mints it (so the hold is re-derived for what is actually on screen).
+   *
+   * Read during render rather than in an effect, because an effect runs AFTER the first render and
+   * the first render is where the compose decides whether it is editable. A hold that arrives one
+   * paint late is a hold somebody can type past.
    */
-  const latchedFp = useRef<string | null | undefined>(undefined);
-  if (latchedFp.current === undefined) latchedFp.current = composeBufferFingerprint();
+  const latch = useRef<{ fp: string | null; session: string | null } | null>(null);
+  {
+    const live = composeSessionId(owner.current);
+    if (latch.current === null || latch.current.session !== live) {
+      latch.current = { fp: composeBufferFingerprint(), session: live };
+    }
+  }
 
   const send = useCallback(
     (m: MailSend, opts?: { surface?: "inline" }) => {
@@ -1572,7 +1664,8 @@ export function useMailSend(
        */
       if (key === COMPOSE_SEND_KEY
         && sendUnsettledFromLastSession(
-          key, latchedFp.current ?? null, ownKeys.current, owner.current,
+          key, latch.current ?? { fp: null, session: null }, ownKeys.current,
+          sendPendingInDurableOutbox(engine, key), owner.current,
         )) {
         attachSendLockDraft(key, sendSubjects(m, sessionOf(key)), m.draftId ?? null, owner.current);
         return;
@@ -1693,7 +1786,10 @@ export function useMailSend(
       /** See {@link sendUnsettledFromLastSession} — the mount's own keys are what it excludes. */
       /** See {@link sendUnsettledFromLastSession} — the identity latched at mount is the key. */
       restoredPending: (lane: string) => lane === COMPOSE_SEND_KEY
-        && sendUnsettledFromLastSession(lane, latchedFp.current ?? null, ownKeys.current, owner.current),
+        && sendUnsettledFromLastSession(
+          lane, latch.current ?? { fp: null, session: null }, ownKeys.current,
+          sendPendingInDurableOutbox(engine, lane), owner.current,
+        ),
     }),
     [stateFor, send],
   );

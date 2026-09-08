@@ -150,6 +150,11 @@ That message is now held until it has gone — the fields are read-only, Send wa
 why. It clears itself the moment the send completes. A different message you start in the meantime
 is not affected; only the one being sent is held.
 
+One exception, and it lasts as long as the send does. If you updated the app while a message was
+already waiting to go out, there is no record of which message that send is for — the app that
+wrote it did not keep one. Until it has gone, the composer waits whatever you put in it. That is
+the only case where starting something else waits too.
+
 ### A send nobody could confirm is held
 
 It stays in Drafts, it says so when you open it, and the app will not send it again — sending
