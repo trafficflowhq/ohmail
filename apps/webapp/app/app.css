@@ -5646,8 +5646,10 @@ body.dnd-active * { cursor: grabbing !important; }
   opacity: 0.5;
   cursor: default;
 }
-/* The text IS editable in place — a bare textarea wearing the block's own chrome, so editing
-   does not jump the reader into a different-looking control. */
+/* The PLAIN shape of the block: the text is editable in place, a bare textarea wearing the
+   block's own chrome, so editing does not jump the reader into a different-looking control. A
+   signature that carries formatting renders through `.sig-rich` below instead — the same editor
+   the message is written in, read-only — and `Edit as text` is what hands it back to this. */
 /* `TextField` in its LINE shape — the block's own hairline is the boundary. Named by element so
    the block's type, ink and `resize: none` outrank the shape's resets in either load order; a text
    control, so it takes the phone floor. */
@@ -5663,6 +5665,26 @@ textarea.sig-text {
      the same stops so what is shown and what ships are the same columns. */
   -moz-tab-size: 4;
   tab-size: 4;
+}
+
+/* The FORMATTED shape of the block — the compose editor with no toolbar, showing the document
+   the message will carry. It borrows the plain shape's type so the two shapes sit at the same
+   size and one ink step down from the body: whichever shape a signature has, the block is the
+   message's furniture rather than its point.
+
+   The editor's own surface supplies the padding and the caret rules, so nothing here re-states
+   them; `tab-size` is declared for the reason `.sig-text` and the preview declare it — the
+   serialized markup expands tabs to 4-column stops (`signature.ts`), and the surfaces that show
+   the text agree on the width. */
+.sig-rich {
+  font-size:calc(13px + var(--type-up));
+  line-height: 1.45;
+  color: var(--ink2);
+  -moz-tab-size: 4;
+  tab-size: 4;
+}
+.sig-rich .rte-body {
+  padding: 0;
 }
 
 /* ── the reply's subject line — plain text until pressed (item: subject editable in place) ──
@@ -5707,10 +5729,14 @@ input.reply-subject-input { /* by element: this width and type outrank the line 
 }
 
 /* ── the Signatures settings pane ─────────────────────────────────────────────────────────
-   One editor per mailbox: the address as the row label, the plain multi-line editor, then the
-   live preview drawn in the compose block's own chrome — what is approved here is what a
-   message will carry, so the preview borrows `.sig-block`'s framing rather than inventing a
-   second rendering. */
+   One editor per mailbox: the address as the row label, THE MESSAGE EDITOR ITSELF (bold, italic,
+   strike, links, lists, quotes, code — exactly what writing a message offers), then the live
+   preview drawn in the compose block's own chrome. What is approved here is what a message will
+   carry, so the preview borrows `.sig-block`'s framing rather than inventing a second rendering
+   — and since it is the same component read-only, it cannot render differently either.
+
+   The row's spacing is the pre-0.16 pane's and is deliberately left alone: the field treatment
+   for this pane (and the empty state) is a design pass of its own. */
 .sig-settings {
   padding: 10px 0;
   border-bottom: 1px solid var(--hair-soft);
@@ -5723,10 +5749,17 @@ input.reply-subject-input { /* by element: this width and type outrank the line 
 }
 .sig-settings .lab b { display: block; font-size:calc(13px + var(--type-up)); font-weight: 600; }
 .sig-settings .lab span { display: block; font-size:calc(11.5px + var(--type-up)); color: var(--ink2); line-height: 1.5; }
-/* `TextField` (box) — on a settings page a signature editor is a settings field, and it was the
-   borderless compose class that made it read as a paragraph. Its own: the same 4-column tab stops
-   the compose block and the markup use — one width everywhere. */
+/* The compose editor, mounted in a settings pane (0.16, item 11) — so the treatment `TextField`
+   gave this field does NOT reach it: the box was `.tf`'s, and this host carries none of it. The
+   four declarations below are the editor's own and are restored for that reason. THE
+   SETTINGS-FIELD EDGE IS NOT DRAWN HERE and is a designer question at this seam
+   (`.sig-settings-editor` / `.sig-preview-text` / `.sig-rich`) — named rather than claimed. */
 .sig-settings-editor {
+  display: block;
+  width: 100%;
+  font-size:calc(13px + var(--type-up));
+  line-height: 1.45;
+  /* The same 4-column tab stops the compose block and the markup use — one width everywhere. */
   -moz-tab-size: 4;
   tab-size: 4;
 }
@@ -5736,13 +5769,20 @@ input.reply-subject-input { /* by element: this width and type outrank the line 
   border-radius:var(--r-ctl);
   padding: 6px 8px;
 }
+/* The preview is the same editor read-only, so the line breaks are the DOCUMENT's paragraphs
+   and `<br>`s — `white-space: pre-wrap` came off with the textarea, where it was what made a
+   stored newline visible. Left on a wrapper of real elements it would render the whitespace
+   BETWEEN tags as well, which is not in the signature. `tab-size` stays: `signature.ts` names
+   this surface as one of the three that must agree on the stops. */
 .sig-preview-text {
   font-size:calc(13px + var(--type-up));
   line-height: 1.45;
   color: var(--ink2);
-  white-space: pre-wrap;
   -moz-tab-size: 4;
   tab-size: 4;
+}
+.sig-preview-text .rte-body {
+  padding: 0;
 }
 .sig-settings-actions {
   display: flex;

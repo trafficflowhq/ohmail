@@ -157,9 +157,9 @@ function escapeHtml(s: string): string {
  * as ordinary spaces at the same width (`outbound-html.ts`).
  *
  * TABS EXPAND TO 4-COLUMN STOPS — column-aware, next multiple of four, not a fixed run —
- * and the three surfaces that show the text (`.sig-text`, the Settings editor and its
- * preview) declare `tab-size: 4`, so the stops agree for the plain ASCII text signatures are
- * made of. STATED AS AN APPROXIMATION, deliberately: the column count is code units, so a
+ * and the FOUR surfaces that show a signature (`.sig-text`, `.sig-rich`, the Settings editor
+ * and its preview) declare `tab-size: 4`, so the stops agree for the plain ASCII text
+ * signatures are made of. It was three until the block gained a rendered shape. STATED AS AN APPROXIMATION, deliberately: the column count is code units, so a
  * combining mark or a wide glyph before a tab shifts the stop, and the surfaces render a
  * proportional face in which no character-level encoding can promise pixel alignment — a
  * signature that needs true columns needs a monospaced block, which is a design decision this

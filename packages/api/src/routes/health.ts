@@ -1104,11 +1104,9 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // to a dead address once per throttle interval, each attempt returning a bounce into this
   // account's own Ohbox. That is the state this migration was written to end.
   ["away_sender_state", "undeliverable_at"],
-  // mail 0097_folder_state_last_error_class — ONE column, because the migration adds one.
-  // **It is the newest entry, so it is also the tag below.** The 0096 paragraph above carried that
-  // sentence until this migration landed behind it; `MAIL_SCHEMA_MARKER_JOURNAL_TAG` is
-  // single-valued, so the sentence moves with the tag rather than standing in two places — the
-  // docblock's own rule, and leaving both would have shipped a false claim with every gate green.
+  // mail 0097_folder_state_last_error_class — ONE column, because the migration adds one. It was
+  // the newest entry until 0098 landed below it; the tag is single-valued, so the claim moves with
+  // it rather than standing in two places.
   //
   // `folder_state.last_error_class` is WHY the mail server refused a filing, as one of four words
   // this codebase chose. It is probed because the API READS it: the mailbox projection selects it
@@ -1122,6 +1120,18 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // the four words gets no marker of its own — a constraint that gained a set cannot be detected
   // by reading a column name, the same rule the refusal vocabulary above records.
   ["folder_state", "last_error_class"],
+  // mail 0098_signature_html — ONE column, because the migration adds one.
+  //
+  // `mailboxes.signature_html` is the markup half of a mailbox's signature. It is probed for a
+  // sharper reason than the holder columns above: `mailboxSignatures`' twin
+  // (`mailboxSignatureHtmls`) SELECTS THIS COLUMN BY NAME on every `GET /consent`, so an API
+  // ahead of the migration raises Postgres 42703 on the settings read that every client makes at
+  // boot — not on a panel somebody may never open. A database certified healthy while missing it
+  // therefore serves an account that cannot load its own settings at all.
+  //
+  // The derived text half needs no marker of its own: `mailboxes.signature` predates the split
+  // and is probed by nothing here for the same reason nothing else pre-split is.
+  ["mailboxes", "signature_html"],
 ] as const;
 
 /* THE CLOUD HALF OF THE MARKER CENSUS MOVED TO `./health-cloud.js`.
@@ -1910,6 +1920,9 @@ export const MAIL_EXPECTED_MARKERS =
  * and the resolve verb writes both columns in one UPDATE. Its FK change is unprobeable by
  * construction (dropped and re-added under the same name), which that marker's entry records.
  *
+ * `0098_signature_html` is probed as `mailboxes.signature_html` — the signature's markup half, one
+ * additive nullable field. **It is the newest entry, so it is also the tag below.**
+ *
  * That last sentence is the one this docblock keeps getting wrong, and it is now attached to the
  * marker that is actually newest rather than left on an older one. It stood on `0081` and then on
  * `0083` while the tag had already moved to `0084`, so the file asserted "newest" of three
@@ -1927,7 +1940,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0097_folder_state_last_error_class";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0098_signature_html";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */
