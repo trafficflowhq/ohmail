@@ -708,6 +708,7 @@ export default defineConfig({
          the engine bundle (which has its own resolver) went green beside them. Same reason the
          four entries above exist; listed after them because it is the same kind of seam. */
       { find: "@trafficflow/core/ics", replacement: r("../../packages/core/src/ics.ts") },
+      { find: "@trafficflow/core/away-scope", replacement: r("../../packages/core/src/away-scope.ts") },
       /* The folder-name validator (FOLDERS-SPEC.md stage 2) — the rail's Folders group
          validates a create/rename BEFORE the wire with the same rules the server runs, and
          `FoldersRailGroup.tsx` is published shell. A browser-safe leaf (`types.ts` re-export,
