@@ -138,11 +138,13 @@ whatever state the server left the original in.
 
 ### A send nobody could confirm is held
 
-It stays in Drafts, it says so when you open it, and the app will not send it again on its own —
-sending again could deliver the same mail twice. Trying again reuses the same send, which is the
-one repeat your server can recognise and answer for.
+It stays in Drafts, it says so when you open it, and the app will not send it again — sending
+again could deliver the same mail twice, and this release has no way to tell which it would be.
+Checking the Sent folder is what settles it, and if the message did go out the app now says so
+rather than keeping the warning up.
 
-Discarding such a message now says why it stays instead of reporting that something went wrong.
+Discarding such a message says why it stays instead of reporting that something went wrong, from
+the Drafts list as well as from the composer.
 Reopening it while you are part-way through writing something else is refused too, so what is on
 screen is not replaced without asking.
 
