@@ -5576,9 +5576,20 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           connectionDeadBy = null;
           redialAttempts = 0;
           redialNotBefore = 0;
-          /* THE PRESS'S FLOOR GOES WITH THE LADDER. A dial that reached the server ends the
-             condition both of them were rationing; leaving it would refuse the next press for up
-             to fifteen seconds after the mailbox came back. */
+          /* THE PRESS'S FLOOR GOES WITH THE LADDER, and NO TEST WATCHES THIS LINE — said here
+             because the alternative is a later reader taking it for a guarantee.
+             Its contrary state is unreachable: a FORCED dial only runs once the floor has
+             passed, so after one the floor is a past instant whether or not this clears it, and
+             a later press is admitted either way. The one path that could see a difference — the
+             POLL succeeding INSIDE the floor's window — needs the ladder's jitter pinned and the
+             clock frozen across a 13-second jump, and a fixture doing that loses the organizer
+             lease (`lease_lost_race`, then `organizer_stand_down`), after which the resync route
+             refuses and the press dials nothing for a reason that is not this line. A case built
+             on it passed only by asserting before the stand-down landed, which is a race, not
+             evidence; it was removed rather than left looking like a guard.
+             The line stays because it is correct hygiene — a floor outliving the condition it
+             rations is a bug waiting for the next caller — but it is DEFENCE, not a watched
+             invariant, and the mutation table says so by leaving it out. */
           forcedNotBefore = 0;
           if (outcome.leaseRead) {
             leaseUnavailableSince = null;
