@@ -78,6 +78,12 @@ computer — used to count as "nothing holds it", and the next screen after this
 agree to let this computer organize the mailbox. Not being told is not an answer, and the question
 stays on screen until one arrives.
 
+Neither is being told something out of date. Two checks of the same account can be under way at
+once and come back in either order, so an answer prepared before the other install appeared can
+arrive after the one that showed it — and it says exactly what a current answer would say. Setup
+now compares when each answer was last true of the mailbox and ignores the older one, so the
+question is not taken away by news that has been overtaken.
+
 ## [0.14.1] — 2026-09-04
 
 **The phone's 0.14.1 build went out first; this desktop and web release completes 0.14.1.**

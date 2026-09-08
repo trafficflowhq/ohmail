@@ -2142,6 +2142,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
         organizerRole: firstRunMailbox.organizerRole,
         organizedBy: firstRunMailbox.organizedBy,
         organizerState: firstRunMailbox.organizerState,
+        // THE STAMP THAT ORDERS TWO READS — see `OnboardingMailbox.organizerEventAt`. Forwarded
+        // untouched on the same rule as the two below: absent is a build that predates the
+        // column and null is a mailbox nothing has happened to, and the rule that reads it
+        // treats both as "no ordering evidence" rather than as evidence of anything.
+        organizerEventAt: firstRunMailbox.organizerEventAt,
         // FORWARDED UNTOUCHED, both of them. `mailbox-facts.ts` states the rule and the two
         // measured failures behind it: absent and null are different answers on these fields,
         // and a `?? null` at this seam is what destroyed the distinction the last two times.

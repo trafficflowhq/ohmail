@@ -204,9 +204,42 @@ export interface FirstRunProps {
  * Exported for the tests, which drive this table directly rather than through a render: the
  * cursor/derivation interaction is the part with rows, and rows are what a table test is for.
  */
+/**
+ * IS THIS READ AT LEAST AS NEW AS THE ONE THAT SHOWED THE HOLDER?
+ *
+ * The whole of the ordering rule, in one place so its three degenerate cases are visible
+ * together rather than spread through a condition:
+ *
+ *  · NO BASELINE — the read that showed the holder carried no stamp (a mailbox nothing had
+ *    happened to, or a build predating the column). There is nothing to order against, so the
+ *    explicit verdict stands on its own. That is the pre-ordering behaviour, kept exactly where
+ *    no evidence exists rather than replaced by a refusal that could park somebody on the claim
+ *    question for ever.
+ *  · A BASELINE AND NO STAMP NOW — the row went backwards, which only a read issued before the
+ *    stamp existed can do. OLDER.
+ *  · BOTH — later or equal is current; equal because a read can legitimately repeat a stamp
+ *    while some other column moves, and refusing an equal one would refuse the ordinary case.
+ *
+ * Unparseable is treated as absent on both sides, which lands each in the case above it.
+ */
+export function readIsNotOlder(readAt?: string | null, baseline?: string | null): boolean {
+  const base = baseline ? Date.parse(baseline) : Number.NaN;
+  if (!Number.isFinite(base)) return true;
+  const seen = readAt ? Date.parse(readAt) : Number.NaN;
+  if (!Number.isFinite(seen)) return false;
+  return seen >= base;
+}
+
 export function firstRunStep(
   facts: OnboardingFacts, at: OnboardingStep | null, rerun = false, claimAnswered = false,
   add = false,
+  /**
+   * `organizerEventAt` AS IT STOOD ON THE READ THAT PUT A HOLDER ON THE CLAIM QUESTION, or null
+   * when no holder has been shown in this run. See {@link readIsNotOlder} — it is the only thing
+   * that can tell a current "nobody organizes this" from one that a slower read is still
+   * carrying about a moment that has passed.
+   */
+  heldStamp: string | null = null,
 ): OnboardingStep | null {
   const derived = deriveOnboardingStep(facts);
   /**
@@ -293,17 +326,26 @@ export function firstRunStep(
    * A holder recorded with neither kind nor name is still `somebody`: the screen's legacy label is
    * written for exactly that, and an empty name is not an empty mailbox.
    *
-   * ── WHAT THIS DOES NOT CLOSE, AND IT IS SAID HERE BECAUSE IT LOOKS CLOSED ──────────────────
+   * ── AND A `nobody` THAT IS STALE IS NOT AN ANSWER EITHER ───────────────────────────────────
    *
-   * A `nobody` that is STALE. Two reads of one account can be in flight together and settle in
-   * either order, so an answer issued before the holder was recorded can land after the one that
-   * showed it — a legitimate `nobody` about a moment that has passed, indistinguishable from a
-   * current one at this seam. Ordering them needs a per-row stamp that moves when the holder
-   * does; `organizerEventAt` is that stamp, it is projected unconditionally by the service and it
-   * is already on `MailboxFacts` — it simply does not reach here, because `OnboardingMailbox`
-   * carries five fields and this is not one of them.
+   * Two reads of one account can be in flight together and settle in either order, so an answer
+   * issued before the holder was recorded can land AFTER the one that showed it: a `nobody` that
+   * was true of a moment that has passed, and at this seam indistinguishable from a current one
+   * by its content alone. The verdict above cannot see it — both reads say the same thing.
+   *
+   * `organizerEventAt` orders them. Every writer that changes the organizing story stamps it in
+   * the same statement, so the read that showed the holder H fixes a floor, and a `nobody`
+   * carrying an older stamp is a late arrival rather than news. {@link readIsNotOlder} holds the
+   * rule and names what it does when there is no floor to compare against.
+   *
+   * The floor is remembered by the SCREEN and not derived here, because it is a fact about this
+   * run rather than about this read — see {@link heldStamp} and the ref that fills it.
    */
-  const cursor = at === "elsewhere" && holderVerdict(mb) === "nobody" ? null : at;
+  const cursor = at === "elsewhere"
+    && holderVerdict(mb) === "nobody"
+    && readIsNotOlder(mb?.organizerEventAt, heldStamp)
+    ? null
+    : at;
   /* ── A RE-RUN IS AN INTENT, AND IT OUTRANKS THE COMPLETION STAMP ─────────────────────────
    *
    * `rerun` comes from the ROUTE (`#/first-run/again`), which is the only place it can come
@@ -454,10 +496,36 @@ export function FirstRun({
    */
   const [claimAnsweredFor, setClaimAnsweredFor] = useState<string | null>(null);
 
+  /**
+   * THE READ THAT PUT A HOLDER ON THE CLAIM QUESTION, as a floor for every later read.
+   *
+   * A REF AND NOT STATE, and written from an effect rather than during render: nothing on screen
+   * depends on it — it only ever refuses a transition — so a re-render would be work for no
+   * frame, and the value is needed on the render AFTER the one that showed the holder, which is
+   * exactly when an effect has already run. StrictMode's double invocation writes the same value
+   * twice, which is why it is an assignment rather than an accumulation.
+   *
+   * KEYED BY MAILBOX, on `consented` and `claimAnsweredFor`'s rule and for their measured reason:
+   * "Start over → forget this mailbox" and a reconnect inside one mount would otherwise hold a
+   * floor taken from one row against the reads of another, and the two rows' stamps have nothing
+   * to do with each other.
+   */
+  const heldStampRef = useRef<{ mailboxId: string | null; at: string | null } | null>(null);
+  const heldStamp = heldStampRef.current !== null && heldStampRef.current.mailboxId === mailboxId
+    ? heldStampRef.current.at
+    : null;
   const step = firstRunStep(
     facts, at, rerun === true, mailboxId !== null && claimAnsweredFor === mailboxId,
-    add === true,
+    add === true, heldStamp,
   );
+  useEffect(() => {
+    /* ONLY WHILE THE QUESTION IS ACTUALLY ON SCREEN WITH A HOLDER ON IT. The floor is about what
+       this person was shown, so a holder seen on some other step is not one — and a read that
+       says nothing (see `holderVerdict`) may not move a floor either, or a lagging read would
+       raise the very bar it is supposed to fail. */
+    if (step !== "elsewhere" || holderVerdict(facts.mailbox) !== "somebody") return;
+    heldStampRef.current = { mailboxId, at: facts.mailbox?.organizerEventAt ?? null };
+  }, [step, facts.mailbox, mailboxId]);
   const path = useMemo(() => onboardingPath(facts, add === true), [facts, add]);
 
   /**

@@ -126,6 +126,25 @@ export interface OnboardingMailbox {
   /** Whether that holder is still renewing. Read by the SCREEN, not by this derivation. */
   organizerState?: "held" | "stopped" | null;
   /**
+   * WHEN WHAT THIS ROW SAYS ABOUT ITS ORGANIZER LAST CHANGED — the one fact that ORDERS two
+   * reads of the same mailbox, and the reason it is carried here.
+   *
+   * NOT read by this derivation, which is a pure function of one read. It is read by
+   * `firstRunStep`, which is not: two reads of one account can be in flight together and settle
+   * in either order, so an answer prepared before a holder was recorded can land after the one
+   * that showed it — a `nobody` that is true of a moment that has passed, and taking the claim
+   * question away on it puts somebody one press from authorizing a takeover they were never
+   * offered. Every writer that changes the organizing story stamps this in the same statement
+   * (the demotion, the promotion, the release, and the lease read when the state it saw
+   * changed), so a read that carries an older stamp than the one that showed the holder is an
+   * older read.
+   *
+   * `null` is a mailbox nothing has happened to yet; ABSENT is a build that predates the column.
+   * Both mean "no ordering evidence", and the rule that consults it says what it does with that
+   * rather than pretending the evidence exists.
+   */
+  organizerEventAt?: string | null;
+  /**
    * WHEN somebody agreed to let ohmail organize this mailbox. Absent and `null` both mean
    * "nobody has", which is what makes the consent step the unmet condition — the safe direction,
    * because the cost of being wrong is a consent screen shown twice, and the cost of the inverse
