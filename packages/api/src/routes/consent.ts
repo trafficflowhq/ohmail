@@ -1,6 +1,6 @@
 import {
   buildSeedReview, confirmSeed, consentSettings, cutlineCounts, mailboxFoldersOff,
-  mailboxSignatures,
+  mailboxSignatures, mailboxSignatureHtmls,
   resetScreeningState, setAutoSuggest, setBlockAutoUnsubscribe, setBlockRemoteImages,
   setBlockTrackingPixels,
   setDormancyDays, setFoldersEnabled, setLocale, setMailboxFoldersEnabled, setMailboxSignature,
@@ -151,6 +151,17 @@ interface ConsentSettingsBody {
    * `MAILBOX_SIGNATURE_MAX_CHARS`), `null` — and a blank string — clears it.
    */
   signatures?: unknown;
+  /**
+   * Per-mailbox signature MARKUP (mail 0098) — `{ [mailboxId]: string | null }`, `signatures`'
+   * shape exactly. A string is reduced to the compose grammar and stored, and the plain
+   * `signatures` half is DERIVED FROM IT by the service; `null` — and markup that renders to
+   * nothing — clears the signature entirely.
+   *
+   * A mailbox may be named in THIS map or in `signatures`, never in both: one value, one door
+   * (the service states the argument, and the refusal is a 400 here before anything writes).
+   * The two maps also share ONE entry ceiling, because a mailbox costs one write in either.
+   */
+  signaturesHtml?: unknown;
   locale?: unknown;
   themeFace?: unknown;
   /**
@@ -196,6 +207,7 @@ async function applyConsentSettings(
   loadTrackingPixelsAt?: string | null;
   blockAutoUnsubscribeAt?: string | null; foldersEnabledAt?: string | null;
   folderMailboxesOff?: Record<string, string>; signatures?: Record<string, string>;
+  signaturesHtml?: Record<string, string>;
   locale?: string | null; themeFace?: string | null; onboardingCompletedAt?: string;
 }> {
   const hasAuto = "autoSuggest" in body;
@@ -207,16 +219,19 @@ async function applyConsentSettings(
   const hasFolders = "foldersEnabled" in body;
   const hasFolderMailboxes = "folderMailboxes" in body;
   const hasSignatures = "signatures" in body;
+  const hasSignaturesHtml = "signaturesHtml" in body;
   const hasLocale = "locale" in body;
   const hasThemeFace = "themeFace" in body;
   const hasOnboarding = "onboardingCompleted" in body;
   if (!hasAuto && !hasDormancy && !hasScope && !hasImages && !hasPixels && !hasAutoUnsub
-      && !hasFolders && !hasFolderMailboxes && !hasSignatures && !hasLocale && !hasThemeFace
+      && !hasFolders && !hasFolderMailboxes && !hasSignatures && !hasSignaturesHtml
+      && !hasLocale && !hasThemeFace
       && !hasOnboarding) {
     throw new ServiceError(
       "validation_failed", 400,
       "at least one of autoSuggest, dormancyDays, screeningScope, blockRemoteImages, " +
       "blockTrackingPixels, blockAutoUnsubscribe, foldersEnabled, folderMailboxes, signatures, " +
+      "signaturesHtml, " +
       "locale, themeFace or onboardingCompleted is required",
     );
   }
@@ -397,6 +412,72 @@ async function applyConsentSettings(
     signatures = entries as Array<[string, string | null]>;
   }
   /**
+   * THE SIGNATURE MARKUP MAP (mail 0098) — `signatures`' shape rule value for value, and then
+   * TWO rules that only exist because there are now two maps for one value.
+   *
+   * ONE VALUE, ONE DOOR. A mailbox named in both maps is a 400 before anything writes. The
+   * service refuses the same shape at its own door (a call carrying both halves), and this is
+   * that refusal at the wire so a BATCH naming twenty mailboxes cannot persist nineteen of them
+   * before reaching the contradictory one. Reconciling instead of refusing would store a
+   * signature whose html and text say different things to different recipients.
+   *
+   * ONE CEILING, SHARED. A mailbox costs one write inside one transaction whichever map names
+   * it, so the ceiling is over the DISTINCT MAILBOXES the request names rather than per map.
+   * That is also what keeps the door's own arithmetic true: `body-ceiling.ts` derives the worst
+   * legal body from `SETTINGS_MAX_MAILBOX_ENTRIES` × `MAILBOX_SIGNATURE_MAX_CHARS` and states
+   * that `POST /drafts` is the largest — two independently-capped maps would have doubled the
+   * product and made that sentence false, and a comment stating a bound is a claim under test.
+   */
+  let signaturesHtml: Array<[string, string | null]> | undefined;
+  if (hasSignaturesHtml) {
+    const m = body.signaturesHtml;
+    if (typeof m !== "object" || m === null || Array.isArray(m)) {
+      throw new ServiceError(
+        "validation_failed", 400,
+        "signaturesHtml must be an object of mailboxId: string | null",
+      );
+    }
+    const entries = Object.entries(m as Record<string, unknown>);
+    if (entries.length === 0) {
+      throw new ServiceError(
+        "validation_failed", 400, "signaturesHtml must name at least one mailbox",
+      );
+    }
+    for (const [k, v] of entries) {
+      if (!UUID_RE.test(k)) {
+        throw new ServiceError(
+          "validation_failed", 400, "every signaturesHtml key must be a mailbox id",
+        );
+      }
+      if (v !== null && typeof v !== "string") {
+        throw new ServiceError(
+          "validation_failed", 400, "every signaturesHtml value must be a string or null",
+        );
+      }
+    }
+    signaturesHtml = entries as Array<[string, string | null]>;
+  }
+  if (signatures || signaturesHtml) {
+    // The two rules above, applied to the request as a whole. Computed over the union so the
+    // count is DISTINCT mailboxes, and the overlap is named before the count so a request that
+    // breaks both gets the more specific answer.
+    const textKeys = new Set((signatures ?? []).map(([k]) => k));
+    const bothNamed = (signaturesHtml ?? []).map(([k]) => k).filter((k) => textKeys.has(k));
+    if (bothNamed.length > 0) {
+      throw new ServiceError(
+        "validation_failed", 400,
+        "a mailbox may be named in signatures or in signaturesHtml, never both",
+      );
+    }
+    const distinct = new Set([...textKeys, ...(signaturesHtml ?? []).map(([k]) => k)]).size;
+    if (distinct > SETTINGS_MAX_MAILBOX_ENTRIES) {
+      throw new ServiceError(
+        "payload_too_large", 413,
+        `signatures names ${distinct} mailboxes; the limit is ${SETTINGS_MAX_MAILBOX_ENTRIES}`,
+      );
+    }
+  }
+  /**
    * THE CLOSED SET AT THE WIRE, and `null` is a legal MEMBER of the request rather than an absence.
    *
    * "absent" and "null" mean different things on this route and this is the field where the
@@ -462,6 +543,7 @@ async function applyConsentSettings(
     loadTrackingPixelsAt?: string | null;
     blockAutoUnsubscribeAt?: string | null; foldersEnabledAt?: string | null;
     folderMailboxesOff?: Record<string, string>; signatures?: Record<string, string>;
+  signaturesHtml?: Record<string, string>;
     locale?: string | null; themeFace?: string | null; onboardingCompletedAt?: string;
   } = {};
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
@@ -509,14 +591,23 @@ async function applyConsentSettings(
       }
       out.folderMailboxesOff = await mailboxFoldersOff(txCtx.db, txCtx.accountId);
     }
-    if (signatures) {
+    if (signatures || signaturesHtml) {
       // Sequential, like `folderMailboxes` above and for its reasons: each write moves the
       // settings stamp under the account's counter lock, and the echo is the WHOLE map after
       // the last write — one consistent picture, server-confirmed.
-      for (const [mailboxId, signature] of signatures) {
+      for (const [mailboxId, signature] of signatures ?? []) {
         await setMailboxSignature(txCtx, mailboxId, signature);
       }
+      // The markup arm passes `null` as the TEXT half: the service derives it, and a caller
+      // that supplied both would already have been refused at the wire above.
+      for (const [mailboxId, html] of signaturesHtml ?? []) {
+        await setMailboxSignature(txCtx, mailboxId, null, html);
+      }
+      // BOTH maps travel back whichever one was written, because a write to either CHANGES
+      // both columns — a markup save derives the text, and a plain save clears the markup. An
+      // echo carrying only the map that was posted would leave the pane rendering a stale half.
       out.signatures = await mailboxSignatures(txCtx.db, txCtx.accountId);
+      out.signaturesHtml = await mailboxSignatureHtmls(txCtx.db, txCtx.accountId);
     }
     if (hasLocale) {
       out.locale = (await setLocale(txCtx, locale as string | null)).locale;
@@ -654,6 +745,12 @@ export const consentRoutes: Route[] = [
         // assumes; an older SERVER simply omits the field, and the client's absent-means-none
         // read is the same picture.
         signatures: await mailboxSignatures(ctx.db, ctx.accountId),
+        // PER-MAILBOX SIGNATURE MARKUP (mail 0098) — only the mailboxes whose signature has
+        // formatting in it. An absent key here is "no formatting", NEVER "no signature":
+        // the map above answers that, and the two are read together. Present-and-empty for
+        // `signatures`' reason — a client can tell this server having read the rows from one
+        // too old to carry the field, and both pictures render the same.
+        signaturesHtml: await mailboxSignatureHtmls(ctx.db, ctx.accountId),
         // THE INTERFACE LANGUAGE — `'de'`, or `null` for "this account has no preference". Sent as
         // `null` rather than omitted, and normalised to the default rather than to a string, for
         // the same reason `blockRemoteImagesAt` is: the client has to be able to tell "this server
