@@ -379,7 +379,9 @@ itself; another install has to press "Organize here", or you add the mailbox to 
 Pressing the verb asks the same question it always did, with the same confirmation.
 
 The cell saying whether the mail server can be reached is announced to a screen reader when it
-changes. Its text is unchanged.
+changes, and only then: the "Last answered … ago" clause beside it keeps counting without being
+read out again each minute. The chip's change — to "Stopping" at the press, and to the role the
+mailbox settles into afterwards — is announced as well. The text on screen is unchanged.
 
 ### Still to come
 

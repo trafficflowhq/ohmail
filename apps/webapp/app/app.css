@@ -4297,6 +4297,13 @@ input.set-tag-input {
   white-space: normal; text-align: left;
 }
 .mbx-verb .gloss-t { padding: 4px; }
+/* The role line's live node: the chip's label again, for a reader and nobody else. Kept in the
+   layout (not `display:none`, which would take it out of the tree) at one pixel, clipped, out of
+   the flow — the standing pattern for text that is announced and not shown. */
+.mbx-say {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0;
+}
 @media (max-width: 420px) {
   .mbx-role .mbx-btn { white-space: normal; }
 }

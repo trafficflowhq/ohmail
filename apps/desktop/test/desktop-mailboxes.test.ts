@@ -2868,9 +2868,76 @@ describe("the compact card — the role chip, its description, the quiet verb an
     const el = await render("local");
     const c = cell(el);
     expect(c).not.toBeNull();
-    expect(c!.textContent ?? "").toContain("Can't reach the mail server");
-    expect(c!.textContent ?? "").toContain("20 minutes ago");
+    // The VERDICT is the live node's whole text; the duration stands beside it in the cell.
+    expect((c!.textContent ?? "").trim()).toBe(mailboxCopy.desktopStateUnreachable!);
+    const wholeCell = el.querySelector(".set-row .set-val")?.textContent ?? "";
+    expect(wholeCell).toContain("Can't reach the mail server");
+    expect(wholeCell).toContain("20 minutes ago");
     // One live region per row's state, and the chip's description is not one of them.
     expect(el.querySelectorAll('.set-row .set-val [role="status"]').length).toBe(1);
+  });
+
+  /**
+   * THE STAMP TICKS OUTSIDE THE LIVE NODE. With "Last answered 3 minutes ago" inside the
+   * announced sentence, an outage was read out again every minute — the stamp moved, so the
+   * region spoke — for as long as the outage lasted. The verdict is what the live node holds;
+   * the clause with the duration stands beside it, in the tree, never announced.
+   *
+   * WATCH IT FAIL: put the stamp back into the announced sentence — the second reading differs
+   * from the first by one minute.
+   */
+  it("the live node's text is stable across a minute of outage; the duration ticks beside it", async () => {
+    FACTS = [MAILBOX];
+    const t0 = Date.now();
+    bridgeReply = () => new Response(JSON.stringify({
+      items: [{
+        mailboxId: "mbx-1",
+        reachable: false,
+        unreachableSince: new Date(t0 - 20 * 60_000).toISOString(),
+      }],
+    }), { status: 200, headers: { "content-type": "application/json" } });
+    const el = await render("local");
+    const first = (cell(el)!.textContent ?? "").trim();
+    expect(first).toBe(mailboxCopy.desktopStateUnreachable!);
+    expect(el.querySelector(".set-row .set-val")?.textContent ?? "").toContain("20 minutes ago");
+
+    // A minute later the pane paints again (any poll, any state change elsewhere does this).
+    vi.spyOn(Date, "now").mockReturnValue(t0 + 60_000);
+    await repaint("local");
+    expect(el.querySelector(".set-row .set-val")?.textContent ?? "", "the duration stopped counting")
+      .toContain("21 minutes ago");
+    expect((cell(el)!.textContent ?? "").trim(), "the live node re-announced the minute")
+      .toBe(first);
+    // And the duration is in the tree, not a bare span: a reader who reaches the cell hears it.
+    expect(el.querySelector('.set-row .set-val [role="note"]')?.textContent ?? "")
+      .toContain("21 minutes ago");
+  });
+
+  /**
+   * THE PRESS IS ANNOUNCED. The "asked for" note was a live-region verdict, so a reader heard the
+   * stop's answer at the press; the chip that replaced it changed silently — a caption inside a
+   * button is presentational and cannot be a live region. The chip's label is repeated in a
+   * polite live node beside it, seen by nobody, which speaks when the label moves.
+   *
+   * WATCH IT FAIL: drop the `.mbx-say` node — no live node in the role line at all.
+   */
+  it("the role line has a polite live node whose text changes to Stopping at the press", async () => {
+    FACTS = [ORGANIZING];
+    bridgeReply = () => new Response(JSON.stringify({ outcome: "requested" }), {
+      status: 202, headers: { "content-type": "application/json" },
+    });
+    const el = await render("local");
+    const live = () => el.querySelector<HTMLElement>('.mbx-org [role="status"]');
+    expect(live(), "no live node in the role line").not.toBeNull();
+    expect((live()!.textContent ?? "").trim()).toBe(mailboxCopy.stateOrganizing!);
+    // Outside the chip's button: a button's descendants are presentational.
+    expect(live()!.closest("button")).toBeNull();
+
+    await act(async () => { buttonExactly(el, mailboxCopy.stopOrganizingHandBack!)!.click(); });
+    await act(async () => { buttonExactly(el, mailboxCopy.stopOrganizingConfirm!)!.click(); });
+    expect((live()!.textContent ?? "").trim(), "the press changed nothing a reader is told")
+      .toBe(mailboxCopy.chipStopping!);
+    // And it says what the chip says — the two are one label.
+    expect((live()!.textContent ?? "").trim()).toBe(chip(el).label);
   });
 });

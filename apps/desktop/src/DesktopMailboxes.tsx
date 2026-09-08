@@ -1440,8 +1440,18 @@ export function DesktopMailboxes(
   };
 
   /**
-   * What each mailbox is doing, in one line. A closure rather than a module function so it reads
-   * the same translator the rest of the pane does; there is nothing to share it with.
+   * What each mailbox is doing, in one line — the SENTENCE, and apart from it the one clause that
+   * TICKS. A closure rather than a module function so it reads the same translator the rest of
+   * the pane does; there is nothing to share it with.
+   *
+   * ── WHY TWO PARTS ─────────────────────────────────────────────────────────────────────────
+   * The cell is a live region (the row's value slot, `role="status"`), and a live region announces
+   * every text change inside it. With the relative stamp inside the sentence an outage read
+   * "Last answered 3 minutes ago", then "4 minutes ago", once a minute for as long as it lasted —
+   * a reader told every minute what it was told the first time. So the stamp comes back apart:
+   * `said` is what the live node holds, and it changes only when the STATE moves; `when` stands
+   * beside it in the cell, exposed to the tree but never announced. Every other arm has nothing
+   * that ticks. The visible text is the same two clauses in the same order.
    */
   /**
    * WHETHER THIS COMPUTER FILES THIS MAILBOX — the row's own claim, in one place.
@@ -1460,12 +1470,13 @@ export function DesktopMailboxes(
     !cloud && m.status !== "disabled" && m.organizerRole !== "reader"
     && Boolean(m.organizeConsentedAt);
 
-  const stateOf = (m: MailboxFacts): string => {
+  const stateOf = (m: MailboxFacts): { said: string; when: string | null } => {
+    const say = (said: string): { said: string; when: null } => ({ said, when: null });
     if (m.status === "error") {
-      return t("desktopStateError", { code: m.errorCode ?? t("desktopUnknownCode") });
+      return say(t("desktopStateError", { code: m.errorCode ?? t("desktopUnknownCode") }));
     }
     if (m.status === "disabled") {
-      return m.disabledReason ? t("desktopStateHandedOver") : t("desktopStateDisconnected");
+      return say(m.disabledReason ? t("desktopStateHandedOver") : t("desktopStateDisconnected"));
     }
     /* ── UNREACHABLE OUTRANKS BOTH THE ROLE AND THE PROGRESS ───────────────────────────────
      *
@@ -1482,11 +1493,11 @@ export function DesktopMailboxes(
        when this is false, and `reachable: false` sitting under it would announce an outage at a
        mail server this read learned nothing about. Same sentence as the whole-slice arm below:
        the question about this row went unanswered, which is what both of them are. */
-    if (r && !r.answered) return t("desktopStateUnknown");
+    if (r && !r.answered) return say(t("desktopStateUnknown"));
     /* THE SERVER ANSWERED AND SAID NO — above the unreachable arm, because it is a MORE specific
        answer to the same question and the generic one would send somebody to check a network
        that is working perfectly. */
-    if (r?.signInRefused) return t("desktopStateSignInRefused");
+    if (r?.signInRefused) return say(t("desktopStateSignInRefused"));
     /* ── THE ENGINE COULD NOT SAY, AND THAT IS ITS OWN SENTENCE ─────────────────────────────
      *
      * Only when the row has no answer of its own — the check is written on the row rather than on
@@ -1508,22 +1519,27 @@ export function DesktopMailboxes(
      * next good answer replaces it, rather than asserting an outage and then withdrawing it. No
      * debounce for that reason — a delay would hold a true outage back by as long as it holds a
      * false one, and this arm no longer claims anything that needs holding back. */
-    if (!r && reachUnknownForRow(reach, organizesHere(m))) return t("desktopStateUnknown");
+    if (!r && reachUnknownForRow(reach, organizesHere(m))) return say(t("desktopStateUnknown"));
     if (r && !r.reachable) {
       /* `agoStamp(...).rel` AND NOT `day(...)`: an outage is a DURATION, and the neighbouring
          `day` stamp is deliberately date-only because the sentences it serves are standing facts
          somebody reads once. "Unreachable since 5 Sep 2026" tells a person nothing about an
          outage that began twenty minutes ago; "unreachable since 20 minutes ago" is the whole
-         answer. It is the same stamp the quiet-mailbox line already uses on this pane. */
+         answer. It is the same stamp the quiet-mailbox line already uses on this pane. The
+         stamp's clause is the `when` half — see the header — so the sentence the live node
+         announces is the verdict alone, once. */
       return r.unreachableSince
-        ? t("desktopStateUnreachableSince", { when: agoStamp(r.unreachableSince, Date.now()).rel })
-        : t("desktopStateUnreachable");
+        ? {
+            said: t("desktopStateUnreachable"),
+            when: t("desktopStateLastAnswered", { when: agoStamp(r.unreachableSince, Date.now()).rel }),
+          }
+        : say(t("desktopStateUnreachable"));
     }
-    if (m.organizerRole === "reader") return t("stateReading");
-    if (m.syncBlockedSince) return t("desktopStatePaused");
-    if (m.lastSyncAt === null) return t("desktopStateFirstOpen");
-    if (m.initialImportCompletedAt === null) return t("desktopStateCatchingUp");
-    return t("desktopStateUpToDate");
+    if (m.organizerRole === "reader") return say(t("stateReading"));
+    if (m.syncBlockedSince) return say(t("desktopStatePaused"));
+    if (m.lastSyncAt === null) return say(t("desktopStateFirstOpen"));
+    if (m.initialImportCompletedAt === null) return say(t("desktopStateCatchingUp"));
+    return say(t("desktopStateUpToDate"));
   };
 
   /**
@@ -1643,6 +1659,18 @@ export function DesktopMailboxes(
     const stopQueued = released.get(m.id) === "requested" && role === "organizer" && !m.releaseRequestedAt;
     const stopState: "queued" | "pending" | undefined =
       stopQueued ? "queued" : role === "organizer" && m.releaseRequestedAt ? "pending" : undefined;
+    /* THE CHIP'S LABEL, computed once: it is the chip's caption AND the text of the live node
+       beside the chip (below), and the two must never disagree. */
+    const chipLabel =
+      role === "organizer"
+        ? (stopState ? t("chipStopping") : t("stateOrganizing"))
+        /* A legacy row carries no holder columns at all — the pre-role engine recorded only
+           `disabled_reason` — so there is no name to put in `readerLabel`. */
+        : m.legacyStandDown === true
+          ? t("readerLabelLegacy")
+          : role === "released"
+            ? t("stateNotOrganized")
+            : t("readerLabel", { name: holderOf(m) });
     return (
       <div className="mbx-org" data-role={role} data-state={stopState}>
         <div className="mbx-role">
@@ -1655,17 +1683,7 @@ export function DesktopMailboxes(
         <Gloss
           className="mbx-chip"
           placement="chip"
-          caption={
-            role === "organizer"
-              ? (stopState ? t("chipStopping") : t("stateOrganizing"))
-              /* A legacy row carries no holder columns at all — the pre-role engine recorded only
-                 `disabled_reason` — so there is no name to put in `readerLabel`. */
-              : m.legacyStandDown === true
-                ? t("readerLabelLegacy")
-                : role === "released"
-                  ? t("stateNotOrganized")
-                  : t("readerLabel", { name: holderOf(m) })
-          }
+          caption={chipLabel}
           text={
             role === "organizer"
               /* ── A STANDING STOP REQUEST IS ON THE ROW, NOT ONLY IN A LOG (0.14.1) ─────────
@@ -1754,6 +1772,15 @@ export function DesktopMailboxes(
                     : t("readerSinceUnknown", { since: day(m.organizedBy?.since ?? null) })
           }
         />
+        {/* ── THE PRESS IS ANNOUNCED ────────────────────────────────────────────────────────────
+            The "asked for" note used to be a verdict with a live region, so a screen reader heard
+            the stop's answer at the press. The chip carries that answer now, and a caption inside
+            a button cannot be a live region — a button's descendants are presentational, and its
+            card would be announced a second time each time it opened. So the chip's LABEL is
+            repeated here in a polite live node a sighted person never sees: silent at rest, it
+            speaks when the label moves — "Stopping" at the press, then the role the row settles
+            into. The same `chipLabel`, so it cannot say something the chip does not. */}
+        <span className="mbx-say" role="status">{chipLabel}</span>
         {/* THE VERB, WITHHELD WHILE ITS OWN WELL IS OPEN — one place to answer, and no button
             that re-asks a question already on screen.
 
@@ -2006,8 +2033,18 @@ export function DesktopMailboxes(
                from the reach poll. A bare span with text in it is dropped from the accessibility
                tree on Linux, so a reader heard the row's buttons and never this; `role="status"`
                puts it in the tree with its text and announces the change when "Up to date" turns
-               into the outage sentence. The text and its place in the row are untouched. */
-            value={<span className="mbx-reach" role="status">{stateOf(shown)}</span>}
+               into the outage sentence. The ticking stamp stands BESIDE the live node, not inside
+               it (see `stateOf`): in the tree as a note, never announced. The text and its place
+               in the row are untouched. */
+            value={(() => {
+              const s = stateOf(shown);
+              return (
+                <>
+                  <span className="mbx-reach" role="status">{s.said}</span>
+                  {s.when ? <> <span className="mbx-reach-when" role="note">{s.when}</span></> : null}
+                </>
+              );
+            })()}
             control={
               /* ── THE CLAIM IS NOT A ROW CONTROL ANY MORE, AND THE ROW IT WAS ON WAS THE WRONG
                  ONE ────────────────────────────────────────────────────────────────────────────
