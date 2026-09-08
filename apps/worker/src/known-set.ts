@@ -171,6 +171,11 @@ export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
   "insertAttachments", "upsertFolderState", "completeFolderState", "setFolderConflict",
   "deferFolderReconcile",
   "deferFlagReconcile", "recordAudit", "recordAuditMany", "recordChange", "upsertThread",
+  /* `upsertThread`'s device arm — the same rows, the same reason. It is a separate method rather
+     than a branch inside one because the two stores answer "did this insert the row" by different
+     mechanisms, not by different spellings; classified here so a reader does not have to find that
+     out to know it moves no locator. */
+  "upsertThreadOnDeviceStore",
   "mergeThreadMessage", "setMessageThread", "recordRoutingDecision", "enqueueApproval",
   // the mail-0065 wave's writes, none of which touch a projected field (the projection is
   // message_instances + messages.unread/message_id_header + flag_state.observed_seen):

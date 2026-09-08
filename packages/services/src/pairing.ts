@@ -1,4 +1,5 @@
 import { and, count, eq, gt, isNull, isNotNull, desc, type SQL } from "drizzle-orm";
+import { carryDialect } from "@trafficflow/db/dialect";
 import { type Tx } from "@trafficflow/db";
 import { pairingTokens } from "@trafficflow/db";
 import { generateToken, hashToken } from "./auth/crypto.js";

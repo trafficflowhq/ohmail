@@ -1,5 +1,6 @@
 import type { PgliteDatabase } from "drizzle-orm/pglite";
 import type { mailSchema } from "@trafficflow/db/mail";
+import { carryDialect } from "@trafficflow/db/dialect";
 
 /**
  * THE DATABASE-HANDLE REGISTRY — an interface, so a deployment can add its own member.
@@ -106,7 +107,7 @@ export async function runInTransaction<T>(
   const tx = ctx.db as unknown as { transaction: <R>(f: (t: unknown) => Promise<R>) => Promise<R> };
   const result = await tx.transaction(async (handle) => fn({
     ...ctx,
-    db: handle as ServiceContext["db"],
+    db: carryDialect(ctx.db, handle as object) as unknown as ServiceContext["db"],
     noteCredentialAccount: (accountId: string) => { pending = accountId; },
   }));
   if (pending !== null) ctx.noteCredentialAccount?.(pending);

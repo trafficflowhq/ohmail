@@ -9,6 +9,7 @@ import {
   DEFAULT_DORMANCY_DAYS, SEED_MAX_ADDRESSES, SUPPORTED_LOCALES, SUPPORTED_THEME_FACES,
   ServiceError,
 } from "@trafficflow/services/mail";
+import { carryDialect } from "@trafficflow/db/dialect";
 import type { Tx } from "@trafficflow/db";
 import { serviceContext } from "../context.js";
 import { jsonResponse } from "../responses.js";
@@ -547,7 +548,11 @@ async function applyConsentSettings(
     locale?: string | null; themeFace?: string | null; onboardingCompletedAt?: string;
   } = {};
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
-    const txCtx = { ...ctx, db: tx as unknown as typeof ctx.db };
+    // BRANDED. A derived context whose handle is a transaction carries no dialect of its own —
+    // a transaction is a fresh object built by the query builder — so anything below that composes
+    // a statement per store would refuse it. `carryDialect` says where the answer came from, which
+    // is the part a bare stamp at this site would be guessing at.
+    const txCtx = { ...ctx, db: carryDialect(ctx.db, tx as object) as unknown as typeof ctx.db };
     if (hasAuto) {
       out.autoSuggestAt = (await setAutoSuggest(txCtx, auto!)).autoSuggestAt;
     }

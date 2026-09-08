@@ -1880,7 +1880,9 @@ export class MailboxService {
       // being true this must move to `runInTransaction`, whose buffer holds a report until the
       // commit. `credential-report-commit-side.test.ts` requires this marker on every derivation
       // outside `context.ts`, so the next one cannot arrive silently.
-      return this.toDTO({ ...ctx, db: tx as unknown as ServiceContext["db"] }, row!);
+      return this.toDTO({
+        ...ctx, db: carryDialect(ctx.db, tx as object) as unknown as ServiceContext["db"],
+      }, row!);
     }).catch((err: unknown) => {
       // The RE-ENABLE path hits the same index: `disabled → connected` inserts a new entry
       // into it, so reconnecting an address another live row already holds raises 23505 here

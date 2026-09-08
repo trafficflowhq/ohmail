@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { carryDialect } from "@trafficflow/db/dialect";
 import { dialect } from "@trafficflow/db/dialect";
 import { and, desc, eq, gt, gte, inArray, isNotNull, isNull, ne, or } from "drizzle-orm";
 import { devices, refreshTokens, sessions, users, type Tx } from "@trafficflow/db";
