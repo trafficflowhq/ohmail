@@ -54,7 +54,9 @@ change was asked for ended when this computer became the organizer — and only 
 organizing here" afterwards moved the row out of organizer again, and the old note reappeared,
 promising a takeover "within a minute" over a mailbox you had just given up. The same record hid the
 button that would ask for it again, so the row offered no way back. A press is the newest word only
-until another press is made.
+until another press is made. The same lag remains in the other direction: after a stop, pressing
+"Organize here" again leaves the stop's "Asked for" note on the row until Settings is closed and
+reopened, although the takeover is what stands.
 
 **A row could say "Organized by" and then name nobody.** When the install holding a mailbox reports
 no name for itself, the sentence was left to end where the name belongs. It now reads "another
@@ -105,7 +107,8 @@ attempts is what some providers answer by locking an account. It does not open a
 connection if one is already being opened. And a press that fails is not repeatable on demand —
 it is worth one attempt every fifteen seconds, so pressing again straight away is accepted and
 changes nothing, and holding the button down cannot turn into the rapid knocking the interval
-exists to prevent.
+exists to prevent. On the desktop the button itself stays greyed out after a press until Settings is
+closed and reopened; that is a separate defect, still open.
 
 ### A long quiet stretch no longer drops the connection
 
