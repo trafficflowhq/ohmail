@@ -84,13 +84,7 @@ export const ADDRESS_DIRECTIONS: readonly AddressDirection[] = ["any", "from", "
 export type AddressArchive =
   | { state: "searching" }
   | { state: "ready"; items: EngineMessage[]; total: number; direction: AddressDirection }
-  /**
-   * `retry` hangs off THIS arm and no other, so "ask again" cannot be offered where there is
-   * nothing to ask again: `unavailable` means there is no archive behind this client at all and
-   * `ready` has already answered. A retry control over either would be a button that does
-   * nothing, which is the same defect as a missing one and harder to see.
-   */
-  | { state: "failed"; error: string; retry: () => void }
+  | { state: "failed"; error: string }
   | { state: "unavailable" };
 
 /**
@@ -119,18 +113,13 @@ export interface AddressHit {
 /** What the view renders. The designer's AddressView consumes exactly this and nothing else. */
 export interface AddressView {
   /**
-   * Device rows first, then the archive's extras where they answer the direction on screen,
-   * each half newest-first.
+   * Device rows first, then the archive's extras, each half newest-first.
    *
    * NOT ONE RE-SORTED LIST, and that is deliberate: the device holds every direction and the
    * archive holds one, so interleaving by date would mix a complete answer with a partial one
    * into a single timeline in which the reader cannot tell which rows could be missing. The
    * device's half is the list; the archive's half completes it from behind, which is also the
    * order the two arrive in.
-   *
-   * The archive's half is present under `any` and under the direction the archive itself
-   * answered, and ABSENT otherwise — under "To them" against a sender-only archive this is the
-   * device's rows alone. See the memo for why that gate lives here as well as in the view.
    */
   items: AddressHit[];
   /** Per-direction counts over the DEVICE's mirror. `any` is the union — never `from + to`. */
@@ -212,33 +201,11 @@ export function useAddressView({
   );
 
   const [pass, setPass] = useState<{ address: string; outcome: AddressArchive } | null>(null);
-  /**
-   * A HUMAN PRESS ON A FAILED PASS, and nothing else, re-issues the request.
-   *
-   * A counter rather than a boolean: two presses on a door that keeps refusing must be two
-   * requests, and a boolean's second press is a no-op that reads on screen as the button being
-   * dead. It is a dependency of the effect below, which is the whole mechanism — the retry is
-   * the ordinary pass run again, so it cannot drift from the first one.
-   *
-   * There is deliberately no automatic re-ask. A failed archive pass is one door refusing, and
-   * re-asking it on a timer turns one person's outage into a request per second from every open
-   * view; the reader decides.
-   */
-  const [retryTick, setRetryTick] = useState(0);
   const available = engine.serverAddressSearchAvailable();
 
   useEffect(() => {
     if (address.trim() === "") {
-      // A BLANK ADDRESS IS AN ANSWERED QUESTION, NOT A PENDING ONE. Leaving the pass null read
-      // as `searching` below — a view showing "searching the archive" for a question nobody will
-      // ever ask, for ever. It is unreachable from the router (`parseHash` refuses an address
-      // branch with an empty segment), which is exactly why it is worth stating rather than
-      // leaving to a fallback: this is the shape a reader takes for a guarantee.
-      //
-      // `ready` with nothing, and the direction the archive serves — byte for byte what
-      // `OhmailEngine.searchAddressServer` itself answers for a blank address, so the contract
-      // and the engine cannot disagree about what "nothing to ask" looks like.
-      setPass({ address, outcome: { state: "ready", items: [], total: 0, direction: "from" } });
+      setPass(null);
       return;
     }
     if (!available) {
@@ -263,7 +230,7 @@ export function useAddressView({
                 direction: outcome.direction,
               }
               : outcome.state === "failed"
-                ? { state: "failed", error: outcome.error, retry: () => setRetryTick((n) => n + 1) }
+                ? { state: "failed", error: outcome.error }
                 : { state: "unavailable" },
         });
       });
@@ -275,7 +242,7 @@ export function useAddressView({
     // round trip to receive the identical rows, and would blank the archive's half of the count
     // line while it was in flight — a number that flickers on a control that changed nothing
     // about what was asked.
-  }, [engine, address, available, limit, retryTick]);
+  }, [engine, address, available, limit]);
 
   /** The archive's answer, but only while it still belongs to the address on screen. */
   const archive: AddressArchive =
@@ -284,26 +251,6 @@ export function useAddressView({
   const items = useMemo<AddressHit[]>(() => {
     const rows: AddressHit[] = device.items.map((hit) => ({ hit, archiveOnly: false }));
     if (archive.state !== "ready") return rows;
-    /**
-     * THE ARCHIVE'S ROWS ONLY WHERE THEY ARE AN ANSWER TO THE QUESTION ON SCREEN.
-     *
-     * The archive answers ONE direction. Its rows belong in a list showing everything, and in a
-     * list showing exactly the direction it answered — nowhere else. Appending them under every
-     * direction, which this did, put mail the address SENT into a list titled "To them": the
-     * precise false claim this module's header warns against, arriving with a 200 and a count
-     * that adds up.
-     *
-     * `direction === archive.direction` rather than the literal `"from"`, so this needs no edit
-     * on the day the recipient index lands: the archive starts answering a wider direction and
-     * its rows appear under that one on their own. It is also the conservative side of the
-     * comparison — an archive answering `any` under a screen showing `from` contributes nothing
-     * rather than contributing rows that may be to-only.
-     *
-     * The view applies the same rule to what it RENDERS, and the two are not redundant: this one
-     * decides what the contract yields, and it is the one whose absence is silent, because a
-     * caller reading `items` has nothing to compare against.
-     */
-    if (!(direction === "any" || direction === archive.direction)) return rows;
     const held = new Set(device.items.map((h) => h.message.id));
     for (const message of archive.items) {
       if (held.has(message.id)) continue;
@@ -312,7 +259,7 @@ export function useAddressView({
       rows.push({ hit: { message, score: 0, matches: [] }, archiveOnly: true });
     }
     return rows;
-  }, [device.items, archive, direction]);
+  }, [device.items, archive]);
 
   /**
    * `senders-only` exactly when the archive ANSWERED and answered a narrower direction than the
@@ -320,22 +267,8 @@ export function useAddressView({
    * `from`", so the day the recipient index lands and the server answers `any`, this goes
    * `complete` on its own and the view's caveat disappears without a code change here.
    */
-  /**
-   * A BLANK ADDRESS IS NOT A QUESTION, so it has no shortfall — its own case, and not folded in
-   * with "the archive answered everything asked of it".
-   *
-   * Without it the rule reads `ready` + `from` against a toggle of `any` and answers
-   * `senders-only`, so a view would print "the archive cannot be searched by recipient yet" over
-   * a screen with no subject and no rows. `total === 0` is deliberately NOT the test: a real
-   * address with nothing in the from-half still HAS the shortfall — mail sent to that person may
-   * be in the archive and this door cannot see it — so keying on emptiness would hide the caveat
-   * in exactly the case a reader most needs it.
-   */
-  const asked = address.trim() !== "";
   const coverage: AddressCoverage =
-    asked && archive.state === "ready" && archive.direction !== direction
-      ? "senders-only"
-      : "complete";
+    archive.state === "ready" && archive.direction !== direction ? "senders-only" : "complete";
 
   return { items, counts: device.counts, archive, coverage };
 }
