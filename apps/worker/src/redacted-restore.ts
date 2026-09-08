@@ -1,5 +1,6 @@
 import { and, asc, eq, gt, sql } from "drizzle-orm";
 import { applyBodyBytesDelta, auditLog, bodyBytesOf, messageBodies, messages, recordChange, type Tx } from "@trafficflow/db";
+import { dialect } from "@trafficflow/db/dialect";
 import {
   fingerprintDedupKey, messageFingerprint, normalizeMessageId, normalizeMime,
   prepareHtmlForStorage, silentLogger,
@@ -299,6 +300,7 @@ async function selectCandidates(
 async function restoreOne(
   db: Tx, accountId: string, messageId: string, fresh: NormalizedMessage, now: Date,
 ): Promise<boolean> {
+  const d = dialect(db);
   return db.transaction(async (tx) => {
     const [live] = await tx.select({
       id: messageBodies.messageId,
@@ -325,7 +327,7 @@ async function restoreOne(
     // gated on any cap: this is a REPAIR of a body the account already owns, not new storage,
     // and blocking a repair on a billing state would be destroying data by another name.
     await applyBodyBytesDelta(
-      tx, accountId,
+      tx, d, accountId,
       bodyBytesOf({ text: storedText, html: storedHtml }) - Number(live.oldBytes),
     );
 

@@ -89,8 +89,9 @@ export async function unhuskJunkFiledBody(db: Tx, args: {
   const { accountId, husk, fresh, capBytes } = args;
   if (!isHuskSameMessage(husk, fresh)) return "identity_mismatch";
 
+  const d = dialect(db);
   return db.transaction(async (tx) => {
-    const [live] = await dialect(db).forUpdate(tx
+    const [live] = await d.forUpdate(tx
       .select({ text: messageBodies.text, html: messageBodies.html, withheld: messageBodies.withheldReason })
       .from(messageBodies)
       .where(eq(messageBodies.messageId, husk.id))
@@ -101,9 +102,9 @@ export async function unhuskJunkFiledBody(db: Tx, args: {
     const newBytes = bodyBytesOf({ text: fresh.textBody, html: storedHtml });
     const grow = newBytes - oldBytes;
     if (grow > 0) {
-      if (!(await reserveBodyBytes(tx, accountId, grow, capBytes))) return "at_cap";
+      if (!(await reserveBodyBytes(tx, d, accountId, grow, capBytes))) return "at_cap";
     } else if (grow < 0) {
-      await applyBodyBytesDelta(tx, accountId, grow);
+      await applyBodyBytesDelta(tx, d, accountId, grow);
     }
     await tx.update(messageBodies).set({
       text: fresh.textBody,

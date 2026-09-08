@@ -3,6 +3,7 @@ import {
   applyBodyBytesDelta, auditLog, bodyBytesOf, mailboxes, messageBodies, messages, recordChange,
   type Tx,
 } from "@trafficflow/db";
+import { dialect } from "@trafficflow/db/dialect";
 import {
   classifySensitivity, fingerprintDedupKey, messageFingerprint, normalizeMessageId, normalizeMime,
   prepareHtmlForStorage, silentLogger,
@@ -861,6 +862,7 @@ async function repairOne(
   verdict: SensitivityResult,
   now: Date,
 ): Promise<boolean> {
+  const d = dialect(db);
   return db.transaction(async (tx) => {
     const [live] = await tx.select({ id: messages.id }).from(messages)
       .where(and(eq(messages.id, messageId), DAMAGED))
@@ -891,7 +893,7 @@ async function repairOne(
     // abort the repair. Not gated on any cap — a repair of a body the account already owns is
     // not new storage.
     await applyBodyBytesDelta(
-      tx, accountId,
+      tx, d, accountId,
       bodyBytesOf({ text: storedText, html: storedHtml }) - Number(oldBody?.oldBytes ?? 0),
     );
 

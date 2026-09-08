@@ -1230,7 +1230,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       .set({ text: "", html: null, withheldReason: reason })
       .where(and(eq(messageBodies.id, victim.id), isNull(messageBodies.withheldReason)));
     const freed = Number(victim.freed);
-    if (freed > 0) await releaseBodyBytes(this.db, accountId, freed);
+    if (freed > 0) await releaseBodyBytes(this.db, this.d, accountId, freed);
     return true;
   }
 
@@ -1292,7 +1292,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       .returning({ id: messageBodies.id });
     if (updated.length === 0) {
       // A concurrent writer beat this restore: give the reserve back on the lock it holds.
-      await releaseBodyBytes(this.db, storage.accountId, bytes);
+      await releaseBodyBytes(this.db, this.d, storage.accountId, bytes);
       return false;
     }
     return true;
@@ -1440,7 +1440,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     // stored bodies to fit THIS one — bounded, same transaction — and only past that bound does
     // it answer `false`, which is the old decline-new shape kept as the pathological ceiling.
     const reserved = dupe.length > 0
-      ? await reserveBodyBytes(this.db, storage.accountId, bytes, storage.capBytes)
+      ? await reserveBodyBytes(this.db, this.d, storage.accountId, bytes, storage.capBytes)
       : await reserveBodyBytesEvicting(this.db, this.d, storage.accountId, bytes, storage.capBytes);
     const rows = await this.db.insert(messageBodies).values({
       messageId,
@@ -1472,7 +1472,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     }).onConflictDoNothing({ target: messageBodies.messageId })
       .returning({ id: messageBodies.id });
     if (reserved && rows.length === 0) {
-      await releaseBodyBytes(this.db, storage.accountId, bytes);
+      await releaseBodyBytes(this.db, this.d, storage.accountId, bytes);
     }
     return reserved ? "stored" : "withheld";
   }

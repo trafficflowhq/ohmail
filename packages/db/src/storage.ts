@@ -75,17 +75,17 @@ export async function storageUsageOf(tx: Tx, accountId: string): Promise<number>
  * cap is wired is a number nobody may trust.
  */
 export async function reserveBodyBytes(
-  tx: Tx, accountId: string, bytes: number, capBytes: number | null,
+  tx: Tx, d: Dialect, accountId: string, bytes: number, capBytes: number | null,
 ): Promise<boolean> {
   await tx.insert(accountStorage).values({ accountId, bytes: 0 }).onConflictDoNothing();
   if (capBytes === null) {
     await tx.update(accountStorage)
-      .set({ bytes: sql`${accountStorage.bytes} + ${bytes}`, updatedAt: sql`now()` })
+      .set({ bytes: sql`${accountStorage.bytes} + ${bytes}`, updatedAt: d.now() })
       .where(eq(accountStorage.accountId, accountId));
     return true;
   }
   const rows = await tx.update(accountStorage)
-    .set({ bytes: sql`${accountStorage.bytes} + ${bytes}`, updatedAt: sql`now()` })
+    .set({ bytes: sql`${accountStorage.bytes} + ${bytes}`, updatedAt: d.now() })
     .where(sql`${accountStorage.accountId} = ${accountId} and ${accountStorage.bytes} < ${capBytes}`)
     .returning({ bytes: accountStorage.bytes });
   return rows.length > 0;
@@ -93,13 +93,18 @@ export async function reserveBodyBytes(
 
 /**
  * COMPENSATE a reservation whose body insert turned out to be a duplicate (`ON CONFLICT DO
- * NOTHING` inserted no row): the loser reserved bytes it will not store. Clamped with
- * `GREATEST(0, …)` so a compensation can never trip the `>= 0` CHECK — the row lock is already
- * held from the reserve, so this is the same lock, not a second ordering.
+ * NOTHING` inserted no row): the loser reserved bytes it will not store. Clamped at zero through
+ * the seam's largest-of member so a compensation can never trip the `>= 0` CHECK — the row lock is
+ * already held from the reserve, so this is the same lock, not a second ordering.
  */
-export async function releaseBodyBytes(tx: Tx, accountId: string, bytes: number): Promise<void> {
+export async function releaseBodyBytes(
+  tx: Tx, d: Dialect, accountId: string, bytes: number,
+): Promise<void> {
   await tx.update(accountStorage)
-    .set({ bytes: sql`greatest(0, ${accountStorage.bytes} - ${bytes})`, updatedAt: sql`now()` })
+    .set({
+      bytes: d.greatest(sql`0`, sql`${accountStorage.bytes} - ${bytes}`),
+      updatedAt: d.now(),
+    })
     .where(eq(accountStorage.accountId, accountId));
 }
 
@@ -133,33 +138,35 @@ export async function releaseBodyBytes(tx: Tx, accountId: string, bytes: number)
  * are then correct, which is the property the single-statement form cannot have: there, the
  * snapshot is taken before the lock is even requested.
  *
- * `SELECT … FOR UPDATE` and the aggregate are deliberately SEPARATE statements for that reason —
+ * The row lock and the aggregate are deliberately SEPARATE statements for that reason —
  * folding them into one would restore the very snapshot-before-lock shape this removes. Same
  * per-account row lock as {@link reserveBodyBytes}, so this introduces no new lock and no new
  * ordering: call it before the transaction's first `recordChange`, like every other writer here.
  */
 export async function recomputeAccountStorage(tx: Tx, d: Dialect, accountId: string): Promise<number> {
   // The row must EXIST before it can be locked — an account whose bodies all predate 0062 has no
-  // row, and `FOR UPDATE` locks nothing rather than waiting for one to appear.
+  // row, and a row lock locks nothing rather than waiting for one to appear.
   await tx.insert(accountStorage).values({ accountId, bytes: 0 }).onConflictDoNothing();
-  // THROUGH THE QUERY BUILDER, not as `for update` inside the statement's text. The seam's member
+  // THROUGH THE QUERY BUILDER, not as lock syntax inside the statement's text. The seam's member
   // takes a QUERY, so a raw fragment could not go through it — and a fragment member would be the
   // more dangerous shape, because it can be attached to a statement the server refuses to lock
   // while `forUpdate(q, { of })` can only be attached to a query and can name the table.
   await d.forUpdate(tx.select({ locked: accountStorage.accountId }).from(accountStorage)
     .where(eq(accountStorage.accountId, accountId)));
-  const rows = await tx.execute<{ bytes: string }>(sql`
+  // THROUGH THE SEAM'S `exec`, which is also what removed the driver split this used to carry.
+  // Its rows are POSITIONAL — the narrower of the two shapes on purpose, because the server's
+  // driver answers named objects and the device's answers arrays, and a helper passing each
+  // through would compile everywhere and read correctly on exactly one store.
+  const rows = await d.exec(tx, sql`
     update ${accountStorage}
        set bytes = coalesce((select sum(octet_length(b."text") + coalesce(octet_length(b."html"), 0))
                                from message_bodies b
                                join messages m on m."id" = b."message_id"
                               where m."account_id" = ${accountId}), 0),
-           updated_at = now()
+           updated_at = ${d.now()}
      where ${accountStorage.accountId} = ${accountId}
     returning bytes`);
-  // Driver split, the credits precedent: postgres-js answers the array, PGlite `{ rows }`.
-  const list = Array.isArray(rows) ? rows : (rows as unknown as { rows: Array<{ bytes: string }> }).rows;
-  return Number((list as Array<{ bytes: string }>)[0]?.bytes ?? 0);
+  return Number(rows[0]?.[0] ?? 0);
 }
 
 /**
@@ -170,11 +177,16 @@ export async function recomputeAccountStorage(tx: Tx, d: Dialect, accountId: str
  * exists to make — the counter self-corrects upward from the floor, and the backfill re-run
  * recomputes it exactly. Call it BEFORE the transaction's `recordChange` (the lock order).
  */
-export async function applyBodyBytesDelta(tx: Tx, accountId: string, delta: number): Promise<void> {
+export async function applyBodyBytesDelta(
+  tx: Tx, d: Dialect, accountId: string, delta: number,
+): Promise<void> {
   if (delta === 0) return;
   await tx.insert(accountStorage).values({ accountId, bytes: 0 }).onConflictDoNothing();
   await tx.update(accountStorage)
-    .set({ bytes: sql`greatest(0, ${accountStorage.bytes} + ${delta})`, updatedAt: sql`now()` })
+    .set({
+      bytes: d.greatest(sql`0`, sql`${accountStorage.bytes} + ${delta}`),
+      updatedAt: d.now(),
+    })
     .where(eq(accountStorage.accountId, accountId));
 }
 
@@ -201,7 +213,7 @@ export async function applyBodyBytesDelta(tx: Tx, accountId: string, delta: numb
  *    {@link EVICT_INLINE_MAX_BODIES}; past that bound the body is withheld exactly as the old
  *    decline-new behaviour withheld it — the pathological ceiling, not the ordinary path.
  *
- * LOCK ORDER: the counter row FIRST (`FOR UPDATE`), then the body rows — the same
+ * LOCK ORDER: the counter row FIRST (the seam's row lock), then the body rows — the same
  * counter-before-everything order every writer in this module keeps. The repair passes order
  * the other way around (body row, then delta), which is safe only because all per-account
  * worker passes run serially inside one cycle; the eviction pass is registered in that same
@@ -258,7 +270,8 @@ export async function evictOldestBodies(
 
   // The victims, oldest first, with the exact octets each will free — the same
   // `octet_length(text) + octet_length(html)` sum every other counter movement uses.
-  const victimRows = await tx.execute<{ id: string; freed: string }>(sql`
+  // Through the seam's `exec`, whose rows are POSITIONAL — two columns, in the order selected.
+  const victimRows = await d.exec(tx, sql`
     select b."id" as id,
            (octet_length(b."text") + coalesce(octet_length(b."html"), 0)) as freed
       from message_bodies b
@@ -268,9 +281,7 @@ export async function evictOldestBodies(
        and (octet_length(b."text") > 0 or b."html" is not null)
      order by coalesce(m."date", m."created_at") asc, m."id" asc
      limit ${opts.maxBodies}`);
-  const victims = (Array.isArray(victimRows)
-    ? victimRows : (victimRows as unknown as { rows: Array<{ id: string; freed: string }> }).rows
-  ) as Array<{ id: string; freed: string }>;
+  const victims = victimRows.map((r) => ({ id: String(r[0]), freed: Number(r[1]) }));
 
   const need = bytes - opts.targetBytes;
   const chosen: string[] = [];
@@ -278,7 +289,7 @@ export async function evictOldestBodies(
   for (const v of victims) {
     if (freed >= need) break;
     chosen.push(v.id);
-    freed += Number(v.freed);
+    freed += v.freed;
   }
   if (chosen.length === 0) {
     return { evicted: 0, freedBytes: 0, bytesAfter: bytes, more: false };
@@ -287,7 +298,7 @@ export async function evictOldestBodies(
   await tx.update(messageBodies)
     .set({ text: "", html: null, withheldReason: "storage_cap" })
     .where(inArray(messageBodies.id, chosen));
-  await releaseBodyBytes(tx, accountId, freed);
+  await releaseBodyBytes(tx, d, accountId, freed);
   const bytesAfter = Math.max(0, bytes - freed);
   return {
     evicted: chosen.length,
@@ -314,9 +325,9 @@ export async function evictOldestBodies(
 export async function reserveBodyBytesEvicting(
   tx: Tx, d: Dialect, accountId: string, bytes: number, capBytes: number | null,
 ): Promise<boolean> {
-  if (await reserveBodyBytes(tx, accountId, bytes, capBytes)) return true;
+  if (await reserveBodyBytes(tx, d, accountId, bytes, capBytes)) return true;
   if (capBytes === null) return false;   // unreachable: a null cap never refuses
   const target = Math.max(0, capBytes - bytes);
   await evictOldestBodies(tx, d, accountId, { targetBytes: target, maxBodies: EVICT_INLINE_MAX_BODIES });
-  return reserveBodyBytes(tx, accountId, bytes, capBytes);
+  return reserveBodyBytes(tx, d, accountId, bytes, capBytes);
 }
