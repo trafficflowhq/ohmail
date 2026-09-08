@@ -37,6 +37,19 @@ Both ways of re-filing now answer the same way, and the refusal names the machin
 mailbox. Marking mail read is untouched: that is something an install reading a mailbox is genuinely
 allowed to do, and it still happens immediately.
 
+### A fault inside the local mail engine is written down
+
+When the window asks the mail engine on your own computer for something and the engine hits a
+failure it does not recognise, it answers "internal error" and the window tells you something went
+wrong. That answer used to be everything there was: the engine wrote no line about it, so
+`engine.log` — the file the app keeps for exactly this, and the one thing worth sending with a
+report — held nothing at all about the request that failed.
+
+It now records one line per such failure, naming the request it was answering and what kind of
+failure it was. As with every other line in that file, it does not carry the failure's own message,
+your address, or anything from the request. Nothing about what the window shows you changes; the
+difference is that afterwards there is something to read.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

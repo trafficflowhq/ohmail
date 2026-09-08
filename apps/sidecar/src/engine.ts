@@ -1602,6 +1602,31 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       db,
       now,
       requestId: "",
+      /**
+       * A ROUTE FAULT ON THIS DOOR HAS A SINK — the same omission as `SidecarConfig.logger`'s,
+       * one container over, and found the same way.
+       *
+       * `withErrorEnvelope` writes the ONE line that describes an unhandled route fault
+       * (`request_unhandled`, with the method, the route pattern and the thrown value's class)
+       * through `deps.logger`, falling back to `silentLogger` when a host injects none. This
+       * container injected none — so a 500 on the standalone door was answered to the client as
+       * `internal` and recorded nowhere at all. On the one door where the log is the only witness
+       * (the database is on the user's own laptop and nobody reads it), a person reporting "it
+       * said something went wrong" left no trace to read back.
+       *
+       * `withRequestId` runs ABOVE the envelope in `FULL_PIPELINE` and binds `requestId` onto
+       * whatever sits here, so the line a user can quote an id for is the same line this field
+       * makes reachable — which is why it is written beside `requestId` and not with the
+       * diagnostics further down.
+       *
+       * `depsForHost` spreads this container, so the host door inherits the sink rather than
+       * needing its own.
+       *
+       * Spread rather than assigned so an install with no logger keeps the field ABSENT (not
+       * `logger: undefined`), which is what `exactOptionalPropertyTypes` requires of the
+       * optional field and what `silentLogger` is the documented default for.
+       */
+      ...(config.logger === undefined ? {} : { logger: config.logger }),
       session: null,
       authConfig,
       keyProvider,
