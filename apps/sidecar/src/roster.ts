@@ -220,8 +220,14 @@ export interface LocalMailboxRuntime {
   // ── THE ENTRY POINTS ─────────────────────────────────────────────────────────────────────────
   /** Run this mailbox's serial queue. */
   serialize<T>(fn: () => Promise<T>): Promise<T>;
-  /** Drain this mailbox until it reports no backlog; answers how many cycles ran. */
-  syncUntilQuiet(maxCycles?: number): Promise<number>;
+  /**
+   * Drain this mailbox until it reports no backlog; answers how many cycles ran.
+   *
+   * `force` skips the re-dial backoff WAIT and nothing else — it is a person pressing "Sync
+   * now", carried from the resync route. The poll passes nothing, so the ladder still holds
+   * for it; see `redialIfDead` in `engine.ts` for what a press may and may not outrank.
+   */
+  syncUntilQuiet(maxCycles?: number, opts?: { force?: boolean }): Promise<number>;
   /** Connect, ensure the tree if organizing, drain, then poll. Never throws for "no password". */
   start(): Promise<void>;
   /** Stop this mailbox's timer, wait for the in-flight cycle and close its login. Leaves the

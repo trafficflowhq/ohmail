@@ -49,7 +49,7 @@ import {
   API_VERSION, ALLOW_ANY_PROBE_HOST, createApp, DEFAULT_SSE, localRoutes, makeImapProbe,
   makeSendAdapter, makeSmtpProbe, matchRoute,
   type ProbeDialer, type SmtpProbeOptions,
-  type ApiDeps, type ApiServices, type App,
+  type ApiDeps, type ApiServices, type App, type Route,
 } from "@trafficflow/api/local";
 // THE DESKTOP-HOST DOOR's route table (Phase 3): the single-user product set plus the carved
 // session-lifecycle pair, the device list and the anonymous device-pair redeem — and structurally
@@ -1168,6 +1168,56 @@ export function summarizeDrain(cycleMs: readonly number[]): { cycles: number; to
   return { cycles: cycleMs.length, totalMs, slowestMs };
 }
 
+/**
+ * "SYNC NOW" FORCES A RE-DIAL — the local door's one addition to the shared resync route.
+ *
+ * `POST /mailboxes/:id/resync` is what Settings → Mailboxes posts and what the browser's own
+ * "Sync now" calls. The shared handler nulls every folder's cursor so the next cycle re-walks
+ * the mailbox, and answers 202. That is the whole of it on the hosted door, where a worker
+ * picks the work up.
+ *
+ * On THIS door the engine is in this process, and it holds a backoff ladder: after an outage
+ * `redialNotBefore` can be up to five minutes out, so the press was answered 202 and then
+ * nothing happened until the ladder ran down. `syncUntilQuiet`'s only production caller is the
+ * poll timer, so there was no path at all from the button to the heal.
+ *
+ * WRAPPED RATHER THAN REPLACED. The shared handler stays the authority for what a resync IS
+ * (ownership, the organizer-role refusal, the cursor writes); this adds the one thing that is
+ * true only of an in-process engine. Re-implementing the route here would be a second
+ * definition of a write, which is the split this composition avoids everywhere else.
+ *
+ * ON A 202 ONLY. A refusal — 404 for a row this account does not own, 403 for a reader, 409,
+ * a 500 — must not dial: the press was not accepted, and dialling on a refused write would make
+ * the door a way to make this machine open a socket without being allowed to resync.
+ *
+ * FIRE-AND-FORGET, so the answer stays 202 and immediate. Awaiting the drain would hold the
+ * response for as long as a connect takes (fifteen seconds against a server that is down) with
+ * the button disabled behind it, and the route's contract is "queued", not "done". The catch is
+ * not decoration: an unhandled rejection here would be a process-level crash on a mailbox that
+ * is simply still unreachable, which is the ordinary case this exists for.
+ */
+export function withForcedRedial(
+  routes: readonly Route[],
+  runtimeFor: (mailboxId: string) => { syncUntilQuiet(maxCycles?: number, opts?: { force?: boolean }): Promise<number> } | undefined,
+): Route[] {
+  return routes.map((r) => {
+    if (r.method !== "POST" || r.pattern !== "/mailboxes/:id/resync") return r;
+    return {
+      ...r,
+      handler: async (req, deps, params) => {
+        const res = await r.handler(req, deps, params);
+        if (res.status !== 202) return res;
+        const id = params.id;
+        if (id !== undefined) {
+          void runtimeFor(id)?.syncUntilQuiet(undefined, { force: true })
+            .catch(() => { /* the drain reports its own failures; a press must not crash the host */ });
+        }
+        return res;
+      },
+    };
+  });
+}
+
 export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
   const log = config.log ?? ((): void => undefined);
   const now = config.now ?? ((): Date => new Date());
@@ -1340,7 +1390,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       else lan = { address: null, reason: outcome.refusal.reason };
     }
     const app = createApp([
-      ...localRoutes,
+      /* THE PRESS REACHES THE ENGINE. `runtimes` is declared further down this same function;
+         the closure is only ever CALLED from a request handler, long after it exists. Local
+         composition only — the hosted door proxies its resync to a worker and has no runtime
+         here to force. */
+      ...withForcedRedial(localRoutes, (id) => runtimes.get(id)),
       ...localAiRoutes(ai),
       ...localAutoSuggestRoutes({ db, accountId: world.accountId, ai, now }),
       // Which addresses this machine could serve same-network access on — the LAN ceremony's
@@ -5025,12 +5079,17 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * OUTCOME rather than one step of it, and so a caller reaching this method directly (the
        * shell's "sync now", `syncMailbox`) feeds the same bound the poll timer does.
        */
-      const syncUntilQuiet = async (maxCycles = 100): Promise<number> => {
+      const syncUntilQuiet = async (
+        maxCycles = 100,
+        opts: { force?: boolean } = {},
+      ): Promise<number> => {
         // THE HEAL, IMMEDIATELY BEFORE THE DRAIN IT IS FOR — and outside `drainPass`'s serialized
         // body, which would deadlock. See `redialIfDead`. It never throws: a server that is still
         // down leaves the drain below to fail in its own words, which is the class the bound
         // counts and every failure counter exempts.
-        await redialIfDead();
+        /* THE POLL PASSES NOTHING, so the ladder holds for it — `force` reaches here only from
+           the resync route's wrapper, which is a person pressing a button. */
+        await redialIfDead({ force: opts.force === true });
         try {
           const cycles = await drainPass(maxCycles);
           noteCycleServed();
@@ -5372,7 +5431,31 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * Resolved whenever no re-dial is running, so awaiting it is free in the ordinary case.
        */
       let redialInFlight: Promise<void> = Promise.resolve();
-      const redialIfDead = async (): Promise<void> => {
+      /**
+       * @param force A PERSON PRESSED "SYNC NOW". Skips the backoff WAIT and nothing else.
+       *
+       * The ladder is right for a poll and wrong for a person. `redialNotBefore` widens to five
+       * minutes so a server that is down is not knocked on four times a minute; the cost is that
+       * after the network comes back the mailbox can sit unreachable for the rest of that wait,
+       * and the one control the product offers for it did nothing. Measured on the Omarchy
+       * guest: five failed attempts at 15/45/90/150/255 s, the sixth at +295 s, and a press in
+       * between changed nothing.
+       *
+       * EVERY OTHER EARLY RETURN STILL HOLDS, and each is a different kind of no:
+       * `stopped` and `connectionDeadSince === null` say there is nothing to re-dial;
+       * `redialling` says one is already in flight, so a second press joins it rather than
+       * opening a second login; the credential guard says the mailbox is waiting for a person,
+       * not for the network; and `signInRefused` says the SERVER has already answered no — a
+       * press must not turn that into repeated LOGIN attempts, which is what providers throttle
+       * and some answer by locking the account. A press is evidence that somebody is waiting.
+       * It is not evidence that the password changed.
+       *
+       * AND IT DOES NOT RESET THE LADDER. `redialAttempts` is untouched, so a forced attempt
+       * that fails leaves the backoff exactly where it was: the press bought one dial, not a
+       * fresh start. Resetting here would let a person holding the button down reproduce the
+       * four-times-a-minute knocking the ladder exists to prevent.
+       */
+      const redialIfDead = async ({ force = false }: { force?: boolean } = {}): Promise<void> => {
         if (stopped || connectionDeadSince === null || redialling) return;
         /* THE SAME PRECONDITION `start()` KEEPS, and for the same reason: an empty password is a
            login attempt the server will refuse, and a refused login counts toward a lockout on
@@ -5386,7 +5469,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          * attempted at all; the second may, so it is attempted on a widening interval instead of
          * four times a minute. */
         if (signInRefused) return;
-        if (Date.now() < redialNotBefore) return;
+        if (!force && Date.now() < redialNotBefore) return;
         /* ── THE RE-DIAL JOINS `tail`, SO `detach()` WAITS FOR IT ────────────────────────────
          *
          * It cannot QUEUE behind `tail` — `dialAndGate` takes the queue twice and a queued
