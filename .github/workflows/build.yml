@@ -681,13 +681,16 @@ jobs:
       # identical is how they stop being identical. A package already present is
       # a no-op.
       #
-      # `rpm` is here for the INSPECTION, not for the build: Tauri assembles the
-      # RPM with a Rust library and never shells out to `rpmbuild`, so the
-      # packaging step needs nothing installed — but the step that opens the
-      # finished package and reads its file list, its metadata and its `Requires`
-      # is `rpm -qp`, and a runner image is free to stop shipping that tool.
-      # Naming it here means an image change is an apt failure rather than a
-      # silently skipped set of assertions.
+      # `rpm` and `cpio` are here for the INSPECTION, not for the build: Tauri
+      # assembles the RPM with a Rust library and never shells out to
+      # `rpmbuild`, so the packaging step needs nothing installed — but the step
+      # that opens the finished package and reads its file list, its metadata and
+      # its `Requires` is `rpm -qp`, and the one that reads the desktop entry out
+      # of it is `rpm2cpio | cpio`. `rpm2cpio` comes with `rpm`; `cpio` DOES NOT,
+      # and is not in every base image — measured on a stock Fedora 42, where
+      # `rpm` and `rpm2cpio` are both present and `cpio` is absent. Naming both
+      # here means a runner image that drops either is an apt failure rather than
+      # a silently skipped set of assertions.
       - name: Install the Tauri prerequisites
         run: |
           sudo apt-get update
@@ -700,7 +703,7 @@ jobs:
             libayatana-appindicator3-dev \
             libssl-dev \
             build-essential curl wget file patchelf desktop-file-utils \
-            xdg-utils rpm
+            xdg-utils rpm cpio
 
       - name: Toolchain
         run: |
@@ -1415,7 +1418,7 @@ jobs:
             libayatana-appindicator3-dev \
             libssl-dev \
             build-essential curl wget file patchelf desktop-file-utils \
-            xdg-utils rpm
+            xdg-utils rpm cpio
 
       - name: Toolchain
         run: |
@@ -2200,9 +2203,12 @@ jobs:
       - name: Install it on Fedora and start what it installed
         run: |
           set -euo pipefail
-          # `--pull always` so a cached layer of the same tag cannot be what this
-          # runs against. desktop-file-utils is the validator the drill calls;
-          # everything else it needs is in the base image or inside the package.
+          # MEASURED against a stock `fedora:42`, not assumed: `rpm`, `rpm2cpio`,
+          # `awk`, `find` and `ldd` are in the base image, and
+          # `desktop-file-validate` is NOT — it comes from desktop-file-utils,
+          # which is why that package and no other is installed here.
+          # findutils is named beside it so the drill's `find` does not depend on
+          # a base image continuing to carry it.
           docker run --rm \
             -v "$PWD/build:/work:ro" \
             registry.fedoraproject.org/fedora:42 \
