@@ -4537,6 +4537,26 @@ input.set-tag-input {
   animation: none;
   padding: 4px 5px 6px;
 }
+/* A ROW IN HERE MAY WRAP, AND IN THE PILL'S OWN MENU IT MAY NOT.
+ *
+ * `.mm-item` is `white-space: nowrap` (action-bar.css) because the pill's menu holds VERBS —
+ * Reply all, Forward — and a verb broken over two lines reads as two items. This popover reuses
+ * that menu and its items are not all verbs: one of them is a whole sentence ("Everything from
+ * and to this address"). Against `.cpop`'s hard 252px ceiling and its `overflow: hidden`, a
+ * nowrap sentence does not widen the card, it is CLIPPED by it — measured on the ohmarchy face
+ * in English, where the type is wider: the popover's own box overflowed itself by 36px at 390px
+ * through 640px and by 15px above that, so the row read "Everything from and to this addr" with
+ * nothing to say it had been cut. German did not overflow, and neither did the paper face, which
+ * is why this needed a face-and-locale sweep to see at all.
+ *
+ * Wrapping rather than truncating, and rather than widening the card: the sentence is the way
+ * onward and a reader has to be able to read it, the same words the screening sheet's own row
+ * carries (where `.sm-detail` has always wrapped). `align-items: flex-start` keeps a two-line
+ * row's glyph on its first line instead of centred against both. */
+.cpop .mm-item {
+  white-space: normal;
+  align-items: flex-start;
+}
 .msg-rcpt-more {
   flex: none;
   display: inline-flex;
