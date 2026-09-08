@@ -1432,6 +1432,18 @@ export function useMailSend(
         }
         const record = recordForSendKey(res.key, Date.now(), owner.current);
         if (record === null) continue;
+        /* WHICH SURFACE THIS ANSWER MAY SPEAK TO, asked ONCE because both endings below need it
+           and for the same reason. The full argument is in the confirmed arm, where this test was
+           written; the short form is that the record names the message it was minted for and the
+           surface names what it holds now, so "different" means this answer is about a message
+           this compose no longer holds and the screen must be left alone. A record with NO
+           session is not a mismatch — a build or a lane that never had one is not evidence of a
+           different message. */
+        const speaksForScreen = !(
+          record.lane === COMPOSE_SEND_KEY
+          && record.session !== undefined
+          && record.session !== composeSessionId(owner.current)
+        );
         if (res.status === "confirmed") {
           /* THE SEND COMPLETED WHILE NOBODY WAS LISTENING. The surface bound to that message is
              told, with the row the send was delivered from, so it can end the way a live
@@ -1471,11 +1483,7 @@ export function useMailSend(
              (a reply and a forward are named by the message they answer, which no re-mint can
              change). Those settle as before: a rule that fails closed needs the state it fails
              closed ON to be distinguishable from "this shell has no such thing". */
-          if (
-            record.lane === COMPOSE_SEND_KEY
-            && record.session !== undefined
-            && record.session !== composeSessionId(owner.current)
-          ) {
+          if (!speaksForScreen) {
             console.warn(
               "ohmail: send_settled_unbound — a send settled for a compose this surface no longer "
               + `holds (lane "${record.lane}"); the message on screen is a different one and was `
@@ -1499,6 +1507,39 @@ export function useMailSend(
             if (record.session !== undefined) names.push(`compose:${record.session}`);
             attachSendLockDraft(record.lane, names, res.entityId, owner.current);
           }
+        } else if (res.status !== "queued") {
+          /* ── EVERYTHING ELSE RELEASES AND REPORTS ──────────────────────────────────────────
+             A settled late result ends the record it names exactly as the live press ending does:
+             `confirmed` settles, `unverified` parks, everything else releases and reports.
+
+             THE KEY IS SPENT AND NOTHING WAS DELIVERED. A replayed `mail_send` refused
+             non-retryably — `send_failed`, or a typed 409 such as `mailbox_disabled` — is
+             abandoned by the engine and handed back `rolled_back`; by the adapter's contract an
+             answer that MIGHT have delivered is `send_unverified`, which is the arm above and is
+             the one outcome the record must outlive. So there is nothing left for this record to
+             protect, and leaving it standing was the whole defect: `restoredPending` reads it for
+             the record's seven days, and the shell renders that as every field, Send AND Cancel
+             inert under "still being sent from your last session" — for a send that is over and
+             did not go. Nobody could edit the message, send it again, or discard it.
+
+             `releaseSendLock` filters by `(lane, fp)`, so an unresolved record for a DIFFERENT
+             message on the same lane is untouched.
+
+             AND `queued` IS NOT ONE OF THESE, for the reason the live path branches on it first:
+             a queued result is the ABSENCE of an answer, in the engine's own words at the
+             late-result writer. The verb is back on the outbox and the hold is still true. Such a
+             result reaches this loop only through the timed-out dispatch's own recorder, and
+             releasing on it would free a key a request still on the wire is carrying — a second
+             key for a message that may yet be delivered, which is the duplicate this whole file
+             exists to prevent.
+
+             NOTHING BEYOND THE RELEASE AND THE SENTENCE. Settling is the `confirmed` ending, and
+             the row the adapter made for a press that carried none is not adopted here. */
+          releaseSendLock(record.lane, record.fp, owner.current);
+          /* The live path's own failure sentence, on the surface this answer is about: without it
+             the composer comes back editable saying nothing, which is a message the person
+             pressed Send on and no account of what happened to it. */
+          if (speaksForScreen) setPhase(record.lane, phaseFor(res));
         }
       }
     };
