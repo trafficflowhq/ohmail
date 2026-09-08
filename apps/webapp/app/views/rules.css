@@ -15,9 +15,8 @@
   box-shadow:inset 0 0 0 1px var(--hair);transition:box-shadow .18s var(--swift)}
 .rules-search:focus-within{box-shadow:inset 0 0 0 1.5px var(--accent-hair)}
 .rules-search svg{color:var(--ink3);flex:none}
-.rules-search input{flex:1;border:0;background:none;font:inherit;font-size:max(var(--input-floor), calc(13px + var(--type-up)));min-width:0;color:inherit}
-.rules-search input:focus{outline:none}
-.rules-search input::placeholder{color:var(--ink3)}
+/* the field is `TextField` in its LINE shape — the pill above is the boundary and carries the ring */
+.rules-search input{flex:1;font-size:max(var(--input-floor), calc(13px + var(--type-up)));min-width:0}
 /* drop the WebKit search decorations — the native clear glyph is a second, unstyled control */
 .rules-search input::-webkit-search-decoration,
 .rules-search input::-webkit-search-cancel-button{-webkit-appearance:none;appearance:none}

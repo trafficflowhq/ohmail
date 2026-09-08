@@ -59,7 +59,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Button, SegmentedControl, SettingsActions, SettingsField, SettingsRow, Switch } from "@ohmail/ui";
+import { Button, SegmentedControl, SettingsActions, SettingsField, SettingsRow, Switch, TextField } from "@ohmail/ui";
 import { away as awayApi, type AwayResponderWire } from "../api-client";
 
 /**
@@ -300,7 +300,8 @@ export function AwayResponderRow({ onChanged, transport, local = false }: {
           The SUBJECT field that stood above this one is gone: the responder replies in the
           correspondent's own thread under `Re: <their subject>`, so there is nothing to compose. */}
       <SettingsField htmlFor="away-body" label={t("bodyLabel")}>
-        <textarea
+        <TextField
+          multiline
           id="away-body"
           rows={4}
           value={draft.body ?? ""}

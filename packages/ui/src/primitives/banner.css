@@ -1,0 +1,50 @@
+/* ═══ BANNER — a standing fact at the head of a list, pinned wide and in the flow narrow ══════
+ *
+ * The form is decided by ONE media rule at the bottom of this file and by nothing else. Its
+ * literal is the shell's own breakpoint — `layout.mobileMax` (900) in `@ohmail/tokens`, so the
+ * rule reads `min-width: 901px` exactly as the rail's and the split's do — and a test pins the two
+ * to each other, because a media query cannot read a custom property and a second breakpoint
+ * typed by hand is how a banner ends up pinned on a tablet the rest of the shell treats as a phone.
+ *
+ * The gutter is the rows' (`.rows{padding:0 16px}`): the banner is the list's first block and
+ * lines up with what follows it, not with the group labels above (30px), which are headings.
+ *
+ * `background` is the accent wash painted over the panel: the wash alone is translucent on
+ * purpose (it is a tint of the ground, not a colour), and a pinned banner with rows scrolling
+ * under a translucent ground is unreadable. The gradient-over-colour form keeps the wash's exact
+ * value while giving it an opaque floor, in both schemes and on both faces.
+ *
+ * `z-index: 2` because rows are `position: relative; z-index: 1` (the raised row's ring) and would
+ * otherwise paint over a pinned banner as they pass. It applies only while the banner is
+ * positioned, i.e. pinned. Consequence worth knowing: a pinned banner is a stacking context, so a
+ * fixed card opened from INSIDE it (a gloss beside the sentence) stacks within the banner's level —
+ * above the rows and the reading column, below the shell's fixed chrome (`--z-dock` and up).
+ */
+.banner{
+  display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;
+  margin:4px 16px 8px;padding:9px 12px;
+  border-radius:var(--r-card);border-inline-start:2px solid var(--accent);
+  background:linear-gradient(var(--accent-soft),var(--accent-soft)) var(--panel);
+  color:var(--ink);font-size:calc(12px + var(--type-up));line-height:1.45;
+}
+/* The sentence is the flexible part and may wrap; `min-width: 0` is what lets it. */
+.banner-text{flex:1 1 auto;min-width:0}
+.banner-act{margin-inline-start:auto;flex:none}
+/* the quiet accent verb every notice in this slot wears */
+.banner-act button{
+  font-size:calc(11.5px + var(--type-up));font-weight:600;color:var(--accent-ink);
+  border-radius:var(--r-pill);padding:2px 9px;white-space:nowrap;
+}
+.banner-act button:hover{background:var(--accent-soft)}
+@media (max-width: 640px){
+  .banner-act button{min-height:44px} /* the thumb's number — see chip.css */
+}
+
+/* THE ONE RULE THAT DECIDES THE FORM. Pinned at the top of the scroller it is the first block of.
+   `top` is the banner's RESTING offset — the scroller's ring room (`list-pane.css`'s padding, the
+   same token product) plus the banner's own 4px top margin — so the stuck position and the resting
+   position are the same pixel and the banner does not hop when the list starts to move. Measured:
+   with `top` at the ring room alone it moved 4px on the first scroll under paper. */
+@media (min-width: 901px){
+  .banner{position:sticky;top:calc(var(--focus-w) * var(--teach) + 4px);z-index:2}
+}

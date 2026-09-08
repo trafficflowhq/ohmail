@@ -150,6 +150,7 @@ export function OhboxView({
   demo,
   replyDone,
   noticeSection,
+  standingNotice,
   resurfaced = [],
   newForYou,
   previouslySeen,
@@ -195,6 +196,20 @@ export function OhboxView({
    * lives. Absent means absent: no placeholder, no reserved height.
    */
   noticeSection?: ReactNode;
+  /**
+   * THE STANDING NOTICE — the list's FIRST BLOCK, inside the scroller, not the header's last line.
+   *
+   * `noticeSection` above is the header slot: what stands there stays put at every width and
+   * pushes the doorbell down. That is right for the offer and the organizer notice, which ask
+   * for something or report a change; it was wrong for the away responder's line, which states a
+   * standing setting. On a phone a standing line pinned above the rows is a toolbar taking a
+   * third of the screen; on a desktop the same line scrolling away is a fact hidden from the one
+   * pane its owner reads. So the away line goes HERE — the `Banner` primitive's one media rule
+   * pins it at the desktop breakpoint and lets it flow below it — and this slot's whole contract
+   * is where it renders: first, inside `.scroller`. Same rule as its sibling: the view draws what
+   * it is given and gates nothing; absent means absent.
+   */
+  standingNotice?: ReactNode;
   /** Fixture world or a real mailbox — decides the "older mail" tail. See its use below. */
   demo: boolean;
   /**
@@ -2445,6 +2460,10 @@ export function OhboxView({
           ) : null
         }
       >
+        {/* THE STANDING NOTICE IS THE SCROLLER'S FIRST CHILD — see the prop. Nothing may be
+            rendered above it here: `banner.css` pins it with `position: sticky` at the top of
+            THIS scroller, and a sibling above it would be what the banner sticks under. */}
+        {standingNotice}
         {/* TWO listboxes, not one: "New" and "Earlier" are separated by a group label, and
             an option's listbox has to be its actual container. Each is labelled, because an
             unnamed pair of listboxes is worse than none.

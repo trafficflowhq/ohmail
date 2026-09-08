@@ -1,6 +1,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { Button } from "../primitives/Button.js";
 import { Kbd } from "../primitives/Kbd.js";
+import { TextField } from "../primitives/TextField.js";
 import "./focus-reply.css";
 
 export interface FocusReplyMessage {
@@ -145,7 +146,8 @@ export function FocusReplyOverlay({
             <div className="from">{message.from}</div>
             <p className="prev">{message.preview}</p>
             {editor ?? (
-              <textarea
+              <TextField
+                multiline
                 ref={textareaRef}
                 placeholder={copy.placeholder}
                 aria-label={copy.replyAria}

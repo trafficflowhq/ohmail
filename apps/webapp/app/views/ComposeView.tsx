@@ -47,7 +47,7 @@ import { useTranslations } from "next-intl";
 import { addressBook } from "@ohmail/client-engine";
 import type { EngineDraft, OhmailEngine } from "@ohmail/client-engine";
 import type { Editor } from "@tiptap/react";
-import { Button, Chip, Icon, Kbd, useToast } from "@ohmail/ui";
+import { Button, Chip, Icon, Kbd, TextField, useToast } from "@ohmail/ui";
 import { chordKeys, useBinding, useKeyBindings, useModGlyph, useWritingSurface } from "../shell/keymap";
 import { go } from "../shell/routing";
 import { displayAddress } from "../shell/idn";
@@ -796,9 +796,9 @@ export function ComposeView({
                 placeholder carries it for everyone else. Sized between the address rows and the
                 body, because that is where a subject sits in the message it heads. */}
             <div className="c-field c-subject">
-              <input
+              <TextField
                 id="compose-subject"
-                className="c-input"
+                shape="line"
                 type="text"
                 aria-label={t("subject")}
                 placeholder={t("subject")}

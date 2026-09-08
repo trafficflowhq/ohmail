@@ -30,7 +30,7 @@ import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useRowBadgeCopy } from "../shell/row-copy";
 import { presentsUnread, type EngineMessage, type TagDTO } from "@ohmail/client-engine";
-import { Button, Kbd, ListPane, ListRows, MessageRow, ReadColumn, TagDot } from "@ohmail/ui";
+import { Button, Kbd, ListPane, ListRows, MessageRow, ReadColumn, TagDot, TextField } from "@ohmail/ui";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { avatarOf, rowStamp, hueOf, placeLabel, rowAddress, senderName, tagsOfMessage } from "../shell/format";
 import { useZoneNav } from "../shell/zone-nav";
@@ -302,8 +302,8 @@ function TagManage({
     return (
       <div className="tag-manage">
         <TagDot hue={hueOf(tag)} />
-        <input
-          className="join-input tag-manage-input"
+        <TextField
+          className="tag-manage-input"
           autoFocus
           value={mode.draft}
           aria-label={t("renameAria")}

@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import type { Editor } from "@tiptap/react";
+import { TextField } from "@ohmail/ui";
 
 /**
  * THE LINK POPOVER — the destination input the toolbar's Link button and ⌘K both open.
@@ -153,7 +154,7 @@ export function LinkPopover({ editor, onClose }: LinkPopoverProps) {
       onKeyDown={onKeyDown}
       onBlur={onBlur}
     >
-      <input
+      <TextField
         ref={inputRef}
         className="rte-linkpop-url"
         type="text"

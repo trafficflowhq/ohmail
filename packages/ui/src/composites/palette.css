@@ -3,8 +3,9 @@
 .palette{position:fixed;left:50%;top:15vh;translate:-50%;z-index:var(--z-pal);width:min(520px,92vw);
   border-radius:calc(var(--r-overlay) * 22 / 20);background:var(--float);box-shadow:var(--lift-3);
   overflow:hidden;animation:rise .24s var(--spring)}
-.palette input{width:100%;border:0;background:none;padding:16px 22px;font-size:max(var(--input-floor), calc(14.5px + var(--type-up)));border-bottom:1px solid var(--hair-soft)} /* input boundary — kept */
-.palette input:focus{outline:none}
+/* The field is `TextField` in its LINE shape: the sheet's edge is the boundary, and the hairline
+   under the input is the line between the question and the answers. */
+.palette input{width:100%;padding:16px 22px;font-size:max(var(--input-floor), calc(14.5px + var(--type-up)));border-bottom:1px solid var(--hair-soft)} /* input boundary — kept */
 .palette input::placeholder{color:var(--ink2)}
 .pal-list{list-style:none;max-height:44vh;overflow-y:auto;padding:7px;margin:0}
 .pal-list li{display:flex;align-items:center;gap:10px;padding:9px 14px;border-radius:calc(var(--r-card) * 13 / 14);font-size:calc(13px + var(--type-up));cursor:pointer}

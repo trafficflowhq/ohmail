@@ -42,6 +42,24 @@ so your rules and the tidying pass can file it as they would anything else.
 
 Fixed on ohmail Cloud on 2026-09-09; in the desktop app with this release.
 
+### Text fields show their edge before you type
+
+Every place text is typed — the settings fields, the screening note, the signature editors, the
+Junk window's search, the rules search, the folder filter, the link popover — now draws one text
+field: a 1px edge on a slightly recessed ground that is present while the field is empty, one focus
+ring, and read-only and disabled states that look the same everywhere, in light and dark. Several
+of these fields had no edge until they held text, so an empty one was a placeholder and a resize
+handle and nothing that said "type here"; the Junk window's search had no edge at all, because its
+rule named a colour that was never defined. A field standing inside a compose header row, a
+floating card or the folder rail keeps the row or the card as its boundary, as before.
+
+### The away responder's line scrolls with the list on a phone
+
+The Ohbox line saying the away responder is on stood above the list at every width and stayed
+there while the list scrolled. It is the list's first block now: on a desktop it stays pinned at
+the top while the rows pass under it; on a phone it is read at the top and scrolls away with the
+list. The sentence and its "Away settings" link are unchanged.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

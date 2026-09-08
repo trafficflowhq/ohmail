@@ -70,6 +70,17 @@ export { Waterline } from "./primitives/Waterline.js";
 export type { WaterlineProps } from "./primitives/Waterline.js";
 export { InfoNote } from "./primitives/InfoNote.js";
 export type { InfoNoteProps } from "./primitives/InfoNote.js";
+export { Gloss, placeGloss, GLOSS_EDGE, GLOSS_GAP } from "./primitives/Gloss.js";
+export type { GlossProps, GlossPlacement, GlossPosition } from "./primitives/Gloss.js";
+export { TextField } from "./primitives/TextField.js";
+export type {
+  TextFieldProps,
+  TextFieldInputProps,
+  TextFieldAreaProps,
+  TextFieldShape,
+} from "./primitives/TextField.js";
+export { Banner } from "./primitives/Banner.js";
+export type { BannerProps } from "./primitives/Banner.js";
 
 /* composites */
 export { RailNav } from "./composites/RailNav.js";

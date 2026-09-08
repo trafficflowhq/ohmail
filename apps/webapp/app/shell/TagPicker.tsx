@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import type { TagDTO } from "@ohmail/client-engine";
-import { TagDot } from "@ohmail/ui";
+import { TagDot, TextField } from "@ohmail/ui";
 import { hueOf } from "./format";
 
 export interface TagPickerState {
@@ -113,8 +113,9 @@ export function TagPicker({
       aria-label={t("pickerAria")}
       style={{ left: state.x, top: state.y }}
     >
-      <input
+      <TextField
         ref={inputRef}
+        shape="line"
         type="text"
         placeholder={t("pickerPlaceholder")}
         autoComplete="off"

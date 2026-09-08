@@ -41,7 +41,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Button } from "@ohmail/ui";
+import { Button, TextField } from "@ohmail/ui";
 import { ApiError, consent as consentApi, type SeedReviewWire } from "../api-client";
 import { displayAddress } from "../shell/idn";
 
@@ -215,7 +215,7 @@ export function SeedReviewView({
           </p>
         ) : null}
 
-        <input
+        <TextField
           className="seed-filter"
           type="search"
           value={filter}

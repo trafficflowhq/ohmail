@@ -51,7 +51,7 @@ import type {
   EmailAddress,
   EngineMessage,
 } from "@ohmail/client-engine";
-import { Button, Kbd } from "@ohmail/ui";
+import { Button, Kbd, TextField } from "@ohmail/ui";
 import { ComposeAttach, composeAttachCap } from "../components/ComposeAttach";
 import { rowAddress, senderName } from "./format";
 import { displayAddress } from "./idn";
@@ -701,8 +701,9 @@ export function InlineReply({
           chrome, a bare harness) renders the plain sentence rather than a dead control. */}
       {mode === "reply" && onSubject ? (
         editingSubject ? (
-          <input
-            className="c-input reply-subject-input"
+          <TextField
+            shape="line"
+            className="reply-subject-input"
             type="text"
             aria-label={t("subjectAria")}
             value={outgoingSubject}

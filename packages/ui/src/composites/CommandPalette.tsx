@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon, type IconName } from "../icons.js";
 import { Kbd } from "../primitives/Kbd.js";
+import { TextField } from "../primitives/TextField.js";
 import "./palette.css";
 
 export interface Command {
@@ -91,8 +92,9 @@ export function CommandPalette({
     <>
       <div className="pal-bg" onClick={onClose} />
       <div className="palette" role="dialog" aria-modal="true" aria-label={ariaLabel}>
-        <input
+        <TextField
           ref={inputRef}
+          shape="line"
           type="text"
           placeholder={placeholder}
           autoComplete="off"

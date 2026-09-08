@@ -52,16 +52,18 @@
 /* ── fields ── label above, input, hint below; a group lays them side by side while room lasts */
 .set-field{display:flex;flex-direction:column;gap:6px;padding:8px 0 6px;min-width:0}
 .set-field > label,.set-field-label{font-size:max(var(--input-floor), calc(11.5px + var(--type-up)));font-weight:600;color:var(--ink2)}
-.set-field .set-input,.set-field input,.set-field select,.set-field textarea{
+/* Text controls in a field are `TextField` (primitives/text-field.css) — the box below is the
+   SELECT's, the one control here that is not a text field, drawn to the same values so the two
+   stand level in a `.set-fields` grid. Change one, change both. */
+.set-field select{
   width:100%;box-sizing:border-box;padding:9px 12px;font:inherit;font-size:max(var(--input-floor), calc(13px + var(--type-up)));line-height:1.45;color:var(--ink);
   background:var(--canvas);border:1px solid var(--hair);border-radius:calc(var(--r-card) * 12 / 14)}
 .set-field select{appearance:none;-webkit-appearance:none;padding-right:34px;cursor:pointer;
   background-image:linear-gradient(45deg,transparent 50%,var(--ink3) 50%),linear-gradient(135deg,var(--ink3) 50%,transparent 50%);
   background-position:calc(100% - 18px) 55%,calc(100% - 13px) 55%;background-size:5px 5px;background-repeat:no-repeat}
-.set-field input:focus-visible,.set-field select:focus-visible,.set-field textarea:focus-visible{
+.set-field select:focus-visible{
   outline:var(--focus-w) solid var(--focus,var(--accent));outline-offset:0;border-color:transparent}
-.set-field input:disabled,.set-field select:disabled{color:var(--ink3);background:var(--tint);cursor:default}
-.set-field .set-mono,.set-field input.set-mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.02em}
+.set-field select:disabled{color:var(--ink3);background:var(--tint);cursor:default}
 .set-field-hint{font-size:max(var(--input-floor), calc(11.5px + var(--type-up)));color:var(--ink3);line-height:1.5;max-width:62ch}
 /* a field with its verb beside it ("Test key") — the button never wraps, the input gives, and
    below the width where BOTH fit the verb drops to its own line rather than squeezing the field

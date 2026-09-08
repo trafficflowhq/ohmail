@@ -50,7 +50,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Avatar, InfoNote } from "@ohmail/ui";
+import { Avatar, InfoNote, TextField } from "@ohmail/ui";
 import { usePileNames } from "./decision-copy";
 import { avatarHue, initialsOf } from "./format";
 import { displayAddress, displayAddressee, displayRuleMatch } from "./idn";
@@ -246,7 +246,8 @@ export function SubjectRuleSheet({
           >
             {t("subjectEditLead")}
           </button>
-          <input
+          <TextField
+            shape="line"
             type="text"
             className="sm-edit-input"
             value={custom}

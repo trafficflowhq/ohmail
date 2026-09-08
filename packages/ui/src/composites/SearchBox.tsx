@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Icon } from "../icons.js";
 import { Kbd } from "../primitives/Kbd.js";
+import { TextField } from "../primitives/TextField.js";
 import "./search.css";
 
 export interface SearchBoxProps {
@@ -42,7 +43,8 @@ export function SearchBox({
   return (
     <div className={className ? `search-box ${className}` : "search-box"}>
       <Icon name="search" />
-      <input
+      <TextField
+        shape="line"
         type="text"
         value={value}
         spellCheck={false}

@@ -45,6 +45,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
+import { Banner } from "@ohmail/ui";
 import { apiConfigured, away as awayApi, type AwayResponderWire } from "../api-client";
 import type { AwayTransport } from "./AwayResponderRow";
 import { go } from "./routing";
@@ -187,20 +188,33 @@ function openAwaySettings(): void {
  * `role="status"`: the responder being on is exactly the kind of ambient fact a screen reader
  * should hear once and not be interrupted by.
  *
- * IT IS A STANDING PANE, NOT A SUBLINE (`ohx-standing`). Every other line in this slot
- * announces a CHANGE and can be made to go — the organizer notice keeps a "Mark read" that
- * ends it. This one states a condition that holds until its owner ends it, and it was reported
- * from real use as reading like one more pile description, which is the one thing it is not.
- * The box is the difference; the words are unchanged.
+ * IT IS A STANDING PANE, NOT A SUBLINE — the `Banner` primitive (`packages/ui`). Every other
+ * line in the header slot announces a CHANGE and can be made to go — the organizer notice keeps a
+ * "Mark read" that ends it. This one states a condition that holds until its owner ends it, and it
+ * was reported from real use as reading like one more pile description, which is the one thing it
+ * is not. The box is the difference; the words are unchanged.
+ *
+ * AND IT IS THE LIST'S FIRST BLOCK, NOT THE HEADER'S LAST LINE. Rendered through `OhboxView`'s
+ * `standingNotice` slot — inside the scroller — so the banner's one media rule can give it both
+ * forms: pinned at the top of the list on a desktop, where a standing fact belongs in view; in the
+ * flow on a phone, read at the top and gone with the first swipe, where the same line pinned
+ * would be a toolbar taking a third of the screen. The offer and the organizer notice stay in the
+ * header slot — they must not scroll away, and they must not displace the doorbell.
+ *
+ * `ohx-away` is a hook for tests and the fit harness; nothing styles it.
  */
 export function AwayNotice({ audience, throttle }: { audience: Audience; throttle: Throttle }) {
   const t = useTranslations("away");
   return (
-    <div className="ohx-notice ohx-standing" role="status">
-      <span>{t("notice", { audience, throttle })}</span>
-      <button type="button" onClick={openAwaySettings}>
-        {t("noticeSettings")}
-      </button>
-    </div>
+    <Banner
+      className="ohx-away"
+      action={
+        <button type="button" onClick={openAwaySettings}>
+          {t("noticeSettings")}
+        </button>
+      }
+    >
+      {t("notice", { audience, throttle })}
+    </Banner>
   );
 }

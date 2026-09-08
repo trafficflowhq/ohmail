@@ -32,7 +32,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Button } from "@ohmail/ui";
+import { Button, TextField } from "@ohmail/ui";
 
 export function SignaturesRow({
   mailboxes,
@@ -101,8 +101,9 @@ export function SignaturesRow({
                 {stored.trim().length > 0 ? t("signatures.mailboxOn") : t("signatures.mailboxOff")}
               </span>
             </div>
-            <textarea
-              className="c-input sig-settings-editor"
+            <TextField
+              multiline
+              className="sig-settings-editor"
               aria-label={`${t("signatures.title")}: ${mb.address}`}
               value={shown}
               rows={Math.min(Math.max(shown.split("\n").length, 2) + 1, 10)}

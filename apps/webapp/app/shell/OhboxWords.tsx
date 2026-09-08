@@ -56,7 +56,7 @@
 
 import { useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { Button } from "@ohmail/ui";
+import { Button, TextField } from "@ohmail/ui";
 
 import { DEFAULT_LOCALE } from "./locale";
 
@@ -161,7 +161,8 @@ export function OhboxWords({
   return (
     <div className="set-screening-bar">
       <label className="set-note-inline" htmlFor="ohbox-bar">{t("screening.barLabel")}</label>
-      <textarea
+      <TextField
+        multiline
         id="ohbox-bar"
         className="set-screening-textarea"
         rows={4}

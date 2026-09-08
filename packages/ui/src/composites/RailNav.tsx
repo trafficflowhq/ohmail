@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon } from "../icons.js";
 import { Kbd } from "../primitives/Kbd.js";
 import { TagDot, type TagHueName } from "../primitives/Chip.js";
+import { TextField } from "../primitives/TextField.js";
 import "./rail.css";
 
 export interface RailItem {
@@ -451,8 +452,9 @@ function TagsGroup({
               {/* The `+` sits exactly where a tag dot does, so the input reads as the row it
                   replaced rather than as a control that dropped in. */}
               <Icon name="plus" className="ritem-plus" />
-              <input
+              <TextField
                 ref={inputRef}
+                shape="line"
                 className="ritem-new-input"
                 value={draft}
                 placeholder={create.placeholder}

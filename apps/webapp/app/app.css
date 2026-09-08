@@ -184,9 +184,10 @@ body.reading .shell {
   gap: 8px;
   min-width: 0;
 }
-.tag-manage-input {
+input.tag-manage-input { /* by element: the row is the width, the field gives */
   flex: 1 1 auto;
   min-width: 0;
+  width: auto;
 }
 /* The delete question and the sentence about what survives — the same wording the Settings
    pane uses, stacked tight so the confirm reads as one thing. */
@@ -338,16 +339,9 @@ body.reading .shell {
   border-bottom: 0;
 }
 
+/* `TextField` (box); only its place in the column is decided here. */
 .seed-filter {
-  width: 100%;
   margin: 6px 0 10px;
-  padding: 8px 10px;
-  font: inherit;
-  font-size:calc(13px + var(--type-up));
-  color: var(--ink);
-  background: var(--canvas);
-  border: 1px solid var(--hair);
-  border-radius:calc(var(--r-ctl) * 9 / 8);
 }
 
 /* The refusal sits ABOVE the list, so the list — and everything ticked in it — stays put. */
@@ -970,38 +964,13 @@ body.reading .shell {
   }
 }
 
-/* ── THE AWAY RESPONDER'S NOTICE IS A STANDING PANE ──────────────────────────────────────
-   The other tenants of this slot announce a CHANGE and can be dismissed. This one reports a
-   condition that holds until its owner ends it — mail is leaving the account unprompted — and
-   as a bare subline it read as one more pile description, which is what it was reported as.
-   So it gets a box: the soft accent ground the settings banners use, the card radius, and a
-   2px rule down its leading edge so the eye finds an OBJECT before it reads a sentence.
-   Deliberately not an alert: nothing here is wrong and the responder being on is usually
-   wanted, so there is no warning colour, no icon and no border around the whole box.
-   Both faces come out of the tokens — paper rounds the corners, ohmarchy squares them
-   (`--r-card` is 0 there) and keeps the same ground — and no face is named here.
-   `border-inline-start`, not `border-left`, so the rule follows the writing direction.
-   The action keeps the quiet accent capsule every verb in this slot wears; it sits at the far
-   end on one line and drops below the sentence when the pane is too narrow for both, which is
-   what keeps a long German sentence inside the box at a phone width instead of past it. */
-.ohx-notice.ohx-standing {
-  align-items: center;
-  padding: 9px 12px;
-  border-radius: var(--r-card);
-  border-inline-start: 2px solid var(--accent);
-  background: var(--accent-soft);
-  color: var(--ink);
-}
-/* The sentence is the flexible part and may wrap; `min-width: 0` is what lets it, because a
-   flex item's floor is its content otherwise and the box would grow instead of the text
-   wrapping. */
-.ohx-notice.ohx-standing > span {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-.ohx-notice.ohx-standing > button {
-  margin-inline-start: auto;
-}
+/* ── THE AWAY RESPONDER'S NOTICE IS A STANDING PANE — the `Banner` primitive ─────────────
+   It used to be `.ohx-notice.ohx-standing`, the pane's rules written here beside the subline's.
+   The pane is `packages/ui`'s `Banner` now (primitives/banner.css: the soft accent ground over
+   the panel, the card radius, the 2px leading rule, the quiet verb — and the ONE media rule that
+   pins it at 901px and up while it scrolls with the rows below), and `AwayNotice` renders through
+   `OhboxView`'s `standingNotice` slot INSIDE the scroller rather than in this header slot. The
+   two rules below stay for the header slot's remaining tenants. */
 
 /* ============ the organizer notice: the same quiet line, once per change ================
    The Ohbox notice's second tenant. Which install organizes a mailbox can change — a press on
@@ -1392,27 +1361,12 @@ body.reading .shell {
   padding: 0;
   font-weight: 600;
 }
+/* The look is the text field's (`TextField`, box): one edge, one ring, one ground wherever text
+   is typed. This field's own: the settings prose measure, and a floor tall enough to say it takes
+   a paragraph rather than a line. */
 .set-screening-textarea {
-  width: 100%;
   max-width: 62ch;
-  box-sizing: border-box;
-  resize: vertical;
   min-height: 88px;
-  padding: 10px 12px;
-  border: 1px solid var(--hair-soft);
-  border-radius:calc(var(--r-ctl) * 10 / 8);
-  /* `--float`, not the undefined `--surface`: that token is declared nowhere in the app, so
-     `var(--surface, #fff)` resolved to the white fallback in BOTH themes — a glaring white
-     field, with light ink on it, in dark mode. `--float` is the theme-aware raised-surface
-     token (white in light, a lifted dark in dark), matching the field to the pane behind it. */
-  background: var(--float);
-  color: var(--ink);
-  font: inherit;
-  line-height: 1.55;
-}
-.set-screening-textarea:focus-visible {
-  outline: 2px solid var(--accent, #c15f3c);
-  outline-offset: 1px;
 }
 .set-screening-bar .set-note-inline {
   padding: 0;
@@ -1582,21 +1536,8 @@ body.reading .shell {
 .scn-junk-search {
   margin: 4px 14px 8px;
 }
-.scn-junk-search input {
-  width: 100%;
-  box-sizing: border-box;
-  font: inherit;
-  font-size:max(var(--input-floor), calc(13px + var(--type-up)));
-  color: var(--ink);
-  background: var(--float);
-  border: 1px solid var(--line);
-  border-radius:calc(var(--r-ctl) * 10 / 8);
-  padding: 7px 10px;
-}
-.scn-junk-search input:focus {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
+/* The field itself is `TextField` (box). The rule that stood here read `var(--line)`, a token
+   declared nowhere — so the whole `border` declaration was invalid and the search had no edge. */
 /* The one-time sweep offer — a card at the head of the segment, the empty-state's voice, with
    its number, its one press, and the way to say "not now". */
 .scn-junk-sweep {
@@ -1931,7 +1872,12 @@ body.reading .shell {
    would have turned one calm block into two stacked widgets. So the input carries no border
    and no background of its own; the row's own hairline is the field, and focus moves that
    hairline to the accent rather than drawing a second edge around it. `--ink` and not `--ink2`
-   because these are the message's own words, like the body below them. */
+   because these are the message's own words, like the body below them.
+
+   THE TEXT CONTROLS IN THESE ROWS ARE `TextField` IN ITS LINE SHAPE (`packages/ui`,
+   `text-field.css`): the one text-field treatment, with the box withdrawn because THIS ROW is
+   the boundary. `.c-input` below is what remains for the header's non-text control — the From
+   `<select>` — and for nothing else. */
 .c-field {
   transition: border-color 0.15s var(--swift);
 }
@@ -2098,12 +2044,12 @@ textarea.c-input:read-only {
 .c-subject {
   padding: 10px 2px;
 }
-.c-subject .c-input {
+.c-subject .tf {
   font-size:max(var(--input-floor), calc(15px + var(--type-up)));
   font-weight: 600;
   letter-spacing: -0.01em;
 }
-.c-subject .c-input::placeholder {
+.c-subject .tf::placeholder {
   font-weight: 500;
   letter-spacing: 0;
 }
@@ -2628,7 +2574,7 @@ textarea.c-input:read-only {
 }
 /* The input takes the rest of the line and never shrinks below a typeable width — mid-list
    it wraps to its own line instead. */
-.rcp-input {
+input.rcp-input { /* by element: the floor outranks the line shape's `flex: 1` in either load order */
   flex: 1 1 120px;
   min-width: 120px;
   width: auto;
@@ -2670,11 +2616,12 @@ textarea.c-input:read-only {
      pixel. Only this mode can overflow, so the wrap is scoped to it. */
   flex-wrap: wrap;
 }
-.set-tag-input {
+input.set-tag-input {
   flex: 1 1 auto;
   min-width: 0;
-  /* `.join-input` is `width: 100%`, which forced the verb beside this input onto a line of its
-     own in every create row (tags, invites, devices). The row is the width; the input gives. */
+  /* The text field is `width: 100%`, which would force the verb beside this input onto a line of
+     its own in every create row (tags, invites, devices). The row is the width; the input gives.
+     By element, so this outranks the field's own width in either load order. */
   width: auto;
 }
 .set-tag-acts {
@@ -2739,16 +2686,13 @@ textarea.c-input:read-only {
   overflow: hidden;
   animation: rise 0.2s var(--spring);
 }
+/* `TextField` in its LINE shape — the card is the boundary; the hairline under the query is the
+   line between the question and the list. */
 .tagp input {
   width: 100%;
-  border: 0;
-  background: none;
   padding: 11px 16px;
   font-size:max(var(--input-floor), calc(12.5px + var(--type-up)));
   border-bottom: 1px solid var(--hair-soft); /* input boundary — kept */
-}
-.tagp input:focus {
-  outline: none;
 }
 .tagp input::placeholder {
   color: var(--ink2);
@@ -3692,7 +3636,7 @@ textarea.c-input:read-only {
   .compose-editor {
     min-height: 160px;
   }
-  .c-subject .c-input {
+  .c-subject .tf {
     font-size:max(var(--input-floor), calc(14.5px + var(--type-up)));
   }
   .set-layout {
@@ -4991,21 +4935,10 @@ textarea.c-input:read-only {
   box-shadow: var(--lift-3);
   animation: rise 0.2s var(--spring);
 }
+/* `TextField` (box). Its own: it takes the popover's remaining width and yields to the verbs. */
 .rte-linkpop-url {
   flex: 1 1 150px;
   min-width: 0;
-  padding: 6px 10px;
-  border: 1px solid var(--hair);
-  border-radius:var(--r-ctl);
-  background: var(--canvas);
-  color: var(--ink);
-  font: inherit;
-  font-size:calc(13px + var(--type-up));
-}
-.rte-linkpop-url:focus-visible {
-  outline: 1.5px solid var(--accent);
-  outline-offset: -1px;
-  border-color: transparent;
 }
 .rte-linkpop-apply,
 .rte-linkpop-remove {
@@ -5715,18 +5648,17 @@ body.dnd-active * { cursor: grabbing !important; }
 }
 /* The text IS editable in place — a bare textarea wearing the block's own chrome, so editing
    does not jump the reader into a different-looking control. */
-.sig-text {
+/* `TextField` in its LINE shape — the block's own hairline is the boundary. Named by element so
+   the block's type, ink and `resize: none` outrank the shape's resets in either load order; a text
+   control, so it takes the phone floor. */
+textarea.sig-text {
   display: block;
   width: 100%;
-  border: 0;
-  background: none;
   resize: none;
-  font: inherit;
-  font-size:calc(13px + var(--type-up));
+  font-size:max(var(--input-floor), calc(13px + var(--type-up)));
   line-height: 1.45;
   color: var(--ink2);
   padding: 2px 0 0;
-  outline: none;
   /* The serialized markup expands tabs to 4-column stops (`signature.ts`); the block declares
      the same stops so what is shown and what ships are the same columns. */
   -moz-tab-size: 4;
@@ -5767,7 +5699,7 @@ body.dnd-active * { cursor: grabbing !important; }
 .reply-subject:focus-visible .reply-subject-hint {
   opacity: 1;
 }
-.reply-subject-input {
+input.reply-subject-input { /* by element: this width and type outrank the line shape's resets */
   display: block;
   width: 100%;
   margin: 0 0 8px;
@@ -5791,14 +5723,10 @@ body.dnd-active * { cursor: grabbing !important; }
 }
 .sig-settings .lab b { display: block; font-size:calc(13px + var(--type-up)); font-weight: 600; }
 .sig-settings .lab span { display: block; font-size:calc(11.5px + var(--type-up)); color: var(--ink2); line-height: 1.5; }
+/* `TextField` (box) — on a settings page a signature editor is a settings field, and it was the
+   borderless compose class that made it read as a paragraph. Its own: the same 4-column tab stops
+   the compose block and the markup use — one width everywhere. */
 .sig-settings-editor {
-  display: block;
-  width: 100%;
-  resize: vertical;
-  font: inherit;
-  font-size:calc(13px + var(--type-up));
-  line-height: 1.45;
-  /* The same 4-column tab stops the compose block and the markup use — one width everywhere. */
   -moz-tab-size: 4;
   tab-size: 4;
 }

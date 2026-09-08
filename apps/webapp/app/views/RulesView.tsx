@@ -63,7 +63,7 @@
  */
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Button, Icon, SettingsNote, SettingsSection, useToast } from "@ohmail/ui";
+import { Button, Icon, SettingsNote, SettingsSection, TextField, useToast } from "@ohmail/ui";
 import type { Folder, MutationStatus, RuleDTO } from "@ohmail/client-engine";
 import { placeLabel } from "../shell/format";
 import { displayRuleMatch } from "../shell/idn";
@@ -336,7 +336,8 @@ export function RulesView({ rules, onRevoke, onRetarget }: RulesViewProps) {
           {showSearch ? (
             <label className="rules-search">
               <Icon name="search" />
-              <input
+              <TextField
+                shape="line"
                 type="search"
                 value={query}
                 placeholder={t("search")}

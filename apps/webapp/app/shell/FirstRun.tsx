@@ -39,6 +39,7 @@ import { useLocale, useTranslations } from "next-intl";
 import {
   Button, DecisionBar, Kbd,
   SettingsActions, SettingsBanner, SettingsChoice, SettingsField, SettingsRow, SettingsVerdict,
+  TextField,
 } from "@ohmail/ui";
 import type { DecisionDestination, DecisionScope } from "@ohmail/ui";
 import { useDecisionBarCopy } from "./decision-copy";
@@ -1125,32 +1126,32 @@ export function FirstRun({
               />
               <div className="set-fields">
                 <SettingsField htmlFor={`${ids}-address`} label={t("address")}>
-                  <input id={`${ids}-address`} type="email" autoComplete="email" value={address}
+                  <TextField id={`${ids}-address`} type="email" autoComplete="email" value={address}
                     onChange={(e) => { setAddress(e.target.value); retireTest(); }} />
                 </SettingsField>
                 <SettingsField htmlFor={`${ids}-pass`} label={t("password")}
                   hint={host.door === "local" ? t("passwordHint") : t("passwordHintCloud")}>
-                  <input id={`${ids}-pass`} type="password" autoComplete="off" value={pass}
+                  <TextField id={`${ids}-pass`} type="password" autoComplete="off" value={pass}
                     onChange={(e) => { setPass(e.target.value); retireTest(); }} />
                 </SettingsField>
               </div>
               {preset.manual ? (
                 <div className="set-fields">
                   <SettingsField htmlFor={`${ids}-imap`} label={t("imapHost")}>
-                    <input id={`${ids}-imap`} className="set-mono" value={imapHost}
+                    <TextField id={`${ids}-imap`} mono value={imapHost}
                       onChange={(e) => { setImapHost(e.target.value); retireTest(); }} />
                   </SettingsField>
                   <SettingsField htmlFor={`${ids}-imap-port`} label={t("imapPort")}>
-                    <input id={`${ids}-imap-port`} className="set-mono" inputMode="numeric"
+                    <TextField id={`${ids}-imap-port`} mono inputMode="numeric"
                       value={imapPort}
                       onChange={(e) => { setImapPort(e.target.value); retireTest(); }} />
                   </SettingsField>
                   <SettingsField htmlFor={`${ids}-smtp`} label={t("smtpHost")}>
-                    <input id={`${ids}-smtp`} className="set-mono" value={smtpHost}
+                    <TextField id={`${ids}-smtp`} mono value={smtpHost}
                       onChange={(e) => { setSmtpHost(e.target.value); retireTest(); }} />
                   </SettingsField>
                   <SettingsField htmlFor={`${ids}-smtp-port`} label={t("smtpPort")}>
-                    <input id={`${ids}-smtp-port`} className="set-mono" inputMode="numeric"
+                    <TextField id={`${ids}-smtp-port`} mono inputMode="numeric"
                       value={smtpPort}
                       onChange={(e) => { setSmtpPort(e.target.value); retireTest(); }} />
                   </SettingsField>

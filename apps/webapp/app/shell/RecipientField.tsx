@@ -53,6 +53,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { formatRecipient, matchAddresses, type AddressBookEntry } from "@ohmail/client-engine";
+import { TextField } from "@ohmail/ui";
 import { parseRecipients } from "./compose";
 import { displayAddress } from "./idn";
 
@@ -618,10 +619,11 @@ export function RecipientField({
             })}
           </span>
         ) : null}
-        <input
+        <TextField
           ref={inputRef}
           id={id}
-          className="c-input rcp-input"
+          shape="line"
+          className="rcp-input"
           type="text"
           autoComplete="off"
           spellCheck={false}

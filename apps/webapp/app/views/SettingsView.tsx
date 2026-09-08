@@ -48,6 +48,7 @@ import {
   Switch,
   TAG_HUES,
   TagDot,
+  TextField,
   useTheme,
   useToast,
   VipChip,
@@ -215,8 +216,8 @@ function TagRow({
     return (
       <div className="set-row set-tag-edit">
         <TagDot hue={hueOf(tag)} />
-        <input
-          className="join-input set-tag-input"
+        <TextField
+          className="set-tag-input"
           autoFocus
           value={mode.draft}
           aria-label={t("tagRename")}
@@ -353,8 +354,8 @@ function TagCreateRow({
     <>
       <div className="set-row set-tag-edit set-tag-new">
         <TagDot hue="moss" />
-        <input
-          className="join-input set-tag-input"
+        <TextField
+          className="set-tag-input"
           value={draft}
           placeholder={t("tagNewPlaceholder")}
           aria-label={t("tagNew")}

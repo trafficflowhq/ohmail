@@ -4,8 +4,8 @@
   transition:box-shadow .2s var(--swift)}
 .search-box:focus-within{box-shadow:0 0 0 1.5px var(--accent-hair), var(--lift-2)}
 .search-box svg{color:var(--ink3)}
-.search-box input{flex:1;border:0;background:none;font-size:max(var(--input-floor), calc(14.5px + var(--type-up)));min-width:0;font-family:inherit;color:inherit}
-.search-box input:focus{outline:none}
+/* The field is `TextField` in its LINE shape — the pill is the boundary and its focus ring above. */
+.search-box input{flex:1;font-size:max(var(--input-floor), calc(14.5px + var(--type-up)));min-width:0}
 .search-box input::placeholder{color:var(--ink2)}
 .results-head{font-size:calc(12px + var(--type-up));color:var(--ink2);padding:16px 4px 10px;font-variant-numeric:tabular-nums}
 .results-head b{color:var(--ink)}

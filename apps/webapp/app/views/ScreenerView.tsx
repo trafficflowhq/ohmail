@@ -35,6 +35,7 @@ import {
   SegmentedControl,
   SizeLadder,
   Spinner,
+  TextField,
   type AskWellState,
   type DecisionDestination,
   type DecisionScope,
@@ -2609,7 +2610,7 @@ function JunkRows({
           folders are asked only when that finds nothing (or on the press below), and their
           hits are APPENDED under the kept rows — never a spinner over the first paint. */}
       <div className="scn-junk-search">
-        <input
+        <TextField
           type="search"
           value={search.query}
           onChange={(e) => search.setQuery(e.currentTarget.value)}

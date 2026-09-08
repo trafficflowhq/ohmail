@@ -329,14 +329,14 @@
   min-width: 0;
   max-width: 100%;
 }
-.sm-edit-input {
+/* `TextField` in its LINE shape, with this field's own underline: the sheet is the boundary and
+   the line under the fragment is the edit's own state (rest / on / focus). Named by element so
+   the underline and the type outrank the line shape's resets whatever order the sheets load in. */
+input.sm-edit-input {
   width: 100%;
   min-width: 0;
-  border: 0;
   margin: 1px 0;
   padding: 3px 0;
-  background: none;
-  font-family: inherit;
   font-size:max(var(--input-floor), calc(12.5px + var(--type-up)));
   font-weight: 550;
   color: var(--ink);

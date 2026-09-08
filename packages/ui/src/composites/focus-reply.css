@@ -9,8 +9,8 @@
 .fr-card h3{font-size:16px;font-weight:650;margin:16px 0 2px;letter-spacing:-.015em}
 .fr-card .from{font-size:calc(12px + var(--type-up));color:var(--ink3)}
 .fr-card .prev{font-size:calc(13px + var(--type-up));color:var(--ink2);margin:10px 0 16px;line-height:1.55}
-.fr-card textarea{width:100%;min-height:100px;resize:vertical;border:1px solid var(--hair);border-radius:calc(var(--r-card) * 16 / 14); /* input field — kept */
-  background:var(--canvas);padding:12px 14px;font-size:max(var(--input-floor), calc(13px + var(--type-up)));line-height:1.6;font-family:inherit;color:inherit;box-sizing:border-box}
-.fr-card textarea:focus{outline:1.5px solid var(--accent);outline-offset:0;border-color:transparent}
+/* The field is `TextField` (box) — edge, ground, ring and type from one place. Its own: a floor
+   tall enough for a reply and the reading line-height a longer text wants. */
+.fr-card textarea{min-height:100px;line-height:1.6}
 .fr-foot{display:flex;gap:8px;margin-top:16px;align-items:center}
 .fr-foot .esc{margin-left:auto;font-size:calc(11px + var(--type-up));color:var(--ink3)}

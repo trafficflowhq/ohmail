@@ -30,6 +30,7 @@
  * the resting state, not a collapsed control.
  */
 import { useTranslations } from "next-intl";
+import { TextField } from "@ohmail/ui";
 import { effectiveSignature, type SignatureState } from "./signature";
 
 export function SignatureBlock({
@@ -71,7 +72,9 @@ export function SignatureBlock({
       </div>
       {/* Sized to the text it holds (+1 keeps the next line visible while typing), bounded so
           a long signature scrolls inside the block rather than burying the actions below it. */}
-      <textarea
+      <TextField
+        multiline
+        shape="line"
         className="sig-text"
         aria-label={t("signatureAria")}
         value={text}

@@ -1,0 +1,71 @@
+/* ═══ TEXT FIELD — the one treatment for typed text ═══════════════════════════════════════════
+ *
+ * Before this file, a text control was drawn by whichever stylesheet stood nearest: the settings
+ * pane boxed its inputs (`.set-field input`), the sign-in forms boxed theirs a shade differently
+ * (`.join-input`), the compose header drew a hairline under the ROW instead (`.c-input`), the
+ * signatures pane borrowed that compose class for a textarea standing on a settings page, the
+ * screening textarea and the Junk search each carried a rule of their own — and one of those read
+ * a token declared nowhere, so it had no edge at all. Empty, several of them were indistinguishable
+ * from the page around them.
+ *
+ * ── THE BOX ──────────────────────────────────────────────────────────────────────────────────
+ *
+ * Canvas ground on a panel: the field sits a step BELOW the surface it stands on, in both schemes
+ * and on both faces (paper: off-white in white; dark: the deeper warm grey; ohmarchy: the theme's
+ * own canvas), which is the recess the Blanc prototype gave every input. The 1px `--hair` edge is
+ * the affordance the empty state was missing — it is there before a character is typed, and it is
+ * the same edge the keycaps and the signature block already wear. Radius from the card band
+ * (`--r-card × 12/14`), the value the settings fields have carried since they were drawn.
+ *
+ * Focus is a RING, not a heavier edge: `--focus-w` at `--focus` (paper 1.5px accent, ohmarchy 2px
+ * in the theme's focus colour), offset 0, with the hair edge withdrawn under it so the two do not
+ * stack into a smudged 2.5px line. Read-only recedes one ink step and keeps its edge — "held", the
+ * same word the compose header uses mid-send. Disabled goes to `--ink3` on the `--tint` ground with
+ * a softer edge: still a field, not a label.
+ *
+ * ── THE LINE ─────────────────────────────────────────────────────────────────────────────────
+ *
+ * `.tf-line` is the box with the box taken away — for a control whose CONTAINER draws the edge.
+ * It declares nothing about size: the row it sits in decides the type, exactly as `.c-input` did,
+ * and the host class keeps the width. It is declared AFTER the box at the same specificity so it
+ * wins by order, and it is one class rather than `.tf.tf-line` on purpose: a host rule written as
+ * `.tagp input` (0,1,1) has to keep beating it, and `.tf.tf-line` (0,2,0) would not let it.
+ *
+ * Every size here sits in the phone step's band, so it carries `--type-up`; text controls are
+ * floored at `--input-floor` because iOS zooms a page whose focused control is under 16px
+ * (`base.css`). The phone-type census reads both.
+ */
+.tf{
+  display:block;width:100%;min-width:0;box-sizing:border-box;margin:0;
+  padding:9px 12px;
+  font:inherit;font-size:max(var(--input-floor), calc(13px + var(--type-up)));line-height:1.45;
+  color:var(--ink);background:var(--canvas);
+  border:1px solid var(--hair);border-radius:calc(var(--r-card) * 12 / 14);
+  transition:border-color .15s var(--swift),background-color .15s var(--swift);
+}
+.tf::placeholder{color:var(--ink3);opacity:1}
+/* A textarea grows downward only: sideways would break the column it stands in. `rows` from the
+   caller decides the resting height — no floor here, so a two-line note and a ten-line signature
+   each start at their own size. */
+.tf-area{resize:vertical}
+.tf:focus-visible{
+  outline:var(--focus-w) solid var(--focus,var(--accent));outline-offset:0;border-color:transparent;
+}
+/* NAMED BY ELEMENT — `:read-only` on its own would also match a disabled control, and the disabled
+   rule below must win. Held: one ink step down, the edge kept. */
+input.tf:read-only:not(:disabled),
+textarea.tf:read-only:not(:disabled){color:var(--ink2)}
+.tf:disabled{
+  color:var(--ink3);-webkit-text-fill-color:var(--ink3);background:var(--tint);
+  border-color:var(--hair-soft);cursor:default;
+}
+.tf-mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.02em}
+
+/* the line shape — see the header */
+.tf-line{
+  flex:1;min-width:0;width:auto;
+  padding:0;background:none;border:0;border-radius:0;
+  font-size:inherit;line-height:inherit;
+}
+.tf-line:focus-visible{outline:none} /* the container's edge is the ring — `.c-field:focus-within` */
+.tf-line:disabled{background:none;border:0}

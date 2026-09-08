@@ -53,7 +53,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { folderNameError } from "@trafficflow/core/folder-name";
 import type { FolderEntity } from "@ohmail/client-engine";
-import { Icon } from "@ohmail/ui";
+import { Icon, TextField } from "@ohmail/ui";
 import {
   FOLDER_FILTER_AT,
   folderLeafOf,
@@ -312,7 +312,8 @@ export function FoldersRailGroup({
         <span className="ftw" />
         <div className="ritem ritem-new" style={{ flex: "1 1 auto" }}>
           <Icon name="folder" className="fglyph" />
-          <input
+          <TextField
+            shape="line"
             className="ritem-new-input"
             /* eslint-disable-next-line jsx-a11y/no-autofocus -- the input replaced the control
                the user just pressed; NOT focusing it is the disorienting branch. */
@@ -668,7 +669,8 @@ export function FoldersRailGroup({
                   <span className="ftw" />
                   <div className="ritem ritem-new" style={{ flex: "1 1 auto" }}>
                     <Icon name="search" className="fglyph" />
-                    <input
+                    <TextField
+                      shape="line"
                       className="ritem-new-input"
                       placeholder={t("folderFilter")}
                       aria-label={t("folderFilter")}

@@ -7013,15 +7013,23 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
                    standalone install, and absent unless the SERVER's own row says it is on.
                    `awayNotice.on` resting false means the fail-shape is a missing courtesy
                    line, never a false claim that replies are going out. */
-                noticeSection={
+                standingNotice={
                   (() => {
-                    /* Two possible lines share the slot: the Option B ohmarchy offer (above,
-                       so a fresh Linux sign-in sees it first) and the away-responder notice.
-                       Each keeps its own gate; the slot is undefined only when both are
-                       absent, so OhboxView's spacing never reserves an empty band. */
+                    /* THE AWAY LINE IS THE LIST'S FIRST BLOCK, not a header tenant — see
+                       `OhboxView.standingNotice` for why it moved and `AwayNotice` for the form
+                       it takes by width. Its three-part gate is unchanged. */
                     const away = demo || !awaySupported || !awayNotice.on
                       ? null
                       : <AwayNotice audience={awayNotice.audience} throttle={awayNotice.throttle} />;
+                    return away ?? undefined;
+                  })()
+                }
+                noticeSection={
+                  (() => {
+                    /* Two possible lines share the header slot: the Option B ohmarchy offer
+                       (above, so a fresh Linux sign-in sees it first) and the organizer notice.
+                       Each keeps its own gate; the slot is undefined only when both are absent,
+                       so OhboxView's spacing never reserves an empty band. */
                     /* ── ONE ASK AT A TIME ON A FIRST RUN ──────────────────────────────
                        MEASURED on the released 0.13.7: at +15 s after connecting a mailbox a
                        person faced THREE asks at once — the setup flow's modal, the OS
@@ -7037,11 +7045,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
                       && !route.firstRun
                       ? <OhmarchyOffer apply={applyFaceAllDevices} onDone={faceOffer.dismiss} />
                       : null;
-                    /* ── AND THE ORGANIZER NOTICE, WHICH IS THE SLOT'S THIRD TENANT ────
-                       ABOVE the away line and below the offer, and the order is the amount
-                       of decision each one asks for: the offer proposes something, this
-                       reports something that already happened, the away line states a
-                       standing setting. Its own gate is inside the component (it renders
+                    /* ── AND THE ORGANIZER NOTICE, THE SLOT'S OTHER TENANT ─────────────
+                       Below the offer, and the order is the amount of decision each one asks
+                       for: the offer proposes something, this reports something that already
+                       happened. (The away line, which states a standing setting, is the
+                       list's first block now — `standingNotice` above.) Its own gate is
+                       inside the component (it renders
                        nothing without an unacknowledged change), so the only thing decided
                        here is whether there is any way to acknowledge — see
                        `acknowledgeOrganizerNotice`. Withheld on the demo, which has no row
@@ -7054,9 +7063,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
                           onAcknowledge={acknowledgeOrganizerNotice}
                         />
                       );
-                    return offer === null && away === null && organizer === null
+                    return offer === null && organizer === null
                       ? undefined
-                      : <>{offer}{organizer}{away}</>;
+                      : <>{offer}{organizer}</>;
                   })()
                 }
                 resurfaced={ohbox.resurfaced}

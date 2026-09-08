@@ -49,10 +49,10 @@
    happens to accept typing, not a form control dropped into the nav. */
 .ritem-new{cursor:text}
 .ritem-new .ritem-plus{color:var(--accent-ink)}
-.ritem-new-input{flex:1 1 auto;min-width:0;border:0;background:none;padding:0;margin:0;
-  font-family:inherit;font-size:max(var(--input-floor), calc(12.5px + var(--type-up)));font-weight:450;color:var(--ink);line-height:1.5}
-.ritem-new-input::placeholder{color:var(--ink3)}
-.ritem-new-input:focus{outline:none}
+/* `TextField` in its LINE shape — the rail row is the boundary. Named by element so the row's type
+   outranks the line shape's `inherit` whatever order the two stylesheets load in. */
+input.ritem-new-input{flex:1 1 auto;min-width:0;
+  font-size:max(var(--input-floor), calc(12.5px + var(--type-up)));font-weight:450;color:var(--ink);line-height:1.5}
 /* The empty-state invite, and the duplicate-name refusal — both quiet lines inside the group,
    aligned to the tag labels above them (dot column + gap). */
 .rsub-empty{margin:2px 0;padding:5px 8px 5px 25px;font-size:calc(12px + var(--type-up));color:var(--ink3);line-height:1.45}

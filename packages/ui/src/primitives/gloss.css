@@ -1,0 +1,46 @@
+/* ═══ GLOSS — the (i) whose sentence opens beside it ═════════════════════════════════════════
+ *
+ * Furniture in the line it stands in: the trigger inherits the line's type and colour, and the
+ * glyph is sized per placement so it sits ON the line rather than above it (`meta` 13px, `chip`
+ * 14px, `figure` the 15px base). At rest the glyph is `--ink3` at .7 — legible when looked for,
+ * silent otherwise, the same weight the InfoNote's mark carries; hover and open lift it to
+ * `--ink2` at full. `cursor: help` says what a press will do before it is made.
+ *
+ * The card is the tag picker's family: `--float` ground, `--lift-3`, the card radius, `--z-pal`,
+ * the `rise` entrance — paper draws a soft rounded card, ohmarchy a square one with the 2px ring,
+ * both from the same rules and no face named here. It measures at most 34ch (a sentence, not a
+ * paragraph) and never wider than the window less its two insets, so the placement clamp can keep
+ * its promise. `text-wrap: pretty` where the engine has it: a two-line sentence with an orphaned
+ * word on the second line is the commonest way a small card looks careless.
+ */
+.gloss{display:inline-flex;align-items:center;vertical-align:baseline;min-width:0}
+.gloss-t{
+  display:inline-flex;align-items:center;gap:5px;
+  border:0;background:none;padding:0;margin:0;
+  font:inherit;color:inherit;cursor:help;
+}
+.gloss-i{flex:none;color:var(--ink3);opacity:.7;transition:opacity .12s ease,color .12s ease}
+.gloss-t:hover .gloss-i,.gloss.open .gloss-i{opacity:1;color:var(--ink2)}
+.gloss-cap{min-width:0}
+/* sized to the line — see the header */
+.gloss-meta .gloss-i{width:13px;height:13px;transform:translateY(.5px)}
+.gloss-chip .gloss-i{width:14px;height:14px}
+.gloss-figure .gloss-i{width:15px;height:15px}
+/* Keyboard focus lands on the trigger; the ring has to be visible on a control this small, and it
+   follows the glyph's own shape (round under paper, square under ohmarchy — `--r-avatar`). */
+.gloss-t:focus-visible{outline:var(--focus-w) solid var(--focus,var(--accent));outline-offset:2px;border-radius:var(--r-avatar)}
+
+.gloss-pop{
+  position:fixed;z-index:var(--z-pal);
+  max-width:min(34ch, calc(100vw - 16px));width:max-content;
+  padding:8px 11px;
+  background:var(--float);color:var(--ink);
+  border-radius:var(--r-card);box-shadow:var(--lift-3);
+  font-size:calc(12px + var(--type-up));font-weight:400;line-height:1.5;letter-spacing:0;
+  text-align:left;text-wrap:pretty;white-space:normal;
+  animation:rise .16s var(--spring);
+  pointer-events:none; /* nothing inside is pressable; a press "on the card" is an outside press */
+}
+@supports (max-width: 100dvw){
+  .gloss-pop{max-width:min(34ch, calc(100dvw - 16px))}
+}
