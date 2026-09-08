@@ -11,6 +11,24 @@ import type { Change, NativeLocator } from "../mail.js";
 import { DESTINATIONS as DESTINATIONS_VALUE, RESERVED_FOLDER_LEAF } from "../types.js";
 
 /**
+ * THE TWO MODEL TYPES THIS MODULE'S OWN INTERFACES ARE WRITTEN IN, HANDED ON.
+ *
+ * `MailboxAdapter.move`, `moveMany`, `setFlags`, `fetchPart`, `MoveManyResult` and
+ * `SendResult.sentLocator` all name {@link NativeLocator}; {@link ChangeBatch} and
+ * {@link TargetedFetch} are arrays of {@link Change}. Both types arrived here as `import type`
+ * from the mail half and stopped there, so a consumer could import `MailboxAdapter` from this
+ * entrypoint — or from `adapters/imap`, which re-exports this module whole — and still have no
+ * name for the argument it has to pass: `TS2459: declares 'NativeLocator' locally, but it is not
+ * exported`. Re-exported for the reason `isOrganizedFolder` below is re-exported: a caller that
+ * already imports this module should not need a second import to spell its own signatures.
+ *
+ * This is a `export type { … } from` rather than a value re-export because both are types; it
+ * creates no local binding and so does not shadow the `import type` above, which the rest of
+ * this file still reads.
+ */
+export type { Change, NativeLocator } from "../mail.js";
+
+/**
  * Canonical folders the worker watches. INBOX = Imbox.
  *
  * These are the six `Destination` strings and nothing else: the set `ensureFolders()` creates,
