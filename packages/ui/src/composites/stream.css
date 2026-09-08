@@ -128,9 +128,10 @@
 
    It has no fade, and not by a rule of its own: `.scast.short .sc-fade{display:none}` above
    reaches it, and under the rule the fade now follows — painted only over a clip with something
-   to hide — a two-line snippet in a reserved 348px box has nothing to hide either way. A
-   `.scast.short.pend .sc-fade{display:none}` used to stand here as well and was removed as
-   redundant; the 16px the card lost at the moment its body arrived (`566 → 550` at 1440) came
+   to hide — a two-line snippet in a reserved 348px box has nothing to hide either way. A second
+   rule hiding the waiting card's fade under its own two-class selector used to stand here and
+   was removed as redundant; the 16px the card lost at the moment its body arrived (`566 → 550`
+   at 1440) came
    from the pill's extra margins below, not from the fade, which adds no height in any state.
    One box, one height, before and after. */
 .scast.short.pend .sc-x{display:flex}
