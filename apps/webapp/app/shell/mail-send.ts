@@ -1348,11 +1348,20 @@ export function useMailSend(
     /* AND ONCE AT MOUNT, for the boot that finished its replay before this surface existed — the
        answer waits in `lateResults` precisely so a later reader can have it.
 
-       GUARDED BY THE SAME QUESTION, and the guard is not tidiness: `flushPending()` DISPATCHES the
-       queue as well as handing back late answers, so calling it unconditionally at mount adds a
-       second delivery road beside the drive's own replay. Measured — "a reload inside the queued
-       window cannot deliver the same mail twice" went red, which is the one thing this whole seam
-       exists to prevent. Nothing is pulled unless there is an answer to pull. */
+       GUARDED BY THE SAME QUESTION, and the guard is NOT COVERED BY A TEST — recorded here rather
+       than left to be discovered, because a comment in this file is the claim under test.
+
+       Removing the guard is GREEN across this suite, and the green has a reason: every harness
+       awaits `engine.start()` before it mounts, so the replay has already emptied the outbox and
+       there is nothing left for an unconditional pull to dispatch. The shipped shell does not
+       await it. There, a mount can land mid-replay, and `flushPending()` DISPATCHES the queue as
+       well as handing back late answers — so an unconditional pull is a second dispatch road
+       beside the replay's own, on the one seam where a second road means a second mail. That is
+       the property the guard defends and it is the whole reason it stays; it is not evidence, and
+       nobody should read it as covered.
+
+       (The red that prompted it was a different defect — releasing the send lock on adoption, in
+       the `confirmed` arm below. That one IS measured, and it is why the release is gone.) */
     if (engine.hasLateResults()) void collect();
     return () => { cancelled = true; off(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
