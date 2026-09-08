@@ -63,6 +63,7 @@ import { usePileNames } from "./decision-copy";
 import { avatarHue, initialsOf } from "./format";
 import { displayAddress, displayAddressee, displayDomain } from "./idn";
 import { useOverlayClamp } from "./overlay-clamp";
+import { addressHref } from "./address-view";
 import "./sender-sheet.css";
 import {
   DECISION_OF_DEST,
@@ -365,6 +366,24 @@ export function SenderMenu({
       <button type="button" className="sm-detail" onClick={() => onOpenDetail(scope)}>
         {t("auditOpen", { count: subject.messages.length })}
       </button>
+
+      {/* ── EVERYTHING FROM AND TO THIS ADDRESS ──────────────────────────────────────────────
+          The address view (`#/address/<addr>`): one list of what this address sent and what was
+          sent to it, newest first. On a list row and on a stream card the address pixels are this
+          sheet's own handle (`sender-hit.ts`), so THIS ROW is the one way from those surfaces into
+          that view — the search result row and the reader's chips, where the hit test answers
+          null, link to it directly.
+
+          It is a LINK and not a verb, like the row above it: it opens a different question rather
+          than answering this one, so it sits here with the ways onward and not among the
+          destinations. A real `<a href>` — the hash is what the router reads, and the sheet closes
+          on the press so the view is not opened under an open popover. Address scope only: the
+          view is about one address, and a domain has no such page. */}
+      {scope === "sender" ? (
+        <a className="sm-detail" href={addressHref(sender.address)} onClick={onClose}>
+          {t("addressOpen")}
+        </a>
+      ) : null}
 
       {/* ── SPLIT THIS SENDER BY SUBJECT ──────────────────────────────────────────────────────
           The row that admits this sheet's limit. Everything above it decides where ALL of an

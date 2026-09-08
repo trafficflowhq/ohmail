@@ -56,9 +56,10 @@ import {
   type ServerSearchSort,
 } from "@ohmail/client-engine";
 import { showSimilar } from "@trafficflow/core/search-rank";
-import { Facets, SearchBox, SearchHit, type FacetGroup } from "@ohmail/ui";
+import { Facets, SearchBox, type FacetGroup } from "@ohmail/ui";
 import { displayTime, metaLine, PLACE_LABEL, placeLabel, senderName } from "../shell/format";
 import { displayAddress } from "../shell/idn";
+import { addressHref } from "../shell/address-view";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useZoneNav } from "../shell/zone-nav";
 import { storageOwner } from "../shell/storage-owner";
@@ -817,7 +818,7 @@ export function SearchView({
                       data-hit={hit.message.id}
                       {...(i === cursor ? { "aria-current": "true" as const } : {})}
                     >
-                      <Hit hit={hit} now={now} onOpen={onOpen} archiveOnly={archiveOnly} placeOf={placeOf} />
+                      <SearchHitRow hit={hit} now={now} onOpen={onOpen} archiveOnly={archiveOnly} placeOf={placeOf} />
                     </div>
                   ))}
                   {/*
@@ -850,7 +851,7 @@ export function SearchView({
                             data-similar="hit"
                             {...(rowAt === cursor ? { "aria-current": "true" as const } : {})}
                           >
-                            <Hit hit={hit} now={now} onOpen={onOpen} archiveOnly={archiveOnly} placeOf={placeOf} />
+                            <SearchHitRow hit={hit} now={now} onOpen={onOpen} archiveOnly={archiveOnly} placeOf={placeOf} />
                           </div>
                         );
                       })}
@@ -867,12 +868,49 @@ export function SearchView({
   );
 }
 
-function Hit({
+/**
+ * ═══ ONE RESULT ROW — the name, the address, the subject, and which of them is the control ═══
+ *
+ * A result used to print its sender as `from.name ?? address`, so wherever a name existed the
+ * address was invisible, and the whole row was one `<button>` that opened the message. Two things
+ * change here, and they are one decision:
+ *
+ *  1. THE ADDRESS IS ON EVERY ROW. Line one is the name and line two the address, in the address
+ *     type the list rows and stream cards already use (11.5px, `--ink3`); with no name the address
+ *     takes line one at the name's weight, so a nameless row does not open with a whisper.
+ *     `displayAddress` decodes an internationalized domain for the face, as everywhere else.
+ *
+ *  2. THE ADDRESS IS A LINK to `#/address/<addr>` — everything from and to that person. On a list
+ *     row or a stream card the address pixels belong to the screening popover (`sender-hit.ts`
+ *     answers non-null there, and the popover offers the address view as one of its rows). Here
+ *     `senderHitOf` answers null, so the address itself is the way in — `test/address-control-
+ *     census.test.tsx` renders each surface and asks, rather than assuming. A real `<a href>` and
+ *     not a click handler: the hash is what the router reads, the link can be copied or opened
+ *     beside, and nothing in the shell has to be wired for it to be true.
+ *
+ * ── WHY THE ROW IS NO LONGER ONE BUTTON ─────────────────────────────────────────────────────
+ *
+ * A button may not contain interactive content; a link inside one is invalid in the spec,
+ * flattened by assistive technology and inconsistent between engines. So the row is a
+ * `<div class="hit">` holding three things in reading order — the name line, the address link and
+ * a `<button class="hit-open">` around the subject whose `::after` is stretched over the whole row
+ * (`search-keys.css`). Pressing anywhere that is not the address opens the message, exactly as
+ * before; the address sits above the stretch and navigates. Tab reaches the address and then the
+ * open control, which is the reading order and also the DOM order. `.hit`'s own rules in
+ * `packages/ui` (the radius, the hover lift, the pointer) apply unchanged to the div, so the row
+ * looks as it did with one more line in it.
+ *
+ * `here` is the address whose view this row already stands in (the address view passes its own):
+ * that row's address is printed, not linked — a control that navigates to the page that is open
+ * is a control that does nothing.
+ */
+export function SearchHitRow({
   hit,
   now,
   onOpen,
   archiveOnly,
   placeOf,
+  here,
 }: {
   hit: EngineSearchHit;
   now: Date;
@@ -880,6 +918,8 @@ function Hit({
   /** The archive returned it and this device's mirror has no row for it — say so. */
   archiveOnly: boolean;
   placeOf?: ReadonlyMap<string, string | null>;
+  /** The address whose view this row stands in, if any — its own address is not linked. */
+  here?: string;
 }) {
   const t = useTranslations("search");
   const m = hit.message;
@@ -917,13 +957,31 @@ function Hit({
     archiveOnly ? t("hitArchiveOnly") : null,
   );
 
+  const name = m.from.name || null;
+  const shownAddress = displayAddress(m.from.address);
+  // Case-insensitive, as both doors match — `Anna@ACME.test` and `anna@acme.test` are one person.
+  const isHere = here !== undefined && here.toLowerCase() === m.from.address.toLowerCase();
+  const address = isHere ? (
+    <span className="hit-addr">{shownAddress}</span>
+  ) : (
+    <a className="hit-addr" href={addressHref(m.from.address)}>
+      {shownAddress}
+    </a>
+  );
+
   return (
-    <SearchHit
-      who={senderName(m)}
-      where={where}
-      subject={subject}
-      fuzzyNote={fuzzy ? t("fuzzyNote", { term: fuzzy.term }) : undefined}
-      onPress={() => onOpen(hit)}
-    />
+    <div className="hit">
+      <span className="top">
+        {name ? <span className="who">{name}</span> : <span className="who">{address}</span>}
+        <span className="where">{where}</span>
+      </span>
+      {name ? <span className="hit-under">{address}</span> : null}
+      <button type="button" className="hit-open" onClick={() => onOpen(hit)}>
+        <span className="subj">
+          {subject}
+          {fuzzy ? <span className="fuzzy">{t("fuzzyNote", { term: fuzzy.term })}</span> : null}
+        </span>
+      </button>
+    </div>
   );
 }

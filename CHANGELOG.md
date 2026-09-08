@@ -323,6 +323,32 @@ has ever listed it, and it is reachable today only through a conversation. A not
 claiming sent mail never reached the device at all has been corrected; it had been wrong since it
 was written, and the check that keeps it true is now part of the suite.
 
+### Search results show the address, and an address opens everything from and to that person
+
+A search result printed its sender's name and, where the sender had one, nothing else: the address
+was invisible whenever a display name existed. Every result now carries the name on its first line
+and the address under it, in the small type the list rows already use for an address; a result with
+no name shows the address in the name's place. The address is a link. Pressing it opens a new view,
+`#/address/<address>`, listing what that address sent and what was sent to it, newest first, with a
+toggle — All, From them, To them — that narrows the list to either direction and shows how many rows
+each would hold. Pressing anywhere else on a result still opens the message, as before.
+
+The same view is reachable from every other place an address is printed, through the control each
+place already has. On a list row and on a Reads or Receipts card the address is the handle that
+opens the screening popover; that popover gains one row, "Everything from and to this address". A
+recipient chip in an open message gains the same entry in its own popover, and the reader's From
+block, which opens the screening popover, reaches the view through that row.
+
+The view states what it can and cannot see. This device answers all three directions from the mail
+it holds; the archive on the server can be searched by sender only. So the count line reads, for
+example, "3 on this device · 40 in the archive (by sender)", and under To them the archive's half is
+the sentence "the archive cannot be searched by recipient yet" rather than a number — a small (i)
+beside either carries the reason in one sentence. A message the archive returned that this device
+does not hold is marked "from the archive", as in Search, and where the archive holds more than it
+returned the line says how many are shown. A copy you sent is listed with "Sent" in its meta line.
+With no archive behind the client the line says so. Escape leaves the view; `/` still opens Search
+from it.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

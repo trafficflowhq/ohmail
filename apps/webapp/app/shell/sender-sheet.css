@@ -239,6 +239,11 @@
 .sm-detail:hover {
   background: var(--tint);
 }
+/* One of the ways onward is a real link (the address view's row): no underline and no visited
+   blue — it wears the row's own ink like its button siblings. */
+a.sm-detail {
+  text-decoration: none;
+}
 /* ── the reason ── */
 .sm-foot {
   padding: 10px 18px 14px;

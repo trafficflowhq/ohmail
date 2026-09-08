@@ -76,3 +76,160 @@
     margin-left: 0;
   }
 }
+
+/* ═══ THE ADDRESS ON A RESULT ROW, AND THE ROW THAT IS NO LONGER ONE BUTTON ════════════════
+ *
+ * `SearchHitRow` (SearchView.tsx) is a `<div class="hit">` holding the name line, the address
+ * link and a `<button class="hit-open">` around the subject. `.hit`'s own rules — the radius, the
+ * padding, the hover lift, the pointer — come from `packages/ui/src/composites/search.css` and
+ * apply to the div unchanged. What is added here is the geometry that lets two controls share
+ * one row without nesting: the open control's `::after` is stretched over the whole row, and the
+ * address link sits above it. Press the name, the meta or the subject and the message opens;
+ * press the address and the address view does.
+ *
+ * The address is drawn in the address type the list rows and stream cards already use — 11.5px,
+ * `--ink3`, an accent underline on hover (`.view .row .addr:hover`, `app.css`) — so a reader who
+ * has learned what an address looks like in this product recognises it here. On a row with no
+ * name it stands in the name's place and takes the name's weight. Tokens only; the ohmarchy face
+ * squares the row's corners through `--r-card` as it does every other card.
+ */
+.hit {
+  position: relative;
+}
+.hit .who {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The meta keeps its one line and the NAME yields — the list row's own rule (`.row-top .addr`
+   ellipsises, the time never wraps). Under the mono face at 390px both used to give: the name
+   was cut AND the meta broke mid-phrase ("aus dem / Archiv"), which is the worst pair. The
+   address under the name still says who it is in full. */
+.hit .top .where {
+  flex: none;
+  white-space: nowrap;
+}
+/* The results column is a grid track, and a grid item's automatic minimum is its content's —
+   so one address that may not wrap made the column wider than the pane at 390px, and the
+   whole list with it. Zero lets the row's own ellipses do their work. `app.css` declares the
+   grid; this is the one line the address line adds to it. */
+.search-cols > div {
+  min-width: 0;
+}
+.hit-open {
+  display: block;
+  width: 100%;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+/* The stretch. `inset: 0` against `.hit`'s padding box, the row's own radius so a focus ring
+   drawn on it follows the corners. Transparent: it is a hit area, not a paint. */
+.hit-open::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: calc(var(--r-card) * 16 / 14);
+}
+/* Keyboard focus rings the ROW, not the subject line — the whole row is what the press opens.
+   Same tokens as the shared `:focus-visible` in `base.css`, drawn on the stretch instead. */
+.hit-open:focus-visible {
+  outline: none;
+}
+.hit-open:focus-visible::after {
+  outline: var(--focus-w) solid var(--accent);
+  outline-offset: -1px;
+}
+.hit-addr {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  color: inherit;
+  text-decoration: none;
+}
+a.hit-addr:hover {
+  color: var(--accent-ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+/* Line two — the address under the name. A block, so a long address ellipsises on its own line
+   instead of pushing the meta off the row above it. */
+.hit-under {
+  display: block;
+  margin-top: 1px;
+  font-size: calc(11.5px + var(--type-up));
+  line-height: 1.4;
+  color: var(--ink3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hit-under .hit-addr {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+/* ═══ THE ADDRESS VIEW ═════════════════════════════════════════════════════════════════════
+ *
+ * Its rows, column and count line are Search's (`.search-wrap`, `.results-head`, `.hit-w`), so
+ * what is declared here is only what Search does not have: a header whose title may be an
+ * address (which must wrap, not overflow, at 390px), the toggle's row, and the count line's
+ * leading number.
+ */
+.view-address .vhead h1 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.view-address .vhead .meta {
+  /* The address beside the name may need the width; it wraps rather than clipping. */
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+/* The toggle stands where Search's pill stands: first in the column, 4px in from the rows so its
+   left edge lines up with the count line under it. */
+.addr-bar {
+  display: flex;
+  padding: 2px 4px 0;
+}
+/* The device's number leads the line and is the one a reader can check by counting; it takes the
+   ink `.results-head b` already gives a leading count. A PHRASE beside it is joined with the
+   meta separator; a SENTENCE (no archive behind this client, a refusal) takes its own line, as
+   Search's scope line does. The gloss's glyph sits on the line. */
+.addr-scope .addr-archive::before {
+  content: " · ";
+}
+.addr-scope .addr-archive.sentence {
+  display: block;
+  margin-top: 2px;
+}
+.addr-scope .addr-archive.sentence::before {
+  content: none;
+}
+.addr-scope .gloss {
+  vertical-align: -1px;
+}
+/* Inside the empty state the count line is a caption under the sentence, at the sentence's ink,
+   and the two halves stack — a separator at the head of a centred line reads as a stray mark. */
+.empty .addr-scope {
+  display: block;
+  margin-top: 6px;
+  font-size: calc(12px + var(--type-up));
+  color: var(--ink2);
+}
+.empty .addr-scope .addr-archive {
+  display: block;
+  margin-top: 2px;
+}
+.empty .addr-scope .addr-archive::before {
+  content: none;
+}

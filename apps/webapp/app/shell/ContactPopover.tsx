@@ -35,6 +35,7 @@ import { useTranslations } from "next-intl";
 import { displayAddress, displayAddressee } from "./idn";
 import { MoreMenu, type MoreMenuItem } from "./MoreMenu";
 import { useOverlayClamp } from "./overlay-clamp";
+import { goAddress } from "./routing";
 
 export interface ContactPopoverState {
   /** The message the chip sits on — the screening sheet's anchor into the mirror. */
@@ -77,6 +78,9 @@ export function ContactPopover({
   onClose: () => void;
 }) {
   const t = useTranslations("message");
+  /* The address view's row shares its ONE sentence with the screening sheet's row — the same
+     words wherever the same page is offered, so `screening` is read for that one key. */
+  const ts = useTranslations("screening");
   const rootRef = useRef<HTMLDivElement>(null);
   /**
    * THE VIEWPORT CLAMP. A chip on the LAST message of a thread — the default reading
@@ -99,6 +103,17 @@ export function ContactPopover({
         onClose();
       },
     },
+    /**
+     * EVERYTHING FROM AND TO THIS ADDRESS — `#/address/<addr>`. Always offered, like Copy: it has no
+     * machine behind it that a host could fail to wire. The hash router is the shell's own, so a
+     * hash assignment (`goAddress`, the one spelling every address control shares) IS the
+     * navigation. A chip is a person; this is the fourth thing a reader does with one — see all
+     * the mail between us — and it sits after the address itself, before the acts of writing and
+     * screening. The chip's own pixels stay the popover's trigger: `senderHitOf` answers null
+     * here, and the popover is the chip's existing door, so the view is one verb in it rather
+     * than a second click target laid over a control that already has one.
+     */
+    { id: "address", label: ts("addressOpen"), run: () => { onClose(); goAddress(state.address); } },
     ...(onWrite
       ? [{ id: "write", label: t("write"), run: () => { onClose(); onWrite(); } }]
       : []),
