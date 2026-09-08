@@ -50,7 +50,7 @@ import {
 } from "./onboarding";
 import type { FirstRunHost, FirstRunMailboxInput, FirstRunProbeOk } from "./first-run-host";
 import { pullEtaMs, pullRate, pullRemaining, pullSampleStep, type PullSample } from "./pull-rate";
-import { readerHolder } from "./reader-holder";
+import { holderVerdict, readerHolder } from "./reader-holder";
 import "./first-run.css";
 
 /**
@@ -276,11 +276,34 @@ export function firstRunStep(
    * this is not the screen for this state. The cursor releases and the derivation says where the
    * run actually is — the consent statement, the window, the pull, or nothing left to do.
    *
-   * `readerHolder` and NOT `claimPending`'s `kind || name`: those two questions differ exactly
-   * here. A holder recorded with neither kind nor name is still a holder this build cannot name,
-   * the screen's legacy label is written for it, and an empty name is not an empty mailbox.
+   * `holderVerdict` and NOT `readerHolder`, and NOT `claimPending`'s `kind || name`: three
+   * questions, three answers, and this is the only one about which SCREEN somebody sees.
+   *
+   *  · `claimPending`'s test asks whether a holder was NAMED, because row 3 decides whether to put
+   *    a whole screen in front of somebody who has not been asked yet.
+   *  · `readerHolder` asks which SENTENCE is true, and deliberately collapses "no field" into
+   *    "nobody" — for a sentence that is right, since neither names an install.
+   *  · This asks whether a read ANSWERED, and that collapse is the defect here. It read "this
+   *    build has not been told" as "the mailbox is free" and took the screen away: with the run
+   *    parked on the claim question and the mailbox absent from the facts — a removal from
+   *    another surface, a stale or failing list, an add that has not created — the cursor was
+   *    released and the run resumed on the consent statement, where Continue and then Agree
+   *    authorize a takeover with the choice never having been shown.
+   *
+   * A holder recorded with neither kind nor name is still `somebody`: the screen's legacy label is
+   * written for exactly that, and an empty name is not an empty mailbox.
+   *
+   * ── WHAT THIS DOES NOT CLOSE, AND IT IS SAID HERE BECAUSE IT LOOKS CLOSED ──────────────────
+   *
+   * A `nobody` that is STALE. Two reads of one account can be in flight together and settle in
+   * either order, so an answer issued before the holder was recorded can land after the one that
+   * showed it — a legitimate `nobody` about a moment that has passed, indistinguishable from a
+   * current one at this seam. Ordering them needs a per-row stamp that moves when the holder
+   * does; `organizerEventAt` is that stamp, it is projected unconditionally by the service and it
+   * is already on `MailboxFacts` — it simply does not reach here, because `OnboardingMailbox`
+   * carries five fields and this is not one of them.
    */
-  const cursor = at === "elsewhere" && readerHolder(mb?.organizedBy) === "nobody" ? null : at;
+  const cursor = at === "elsewhere" && holderVerdict(mb) === "nobody" ? null : at;
   /* ── A RE-RUN IS AN INTENT, AND IT OUTRANKS THE COMPLETION STAMP ─────────────────────────
    *
    * `rerun` comes from the ROUTE (`#/first-run/again`), which is the only place it can come

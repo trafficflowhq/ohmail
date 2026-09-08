@@ -60,3 +60,51 @@ export function readerHolder(organizedBy?: ReaderHolderColumns | null): ReaderHo
   const name = organizedBy.name;
   return name !== null && name !== undefined && name.trim() !== "" ? "named" : "unnamed";
 }
+
+/**
+ * ═══ AND THE ROUTING QUESTION, WHICH IS A DIFFERENT ONE ═══════════════════════════════════
+ *
+ * {@link readerHolder} answers "which of three SENTENCES is true", and for a sentence it is right
+ * that an API too old to send the field and one saying "no holder" collapse: neither names an
+ * install, so neither may print a name. For a decision about which SCREEN somebody sees, that
+ * collapse is the defect — it reads "this build has not been told" as "the mailbox is free", and
+ * the screen it takes away is the one that asks whether to displace an existing organizer.
+ *
+ * MEASURED: with the claim question on screen and the cursor parked on it, a read that carried no
+ * organizer answer released the cursor and the run resumed on the consent statement — where
+ * Continue, then Agree, authorizes a takeover with the choice never having been shown.
+ *
+ * So this asks whether a read ANSWERED the question, and it has three answers rather than three
+ * sentences:
+ *
+ *  · `unknown` — no row was read at all (a run whose mailbox the facts do not hold: a removal
+ *    from another surface, a failing or stale list, an add that has not created yet), or a row
+ *    that carried no organizer field. Nothing was said, so nothing may be concluded.
+ *  · `nobody`  — the field was there and it was empty. That is an ANSWER: nothing organizes it.
+ *  · `somebody` — a holder was recorded, named or not.
+ *
+ * ── WHAT IT STILL CANNOT TELL, SAID HERE RATHER THAN LEFT TO BE DISCOVERED ──────────────────
+ *
+ * It cannot tell a CURRENT `nobody` from a STALE one. Two reads of the same account can be in
+ * flight at once and settle in either order, and an older answer landing second is a legitimate
+ * `nobody` about a moment that has passed. Ordering them needs a fact this shape does not carry —
+ * see `OnboardingMailbox`, where the missing field is named.
+ */
+export type HolderVerdict = "unknown" | "nobody" | "somebody";
+
+/** What a read said about who organizes one mailbox — see {@link HolderVerdict}. */
+export function holderVerdict(
+  mailbox: { organizedBy?: ReaderHolderColumns | null } | null | undefined,
+): HolderVerdict {
+  /* NO ROW, NO ANSWER. `undefined` and `null` are one case here for the same reason they are two
+     in `readerHolder`: there, both mean "name nobody"; here, neither is the mailbox saying
+     anything about itself, because there is no mailbox in the run to say it. */
+  if (mailbox === null || mailbox === undefined) return "unknown";
+  /* ABSENT IS NOT EMPTY. `undefined` is a read that did not carry the field; `null` is the field,
+     carried, saying nothing holds this mailbox — which every current producer distinguishes in
+     its type and neither emits today, both mapping absent to `null` at their own seam. Honoured
+     anyway, and named as unreachable rather than counted as a defence: the state it guards is one
+     a wire change would reintroduce silently. */
+  if (mailbox.organizedBy === undefined) return "unknown";
+  return mailbox.organizedBy === null ? "nobody" : "somebody";
+}

@@ -24,21 +24,30 @@ Signed installers — a real Apple Developer ID and an Authenticode certificate.
 
 Five sentences on the mailbox rows described a state the install was not in.
 
-**A mail server it could not ask about read as a working one.** The app asks its own mail engine,
-once a minute, which of your mailboxes it can currently reach. If that question came back refused
-or failed — not unanswered, but answered badly — the pane treated it as no answer at all and every
-row went on saying "Up to date", while nothing could be said about whether any mail was moving. It
-now says the mail server cannot be reached, with no "last answered" time on it, because none is
-known. An engine too old to be asked the question at all is still silence, and the rows keep the
-state they had: a desktop updates on its own schedule, and a window newer than its engine must not
-announce an outage.
+**A question the app could not get answered read as a working mailbox.** Settings asks the mail
+engine on your own computer, every fifteen seconds, which of your mailboxes it can currently
+reach. If that came back refused, or failed, or arrived as something that is not a list of
+mailboxes, the pane treated it as no answer at all: every row went on saying "Up to date" while
+nothing could be said about whether any mail was moving.
+
+The row now says the mail server cannot be *checked* right now — not that it cannot be reached.
+Those are different facts and only one of them had happened: what refused was the engine on this
+machine, asked about its own connections, and your mail server may be working perfectly. That also
+means a single bad answer costs you one interval of "cannot check" instead of a false outage, and
+the next good answer replaces it.
+
+An engine too old to be asked the question at all is a third thing again — silence, not a bad
+answer — and there the rows keep the state they had: a desktop updates on its own schedule, and a
+window newer than its engine must not announce anything.
 
 **"Stop organizing here" left no trace on some mailboxes.** The row that says what this computer
 does with a mailbox — and carries the stop — was withheld entirely on installs that took the
 mailbox over through the organizing hand-off rather than through the setup flow, and on mailboxes
 connected before that record existed. Pressing stop from anywhere else then showed nowhere: the row
 read as an ordinary organized mailbox with nothing pending. The row now says "Stopping on the next
-pass" whenever a stop is standing, whichever install it was asked from.
+pass" whenever a stop is standing on a mailbox this computer organizes. A mailbox organized
+somewhere else does not carry that sentence even if a stop was once asked for here — the request
+records that somebody asked, not who is organizing, and only the second decides what the row says.
 
 **A takeover you had since undone came back on screen.** After "Organize here", the note saying the
 change was asked for ended when this computer became the organizer — and only then. Pressing "Stop
@@ -62,6 +71,12 @@ mailbox with no organizer.
 from here — and every sentence on that screen is about that install. If the mailbox was released
 while you were reading it, the screen stayed, offering a choice between two installs when there was
 one. Setup now moves on to the next thing it needs as soon as nothing holds the mailbox.
+
+It moves on only when it has actually been TOLD that nothing holds it. A read that said nothing —
+because the mailbox list was stale, or failing, or the mailbox had been removed on another
+computer — used to count as "nothing holds it", and the next screen after this one is where you
+agree to let this computer organize the mailbox. Not being told is not an answer, and the question
+stays on screen until one arrives.
 
 ## [0.14.1] — 2026-09-04
 
