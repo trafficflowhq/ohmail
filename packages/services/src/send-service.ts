@@ -646,6 +646,21 @@ export const SEND_DUPLICATE_WINDOW_MS = 60 * 60 * 1000;
  *
  * The time is ISO-8601 rather than a friendly rendering, because none of those three readers has
  * a locale this process knows, and an unambiguous instant beats a pretty one nobody can place.
+ *
+ * ── WHICH INSTANT `at` IS ───────────────────────────────────────────────────────────────────
+ *
+ * For `sent` it is `outbound_sends.sent_at` — the moment the send was recorded as sent, which is
+ * what the Sent copy is stamped with and the only time the reader can look for. It is NOT the
+ * content claim's `created_at`, which is the duplicate window's clock and is restamped whenever a
+ * claim is re-pointed; passing that named a time nothing had happened at whenever a send was
+ * confirmed later than it was reserved. The caller ({@link SendService.reserve}) reads the column
+ * inside the same transaction, and falls back to the claim's stamp for the case that should not
+ * occur — a `sent` row with no `sent_at`, which `finalizeSent` cannot produce, since it writes
+ * both in one statement.
+ *
+ * For `unverified` it is still the claim's stamp: nothing was ever recorded as sent, so there is
+ * no delivery instant to name, and the sentence says exactly that about the attempt. `pending`
+ * carries no time at all.
  */
 export function duplicateSendSentence(firstSendStatus: string, at: Date): string {
   const when = at.toISOString();
@@ -1954,7 +1969,12 @@ export class SendService {
             throw new ServiceError("internal", 500, "the content claim could not be taken");
           }
         } else {
-          const [prior] = await tx.select({ status: outboundSends.status })
+          // `sent_at` rides this SAME read, in the same statement and the same transaction: the
+          // refusal below has to name an instant, and this is the only column that holds one. See
+          // the block at the throw for why the claim's own stamp is not that instant.
+          const [prior] = await tx.select({
+            status: outboundSends.status, sentAt: outboundSends.sentAt,
+          })
             .from(outboundSends).where(eq(outboundSends.id, held.sendId)).limit(1);
           const priorStatus = prior?.status ?? "pending";
           // ── TWO WAYS A STANDING CLAIM IS RECLAIMED, AND THE SECOND IS NOT AN OPTIMISATION ────
@@ -2007,10 +2027,43 @@ export class SendService {
             // only.
             const claimAgeMs = claimNow.getTime() - held.createdAt.getTime();
             const stillRunning = priorStatus === "pending" && claimAgeMs < SEND_STALE_AFTER_MS;
+            // ── WHICH INSTANT THIS REFUSAL NAMES, AND WHY IT IS NOT THE CLAIM'S ─────────────
+            //
+            // The time in the sentence is the one thing in it a person can act on: they go to the
+            // Sent folder and look for the copy. So it has to be the delivery's instant.
+            //
+            // `held.createdAt` is not that. It is the WINDOW's clock — stamped when the claim is
+            // taken and RESTAMPED at every re-point below — so it is the age of an intent and not
+            // the birthday of anything. `outbound_sends.sent_at` is the delivery's, written by the
+            // finalize that recorded the send as sent.
+            //
+            // The two come apart on an ordinary ending, not an exotic one: `adapter.send` throws,
+            // the fate is genuinely unknown, the reservation stays `pending` with its key, and
+            // verify-by-Sent settles it `sent` on ITS clock — the same-key retry's, or
+            // `runSendReconcilePass`'s, tens of minutes later. A press reserved at 09:00 and
+            // confirmed at 09:50 answered "already sent at 09:00", a time nothing happened at.
+            //
+            // The gap is bounded by the window and therefore always inside an hour: a 409 needs
+            // the claim to be YOUNGER than `SEND_DUPLICATE_WINDOW_MS`, and `sent_at` cannot be
+            // later than the request being refused. An older claim is not refused at all — it is
+            // reclaimed a few lines below and the message goes.
+            //
+            // BOTH HALVES MOVE TOGETHER — the sentence and `firstSend.at` — because a client that
+            // renders its own copy from the details would otherwise disagree with the sentence the
+            // API wrote, and the two would be describing different sends.
+            //
+            // A NULL `sent_at` on a `sent` row should not happen: `finalizeSent` is the only
+            // writer of `status = 'sent'` and it sets both columns in one statement. If one ever
+            // appears, this falls back to the claim's stamp — the answer this refusal gave before
+            // — rather than to no time at all. Named here and in {@link duplicateSendSentence}
+            // rather than left as a bare `??`.
+            const firstSendAt = priorStatus === "sent"
+              ? (prior?.sentAt ?? held.createdAt)
+              : held.createdAt;
             throw new ServiceError(
               "duplicate_send", 409,
-              duplicateSendSentence(priorStatus, held.createdAt),
-              { firstSend: { status: priorStatus, at: held.createdAt.toISOString() } },
+              duplicateSendSentence(priorStatus, firstSendAt),
+              { firstSend: { status: priorStatus, at: firstSendAt.toISOString() } },
               stillRunning,
             );
           }

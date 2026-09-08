@@ -306,7 +306,10 @@ composer. For an hour, a second send of exactly that message from the same addre
 whatever key it arrives under, and whatever draft it names. Nothing is submitted, the draft is left
 untouched and ready to send, and the composer says what became of the first attempt: whether it is
 known to have been sent, could not be confirmed, or is going out right now. Those are three
-different facts and they get three different sentences.
+different facts and they get three different sentences. For a message known to have been sent, the
+time named is the time that send was recorded as sent — the one to look for in the Sent folder —
+rather than the time the first attempt was reserved, which can be up to an hour earlier when an
+attempt's outcome was unknown at the time and only confirmed later.
 
 **A message carrying an UPLOADED attachment is not covered by this.** Large files are uploaded before
 the message goes, and their contents are not readable at the moment a send is reserved — only the
