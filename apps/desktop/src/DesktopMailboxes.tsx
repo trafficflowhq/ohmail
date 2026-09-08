@@ -257,20 +257,34 @@ export async function readMailboxReachVia(
      reason this is a status test rather than `!res.ok`. */
   if (res.status === 404) return silent();
   if (!res.ok) return { rows: {}, faulted: true };
-  let body: {
-    items?: Array<{
-      mailboxId?: unknown; reachable?: unknown; unreachableSince?: unknown; signInRefused?: unknown;
-    }>;
-  };
+  let body: unknown;
   try {
-    body = (await res.json()) as typeof body;
+    body = await res.json();
   } catch {
     /* AN OK RESPONSE THAT IS NOT A VERDICT. `readMirrorFreshness` rejects on the same grounds and
        for the same reason: an unanswerable question must not be dressed as an answer. */
     return { rows: {}, faulted: true };
   }
+  /* ── AND A BODY THAT PARSED IS STILL NOT NECESSARILY A VERDICT ──────────────────────────────
+   *
+   * `body.items ?? []` treated `{}`, `{"items": null}`, a bare string and an array as "the engine
+   * answered about no mailboxes", which is the SILENT slice — every row keeps its last ordinary
+   * state, so a mailbox whose socket died goes on reading "Up to date" for as long as the malformed
+   * answer keeps arriving. That is the same confident-wrong-answer-for-a-missing-one this function
+   * was rewritten to stop, surviving one line below the status check that stopped it.
+   *
+   * The verdict is the SHAPE: an object carrying an `items` ARRAY. `{"items": []}` is a genuine
+   * verdict — an engine holding no runtimes — and stays un-faulted with an empty roster, which is
+   * the case that keeps this from being a check that fires on everything. */
+  const items = (body as { items?: unknown } | null)?.items;
+  if (typeof body !== "object" || body === null || Array.isArray(body) || !Array.isArray(items)) {
+    return { rows: {}, faulted: true };
+  }
   const out: Record<string, MailboxReach> = {};
-  for (const it of body.items ?? []) {
+  for (const raw of items) {
+    const it = raw as {
+      mailboxId?: unknown; reachable?: unknown; unreachableSince?: unknown; signInRefused?: unknown;
+    };
     if (typeof it.mailboxId !== "string" || typeof it.reachable !== "boolean") continue;
     out[it.mailboxId] = {
       reachable: it.reachable,
@@ -1208,16 +1222,24 @@ export function DesktopMailboxes(
        answer to the same question and the generic one would send somebody to check a network
        that is working perfectly. */
     if (r?.signInRefused) return t("desktopStateSignInRefused");
-    /* ── THE ENGINE COULD NOT SAY, AND SAYING NOTHING IS A CLAIM TOO ────────────────────────
+    /* ── THE ENGINE COULD NOT SAY, AND THAT IS ITS OWN SENTENCE ─────────────────────────────
      *
      * Only when the row has no answer of its own: a slice that faulted carries none, but the
      * check is written on the row rather than on the verdict so a future partial answer keeps
      * whatever it managed to say.
      *
-     * The UNDATED sentence, and it has to be: `faulted` says the question was refused, not when
-     * the mailbox went quiet, and `desktopStateUnreachableSince` promises a duration this arm
-     * has no way to know. */
-    if (!r && reach.faulted) return t("desktopStateUnreachable");
+     * NOT `desktopStateUnreachable`. That sentence — "Can't reach the mail server" — is a claim
+     * about the PERSON'S MAIL SERVER, and what actually happened is that the engine on this
+     * machine refused or fell over when asked about its own sockets. A stale bearer after an
+     * engine restart answers 401 for every poll, and every row would announce an outage at a
+     * provider that is working perfectly, while mail carries on arriving.
+     *
+     * "Can't check the mail server right now" is the honest one, and it is also what makes a
+     * single transient 5xx harmless: the row states an unanswered question for one poll and the
+     * next good answer replaces it, rather than asserting an outage and then withdrawing it. No
+     * debounce for that reason — a delay would hold a true outage back by as long as it holds a
+     * false one, and this arm no longer claims anything that needs holding back. */
+    if (!r && reach.faulted) return t("desktopStateUnknown");
     if (r && !r.reachable) {
       /* `agoStamp(...).rel` AND NOT `day(...)`: an outage is a DURATION, and the neighbouring
          `day` stamp is deliberately date-only because the sentences it serves are standing facts
@@ -1322,7 +1344,16 @@ export function DesktopMailboxes(
      * would be a button whose press cannot work. So the exception is exactly one fact wide: the
      * block renders when there is something standing to say, and `action` below still withholds
      * the verb on a row that carries the request. */
-    if (role === "organizer" && !offerRelease && !m.releaseRequestedAt) return null;
+    /* THE DTO'S OWN ROLE, never the derived one. `role` above answers `organizer` for anything
+       `claimable` refuses, and `claimable` refuses EVERY row on the hosted door — so a hosted row
+       the wire calls a `reader` was reclassified here, and a retained release stamp on it made
+       this block say "Organizing · Stopping on the next pass" about the service's organizer. The
+       stamp can outlive the role that wrote it (a local install organizes, a stop is asked for,
+       the row goes back to being organized in the cloud), and a stamp is not an authority on who
+       organizes anything: it says a request was made, and the ROLE says whose it was. A reader
+       row with a stamp renders as a reader here and offers nothing. */
+    const pendingStop = m.organizerRole !== "reader" && Boolean(m.releaseRequestedAt);
+    if (role === "organizer" && !offerRelease && !pendingStop) return null;
 
     const open = claimFor === m.id;
     const releasing = releaseFor === m.id;

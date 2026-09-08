@@ -2169,6 +2169,7 @@
     "desktopStateDisconnected": "Disconnected",
     "desktopStateSignInRefused": "The mail server refused the sign-in.",
     "desktopStateUnreachable": "Can't reach the mail server.",
+    "desktopStateUnknown": "Can't check the mail server right now.",
     "desktopStateUnreachableSince": "Can't reach the mail server. Last answered {when}.",
     "desktopStatePaused": "Paused",
     "desktopStateFirstOpen": "Opening for the first time",

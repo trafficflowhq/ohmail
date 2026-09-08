@@ -2169,6 +2169,7 @@
     "desktopStateDisconnected": "Getrennt",
     "desktopStateSignInRefused": "Der Mailserver hat die Anmeldung abgelehnt.",
     "desktopStateUnreachable": "Der Mailserver ist nicht erreichbar.",
+    "desktopStateUnknown": "Der Mailserver lässt sich gerade nicht prüfen.",
     "desktopStateUnreachableSince": "Der Mailserver ist nicht erreichbar. Letzte Antwort {when}.",
     "desktopStatePaused": "Pausiert",
     "desktopStateFirstOpen": "Wird zum ersten Mal geöffnet",
