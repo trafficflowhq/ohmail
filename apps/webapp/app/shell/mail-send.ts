@@ -1326,6 +1326,38 @@ export function useMailSend(
              message has ALREADY GONE stays in the jar, and a press of the same message resumes K
              and is replayed rather than re-sent. A different message is unaffected — it has a
              different fingerprint, and the next press sweeps this record as spent. */
+
+          /* ── WHICH COMPOSE THIS ANSWER IS FOR, AND THE ONE IT IS NOT ─────────────────────
+             `settleCompose`'s `sentByMirror` arm CLEARS the form unconditionally — right on the
+             live path, where the surface being cleared is the one that pressed. Here it is not:
+             a contact's Write or a mail link re-mints the compose session and puts a DIFFERENT
+             message on the same lane while the replay is still out there, and settling then wipes
+             words nobody has sent. Measured — the case in the trace file read `expected '' to be
+             'Wann kommt der Ofen?'` before this guard, which is a data loss the person cannot undo
+             and cannot see the cause of. This pass opened that route; it closes it.
+
+             The record names the message it was minted for; the surface names what it holds now.
+             Equal means the answer is about what is on screen. Different means it is about a
+             message this surface no longer holds, and the only correct action is to leave the
+             screen alone — the record stays, so the message it names is still recognised if it
+             comes back, and the diagnostic says so rather than the seam going quiet.
+
+             A record with NO session is not a mismatch; it is a build or a lane that never had one
+             (a reply and a forward are named by the message they answer, which no re-mint can
+             change). Those settle as before: a rule that fails closed needs the state it fails
+             closed ON to be distinguishable from "this shell has no such thing". */
+          if (
+            record.lane === COMPOSE_SEND_KEY
+            && record.session !== undefined
+            && record.session !== composeSessionId(owner.current)
+          ) {
+            console.warn(
+              "ohmail: send_settled_unbound — a send settled for a compose this surface no longer "
+              + `holds (lane "${record.lane}"); the message on screen is a different one and was `
+              + "left alone",
+            );
+            continue;
+          }
           settledRef.current(record.lane, {
             kind: "mail_send", draftId: res.entityId ?? record.draftId ?? null,
           } as unknown as MailSend);
