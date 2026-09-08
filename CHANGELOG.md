@@ -87,8 +87,9 @@ question is not taken away by news that has been overtaken.
 ### Sync now reconnects at once after a detected outage
 
 When the connection to your mail server drops, ohmail re-dials by itself on a widening interval —
-fifteen seconds, then longer, up to five minutes — so that a server which is genuinely down is not
-knocked on every few seconds. That is right when nobody is watching and wrong when somebody is: if
+fifteen seconds, then longer, up to about five minutes (each wait carries a small random spread, so
+the longest gap can approach six) — so that a server which is genuinely down is not knocked on every
+few seconds. That is right when nobody is watching and wrong when somebody is: if
 your network came back thirty seconds into a five-minute wait, the mailbox sat there saying it was
 unreachable until the wait ran out, and pressing "Sync now" did nothing about it.
 
@@ -174,8 +175,8 @@ A browser that will not let the app keep its own records can still send and stil
 cannot do is decide, on evidence it does not have, to delete a draft, start a new one, or take
 over a message it may already have sent.
 
-The wording that told you to check your Sent folder and send it again has been replaced, because
-sending it again is refused — the sentence now says what is true.
+The wording no longer tells you to send it again, because sending it again is refused; it still
+points you to your Sent folder, which is where the answer is, and says the message is held here.
 
 ## [0.14.1] — 2026-09-04
 
