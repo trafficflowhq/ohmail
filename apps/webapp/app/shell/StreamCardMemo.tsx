@@ -42,7 +42,7 @@
  * cards through `presentationReader` so a reference memo cannot pass it.
  */
 
-import { memo, type ReactNode } from "react";
+import { memo, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import type { EngineMessage, MessageBody } from "@ohmail/client-engine";
 import { StreamCard, StreamArt } from "@ohmail/ui";
@@ -53,6 +53,7 @@ import { MessageRecipients } from "./MessageRecipients";
 import { FoldTableArt } from "./StreamShell";
 import type { RemoteImagesChrome } from "./remote-images";
 import { MessageBody as MessageBodyView } from "../components/MessageBody";
+import { BlockNoticeGloss, type BlockNotice } from "../components/BlockNotice";
 
 /**
  * HOW MANY RECIPIENTS A CARD NAMES BEFORE THE REST BECOMES A COUNT.
@@ -117,6 +118,15 @@ function StreamCardMemoInner({
 }: StreamCardMemoProps) {
   /* The card's two toggle words. `StreamCard` has none of its own — see `copy-census`. */
   const tm = useTranslations("message");
+  /**
+   * WHAT THIS MESSAGE HAD REFUSED, as the viewer reports it (`MessageBody.onNotice`) — carried to
+   * the card's HEAD as a glyph rather than said as a bar above the body. Internal state, not a
+   * prop, so `areEqual` below is untouched: the viewer reports once per real change, this card
+   * re-renders once to place the glyph, and a card with nothing refused never re-renders for it.
+   * `setNotice` is a state setter and therefore stable, which is what keeps the viewer's effect
+   * from re-firing on every render of this card.
+   */
+  const [notice, setNotice] = useState<BlockNotice | null>(null);
   /* THE SAME THREE-TERM `remoteLoaded` AS `MessagePane`, and the same withheld button in auto
      mode: the stored flag, the account's auto setting, this session's press. Built inside the
      memo so a skipped render costs nothing. */
@@ -132,6 +142,7 @@ function StreamCardMemoInner({
         imageProxy={remoteImages ? remoteImages.proxyFor(m.id) : null}
         onLoadRemote={remoteImages && !remoteImages.auto ? () => remoteImages.consent(m.id) : undefined}
         loadTrackingPixels={remoteImages?.loadPixels ?? false}
+        onNotice={setNotice}
       />
     ) : undefined;
   /**
@@ -150,6 +161,11 @@ function StreamCardMemoInner({
   const recipientCount = (m.to?.length ?? 0) + (m.cc?.length ?? 0);
   const recipients: ReactNode =
     recipientCount > 1 ? <MessageRecipients message={m} max={CARD_RECIPIENT_CHIPS} /> : undefined;
+
+  /* Shown only while the viewer that reported it is mounted: a card whose body went back to a
+     snippet has no document left for the fact to be true of. */
+  const noticeNode: ReactNode =
+    bodySlot && notice ? <BlockNoticeGloss notice={notice} /> : undefined;
   const art: ReactNode = m.art ? (
     <StreamArt ariaLabel={m.art.ariaLabel} caption={m.art.caption}>
       <FoldTableArt />
@@ -162,6 +178,7 @@ function StreamCardMemoInner({
       address={displayAddress(m.from.address)}
       amount={m.amount}
       time={displayTime(m, now)}
+      notice={noticeNode}
       subject={m.subject}
       body={bodyText}
       bodyState={bodyState}

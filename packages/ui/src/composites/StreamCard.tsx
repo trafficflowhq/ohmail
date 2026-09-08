@@ -19,6 +19,19 @@ export interface StreamCardProps {
   /** Receipts: the amount beside the sender. */
   amount?: string;
   time: string;
+  /**
+   * A FACT ABOUT THE MESSAGE, said in the meta line — between the sender and the time.
+   *
+   * What the reading pane says above a message as a bar ("A tracking pixel was blocked."), a card
+   * says here as a glyph with a short caption whose sentence opens on demand. A SLOT and not a
+   * shape, for the reason `actions` is one: the app owns the words and the primitive that opens
+   * them (`BlockNotice` over `Gloss`); this file decides only where the node stands and what it
+   * inherits — the time's size and ink, never the accent. A press on it is a question about the
+   * notice, not an engagement with the card, so it does not select or expand the card.
+   *
+   * Default-absent: a card whose caller passes nothing is exactly the card that shipped before.
+   */
+  notice?: ReactNode;
   subject: string;
   /**
    * Body text (white-space: pre-line). A "[[img]]" marker splits the
@@ -125,6 +138,7 @@ export function StreamCard({
   address,
   amount,
   time,
+  notice,
   subject,
   body,
   art,
@@ -336,6 +350,14 @@ export function StreamCard({
           <b>{from}</b>
           {address ? <span className="addr">{address}</span> : null}
           {amount ? <span className="amt num">{amount}</span> : null}
+          {/* Before the time, so the date keeps the corner the eye expects it in and the notice
+              leads into it. `onClick` stops here: asking what the glyph means must not also select
+              and open the card underneath it. */}
+          {notice ? (
+            <span className="sc-notice" onClick={(e) => e.stopPropagation()}>
+              {notice}
+            </span>
+          ) : null}
           <span className="t num">{time}</span>
         </div>
         <h3>{subject}</h3>

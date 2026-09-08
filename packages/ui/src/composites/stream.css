@@ -31,6 +31,22 @@
   cursor:pointer;transition:color .15s}
 .sc-line .addr:hover{color:var(--ink2);text-decoration:underline;text-underline-offset:2px}
 .sc-line .amt{flex:none;font-variant-numeric:tabular-nums;font-size:calc(12px + var(--type-up));font-weight:550}
+/* THE NOTICE SLOT — a fact about the message in the line's own voice: the time's size and ink,
+   never the accent, because a block is the product doing what it says and not a fault. It takes
+   the time's `margin-left:auto` when present (the rule below hands the time a fixed gap instead),
+   so the pair is pushed to the trailing edge as one and the date keeps its corner. The glyph's own
+   stylesheet (`gloss.css`) draws the card that opens; nothing here is face-conditional. */
+.sc-line .sc-notice{margin-left:auto;flex:none;display:inline-flex;align-items:baseline;min-width:0;font-size:calc(11px + var(--type-up));color:var(--ink3)}
+.sc-line .sc-notice + .t{margin-left:4px}
+/* At the phone tier the caption yields to the glyph: a Receipts head at 390px holds a sender, an
+   amount and a time, and a two-word caption beside them would take the address's whole width.
+   The caption stays in the accessibility tree — clipped, not `display:none` — so the trigger keeps
+   its name and a reader still hears "Tracker blocked" before the sentence. Same boundary as the
+   shell's other phone rules (`app.css`, `max-width: 640px`). */
+@media (max-width: 640px){
+  .sc-line .sc-notice .gloss-cap{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+  .sc-line .sc-notice .gloss-t{gap:0}
+}
 .sc-line .t{margin-left:auto;font-size:calc(11px + var(--type-up));color:var(--ink3);font-variant-numeric:tabular-nums;flex:none}
 .sc-head h3{font-size:16.5px;font-weight:600;letter-spacing:-.015em;margin:5px 0 0;line-height:1.3;text-wrap:balance}
 /* THE RECIPIENTS SLOT. The block inside it is the reading pane's own (`.msg-rcpts`, `app.css`)

@@ -407,6 +407,19 @@ wheel. A message too tall to shrink into its frame at all still scrolls inside i
 the only way to reach the end of it. The wide tables and code blocks inside a message keep their
 sideways scrolling and no longer take a vertical wheel with it.
 
+### The tracking notice moves into the card's head in Reads and Receipts
+
+In Reads and Receipts, "A tracking pixel was blocked." — and its siblings, "N remote images
+blocked." and "A remote stylesheet was blocked, so this message may look plain." — no longer stands
+as a full-width boxed line above an open message. The card's meta line carries a small (i) beside
+the date with a two-word caption instead: "Tracker blocked", "Images blocked" or "Stylesheet
+blocked". Hovering, focusing or pressing it opens the whole sentence in a small card; Escape or a
+press elsewhere closes it. The glyph is a button whose description is the sentence, so a screen
+reader hears the caption and then the sentence. "Show images" keeps its place above the message,
+without the box around it. On a phone the caption yields to the glyph so the sender's address keeps
+its room. The reading pane, the Ohbox card and the Screener still say the sentence in their bar,
+unchanged, and nothing about the blocking itself changes.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

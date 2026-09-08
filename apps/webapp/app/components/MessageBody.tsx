@@ -132,6 +132,7 @@ import { UI_KEYS, usePersistedIdSet } from "../shell/persisted-ui";
 import { interceptLinkClicks } from "../shell/open-external";
 import "./message-body.css";
 import { liveCopy } from "../shell/locale";
+import { CAPTION_KEY, type BlockNotice, type NoticeKind } from "./BlockNotice";
 
 /**
  * THE ENGLISH SENTENCES — the FALLBACK, not the source. Every string this component draws comes out
@@ -160,6 +161,17 @@ const EN = {
    * "one of them" off, so the refusal is stated whole. The singular reuses {@link pixelOnly}.
    */
   pixelsRefusedMany: (n: number) => `${n} tracking pixels were blocked.`,
+  /**
+   * THE CAPTIONS — what the reading stream's card head CALLS each of the three notices when it
+   * carries the disclosure as a glyph instead of a bar (`BlockNotice`). Two words in the meta
+   * line's voice, never a shortened sentence and never a colour that reads as an error; the whole
+   * sentence above is the glyph's description and opens on hover, focus or a press. Which caption
+   * a message gets is `NOTICE_CAPTION` in `BlockNotice.tsx`, and `test/tracking-notice.test.tsx`
+   * holds every notice sentence in this table against that mapping and both catalogues.
+   */
+  pixelCaption: "Tracker blocked",
+  imagesCaption: "Images blocked",
+  sheetCaption: "Stylesheet blocked",
   show: "Show images",
   /** The dark-viewer toggle. Shown only in a dark theme; flips THIS message between the
    *  adapted (dark) rendering and its original light one, and the choice is remembered. */
@@ -3616,6 +3628,69 @@ function scrollAncestors(el: Element): Element[] {
   return out;
 }
 
+/**
+ * WHAT THE BAR SAYS ABOUT WHAT WAS REFUSED — composed once, read twice.
+ *
+ * The bar above a framed message and the glyph in a stream card's head state the SAME fact from the
+ * SAME terms, and this is the one place the sentences are chosen, so the two can never disagree.
+ * `lead` is the images-or-beacons sentence, `hit` the "one of them is a tracking pixel" that rides
+ * inside an images sentence (the bar sets it in the accent), `sheet` the stylesheet sentence, said
+ * LAST, ALWAYS: the browser-level test of the bar reads the FIRST number in it and holds that
+ * against the remote images the message names, and a stylesheet count in front would make that
+ * guard measure the wrong thing. `spaceBeforeSheet` is the bar's exact separator rule — a space
+ * whenever the message named remote images, even where the loaded modes left `lead` unsaid.
+ *
+ * `pixelSaid` is whether the lead sentence itself is a beacon sentence, kept as a fact rather than
+ * re-derived from the strings: the caption a host shows is decided from it, and a string comparison
+ * against a translated sentence is not a decision.
+ *
+ * Every member reads `COPY`, so the answer follows the active catalogue like the bar always did.
+ */
+interface BlockedSaid {
+  lead: string | null;
+  pixelSaid: boolean;
+  hit: string | null;
+  sheet: string | null;
+  spaceBeforeSheet: boolean;
+}
+
+function sayBlocked(t: {
+  remote: readonly BlockedAsset[];
+  sheets: readonly string[];
+  pixels: number;
+  remoteShown: boolean;
+  pixelsRefused: number;
+}): BlockedSaid {
+  const { remote, sheets, pixels, remoteShown, pixelsRefused } = t;
+  let lead: string | null = null;
+  let pixelSaid = false;
+  if (remote.length > 0) {
+    if (remoteShown) {
+      /* The pictures are on screen; only the refused beacons are left to report. */
+      if (pixelsRefused > 0) {
+        lead = pixelsRefused === 1 ? COPY.pixelOnly : COPY.pixelsRefusedMany(pixelsRefused);
+        pixelSaid = true;
+      }
+    } else if (remote.length === pixels && pixels > 0) {
+      lead = COPY.pixelOnly;
+      pixelSaid = true;
+    } else {
+      lead = remote.length === 1 ? COPY.blockedOne : COPY.blockedMany(remote.length);
+    }
+  }
+  const hit =
+    !remoteShown && pixels > 0 && remote.length !== pixels
+      ? pixels === 1 ? COPY.pixelOne : COPY.pixelMany(pixels)
+      : null;
+  const sheet =
+    sheets.length > 0 ? (sheets.length === 1 ? COPY.sheetOne : COPY.sheetMany(sheets.length)) : null;
+  return { lead, pixelSaid, hit, sheet, spaceBeforeSheet: remote.length > 0 };
+}
+
+/** Stable empties for the renders where there is no sanitized document to read them from. */
+const NO_ASSETS: readonly BlockedAsset[] = [];
+const NO_SHEETS: readonly string[] = [];
+
 // ── the component ──────────────────────────────────────────────────────────────────────
 
 export interface MessageBodyProps {
@@ -3691,6 +3766,23 @@ export interface MessageBodyProps {
    * Fired after mount and on every change, never during render.
    */
   onRenderMode?: (mode: "prose" | "framed") => void;
+  /**
+   * THE HOST STATES THE BLOCKING DISCLOSURE ITSELF — and this component then does not.
+   *
+   * Present, it is called (from an effect, never during render) with what this message had refused
+   * and how that is said — the caption a meta line shows and the whole sentence behind it
+   * (`BlockNotice`) — or `null` when nothing was refused. The reading stream's card passes it and
+   * puts the fact in its head as a glyph; the bar here keeps only the controls it still owns
+   * ("Show images", the dark toggle), with no sentence and no box around them. Absent — the reading
+   * pane, the Ohbox card, the Screener, every bare test mount — the bar says the sentence exactly
+   * as it always has. The fact is stated in every case; what moves is where.
+   *
+   * A callback and not a value the host computes, for the reason `onRenderMode` is one: the terms
+   * are fields of the sanitize pass this component already runs, and asking for them from outside
+   * would sanitize every message twice. The reported object is rebuilt only when one of its three
+   * strings changes, so a host that stores it re-renders once per real change.
+   */
+  onNotice?: (notice: BlockNotice | null) => void;
 }
 
 /**
@@ -3710,6 +3802,7 @@ export function MessageBody({
   cidImages,
   onCidImages,
   onRenderMode,
+  onNotice,
 }: MessageBodyProps) {
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
@@ -4107,24 +4200,17 @@ export function MessageBody({
     if (wantedCids && wantedCids.length > 0) onCidImages?.(wantedCids);
   }, [wantedCids, onCidImages]);
 
-  // ── no html, or nothing left after sanitizing: the text part, unchanged ──
-  if (!mail) return <BodyText text={text} />;
-
-  // ── a DOM the sanitizer could not use (a server render), or an html part past the size
-  //    cap. Both render the text WITH THE REASON — never the raw html, never a blank frame. ──
-  if (mail.state !== "ok") {
-    return (
-      <>
-        <BodyText text={text} />
-        <p className="mb-note">
-          {mail.state === "oversize" ? COPY.oversize : COPY.unsupported}
-        </p>
-      </>
-    );
-  }
-
-  const remote = mail.blocked;
-  const sheets = mail.sheets;
+  /**
+   * ── WHAT WAS REFUSED, AND WHAT IS SAID ABOUT IT ─────────────────────────────────────────
+   *
+   * Computed HERE, above the early returns, because the effect that reports it to a host is a hook
+   * — the same reason `framelessView` sits up here. On the three renders that carry no sanitized
+   * document (`!mail`, `unsupported`, `oversize`) the terms are empty and nothing is refused, which
+   * is also what those renders have always said: no bar.
+   */
+  const okMail = mail && mail.state === "ok" ? mail : null;
+  const remote = okMail ? okMail.blocked : NO_ASSETS;
+  const sheets = okMail ? okMail.sheets : NO_SHEETS;
   const pixels = remote.filter((b) => b.pixel).length;
   /**
    * ── DID THE PICTURES ACTUALLY LOAD? NOT THE SAME QUESTION AS `remoteLoaded` ─────────────
@@ -4161,6 +4247,54 @@ export function MessageBody({
   // status line that used to say "Images loaded for this message." was pure noise and is gone.
   // Blocked stylesheets have no consent path, so they still count even when images loaded.
   const hasBlocked = (remote.length > 0 && !remoteShown) || sheets.length > 0 || pixelsRefused > 0;
+  /**
+   * The sentences, chosen once (`sayBlocked`) for the bar below AND for the host's glyph. The
+   * caption follows the beacon when there is one — the fact this product is named for leads —
+   * then the pictures, then the stylesheet; the glyph's text is the bar's sentences joined by a
+   * space, in the bar's order.
+   */
+  const said = hasBlocked ? sayBlocked({ remote, sheets, pixels, remoteShown, pixelsRefused }) : null;
+  const noticeKind: NoticeKind | null =
+    said === null ? null
+    : said.pixelSaid || said.hit !== null ? "pixel"
+    : said.lead !== null ? "images"
+    : "sheet";
+  const noticeCaption = noticeKind === null ? null : COPY[CAPTION_KEY[noticeKind]];
+  const noticeText =
+    said === null ? null : [said.lead, said.hit, said.sheet].filter((s): s is string => s !== null).join(" ");
+  /**
+   * REPORT IT — see {@link MessageBodyProps.onNotice}. In an effect, for the reasons `onRenderMode`
+   * gives, and keyed on the three STRINGS rather than on an object, so a host storing the answer is
+   * told once per real change and never once per render.
+   */
+  useEffect(() => {
+    if (!onNotice) return;
+    onNotice(
+      noticeKind !== null && noticeCaption !== null && noticeText !== null
+        ? { kind: noticeKind, caption: noticeCaption, text: noticeText }
+        : null,
+    );
+  }, [onNotice, noticeKind, noticeCaption, noticeText]);
+
+  // ── no html, or nothing left after sanitizing: the text part, unchanged ──
+  if (!mail) return <BodyText text={text} />;
+
+  // ── a DOM the sanitizer could not use (a server render), or an html part past the size
+  //    cap. Both render the text WITH THE REASON — never the raw html, never a blank frame. ──
+  if (mail.state !== "ok") {
+    return (
+      <>
+        <BodyText text={text} />
+        <p className="mb-note">
+          {mail.state === "oversize" ? COPY.oversize : COPY.unsupported}
+        </p>
+      </>
+    );
+  }
+
+  // `remote`, `sheets`, `pixels`, `remoteShown`, `pixelsRefused`, `hasBlocked` and the sentences
+  // (`said`) are computed ABOVE the early returns, beside `framelessView`, because a hook reads them.
+  //
   // The bar also carries the dark-viewer toggle, so it appears in a dark theme even when there
   // is nothing blocked to report. The empty text span below still takes the flex space, which
   // is what pushes the toggle to the right whether or not the blocked-content sentence is there.
@@ -4234,31 +4368,45 @@ export function MessageBody({
      the one the strip reads is the one computed above. */
   const proseView = framelessView;
   const canAdapt = themeDark && adaptable && !proseView;
+  // `imgSource !== null` is the third term and it is the same rule the sanitizer's `proxy` is
+  // gated on: a button that consents to images the frame's policy will then refuse is a control
+  // over a capability nothing can serve, which this file already refuses to render elsewhere.
+  const canLoad =
+    imageProxy != null && imgSource !== null && onLoadRemote != null && !remoteLoaded && !proseView;
   /**
-   * THE BAR CARRIES A SENTENCE OR A CONTROL WITH A JOB — never nothing. `hasBlocked` is the
-   * privacy disclosure (a beacon or a stylesheet the message named and this refused); `canAdapt`
-   * is the dark-viewer toggle, meaningful only over a frame in a dark theme. `proseable` is NOT
-   * here: it is the frameless flip, which now lives as its own quiet control after the body, so
-   * a plain letter with nothing to report shows no bar at all.
+   * THE HOST SAYS IT, OR THE BAR DOES — never both, never neither. `onNotice` present means the
+   * mounting surface states the blocking disclosure in its own chrome (the stream card's head),
+   * so the sentence and its glyph leave this bar; what stays is a control with a job.
    */
-  const showBar = hasBlocked || canAdapt;
+  const hostTakesNotice = onNotice != null;
+  const barSaysIt = hasBlocked && !hostTakesNotice;
+  /**
+   * THE BAR CARRIES A SENTENCE OR A CONTROL WITH A JOB — never nothing. `barSaysIt` is the
+   * privacy disclosure (a beacon or a stylesheet the message named and this refused), where this
+   * component is the one saying it; `canAdapt` is the dark-viewer toggle, meaningful only over a
+   * frame in a dark theme; `controlsOnly` is the host-said case where "Show images" still has
+   * pictures to load — the button keeps its place above the body, the box does not (`mb-bar-quiet`).
+   * `proseable` is NOT here: it is the frameless flip, which now lives as its own quiet control
+   * after the body, so a plain letter with nothing to report shows no bar at all.
+   */
+  const controlsOnly = hostTakesNotice && hasBlocked && canLoad;
+  const showBar = barSaysIt || canAdapt || controlsOnly;
   /**
    * IS WHAT THE READER IS LOOKING AT DARK? Not the same question as `dark`, which is only
    * whether the FILTER is on. A mail the sender drew dark is dark on screen with no filter at
    * all, and the surround has to match that too or a dark newsletter sits in a light frame.
    */
   const surfaceDark = themeDark && (dark || !adaptable);
-  // `imgSource !== null` is the third term and it is the same rule the sanitizer's `proxy` is
-  // gated on: a button that consents to images the frame's policy will then refuse is a control
-  // over a capability nothing can serve, which this file already refuses to render elsewhere.
-  const canLoad =
-    imageProxy != null && imgSource !== null && onLoadRemote != null && !remoteLoaded && !proseView;
 
   return (
     <div className="mb" ref={shellRef}>
       {showBar ? (
-        <div className="mb-bar" role="status">
-          {hasBlocked ? (
+        <div
+          className={hostTakesNotice ? "mb-bar mb-bar-quiet" : "mb-bar"}
+          /* A live region only while a sentence lives here; a row of controls announces nothing. */
+          role={hostTakesNotice ? undefined : "status"}
+        >
+          {barSaysIt ? (
             <svg className="mb-bar-icon" viewBox="0 0 16 16" aria-hidden="true" fill="none"
               stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
               <path d="M2 8s2.4-4 6-4 6 4 6 4-2.4 4-6 4-6-4-6-4Z" />
@@ -4266,39 +4414,30 @@ export function MessageBody({
               <path d="m3 13 10-10" />
             </svg>
           ) : null}
-          <span className="mb-bar-text">
-            {remote.length === 0
-              ? null
-              : remoteShown
-                ? /* The pictures are on screen; only the refused beacons are left to report. */
-                  pixelsRefused === 0
-                  ? null
-                  : pixelsRefused === 1
-                    ? COPY.pixelOnly
-                    : COPY.pixelsRefusedMany(pixelsRefused)
-                : remote.length === pixels && pixels > 0
-                  ? COPY.pixelOnly
-                  : remote.length === 1
-                    ? COPY.blockedOne
-                    : COPY.blockedMany(remote.length)}
-            {!remoteShown && pixels > 0 && remote.length !== pixels ? (
-              <>
-                {" "}
-                <span className="mb-bar-hit">
-                  {pixels === 1 ? COPY.pixelOne : COPY.pixelMany(pixels)}
-                </span>
-              </>
-            ) : null}
-            {/* LAST, ALWAYS. The browser-level test of this bar reads the FIRST number in it
-                and holds that against the remote images the message names; a stylesheet count
-                in front of that would make the guard measure the wrong thing. */}
-            {sheets.length > 0 ? (
-              <>
-                {remote.length > 0 ? " " : null}
-                {sheets.length === 1 ? COPY.sheetOne : COPY.sheetMany(sheets.length)}
-              </>
-            ) : null}
-          </span>
+          {hostTakesNotice ? null : (
+            /* The sentences are `said`, chosen above the returns by `sayBlocked` — the same
+               choice the host's glyph reads, so the two can never disagree. Empty when nothing
+               was refused (a dark-toggle-only bar): the span still takes the flex space, which is
+               what pushes the toggle to the right. */
+            <span className="mb-bar-text">
+              {said?.lead}
+              {said?.hit ? (
+                <>
+                  {" "}
+                  <span className="mb-bar-hit">{said.hit}</span>
+                </>
+              ) : null}
+              {/* LAST, ALWAYS. The browser-level test of this bar reads the FIRST number in it
+                  and holds that against the remote images the message names; a stylesheet count
+                  in front of that would make the guard measure the wrong thing. */}
+              {said?.sheet ? (
+                <>
+                  {said.spaceBeforeSheet ? " " : null}
+                  {said.sheet}
+                </>
+              ) : null}
+            </span>
+          )}
           {/* "Show images" is SUPPRESSED on the frameless path (`canLoad` reads `!proseView`),
               because that rendering draws no images at all — the button would consent to
               something and then show nothing, which is the objection `canAdapt` answers for the
