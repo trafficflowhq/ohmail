@@ -42,8 +42,12 @@ import { drizzle as drizzleSqliteProxy } from "drizzle-orm/sqlite-proxy";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { migrateSqlite } from "@trafficflow/db/sqlite-migrate";
 import type { OrganizerKindWritten } from "@trafficflow/core/adapters/organizer-lease";
+/* THE WORKER'S SOCKET PROFILE, not a third one. See {@link startPhoneEngine}. */
+import { WORKER_NET_TIMEOUTS } from "@trafficflow/core/adapters/imap";
+import type { ImapConfig, MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import {
   createSidecar,
+  type AdapterDialContext,
   type OrganizerState,
   type MailboxConnectionState,
   type SidecarImapConfig,
@@ -160,6 +164,17 @@ export interface PhoneEngineDeps {
    * nothing is read from here: the store arrives open and this build has no filesystem module.
    */
   dataDir?: string;
+  /**
+   * TEST SEAM — how a mailbox connection is opened. Production passes nothing and the engine dials
+   * for real.
+   *
+   * It is here because {@link startPhoneEngine} now DIALS on its own, and a composition suite that
+   * did not intercept the dial would open a socket to whatever host its fixture named. The suite
+   * had been passing this all along and it was being dropped on the floor: the config assembled
+   * below never carried it, so the file's own statement that "no socket is opened: the adapter is
+   * a double" was false, and harmless only for as long as nothing started the engine.
+   */
+  adapterFactory?: (cfg: ImapConfig, ctx: AdapterDialContext) => MailboxAdapter;
 }
 
 /** What a phone gets back. `handle` is the seam the in-app client talks to. */
@@ -412,16 +427,39 @@ export async function startPhoneEngine(deps: PhoneEngineDeps): Promise<PhoneEngi
     }
   }
 
+  /* ONE DIAGNOSTIC, handed to the engine AND to the launch catch below. Two would be two places a
+     caller has to wire up, and the one that gets forgotten is the one that swallows the only
+     record of a mailbox that never came up. */
+  const log: Diagnostic = deps.log ?? ((): void => undefined);
+
   const store = await openPhoneStore(deps.exec);
   const sidecar = await createSidecar({
     dataDir: deps.dataDir ?? "",
-    imap: deps.imap,
+    /**
+     * THE PHONE'S SOCKET DEADLINE IS THE COMPOSITION'S, AND IT IS THE WORKER'S NUMBER.
+     *
+     * The engine's default profile documents itself as chosen against a sixty-second serverless
+     * invocation ceiling — a 25 s socket deadline for a connection that is opened, used and thrown
+     * away inside one request. This connection is nothing like that: it is held for as long as the
+     * app is in the foreground, and a single fetch pass over a couple of hundred messages was
+     * measured at 42 s on a device. Under the serverless profile that pass is a dead socket, and
+     * what a person sees is a mailbox that never finishes opening.
+     *
+     * `WORKER_NET_TIMEOUTS` is the profile that already exists for exactly this shape, with
+     * exactly this reason written on it, and the worker passes it the same way — INSIDE the config
+     * object, which flows through the seed mailbox's dial to the adapter with no engine change at
+     * all. A third profile would be a third number to keep in step with two others.
+     *
+     * A caller that supplies its own timeouts WINS, so this is a default rather than an override.
+     */
+    imap: { ...deps.imap, timeouts: deps.imap.timeouts ?? WORKER_NET_TIMEOUTS },
     ...(deps.address !== undefined ? { address: deps.address } : {}),
     machineName: deps.machineName,
     installId: deps.installId,
     organizerKind: deps.organizerKind ?? "mobile",
     ...(deps.now ? { now: deps.now } : {}),
     ...(deps.log ? { log: deps.log } : {}),
+    ...(deps.adapterFactory ? { adapterFactory: deps.adapterFactory } : {}),
     // Hex to bytes happens HERE and nowhere else: `Buffer` is bound in this bundle by the builder's
     // `inject`, and the app-side code that reads the keystore has no such global.
     ...(Object.keys(keks).length > 0
@@ -432,6 +470,35 @@ export async function startPhoneEngine(deps: PhoneEngineDeps): Promise<PhoneEngi
     /* See {@link phoneOneClickPost}: refused by name, so the failure is about the person's mail
        rather than about a missing Node module. */
     oneClickPost: phoneOneClickPost,
+  });
+
+  /**
+   * THE ENGINE STARTS ITSELF. Nobody outside has to remember to.
+   *
+   * `main.ts` is the desktop's composition root and it does exactly this, on the line after the
+   * engine is built. This file did not, and it exposed no way to do it either — so a phone booted,
+   * answered its door, reported `organizing: true`, and synchronised nothing for ever, with no
+   * diagnostic anywhere. Every part worked; the launch was simply never made.
+   *
+   * NOT a `start()` member on {@link PhoneEngine}. A door that must remember to call something is
+   * the built-tested-unreachable shape this whole composition exists to close, and it would have
+   * put "does this install organize its mailbox?" in the app rather than in the engine.
+   *
+   * `void` and a catch, not an `await`: the handle is usable the moment this function resolves,
+   * which is the desktop's own "door before mailbox" order. A launch that fails is not fatal — the
+   * runtime arms its poll on the way out and `wake()` re-dials when the app returns to the
+   * foreground — and it is VISIBLE without a logger, because the failure marks the connection dead
+   * and {@link PhoneEngine.runtimes} reports the row rather than the gate's optimism.
+   *
+   * This is a READ. Nothing moves before the lease is consulted; the dial and the gate are the
+   * engine's own, unchanged.
+   */
+  void sidecar.start().catch((err: unknown) => {
+    log("mailbox_start_failed", {
+      err,
+      reason: "the mailbox did not come up; the engine keeps serving the local store and the " +
+        "poll will re-dial",
+    });
   });
 
   return {
