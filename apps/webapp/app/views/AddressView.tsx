@@ -33,12 +33,14 @@
  *
  * ── WHICH ROWS THE ARCHIVE MAY ADD ─────────────────────────────────────────────────────────
  *
- * The contract appends the archive's rows behind the device's whatever the toggle says, and the
- * archive answers `from`. Under All those rows belong (All includes what they sent). Under To them
- * they do not — they are mail the address SENT, and listing them under "To them" is the false claim
- * the contract's own header warns against. So {@link archiveRowsBelong} decides per direction and
- * the view drops the archive's rows where they do not belong; the named line says why the list is
- * device-only there. The same rule gives the toggle its numbers.
+ * The archive answers ONE direction — `from`. Its rows belong under All (which includes what they
+ * sent) and under From them, and not under To them, where they would be mail the address SENT
+ * listed as mail sent TO it: the false claim the contract's own header warns against.
+ *
+ * {@link archiveRowsBelong} is that rule, and it is applied TWICE on purpose. The contract holds
+ * the rows back where they do not belong, so `items` is already right; this file applies the same
+ * rule to what it renders, and uses it a third time for the toggle's numbers, where it is the only
+ * thing deciding them. The named line says why the list is device-only under To them.
  *
  * ── KEYBOARD ───────────────────────────────────────────────────────────────────────────────
  *
@@ -147,9 +149,11 @@ export function AddressView({
 
   /**
    * HOW MANY ROWS THE ARCHIVE ADDS — the archive's rows this device does not hold, counted against
-   * the direction the archive answered. `view.items` cannot be read for this under To them, where
-   * the contract's `held` set is the device's to-rows and every archive row looks new; so the
-   * device's rows for the ANSWERED direction are asked for directly (`messagesWith` is pure).
+   * the direction the archive answered. `view.items` cannot be read for this at all: under To them
+   * the contract holds the archive's rows back entirely, so counting the marked rows there would
+   * answer zero and each segment would show its device count alone. The device's rows for the
+   * ANSWERED direction are therefore asked for directly (`messagesWith` is pure), which is the
+   * same number whatever the toggle shows.
    */
   const extras = useMemo(() => {
     if (archive.state !== "ready") return 0;
@@ -179,7 +183,8 @@ export function AddressView({
    * while the view is. `coverage` decides the archive's slot: `complete` prints the number plain,
    * `senders-only` prints it with "(by sender)" under All and the named line under To them. The
    * caveat is derived in the contract, not here, so the day the archive answers every direction
-   * the plain arm takes over without a change to this file.
+   * the plain arm takes over without a change to this file. The refusal arm is the only one that
+   * carries a control — see it for why.
    */
   const deviceHalf = t("addressDevice", { count: view.counts[direction] });
   const archiveHalf =
@@ -188,7 +193,18 @@ export function AddressView({
     ) : archive.state === "unavailable" ? (
       t("scopeNoArchive")
     ) : archive.state === "failed" ? (
-      t("scopeFailed", { reason: archive.error })
+      /* A refusal is the one archive state a reader can do something about, so it is the one
+         that carries a control. `retry` hangs off the failed arm of the contract, so there is no
+         way to render this button over a state that has nothing to ask again. A text button on
+         the count line rather than a banner: the failure is about one half of one line, and a
+         block above the list would claim the whole view had failed when the device's rows are
+         right there. Search's own retry is the same control on the same line. */
+      <>
+        {t("scopeFailed", { reason: archive.error })}{" "}
+        <button type="button" className="btn ghost" onClick={archive.retry}>
+          {t("addressRetry")}
+        </button>
+      </>
     ) : view.coverage === "complete" ? (
       t("addressArchive", { count: archive.total })
     ) : direction === "to" ? (

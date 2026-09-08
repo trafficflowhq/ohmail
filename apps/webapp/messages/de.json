@@ -985,6 +985,7 @@
     "addressEmptyAny": "Nichts von oder an {address}.",
     "addressEmptyFrom": "Nichts von {address}.",
     "addressEmptyTo": "Nichts an {address} geschickt.",
+    "addressRetry": "Erneut versuchen",
     "addressKeyClose": "Diese Adresse verlassen"
   },
   "compose": {
