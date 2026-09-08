@@ -140,6 +140,16 @@ A send that finishes while the app is still starting up now clears the message i
 that message stayed in the composer with nothing on screen to say it had gone, and the next thing
 you typed in it was saved as a second draft.
 
+### A message still on its way is held while it goes
+
+Come back to the app while a message you sent is still going out and it is there in the composer,
+where you left it. Editing it and pressing Send there sent a second copy: the change made it a
+different message, so nothing on the server could recognise it as the one already on its way.
+
+That message is now held until it has gone — the fields are read-only, Send waits, and a line says
+why. It clears itself the moment the send completes. A different message you start in the meantime
+is not affected; only the one being sent is held.
+
 ### A send nobody could confirm is held
 
 It stays in Drafts, it says so when you open it, and the app will not send it again — sending
