@@ -4792,7 +4792,7 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.14.1...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.14.2...HEAD
 [0.14.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.14.2
 [0.14.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.14.1
 [0.14.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.14.0
