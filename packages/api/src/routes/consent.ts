@@ -548,11 +548,10 @@ async function applyConsentSettings(
     locale?: string | null; themeFace?: string | null; onboardingCompletedAt?: string;
   } = {};
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
-    // BRANDED. A derived context whose handle is a transaction carries no dialect of its own —
-    // a transaction is a fresh object built by the query builder — so anything below that composes
-    // a statement per store would refuse it. `carryDialect` says where the answer came from, which
-    // is the part a bare stamp at this site would be guessing at.
-    const txCtx = { ...ctx, db: carryDialect(ctx.db, tx as object) as unknown as typeof ctx.db };
+    // The transaction arrives BRANDED: `brandDialect` wraps a handle's `transaction` so the
+    // callback is handed a branded object, to any savepoint depth. This site used to stamp it by
+    // hand, which worked and left every other site to remember.
+    const txCtx = { ...ctx, db: tx as unknown as typeof ctx.db };
     if (hasAuto) {
       out.autoSuggestAt = (await setAutoSuggest(txCtx, auto!)).autoSuggestAt;
     }

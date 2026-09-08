@@ -1998,9 +1998,7 @@ export class MailboxService {
       // is the point of returning anything from a delete at all — `MessageService.delete` and
       // `DraftsService.remove` both do it, and this method was the odd one out because until now
       // it emitted no change to echo.
-      // BRANDED, because the callee composes a row lock per dialect and a driver's transaction
-      // object inherits no brand from the handle that opened it.
-      const { seq } = await closeRemovedMailboxAppointments(carryDialect(ctx.db, tx) as typeof tx, {
+      const { seq } = await closeRemovedMailboxAppointments(tx, {
         accountId: ctx.accountId, mailboxId: id, now: ctx.now(),
       });
       return { seq };

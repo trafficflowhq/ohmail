@@ -4,6 +4,7 @@ import type { PgDatabase, PgTransaction } from "drizzle-orm/pg-core";
  * here would put every Cloud table into the root barrel's closure — and the root barrel is what
  * the desktop engine's bundle follows. Both tables below are mail-domain. */
 import { accountSyncState, changeLog } from "./schema-mail.js";
+import { dialect } from "./dialect/index.js";
 
 /**
  * A Drizzle query runner: either a top-level db handle (postgres-js in prod,
@@ -241,7 +242,10 @@ export async function allocateSeqRange(tx: LedgerTx, accountId: string, count: n
   const rows = await tx
     .update(accountSyncState)
     .set({
-      nextSeq: sql`greatest(${accountSyncState.nextSeq}, coalesce((select max(${changeLog.seq}) from ${changeLog} where ${changeLog.accountId} = ${accountId}), 0)) + ${count}`,
+      nextSeq: sql`${dialect(tx).greatest(
+        accountSyncState.nextSeq,
+        sql`coalesce((select max(${changeLog.seq}) from ${changeLog} where ${changeLog.accountId} = ${accountId}), 0)`,
+      )} + ${count}`,
     })
     .where(eq(accountSyncState.accountId, accountId))
     .returning({ nextSeq: accountSyncState.nextSeq });
@@ -325,8 +329,8 @@ export async function recordChanges(tx: LedgerTx, changes: readonly ChangeInput[
   // is never woken for a row that rolled back, and never before the row it names is readable.
   // One notification per batch (the highest seq), account id + seq only: see
   // {@link CHANGE_LOG_CHANNEL} for the channel design and why no content may ever ride here.
-  await tx.execute(
-    sql`select pg_notify(${CHANGE_LOG_CHANNEL}, ${changeWakePayload(accountId, seqs[seqs.length - 1]!)})`,
+  await dialect(tx).notify(
+    tx, CHANGE_LOG_CHANNEL, changeWakePayload(accountId, seqs[seqs.length - 1]!),
   );
   return seqs;
 }

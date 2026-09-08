@@ -56,11 +56,55 @@ export type DialectName = "pg" | "sqlite";
 /** Where a factory records which dialect its handle speaks. Registered, so copies agree. */
 export const DIALECT_BRAND: unique symbol = Symbol.for("ohmail.db.dialect") as never;
 
-/** Stamp a handle with the dialect it speaks. Called by the factories, by nobody else. */
+/** Marks a `transaction` this module has already wrapped, so branding twice wraps once. */
+const TRANSACTION_WRAPPED: unique symbol = Symbol.for("ohmail.db.dialect.txWrapped") as never;
+
+/**
+ * Stamp a handle with the dialect it speaks. Called by the factories, by nobody else.
+ *
+ * ── AND THE BRAND IS INHERITED BY TRANSACTIONS, WHICH IS THE WHOLE POINT ──────────────────
+ *
+ * A driver's transaction object is NOT the connection it was opened on: it is a fresh object the
+ * query builder makes, and a property defined on the handle does not travel to it. Everything that
+ * composes a statement per dialect therefore refused a transaction — and almost every statement in
+ * this engine runs inside one.
+ *
+ * That was met twice by hand, and both answers were wrong at the scale they had to work at.
+ * Passing the dialect down as a parameter means every function between the factory and the
+ * statement grows an argument; the change-log's own recorder has a hundred callers, none of which
+ * has an opinion about dialects. Stamping the transaction at each site means every site must
+ * remember, and the failure of forgetting is not a compile error — it is a refusal deep inside a
+ * request, which a route's error handler turns into a 500 with the reason discarded. Nineteen
+ * requests failed that way before this existed.
+ *
+ * So the brand travels with the thing that creates the transaction. Branding a handle also wraps
+ * its `transaction`, so the callback receives a branded object; and because the wrapper brands
+ * recursively, a SAVEPOINT opened on that transaction is branded too, to any depth. One edit, and
+ * "a handle that reaches a statement is branded" becomes true by construction rather than by
+ * everybody remembering.
+ *
+ * Wrapping is idempotent — branding the same handle twice must not nest wrappers — and the wrapper
+ * is defined as an OWN property, shadowing the prototype's method for this instance only, so two
+ * handles from one driver do not interfere.
+ */
 export function brandDialect<T extends object>(db: T, name: DialectName): T {
   Object.defineProperty(db, DIALECT_BRAND, {
     value: name, enumerable: false, configurable: true, writable: false,
   });
+
+  type TxFn = (fn: (tx: object, ...inner: unknown[]) => unknown, ...rest: unknown[]) => unknown;
+  const holder = db as { transaction?: TxFn };
+  const original = holder.transaction;
+  if (typeof original === "function"
+    && (original as unknown as Record<symbol, unknown>)[TRANSACTION_WRAPPED] !== true) {
+    const wrapped = function (this: unknown, fn: (tx: object, ...i: unknown[]) => unknown, ...rest: unknown[]) {
+      return original.call(this, (tx: object, ...inner: unknown[]) => fn(brandDialect(tx, name), ...inner), ...rest);
+    } as TxFn;
+    Object.defineProperty(wrapped, TRANSACTION_WRAPPED, { value: true, enumerable: false });
+    Object.defineProperty(db, "transaction", {
+      value: wrapped, enumerable: false, configurable: true, writable: true,
+    });
+  }
   return db;
 }
 
