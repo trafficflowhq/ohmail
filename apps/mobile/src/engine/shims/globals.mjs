@@ -30,7 +30,11 @@
    bundler lifting an object literal into named exports, which is a behaviour to depend on rather
    than a contract. `.mjs` states the module kind as a fact instead of inheriting it from a
    `package.json` two directories up. */
-import { Buffer as BufferPolyfill } from "buffer";
+/* THE WRAPPED CLASS, not the raw package. The global bound here and the `Buffer` any module
+   imports have to be ONE class: mail parsing writes `Buffer.from` against the global, and binding
+   the unpatched polyfill here would leave exactly that code without `base64url` while every module
+   that imports `buffer` had it — the same defect one indirection further away. */
+import { Buffer as BufferPolyfill } from "./buffer.js";
 
 const Buffer = BufferPolyfill;
 

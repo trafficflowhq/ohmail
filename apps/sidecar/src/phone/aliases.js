@@ -71,7 +71,12 @@ const READABLE_STREAM_PROMISES = "readable-stream/lib/stream/promises.js";
 const NODE_MODULES = {
   // ── PROVIDED, and these are the ones the engine genuinely uses ────────────────────────────
   crypto: "react-native-quick-crypto",
-  buffer: "buffer",
+  /* THE POLYFILL, WRAPPED — see `shims/buffer.js`. The package has no `base64url`, which sealing a
+     mailbox credential writes, and one of its members answers a WRONG LENGTH for that name rather
+     than refusing. The shim requires the package by its own `buffer/` spelling, which this table
+     does not match (rule 2 is the bare name, exactly), so there is still exactly one copy of it in
+     the artifact — asserted by the bundle census. */
+  buffer: path.join(SHIMS, "buffer.js"),
   events: "events",
   util: "util",
   stream: "readable-stream",
