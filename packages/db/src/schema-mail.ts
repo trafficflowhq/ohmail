@@ -332,6 +332,26 @@ export const mailboxes = pgTable("mailboxes", {
   // (`MAILBOX_SIGNATURE_MAX_CHARS`, a 400), not by a CHECK: free text closes no set, and a
   // byte bound in the database would answer 23514 to a person typing.
   signature: text("signature"),
+  // ── Mail 0098 — the signature's MARKUP half (0.16: Settings → Signatures gained the compose
+  // editor's basic formatting) ──
+  //
+  // THE AUTHORITY, and `signature` above is DERIVED FROM IT. When this is non-NULL the server
+  // wrote both columns in one statement from one value: `prepareOutboundBody` reduces the posted
+  // markup to the compose grammar and renders the text half from what survives, which is the
+  // same pair of halves a `multipart/alternative` promises and the same function that produces
+  // them for every composed message. Nothing writes `signature` by hand while this is set, so
+  // the two cannot drift.
+  //
+  // NULL is "no markup in this signature" — the state of every row that existed before this
+  // column, and of every signature typed without pressing a formatting control (the editor
+  // reports no markup for a document nobody formatted). Those rows take the pre-0.16 path
+  // unchanged: the text is escaped into one paragraph at the press (`signatureHtml`). That is
+  // what lets every reader of `signature` — the phone's composer among them, which has no
+  // formatting and sends a single `text/plain` part — keep working with no knowledge of this.
+  //
+  // Bounded at the write site with `signature`'s bound and for `signature`'s reason
+  // (`MAILBOX_SIGNATURE_MAX_CHARS`, a 400 in words), not by a CHECK.
+  signatureHtml: text("signature_html"),
   // ── Mail 0076 — THE ONE-TIME QUARANTINE→\Junk SWEEP, RECORDED AS A COMMAND (FOLDERS-SPEC.md
   // §16.1: "an optional ONE-TIME sweep offers to move the old ohmail/Quarantine pile into
   // native Junk … One press, one direction, then the offer is gone") ──

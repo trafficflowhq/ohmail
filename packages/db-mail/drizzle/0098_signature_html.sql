@@ -1,0 +1,39 @@
+-- THE SIGNATURE'S MARKUP — the authority half of a value that has had one shape since mail 0075.
+--
+-- ══ WHY A SECOND COLUMN AND NOT A REPLACEMENT ══════════════════════════════════════════════
+--
+-- Settings → Signatures was one plain textarea per address. A sign-off is part of the message,
+-- and writing a message here already offers bold, italic, strike, links, lists, quotes and code —
+-- so that pane now mounts the compose editor itself, offering exactly the same set and nothing
+-- beyond it. The value it produces is therefore markup.
+--
+-- Markup could not simply take over `signature`. That column is read by surfaces this migration
+-- does not reach — the phone's composer, which has no formatting at all and whose send carries a
+-- single `text/plain` part — and a reader that suddenly found `<p><strong>…` in a column it puts
+-- on the tail of a plain message would ship tags to a recipient as prose. So the value keeps BOTH
+-- shapes, and which one is authoritative is decided once, here:
+--
+--   · `signature_html` is the AUTHORITY. It is what the editor wrote and what the reader approved.
+--   · `signature` is DERIVED FROM IT by the server at save, with `prepareOutboundBody` — the same
+--     converter that produces the `text/plain` half of every composed message. The two halves are
+--     therefore the same two halves a `multipart/alternative` promises, produced by one function,
+--     and they cannot drift: nothing writes the text half by hand while markup is present.
+--
+-- NULL is "this signature has no markup in it", which is the state of every row that exists when
+-- this is applied and the state of every signature typed without pressing a formatting control
+-- (the editor reports no markup for a document nobody formatted — the round-trip rule in
+-- `rich-text.ts`). Those rows keep the pre-0.16 path byte for byte: the text is escaped into one
+-- paragraph at the press, exactly as `signatureHtml` has always done.
+--
+-- ══ NO LENGTH CHECK HERE, FOR `signature`'S REASON ═════════════════════════════════════════
+--
+-- The bound lives at the write site (`MAILBOX_SIGNATURE_MAX_CHARS`), as a 400 in words. `signature`
+-- states that argument in full at mail 0075 and it is unchanged: free text closes no set, and a
+-- byte bound in the database answers a person typing with a raw 23514. The markup half is bounded
+-- by the same write site, measured in the same characters.
+--
+-- Idempotent (`IF NOT EXISTS`); no breakpoint marker needed — a single statement, nothing to
+-- split. `when` after 0092, because a desktop engine replays this journal at every launch. The
+-- index is renumbered at the rebase onto the landed 0.16 predecessors.
+
+ALTER TABLE "mailboxes" ADD COLUMN IF NOT EXISTS "signature_html" text;

@@ -43,6 +43,26 @@
  * removed, empty, or the mailbox stores nothing — and then the mutation is byte-identical to
  * one built before this module existed.
  *
+ * ── THE SECOND HALF: A SIGNATURE THAT CARRIES FORMATTING (0.16) ──────────────────────────
+ *
+ * A mailbox may also store MARKUP for its signature — `mailboxes.signature_html`, written by
+ * the Settings editor, which is the compose editor's own component and therefore speaks the
+ * compose editor's own small grammar (bold, italic, strike, link, lists, quote, code). That
+ * column is the AUTHORITY and `mailboxes.signature` beside it is DERIVED FROM IT BY THE SERVER
+ * with the same converter the drafts use, so the two halves cannot drift and every reader that
+ * only ever knew about `signature` keeps working unchanged.
+ *
+ * {@link effectiveSignatureHtml} is the second derivation, and it answers markup in the
+ * `following` state ONLY. That is not a shortcut — it is what keeps the serialization promise
+ * above true once two shapes exist. `edited` holds a STRING (the block is a text field; typing
+ * in it is typing plain words), so from the first keystroke the block is showing text and both
+ * halves of the send must carry that text. A state in which the block rendered bold and the
+ * wire carried something else is the state the split makes unrepresentable.
+ *
+ * A mailbox with no markup — which is every mailbox that existed before this — takes the
+ * escaped-text path unchanged, and {@link withSignature}'s two-argument call is byte-identical
+ * to the one it was before the third argument existed.
+ *
  * On a forward, the server appends the quoted original AFTER the body it was handed
  * (`send-service.ts`: `text: d.body + fwdText`), so a signature serialized into the body sits
  * ABOVE the quoted history — the ruling's placement, structurally. A reply carries no quoted
@@ -76,6 +96,33 @@ export function effectiveSignature(
   if (state.kind === "edited") return state.text.trim().length > 0 ? state.text : null;
   if (mailboxId === null) return null;
   const stored = signatures[mailboxId];
+  return stored !== undefined && stored.trim().length > 0 ? stored : null;
+}
+
+/**
+ * WHAT THE BLOCK RENDERS AS MARKUP — `null` for "there is no markup here", which is every case
+ * except one: the reader has said nothing (`following`) and the resolved sending mailbox stores
+ * markup for its signature.
+ *
+ * SEPARATE FROM {@link effectiveSignature} RATHER THAN A SECOND FIELD ON IT, because the two
+ * questions have different answers and the caller needs both: the text half of the send always
+ * carries `effectiveSignature`, and the html half carries this when it is non-null and the
+ * escaped text otherwise. Folding them into one return would let a caller take the markup and
+ * forget the text, which is the `multipart/alternative` promise broken by construction.
+ *
+ * Blank-after-trimming markup answers `null` for {@link effectiveSignature}'s reason: an empty
+ * `<p></p>` is four characters of markup and no signature, and shipping it would put an empty
+ * paragraph on the tail of every message.
+ */
+export function effectiveSignatureHtml(
+  state: SignatureState,
+  signaturesHtml: Readonly<Record<string, string>>,
+  mailboxId: string | null,
+): string | null {
+  // The reader spoke — their words are plain text and BOTH halves carry them. See the header.
+  if (state.kind !== "following") return null;
+  if (mailboxId === null) return null;
+  const stored = signaturesHtml[mailboxId];
   return stored !== undefined && stored.trim().length > 0 ? stored : null;
 }
 
@@ -140,20 +187,41 @@ export function signatureHtml(sig: string): string {
 /**
  * SEAL THE SIGNATURE INTO THE MUTATION — the one place the block's text joins the message.
  *
- * `null` returns the mutation UNCHANGED (the same object, so the no-signature request is
+ * `sig === null` returns the mutation UNCHANGED (the same object, so the no-signature request is
  * byte-identical on the wire). Otherwise the plain body gains `\n\n` + the text, and a rich
- * body — when the mutation carries one — gains {@link signatureHtml}: the server derives the
- * delivered plaintext from the markup, so a rich send that appended to `body` alone would
- * show the signature locally and drop it from what recipients read.
+ * body — when the mutation carries one — gains markup: the server derives the delivered
+ * plaintext from the markup, so a rich send that appended to `body` alone would show the
+ * signature locally and drop it from what recipients read.
+ *
+ * ── THE THIRD ARGUMENT IS THE MAILBOX'S STORED MARKUP, OR NOTHING ────────────────────────
+ *
+ * `sigHtml` is {@link effectiveSignatureHtml}'s answer — the markup the Settings editor wrote,
+ * already reduced to the compose grammar by the server that stored it, and reduced again by the
+ * server that sends it (`sanitizeOutboundHtml` runs on the way out and is idempotent, so this
+ * is never the only gate). Absent, `undefined` or `null` takes {@link signatureHtml}'s escaped
+ * text path, which is what EVERY caller did before this argument existed and what the phone's
+ * two send arms still do — so the two-argument call is byte-identical to the one it replaced.
+ *
+ * THE TEXT HALF IS NEVER THE MARKUP. `sig` goes onto `body` in both branches, because `body` is
+ * the `text/plain` part and a recipient reading it must see words rather than tags.
+ *
+ * A mutation with NO `html` stays plain in both branches too. `html` present is what puts a
+ * message on the wire as `multipart/alternative` (`compose.ts`), and a signature must not turn
+ * somebody's plain note into a two-part message.
  *
  * Structural over the two fields it touches (`mail_send` carries them on every client), so
  * the webapp's `MailSend` plan and the engine's own mutation both satisfy it unchanged.
  */
-export function withSignature<M extends { body: string; html?: string }>(m: M, sig: string | null): M {
+export function withSignature<M extends { body: string; html?: string }>(
+  m: M, sig: string | null, sigHtml?: string | null,
+): M {
   if (sig === null) return m;
+  const tail = sigHtml !== undefined && sigHtml !== null && sigHtml.trim().length > 0
+    ? sigHtml
+    : signatureHtml(sig);
   return {
     ...m,
     body: `${m.body}\n\n${sig}`,
-    ...(m.html !== undefined ? { html: m.html + signatureHtml(sig) } : {}),
+    ...(m.html !== undefined ? { html: m.html + tail } : {}),
   };
 }

@@ -54,6 +54,7 @@ export {
 export {
   SIG_FOLLOWING,
   effectiveSignature,
+  effectiveSignatureHtml,
   signatureHtml,
   withSignature,
   type SignatureState,

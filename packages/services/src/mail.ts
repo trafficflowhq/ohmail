@@ -86,7 +86,7 @@ export {
   setBlockRemoteImages, setBlockTrackingPixels, setDormancyDays, setFoldersEnabled,
   setLocale, setMailboxFoldersEnabled, setMailboxSignature, setThemeFace,
   setOnboardingCompleted,
-  mailboxSignatures, MAILBOX_SIGNATURE_MAX_CHARS,
+  mailboxSignatures, mailboxSignatureHtmls, MAILBOX_SIGNATURE_MAX_CHARS,
   hasMachineSentHeaders, isMachineSent, isRobotAddress, parseAddressList,
   type SeedCandidate, type SeedConfirmResult, type SeedExclusionReason, type SeedReview,
 } from "./consent-seed.js";

@@ -687,6 +687,13 @@
       "when": 1791600600011,
       "tag": "0097_folder_state_last_error_class",
       "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "7",
+      "when": 1791600800011,
+      "tag": "0098_signature_html",
+      "breakpoints": true
     }
   ]
 }

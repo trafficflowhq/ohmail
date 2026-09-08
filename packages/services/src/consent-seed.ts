@@ -8,6 +8,11 @@ import type { ServiceContext } from "./context.js";
 import { DEFAULT_DORMANCY_DAYS } from "./consent-cutline.js";
 import { ServiceError } from "./errors.js";
 import { fenceErasedAccount } from "./erasure-fence.js";
+// The COMPOSE grammar and the COMPOSE html-to-text converter, both of them — a signature is
+// part of an outgoing message, so it is reduced by the same allow-list the message body is and
+// its text alternative is rendered by the same function. A second sanitizer here would be a
+// second door into the body with its own answer about what markup is allowed.
+import { prepareOutboundBody } from "./outbound-html.js";
 import { planAccountFanOut, routeMailboxWrite, writeReaderRequest } from "./reader-request.js";
 import {
   fanOutProfileEdit, profileRequestPayload, profileTravelled,
@@ -28,6 +33,9 @@ export interface DormancyResult {
 /**
  * A signature save's answer. `signature` is the column as it stands on THIS install — the saved
  * value when the write happened here, the UNCHANGED one when the edit travelled instead.
+ * `signatureHtml` is the markup half on the same terms — null on a signature with no formatting.
+ * It does NOT travel: a travelling save carries the derived text, so the holder's markup is
+ * untouched (row SIGNATURE-MARKUP-DOES-NOT-TRAVEL-TO-THE-ORGANIZING-INSTALL).
  *
  * PER-MAILBOX, so there is one holder rather than a per-mailbox table: the request went to the
  * install that holds THIS mailbox, and there is exactly one of those.
@@ -35,6 +43,7 @@ export interface DormancyResult {
 export interface MailboxSignatureResult {
   mailboxId: string;
   signature: string | null;
+  signatureHtml: string | null;
   pending?: true;
   holder?: OrganizedBy;
   requestId?: string;
@@ -1099,12 +1108,58 @@ export const MAILBOX_SIGNATURE_MAX_CHARS = 10_000;
  *
  * Returns the stored text (`null` = none) so the caller echoes what the database holds —
  * server-confirmed values only, which is what the Settings pane renders.
+ *
+ * ── THE MARKUP HALF, AND WHY THE TEXT IS DERIVED HERE (mail 0098, 0.16) ──────────────────
+ *
+ * Settings → Signatures mounts the compose editor, so a save may carry MARKUP. `signatureHtml`
+ * is then the value and `signature` is COMPUTED FROM IT by {@link prepareOutboundBody} — the
+ * same call that produces the two halves of every composed message. Which is to say the two
+ * columns are one value in two shapes, produced by one function, and cannot drift.
+ *
+ * EXACTLY ONE OF THE TWO CARRIES IT, and a call that supplies both is REFUSED rather than
+ * reconciled. Nothing about a request proves an editor was involved, so a client could send
+ * markup reading `<b>Anna</b>` beside text reading `Bob` — a signature whose two halves say
+ * different things to different recipients, which is the one promise a `multipart/alternative`
+ * makes. Refusing is what makes that unrepresentable; picking a winner would only hide it.
+ *
+ * A PLAIN write CLEARS the markup. Saving text is saving the whole value, so a client with no
+ * editor — the phone, whose composer has no formatting at all — must not leave stale markup
+ * behind for the composer to ship in place of the words that were just saved.
+ *
+ * EMPTINESS IS DECIDED ON THE TEXT in both branches, which is `isRichEmpty`'s rule and for its
+ * reason: an empty document serializes to `<p></p>`, four characters of markup and no signature,
+ * and storing it would put an empty paragraph on the tail of every message.
  */
 export async function setMailboxSignature(
   ctx: ServiceContext, mailboxId: string, signature: string | null,
+  signatureHtml?: string | null,
 ): Promise<MailboxSignatureResult> {
   if (signature !== null && typeof signature !== "string") {
     throw new ServiceError("validation_failed", 400, "signature must be a string or null");
+  }
+  if (signatureHtml !== undefined && signatureHtml !== null && typeof signatureHtml !== "string") {
+    throw new ServiceError("validation_failed", 400, "signatureHtml must be a string or null");
+  }
+  // Is there MARKUP in this write at all? Blank-after-trimming is not markup — see the header.
+  const hasMarkup = typeof signatureHtml === "string" && signatureHtml.trim().length > 0;
+  if (hasMarkup && signature !== null) {
+    throw new ServiceError(
+      "validation_failed", 400,
+      "a signature is stored as text or as markup, never both",
+    );
+  }
+  // The bound is on whichever value ARRIVED, in the same characters and with the same words. The
+  // markup is the longer of the two shapes for one signature, so bounding it is what bounds what
+  // the `GET /consent` read carries.
+  if (hasMarkup && signatureHtml!.length > MAILBOX_SIGNATURE_MAX_CHARS) {
+    throw new ServiceError(
+      "validation_failed", 400,
+      `signature must be at most ${MAILBOX_SIGNATURE_MAX_CHARS} characters`,
+    );
+  }
+  // A NUL in the markup, for the text half's reason below and with the same refusal.
+  if (hasMarkup && signatureHtml!.includes("\u0000")) {
+    throw new ServiceError("validation_failed", 400, "signature must not contain a NUL character");
   }
   if (signature !== null && signature.length > MAILBOX_SIGNATURE_MAX_CHARS) {
     throw new ServiceError(
@@ -1119,7 +1174,26 @@ export async function setMailboxSignature(
   if (signature !== null && signature.includes("\u0000")) {
     throw new ServiceError("validation_failed", 400, "signature must not contain a NUL character");
   }
-  const stored = signature !== null && signature.trim().length > 0 ? signature : null;
+  /**
+   * THE TWO SHAPES, DERIVED TOGETHER OR NEITHER.
+   *
+   * In the markup branch `prepareOutboundBody` runs the compose allow-list and then renders the
+   * text FROM WHAT SURVIVED IT, so nothing the sanitizer removed can reach the text half — the
+   * property that makes the pair honest rather than merely consistent.
+   */
+  let stored: string | null;
+  let storedHtml: string | null;
+  if (hasMarkup) {
+    const prepared = prepareOutboundBody(signatureHtml!);
+    // Decided on the TEXT: markup that renders to nothing is no signature. See the header.
+    const empty = prepared.text.trim().length === 0;
+    stored = empty ? null : prepared.text;
+    storedHtml = empty ? null : prepared.html;
+  } else {
+    stored = signature !== null && signature.trim().length > 0 ? signature : null;
+    // A plain write clears the markup — saving text is saving the whole value.
+    storedHtml = null;
+  }
   let travel: { pending: true; holder: OrganizedBy; requestId: string } | undefined;
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
     // ── ERASURE FENCE, FIRST — before any settings lock. `deleteAccount` stamps
@@ -1175,20 +1249,28 @@ export async function setMailboxSignature(
         target: accountSettings.accountId,
         set: { updatedAt: ctx.now() },
       });
+    // BOTH columns in ONE statement, always — including the plain branch, where the markup is
+    // set to NULL rather than left alone. Writing only the column that changed is what would
+    // let the two halves drift.
     await tx.update(mailboxes)
-      .set({ signature: stored })
+      .set({ signature: stored, signatureHtml: storedHtml })
       .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, ctx.accountId)));
     await recordSettingsChange(tx, ctx.accountId);
   });
-  /* THE UNCHANGED COLUMN when the edit travelled — the person is looking at it and it has not
-     changed here. Read back rather than echoing `stored`, which would be the value they typed. */
+  /* THE UNCHANGED COLUMNS when the edit travelled — the person is looking at them and neither
+     changed here. Read both back rather than echoing `stored`/`storedHtml`, which would be the
+     values they typed for a write that happened on the install holding this mailbox. */
   if (travel !== undefined) {
-    const [row] = await (ctx.db as unknown as Tx).select({ signature: mailboxes.signature })
+    const [row] = await (ctx.db as unknown as Tx)
+      .select({ signature: mailboxes.signature, signatureHtml: mailboxes.signatureHtml })
       .from(mailboxes).where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, ctx.accountId)))
       .limit(1);
-    return { mailboxId, signature: row?.signature ?? null, ...travel };
+    return {
+      mailboxId, signature: row?.signature ?? null, signatureHtml: row?.signatureHtml ?? null,
+      ...travel,
+    };
   }
-  return { mailboxId, signature: stored };
+  return { mailboxId, signature: stored, signatureHtml: storedHtml };
 }
 
 /**
@@ -1207,6 +1289,28 @@ export async function mailboxSignatures(
   const out: Record<string, string> = {};
   for (const r of rows) {
     if (r.signature !== null) out[r.id] = r.signature;
+  }
+  return out;
+}
+
+/**
+ * EVERY STORED SIGNATURE'S MARKUP — `{ mailboxId: html }`, only the mailboxes whose signature has
+ * formatting in it. {@link mailboxSignatures}' shape and rule, one question over.
+ *
+ * AN ABSENT KEY HERE IS "NO FORMATTING", NEVER "NO SIGNATURE" — the text map answers that, and
+ * the two are read together. A mailbox with a plain signature appears in `signatures` and not
+ * here, which is exactly the state every mailbox was in before mail 0098.
+ */
+export async function mailboxSignatureHtmls(
+  db: ServiceContext["db"], accountId: string,
+): Promise<Record<string, string>> {
+  const rows = await db
+    .select({ id: mailboxes.id, signatureHtml: mailboxes.signatureHtml })
+    .from(mailboxes)
+    .where(eq(mailboxes.accountId, accountId));
+  const out: Record<string, string> = {};
+  for (const r of rows) {
+    if (r.signatureHtml !== null) out[r.id] = r.signatureHtml;
   }
   return out;
 }
