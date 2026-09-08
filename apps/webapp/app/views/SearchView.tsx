@@ -883,10 +883,10 @@ export function SearchView({
  *  2. THE ADDRESS IS A LINK to `#/address/<addr>` — everything from and to that person. On a list
  *     row or a stream card the address pixels belong to the screening popover (`sender-hit.ts`
  *     answers non-null there, and the popover offers the address view as one of its rows). Here
- *     `senderHitOf` answers null, so the address itself is the way in — `test/address-control-
- *     census.test.tsx` renders each surface and asks, rather than assuming. A real `<a href>` and
- *     not a click handler: the hash is what the router reads, the link can be copied or opened
- *     beside, and nothing in the shell has to be wired for it to be true.
+ *     `senderHitOf` answers null, so the address itself is the way in — the address-control
+ *     census beside the shell's tests renders each surface and asks, rather than assuming. A real
+ *     `<a href>` and not a click handler: the hash is what the router reads, the link can be
+ *     copied or opened beside, and nothing in the shell has to be wired for it to be true.
  *
  * ── WHY THE ROW IS NO LONGER ONE BUTTON ─────────────────────────────────────────────────────
  *
