@@ -287,6 +287,17 @@ sooner instead of waiting for its next turn, so the ordinary case is seconds rat
 And the decision you just made re-reads the mailbox afterwards, so the line is about what you did
 rather than about what was true up to half a minute earlier.
 
+### A signature can carry basic formatting
+
+The signature field in Settings is now the same editor you write messages in, with the same set:
+bold, italic, strike, links, lists, quotes and code. The block below the message renders the
+formatting, so what is on screen is what ships. A signature with no formatting in it is stored and
+sent exactly as before.
+
+Saving plain text clears the formatting — saving text is saving the whole value — and a save cannot
+carry both shapes at once. A recipient whose mail client shows plain text only reads the same words:
+the plain version is worked out from the formatting when the signature is saved.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
