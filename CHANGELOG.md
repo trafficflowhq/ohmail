@@ -124,7 +124,7 @@ If your first sync has been stopping short, this is why.
 ### One draft per message
 
 A message you are writing has exactly one draft on your account, from the first thing you type
-until it is sent. Three ways it could end up with two are closed.
+until it is sent. Four ways it could end up with two are closed.
 
 Opening a compose with somebody already in the To line — from a contact, or from a mail link
 outside the app — no longer saves a draft by itself. Nothing is written to your account until you
@@ -135,6 +135,10 @@ behind. The send makes its own, and that is the one the app keeps.
 
 Coming back to a message whose send could not be confirmed no longer starts a fresh copy of it,
 whatever state the server left the original in.
+
+A send that finishes while the app is still starting up now clears the message it was for. Before,
+that message stayed in the composer with nothing on screen to say it had gone, and the next thing
+you typed in it was saved as a second draft.
 
 ### A send nobody could confirm is held
 
