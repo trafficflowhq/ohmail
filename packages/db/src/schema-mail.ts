@@ -1032,9 +1032,20 @@ export const messageFailures = pgTable("message_failures", {
  * product does not discard it — a host that starts accepting the mutation next week converges then.
  * Deferral is about how OFTEN we ask, never about whether we still owe it.
  *
- * Deliberately no error column. What went wrong is free text from someone else's mail server; it
- * belongs in the `reconcile.move.failed` / `reconcile.flags.failed` audit row, which is where it
- * already goes. These two columns are a schedule, and a schedule is a coordinate.
+ * Deliberately no FREE-TEXT error column. What went wrong in the server's own words is free text
+ * from someone else's mail server; it belongs in the `reconcile.move.failed` /
+ * `reconcile.flags.failed` audit row, which is where it still goes. These two columns are a
+ * schedule, and a schedule is a coordinate.
+ *
+ * ── AND ONE CLASS BESIDE THEM (mail 0097, `folder_state` only) ──────────────────────────────
+ *
+ * {@link folderState.lastErrorClass} is not an exception to that rule, it is that rule applied:
+ * a member of a CLOSED FOUR-VALUE SET this codebase chose, with a CHECK behind it, mapped from the
+ * server's structured response code by `apps/worker/src/sync.ts` — so no value a mail server
+ * picked can reach a screen. It exists because the schedule alone cannot be rendered honestly:
+ * "retrying at 14:20" is true and unactionable, where "the folder is not there" names the one
+ * screen that fixes it. `flag_state` has no equivalent and needs none — nothing renders a
+ * per-message reason for a `\Seen` push.
  */
 export const folderState = pgTable("folder_state", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -1049,6 +1060,18 @@ export const folderState = pgTable("folder_state", {
   attempts: integer("attempts").notNull().default(0),
   /** NULL ⇒ due now. See the block above. */
   nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+  /**
+   * WHY the last attempt was refused, as one of `refused | no_such_folder | read_only |
+   * over_quota` — NULL while no refusal stands. See the block above for why a CLASS is not the
+   * free-text column that block forbids, and {@link RECONCILE_REFUSAL_CLASSES} in
+   * `apps/worker/src/sync.ts` for the mapping and the CHECK's membership.
+   *
+   * Written by the deferral and cleared by a fresh intent, alongside the schedule pair — one
+   * group, because a class without its schedule is a reason for nothing and a schedule without
+   * its class is the sentence this column exists to end. A TRANSPORT failure writes NEITHER: an
+   * unreachable mail host is not this message's refusal.
+   */
+  lastErrorClass: text("last_error_class"),
 }, (t) => ({ uqMessage: unique().on(t.messageId) }));
 
 /**

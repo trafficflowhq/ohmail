@@ -40,6 +40,20 @@ export * from "./schema-mail.js";
 export { junkSweepCandidateWhere, JUNK_SWEEP_SOURCE_PILE } from "./junk-sweep.js";
 export { autoReplyByUsWhere } from "./auto-reply-by-us.js";
 
+// The ONE spelling of every predicate over `folder_state`'s pending set — `dueNow` for the
+// reconciler's queue, and the strip's `due`/`deferred` split for the DTO. Both sites import from
+// here so the two can only disagree in the ways that module names out loud; see its header for
+// why they are composed rather than shared as one query. Reaches `schema-mail.js` alone.
+export {
+  dueNow, deferredUntilLater, ourOutstandingFiling, filingDue, filingDeferred,
+  FILING_REFUSAL_CLASSES, isFilingRefusalClass, type FilingRefusalClass,
+} from "./folder-state-pending.js";
+
+// The ONE spelling of the worker's doorbell for a FILING decision, throttled in the update's own
+// predicate exactly as the pull verb's is. Both the message door and the Screener's verdict ring
+// it, and neither may grow a second answer to how often. Reaches `schema-mail.js` alone.
+export { ringFilingDoorbell, FILING_DOORBELL_MIN_GAP_MS } from "./filing-doorbell.js";
+
 // The ONE spelling of the read-state intent — see the module header for why it lives here
 // (both the services and the worker write it, and the worker may not import services at
 // runtime). Reaches `schema-mail.js` alone, so the closure rule above holds.

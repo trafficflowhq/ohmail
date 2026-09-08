@@ -1,5 +1,6 @@
 import { and, desc, eq, isNull, sql, type SQL } from "drizzle-orm";
 import { accountSettings, contacts, folderState, messages, rules as rulesTbl } from "./schema-mail.js";
+import { ringFilingDoorbell } from "./filing-doorbell.js";
 import { recordChange, type LedgerTx, type Tx } from "./change-log.js";
 import { readAccountErasedAt } from "./erasure-fence.js";
 import { recordLearningSignal } from "./learning-signal.js";
@@ -436,6 +437,25 @@ export async function applyScreenerDecision(
       });
     }
   }
+
+  /* ── RING THE WORKER'S DOORBELL, ONCE, FOR WHAT THIS VERDICT NOW OWES ────────────────────────
+   *
+   * A Screener press is a filing decision like any other and waited for the worker's ROTATION
+   * like any other: a 60 s tick queues one serialized pass, each mailbox gets one bounded turn,
+   * and `reconcileFolders` runs on that turn. This is the front door of the product, so it is the
+   * decision whose wait was most visible — the rail said "Filing 1 message on your mail server…"
+   * for minutes after a press.
+   *
+   * ONCE, AFTER the loop rather than inside it: a domain-scoped verdict reroutes every held
+   * message from that sender's domain, and the doorbell is not per message — it says "come
+   * sooner", and the reconcile pass reads the pending rows itself. `ringFilingDoorbell`'s throttle
+   * would collapse the repeats anyway; doing it here makes that a property of the code rather than
+   * a property of a predicate.
+   *
+   * GUARDED ON `rerouted`, so a verdict that moved nothing (every held row had moved on — see the
+   * `setWhere` above) does not wake a worker for work that does not exist. The rule and the
+   * learning signal below are still written: the verdict stands, there is simply no IMAP owed. */
+  if (rerouted.length > 0) await ringFilingDoorbell(tx, mailboxId, now);
 
   await recordLearningSignal(tx, accountId, {
     triggeringActionId,

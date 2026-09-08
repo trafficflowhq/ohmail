@@ -12,7 +12,7 @@ import { LeaseUnavailableError } from "@trafficflow/core/adapters/organizer-leas
 // services layer need one spelling of it and the worker may not import services at runtime —
 // `stand-down-sends.ts`'s reason, and the module reaches `schema-mail.js` alone. A type-only
 // import, so nothing of the db package enters this file's runtime graph.
-import type { OrganizerRole } from "@trafficflow/db";
+import type { FilingRefusalClass, OrganizerRole } from "@trafficflow/db";
 import type { WorkerRepo, DrizzleRepo, PendingFolderState, PendingFlagState } from "@trafficflow/core/adapters/drizzle-repo";
 import { ClassifierFaultError } from "./classifier-fault.js";
 import {
@@ -1559,6 +1559,59 @@ function isTransportFailure(err: unknown): boolean {
 }
 
 /**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  WHAT THE SERVER REFUSED, AS A CLASS SOMEBODY CAN ACT ON (mail 0097)
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * The deferral above already records the SCHEDULE. What it could not record is WHY, so the client
+ * had a number and a retry time and nothing else — and the honest sentence cannot be written from
+ * those: "1 message waits · retrying at 14:20" is true and tells a person nothing they can do,
+ * where "the folder is not there" names the one screen that fixes it.
+ *
+ * ── THE OUTPUT IS FOUR WORDS, AND THAT IS THE WHOLE SAFETY ARGUMENT ─────────────────────────
+ *
+ * `folder_state`'s schema comment forbids an error column on the grounds that "what went wrong is
+ * free text from someone else's mail server". That rule is kept, not relaxed: this function MAY
+ * read the error and may never store it, exactly as `classifyMailboxError` is a seven-value enum
+ * and `classifyIngestFault` a five-value one. The server's own wording still goes to the
+ * `reconcile.move.failed` audit row, which is the only place it belongs.
+ *
+ * ── STRUCTURED EVIDENCE ONLY, AND NO MESSAGE PROBE ─────────────────────────────────────────
+ *
+ * `serverResponseCode` is imapflow's parse of the bracketed IMAP response code, which is the
+ * server's own machine-readable statement about the refusal. There is deliberately NO
+ * message-text probe here: `classifyMailboxError` keeps one for authentication because a rejected
+ * password is common and several servers report it with no structured marker, and none of the
+ * conditions below has that excuse — a server that refuses a move without a code has refused it,
+ * which `refused` says.
+ *
+ * `refused` is a real member and not a fallback. A bare `NO` to a `UID MOVE` is a refusal, and
+ * telling somebody their server refused the move is both true and more than they had.
+ *
+ * ── WHAT IS NOT HERE ───────────────────────────────────────────────────────────────────────
+ *
+ * Nothing for a transport failure, because a transport failure never reaches this function:
+ * {@link isTransportFailure} returns first and leaves the row exactly as it was — due now,
+ * attempts unchanged, no audit row, no class. An unreachable mail host is not this message's
+ * refusal, and stamping one would blame the message for the socket.
+ */
+function classifyMoveRefusal(err: unknown): FilingRefusalClass {
+  const code = typeof (err as { serverResponseCode?: unknown } | null)?.serverResponseCode === "string"
+    ? String((err as { serverResponseCode: string }).serverResponseCode).toUpperCase()
+    : "";
+  // `[TRYCREATE]` is the server saying the destination does not exist and it would accept a
+  // CREATE — the same fact as `[NONEXISTENT]` from a person's point of view, and the same remedy.
+  if (code === "NONEXISTENT" || code === "TRYCREATE") return "no_such_folder";
+  if (code === "OVERQUOTA") return "over_quota";
+  // `[NOPERM]` is "you may not write here" and `[READ-ONLY]` is "this mailbox is not writable
+  // right now": one is a permission and the other a mode, and both are the same sentence to
+  // whoever filed the mail — the folder will not take it. A provider's own maintenance window
+  // produces the second one, which is why the ladder's early rungs are minutes.
+  if (code === "NOPERM" || code === "READ-ONLY") return "read_only";
+  return "refused";
+}
+
+/**
  * Execute our intended moves, grouped by (source folder → destination) and filed in batches.
  *
  * Returns whether the budget was reached with rows still pending, which the caller turns into a
@@ -1945,6 +1998,11 @@ async function fileOne(deps: SyncDeps, p: PendingPhysical, special: SpecialFolde
     // with nothing saying why; an audit row without its deferral is the unbounded retry, restored.
     const attempts = (p.attempts ?? 0) + 1;
     const nextAttemptAt = nextReconcileAttemptAfter(attempts, new Date());
+    // The CLASS rides in the same group as the schedule and the audit row — see
+    // {@link classifyMoveRefusal} for why the output is four words, and `WorkerRepo.
+    // deferFolderReconcile` for why it is an argument to the deferral rather than a write of its
+    // own. A class without its schedule is a reason for nothing.
+    const errorClass = classifyMoveRefusal(err);
     await fencedGroup(deps, async (r) => {
       await r.recordAudit(
         accountId,
@@ -1957,11 +2015,11 @@ async function fileOne(deps: SyncDeps, p: PendingPhysical, special: SpecialFolde
           // never named.
           to: physical,
           error: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
-          attempts, nextAttemptAt: nextAttemptAt.toISOString(),
+          attempts, nextAttemptAt: nextAttemptAt.toISOString(), errorClass,
         },
         null,
       );
-      await r.deferFolderReconcile(p.messageId, { attempts, nextAttemptAt });
+      await r.deferFolderReconcile(p.messageId, { attempts, nextAttemptAt, errorClass });
     });
     return false;
   }

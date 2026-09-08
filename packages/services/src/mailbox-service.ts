@@ -7,6 +7,7 @@ import {
   hasCapability, CAPABILITY_REQUESTS,
   standDownMemory,
   closeRemovedMailboxAppointments,
+  filingDue, filingDeferred, ourOutstandingFiling, isFilingRefusalClass,
   type LedgerTx, type MailboxErrorCode, type Tx,
 } from "@trafficflow/db";
 import type { ServiceContext } from "./context.js";
@@ -777,6 +778,30 @@ export interface MailboxServiceDeps {
    * forgetting it costs a hosted customer a bonus, never money.
    */
   onCreated?: (tx: LedgerTx, accountId: string, mailboxId: string, now: Date) => Promise<unknown>;
+  /**
+   * WHEN THE ORGANIZER'S LAST PASS FINISHED, for {@link MailboxDTO.filing}'s `lastCycleAt` —
+   * hosted only, and injected for the reason {@link onCreated} is.
+   *
+   * The fact is in `worker_heartbeats.last_cycle_at`, which is a CLOUD table. This module may not
+   * import one: `packages/services` is in the desktop engine's import closure (the API imports
+   * it, the engine bundles the API), and the barrel's own header records that exporting the cloud
+   * schema "put every Cloud table into every consumer of this package — including the desktop
+   * engine's shipped bundle". So the hosted composition passes a reader and the local tiers pass
+   * nothing.
+   *
+   * ── WHY THE FIELD IS WORTH A DEPENDENCY ─────────────────────────────────────────────────────
+   *
+   * It is the fact that separates a TURN from a STALL. A pending filing waits for the organizer's
+   * rotation, so "one message outstanding" is unremarkable while passes are landing and alarming
+   * while none are. Without it the strip can only report the backlog, which is what made one
+   * sentence cover both situations.
+   *
+   * ABSENT resolves to `null`, which the client renders as SILENCE on that clause rather than as
+   * "no pass has ever run" — a local install keeps no heartbeat and must not be told its
+   * organizer is dead. A throw resolves to `null` too: a status sentence losing half of itself is
+   * a cost worth paying to keep a heartbeat read from failing `GET /mailboxes`.
+   */
+  lastOrganizerCycleAt?: (ctx: ServiceContext) => Promise<string | null>;
 }
 
 /**
@@ -2889,9 +2914,39 @@ export class MailboxService {
    * share. Every other caller (`get`, `create`, `update`) omits the argument and the field is
    * absent from their DTOs — a single mailbox read is not a surface that asks "how many".
    */
+  /**
+   * WHEN THE ORGANIZER'S LAST PASS FINISHED — one read per request, whichever door asked.
+   *
+   * Memoized on the `ServiceContext` OBJECT rather than on the service, because the service is a
+   * singleton across requests and a cached heartbeat would serve one tab's poll the figure from
+   * another tab's poll minutes earlier — a stale "last pass" is exactly the lie this field exists
+   * to replace. The context is minted per request (`serviceContext(deps, req)`), so a WeakMap
+   * keyed on it is per-request by construction and collects itself.
+   *
+   * It sits here rather than in `list`'s pre-loop (where `messageCounts` correctly lives) so that
+   * EVERY door answers the same way. Hoisting it to the list route would have left the write
+   * doors' DTOs reporting `null` — "this deployment cannot tell" — for a deployment that can,
+   * and a client comparing two responses would see the capability appear and disappear.
+   *
+   * A throw resolves to `null`: see {@link MailboxServiceDeps.lastOrganizerCycleAt}.
+   */
+  private async lastCycleAtFor(ctx: ServiceContext): Promise<string | null> {
+    const read = this.deps.lastOrganizerCycleAt;
+    if (!read) return null;
+    const memo = MailboxService.lastCycleMemo.get(ctx);
+    if (memo) return memo;
+    const pending = read(ctx).catch(() => null);
+    MailboxService.lastCycleMemo.set(ctx, pending);
+    return pending;
+  }
+
+  private static readonly lastCycleMemo =
+    new WeakMap<ServiceContext, Promise<string | null>>();
+
   private async toDTO(
     ctx: ServiceContext, m: MailboxRow, messageCount?: number,
   ): Promise<MailboxDTO> {
+    const lastCycleAt = await this.lastCycleAtFor(ctx);
     const fRows = await ctx.db.select().from(mailboxFolders)
       .where(eq(mailboxFolders.mailboxId, m.id)).orderBy(asc(mailboxFolders.folder));
     /**
@@ -2961,18 +3016,70 @@ export class MailboxService {
     // surface that wants one.
     //
     // Joined through `messages` because `folder_state` is keyed by message and carries no
-    // mailbox column — the same join `listPendingFolderStates` uses, and the same three
-    // predicates, so the number here and the work the reconciler will actually do are one set.
-    // Written as a filtered aggregate rather than a second SELECT so it costs one round trip.
-    const [pending] = await ctx.db.select({ n: sql<number>`count(*)::int` })
+    // mailbox column — the same join `listPendingFolderStates` uses. The PREDICATES are NOT the
+    // same, and this comment used to claim they were ("the same three predicates, so the number
+    // here and the work the reconciler will actually do are one set"). Both halves were false:
+    //
+    //  · this count filters `pending` ∧ `last_set_by = 'us'` ∧ `desired <> observed`;
+    //  · `listPendingFolderStates` filters `pending` ∧ `dueNow(next_attempt_at)` — and NOT the
+    //    other two.
+    //
+    // So a DEFERRED row (refused, its next attempt minutes or hours out) is IN this number and
+    // ABSENT from that queue: nothing is going to touch it until its schedule says so. That is
+    // the whole of the reported defect — the strip said "Filing 1 message on your mail server…"
+    // about a row nothing was doing anything with. And in the other direction the queue carries
+    // rows this deliberately excludes (a status repair where the folders already agree; an
+    // external move under the user-wins rule), which is why the two sets are genuinely different
+    // rather than one set written twice. `folder-state-pending.ts` owns every predicate and
+    // states which site composes which.
+    //
+    // ── THE COUNT IS UNCHANGED, AND THE SPLIT SITS BESIDE IT ─────────────────────────────────
+    //
+    // `pendingMoves` still counts BOTH arms, byte for byte, because every shipped client reads
+    // it and a narrowing here would silently stop reporting deferred work to all of them. What
+    // is new is {@link MailboxDTO.filing}, which reports the same rows split by the operand that
+    // decides — and adds the three facts a sentence needs to be true about them.
+    //
+    // ONE STATEMENT, filtered aggregates over one join, so the split costs the same round trip
+    // the bare count did. `to_char` and never a bare `::text` cast, for the reason `requestPull`
+    // records at its own timestamps: the bare cast renders at the server's DateStyle, which
+    // `Date.parse` is not required to accept, and this is millisecond ISO-8601 UTC matching
+    // `toISOString()` everywhere else on this DTO.
+    const now = ctx.now();
+    const ISO = 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"';
+    const [pending] = await ctx.db.select({
+      n: sql<number>`count(*) filter (where ${ourOutstandingFiling()})::int`,
+      due: sql<number>`count(*) filter (where ${filingDue(now)})::int`,
+      deferred: sql<number>`count(*) filter (where ${filingDeferred(now)})::int`,
+      // MIN over `updated_at`, which is the reconciler's OWN queue order (`listPendingFolderStates`
+      // orders by it) and the honest "waiting since": the intent writers stamp it and
+      // `deferFolderReconcile` deliberately does not, because "a refusal is not a re-filing".
+      // A `created_at` would have been wrong here — `folder_state` is upserted per message, so a
+      // creation stamp dates the message's FIRST filing and would report weeks of waiting over a
+      // decision made a second ago.
+      oldestPendingAt: sql<string | null>`
+        to_char(min(${folderState.updatedAt}) filter (where ${ourOutstandingFiling()})
+                at time zone 'utc', ${ISO})`,
+      // MIN, not max: the SOONEST is when something will next happen, which is what a sentence
+      // promising a retry has to name. Over the deferred rows alone — a due row's NULL means "now"
+      // and has no instant to quote.
+      nextAttemptAt: sql<string | null>`
+        to_char(min(${folderState.nextAttemptAt}) filter (where ${filingDeferred(now)})
+                at time zone 'utc', ${ISO})`,
+      attempts: sql<number>`
+        coalesce(max(${folderState.attempts}) filter (where ${ourOutstandingFiling()}), 0)::int`,
+      // THE CLASS OF THE ROW `attempts` CAME FROM, so the two halves of one sentence are about
+      // one message. Ordered by `attempts` (then by the widest schedule) rather than by
+      // `updated_at`: the deferral does not stamp `updated_at`, so ordering by it would pair the
+      // reported attempt count with a different row's reason.
+      lastRefusalClass: sql<string | null>`
+        (array_agg(${folderState.lastErrorClass}
+                   order by ${folderState.attempts} desc, ${folderState.nextAttemptAt} desc)
+         filter (where ${ourOutstandingFiling()} and ${folderState.lastErrorClass} is not null))[1]`,
+    })
       .from(folderState)
       .innerJoin(messages, eq(messages.id, folderState.messageId))
-      .where(and(
-        eq(messages.mailboxId, m.id),
-        eq(folderState.reconcileStatus, "pending"),
-        eq(folderState.lastSetBy, "us"),
-        sql`${folderState.desiredFolder} <> ${folderState.observedFolder}`,
-      ));
+      .where(eq(messages.mailboxId, m.id));
     return {
       id: m.id,
       provider: m.provider,
@@ -3044,6 +3151,29 @@ export class MailboxService {
       // return no row here, but a driver that answered `undefined` must degrade to "nothing
       // outstanding" rather than to `NaN` on somebody's strip.
       pendingMoves: pending?.n ?? 0,
+      // ── THE SAME ROWS, SPLIT BY THE OPERAND THAT DECIDES (mail 0097) ───────────────────
+      //
+      // UNCONDITIONAL and never absent, on `pendingMoves`' own rule: absent means "this server
+      // predates the field" and the client renders the legacy count alone, so emitting it
+      // conditionally would make a deployment that CAN tell indistinguishable from one that
+      // cannot. Every member is present; the nullable ones are null when no row supplies them,
+      // which is a different statement from the object being missing.
+      filing: {
+        due: pending?.due ?? 0,
+        deferred: pending?.deferred ?? 0,
+        oldestPendingAt: pending?.oldestPendingAt ?? null,
+        nextAttemptAt: pending?.nextAttemptAt ?? null,
+        attempts: pending?.attempts ?? 0,
+        lastRefusalClass: isFilingRefusalClass(pending?.lastRefusalClass)
+          ? pending!.lastRefusalClass!
+          : null,
+        // THE READ'S OWN INSTANT, so a client can say when it last looked instead of running a
+        // clock over a figure it has not re-fetched. `MailStateProvider` polls this route every
+        // 30 s and re-fetches on nothing else, so a strip with a live clock and no `asOf` was
+        // animating a number up to thirty seconds stale.
+        asOf: now.toISOString(),
+        lastCycleAt,
+      },
       // ── THE ORGANIZING ROLE AND ITS HOLDER (mail 0083) ─────────────────────────────────
       //
       // UNCONDITIONAL, on the sync-block pair's rule stated above: a reader is `connected`, so a

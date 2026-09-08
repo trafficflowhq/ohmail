@@ -1,0 +1,62 @@
+-- WHY A FILING WAS REFUSED, AS A CLASS — the one thing the strip could not say.
+--
+-- ══ THE SENTENCE THAT COVERED FOUR SITUATIONS ══════════════════════════════════════════════
+--
+-- A `folder_state` row that is `pending` with `last_set_by = 'us'` and its two folders in
+-- disagreement is a filing the mail server has not applied. The client is told how MANY such rows
+-- there are and nothing else, so it renders one sentence — "Filing 1 message on your mail
+-- server…" — for a move the organizer will make on its next turn AND for a move the server has
+-- refused repeatedly and has scheduled its next attempt hours out.
+--
+-- `attempts` and `next_attempt_at` (mail 0058) already carry the SCHEDULE, which separates "asleep"
+-- from "due". What is missing is WHY, and without it the honest version of the sentence cannot be
+-- written: "1 message waits · retrying at 14:20" is true but says nothing a person can act on,
+-- while "the folder is not there" sends them to the one screen that fixes it.
+--
+-- ══ A CLASS, NEVER THE SERVER'S TEXT ═══════════════════════════════════════════════════════
+--
+-- `folder_state`'s own comment says "deliberately no error column. What went wrong is free text
+-- from someone else's mail server; it belongs in the `reconcile.move.failed` audit row", and that
+-- rule is not being relaxed — it is being kept. This column holds a member of a CLOSED SET the
+-- reconciler maps the server's structured IMAP response code onto
+-- (`refused | no_such_folder | read_only | over_quota`, `apps/worker/src/sync.ts`): four words this
+-- codebase chose, with a CHECK behind them, so no value a mail server picked can reach a screen.
+-- The free text stays exactly where it was, in the audit row, which is still the only place the
+-- server's own wording is recorded.
+--
+-- A value this deployment does not recognise is possible during a rolling deploy, so the CHECK
+-- admits the four and NULL and every reader falls back to "your server would not say why" rather
+-- than to silence. That is the rule this schema follows wherever a closed set crosses a version
+-- boundary: a state a build cannot NAME still gets a sentence, because silence is what made the
+-- state invisible before the column existed.
+--
+-- ══ NULLABLE, AND WHY IT IS NOT DEFAULTED ══════════════════════════════════════════════════
+--
+-- NULL means "no refusal has been recorded for this row": every row is born that way, a fresh
+-- intent clears it (`upsertFolderState` resets the schedule pair on write, and this rides with
+-- them), and a TRANSPORT failure leaves it alone deliberately — a mail host that is unreachable is
+-- not a refusal of this message, and stamping one would blame the message for the socket.
+--
+-- ══ NO `created_at`, AND THAT IS A CORRECTION ══════════════════════════════════════════════
+--
+-- The obvious companion column would be a creation stamp for "how long has this waited". It is
+-- NOT added, because `folder_state` is keyed by message and UPSERTED: one row per message, reused
+-- every time that message is filed again. A creation stamp would therefore date the message's
+-- FIRST filing — possibly months ago — and report "not filed for 47 days" over a decision made a
+-- second ago.
+--
+-- `updated_at` is the truthful operand and the code already treats it as one: the intent writers
+-- stamp it, `deferFolderReconcile` deliberately leaves it alone ("a refusal is not a re-filing —
+-- it is this row's place in the oldest-first queue"), and `listPendingFolderStates` orders by it.
+-- The projection reads `min(updated_at)` over the outstanding rows, which is the queue's own head
+-- measured the way the queue measures it.
+--
+-- Idempotent (`IF NOT EXISTS`) on both statements, because a desktop engine replays this journal
+-- at every launch. Two statements, so the breakpoint marker is required.
+
+ALTER TABLE "folder_state" ADD COLUMN IF NOT EXISTS "last_error_class" text;
+--> statement-breakpoint
+DO $$ BEGIN
+  ALTER TABLE "folder_state" ADD CONSTRAINT "folder_state_last_error_class_check"
+    CHECK ("last_error_class" IS NULL OR "last_error_class" IN ('refused', 'no_such_folder', 'read_only', 'over_quota'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;

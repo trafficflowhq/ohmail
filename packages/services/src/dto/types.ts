@@ -757,6 +757,99 @@ export interface MailboxDTO {
    */
   pendingMoves: number;
   /**
+   * THE SAME OUTSTANDING FILINGS, SPLIT BY THE OPERAND THAT DECIDES (mail 0097).
+   *
+   * ── ONE NUMBER FOR FOUR SITUATIONS ────────────────────────────────────────────────────────
+   *
+   * Reported from real use: the shell's rail read "Filing 1 message on your mail server… · your
+   * decisions are already applied here; the server is catching up." for ten minutes while nothing
+   * changed on the mailbox, then cleared. The COUNT was right — one `folder_state` row really was
+   * outstanding — and the sentence was the only one the field above can produce, so it covered
+   * every reason a row can be outstanding. Three of the four are not "the server is catching up":
+   *
+   *  · the organizer has not reached this mailbox in its rotation yet (true, and the honest
+   *    version says when the last pass finished, which is the difference between a turn and a
+   *    stall);
+   *  · the server REFUSED the move and the retry is scheduled minutes or hours out — the row is
+   *    DEFERRED, absent from `listPendingFolderStates` until then, so nothing is catching up;
+   *  · it has been refused repeatedly, or has been outstanding far longer than a rotation can
+   *    account for;
+   *  · a READER install made the decision. `reconcileFolders` is skipped for a reader, so the
+   *    install that HOLDS the mailbox applies it on its own schedule. "The server is catching up"
+   *    is false by construction there: the server is not the organizer.
+   *
+   * ── PRESENT WITH ZEROS, NEVER ABSENT ─────────────────────────────────────────────────────
+   *
+   * On {@link pendingMoves}' rule, from the other side: ABSENT means "this server predates the
+   * field" and a client then renders the legacy count alone, so a conditional projection would
+   * make a deployment that CAN tell indistinguishable from one that cannot. The nullable MEMBERS
+   * carry the "no row supplies this" cases, which is a different statement.
+   */
+  filing: {
+    /** Outstanding filings the next reconcile turn will pick up (`next_attempt_at` null or past). */
+    due: number;
+    /**
+     * Outstanding filings that are ASLEEP — refused, retry scheduled ahead.
+     *
+     * The row the reported sentence was about. `due + deferred` is {@link pendingMoves}; a client
+     * that cannot tell the two apart cannot say anything true about either.
+     */
+    deferred: number;
+    /**
+     * When the OLDEST outstanding filing was written, ISO-8601 UTC, or null when none is.
+     *
+     * `folder_state.updated_at`, which is the reconciler's own queue order
+     * (`listPendingFolderStates` orders by it) and the honest "waiting since": the intent writers
+     * stamp it and `deferFolderReconcile` deliberately does not — "a refusal is not a re-filing".
+     *
+     * NOT a creation stamp, and that was considered and rejected: `folder_state` is keyed by
+     * message and upserted, so a `created_at` dates the message's FIRST filing and would report
+     * weeks of waiting over a decision made a second ago.
+     */
+    oldestPendingAt: string | null;
+    /**
+     * When the SOONEST deferred filing may be attempted again, or null when none is deferred.
+     *
+     * MIN and not max: it is when something will next happen, which is what a sentence promising
+     * a retry has to name.
+     */
+    nextAttemptAt: string | null;
+    /** The highest refusal count among the outstanding filings — 0 when none has been refused. */
+    attempts: number;
+    /**
+     * WHY the worst-off outstanding filing was refused — one of
+     * `refused | no_such_folder | read_only | over_quota`, or null.
+     *
+     * Read from the same row {@link attempts} comes from, so the two halves of one sentence are
+     * about one message. NARROWED against the closed set rather than projected verbatim: a value
+     * a newer worker writes and this API does not know becomes null, and a client renders its own
+     * "your server would not say why" — never the raw string, which is one step from a mail
+     * server's own words on somebody's screen.
+     */
+    lastRefusalClass: string | null;
+    /**
+     * WHEN THIS READ HAPPENED, ISO-8601 UTC.
+     *
+     * The strip runs a clock (nothing in the mirror moves when the worker drains this backlog, so
+     * a state keyed on mirror movement would freeze) while the facts behind it are re-fetched
+     * every 30 s and on nothing else. So the number was being animated up to thirty seconds
+     * stale. With this the surface can state when it last looked instead.
+     */
+    asOf: string;
+    /**
+     * WHEN THE ORGANIZER'S LAST PASS FINISHED, ISO-8601 UTC, or null when this deployment cannot
+     * say.
+     *
+     * The fact that separates a TURN from a STALL: a pending filing waits for the rotation, so one
+     * outstanding move is unremarkable while passes are landing and alarming while none are.
+     *
+     * `null` on every local tier — there is no heartbeat to read — and a client must render
+     * SILENCE on that clause rather than "no pass has ever run". A desktop install organizes its
+     * own mailbox in-process and must never be told its organizer is dead.
+     */
+    lastCycleAt: string | null;
+  };
+  /**
    * THE BIGGEST MESSAGE THIS MAILBOX'S SUBMISSION SERVER SAID IT WILL ACCEPT, in bytes — the
    * server's own RFC 1870 `SIZE` announcement, recorded by the connect-time SMTP probe (mail 0055).
    *

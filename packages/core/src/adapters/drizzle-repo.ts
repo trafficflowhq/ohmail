@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
-import { accountStorage, changeLog, messages, messageInstances, messageFailures, folderOps, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordChange as recordChangeTx, recordChanges as recordChangesTx, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS } from "@trafficflow/db";
+import { accountStorage, changeLog, messages, messageInstances, messageFailures, folderOps, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordChange as recordChangeTx, recordChanges as recordChangesTx, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass } from "@trafficflow/db";
 import type {
   RepoPort, RoutingPort, StoredMessage, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
   FolderAttribution,
@@ -541,9 +541,23 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    * `attempts` is passed absolutely rather than incremented in SQL because one organizer writes
    * one mailbox (the lease is the product's central invariant), so the caller's read-then-write is
    * not a race — and an absolute value is a value a test can assert instead of infer.
+   *
+   * ── AND `errorClass`, WHICH RIDES WITH THEM AND NOT SEPARATELY (mail 0097) ──────────────────
+   *
+   * A member of `FILING_REFUSAL_CLASSES` — four words this codebase chose, mapped from the
+   * server's structured response code by the caller. It is in this method's argument and not in
+   * a method of its own for the same reason the two schedule columns share one: a class without
+   * its schedule is a reason for nothing, and a schedule without its class is the sentence a
+   * client could not write. `folder_state`'s schema comment forbids storing the server's OWN
+   * WORDS, and that rule is untouched — the free text stays in the `reconcile.move.failed` audit
+   * row this call is grouped with, and only a value we picked reaches a screen.
+   *
+   * `flag_state` has NO equivalent and {@link deferFlagReconcile} is unchanged: nothing renders a
+   * per-message reason for a `\Seen` push, and a column nobody reads is a column that goes stale.
    */
   deferFolderReconcile(
-    messageId: string, next: { attempts: number; nextAttemptAt: Date },
+    messageId: string,
+    next: { attempts: number; nextAttemptAt: Date; errorClass: FilingRefusalClass },
   ): Promise<void>;
   /** {@link deferFolderReconcile}, one flag over: defer a refused `\Seen` write. */
   deferFlagReconcile(
@@ -646,10 +660,21 @@ function flagStatusFor(s: FlagStateRow): "pending" | "reconciled" {
  * "This deferred mutation may be attempted again" — the due predicate both pending queries share
  * (mail 0058).
  *
- * `IS NULL` is the FIRST arm and it is not a convenience: NULL is what every row is born with and
- * what a fresh intent is reset to, so an implementation that only compared instants would hide
- * every never-yet-refused mutation in the product. The two arms together are the whole meaning of
- * the column — a schedule with "now" as its default.
+ * ── THE DEFINITION MOVED TO `@trafficflow/db` AND THIS IS NOW ONE LINE OVER IT (mail 0097) ───
+ *
+ * It used to be spelled out here, and the DTO builder that reports the same rows to a client
+ * spelled its own predicates out separately — under a comment claiming the two were "one set",
+ * which they were not: this queue filters `pending` ∧ due, and the strip's count filters
+ * `pending` ∧ `last_set_by = 'us'` ∧ `desired <> observed`. A DEFERRED row was therefore counted
+ * on somebody's screen and absent from this queue, which is how "Filing 1 message on your mail
+ * server…" came to describe a row nothing was going to touch.
+ *
+ * `packages/db/src/folder-state-pending.ts` now owns every predicate over this table's pending
+ * set, and its header states which site composes which and WHY THE QUEUE MUST STAY WIDER: this
+ * one has to keep carrying the status-repair rows (`desired = observed` with a stale status —
+ * `reconcileFolders` reads exactly those to re-derive it) and the external rows the user-wins rule
+ * skips. Narrowing this to the strip's three predicates would strand every status repair
+ * `pending` for ever, and invisibly, because the strip is the thing that does not count them.
  *
  * The instant comes from the APPLICATION clock rather than SQL `now()`, matching the write side
  * (`deferFolderReconcile` is handed a `Date` the worker computed). One clock decides both when a
@@ -657,7 +682,7 @@ function flagStatusFor(s: FlagStateRow): "pending" | "reconciled" {
  * worker's cannot make a deferral shorter or longer than the policy says.
  */
 function dueNow(col: AnyPgColumn): SQL | undefined {
-  return or(isNull(col), lte(col, new Date()));
+  return sharedDueNow(col, new Date());
 }
 
 /**
@@ -2663,13 +2688,18 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   async deferFolderReconcile(
-    messageId: string, next: { attempts: number; nextAttemptAt: Date },
+    messageId: string,
+    next: { attempts: number; nextAttemptAt: Date; errorClass: FilingRefusalClass },
   ): Promise<void> {
-    // TWO COLUMNS AND NO OTHERS — see the port's doc for why each omission matters, `updated_at`
+    // THREE COLUMNS AND NO OTHERS — see the port's doc for why each omission matters, `updated_at`
     // most of all: it is this row's place in the oldest-first queue, and a refusal is not a
-    // re-filing.
+    // re-filing. The class is the third and it moves with the pair, never on its own.
     await this.db.update(folderState)
-      .set({ attempts: next.attempts, nextAttemptAt: next.nextAttemptAt })
+      .set({
+        attempts: next.attempts,
+        nextAttemptAt: next.nextAttemptAt,
+        lastErrorClass: next.errorClass,
+      })
       .where(eq(folderState.messageId, messageId));
   }
 

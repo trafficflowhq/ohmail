@@ -680,6 +680,13 @@
       "when": 1791600400011,
       "tag": "0096_away_piles",
       "breakpoints": true
+    },
+    {
+      "idx": 97,
+      "version": "7",
+      "when": 1791600600011,
+      "tag": "0097_folder_state_last_error_class",
+      "breakpoints": true
     }
   ]
 }
