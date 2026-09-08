@@ -1186,9 +1186,27 @@ export function summarizeDrain(cycleMs: readonly number[]): { cycles: number; to
  * true only of an in-process engine. Re-implementing the route here would be a second
  * definition of a write, which is the split this composition avoids everywhere else.
  *
- * ON A 202 ONLY. A refusal — 404 for a row this account does not own, 403 for a reader, 409,
- * a 500 — must not dial: the press was not accepted, and dialling on a refused write would make
- * the door a way to make this machine open a socket without being allowed to resync.
+ * ON A 202 ONLY — AND AS THINGS STAND, 202 IS THE ONLY ANSWER THIS CHECK EVER SEES.
+ *
+ * That is a fact about the shared handler, and it is written here because a reader who assumes
+ * otherwise will draw the wrong conclusion from the tests. `POST /mailboxes/:id/resync` calls
+ * `MailboxService.requestResync` and then RETURNS 202; it has no other return. Every refusal it
+ * can make is THROWN, and the throw is turned into a response by the error envelope ABOVE this
+ * handler, so it never passes through the line below:
+ *
+ *   · `ownedRow` throws `ServiceError("not_found", 404)` for a row this account does not own;
+ *   · `assertOrganizerRole` throws `OrganizedElsewhereError` when this install only reads the
+ *     mailbox, and `MailboxNotFoundError` when the row is gone by the time it looks.
+ *
+ * So the status test is a CONTRACT ON THIS WRAPPER — "dial only for an answer that means the
+ * resync was accepted" — and not a claim that the route produces refusing responses today. It
+ * is what the day somebody answers 409 instead of raising will rest on, and until then its only
+ * live arm is 202. The suite reaches the other arm deliberately, by driving this function with a
+ * stub route that RETURNS a refusal, because a check whose contrary state no test can produce is
+ * one nobody can watch fail.
+ *
+ * Dialling on a refused write would make the door a way to have this machine open a socket
+ * without being allowed to resync.
  *
  * FIRE-AND-FORGET, so the answer stays 202 and immediate. Awaiting the drain would hold the
  * response for as long as a connect takes (fifteen seconds against a server that is down) with
@@ -2767,6 +2785,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         signInRefused = false;
         redialAttempts = 0;
         redialNotBefore = 0;
+        /* …and the manual floor with them, for this method's own stated reason: a new password
+           is a new question, and it should be asked promptly rather than at the end of a wait
+           the old one earned. */
+        forcedNotBefore = 0;
         log("mailbox_sign_in_retry_armed", {
           mailboxId: mb.id,
           reason: `${why}; the stored refusal is discarded and the next poll dials again`,
@@ -2776,6 +2798,27 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       let redialAttempts = 0;
       /** Wall-clock instant before which no re-dial is attempted. */
       let redialNotBefore = 0;
+      /**
+       * WALL-CLOCK INSTANT BEFORE WHICH A PRESS IS NOT HONOURED — a floor under the one path
+       * that is allowed to skip the ladder.
+       *
+       * A forced dial skips {@link redialNotBefore}, and a dial that fails FAST settles in well
+       * under a second. So without this a second press — a remounted pane, a second window, a
+       * person pressing twice — skipped the wait again, and repeated presses dialled once per
+       * press: the 15-second-to-5-minute ladder defeated by a control anybody can hold down,
+       * against a server that has already refused to answer.
+       *
+       * A press is worth ONE attempt per base step. After a forced dial FAILS this is set to
+       * `now + REDIAL_BACKOFF_BASE_MS` and `force` is refused until it passes; the press still
+       * answers 202, and the row still says what it said. A forced dial that SUCCEEDS clears it,
+       * because the thing it was rationing is over.
+       *
+       * SEPARATE FROM `redialNotBefore`, deliberately. That one is the automatic ladder and
+       * widens to five minutes; this is a fixed floor under the manual path. Folding them
+       * together would either give a press the five-minute wait back (the defect this lane
+       * closed) or let a press reset the automatic ladder (the one it refused to do).
+       */
+      let forcedNotBefore = 0;
 
       /**
        * WHICH CONNECTION THIS MAILBOX IS ON — a counter, bumped by every dial.
@@ -5452,8 +5495,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        *
        * AND IT DOES NOT RESET THE LADDER. `redialAttempts` is untouched, so a forced attempt
        * that fails leaves the backoff exactly where it was: the press bought one dial, not a
-       * fresh start. Resetting here would let a person holding the button down reproduce the
-       * four-times-a-minute knocking the ladder exists to prevent.
+       * fresh start.
+       *
+       * NOR IS IT UNLIMITED. Skipping the wait is not the same as having no wait: a failed dial
+       * settles in well under a second, so an unbounded `force` let repeated presses dial once
+       * per press and reproduced the four-times-a-minute knocking from the other side. A press
+       * is honoured at most once per {@link REDIAL_BACKOFF_BASE_MS} — see {@link forcedNotBefore}.
        */
       const redialIfDead = async ({ force = false }: { force?: boolean } = {}): Promise<void> => {
         if (stopped || connectionDeadSince === null || redialling) return;
@@ -5469,7 +5516,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          * attempted at all; the second may, so it is attempted on a widening interval instead of
          * four times a minute. */
         if (signInRefused) return;
-        if (!force && Date.now() < redialNotBefore) return;
+        /* THE PRESS SKIPS THE LADDER, AND THE FLOOR UNDER THE PRESS IS ITS OWN. See
+           {@link forcedNotBefore}: a forced dial that failed a moment ago has not become worth
+           repeating because somebody pressed again. */
+        if (force ? Date.now() < forcedNotBefore : Date.now() < redialNotBefore) return;
         /* ── THE RE-DIAL JOINS `tail`, SO `detach()` WAITS FOR IT ────────────────────────────
          *
          * It cannot QUEUE behind `tail` — `dialAndGate` takes the queue twice and a queued
@@ -5526,6 +5576,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           connectionDeadBy = null;
           redialAttempts = 0;
           redialNotBefore = 0;
+          /* THE PRESS'S FLOOR GOES WITH THE LADDER. A dial that reached the server ends the
+             condition both of them were rationing; leaving it would refuse the next press for up
+             to fifteen seconds after the mailbox came back. */
+          forcedNotBefore = 0;
           if (outcome.leaseRead) {
             leaseUnavailableSince = null;
             leaseUnavailableCycles = 0;
@@ -5573,6 +5627,19 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             /* JITTERED, so several mailboxes on one server do not knock in unison after an
                outage — the thundering herd every backoff without one produces. */
             redialNotBefore = Date.now() + Math.round(step * (0.8 + Math.random() * 0.4));
+            /* ONLY A FORCED ATTEMPT ARMS THE PRESS'S FLOOR, and the `if` is the whole of it.
+               An earlier version armed this on ANY failed dial, which reads harmless and is not:
+               during an outage the POLL fails on its own cadence, so the floor would be re-armed
+               every 15 s to 5 min and a press would be refused almost whenever anybody made one
+               — the defect this lane closed, rebuilt out of its own remedy. Caught by the
+               press-through-the-route control, which went red the moment it ran beside the rest
+               of the file.
+
+               UNJITTERED AND FIXED AT THE BASE STEP, unlike the line above. The jitter exists to
+               stop several mailboxes knocking in unison after an outage, which is a property of
+               the AUTOMATIC cadence; a person pressing a button is not a herd, and a floor that
+               moved would make "press again in fifteen seconds" a thing nobody could state. */
+            if (force) forcedNotBefore = Date.now() + REDIAL_BACKOFF_BASE_MS;
           }
           log("mailbox_reconnect_failed", {
             err, mailboxId: mb.id,

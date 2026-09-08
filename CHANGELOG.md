@@ -84,7 +84,7 @@ arrive after the one that showed it — and it says exactly what a current answe
 now compares when each answer was last true of the mailbox and ignores the older one, so the
 question is not taken away by news that has been overtaken.
 
-### Sync now reconnects at once after an outage
+### Sync now reconnects at once after a detected outage
 
 When the connection to your mail server drops, ohmail re-dials by itself on a widening interval —
 fifteen seconds, then longer, up to five minutes — so that a server which is genuinely down is not
@@ -92,14 +92,19 @@ knocked on every few seconds. That is right when nobody is watching and wrong wh
 your network came back thirty seconds into a five-minute wait, the mailbox sat there saying it was
 unreachable until the wait ran out, and pressing "Sync now" did nothing about it.
 
-Pressing "Sync now" now goes and reconnects immediately, instead of waiting out the interval.
+Pressing "Sync now" now reconnects immediately once the app has NOTICED the link is down,
+instead of waiting out the interval. Noticing is its own step: a link that ends is reported at
+once, but one that goes half-open — the socket still there, answering nothing — is only concluded
+dead after about two minutes without a completed round trip, and until then a press finds nothing
+to reconnect and the row can still read as up to date. Shortening that is separate work.
 
 What a press deliberately does not do: it does not retry a sign-in the server has already
 rejected, because that is a password to fix and not a connection to retry, and repeating those
 attempts is what some providers answer by locking an account. It does not open a second
-connection if one is already being opened. And a press that fails does not reset the interval —
-it buys one attempt, not a fresh start, so holding the button down cannot turn into the rapid
-knocking the interval exists to prevent.
+connection if one is already being opened. And a press that fails is not repeatable on demand —
+it is worth one attempt every fifteen seconds, so pressing again straight away is accepted and
+changes nothing, and holding the button down cannot turn into the rapid knocking the interval
+exists to prevent.
 
 ### A long quiet stretch no longer drops the connection
 
