@@ -362,6 +362,25 @@ spam, senders you've screened out, your own addresses, and an address that bounc
 as a line under the rate. It is an (i) beside "Which mail gets a reply" now: the whole sentence
 opens on hover, on focus or on a press, and it is the one place the list is stated.
 
+### Each mailbox says who organizes it in one chip
+
+On the desktop's Settings → Mailboxes pane every mailbox carried a boxed paragraph under its row —
+"Organizing", the sentence about what this computer does to the mailbox, and a button — and the
+box repeated for every mailbox. The row now carries a chip: "Organizing", "Organized by …" naming
+the install, or "Nothing organizes this mailbox". The chip is a button; hovering it, focusing it or
+pressing it opens the sentence beside it, and a screen reader hears the sentence as the chip's
+description. While a stop is asked for, the chip reads "Stopping" and its sentence says whether the
+server has confirmed yet.
+
+The verb under a mailbox this computer organizes is "Stop organizing — hand the mailbox back", with
+its own (i) saying what follows: from its next pass this computer only reads the mailbox — it moves
+nothing, screens nothing and applies none of your rules — and nothing takes the mailbox over by
+itself; another install has to press "Organize here", or you add the mailbox to ohmail Cloud.
+Pressing the verb asks the same question it always did, with the same confirmation.
+
+The cell saying whether the mail server can be reached is announced to a screen reader when it
+changes. Its text is unchanged.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

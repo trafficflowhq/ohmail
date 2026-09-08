@@ -83,9 +83,9 @@
  * door could perform. The control is below, beside the resync, on the local door alone.
  */
 
-import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
-import { Button, SettingsActions, SettingsBanner, SettingsNote, SettingsRow, SettingsSection, SettingsVerdict } from "@ohmail/ui";
+import { Button, Gloss, SettingsActions, SettingsNote, SettingsRow, SettingsSection, SettingsVerdict } from "@ohmail/ui";
 
 import {
   deviceHoldings, holdingsSpeak, readerStandDown, showInboundQuiet, type MailboxFacts,
@@ -1547,17 +1547,23 @@ export function DesktopMailboxes(
    *  · NOBODY — this install let it go, or the holder vanished. Its verb is the takeover again,
    *    and here it is the primary one, because nothing is filing the mailbox at all.
    *
-   * `SettingsBanner` for all three: the fact, since when, and the action. Told apart by how loud
-   * the surface is rather than by three different constructions — a tint under EVERY row would
-   * mean nothing, so the ordinary state wears a hairline and the two exceptions wear the wash.
+   * ONE CHIP for all three, with the verb beside it. The chip's caption is the fact; the sentence
+   * that says since when and what this computer does is the chip's accessible DESCRIPTION, opened
+   * beside it on hover, focus or a press (the `Gloss` primitive in its caption form). It used to
+   * be a `SettingsBanner` — a boxed label, the sentence in full and the verb — under every row,
+   * which spent three lines per mailbox on a sentence a person reads once. Told apart by how loud
+   * the chip is rather than by three constructions — a tint under EVERY row would mean nothing,
+   * so the ordinary state wears a hairline and the two exceptions wear the wash.
    *
    * ── AND THE CONSEQUENCE IS STATED BEFORE THE PRESS, NOT AFTER IT ──────────────────────────
    *
-   * Both verbs open a well under the banner with one sentence in it and the confirm underneath.
+   * Both verbs open a well under the chip line with one sentence in it and the confirm underneath.
    * Handing a mailbox between machines is the one act on this pane that changes what another
    * computer does, and the sentence is what makes the press a decision rather than a discovery.
-   * The banner's own verb is withheld while the well is open, so there is exactly one place to
-   * answer.
+   * The verb is withheld while the well is open, so there is exactly one place to answer. The
+   * stop verb carries a (i) of its own as well, for the person who has not pressed yet: what this
+   * computer does from its next pass, and that nothing takes the mailbox over until another
+   * install asks for it.
    */
   const organizerBlock = (m: MailboxFacts): ReactNode => {
     /* WHAT THIS ROW IS, in the vocabulary the block renders. `released` is not merely "reader
@@ -1626,12 +1632,32 @@ export function DesktopMailboxes(
 
     const open = claimFor === m.id;
     const releasing = releaseFor === m.id;
+    /* ── THE STOP, ASKED FOR AND THEN STANDING — two clocks, one chip ──────────────────────────
+       This window's own "requested" note used to render as a verdict line under the banner while
+       the banner still read "Organizing"; a poll later the row's request stamp replaced the
+       banner's sentence. They are the same fact on two clocks — the press made here, then the
+       server's confirmation — so both wear one chip that reads "Stopping", and its sentence says
+       which clock it is on. The conditions are the note's and the description's, unchanged: the
+       note's while the row has not yet answered (`released` says requested, the role is still
+       organizer, no stamp on the row); the row's own once the stamp is there. */
+    const stopQueued = released.get(m.id) === "requested" && role === "organizer" && !m.releaseRequestedAt;
+    const stopState: "queued" | "pending" | undefined =
+      stopQueued ? "queued" : role === "organizer" && m.releaseRequestedAt ? "pending" : undefined;
     return (
-      <div className="mbx-org" data-role={role}>
-        <SettingsBanner
-          label={
+      <div className="mbx-org" data-role={role} data-state={stopState}>
+        <div className="mbx-role">
+        {/* THE CHIP IS THE (i). One button: its caption is the role's label, the sentence that
+            stood under the label is its accessible description, and hover, focus or a press opens
+            that sentence beside it. The banner rendered label and sentence as two sibling text
+            nodes inside one note, and on Linux a reader of the accessibility tree heard the label
+            and never the sentence; `aria-describedby` is what a reader computes a description
+            from, and the primitive sets it from the caption. */}
+        <Gloss
+          className="mbx-chip"
+          placement="chip"
+          caption={
             role === "organizer"
-              ? t("stateOrganizing")
+              ? (stopState ? t("chipStopping") : t("stateOrganizing"))
               /* A legacy row carries no holder columns at all — the pre-role engine recorded only
                  `disabled_reason` — so there is no name to put in `readerLabel`. */
               : m.legacyStandDown === true
@@ -1640,7 +1666,7 @@ export function DesktopMailboxes(
                   ? t("stateNotOrganized")
                   : t("readerLabel", { name: holderOf(m) })
           }
-          description={
+          text={
             role === "organizer"
               /* ── A STANDING STOP REQUEST IS ON THE ROW, NOT ONLY IN A LOG (0.14.1) ─────────
                  The request is honoured by the engine's own next pass, and on a server that keeps
@@ -1648,10 +1674,13 @@ export function DesktopMailboxes(
                  session of retries with this row reading "files this mailbox" throughout, so the
                  press showed no trace anywhere. While the request stands the row is still an
                  ORGANIZER and deliberately files nothing, so the ordinary sentence is false in
-                 both halves; the pending one names the actual state. */
-              ? (m.releaseRequestedAt
-                ? t("stopOrganizingPending")
-                : t("stateOrganizingHere"))
+                 both halves; the pending one names the actual state. Before the row carries the
+                 stamp, this window's own press is the newest word — see `stopQueued`. */
+              ? (stopQueued
+                ? t("stopOrganizingQueued")
+                : m.releaseRequestedAt
+                  ? t("stopOrganizingPending")
+                  : t("stateOrganizingHere"))
               : role === "released"
                 /* THE ONE SENTENCE THAT DATES SOMETHING THE PERSON HERE DID. A mailbox whose
                    holder simply vanished and one this install released look identical from every
@@ -1724,43 +1753,52 @@ export function DesktopMailboxes(
                       })
                     : t("readerSinceUnknown", { since: day(m.organizedBy?.since ?? null) })
           }
-          /* THE VERB, WITHHELD WHILE ITS OWN WELL IS OPEN — one place to answer, and no button
-             that re-asks a question already on screen.
-
-             THE TAKEOVER'S BUTTON IS ALWAYS OFFERED NOW, and the arithmetic that used to hide it
-             is gone with the rule it rested on. A press used to be refusable by the lease on the
-             holder's KIND, so the pane tracked whether a request had been made and whether it had
-             been blocked, to keep the retry reachable in the case where the answer said "come back
-             later". Kind no longer ranks: an explicit press outranks a claim that carries none,
-             and the holder stands down on its next pass. There is no blocked case to keep a
-             retry reachable for, so `reclaimed` gates the button and nothing else does. */
-          action={
-            open || releasing ? undefined
-              : role === "organizer" ? (
-                /* Withheld while the row already carries the request: the button would write the
-                   very ask the description above says is being carried out. */
-                m.releaseRequestedAt ? undefined : (
-                  <Button variant="ghost" onClick={() => setReleaseFor(m.id)}>
-                    {t("stopOrganizing")}
-                  </Button>
-                )
-              ) : takeoverStanding(m) ? undefined : (
-                <Button
-                  variant={role === "released" ? "primary" : undefined}
-                  onClick={() => setClaimFor(m.id)}
-                >
-                  {/* ── "INSTEAD" NEEDS SOMETHING TO BE INSTEAD OF ────────────────────────
-                      One key served both states and its words were written for the one with a
-                      holder, so a row nothing organizes offered an alternative to nobody — while
-                      its own sentence two lines up names the press as "Organize here". The
-                      catalogue and the button disagreed on one screen. The browser pane's only
-                      call site is its released row, so `organizeHere` keeps the plain wording it
-                      always should have had there and the takeover gets its own key. */}
-                  {role === "released" ? t("organizeHere") : t("organizeHereInstead")}
-                </Button>
-              )
-          }
         />
+        {/* THE VERB, WITHHELD WHILE ITS OWN WELL IS OPEN — one place to answer, and no button
+            that re-asks a question already on screen.
+
+            THE TAKEOVER'S BUTTON IS ALWAYS OFFERED NOW, and the arithmetic that used to hide it
+            is gone with the rule it rested on. A press used to be refusable by the lease on the
+            holder's KIND, so the pane tracked whether a request had been made and whether it had
+            been blocked, to keep the retry reachable in the case where the answer said "come back
+            later". Kind no longer ranks: an explicit press outranks a claim that carries none,
+            and the holder stands down on its next pass. There is no blocked case to keep a
+            retry reachable for, so `reclaimed` gates the button and nothing else does. */}
+        {open || releasing ? null
+          : role === "organizer" ? (
+            /* Withheld while the row already carries the request: the button would write the
+               very ask the chip's sentence says is being carried out. */
+            m.releaseRequestedAt ? null : (
+              <span className="mbx-verb">
+                <Button variant="ghost" className="mbx-quiet" onClick={() => setReleaseFor(m.id)}>
+                  {t("stopOrganizingHandBack")}
+                </Button>
+                {/* WHAT FOLLOWS THE PRESS, for the person who has not made it: this computer
+                    goes on reading and stops filing — moves nothing, screens nothing, applies
+                    none of the rules — and NOTHING takes the mailbox over by itself; another
+                    install has to press Organize here. The verb hands the mailbox back, to be
+                    taken; it never promises a hand-over that happens. The confirm well under it
+                    says what stays where it is, which is the other half of the same decision. */}
+                <Gloss placement="chip" text={t("stopOrganizingHandBackWhat")} />
+              </span>
+            )
+          ) : takeoverStanding(m) ? null : (
+            <Button
+              className="mbx-btn"
+              variant={role === "released" ? "primary" : undefined}
+              onClick={() => setClaimFor(m.id)}
+            >
+              {/* ── "INSTEAD" NEEDS SOMETHING TO BE INSTEAD OF ────────────────────────
+                  One key served both states and its words were written for the one with a
+                  holder, so a row nothing organizes offered an alternative to nobody — while
+                  its own sentence two lines up names the press as "Organize here". The
+                  catalogue and the button disagreed on one screen. The browser pane's only
+                  call site is its released row, so `organizeHere` keeps the plain wording it
+                  always should have had there and the takeover gets its own key. */}
+              {role === "released" ? t("organizeHere") : t("organizeHereInstead")}
+            </Button>
+          )}
+        </div>
         {/* AND WHY A DECISION CANNOT BE MADE HERE, on the mailboxes where the answer is the
             sign-in rather than a version somebody can update. A password mailbox lets both
             installs derive the same signing key from the credential they already share; an OAuth
@@ -1842,8 +1880,9 @@ export function DesktopMailboxes(
             about a clock that has long since run out. Each note now renders only while the row
             has NOT answered: the takeover's while the role is not yet `organizer`; the stop's
             while the role is still `organizer` AND the row does not yet carry the request (once
-            it does, the banner's own pending description says the same thing from the row's
-            clock, which is the one that is true). */}
+            it does, the chip's own pending sentence says the same thing from the row's clock,
+            which is the one that is true). The stop's note is the CHIP now — see `stopQueued`
+            above — so only the "was not organizing" answer still renders as a line here. */}
         {/* `off`, NEVER `wait`. A spinner claims something is in flight, and nothing is: the
             route RECORDS a request and returns. The gate acts on it at its next tick, which may
             be a minute away and is not this window's to watch. And not `ok`
@@ -1863,12 +1902,8 @@ export function DesktopMailboxes(
             <SettingsNote>{t(`desktopOrganizeHere_${reclaimed.get(m.id)!.outcome}`)}</SettingsNote>
           )
         ) : null}
-        {released.has(m.id) ? (
-          released.get(m.id) === "requested"
-            ? (role === "organizer" && !m.releaseRequestedAt
-              ? <SettingsVerdict state="off" headline={t("stopOrganizingQueued")} />
-              : null)
-            : <SettingsNote>{t("stopOrganizingNot")}</SettingsNote>
+        {released.has(m.id) && released.get(m.id) !== "requested" ? (
+          <SettingsNote>{t("stopOrganizingNot")}</SettingsNote>
         ) : null}
       </div>
     );
@@ -1930,8 +1965,13 @@ export function DesktopMailboxes(
           account whose only mailbox was stood down must still see it. `addressKey` and not a local
           copy: the browser pane and the rail fold with that function, and a third rule here would
           be the same divergence wearing different clothes. */}
+      {/* ONE CARD PER MAILBOX — the row, the quiet role line under it, the wells and the removal
+          panel — so the rule between mailboxes runs between cards. The settings grammar draws its
+          rules with sibling combinators (`.set-row + .set-row`), which cannot see past the sending
+          note and the organizer block that stand between one mailbox's row and the next; the
+          browser's pane wraps its rows in `.mbx-entry` for the same reason. */}
       {foldByAddress(facts).map(({ shown, superseded }) => (
-        <Fragment key={shown.id}>
+        <div className="mbx-card" key={shown.id}>
           <SettingsRow
             label={shown.address}
             description={
@@ -1961,7 +2001,13 @@ export function DesktopMailboxes(
                 </>
               ) : t("desktopLastChecked", { when: when(shown.lastSyncAt) })
             }
-            value={stateOf(shown)}
+            /* THE STATE CELL IS A LIVE REGION. It carries the one fact on the row a person most
+               needs — whether the mail server can be reached at all — and it changes on its own,
+               from the reach poll. A bare span with text in it is dropped from the accessibility
+               tree on Linux, so a reader heard the row's buttons and never this; `role="status"`
+               puts it in the tree with its text and announces the change when "Up to date" turns
+               into the outage sentence. The text and its place in the row are untouched. */
+            value={<span className="mbx-reach" role="status">{stateOf(shown)}</span>}
             control={
               /* ── THE CLAIM IS NOT A ROW CONTROL ANY MORE, AND THE ROW IT WAS ON WAS THE WRONG
                  ONE ────────────────────────────────────────────────────────────────────────────
@@ -2143,7 +2189,7 @@ export function DesktopMailboxes(
               }
             />
           ) : null}
-        </Fragment>
+        </div>
       ))}
 
       {/* THE HAND-OFF, ON THE HOSTED DOOR ONLY. See this file's header for why there is no edit

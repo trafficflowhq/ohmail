@@ -4143,8 +4143,9 @@ input.set-tag-input {
 /* ── WHO ORGANIZES THIS MAILBOX, UNDER ITS ROW — AND THE HANDOVER ───────────────────────────
    The row answers "is my mail coming down?"; this block answers the other question a person
    with two machines has — "which one files it?" — and it never disappears: it is the row's
-   standing record, with the one verb that changes it. One shape for the three answers
-   (`SettingsBanner`: the fact, since when, the verb), told apart by how loud the surface is:
+   standing record, with the one verb that changes it. In the BROWSER's pane it is one shape for
+   the three answers (`SettingsBanner`: the fact, since when, the verb) — the desktop's pane has
+   the chip form further down — told apart by how loud the surface is:
 
      organizing here   a hairline ring on no fill — the ordinary state, and a tint under every
                        row would mean nothing;
@@ -4212,6 +4213,92 @@ input.set-tag-input {
 }
 .mbx-handover .set-actions {
   padding: 10px 0 4px;
+}
+
+/* ── THE DESKTOP'S MAILBOX CARD: the row, one quiet role line under it, the wells ──────────────
+   The desktop pane used to put the banner above under every row — a boxed label, a two-line
+   sentence and a capsule, once per mailbox, so three mailboxes were three paragraphs saying the
+   same thing. The card keeps the same three facts and spends one line on them: a CHIP naming the
+   role ("Organizing" · "Organized by omarchy" · "Nothing organizes this mailbox"), which is itself
+   the (i) that opens the sentence, and the one verb beside it. The wells and the press notes
+   stand under the line exactly as they stood under the banner.
+
+   `.mbx-card` wraps one mailbox so the rule between mailboxes runs between cards: the settings
+   grammar draws its rules with sibling combinators (`.set-row + .set-row`), which cannot see past
+   the sending note and the organizer block standing between one row and the next, and today the
+   rule simply vanished wherever a block stood. The card carries it, and the row inside gives up
+   its own so the two never double.
+
+   The chip is the `Gloss` primitive in its caption form — the caption is what the button is
+   CALLED, the sentence its DESCRIPTION — and the capsule is drawn here on the primitive's trigger,
+   from the same tokens the row's capsules use. The ladder is the banner's: the ordinary state
+   wears a hairline on the tint; the two exceptions (somebody else holds it, nobody does) wear the
+   accent wash; a stop in flight — asked for here, or standing on the row — wears a dashed hairline
+   and no fill, and reads "Stopping". Radius from the pill slot, so ohmarchy squares it with
+   everything else. The glyph takes the chip's own ink rather than `--ink3`, because on the wash it
+   would otherwise be the one grey thing in an accent capsule. */
+.mbx-card + .mbx-card,
+.set-row + .mbx-card,
+.set-note-inline + .mbx-card,
+.mbx-card + .set-row { border-top: 1px solid var(--hair-soft); }
+.mbx-card > .set-row { border-top: 0; }
+.mbx-role {
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: 8px 12px;
+  margin: -7px 2px 0;
+  padding: 0 0 14px;
+}
+/* The sending note sits between the row and this line when sending is not set up; it already tucks
+   itself under the row (`.set-row + .set-note-inline`), so the line only closes its own gap. */
+.set-note-inline + .mbx-org > .mbx-role { margin-top: -4px; }
+.mbx-chip .gloss-t {
+  gap: 6px;
+  padding: 3px 9px 3px 11px;
+  border: 1px solid var(--hair-soft);
+  border-radius: var(--r-pill);
+  background: var(--tint);
+  color: var(--ink2);
+  font-size: calc(11.5px + var(--type-up));
+  font-weight: 600;
+  line-height: 1.4;
+  text-align: left;
+}
+/* "Organized by <a long install name>" breaks inside its capsule at 320px rather than past it. */
+.mbx-chip .gloss-cap { white-space: normal; }
+.mbx-chip .gloss-i { color: currentColor; opacity: .6; }
+.mbx-chip .gloss-t:hover .gloss-i,
+.mbx-chip.open .gloss-i { color: currentColor; opacity: 1; }
+/* The focus ring follows the capsule, not the glyph's own round shape. */
+.mbx-chip .gloss-t:focus-visible { border-radius: var(--r-pill); }
+.mbx-org[data-role="reader"] .mbx-chip .gloss-t,
+.mbx-org[data-role="released"] .mbx-chip .gloss-t {
+  background: var(--accent-soft); border-color: transparent; color: var(--accent-ink);
+}
+.mbx-org[data-state="queued"] .mbx-chip .gloss-t,
+.mbx-org[data-state="pending"] .mbx-chip .gloss-t {
+  background: transparent; border-style: dashed; border-color: var(--ink3); color: var(--ink2);
+}
+/* The verb and its (i) stay together across a line break; the verb wraps its own label rather
+   than crossing the pane at 320px — a ghost has no box at rest, so two lines read as text.
+   Scoped under `.mbx-role` because `.btn` (the primitive's own rule, loaded after this sheet) ties
+   a bare class on specificity and would keep its 7px/15px padding; and `min-width: 0`, because a
+   button flex item's automatic minimum is wider than the words it wraps — measured at 360px: the
+   capsule stopped shrinking 5–7px short of the room beside its glyph and pushed the glyph past
+   the line. */
+.mbx-verb { display: inline-flex; align-items: center; gap: 2px; min-width: 0; }
+/* The glyph keeps its 22px: the primitive's root is `min-width: 0` so it can sit in a tight meta
+   line, and here that let it take a share of the line's shortfall — 3–6px — and its trigger then
+   overflowed it. All of the shortfall belongs to the verb, which is the thing that can wrap. */
+.mbx-verb > .gloss { flex: none; }
+.mbx-role .mbx-quiet {
+  min-width: 0;
+  font-size: calc(12px + var(--type-up));
+  padding: 4px 9px;
+  white-space: normal; text-align: left;
+}
+.mbx-verb .gloss-t { padding: 4px; }
+@media (max-width: 420px) {
+  .mbx-role .mbx-btn { white-space: normal; }
 }
 
 /* ================= Settings → Subscription ================= */

@@ -1561,15 +1561,19 @@ describe("the reader row's three states, and the one that had no holder at all",
    * clause, so it is a substring of it and a containment check passes for both states.
    */
   const orgRow = (el: HTMLElement): { label: string; description: string } => {
-    const node = el.querySelector(".mbx-org .set-banner");
+    /* The role CHIP: its caption is the label, and the node its `aria-describedby` points at is
+       the sentence. Read through the description link on purpose — the same path a screen reader
+       takes — so a chip whose sentence is present but not linked reads as having none. */
+    const node = el.querySelector(".mbx-org .mbx-chip .gloss-t");
     if (!node) {
-      throw new Error("no organizer banner on the row; banners: "
-        + [...el.querySelectorAll(".set-banner .lab b")]
+      throw new Error("no role chip on the row; chips: "
+        + [...el.querySelectorAll(".mbx-chip .gloss-cap")]
           .map((b) => JSON.stringify(b.textContent)).join(", "));
     }
+    const said = document.getElementById(node.getAttribute("aria-describedby") ?? "");
     return {
-      label: (node.querySelector(".lab b")?.textContent ?? "").trim(),
-      description: (node.querySelector(".lab span")?.textContent ?? "").trim(),
+      label: (node.querySelector(".gloss-cap")?.textContent ?? "").trim(),
+      description: (said?.textContent ?? "").trim(),
     };
   };
 
@@ -2157,8 +2161,8 @@ describe("the pane tells the truth about the outage, the holder and the standing
       organizeConsentedAt: null,
     }];
     const el = await render("local");
-    const label = (el.querySelector(".mbx-org .set-banner .lab b")?.textContent ?? "").trim();
-    const said = (el.querySelector(".mbx-org .set-banner .lab span")?.textContent ?? "").trim();
+    const label = (el.querySelector(".mbx-org .mbx-chip .gloss-cap")?.textContent ?? "").trim();
+    const said = (el.querySelector(".mbx-org .mbx-chip .gloss-pop")?.textContent ?? "").trim();
     expect(label, "the row named its holder with an empty string").toBe(
       mailboxCopy.readerLabel!.replace("{name}", mailboxCopy.readerHolderUnknown!),
     );
@@ -2183,7 +2187,7 @@ describe("the pane tells the truth about the outage, the holder and the standing
       organizeConsentedAt: null,
     }];
     const el = await render("local");
-    const label = (el.querySelector(".mbx-org .set-banner .lab b")?.textContent ?? "").trim();
+    const label = (el.querySelector(".mbx-org .mbx-chip .gloss-cap")?.textContent ?? "").trim();
     expect(label).toBe(mailboxCopy.readerLabel!.replace("{name}", "omarchy"));
     expect(el.textContent ?? "").toContain("omarchy");
   });
@@ -2630,5 +2634,243 @@ describe("the pane says it cannot check, rather than that the mailbox is up to d
     expect((long.detail ?? "").length, "an unbounded line went into the log").toBeLessThanOrEqual(241);
     const odd = await readMailboxReachVia(() => { throw "just a string"; });
     expect(odd.detail).toContain("just a string");
+  });
+});
+
+/**
+ * ═══ THE COMPACT CARD — THE ROLE IS A CHIP, AND THE SENTENCE IS ITS DESCRIPTION ═══════════
+ *
+ * The organizer banner under every mailbox row — a bold label, a two-line sentence and a capsule,
+ * once per mailbox — is one chip now. The chip is a button: its caption is the role's label, and
+ * the sentence that stood under the label is its ACCESSIBLE DESCRIPTION, opened beside the chip
+ * on hover, focus or a press. What that changes for a screen reader is the point: the banner
+ * rendered label and sentence as two sibling text nodes inside one note, and an accessibility-tree
+ * walk of the row on Linux heard "Organizing" and never the sentence. `aria-describedby` from the
+ * chip to the sentence's node is what a reader computes a description from, and it is asserted
+ * here rather than the text — every earlier case in this file asserts the sentences by
+ * `textContent`, which is exactly why the missing description was invisible to all of them.
+ *
+ * The state cell — "Up to date", or the outage sentence — is a live region for the same reason: a
+ * bare span is dropped from the tree on the same platform, and it carries the one fact on the row
+ * a person most needs.
+ *
+ * The stop is one chip on two clocks. This window's own "asked for" note used to be a verdict line
+ * under a banner that still read "Organizing"; the row's request stamp then replaced the banner's
+ * sentence a poll later. Both read "Stopping" now, and the chip's sentence says which clock it is
+ * on. The conditions are the note's and the description's, unchanged.
+ *
+ * ── HOW TO WATCH THESE FAIL ─────────────────────────────────────────────────────────────────
+ *  · drop the chip's `caption` (a label beside a bare glyph) → every description case reds: the
+ *    trigger has no `aria-describedby`; the `textContent` cases above stay green, which is the
+ *    blindness this describe exists to end;
+ *  · point the pending arm back at `stateOrganizingHere` → the pending chip case reds alone;
+ *  · drop `role="status"` from the state cell → both cell cases red, nothing else;
+ *  · render the quiet verb without its glyph → the verb case reds on the missing description.
+ */
+describe("the compact card — the role chip, its description, the quiet verb and the state cell", () => {
+  const mailboxCopy = (messages as unknown as { mailboxes: Record<string, string> }).mailboxes;
+  const ORGANIZING: MailboxFacts = {
+    ...MAILBOX,
+    organizerRole: "organizer",
+    organizeConsentedAt: "2026-08-01T09:00:00.000Z",
+  };
+
+  /** The chip: its trigger, its caption, and the node its description points at. */
+  const chip = (el: HTMLElement) => {
+    const btn = el.querySelector<HTMLButtonElement>(".mbx-org .mbx-chip .gloss-t");
+    if (!btn) throw new Error("no role chip on the row");
+    const id = btn.getAttribute("aria-describedby");
+    const said = id ? document.getElementById(id) : null;
+    return {
+      btn,
+      label: (btn.querySelector(".gloss-cap")?.textContent ?? "").trim(),
+      said,
+      description: (said?.textContent ?? "").trim(),
+      state: btn.closest(".mbx-org")?.getAttribute("data-state") ?? null,
+      role: btn.closest(".mbx-org")?.getAttribute("data-role") ?? null,
+    };
+  };
+
+  /** The row's state cell — the live region inside the value slot. */
+  const cell = (el: HTMLElement): HTMLElement | null =>
+    el.querySelector<HTMLElement>('.set-row .set-val [role="status"]');
+
+  async function repaint(door: string): Promise<void> {
+    const { DesktopMailboxes } = await import("../src/DesktopMailboxes.js");
+    await act(async () => {
+      root!.render(
+        h(
+          IntlProvider,
+          { locale: "en", messages: messages as never, timeZone: "UTC" } as never,
+          h(
+            ThemeProvider,
+            { storageKey: "ohmail.theme" } as never,
+            h(ToastHost, null, h(DesktopMailboxes, { door })),
+          ),
+        ),
+      );
+    });
+  }
+
+  it("an organizer row's chip reads Organizing, and its DESCRIPTION is the filing sentence", async () => {
+    FACTS = [ORGANIZING];
+    const el = await render("local");
+    const c = chip(el);
+    expect(c.label).toBe(mailboxCopy.stateOrganizing!);
+    expect(c.role).toBe("organizer");
+    expect(c.state, "an ordinary organizer carries no stop state").toBeNull();
+    expect(c.said, "aria-describedby does not resolve to a node — a reader gets no description")
+      .not.toBeNull();
+    expect(c.said!.getAttribute("role")).toBe("tooltip");
+    expect(c.description).toBe(mailboxCopy.stateOrganizingHere!);
+    // Present and closed: the description has to be computable BEFORE anything is opened.
+    expect(c.said!.hidden).toBe(true);
+    expect(c.btn.getAttribute("aria-expanded")).toBe("false");
+    // The banner is gone from this pane — the chip is the container now, not a second copy.
+    expect(el.querySelector(".mbx-org .set-banner")).toBeNull();
+  });
+
+  it("a press opens the sentence beside the chip; Escape closes it", async () => {
+    FACTS = [ORGANIZING];
+    const el = await render("local");
+    const c = chip(el);
+    await act(async () => { c.btn.click(); });
+    expect(c.said!.hidden).toBe(false);
+    expect(c.btn.getAttribute("aria-expanded")).toBe("true");
+    await act(async () => {
+      c.btn.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(c.said!.hidden).toBe(true);
+  });
+
+  it("while a stop stands on the row the chip reads Stopping and describes the wait; no verb", async () => {
+    FACTS = [{ ...ORGANIZING, releaseRequestedAt: "2026-09-07T09:00:00.000Z" }];
+    const el = await render("local");
+    const c = chip(el);
+    expect(c.label).toBe(mailboxCopy.chipStopping!);
+    expect(c.state).toBe("pending");
+    expect(c.description).toBe(mailboxCopy.stopOrganizingPending!);
+    expect(c.description).not.toBe(mailboxCopy.stateOrganizingHere!);
+    expect(buttonExactly(el, mailboxCopy.stopOrganizingHandBack!),
+      "the verb was offered on a row that already carries the ask").toBeNull();
+    expect(el.querySelector(".mbx-verb"), "the verb's (i) outlived the verb").toBeNull();
+  });
+
+  it("a press flips the chip to Stopping with the asked-for sentence, with no verdict line", async () => {
+    FACTS = [ORGANIZING];
+    bridgeReply = () => new Response(JSON.stringify({ outcome: "requested" }), {
+      status: 202, headers: { "content-type": "application/json" },
+    });
+    const el = await render("local");
+    await act(async () => { buttonExactly(el, mailboxCopy.stopOrganizingHandBack!)!.click(); });
+    await act(async () => { buttonExactly(el, mailboxCopy.stopOrganizingConfirm!)!.click(); });
+    let c = chip(el);
+    expect(c.label, "the press left no trace on the chip").toBe(mailboxCopy.chipStopping!);
+    expect(c.state).toBe("queued");
+    expect(c.description).toBe(mailboxCopy.stopOrganizingQueued!);
+    expect(el.querySelector(".mbx-org .set-verdict"),
+      "the asked-for sentence is rendered twice — on the chip and as a verdict line").toBeNull();
+
+    // The poll brings the stamp: same chip, the row's own clock.
+    FACTS = [{ ...ORGANIZING, releaseRequestedAt: "2026-09-07T09:00:00.000Z" }];
+    await repaint("local");
+    c = chip(el);
+    expect(c.label).toBe(mailboxCopy.chipStopping!);
+    expect(c.state).toBe("pending");
+    expect(c.description).toBe(mailboxCopy.stopOrganizingPending!);
+  });
+
+  it("a reader row's chip names the holder and describes since when; its verb is the takeover", async () => {
+    FACTS = [{
+      ...MAILBOX,
+      organizerRole: "reader",
+      organizedBy: { kind: "local", name: "omarchy", since: "2026-08-30T09:00:00.000Z" },
+      organizerState: "held",
+      organizeConsentedAt: null,
+    }];
+    const el = await render("local");
+    const c = chip(el);
+    expect(c.role).toBe("reader");
+    expect(c.label).toBe(mailboxCopy.readerLabel!.replace("{name}", "omarchy"));
+    /* The clause after the date, as the blank-holder case reads it: the date itself is the
+       formatter's and is not pinned here. */
+    const named = mailboxCopy.readerSinceLocal!;
+    expect(c.description).toContain(named.slice(named.indexOf("· {name}")).replace("{name}", "omarchy"));
+    expect(buttonExactly(el, mailboxCopy.organizeHereInstead!)).not.toBeNull();
+    expect(buttonExactly(el, mailboxCopy.stopOrganizingHandBack!),
+      "a reader row grew a stop verb over somebody else's organizing").toBeNull();
+    expect(el.querySelector(".mbx-verb")).toBeNull();
+  });
+
+  it("a released row's chip says nothing organizes it, dated; the verb is the primary remedy", async () => {
+    FACTS = [{
+      ...MAILBOX,
+      organizerRole: "reader",
+      organizedBy: null,
+      organizerState: null,
+      organizeConsentedAt: "2026-08-01T09:00:00.000Z",
+      organizerReleasedAt: "2026-09-07T09:12:00.000Z",
+    }];
+    const el = await render("local");
+    const c = chip(el);
+    expect(c.role).toBe("released");
+    expect(c.label).toBe(mailboxCopy.stateNotOrganized!);
+    expect(c.description.startsWith(
+      mailboxCopy.stateReleased!.slice(0, mailboxCopy.stateReleased!.indexOf("{when}")),
+    ), c.description).toBe(true);
+    const press = buttonExactly(el, mailboxCopy.organizeHere!);
+    expect(press).not.toBeNull();
+    expect(press!.classList.contains("primary"), "the remedy on a row nothing files is not primary").toBe(true);
+  });
+
+  it("the quiet verb carries its own (i) naming what follows, and the two go together", async () => {
+    FACTS = [ORGANIZING];
+    const el = await render("local");
+    const verb = buttonExactly(el, mailboxCopy.stopOrganizingHandBack!);
+    expect(verb, "the ordinary organizer lost its stop verb").not.toBeNull();
+    const pair = verb!.closest(".mbx-verb")!;
+    const glyph = pair.querySelector<HTMLButtonElement>(".gloss-t");
+    expect(glyph, "the verb has no (i)").not.toBeNull();
+    // No caption on this gloss, so the sentence is the glyph's NAME — a reader focusing the
+    // glyph hears the consequences whole.
+    expect(glyph!.getAttribute("aria-label")).toBe(mailboxCopy.stopOrganizingHandBackWhat!);
+    // The verb still opens the confirm well with its own, unchanged sentence — and the verb and
+    // its (i) are withheld together while the well is open.
+    await act(async () => { verb!.click(); });
+    expect((el.querySelector(".mbx-handover-what")?.textContent ?? "").trim())
+      .toBe(mailboxCopy.stopOrganizingWhat!);
+    expect(el.querySelector(".mbx-verb")).toBeNull();
+    expect(buttonExactly(el, mailboxCopy.stopOrganizingHandBack!)).toBeNull();
+  });
+
+  it("the state cell is a live region — Up to date on a healthy row", async () => {
+    FACTS = [MAILBOX];
+    // A healthy roster, not the resting `202` with no body — that one is the engine answering
+    // badly, and the cell says so (the case two above this describe pins it).
+    bridgeReply = () => new Response(JSON.stringify({
+      items: [{ mailboxId: "mbx-1", reachable: true, unreachableSince: null }],
+    }), { status: 200, headers: { "content-type": "application/json" } });
+    const el = await render("local");
+    const c = cell(el);
+    expect(c, "the state cell is a bare span — dropped from the accessibility tree").not.toBeNull();
+    expect((c!.textContent ?? "").trim()).toBe(mailboxCopy.desktopStateUpToDate!);
+  });
+
+  it("… and the outage sentence, with its duration, when the server cannot be reached", async () => {
+    FACTS = [MAILBOX];
+    bridgeReply = () => new Response(JSON.stringify({
+      items: [{
+        mailboxId: "mbx-1",
+        reachable: false,
+        unreachableSince: new Date(Date.now() - 20 * 60_000).toISOString(),
+      }],
+    }), { status: 200, headers: { "content-type": "application/json" } });
+    const el = await render("local");
+    const c = cell(el);
+    expect(c).not.toBeNull();
+    expect(c!.textContent ?? "").toContain("Can't reach the mail server");
+    expect(c!.textContent ?? "").toContain("20 minutes ago");
+    // One live region per row's state, and the chip's description is not one of them.
+    expect(el.querySelectorAll('.set-row .set-val [role="status"]').length).toBe(1);
   });
 });
