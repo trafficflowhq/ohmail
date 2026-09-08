@@ -2420,6 +2420,22 @@ export interface AwayResponderWire {
    * itself, so saving without editing does not re-answer anybody.
    */
   throttle: "always" | "per_message" | "per_day" | "per_week";
+  /**
+   * WHICH PILES GET A REPLY — folder names, `['INBOX']` for a responder nobody has widened.
+   *
+   * The second dimension beside `audience`, answering a different question: `audience` is about a
+   * SENDER (past the Screener, decided once), this is about WHERE their mail landed. A sender let
+   * in once whose later mail files to Reads is still "somebody I've let in", which is how eight
+   * automatic replies reached shop and notification senders.
+   *
+   * FOLDERS, not pile words — the Ohbox pile's folder is `INBOX`. `awayScopeKey` and
+   * `AWAY_PILE_VIEW` (`@trafficflow/core/away-scope`) translate for display, and the settings
+   * control imports the offered set from there so it cannot offer a pile the server refuses.
+   *
+   * PUT IS A FULL REPLACE, so this field is not optional for a caller: omitting it resets the
+   * scope to the Ohbox. An EMPTY array is "answer nobody" and is stored as asked.
+   */
+  piles: ("INBOX" | "ohmail/Reads")[];
   updatedAt: string | null;
 }
 

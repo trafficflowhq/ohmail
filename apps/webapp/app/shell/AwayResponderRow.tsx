@@ -60,6 +60,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button, SegmentedControl, SettingsActions, SettingsField, SettingsRow, Switch, TextField } from "@ohmail/ui";
+import { AWAY_PILES_DEFAULT } from "@trafficflow/core/away-scope";
 import { away as awayApi, type AwayResponderWire } from "../api-client";
 
 /**
@@ -85,9 +86,28 @@ export const AWAY_COPY = {
   per_message: "Once, until you change the text",
   per_day: "At most once a day",
   per_week: "At most once a week",
+  /**
+   * WHICH PILES GET A REPLY — the control's own label and the two piles it may offer.
+   *
+   * The offered SET is not listed here: it is `AWAY_ANSWERABLE_PILES`, imported from
+   * `@trafficflow/core/away-scope`, so a control cannot offer a pile the engine refuses. These are
+   * only the words for the two members it can hold.
+   */
+  pilesLabel: "Which mail gets a reply",
+  pileOhbox: "Ohbox",
+  pileReads: "Reads",
+  pileOhboxNote: "Always answered.",
+  /**
+   * The three that are never offered — and the Screener is deliberately NOT called "never
+   * answered", because it is not. "Everyone who writes" answers the strangers waiting there;
+   * that is the whole of what the wider audience means. Saying otherwise here would make one of
+   * the two settings on this pane describe the other one wrongly.
+   */
+  pilesNote:
+    "Receipts and Spam are never answered. The Screener is decided by who gets a reply, above.",
   never:
-    "Never sent to mailing lists, no-reply addresses, security mail, senders you've screened out, "
-    + "or your own addresses.",
+    "Never sent to mailing lists, no-reply addresses, security mail, receipts, spam, senders "
+    + "you've screened out, your own addresses, or an address that bounced.",
   localNote: "Replies are sent while ohmail is open on this computer.",
   save: "Save",
   saving: "Saving…",
@@ -128,6 +148,7 @@ export interface AwayTransport {
 const AUDIENCE_IDS: readonly Audience[] = ["screened_in", "everyone"];
 
 type Throttle = AwayResponderWire["throttle"];
+type Piles = AwayResponderWire["piles"];
 
 /**
  * The four rates, LOOSEST FIRST, which is the order the sentence they form reads in: every message,
@@ -141,7 +162,7 @@ type Draft = Omit<AwayResponderWire, "updatedAt">;
 
 const RESTING: Draft = {
   enabled: false, body: null, startsAt: null, endsAt: null,
-  audience: "screened_in", throttle: "per_day",
+  audience: "screened_in", throttle: "per_day", piles: [...AWAY_PILES_DEFAULT],
 };
 
 export function AwayResponderRow({ onChanged, transport, local = false }: {
@@ -151,7 +172,13 @@ export function AwayResponderRow({ onChanged, transport, local = false }: {
    * echo, never what a click asked for — so the row and any listener can only agree.
    * Optional: this row predates the notice, and a mount with nothing to tell stays valid.
    */
-  onChanged?: (state: { enabled: boolean; audience: Audience; throttle: Throttle }) => void;
+  onChanged?: (
+    state: {
+      enabled: boolean; audience: Audience; throttle: Throttle;
+      /** The stored scope, so the Ohbox notice's sentence names it without a second read. */
+      piles: Piles;
+    },
+  ) => void;
   /** The two calls, or the hosted client. See {@link AwayTransport}. */
   transport?: AwayTransport;
   /**
@@ -227,8 +254,17 @@ export function AwayResponderRow({ onChanged, transport, local = false }: {
           enabled: loaded.enabled, body: loaded.body,
           startsAt: loaded.startsAt, endsAt: loaded.endsAt,
           audience: loaded.audience, throttle: loaded.throttle,
+          /* CARRIED, NOT CONTROLLED. This row has no pile control yet — the settings UI is a
+             separate piece of work — and `PUT` is a FULL REPLACE, so a draft that dropped the
+             field would reset an opted-in scope to the Ohbox on every save of an unrelated one.
+             Carrying it through load → draft → save is what keeps that from happening before
+             there is a control, and what the control will then replace. */
+          piles: loaded.piles ?? [...AWAY_PILES_DEFAULT],
         });
-        changed.current?.({ enabled: loaded.enabled, audience: loaded.audience, throttle: loaded.throttle });
+        changed.current?.({
+          enabled: loaded.enabled, audience: loaded.audience, throttle: loaded.throttle,
+          piles: loaded.piles ?? [...AWAY_PILES_DEFAULT],
+        });
       } catch {
         // No server, or a refused read. The CONTROLS stay absent rather than offering one whose
         // Save would fail — a responder somebody believes they configured is worse than none — and
@@ -265,8 +301,12 @@ export function AwayResponderRow({ onChanged, transport, local = false }: {
           enabled: stored.enabled, body: stored.body,
           startsAt: stored.startsAt, endsAt: stored.endsAt,
           audience: stored.audience, throttle: stored.throttle,
+          piles: stored.piles ?? [...AWAY_PILES_DEFAULT],
         });
-        changed.current?.({ enabled: stored.enabled, audience: stored.audience, throttle: stored.throttle });
+        changed.current?.({
+          enabled: stored.enabled, audience: stored.audience, throttle: stored.throttle,
+          piles: stored.piles ?? [...AWAY_PILES_DEFAULT],
+        });
         setState("saved");
       } catch {
         if (alive.current) setState("failed");

@@ -3011,7 +3011,12 @@
     "per_message": "Einmal, bis du den Text änderst",
     "per_day": "Höchstens einmal am Tag",
     "per_week": "Höchstens einmal pro Woche",
-    "never": "Geht nie an Mailinglisten, No-Reply-Adressen, Sicherheitsmails, Absender, die du aussortiert hast, oder deine eigenen Adressen.",
+    "never": "Geht nie an Mailinglisten, No-Reply-Adressen, Sicherheitsmails, Belege, Spam, Absender, die du aussortiert hast, deine eigenen Adressen oder eine Adresse, die unzustellbar war.",
+    "pilesLabel": "Welche Post eine Antwort bekommt",
+    "pileOhbox": "Ohbox",
+    "pileReads": "Reads",
+    "pileOhboxNote": "Wird immer beantwortet.",
+    "pilesNote": "Belege und Spam werden nie beantwortet. Über den Screener entscheidet oben, wer eine Antwort bekommt.",
     "localNote": "Antworten werden gesendet, solange ohmail auf diesem Computer offen ist.",
     "save": "Speichern",
     "saving": "Wird gespeichert …",
@@ -3019,7 +3024,8 @@
     "failed": "Das wurde nicht gespeichert. Es hat sich nichts geändert.",
     "incomplete": "Trag eine Nachricht ein, bevor du das einschaltest.",
     "unreachable": "Deine Abwesenheitseinstellungen konnten gerade nicht gelesen werden. Hier hat sich nichts geändert.",
-    "notice": "Die Abwesenheitsantwort ist an — {audience, select, everyone {alle, die schreiben, bekommen} other {Leute, die du reingelassen hast, bekommen}} {throttle, select, always {auf jede Nachricht eine Antwort} per_message {eine Antwort, bis du den Text änderst} per_week {höchstens einmal pro Woche eine Antwort} other {höchstens einmal am Tag eine Antwort}}.",
+    "notice": "Die Abwesenheitsantwort ist an — {audience, select, everyone {alle, die schreiben,} other {Leute, die du reingelassen hast,}}{scope, select, reads { deren Post in Reads landet,} ohbox_reads { deren Post in der Ohbox oder in Reads landet,} other { deren Post in der Ohbox landet,}} bekommen {throttle, select, always {auf jede Nachricht eine Antwort} per_message {eine Antwort, bis du den Text änderst} per_week {höchstens einmal pro Woche eine Antwort} other {höchstens einmal am Tag eine Antwort}}.",
+    "noticeNone": "Die Abwesenheitsantwort ist an, aber kein Stapel bekommt eine Antwort — es wird nichts gesendet.",
     "noticeSettings": "Abwesenheit einstellen"
   },
   "profileImport": {

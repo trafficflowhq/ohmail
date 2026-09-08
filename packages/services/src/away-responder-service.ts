@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { awayResponders } from "@trafficflow/db";
 import { createLogger } from "@trafficflow/core/mail";
+import { AWAY_ANSWERABLE_PILES, AWAY_PILES_DEFAULT, type AwayPile } from "@trafficflow/core/mail";
 import { AWAY_THROTTLES, type AwayThrottle } from "./away-responder-pass.js";
 import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
@@ -47,6 +48,13 @@ export interface AwayResponderBody {
   endsAt?: string | null;
   audience?: string | null;
   throttle?: string | null;
+  /**
+   * WHICH PILES GET A REPLY — folder names, `['INBOX']` when omitted (mail 0096).
+   *
+   * `string[]` and not `AwayPile[]`: this is request input, so it is whatever a client sent, and
+   * {@link AwayResponderService.validPiles} is what turns it into members.
+   */
+  piles?: string[] | null;
 }
 
 const iso = (d: Date | null): string | null => (d ? d.toISOString() : null);
@@ -73,6 +81,13 @@ function toDTO(row: typeof awayResponders.$inferSelect): AwayResponderDTO {
     // CHECK, so the narrowing is a type assertion and not a fallback: inventing `screened_in` for
     // an unrecognised member would report a narrower audience than the pass would act on.
     audience: row.audience as AwayAudience,
+    /**
+     * The stored piles, narrowed for the same reason `audience` is: the column's CHECK makes a
+     * non-member unrepresentable, so this is an assertion rather than a fallback. A FILTER here
+     * would be worse than either — it would report a narrower scope than the pass acts on, and
+     * the surface would then state a scope that is not the one sending mail.
+     */
+    piles: row.piles as AwayPile[],
     // Same narrowing and the same reason as `audience` above: a stored value outside the closed
     // set cannot reach here through this service or through the CHECK, so this is an assertion and
     // not a fallback. Inventing `per_day` for an unrecognised member would report a RATE the pass
@@ -86,7 +101,7 @@ function toDTO(row: typeof awayResponders.$inferSelect): AwayResponderDTO {
 /** The default disabled shape returned by GET when the account has never configured one. */
 const DEFAULT_SHAPE: AwayResponderDTO = {
   enabled: false, body: null, startsAt: null, endsAt: null,
-  audience: "screened_in", throttle: "per_day", updatedAt: null,
+  audience: "screened_in", throttle: "per_day", piles: [...AWAY_PILES_DEFAULT], updatedAt: null,
 };
 
 /**
@@ -134,6 +149,7 @@ export class AwayResponderService {
     const endsAt = this.validDate(body.endsAt, "endsAt");
     const audience = this.validAudience(body.audience);
     const throttle = this.validThrottle(body.throttle);
+    const piles = this.validPiles(body.piles);
     if (startsAt && endsAt && startsAt.getTime() > endsAt.getTime()) {
       throw new ServiceError("validation_failed", 400, "startsAt must be before or equal to endsAt");
     }
@@ -200,13 +216,16 @@ export class AwayResponderService {
 
       const [row] = await tx.insert(awayResponders).values({
         accountId: ctx.accountId, enabled, body: text, startsAt, endsAt, audience, throttle,
-        enabledAt, updatedAt: now,
+        piles, enabledAt, updatedAt: now,
       }).onConflictDoUpdate({
         target: awayResponders.accountId,
         // `subject` is NOT in the SET: the column survives one release for a rolling deploy's sake
         // and this service neither reads nor writes it. A row that still carries one keeps it,
         // inert, until the 0.15 contract migration drops it.
-        set: { enabled, body: text, startsAt, endsAt, audience, throttle, enabledAt, updatedAt: now },
+        set: {
+          enabled, body: text, startsAt, endsAt, audience, throttle, piles, enabledAt,
+          updatedAt: now,
+        },
       }).returning();
 
       const responder = toDTO(row!);
@@ -227,6 +246,48 @@ export class AwayResponderService {
    * `everyone` would be a widening nobody requested. Only the narrow member is safe to infer, and
    * it is the same value the column's own DEFAULT writes.
    */
+  /**
+   * The piles, or `['INBOX']` for an omitted list — the NARROW value, for `validAudience`'s reason
+   * and more sharply.
+   *
+   * `put` is a FULL REPLACE, so an omitted field is "this request did not ask for it". Defaulting
+   * to the stored value would make a client that predates this field silently PRESERVE a wider
+   * scope on every save; defaulting to every answerable pile would be a widening nobody requested.
+   * The Ohbox alone is the column's own DEFAULT and the only value safe to infer — and unlike the
+   * audience, getting this wrong in the wide direction is what sent the eight replies this field
+   * exists to stop.
+   *
+   * A CLIENT ONE RELEASE OLD therefore narrows the scope to the Ohbox whenever it saves anything,
+   * including a save that only changes the message text. That is the acceptable direction: mail
+   * that is not sent can be sent later, and a reply that reached somebody its owner did not mean
+   * cannot be recalled.
+   *
+   * DUPLICATES ARE COLLAPSED and order is not preserved — the value is a SET ("which piles"), and
+   * `['INBOX','INBOX']` would otherwise be a different stored row from `['INBOX']` with no
+   * difference in meaning, which is a diff nobody can read.
+   */
+  private validPiles(v: unknown): AwayPile[] {
+    if (v === undefined || v === null) return [...AWAY_PILES_DEFAULT];
+    if (!Array.isArray(v)) {
+      throw new ServiceError("validation_failed", 400, "piles must be an array of pile names");
+    }
+    const out: AwayPile[] = [];
+    for (const member of v) {
+      if (typeof member !== "string"
+        || !(AWAY_ANSWERABLE_PILES as readonly string[]).includes(member)) {
+        throw new ServiceError(
+          "validation_failed", 400, `piles must each be one of ${AWAY_ANSWERABLE_PILES.join(", ")}`,
+        );
+      }
+      if (!out.includes(member as AwayPile)) out.push(member as AwayPile);
+    }
+    /* AN EXPLICIT EMPTY LIST IS KEPT, not replaced by the default. "Answer nobody" is a coherent
+       thing to ask for — it is what unticking every box means — and turning it into "answer the
+       Ohbox" would be the endpoint quietly declining to save what it was sent. The rule handles
+       it by name; the responder is simply quiet. */
+    return out;
+  }
+
   private validAudience(v: unknown): AwayAudience {
     if (v === undefined || v === null) return "screened_in";
     if (typeof v !== "string" || !(AWAY_AUDIENCES as readonly string[]).includes(v)) {

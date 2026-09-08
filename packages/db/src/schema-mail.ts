@@ -332,6 +332,26 @@ export const mailboxes = pgTable("mailboxes", {
   // (`MAILBOX_SIGNATURE_MAX_CHARS`, a 400), not by a CHECK: free text closes no set, and a
   // byte bound in the database would answer 23514 to a person typing.
   signature: text("signature"),
+  // ── Mail 0098 — the signature's MARKUP half (0.16: Settings → Signatures gained the compose
+  // editor's basic formatting) ──
+  //
+  // THE AUTHORITY, and `signature` above is DERIVED FROM IT. When this is non-NULL the server
+  // wrote both columns in one statement from one value: `prepareOutboundBody` reduces the posted
+  // markup to the compose grammar and renders the text half from what survives, which is the
+  // same pair of halves a `multipart/alternative` promises and the same function that produces
+  // them for every composed message. Nothing writes `signature` by hand while this is set, so
+  // the two cannot drift.
+  //
+  // NULL is "no markup in this signature" — the state of every row that existed before this
+  // column, and of every signature typed without pressing a formatting control (the editor
+  // reports no markup for a document nobody formatted). Those rows take the pre-0.16 path
+  // unchanged: the text is escaped into one paragraph at the press (`signatureHtml`). That is
+  // what lets every reader of `signature` — the phone's composer among them, which has no
+  // formatting and sends a single `text/plain` part — keep working with no knowledge of this.
+  //
+  // Bounded at the write site with `signature`'s bound and for `signature`'s reason
+  // (`MAILBOX_SIGNATURE_MAX_CHARS`, a 400 in words), not by a CHECK.
+  signatureHtml: text("signature_html"),
   // ── Mail 0076 — THE ONE-TIME QUARANTINE→\Junk SWEEP, RECORDED AS A COMMAND (FOLDERS-SPEC.md
   // §16.1: "an optional ONE-TIME sweep offers to move the old ohmail/Quarantine pile into
   // native Junk … One press, one direction, then the offer is gone") ──
@@ -1032,9 +1052,20 @@ export const messageFailures = pgTable("message_failures", {
  * product does not discard it — a host that starts accepting the mutation next week converges then.
  * Deferral is about how OFTEN we ask, never about whether we still owe it.
  *
- * Deliberately no error column. What went wrong is free text from someone else's mail server; it
- * belongs in the `reconcile.move.failed` / `reconcile.flags.failed` audit row, which is where it
- * already goes. These two columns are a schedule, and a schedule is a coordinate.
+ * Deliberately no FREE-TEXT error column. What went wrong in the server's own words is free text
+ * from someone else's mail server; it belongs in the `reconcile.move.failed` /
+ * `reconcile.flags.failed` audit row, which is where it still goes. These two columns are a
+ * schedule, and a schedule is a coordinate.
+ *
+ * ── AND ONE CLASS BESIDE THEM (mail 0097, `folder_state` only) ──────────────────────────────
+ *
+ * {@link folderState.lastErrorClass} is not an exception to that rule, it is that rule applied:
+ * a member of a CLOSED FOUR-VALUE SET this codebase chose, with a CHECK behind it, mapped from the
+ * server's structured response code by `apps/worker/src/sync.ts` — so no value a mail server
+ * picked can reach a screen. It exists because the schedule alone cannot be rendered honestly:
+ * "retrying at 14:20" is true and unactionable, where "the folder is not there" names the one
+ * screen that fixes it. `flag_state` has no equivalent and needs none — nothing renders a
+ * per-message reason for a `\Seen` push.
  */
 export const folderState = pgTable("folder_state", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -1049,6 +1080,46 @@ export const folderState = pgTable("folder_state", {
   attempts: integer("attempts").notNull().default(0),
   /** NULL ⇒ due now. See the block above. */
   nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+  /**
+   * WHY the last attempt was refused, as one of `refused | no_such_folder | read_only |
+   * over_quota` — NULL while no refusal stands. See the block above for why a CLASS is not the
+   * free-text column that block forbids, and {@link RECONCILE_REFUSAL_CLASSES} in
+   * `apps/worker/src/sync.ts` for the mapping and the CHECK's membership.
+   *
+   * Written by the deferral and cleared by a fresh intent, alongside the schedule pair — one
+   * group, because a class without its schedule is a reason for nothing and a schedule without
+   * its class is the sentence this column exists to end. A TRANSPORT failure writes NEITHER: an
+   * unreachable mail host is not this message's refusal.
+   */
+  lastErrorClass: text("last_error_class"),
+  /**
+   * WHERE A DELETED MESSAGE CAME FROM — the origin a restore puts it back to (mail 0099).
+   *
+   * Written by the DELETE verb alone, in the same upsert that sets `desired_folder` to the
+   * mailbox's Trash path: the value is `observed_folder` as it stood at the press, which is the
+   * folder the message was actually in. NULL when that already equalled the Trash path (there is
+   * nothing to remember) and NULL on every row this column predates.
+   *
+   * CLEARED BY EVERY NON-TRASH DESIRED WRITE, and that is the load-bearing half: a message filed
+   * out of Trash and later deleted from somewhere else must not inherit the origin of its
+   * previous life. `MessageService.upsertDesired` takes the value as an argument for exactly that
+   * reason — a caller cannot forget to clear it, because it cannot write `desired_folder` without
+   * saying what this column becomes.
+   *
+   * ── A PATH, NEVER TRUSTED AS ONE ──────────────────────────────────────────────────────────
+   *
+   * It is a folder path and the folder may be gone by the time somebody restores: mail sits in
+   * Trash while its origin folder is deleted. `MessageService.restore` therefore resolves it —
+   * INBOX, one of the six, or a LIVE `mailbox_folders` path of that mailbox — and falls back to
+   * INBOX otherwise. No CHECK and no foreign key: a CHECK cannot know which folders exist, and an
+   * FK to `mailbox_folders` would erase this row's origin at the moment the fallback is needed.
+   *
+   * NOT a `change_log` read, which is the obvious alternative and is wrong: the log has a
+   * retention horizon (`change-log.ts`), so a restore would work for a week and then silently
+   * stop. A column has no horizon. The `delete` change row gains `meta: {from, to}` in the same
+   * slice for history's sake, and nothing reads it.
+   */
+  trashedFrom: text("trashed_from"),
 }, (t) => ({ uqMessage: unique().on(t.messageId) }));
 
 /**
@@ -1893,6 +1964,36 @@ export const awayResponders = pgTable("away_responders", {
    */
   audience: text("audience").notNull().default("screened_in"),
   /**
+   * WHICH PILES ARE ANSWERED — `'{INBOX}'` by default (mail 0096), as FOLDER names.
+   *
+   * The second, independent dimension beside {@link audience}, and the two answer different
+   * questions on purpose. `audience` is a fact about a SENDER — past the Screener, decided once,
+   * true for ever — and it cannot express "answer this person's mail when it reaches me, but not
+   * when it files itself away". That gap is what sent eight automatic replies to shop and
+   * notification senders who had each been let in once, months earlier.
+   *
+   * MEMBERS ARE FOLDERS, NOT PILE WORDS. The pile a person calls "Ohbox" is `INBOX`
+   * (`VIEW_OF_FOLDER` in client-engine maps the six destinations onto the six words); there is no
+   * `ohmail/Ohbox`, and this feature's own fixture carried that string for three cases before
+   * anything read it. The value compared at decision time is `folder_state.desired_folder`, which
+   * holds a destination, so this column holds destinations.
+   *
+   * The closed set is `{INBOX, ohmail/Reads}` and the CHECK
+   * (`away_responders_piles_closed`) lives in the migration, for `audience`'s reason: an
+   * unhandled member is resolved by whichever branch the rule falls through to, and here that is
+   * the branch that sends mail. `ohmail/Receipts`, `ohmail/Screened` and `ohmail/Quarantine` are
+   * refused by the never-answered map in `away-eligibility.ts`; `ohmail/Screener` is deliberately
+   * not a member, because it is the AUDIENCE's decision and two settings ruling on one population
+   * is a contradiction whichever is consulted second.
+   *
+   * NOT NULL with a default, and the default is the NARROW member — unlike `throttle`, whose
+   * default is the middle of its range. Widening what a standing order reaches is the only
+   * irreversible thing this feature does, so the value nobody chose is the one that reaches
+   * fewest people. An EMPTY array is representable and means "answer nobody", which the rule
+   * handles by name rather than reading as "no filter".
+   */
+  piles: text("piles").array().notNull().default(["INBOX"]),
+  /**
    * HOW OFTEN ONE PERSON MAY BE ANSWERED — `'per_day'` by default (mail 0087).
    *
    *   always       every message gets a reply.
@@ -2090,6 +2191,24 @@ export const awaySenderState = pgTable("away_sender_state", {
   lastRepliedAt: timestamp("last_replied_at", { withTimezone: true }).notNull(),
   /** The `awayTextHash` of what they were told — what `per_message` compares against. */
   lastTextHash: text("last_text_hash").notNull(),
+  /**
+   * WHEN A BOUNCE FOR AN AWAY REPLY TO THIS PERSON CAME BACK (mail 0096) — after which no further
+   * automatic reply is ever sent to them.
+   *
+   * A delivery report is refused as a candidate in its own right, so the bounce itself never
+   * earned a reply. What was missing is what it MEANS: the address the responder wrote to does not
+   * accept mail. Without this the next message from the same correspondent produced another reply
+   * and another bounce, once per throttle interval for the length of the trip — which is the state
+   * that was reported, a bounce sitting in this account's own Ohbox.
+   *
+   * On THIS table rather than on the ledger because it is a fact about a PERSON and not about one
+   * decision, which is the same reason this table exists. A stamp rather than a boolean: "when did
+   * we learn this" is worth more to somebody reading the row and costs the same.
+   *
+   * Permanent, with no expiry. An address that starts accepting mail again is real but rare, and
+   * the recoverable direction is silence — the alternative is the bounce loop above.
+   */
+  undeliverableAt: timestamp("undeliverable_at", { withTimezone: true }),
 }, (t) => ({
   // THE SERIALISER. The upsert's conflict target, so it is the primary key rather than a unique
   // index beside one: there is no other identity for this row.

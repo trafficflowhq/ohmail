@@ -1011,6 +1011,23 @@ export interface AwayResponderDTO {
    */
   audience: "screened_in" | "everyone";
   /**
+   * WHICH PILES GET A REPLY (mail 0096) — folder names, `['INBOX']` when omitted by a client and
+   * what the default-disabled shape reports.
+   *
+   * The second dimension beside `audience`, and they answer different questions: `audience` is a
+   * fact about a SENDER (past the Screener, decided once, true for ever), this is a fact about
+   * WHERE their mail landed. A sender let in once whose later mail files to Reads is still
+   * "somebody I've let in", which is why the audience alone could not express the scope somebody
+   * setting it is thinking of.
+   *
+   * FOLDERS and not pile words: the Ohbox pile's folder is `INBOX`. The surface translates for
+   * display (`AWAY_PILE_VIEW` / `awayScopeKey` in `@trafficflow/core/away-scope`, which the
+   * settings control and the Ohbox banner both import so the offered set cannot drift from the
+   * refused one). Never null — see the column's note in `schema-mail.ts`. An EMPTY array is a
+   * responder that answers nobody, which is a state and not an absence.
+   */
+  piles: ("INBOX" | "ohmail/Reads")[];
+  /**
    * HOW OFTEN ONE PERSON MAY BE ANSWERED — `'per_day'` when omitted by a client, which is both the
    * column default and what every row migrated by 0087 carries.
    *

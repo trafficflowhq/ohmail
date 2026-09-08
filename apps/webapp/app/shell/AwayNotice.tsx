@@ -46,12 +46,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Banner } from "@ohmail/ui";
+import { awayScopeKey, type AwayScope } from "@trafficflow/core/away-scope";
 import { apiConfigured, away as awayApi, type AwayResponderWire } from "../api-client";
 import type { AwayTransport } from "./AwayResponderRow";
 import { go } from "./routing";
 
 type Audience = AwayResponderWire["audience"];
 type Throttle = AwayResponderWire["throttle"];
+type Piles = AwayResponderWire["piles"];
 
 /** THE COPY SHIM. One object, so the i18n pass has one thing to move. */
 /**
@@ -74,9 +76,22 @@ export const AWAY_NOTICE_COPY = {
    * Eight combinations, all grammatical, and a test walks every one of them in both languages.
    */
   notice:
-    "Away responder is on — {audience, select, everyone {everyone who writes gets} other {people you've let in get}} "
+    "Away responder is on — {audience, select, everyone {everyone who writes} other {people you've let in}} "
+    + "{scope, select, reads {whose mail lands in Reads} ohbox_reads {whose mail lands in Ohbox or Reads} "
+    + "other {whose mail lands in Ohbox}} "
+    + "{audience, select, everyone {gets} other {get}} "
     + "{throttle, select, always {a reply to every message} per_message {one reply, until you change the text} "
     + "per_week {a reply at most once a week} other {a reply at most once a day}}.",
+  /**
+   * THE ONE SCOPE THE SENTENCE ABOVE CANNOT CARRY — a responder that is ON with no pile selected.
+   *
+   * `awayScopeKey` answers `none` for an empty `piles`, which the column's containment CHECK
+   * allows and which is what unticking every box means. Given a `none` arm inside the sentence,
+   * every wording that fits the grammar is false: "…whose mail lands in Ohbox get a reply" claims
+   * replies are going out, and an empty arm claims it even more quietly by leaving the clause out.
+   * A responder answering nobody is a different fact and gets a different sentence.
+   */
+  noticeNone: "Away responder is on, but no pile is set to get a reply — nothing is sent.",
   noticeSettings: "Away settings",
 } as const;
 
@@ -88,11 +103,22 @@ export interface AwayNoticeState {
   /** How often each of them gets one — the other half. */
   throttle: Throttle;
   /**
+   * WHICH PILES ARE ANSWERED, as the one word the sentence is chosen by.
+   *
+   * Derived through `awayScopeKey` (`@trafficflow/core/away-scope`) rather than kept as the array,
+   * so the notice and the engine cannot disagree about what a stored `piles` MEANS. Resting
+   * `"ohbox"`, which pairs with `on: false` — the notice is absent until the server has said
+   * otherwise, so the resting value is never on screen.
+   */
+  scope: AwayScope;
+  /**
    * THE SETTINGS ROW'S ECHO. `AwayResponderRow` calls this with what the SERVER answered —
    * its mount load and every save echo, never what a click asked for — so the row and this
    * notice can only agree. It is the whole of how a same-tab edit reaches the Ohbox.
    */
-  update: (next: { enabled: boolean; audience: Audience; throttle: Throttle }) => void;
+  update: (
+    next: { enabled: boolean; audience: Audience; throttle: Throttle; piles: Piles },
+  ) => void;
 }
 
 /**
@@ -106,10 +132,13 @@ export interface AwayNoticeState {
  * what a browser tab has.
  */
 export function useAwayNotice(active: boolean, transport?: AwayTransport): AwayNoticeState {
-  const [state, setState] = useState<{ on: boolean; audience: Audience; throttle: Throttle }>({
+  const [state, setState] = useState<{
+    on: boolean; audience: Audience; throttle: Throttle; scope: AwayScope;
+  }>({
     on: false,
     audience: "screened_in",
     throttle: "per_day",
+    scope: "ohbox",
   });
 
   /* Through a ref so the effect below keeps its `[active]` deps — ONE read per shell mount is the
@@ -144,7 +173,17 @@ export function useAwayNotice(active: boolean, transport?: AwayTransport): AwayN
         const loaded = await via.state();
         // `superseded` as well as `alive`: a save that landed while this was in flight is NEWER.
         if (alive && !superseded.current) {
-          setState({ on: loaded.enabled, audience: loaded.audience, throttle: loaded.throttle });
+          setState({
+            on: loaded.enabled,
+            audience: loaded.audience,
+            throttle: loaded.throttle,
+            /* `?? []` and not `?? ["INBOX"]`. A server one release older answers no `piles` at
+               all, and inventing the Ohbox there would put a scope sentence on screen that the
+               server never stated — the same "no path from 'I do not know' to 'replies are going
+               out'" rule this file's header sets for the notice as a whole. An empty array reads
+               as `none`, whose sentence claims nothing is being sent. */
+            scope: awayScopeKey(loaded.piles ?? []),
+          });
         }
       } catch {
         // No server, or a refused read: the notice stays absent, which is the surface this
@@ -154,13 +193,22 @@ export function useAwayNotice(active: boolean, transport?: AwayTransport): AwayN
     return () => { alive = false; };
   }, [active]);
 
-  const update = useCallback((next: { enabled: boolean; audience: Audience; throttle: Throttle }) => {
+  const update = useCallback((
+    next: { enabled: boolean; audience: Audience; throttle: Throttle; piles: Piles },
+  ) => {
     // This is the server's own answer to a write, so it outranks any read still in flight.
     superseded.current = true;
-    setState({ on: next.enabled, audience: next.audience, throttle: next.throttle });
+    setState({
+      on: next.enabled,
+      audience: next.audience,
+      throttle: next.throttle,
+      scope: awayScopeKey(next.piles ?? []),
+    });
   }, []);
 
-  return { on: state.on, audience: state.audience, throttle: state.throttle, update };
+  return {
+    on: state.on, audience: state.audience, throttle: state.throttle, scope: state.scope, update,
+  };
 }
 
 /**
@@ -203,7 +251,9 @@ function openAwaySettings(): void {
  *
  * `ohx-away` is a hook for tests and the fit harness; nothing styles it.
  */
-export function AwayNotice({ audience, throttle }: { audience: Audience; throttle: Throttle }) {
+export function AwayNotice(
+  { audience, throttle, scope }: { audience: Audience; throttle: Throttle; scope: AwayScope },
+) {
   const t = useTranslations("away");
   return (
     <Banner
@@ -214,7 +264,10 @@ export function AwayNotice({ audience, throttle }: { audience: Audience; throttl
         </button>
       }
     >
-      {t("notice", { audience, throttle })}
+      {/* A RESPONDER ANSWERING NOBODY GETS ITS OWN SENTENCE, never an arm of the one below.
+          Every wording that fits that sentence's grammar is false for an empty scope — see
+          `AWAY_NOTICE_COPY.noticeNone`. */}
+      {scope === "none" ? t("noticeNone") : t("notice", { audience, throttle, scope })}
     </Banner>
   );
 }

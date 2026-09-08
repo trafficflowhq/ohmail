@@ -7059,7 +7059,16 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
                        it takes by width. Its three-part gate is unchanged. */
                     const away = demo || !awaySupported || !awayNotice.on
                       ? null
-                      : <AwayNotice audience={awayNotice.audience} throttle={awayNotice.throttle} />;
+                      : (
+                        <AwayNotice
+                          audience={awayNotice.audience}
+                          throttle={awayNotice.throttle}
+                          /* The pile scope, so the line states WHICH mail is answered and not
+                             only who. Derived by the engine's own `awayScopeKey` inside
+                             `useAwayNotice`, never re-derived here. */
+                          scope={awayNotice.scope}
+                        />
+                      );
                     return away ?? undefined;
                   })()
                 }

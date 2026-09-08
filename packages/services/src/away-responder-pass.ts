@@ -4,7 +4,8 @@ import {
   type Tx,
 } from "@trafficflow/db";
 import {
-  awayEligibility, awayNormalizeAddress, awayTextHash, createLogger, mintMessageId, replySubject,
+  awayEligibility, awayNormalizeAddress, awayTextHash, createLogger, isDeliveryReport,
+  mintMessageId, replySubject,
   type AwayAudience, type AwaySuppression, type Logger, type OpenSendAdapter, type SendAdapter,
 } from "@trafficflow/core/mail";
 import type { Db } from "./context.js";
@@ -69,6 +70,26 @@ export const AWAY_SENDS_PER_RUN = 5;
 
 /** Candidate rows examined per account per run. The send budget above is the real limit. */
 export const AWAY_BATCH = 200;
+
+/**
+ * Candidate BOUNCES examined per account per run — see {@link markUndeliverableFromBounces}.
+ *
+ * Small on purpose. A bounce arrives within minutes of a failed delivery, the pass runs on a
+ * clock, and one correspondent needs marking exactly once — so this is a runaway brake rather
+ * than a page size, and a responder that somehow accumulated more than this many unmatched
+ * bounces has a problem no page size fixes.
+ */
+export const AWAY_BOUNCE_SCAN = 50;
+
+/**
+ * How far back a bounce is believed to be about a reply this pass sent.
+ *
+ * Seven days. A delivery report normally arrives in seconds and at worst after an MTA's retry
+ * schedule gives up, which is four to five days on the common defaults. The window exists so the
+ * scan stays indexed and bounded rather than walking an account's whole history every tick; it is
+ * not a correctness bound, because a bounce older than this tells us about a trip that has ended.
+ */
+export const AWAY_BOUNCE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
  * Accounts one invocation will consult. A responder that is live right now is rare, so this is a
@@ -181,6 +202,13 @@ export interface AwayResponderPassResult {
   deferredCandidates: number;
   /** True ⇒ the send budget was reached and there was more to answer. */
   capped: boolean;
+  /**
+   * CORRESPONDENTS newly marked unreachable this run, because a bounce for an earlier reply came
+   * back. Counted separately from every other number here: it is not a decision about a candidate
+   * and it spends no budget — it is what this run LEARNED, and a non-zero value is the operator's
+   * signal that a responder has been writing to a dead address.
+   */
+  undeliverableMarked: number;
 }
 
 /** One live responder, as the probe reads it. */
@@ -189,6 +217,13 @@ interface LiveResponder {
   body: string;
   audience: AwayAudience;
   throttle: AwayThrottle;
+  /**
+   * WHICH PILES THIS RESPONDER ANSWERS — the stored `text[]`, passed through to the one decision
+   * site. `readonly string[]` and not `AwayPile[]`: it comes off a column, so a member this build
+   * does not know is representable, and `awayEligibility` refuses it. Narrowing here would move
+   * that refusal into a cast.
+   */
+  piles: readonly string[];
   /** max(enabled_at, starts_at) — the candidate floor. Never null: the probe requires enabled_at. */
   floor: Date;
 }
@@ -206,6 +241,12 @@ interface Candidate {
   headers: Record<string, unknown> | null;
   desiredFolder: string | null;
   alreadyReplied: boolean;
+  /**
+   * HAS A BOUNCE FOR AN EARLIER AWAY REPLY TO THIS SENDER COME BACK? — read in the candidate
+   * query and handed to `awayEligibility` as a decided boolean, exactly like `alreadyReplied` and
+   * for the same reason: the eligibility rule may not reach a database.
+   */
+  senderUndeliverable: boolean;
   ownAddress: string;
 }
 
@@ -222,7 +263,7 @@ export async function runAwayResponderPass(
   const budget = deps.sendsPerRun ?? AWAY_SENDS_PER_RUN;
   const result: AwayResponderPassResult = {
     accounts: 0, examined: 0, sent: 0, unverified: 0, throttled: 0, suppressed: 0,
-    deferredAccounts: 0, deferredCandidates: 0, capped: false,
+    deferredAccounts: 0, deferredCandidates: 0, capped: false, undeliverableMarked: 0,
   };
 
   /* NONE MEANS NONE, decided before a single row is read. See the field's own note. */
@@ -312,6 +353,7 @@ async function liveResponders(
     body: awayResponders.body,
     audience: awayResponders.audience,
     throttle: awayResponders.throttle,
+    piles: awayResponders.piles,
     startsAt: awayResponders.startsAt,
     enabledAt: awayResponders.enabledAt,
   }).from(awayResponders)
@@ -375,6 +417,11 @@ async function liveResponders(
       body,
       audience: r.audience as AwayAudience,
       throttle: r.throttle as AwayThrottle,
+      /* NOT defaulted to the answerable set on an absent value. The column is NOT NULL with a
+         DEFAULT of `{INBOX}`, so `null` here can only mean a driver handed back something
+         unexpected — and reading that as "answer everything" is the absent-evidence-selects-the
+         -sending-branch mistake this file refuses everywhere else. An empty array answers nobody. */
+      piles: r.piles ?? [],
       floor,
     });
   }
@@ -394,6 +441,16 @@ async function answerForAccount(
     result.deferredAccounts += 1;
     return;
   }
+
+  /* ── WHAT CAME BACK, BEFORE ANYTHING GOES OUT ────────────────────────────────────────────
+   *
+   * Read for THIS account and BEFORE its candidates, so a correspondent whose address bounced is
+   * already unreachable when this run decides about their next message rather than one run later.
+   * Ordering it after the read would cost exactly one more reply and one more bounce per
+   * correspondent, which is the loop being fixed. */
+  result.undeliverableMarked += await markUndeliverableFromBounces(
+    db, responder.accountId, now(), log,
+  );
 
   // Every address on this account, INCLUDING disabled and errored mailboxes: an address that was
   // ours is still ours, and a responder that answers a former mailbox of its own owner is the same
@@ -491,6 +548,131 @@ async function answerForAccount(
 }
 
 /**
+ * WHICH CORRESPONDENTS' ADDRESSES ARE DEAD — read the bounces that came back for this account's
+ * own away replies and stamp `away_sender_state.undeliverable_at`. Returns how many were newly
+ * marked.
+ *
+ * ── THE STATE THIS FIXES ────────────────────────────────────────────────────────────────────
+ *
+ * A responder wrote to an address that does not accept mail. The bounce arrived in its owner's own
+ * Ohbox, and nothing recorded what it MEANT — so the next message from the same correspondent
+ * produced another reply and another bounce, once per throttle interval for the length of the trip.
+ * The bounce itself is harmless (a delivery report is refused as a candidate in its own right);
+ * the missing fact is the problem.
+ *
+ * ── HOW A BOUNCE IS TIED TO THE REPLY IT IS ABOUT ───────────────────────────────────────────
+ *
+ * By the MINTED Message-ID. Every reply is sent with a `<uuid@domain>` this pass minted and
+ * recorded on the ledger row before it dialled — that column exists so a delivered copy is
+ * attributable — and a delivery report quotes the failed message's id in `In-Reply-To` or
+ * `References`. So the join is ledger.minted_message_id ⊂ bounce.in-reply-to/references, and the
+ * address marked is the LEDGER ROW's `sender`: the person the failed reply was addressed to, never
+ * the mailer-daemon that reported it.
+ *
+ * ── AND WHY THE DELIVERY-REPORT TEST IS NOT OPTIONAL ────────────────────────────────────────
+ *
+ * A HUMAN who replies to an away reply also carries `In-Reply-To: <the minted id>`. On the id
+ * alone, answering "thanks, have a good trip" would mark that person's address dead and silence
+ * them for the rest of the trip — a live correspondent lost to a courtesy. So a matched id is only
+ * half the test; the message must also BE a delivery report, and that question is asked through
+ * `isDeliveryReport` — the same function the eligibility rule uses, because two encodings of "is
+ * this a bounce" would disagree the first time a sender folded the `Content-Type` header, and this
+ * is the direction that disagreement fails in.
+ *
+ * The id match is done in SQL (it is a substring test over an indexed, account-scoped set) and the
+ * report shape in TypeScript (it is a policy, and the shared one). Neither half decides alone.
+ *
+ * ── IT NEVER THROWS AND NEVER BLOCKS A REPLY ────────────────────────────────────────────────
+ *
+ * A fault here means this run does not LEARN something; it must not mean the run does not answer
+ * anybody. So the whole thing is contained and returns 0 on a throw — the same per-account
+ * containment `answerForAccount`'s caller applies, one level in.
+ */
+async function markUndeliverableFromBounces(
+  db: Db, accountId: string, at: Date, log: Logger,
+): Promise<number> {
+  try {
+    const since = new Date(at.getTime() - AWAY_BOUNCE_WINDOW_MS);
+    /* The candidate bounces: a message on this account, inside the window, whose threading
+       headers quote one of this account's own minted reply ids, for a correspondent not already
+       marked. `->>` on a stored header renders an ARRAY value as its JSON text (`["<id>"]`), which
+       a substring test reads correctly — the map is written array-valued by `mime.ts`. */
+    const rows = await (db as unknown as Tx).select({
+      sender: awayReplies.sender,
+      headers: messageBodies.headers,
+      minted: awayReplies.mintedMessageId,
+    })
+      .from(awayReplies)
+      .innerJoin(messages, and(
+        eq(messages.accountId, awayReplies.accountId),
+        // NOT the message the reply answered — that one is the parent, not a bounce.
+        ne(messages.id, awayReplies.messageId),
+      ))
+      .innerJoin(messageBodies, eq(messageBodies.messageId, messages.id))
+      .where(and(
+        eq(awayReplies.accountId, accountId),
+        isNotNull(awayReplies.mintedMessageId),
+        // Only a reply that actually went out can have bounced. A `throttled` or `suppressed` row
+        // never dialled, and its minted id was cleared for exactly that reason.
+        inArray(awayReplies.outcome, ["sent", "unverified"]),
+        gt(messages.createdAt, since),
+        // ALREADY MARKED CORRESPONDENTS ARE OUT, so a bounce that stays in the mailbox does not
+        // re-stamp the same person on every tick — which would move `undeliverable_at` forward for
+        // ever and make "when did we learn this" a lie.
+        sql`NOT EXISTS (
+          SELECT 1 FROM ${awaySenderState} AS ss
+           WHERE ss.account_id = ${awayReplies.accountId}
+             AND ss.sender = ${awayReplies.sender}
+             AND ss.undeliverable_at IS NOT NULL
+        )`,
+        sql`(
+             ${messageBodies.headers}->>'in-reply-to' LIKE '%' || ${awayReplies.mintedMessageId} || '%'
+          OR ${messageBodies.headers}->>'references'  LIKE '%' || ${awayReplies.mintedMessageId} || '%'
+        )`,
+      ))
+      .limit(AWAY_BOUNCE_SCAN);
+
+    /* THE SHARED REPORT TEST. A matched id plus a human reply is a live correspondent; only a
+       matched id plus a delivery report is a dead address. */
+    const dead = new Set<string>();
+    for (const r of rows) {
+      if (isDeliveryReport((r.headers ?? {}) as Record<string, unknown>)) dead.add(r.sender);
+    }
+    if (dead.size === 0) return 0;
+
+    /* One guarded UPDATE. `IS NULL` in the WHERE as well as in the read above, because two runners
+       can reach this with the same row in hand — the first stamp is the one that stands, and the
+       count returned is what THIS run actually changed. */
+    const marked = await (db as unknown as Tx).update(awaySenderState)
+      .set({ undeliverableAt: at })
+      .where(and(
+        eq(awaySenderState.accountId, accountId),
+        inArray(awaySenderState.sender, [...dead]),
+        isNull(awaySenderState.undeliverableAt),
+      ))
+      .returning({ sender: awaySenderState.sender });
+
+    if (marked.length > 0) {
+      // NO ADDRESS IN THE LOG. The count and the account, which is what an operator can act on.
+      log.info("away_sender_undeliverable", {
+        accountId, marked: marked.length,
+        reason: "a delivery report came back for an away reply sent to these correspondents; no " +
+          "further automatic reply is sent to them, which is what stops one bounce per throttle " +
+          "interval arriving in this mailbox for the rest of the away period",
+      });
+    }
+    return marked.length;
+  } catch (err) {
+    log.warn("away_bounce_scan_failed", {
+      accountId, err,
+      reason: "this run did not learn which correspondents are unreachable; nothing was decided " +
+        "and no reply was withheld — the next run reads the same bounces",
+    });
+    return 0;
+  }
+}
+
+/**
  * THE CANDIDATE QUERY — and every predicate in it is candidacy, never a suppression.
  *
  * The distinction is `screener-auto.ts`'s rule and it decides what belongs here: a guard in the
@@ -529,6 +711,26 @@ async function readCandidates(
     headers: messageBodies.headers,
     desiredFolder: folderState.desiredFolder,
     ownAddress: mailboxes.address,
+    /**
+     * IS THIS CORRESPONDENT'S ADDRESS DEAD? — one correlated EXISTS over the sender state, decided
+     * in SQL and handed over as a plain boolean.
+     *
+     * A LEFT JOIN on `away_sender_state` would have been the obvious shape and it is the wrong
+     * one: that table is also the THROTTLE's row, so the join would multiply nothing but would put
+     * a column on this query whose absence (a sender never answered before) is indistinguishable
+     * from a present row with a null stamp. An EXISTS answers the one question asked — is there a
+     * row for this sender carrying a bounce — and a sender with no row at all is correctly `false`.
+     *
+     * Matched on the NORMALISED address, because that is what the reservation writes: `sender` is
+     * always `awayNormalizeAddress(from_address)`, so the comparison is `lower(trim(…))` on both
+     * sides or a correspondent who wrote from two spellings of one address is two people.
+     */
+    senderUndeliverable: sql<boolean>`EXISTS (
+      SELECT 1 FROM ${awaySenderState} AS ss
+       WHERE ss.account_id = ${messages.accountId}
+         AND ss.sender = lower(btrim(${messages.fromAddress}))
+         AND ss.undeliverable_at IS NOT NULL
+    )`.as("sender_undeliverable"),
     /**
      * HAS THIS CORRESPONDENT ALREADY HEARD FROM THIS MAILBOX ABOUT THIS THREAD? — one correlated
      * EXISTS, decided in SQL and handed to `awayEligibility` as a plain boolean.
@@ -618,6 +820,7 @@ async function readCandidates(
     headers: (r.headers ?? null) as Record<string, unknown> | null,
     desiredFolder: r.desiredFolder,
     alreadyReplied: Boolean(r.alreadyReplied),
+    senderUndeliverable: Boolean(r.senderUndeliverable),
     ownAddress: r.ownAddress,
   }));
 }
@@ -657,7 +860,8 @@ async function answerOne(
     sensitivityCategory: candidate.sensitivityCategory,
     noForward: candidate.noForward,
     alreadyReplied: candidate.alreadyReplied,
-  }, responder.audience, ownAddresses);
+    senderUndeliverable: candidate.senderUndeliverable,
+  }, responder.audience, ownAddresses, responder.piles);
 
   if (suppression !== null) {
     await recordDecision(db, responder, candidate, sender, "suppressed", suppression, textHash, now());
