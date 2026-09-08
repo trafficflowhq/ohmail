@@ -41,13 +41,24 @@
  * out of the office and a month on sabbatical are not the same promise to make to a correspondent
  * who writes every morning.
  *
- * The description under the switch says what the responder will NOT do, because that is the part
- * nobody can see: mailing lists, no-reply addresses, security mail, senders screened out, and the
- * account's own addresses are never answered. NONE OF THAT IS ENFORCED HERE — the suppressions are
- * `packages/core/src/away-eligibility.ts`'s and this component only reports them. So the copy below
+ * ── AND WHICH MAIL — THE SCOPE'S OTHER HALF, BETWEEN WHO AND HOW OFTEN ───────────────────────
+ *
+ * "Who gets a reply" is a fact about a SENDER, true from the day they were let in; it says nothing
+ * about where their later mail lands, and a shop let in for one receipt was being answered from
+ * Reads six months on. So there is a second question on this pane — which piles get a reply — and
+ * it stands BETWEEN the audience and the rate because that is the order the Ohbox banner reads the
+ * three in: "people you've let in whose mail lands in Ohbox get a reply at most once a day". The
+ * offered set is the ENGINE's (`AWAY_ANSWERABLE_PILES`, named through `AWAY_PILE_VIEW`); nothing
+ * here lists a pile by hand, so what the control offers and what the pass acts on are one object.
+ *
+ * The full never-list — mailing lists, no-reply addresses, security mail, receipts, spam, senders
+ * screened out, the account's own addresses, bounced addresses — is the gloss beside that control's
+ * label: stated once, in full, where the person asking WHICH mail is answered is the person asking
+ * what never is. NONE OF IT IS ENFORCED HERE — the suppressions are
+ * `packages/core/src/away-eligibility.ts`'s and this component only reports them. So that sentence
  * is a claim about somebody else's code, which makes it the one thing in this file that can go
- * quietly false: if a guard is ever relaxed, this sentence has to be edited in the same change, and
- * a promise of protection may never be added here before the guard exists.
+ * quietly false: if a guard is ever relaxed, it has to be edited in the same change, and a promise
+ * of protection may never be added there before the guard exists.
  *
  * ── COPY IS A SHIM, ON PURPOSE ───────────────────────────────────────────────────────────────
  *
@@ -59,8 +70,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Button, SegmentedControl, SettingsActions, SettingsField, SettingsRow, Switch, TextField } from "@ohmail/ui";
-import { AWAY_PILES_DEFAULT } from "@trafficflow/core/away-scope";
+import { Button, Gloss, SegmentedControl, SettingsActions, SettingsField, SettingsRow, Switch, TextField } from "@ohmail/ui";
+import {
+  AWAY_ANSWERABLE_PILES, AWAY_PILE_VIEW, AWAY_PILES_DEFAULT, type AwayPile,
+} from "@trafficflow/core/away-scope";
 import { away as awayApi, type AwayResponderWire } from "../api-client";
 
 /**
@@ -149,6 +162,15 @@ const AUDIENCE_IDS: readonly Audience[] = ["screened_in", "everyone"];
 
 type Throttle = AwayResponderWire["throttle"];
 type Piles = AwayResponderWire["piles"];
+
+/**
+ * THE LABEL KEY FOR EACH PILE WORD — keyed by the VIEW word, never by the folder. The offered set
+ * is `AWAY_ANSWERABLE_PILES` (the control iterates it) and `AWAY_PILE_VIEW` says what each member
+ * is called; this only turns that word into a catalogue key. `satisfies` closes it over the view
+ * words, so a pile the engine starts offering under a NEW word fails to compile here rather than
+ * rendering with no label — and a new folder under an existing word renders with no edit at all.
+ */
+const PILE_LABEL = { ohbox: "pileOhbox", reads: "pileReads" } as const satisfies Record<(typeof AWAY_PILE_VIEW)[AwayPile], string>;
 
 /**
  * The four rates, LOOSEST FIRST, which is the order the sentence they form reads in: every message,
@@ -254,11 +276,10 @@ export function AwayResponderRow({ onChanged, transport, local = false }: {
           enabled: loaded.enabled, body: loaded.body,
           startsAt: loaded.startsAt, endsAt: loaded.endsAt,
           audience: loaded.audience, throttle: loaded.throttle,
-          /* CARRIED, NOT CONTROLLED. This row has no pile control yet — the settings UI is a
-             separate piece of work — and `PUT` is a FULL REPLACE, so a draft that dropped the
-             field would reset an opted-in scope to the Ohbox on every save of an unrelated one.
-             Carrying it through load → draft → save is what keeps that from happening before
-             there is a control, and what the control will then replace. */
+          /* `PUT` is a FULL REPLACE, so the draft carries the stored scope from the load, and a
+             server one release older (no `piles` in its answer) reads as the default — the narrow
+             one — rather than as an empty scope a save would then write. The control below edits
+             this field; the save echoes whatever the server stored. */
           piles: loaded.piles ?? [...AWAY_PILES_DEFAULT],
         });
         changed.current?.({
@@ -361,6 +382,64 @@ export function AwayResponderRow({ onChanged, transport, local = false }: {
           />
         }
       />
+      {/* WHICH MAIL — see the header. A checkbox group in the choice list's own dress (`.set-choice`:
+          one card per option, the accent wash on a ticked one), under the field grammar (label above,
+          hint below), because two options with a consequence each are a list and not a segmented
+          range. Native checkboxes: Space toggles, the group is named by its label for a reader.
+
+          THE OHBOX CANNOT BE SWITCHED OFF HERE — a responder answering nothing is not a responder —
+          so its box is checked and disabled whenever the stored scope holds it. It is NOT forced on:
+          the column's CHECK admits a scope without the Ohbox (reachable through the API), and drawing
+          a tick over a stored scope that lacks it would state a reply is going out to mail that gets
+          none — the exact false claim `awayScopeKey` exists to keep out of the banner. A stored scope
+          without the Ohbox shows the box unticked and pressable, so the way back to the default is
+          one press; `pileOhboxNote` is drawn only while it is true.
+
+          The never-list is the gloss beside the label (placement `chip`, so the glyph sits on the
+          label's line, and bound to the label's last word by a no-break space so a wrapping label
+          never leaves the glyph alone on a line — measured at 360px in German). Its whole sentence
+          is the trigger's accessible name. The group's OWN name is the label alone — the gloss
+          stands outside the labelling span so a reader is not handed the exclusion list as the
+          group's title — and its description is the note below the options.
+
+          THE NOTE IS MICROCOPY, NOT A FIELD HINT. `.set-field-hint` takes the phone input floor
+          (16px below 640px) because it stands under a text input of that size; under two option
+          cards it outweighed every other line on the pane — measured at 360 and 390. So it is the
+          pane's own `set-note-inline`, the size the audience's and the standalone door's notes take,
+          and it stands after the field so the rate row below still draws its rule. */}
+      <div className="set-field" role="group" aria-labelledby="away-piles-label" aria-describedby="away-piles-note">
+        <span className="set-field-label">
+          <span id="away-piles-label">{t("pilesLabel")}</span>
+          {"\u00a0"}
+          <Gloss placement="chip" text={t("never")} />
+        </span>
+        <div className="set-choice">
+          {AWAY_ANSWERABLE_PILES.map((pile) => {
+            const on = draft.piles.includes(pile);
+            const word = AWAY_PILE_VIEW[pile];
+            const fixed = word === "ohbox" && on;
+            return (
+              <label key={pile}>
+                <input
+                  type="checkbox"
+                  name="away-piles"
+                  value={pile}
+                  checked={on}
+                  disabled={pending || fixed}
+                  onChange={(e) => edit({
+                    /* Filtered over the ENGINE's set, in its order: a toggle can only ever add or
+                       remove a member the engine offers, and never reorders or invents one. */
+                    piles: AWAY_ANSWERABLE_PILES.filter((p) => (p === pile ? e.target.checked : draft.piles.includes(p))),
+                  })}
+                />
+                <b>{t(PILE_LABEL[word])}</b>
+                {fixed ? <span>{t("pileOhboxNote")}</span> : null}
+              </label>
+            );
+          })}
+        </div>
+      </div>
+      <p className="set-note-inline" id="away-piles-note">{t("pilesNote")}</p>
       {/* THE RATE. `SegmentedControl` because the four members are one ordered range and somebody
           choosing between them is choosing a POSITION on it — a select would hide three of the four
           behind a press and lose that. Same widget as the audience row above, so the two settings
@@ -378,17 +457,10 @@ export function AwayResponderRow({ onChanged, transport, local = false }: {
           />
         }
       />
-      {/* WHAT THE RESPONDER WILL NOT DO — the part nobody can see, and therefore the part that has
-          to be said. NONE OF IT IS ENFORCED HERE: the suppressions live in
-          `packages/core/src/away-eligibility.ts` and this sentence only reports them, which makes
-          it a claim about somebody else's code. If a guard is ever relaxed, this line is edited in
-          the same change, and a promise of protection may never be added here before the guard
-          exists. `screened out` was added to it in the same commit that made
-          `AWAY_NEVER_ANSWERED_FOLDERS` audience-blind.
-
-          The per-person rate is deliberately NOT restated here: it is the control directly above,
-          and a sentence repeating it would go stale the moment the two disagree. */}
-      <p className="set-note-inline">{t("never")}</p>
+      {/* WHAT THE RESPONDER WILL NOT DO is the gloss beside "Which mail gets a reply", above — once,
+          in full, on demand. It used to be a standing line here as well; two statements of one
+          exclusion list is one more place for the claim to go stale. The per-person rate is likewise
+          not restated anywhere: it is the control directly above. */}
       {/* THE STANDALONE PROMISE, and it is only true on that door. An install with no account
           behind it answers mail from THIS machine while the window is open, so "your responder is
           on" would be a promise the app cannot keep overnight. The hosted door keeps it, and says

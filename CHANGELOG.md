@@ -350,6 +350,18 @@ Also here: the shared interface package's unused search-result component is remo
 it, and the row this release ships carries two controls rather than one, so it could not have become
 the real one. The stylesheet the real row stands on is untouched.
 
+### The Away pane shows which mail gets a reply
+
+Under "Who gets a reply" there is now "Which mail gets a reply": the two piles the responder can
+answer, in the order the Ohbox banner reads them — who, which mail, how often. Ohbox stays ticked
+and cannot be switched off there; Reads is one press. Saving writes the choice, and the banner's
+sentence names the same piles the next time it renders.
+
+The list of what is never answered — mailing lists, no-reply addresses, security mail, receipts,
+spam, senders you've screened out, your own addresses, and an address that bounced — used to stand
+as a line under the rate. It is an (i) beside "Which mail gets a reply" now: the whole sentence
+opens on hover, on focus or on a press, and it is the one place the list is stated.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
