@@ -14,7 +14,7 @@ import {
   // `@trafficflow/db` for why the transactional core and the eligibility read live there.
   heldRowById, applyScreenerDecision, AccountErasedError, readAccountErasedAt, domainOf,
   readRequestEligibility, readOrganizerRole, insertOrganizerRequest, listOutstandingForAccount,
-  OrganizedElsewhereError, MailboxNotFoundError,
+  OrganizedElsewhereError, MailboxNotFoundError, ringFilingDoorbell,
   type AppliedScreenerRow, type RequestEligibility, type OrganizedBy,
   type Tx,
 } from "@trafficflow/db";
@@ -1322,6 +1322,35 @@ export class ScreenerReadService {
 
       return dto;
     });
+
+    /* ── RING THE WORKER'S DOORBELL FOR WHAT THIS VERDICT NOW OWES — OUTSIDE THE TX ───────────
+     *
+     * A Screener press is a filing decision like any other and waited for the ROTATION like any
+     * other: a tick queues one serialized pass and each mailbox gets one bounded turn in it. This
+     * is the front door of the product, so it is the decision whose wait was most visible — the
+     * rail said "Filing 1 message on your mail server…" for minutes after a press.
+     *
+     * OUTSIDE the transaction, and that placement is the whole of what a review round cost.
+     * Inside it, `applyScreenerDecision` already holds row locks on `rules`, on every rerouted
+     * message's `folder_state`, and on the account's settings — so a `mailboxes` row lock at the
+     * end of that chain closed a cycle: real Postgres answered `40P01 deadlock detected`, "while
+     * updating tuple in relation `mailboxes`", for two concurrent domain decisions on ONE mailbox,
+     * and `screener-domain-scope.pg.test.ts` and `consent-baseline.concurrency.pg.test.ts` both
+     * caught it. PGlite saw none of it.
+     *
+     * ONCE rather than per message: the doorbell is not a work item — it says come sooner, and the
+     * reconcile pass reads the pending rows itself. GUARDED ON `rerouted`, so a verdict that moved
+     * nothing (every held row had already moved on — see the `setWhere` in the apply) does not wake
+     * a worker for work that does not exist. BEST-EFFORT, on `MessageService.ringFiledMailbox`'s
+     * argument and `junk-window.ts`'s own precedent for this column: the verdict has committed, and
+     * the poll is the floor beneath this either way. */
+    if (rerouted.length > 0) {
+      try {
+        await ringFilingDoorbell(ctx.db as unknown as Tx, target.mailboxId, ctx.now());
+      } catch {
+        /* Deliberately silent — see above. */
+      }
+    }
 
     // ── Physical IMAP move via the reconciler write-path, OUTSIDE the tx (step 3, idempotent) ──
     // Only when an adapter is injected. The serverless API path has none — the

@@ -733,6 +733,10 @@ export class MessageService {
     const glance = this.validVia(body.via);
     let pending: PendingRequest | undefined;
 
+    /* WHICH MAILBOX NOW OWES A MOVE — captured inside the transaction and rung AFTER it commits.
+       `null` when this request wrote no desired folder: an `unread`-only patch owes the organizer
+       nothing new, and ringing for it would wake the worker for work that does not exist. */
+    let filed: string | null = null;
     const seq = await asTx(ctx).transaction(async (tx) => {
       const [msg] = await tx.select({
         id: messages.id, unread: messages.unread, nativeLocator: messages.nativeLocator,
@@ -803,8 +807,9 @@ export class MessageService {
           // lock, so a demotion can commit between the two.
           await assertOrganizerRole(tx as unknown as Tx, ctx.accountId, msg.mailboxId);
           const observed = await this.observedFolder(tx, id, msg.nativeLocator);
-          // The mailbox travels into the helper: the doorbell it rings is that mailbox's.
-          await this.upsertDesired(tx, id, msg.mailboxId, observed, folder, ctx.now());
+          // The mailbox that now owes a move, rung AFTER this transaction commits.
+          filed = msg.mailboxId;
+          await this.upsertDesired(tx, id, observed, folder, ctx.now());
           last = await recordChange(tx, {
             accountId: ctx.accountId, entityType: "message", entityId: id, op: "move",
             meta: { from: observed, to: folder },
@@ -830,6 +835,10 @@ export class MessageService {
 
       return last;
     });
+    /* THE DOORBELL, AFTER THE COMMIT. See {@link MessageService.ringFiledMailbox}: inside the
+       transaction this deadlocked against every other writer of the mailbox row — measured on
+       real Postgres as `40P01`, with a 500 to one of two concurrent decisions. */
+    if (filed !== null) await this.ringFiledMailbox(ctx, filed);
 
     const dto = await materializeMessage(ctx.db, ctx.accountId, id);
     if (!dto) throw new ServiceError("internal", 500, "message vanished after write");
@@ -942,7 +951,11 @@ export class MessageService {
   ): Promise<MoveResult | MoveRequestResult> {
     const folder = this.validFolder(body.folder);
 
-    return asTx(ctx).transaction(async (tx) => {
+    /* WHICH MAILBOX NOW OWES A MOVE — captured inside the transaction and rung AFTER it commits.
+       `null` when this request wrote no desired folder, so the organizer is not woken for work
+       that does not exist. */
+    let filed: string | null = null;
+    const answer = await asTx(ctx).transaction(async (tx) => {
       const [msg] = await tx.select({
         id: messages.id, nativeLocator: messages.nativeLocator,
         // Mail 0083 — which mailbox this message is in, so the role is asked about the right row.
@@ -990,7 +1003,8 @@ export class MessageService {
       // and PRESERVE it (never overwrite on conflict); the worker flips it when the
       // physical IMAP move lands. NO adapter, NO IMAP here.
       const observed = await this.observedFolder(tx, id, msg.nativeLocator);
-      await this.upsertDesired(tx, id, msg.mailboxId, observed, folder, ctx.now());
+      filed = msg.mailboxId;
+      await this.upsertDesired(tx, id, observed, folder, ctx.now());
       let seqBig = await recordChange(tx, {
         accountId: ctx.accountId, entityType: "message", entityId: id, op: "move",
         meta: { from: observed, to: folder },
@@ -1024,6 +1038,13 @@ export class MessageService {
 
       return { dto, seq };
     });
+
+    /* THE DOORBELL, AFTER THE COMMIT. See {@link MessageService.ringFiledMailbox}: inside the
+       transaction this deadlocked against every other writer of the mailbox row — measured on
+       real Postgres as `40P01`, with a 500 to one of two concurrent decisions. */
+    if (filed !== null) await this.ringFiledMailbox(ctx, filed);
+
+    return answer;
   }
 
   /**
@@ -1056,7 +1077,11 @@ export class MessageService {
     ctx: ServiceContext, id: string,
     opts: { idempotency?: MoveIdempotency | null } = {},
   ): Promise<MoveResult | MoveRequestResult> {
-    return asTx(ctx).transaction(async (tx) => {
+    /* WHICH MAILBOX NOW OWES A MOVE — captured inside the transaction and rung AFTER it commits.
+       `null` when this request wrote no desired folder, so the organizer is not woken for work
+       that does not exist. */
+    let filed: string | null = null;
+    const answer = await asTx(ctx).transaction(async (tx) => {
       const [msg] = await tx.select({
         id: messages.id, nativeLocator: messages.nativeLocator, mailboxId: messages.mailboxId,
         dedupKey: messages.dedupKey,
@@ -1114,7 +1139,8 @@ export class MessageService {
       const now = ctx.now();
       if (hasCopy && trash !== null) {
         const observed = await this.observedFolder(tx, id, msg.nativeLocator);
-        await this.upsertDesired(tx, id, msg.mailboxId, observed, trash as Folder, now);
+        filed = msg.mailboxId;
+        await this.upsertDesired(tx, id, observed, trash as Folder, now);
       }
       await tx.update(messages).set({ deletedAt: now, updatedAt: now })
         .where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId)));
@@ -1144,6 +1170,13 @@ export class MessageService {
 
       return { dto, seq };
     });
+
+    /* THE DOORBELL, AFTER THE COMMIT. See {@link MessageService.ringFiledMailbox}: inside the
+       transaction this deadlocked against every other writer of the mailbox row — measured on
+       real Postgres as `40P01`, with a 500 to one of two concurrent decisions. */
+    if (filed !== null) await this.ringFiledMailbox(ctx, filed);
+
+    return answer;
   }
 
   // ── helpers ──
@@ -1206,32 +1239,16 @@ export class MessageService {
   // intent, and a second copy would be a second answer to when a `\Seen` round trip is owed.
 
   /**
-   * Upsert folder_state desired=<folder>, pending, us — preserving observedFolder on conflict —
-   * AND RING THE WORKER'S DOORBELL for the mailbox that owes the move.
+   * Upsert folder_state desired=<folder>, pending, us — preserving observedFolder on conflict.
    *
-   * ── WHY THE DOORBELL IS IN HERE AND NOT AT THE THREE DOORS ────────────────────────────────
-   *
-   * This helper is where a filing INTENT becomes durable, and it has exactly three callers: the
-   * batch `patch`, the single-message `move` and the delete's copy-to-Trash. Every one of them
-   * owes the worker the same visit, so putting the ring at the doors would be three answers to
-   * one question and a fourth door would arrive without one — the shape `spendResurface`'s own
-   * header records as the first defect in this file ("only the batch route cleared, so which
-   * client a user read in decided whether their pin came down").
-   *
-   * WITHOUT IT the decision waited for the worker's ROTATION. A 60 s tick queues one serialized
-   * pass, each mailbox gets one bounded turn in it, and `reconcileFolders` runs on that turn — so
-   * one pending move waited the rest of the running pass plus its own turn, which is minutes and
-   * was measured as such. Folder operations rang this doorbell, a send rang it, the pull verb rang
-   * it, the Not-junk rescue rang it; the move door, the most common write in the product, did not.
-   *
-   * `ringFilingDoorbell` carries the throttle (in the update's own predicate, the pull verb's
-   * form), the `disabled` narrowing and the reason it is called inside the deciding transaction.
-   * Its answer is deliberately DISCARDED here: "already ringing" and "rung" are both fine, and the
-   * only caller that has a use for the boolean is the control that watches the throttle.
+   * IT DOES NOT RING THE WORKER'S DOORBELL, and that is a correction rather than an omission:
+   * {@link MessageService.ringFiledMailbox} does, after the transaction commits, for the measured
+   * reason written out there.
    */
   private async upsertDesired(
-    tx: Tx, id: string, mailboxId: string, observed: string, folder: string, now: Date,
+    tx: Tx, id: string, observed: string, folder: string, now: Date,
   ): Promise<void> {
+
     await tx.insert(folderState).values({
       messageId: id, desiredFolder: folder, observedFolder: observed,
       lastSetBy: "us", reconcileStatus: "pending", conflict: false,
@@ -1240,7 +1257,50 @@ export class MessageService {
       // observedFolder deliberately omitted → preserved (worker owns it).
       set: { desiredFolder: folder, lastSetBy: "us", reconcileStatus: "pending", conflict: false, updatedAt: now },
     });
-    await ringFilingDoorbell(tx, mailboxId, now);
+  }
+
+  /**
+   * ═══ ASK THE ORGANIZER TO COME SOONER — AFTER THE COMMIT, NEVER INSIDE IT ═══════════════════
+   *
+   * A filing decision writes `folder_state` and returns; the organizer performs the IMAP move on
+   * its next turn. What decides how long that takes is the ROTATION — a tick queues one serialized
+   * pass and each mailbox gets one bounded turn in it — so one pending move waited the rest of the
+   * running pass plus its own turn, which is minutes. Folder operations ring this doorbell, a send
+   * rings it, the pull verb rings it, the Not-junk rescue rings it; the move door, the most common
+   * write in the product, did not.
+   *
+   * ── IT WAS INSIDE THE TRANSACTION AND THAT DEADLOCKED. MEASURED, NOT ARGUED ────────────────
+   *
+   * The first version stamped the column inside the deciding transaction, on the ground that a
+   * doorbell for a decision that rolled back is a lie. That reasoning is sound and the cost is
+   * higher: the transaction already holds row locks on `messages` and `folder_state` — and, on the
+   * Screener's verdict, on `rules` and the account's settings — so adding a `mailboxes` row lock at
+   * the end of that chain closed a cycle against the other writers of that row.
+   *
+   * Real Postgres answered `40P01 deadlock detected`, "while updating tuple in relation
+   * `mailboxes`", for two concurrent decisions over ONE mailbox — and one of the two reached its
+   * caller as a 500. Three pg suites caught it; PGlite saw none of it, which is the whole reason
+   * those twins exist.
+   *
+   * ── POST-COMMIT AND BEST-EFFORT, WHICH IS THIS COLUMN'S OWN PRECEDENT ─────────────────────
+   *
+   * `junk-window.ts` already rings the same column this way after the Not-junk rescue, in its own
+   * words: "Best-effort — the poll is the floor beneath it either way." That is exactly the trade.
+   * A single-statement transaction of its own cannot deadlock with anything; a crash between the
+   * commit and the ring costs ONE ROTATION, which is the behaviour that shipped before this
+   * existed; and a throw is swallowed, because a decision that has already committed must not be
+   * reported as failed by the thing that was only trying to make it faster.
+   *
+   * The stamp was never "proof the decision committed" and nothing reads it that way. It says COME
+   * SOONER, and the reconcile pass reads the pending rows itself.
+   */
+  private async ringFiledMailbox(ctx: ServiceContext, mailboxId: string): Promise<void> {
+    try {
+      await ringFilingDoorbell(ctx.db as unknown as Tx, mailboxId, ctx.now());
+    } catch {
+      /* Deliberately silent — see the header. The decision has committed and the poll is the
+         floor beneath this either way. */
+    }
   }
 
   private validView(v: string): MessageView {
