@@ -8,6 +8,7 @@ import {
   mintMessageId, replySubject,
   type AwayAudience, type AwaySuppression, type Logger, type OpenSendAdapter, type SendAdapter,
 } from "@trafficflow/core/mail";
+import { dialect } from "@trafficflow/db/dialect";
 import type { Db } from "./context.js";
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
@@ -402,6 +403,7 @@ async function healMissingEnabledAt(db: Db, at: Date): Promise<void> {
 async function liveResponders(
   db: Db, at: Date, mailboxIds: readonly string[] | undefined,
 ): Promise<LiveResponder[]> {
+  const d = dialect(db);
   const rows = await (db as unknown as Tx).select({
     accountId: awayResponders.accountId,
     body: awayResponders.body,
@@ -417,8 +419,12 @@ async function liveResponders(
       // IN-WINDOW, inclusive at both ends. An absent bound is OPEN at that end — what the column
       // means and what the API accepts — and never "now": reading an absent `startsAt` as the
       // current instant would make an enabled responder with no dates answer nobody.
-      or(isNull(awayResponders.startsAt), sql`${awayResponders.startsAt} <= ${at.toISOString()}::timestamptz`)!,
-      or(isNull(awayResponders.endsAt), sql`${awayResponders.endsAt} >= ${at.toISOString()}::timestamptz`)!,
+      // THROUGH THE SEAM'S TIMESTAMP BINDER. Written as an explicit server cast, this pass failed
+      // on the device store at `unrecognized token: ":"` — and it is the pass every drain runs, so
+      // it took the drain down rather than the responder. The binder writes each store's own
+      // literal for one instant: the server's cast, unchanged, and this store's epoch millisecond.
+      or(isNull(awayResponders.startsAt), sql`${awayResponders.startsAt} <= ${d.ts(at)}`)!,
+      or(isNull(awayResponders.endsAt), sql`${awayResponders.endsAt} >= ${d.ts(at)}`)!,
       /* ── THE MAILBOX NARROWING REACHES THE PROBE, NOT ONLY THE CANDIDATES ────────────────
        *
        * This used to be discarded here (`void mailboxIds`) on the reasoning that the narrowing is
@@ -1021,7 +1027,7 @@ async function answerOne(
  * that answer would be a READ — after which this pass would decide, and then write. Two runners
  * can both read "no" before either writes, and the correspondent gets two replies. Serialising it
  * needs a row to lock, and for a sender who has never been answered THERE IS NO ROW TO LOCK:
- * `SELECT … FOR UPDATE` locks nothing and `INSERT … WHERE NOT EXISTS` is not serialised against a
+ * A row lock locks nothing and `INSERT … WHERE NOT EXISTS` is not serialised against a
  * concurrent INSERT of the same key. Both were considered and refused for exactly that case.
  *
  * `INSERT … ON CONFLICT (account_id, sender) DO UPDATE SET … WHERE <predicate>` has no gap. The
@@ -1076,12 +1082,15 @@ async function reserve(
      */
     const cutoff = new Date(
       at.getTime() - (responder.throttle === "per_week" ? WEEK_MS : DAY_MS),
-    ).toISOString();
+    );
+    // The same binder as the in-window predicate above, for the same reason: an instant compared
+    // against a timestamp column has no column to take its type from, so each store needs its own
+    // literal rather than the server's cast.
     const predicate = responder.throttle === "always"
       ? sql`TRUE`
       : responder.throttle === "per_message"
         ? sql`${awaySenderState.lastTextHash} <> ${textHash}`
-        : sql`${awaySenderState.lastRepliedAt} <= ${cutoff}::timestamptz`;
+        : sql`${awaySenderState.lastRepliedAt} <= ${dialect(db).ts(cutoff)}`;
 
     const admitted = await tx.insert(awaySenderState).values({
       accountId: responder.accountId,
