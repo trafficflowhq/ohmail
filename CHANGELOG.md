@@ -485,6 +485,27 @@ computer takes over the organizing. Nothing on the mail server changes until you
 one mailbox at a time. It also lists which mailboxes the other computer was holding, read before
 anything moves — that list only exists until it does.
 
+### RPM packages for Fedora and openSUSE
+
+Linux had two ways to install ohmail — an AppImage and a `.deb` — which left every Fedora, RHEL
+and openSUSE desktop installing outside its own package manager. Every release now attaches an
+`.rpm` as well, one per architecture: `ohmail-linux-x86_64.rpm` and `ohmail-linux-aarch64.rpm`,
+beside the two `.deb` packages and the two AppImages.
+
+```bash
+sudo dnf install ./ohmail-linux-x86_64.rpm      # Fedora, RHEL, CentOS Stream
+sudo zypper install ./ohmail-linux-x86_64.rpm   # openSUSE
+```
+
+It is the same application in a different wrapper: the mail engine and its own Node runtime are
+inside the package, it installs the same desktop entry — so ohmail is selectable as the system
+mail app and a clicked `mailto:` address reaches it — and `dnf remove ohmail` takes it away again.
+Like the `.deb`, an `.rpm` install updates by installing the next `.rpm` rather than through the
+app's own updater; the Install section of the README says why.
+
+CI installs the x86_64 package in a clean Fedora container on every build, starts the mail engine
+from the installed layout, and uninstalls it, so "it installs" is measured rather than assumed.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

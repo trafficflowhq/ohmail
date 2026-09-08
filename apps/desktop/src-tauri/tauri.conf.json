@@ -54,6 +54,10 @@
       "deb": {
         "depends": [],
         "desktopTemplate": "linux/ohmail.desktop"
+      },
+      "rpm": {
+        "depends": [],
+        "desktopTemplate": "linux/ohmail.desktop"
       }
     },
     "windows": {

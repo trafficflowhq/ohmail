@@ -236,16 +236,62 @@ describe("the Linux desktop entry", () => {
   });
 
   /**
-   * And the bundler has to be pointed at it. The AppImage builds its AppDir from the Debian
-   * package's data directory, so this one template is what BOTH Linux artifacts carry — which is
-   * why it is configured under `deb` and not somewhere AppImage-shaped.
+   * And the bundler has to be pointed at it — ONCE PER PACKAGE FORMAT, because Tauri reads the
+   * template out of the section for the format it is building. The AppImage builds its AppDir from
+   * the Debian package's data directory, so `deb` covers two of the three artifacts; the `.rpm` is
+   * assembled from its own section and would otherwise fall back to the bundler's built-in
+   * template — the one with no field code on `Exec`, which is the fault the whole file above is
+   * about. So a Fedora install would claim `mailto:` and drop every address, with every assertion
+   * here still green.
+   *
+   * Asserted as ONE SOURCE rather than as two correct values: the two sections must name the same
+   * file, so an edit to the entry cannot reach one package form and miss the other.
    */
-  it("is the template the bundler is configured to use", () => {
+  it("is the template the bundler is configured to use, in every Linux format", () => {
     const conf = JSON.parse(read("src-tauri/tauri.conf.json")) as {
-      bundle: { linux: { deb: { desktopTemplate?: string } } };
+      bundle: { linux: { deb: { desktopTemplate?: string }; rpm: { desktopTemplate?: string } } };
     };
-    const configured = conf.bundle.linux.deb.desktopTemplate;
-    expect(configured).toBe("linux/ohmail.desktop");
-    expect(fs.existsSync(path.join(APP, "src-tauri", configured!))).toBe(true);
+    const { deb, rpm } = conf.bundle.linux;
+    expect(deb.desktopTemplate).toBe("linux/ohmail.desktop");
+    expect(rpm.desktopTemplate, "the .rpm falls back to Tauri's own template, which has no `%U`")
+      .toBe(deb.desktopTemplate);
+    expect(fs.existsSync(path.join(APP, "src-tauri", deb.desktopTemplate!))).toBe(true);
+  });
+
+  /**
+   * THE RPM DECLARES NEITHER MORE NOR FEWER DEPENDENCIES THAN THE DEB.
+   *
+   * Neither package form declares any: the runtime and the mail engine ship inside the artifact,
+   * and the webview stack is whatever the machine has — the same posture on Debian and on Fedora.
+   * The value of asserting it is the asymmetry it refuses. A dependency added to one section and
+   * not the other is a package that installs on one distribution family and refuses on the other
+   * for a reason nothing in this tree records, and `dnf install` failing on an unmet name reads to
+   * the reader as a broken release rather than as a config that drifted.
+   */
+  it("declares the same dependencies for the .rpm as for the .deb", () => {
+    const conf = JSON.parse(read("src-tauri/tauri.conf.json")) as {
+      bundle: { linux: { deb: { depends?: string[] }; rpm: { depends?: string[] } } };
+    };
+    expect(conf.bundle.linux.rpm.depends ?? []).toEqual(conf.bundle.linux.deb.depends ?? []);
+  });
+
+  /**
+   * AND BOTH LINUX JOBS HAVE TO ASK THE BUNDLER FOR IT.
+   *
+   * Everything above is about what the `.rpm` contains once it exists. This is about whether it
+   * exists at all: `--bundles` is a literal list in each job's packaging step, and dropping `rpm`
+   * from it produces a completely green Linux build that simply attaches two fewer files — the
+   * release then publishes eight installers under a changelog that promises nine, and the only
+   * thing that notices is the release-feeds job, hours later, on a tag. Asserted per job so that
+   * one of the two going quiet is not covered by the other.
+   */
+  it("is asked for in both Linux jobs' bundle lists", () => {
+    const bundles = buildWorkflow().match(/^\s*run: npm run app:build:engine -- --bundles (\S+)$/gm);
+    const linux = (bundles ?? []).filter((line) => line.includes("appimage"));
+    expect(linux, "no Linux job in build.yml packages an appimage").toHaveLength(2);
+    for (const line of linux) {
+      expect(line, "a Linux job packages the AppImage and the .deb but not the .rpm")
+        .toMatch(/--bundles appimage,deb,rpm$/);
+    }
   });
 });

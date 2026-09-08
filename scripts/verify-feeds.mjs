@@ -268,6 +268,27 @@ if (!feedVersion) { console.error(`latest.json version ${JSON.stringify(latest.v
 const armLinux = atLeast(feedVersion, ARM_LINUX_FROM);
 console.log(`  (arm64 Linux ${armLinux ? "expected" : "not expected"} at ${latest.version} — the floor is ${ARM_LINUX_FROM.join(".")})`);
 
+/**
+ * ── THE TWO RPMs, WHICH ARE ASSETS AND NOT FEED ENTRIES ──────────────────────────────────────
+ *
+ * From 0.16.0 the release attaches an `.rpm` per architecture for Fedora, RHEL and openSUSE. They
+ * get NO platform key, for the reason the `-deb` paragraph above gives at length and word for
+ * word: a package-manager install carries a bundle-type marker, asks for `linux-x86_64-rpm`
+ * first, and publishing that key would make the updater hand an rpm to `dnf` on a machine whose
+ * packages are owned by whatever installed them — an install path nothing here can exercise. An
+ * `.rpm` install updates by installing the next `.rpm`, which is what the README says.
+ *
+ * They are still checked, and the section below the checksums is where. A file with no feed entry
+ * is a file nothing in this verifier would otherwise read, which is exactly how the SHA256SUMS
+ * this page promises could go a platform narrower than the release it describes — the failure
+ * that would show up as a reader's `shasum --check` passing over eight files while nine were
+ * published. Same version floor in both directions as the arm64 key, and for the same recovery
+ * reason.
+ */
+const RPM_LINUX_FROM = [0, 16, 0];
+const rpmLinux = atLeast(feedVersion, RPM_LINUX_FROM);
+console.log(`  (Linux .rpm ${rpmLinux ? "expected" : "not expected"} at ${latest.version} — the floor is ${RPM_LINUX_FROM.join(".")})`);
+
 const WANT = armLinux
   ? ["windows-x86_64", "linux-x86_64", "linux-aarch64", "darwin-aarch64", "darwin-x86_64"]
   : ["windows-x86_64", "linux-x86_64", "darwin-aarch64", "darwin-x86_64"];
@@ -405,6 +426,54 @@ for (const [k, want] of Object.entries(LINUX_PAYLOAD)) {
   }
 }
 
+/* ── THE INSTALLER SET, BY NAME ───────────────────────────────────────────────────────────────
+ *
+ * Everything above this line is reached THROUGH `latest.json`: a payload is checked because a
+ * platform key points at it. That leaves every published installer with no feed entry unreadable
+ * by this verifier — the four Linux packages — and "unreadable" is how a release ends up a whole
+ * platform narrower than the changelog says while every signature verifies.
+ *
+ * So the set is written down. Each name is required at its own version floor and REFUSED below
+ * it, the same two-directional shape as the arm64 key: a file nothing ever built for a release is
+ * a file whose provenance nobody can state, and a release that silently dropped one is a download
+ * page with a dead button.
+ *
+ * `ohmail.app.zip` is deliberately not here — it is retired (see the macOS archive's note in the
+ * feed workflow) — and neither is the Windows `.msi`, which stays a deployment-tooling artifact
+ * and is not attached.
+ */
+const REQUIRED_INSTALLERS = [
+  ["ohmail.dmg", [0, 0, 0]],
+  ["ohmail.app.tar.gz", [0, 0, 0]],
+  ["ohmail-windows-setup.exe", [0, 0, 0]],
+  ["ohmail-linux-x86_64.AppImage", [0, 0, 0]],
+  ["ohmail-linux-amd64.deb", [0, 0, 0]],
+  ["ohmail-linux-aarch64.AppImage", ARM_LINUX_FROM],
+  ["ohmail-linux-arm64.deb", ARM_LINUX_FROM],
+  ["ohmail-linux-x86_64.rpm", RPM_LINUX_FROM],
+  ["ohmail-linux-aarch64.rpm", RPM_LINUX_FROM],
+];
+
+/** The installers this release is expected to carry, at this version. */
+const expectedInstallers = REQUIRED_INSTALLERS
+  .filter(([, from]) => atLeast(feedVersion, from))
+  .map(([name]) => name);
+
+console.log(`\ninstallers — ${expectedInstallers.length} expected at ${latest.version}`);
+for (const [name, from] of REQUIRED_INSTALLERS) {
+  const here = fs.existsSync(path.join(assetsDir, name));
+  const wanted = atLeast(feedVersion, from);
+  if (wanted && !here) {
+    bad(`${name} is not in the asset set, and every release from ${from.join(".")} attaches one `
+      + "— an upload that failed and a platform that was never built look the same from here");
+  } else if (!wanted && here) {
+    bad(`${name} is in the asset set but ${latest.version} is below ${from.join(".")} `
+      + "— nothing built one for this release");
+  } else if (wanted) {
+    ok(`${name} — attached`);
+  }
+}
+
 /* ── SHA256SUMS: THE CHECKSUMS THE DOWNLOAD PAGE PROMISES, CHECKED ───────────────────────────
  *
  * The releases publish a `SHA256SUMS` covering every binary asset, because the page that links
@@ -463,6 +532,16 @@ if (!fs.existsSync(sumsPath)) {
     if (!url) continue;
     const name = path.basename(new URL(url).pathname);
     if (!listed.has(name)) bad(`${name} is a published payload and SHA256SUMS does not list it`);
+  }
+  /* AND EVERY INSTALLER, not only the ones a feed points at. The loop above covers the five
+   * signed payloads; the four Linux packages have no platform key, so without this a checksum
+   * file could be complete about everything the updater fetches and silent about everything a
+   * person downloads by hand — which is the half of the release the download page links. */
+  for (const name of expectedInstallers) {
+    if (!listed.has(name)) {
+      bad(`${name} is a published installer and SHA256SUMS does not list it `
+        + "— the download page offers this file as the way to check what you got");
+    }
   }
 }
 

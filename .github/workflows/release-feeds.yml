@@ -190,6 +190,31 @@ jobs:
           if [ "$ARM_LINUX" = 1 ]; then WANT_APPIMAGES=2; else WANT_APPIMAGES=1; fi
           echo "arm64 Linux: $([ "$ARM_LINUX" = 1 ] && echo required || echo "not expected (below $ARM_FROM)")"
 
+          # ── THE TWO RPMs EXIST FROM 0.16.0, AND NOT BEFORE ────────────────
+          #
+          # Same shape as the arm64 floor above and for the same reason: this
+          # workflow can be dispatched by hand at any published tag to recover a
+          # feed, and a flat "there must be two .rpm assets" would refuse every
+          # release cut before Fedora and openSUSE were packaged at all. Both
+          # architectures arrive together — one Linux job each, one change — so
+          # one floor covers both, and it is asserted in BOTH directions like the
+          # arm64 one: at or above the floor both are required, below it both
+          # must be absent, because a package nothing ever built for a release is
+          # a file whose provenance nobody can state.
+          #
+          # The comparison is the same node one-liner, for the reasons written
+          # out above it — BSD `sort -V` on this macOS runner, and `head`
+          # closing a pipe.
+          RPM_FROM=0.16.0
+          RPM_LINUX="$(RPM_FROM="$RPM_FROM" VERSION="$VERSION" node -e '
+            const p = (v) => String(v).split(".").map(Number);
+            const [a, b] = [p(process.env.VERSION), p(process.env.RPM_FROM)];
+            if (a.length !== 3 || a.some(Number.isNaN)) { process.stderr.write("bad version\n"); process.exit(1); }
+            for (let i = 0; i < 3; i++) if (a[i] !== b[i]) { process.stdout.write(a[i] > b[i] ? "1" : "0"); process.exit(0); }
+            process.stdout.write("1");
+          ')"
+          echo "Linux .rpm: $([ "$RPM_LINUX" = 1 ] && echo required || echo "not expected (below $RPM_FROM)")"
+
           PUB_DATE_ISO="${RELEASE_PUBLISHED_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
           NOTES="${RELEASE_BODY:-ohmail $VERSION}"
 
@@ -256,6 +281,16 @@ jobs:
           # Named for the same reason as the Windows installer above: the
           # client refuses any asset name but its own build's.
           MAC_TGZ="assets/ohmail.app.tar.gz"
+          # ── THE TWO RPMs, NAMED LIKE EVERYTHING ELSE ──────────────────────
+          # They carry no platform key in latest.json — see the header's note on
+          # why there is no `-deb` key either, which applies word for word to a
+          # package manager's install — so this job does not sign them. It still
+          # has to know their names: they go into SHA256SUMS, the download page
+          # links them directly, and a release that quietly attached eight
+          # installers under a changelog promising nine is the failure the whole
+          # by-name arrangement in this job exists to catch.
+          LIN_X64_RPM="assets/ohmail-linux-x86_64.rpm"
+          LIN_ARM_RPM="assets/ohmail-linux-aarch64.rpm"
           test -s "$WIN_EXE"  || { echo "no ohmail-windows-setup.exe attached to $RELEASE_TAG" >&2; exit 1; }
           test -s "$MAC_TGZ"  || { echo "no ohmail.app.tar.gz attached to $RELEASE_TAG" >&2; exit 1; }
           test -s "$LIN_X64_APPIMAGE" || { echo "no ohmail-linux-x86_64.AppImage attached to $RELEASE_TAG" >&2; exit 1; }
@@ -266,6 +301,17 @@ jobs:
               echo "$RELEASE_TAG is below $ARM_FROM but carries an arm64 AppImage — nothing built one for it" >&2
               exit 1
             }
+          fi
+          if [ "$RPM_LINUX" = 1 ]; then
+            test -s "$LIN_X64_RPM" || { echo "no ohmail-linux-x86_64.rpm attached to $RELEASE_TAG" >&2; exit 1; }
+            test -s "$LIN_ARM_RPM" || { echo "no ohmail-linux-aarch64.rpm attached to $RELEASE_TAG" >&2; exit 1; }
+          else
+            for stray in "$LIN_X64_RPM" "$LIN_ARM_RPM"; do
+              test ! -e "$stray" || {
+                echo "$RELEASE_TAG is below $RPM_FROM but carries $(basename "$stray") — nothing built one for it" >&2
+                exit 1
+              }
+            done
           fi
           # …and NOTHING ELSE ends in .AppImage. Naming the two files above stops
           # a third one being picked by accident; it does not stop a third one
@@ -311,11 +357,48 @@ jobs:
           # this release publishes and nothing this job is about to rewrite.
           ( cd assets && shasum -a 256 -- * > ../SHA256SUMS )
           echo "--- SHA256SUMS ---"; cat SHA256SUMS
-          # It covers every attached binary, asserted rather than assumed: a
-          # glob that silently matched nothing would produce an empty file and
-          # a release that still claims to publish checksums.
+          # ── COVERAGE IS ASSERTED BY NAME, NOT BY A FLOOR ──────────────────
+          #
+          # This was `test "$SUM_LINES" -ge 5`, which was there to catch a glob
+          # that matched nothing. It cannot catch what actually goes wrong: a
+          # release that attaches one installer FEWER than it built. Nine
+          # installers ship from 0.16.0 (seven before it), and every value from
+          # five upward satisfied a floor of five — so the release the changelog
+          # describes and the release the page links could differ by a whole
+          # platform with this line green.
+          #
+          # Each expected name is therefore named, at its own version floor, and
+          # the count is PRINTED rather than pinned: a number in a comparison is
+          # a second place to edit when a platform arrives, and the names are
+          # what a reader of the download page is actually promised.
+          EXPECTED_SUMS="ohmail.dmg ohmail.app.tar.gz ohmail-windows-setup.exe"
+          EXPECTED_SUMS="$EXPECTED_SUMS ohmail-linux-x86_64.AppImage ohmail-linux-amd64.deb"
+          if [ "$ARM_LINUX" = 1 ]; then
+            EXPECTED_SUMS="$EXPECTED_SUMS ohmail-linux-aarch64.AppImage ohmail-linux-arm64.deb"
+          fi
+          if [ "$RPM_LINUX" = 1 ]; then
+            EXPECTED_SUMS="$EXPECTED_SUMS ohmail-linux-x86_64.rpm ohmail-linux-aarch64.rpm"
+          fi
+          MISSING=""
+          for want in $EXPECTED_SUMS; do
+            # Read the file into a variable and match on that: `grep -q` against
+            # a pipe is the shape this repository has been bitten by, and the
+            # two-space separator `shasum` writes is part of what makes the match
+            # exact rather than a substring of a longer name.
+            SUMS_TEXT="$(cat SHA256SUMS)"
+            case "$SUMS_TEXT" in
+              *"  $want"*) : ;;
+              *) MISSING="$MISSING $want" ;;
+            esac
+          done
+          if [ -n "$MISSING" ]; then
+            echo "SHA256SUMS does not list:$MISSING" >&2
+            echo "Every installer this release attaches has to be in it — the download page" >&2
+            echo "links these files by name and offers this file as the way to check them." >&2
+            exit 1
+          fi
           SUM_LINES="$(grep -c . SHA256SUMS || true)"
-          test "$SUM_LINES" -ge 5 || { echo "SHA256SUMS lists only $SUM_LINES file(s)" >&2; exit 1; }
+          echo "SHA256SUMS lists $SUM_LINES file(s); all $(printf '%s\n' $EXPECTED_SUMS | grep -c .) expected installers are named"
           # And it verifies where it was made. `--check` reads the names
           # relative to the working directory, so it runs inside assets/.
           ( cd assets && shasum -a 256 --check ../SHA256SUMS )

@@ -22,7 +22,7 @@ source, AGPL-3.0, no account.
 [![licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-a3461c)](LICENSE)
 [![macOS 15+](https://img.shields.io/badge/macOS-15%2B-111111)](#macos)
 [![Windows 10+](https://img.shields.io/badge/Windows-10%2B-111111)](#windows)
-[![Linux](https://img.shields.io/badge/Linux-AppImage%20%C2%B7%20deb-111111)](#linux)
+[![Linux](https://img.shields.io/badge/Linux-AppImage%20%C2%B7%20deb%20%C2%B7%20rpm-111111)](#linux)
 
 **One app, two faces:**
 [**`ohmarchy`**](#the-ohmarchy-face) · [**`paper`**](#the-paper-face)
@@ -314,8 +314,8 @@ these are the checks that are actually available. `SHA256SUMS` is published from
 |---|---|---|
 | **macOS** | `ohmail.dmg` (universal, arm64 + x86_64) | macOS 15+ |
 | **Windows** | `ohmail-windows-setup.exe` (NSIS, per-user, no admin) | Windows 10+, x86_64 |
-| **Linux · x86_64** | `ohmail-linux-x86_64.AppImage` or `ohmail-linux-amd64.deb` | — |
-| **Linux · arm64** | `ohmail-linux-aarch64.AppImage` or `ohmail-linux-arm64.deb` | — |
+| **Linux · x86_64** | `ohmail-linux-x86_64.AppImage`, `ohmail-linux-amd64.deb` or `ohmail-linux-x86_64.rpm` | — |
+| **Linux · arm64** | `ohmail-linux-aarch64.AppImage`, `ohmail-linux-arm64.deb` or `ohmail-linux-aarch64.rpm` | — |
 
 `uname -m` tells you which Linux build you want: `x86_64` for the first row,
 `aarch64` for the second. macOS is one file for both architectures; Windows is
@@ -369,6 +369,24 @@ DMG does, because ELF has no equivalent of a universal binary.
 The `.deb` installs with `sudo apt install ./ohmail-linux-amd64.deb`
 (`./ohmail-linux-arm64.deb` on arm64) and pulls in WebKitGTK.
 
+On Fedora, RHEL and openSUSE, take the `.rpm`:
+
+```bash
+sudo dnf install ./ohmail-linux-x86_64.rpm      # Fedora, RHEL, CentOS Stream
+sudo zypper install ./ohmail-linux-x86_64.rpm   # openSUSE
+# on arm64, the same with ./ohmail-linux-aarch64.rpm
+```
+
+Note the architecture words: the `.rpm` is named for the machine (`x86_64`,
+`aarch64`, what `uname -m` prints), like the AppImage, while the `.deb` is named
+for the Debian architecture (`amd64`, `arm64`). Both spellings are the ones the
+tool in your hand uses.
+
+The `.rpm` declares no dependencies, for the same reason the `.deb` needs only
+WebKitGTK: the mail engine and its Node runtime are inside the package, and the
+webview stack is your desktop's. Any Fedora or openSUSE desktop that ships a GTK
+browser engine already has it.
+
 > [!TIP]
 > **If the window opens and never draws anything**, run it against your own
 > distribution's GTK and WebKitGTK instead of the copies inside the AppImage:
@@ -393,17 +411,26 @@ The `.deb` installs with `sudo apt install ./ohmail-linux-amd64.deb`
 > cannot answer.
 
 > [!IMPORTANT]
-> **A `.deb` install cannot update itself — and it will still offer to.** A
-> build installed from the `.deb` asks the release feed for a Debian package,
-> does not find one (the feed publishes AppImages, one per architecture), falls
-> back to the AppImage for its architecture, downloads it, and then reports
-> *"ohmail could not install the update."* Nothing on disk is touched and nothing
-> is broken. Update by installing the new `.deb` over the old one — or use the
-> **AppImage**, which is the Linux build that applies its own updates. This is
+> **A packaged install cannot update itself — and it will still offer to.** A
+> build installed from the `.deb` or the `.rpm` asks the release feed for a
+> package of its own kind, does not find one (the feed publishes AppImages, one
+> per architecture), falls back to the AppImage for its architecture, downloads
+> it, and then reports *"ohmail could not install the update."* Nothing on disk
+> is touched and nothing is broken. Update by installing the new package over the
+> old one — or use the **AppImage**, which is the Linux build that applies its
+> own updates.
+>
+> The feed carries no key for either package format on purpose. Making it work
+> would mean handing a `.deb` to dpkg, or an `.rpm` to rpm, on a machine whose
+> packages are owned by whatever installed them — and there is no Debian or
+> Fedora install in this project's CI that could ever exercise that path. This is
 > the same on x86_64 and arm64, and it applies to any distribution package built
-> from either `.deb`.
+> from any of the four.
 
-Uninstall with `sudo apt remove ohmail`.
+Uninstall with `sudo apt remove ohmail`, or `sudo dnf remove ohmail` /
+`sudo zypper remove ohmail` for the `.rpm`. One word on every platform:
+the package, the binary at `/usr/bin/ohmail`, the icon and the desktop entry are
+all spelled `ohmail`.
 
 ## Updates
 

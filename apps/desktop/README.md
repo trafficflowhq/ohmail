@@ -399,6 +399,7 @@ rejects a pre-release identifier anyway, and the bare number is what reaches the
 installer filenames the bundler emits — which the release then renames in place
 to the stable names the download page links (`ohmail.dmg`,
 `ohmail-linux-amd64.deb`, `ohmail-linux-arm64.deb`,
+`ohmail-linux-x86_64.rpm`, `ohmail-linux-aarch64.rpm`,
 `ohmail-windows-setup.exe`, …). The two Linux architectures carry theirs in the
 filename, because they are two different programs and the update feed has to be
 able to point at one without meaning the other.
@@ -424,17 +425,29 @@ preview is retired, one description is true of the one app, and
 schemes, the Windows installer's bootstrapper mode and hooks.
 
 **One word on Linux, everywhere.** The bundler derives the `.deb`'s `Package:`
-field by kebab-casing `productName`, and `productName` is `ohmail`, so the
-package name, the binary at `/usr/bin/ohmail`, the icon and the `.desktop`
-entry's `Icon=` and `StartupWMClass` are all the same string: `apt remove
-ohmail` works. This was not always true — `productName` used to be `MailOh`,
+field — and the `.rpm`'s `Name:` — by kebab-casing `productName`, and
+`productName` is `ohmail`, so the package name, the binary at
+`/usr/bin/ohmail`, the icon and the `.desktop` entry's `Icon=` and
+`StartupWMClass` are all the same string: `apt remove ohmail` and `dnf remove
+ohmail` both work. This was not always true — `productName` used to be `MailOh`,
 which kebab-cased to `mail-oh` and made the package the one thing on the system
 spelled differently from everything else. (`MailOh` is a historical fact, not a
 brand reference: it is the only string that produces `mail-oh`, and the rename
 sweep briefly turned it into `OhMail`, which kebab-cases to `oh-mail` and made
 the sentence impossible.) The Linux CI job asserts
-`Package: ohmail` against the built artifact, so if a future Tauri changes the
-slug this paragraph goes red instead of quietly going stale.
+`Package: ohmail` against the built artifact, and the `Name:` out of the `.rpm`
+beside it, so if a future Tauri changes the slug this paragraph goes red instead
+of quietly going stale.
+
+**Three Linux package formats, one desktop entry.** `bundle.linux` configures the
+`.deb` and the `.rpm` separately — Tauri reads `desktopTemplate` out of the
+section for the format it is building — so both sections name
+`linux/ohmail.desktop`, and `desktop-linux-recipe.test.ts` asserts they name the
+SAME file rather than two correct values. The AppImage needs no section of its
+own: its AppDir is built from the Debian package's data directory. Neither
+package declares dependencies, and that symmetry is asserted too: a dependency on
+one side only is a package that installs on one distribution family and refuses
+on the other for a reason nothing here records.
 
 ## Verify it
 

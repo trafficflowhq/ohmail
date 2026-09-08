@@ -88,8 +88,8 @@ name: build
 # matching one glob makes the update feed's payload pick arbitrary:
 #
 #   ohmail.dmg · ohmail.app.tar.gz · ohmail-windows-setup.exe
-#   ohmail-linux-x86_64.AppImage   · ohmail-linux-amd64.deb
-#   ohmail-linux-aarch64.AppImage  · ohmail-linux-arm64.deb
+#   ohmail-linux-x86_64.AppImage   · ohmail-linux-amd64.deb   · ohmail-linux-x86_64.rpm
+#   ohmail-linux-aarch64.AppImage  · ohmail-linux-arm64.deb   · ohmail-linux-aarch64.rpm
 #
 # THE TWO LINUX ARCHITECTURES SHARE NO NAME, AND THAT IS THE CONTRACT'S POINT.
 # Each Linux artifact carries its architecture in its own filename, so nothing
@@ -101,8 +101,11 @@ name: build
 # The spellings differ per format on purpose rather than by oversight: an
 # AppImage is named for the machine (`x86_64`, `aarch64`, what `uname -m`
 # prints), a Debian package for the Debian architecture (`amd64`, `arm64`, what
-# `dpkg --print-architecture` prints). Normalising either one would make the
-# filename disagree with the tool a reader is holding.
+# `dpkg --print-architecture` prints), and an RPM for the machine again
+# (`x86_64`, `aarch64`, what `rpm --eval %{_arch}` prints and what the bundler
+# writes into its own filename). Normalising any of them would make the filename
+# disagree with the tool a reader is holding — which is why the `.rpm` shares its
+# architecture words with the AppImage beside it and not with the `.deb`.
 #
 # `latest.json` and `appcast-macos.xml` are the update feeds and belong to the
 # release-feeds workflow; nothing here may produce a file by either name.
@@ -652,7 +655,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   linux:
-    name: Linux · smoke · engine · appimage + deb
+    name: Linux · smoke · engine · appimage + deb + rpm
     runs-on: ubuntu-latest
     timeout-minutes: 60
     defaults:
@@ -677,6 +680,14 @@ jobs:
       # own list: a prerequisite that differs between two jobs meant to be
       # identical is how they stop being identical. A package already present is
       # a no-op.
+      #
+      # `rpm` is here for the INSPECTION, not for the build: Tauri assembles the
+      # RPM with a Rust library and never shells out to `rpmbuild`, so the
+      # packaging step needs nothing installed — but the step that opens the
+      # finished package and reads its file list, its metadata and its `Requires`
+      # is `rpm -qp`, and a runner image is free to stop shipping that tool.
+      # Naming it here means an image change is an apt failure rather than a
+      # silently skipped set of assertions.
       - name: Install the Tauri prerequisites
         run: |
           sudo apt-get update
@@ -689,7 +700,7 @@ jobs:
             libayatana-appindicator3-dev \
             libssl-dev \
             build-essential curl wget file patchelf desktop-file-utils \
-            xdg-utils
+            xdg-utils rpm
 
       - name: Toolchain
         run: |
@@ -776,29 +787,37 @@ jobs:
         env:
           NO_STRIP: "true"
         working-directory: apps/desktop
-        run: npm run app:build:engine -- --bundles appimage,deb
+        run: npm run app:build:engine -- --bundles appimage,deb,rpm
 
       - name: Name the artifacts what the download page links
         run: |
           set -euo pipefail
           B=apps/desktop/src-tauri/target/release/bundle
-          ls -la "$B/appimage" "$B/deb"
+          ls -la "$B/appimage" "$B/deb" "$B/rpm"
           APPIMAGE="$(ls "$B"/appimage/*.AppImage | head -1)"
           DEB="$(ls "$B"/deb/*.deb | head -1)"
+          # The bundler writes `ohmail-<version>-1.x86_64.rpm`, so this glob has
+          # one match — the same arrangement as the two above it, and asserted
+          # the same way: exactly one file, non-empty, before anything is moved.
+          RPM="$(ls "$B"/rpm/*.rpm | head -1)"
           test -s "$APPIMAGE"
           test -s "$DEB"
+          test -s "$RPM"
           mkdir -p build
           # Renamed in place, never copied — see the Windows job.
           mv "$APPIMAGE" build/ohmail-linux-x86_64.AppImage
           mv "$DEB" build/ohmail-linux-amd64.deb
+          mv "$RPM" build/ohmail-linux-x86_64.rpm
           chmod +x build/ohmail-linux-x86_64.AppImage
-          ls -la build/ohmail-linux-x86_64.AppImage build/ohmail-linux-amd64.deb
+          ls -la build/ohmail-linux-x86_64.AppImage build/ohmail-linux-amd64.deb \
+            build/ohmail-linux-x86_64.rpm
 
       - name: Inspect what was produced
         run: |
           set -euo pipefail
           DEB=build/ohmail-linux-amd64.deb
           APPIMAGE=build/ohmail-linux-x86_64.AppImage
+          RPM=build/ohmail-linux-x86_64.rpm
 
           echo "--- .deb control ---"
           dpkg-deb -I "$DEB"
@@ -879,6 +898,95 @@ jobs:
             echo "the .deb's desktop entry does not hand the URL to the app" >&2; exit 1; }
           printf '%s\n' "$DEB_ENTRY" | grep -q '^MimeType=.*x-scheme-handler/mailto' || {
             echo "the .deb's desktop entry no longer claims mailto" >&2; exit 1; }
+
+          # ══ THE .rpm CARRIES THE SAME TREE, ASSERTED SEPARATELY ═══════════
+          #
+          # Not "the bundler builds all three from one staging directory, so if
+          # the .deb is right the .rpm is". That is true of this Tauri and is
+          # exactly the shared assumption that stops being true without anything
+          # going red — the same argument the .deb's desktop-entry check above
+          # makes about the AppImage. The three artifacts are what a stranger
+          # installs, and each is opened here on its own.
+          #
+          # Read with `rpm -qp` (query an uninstalled package file). Every
+          # listing goes into a VARIABLE before it is matched, for the reason
+          # this file gives at length about `dpkg-deb -c | grep -q`: `grep -q`
+          # exits at its first match, closes the pipe, and the producer behind it
+          # dies — which under `pipefail` turns a passing assertion into a failed
+          # step, and without it turns a dead producer into "found nothing".
+          echo "--- .rpm metadata ---"
+          rpm -qpi "$RPM"
+          # WHAT THE PACKAGE MANAGER WILL DEMAND OF THE MACHINE, PRINTED. The
+          # config declares no dependencies — the mail engine and its Node
+          # runtime are inside the artifact and the webview stack is the
+          # machine's, the same posture as the .deb — so this is a record of what
+          # the bundler adds on its own, and the one place a reader can see it
+          # change between releases.
+          echo "--- .rpm requires ---"
+          rpm -qp --requires "$RPM"
+          RPM_FILES="$(rpm -qpl "$RPM")"
+          echo "--- .rpm contents ---"
+          printf '%s\n' "$RPM_FILES"
+          # rpm lists absolute paths, so these anchor on the leading slash where
+          # the .deb's anchor on the space that ends dpkg's columns.
+          grep -qx '/usr/bin/ohmail' <<< "$RPM_FILES"
+          grep -qx '/usr/share/applications/ohmail.desktop' <<< "$RPM_FILES"
+          grep -qE '^/usr/share/icons/hicolor/128x128/apps/.+\.png$' <<< "$RPM_FILES"
+          grep -qx '/usr/lib/ohmail/engine/bin/ohmail-engine.mjs' <<< "$RPM_FILES"
+          grep -qE '^/usr/lib/ohmail/engine/drizzle/' <<< "$RPM_FILES"
+          grep -qx '/usr/lib/ohmail/runtime/node' <<< "$RPM_FILES"
+          # AND THE RUNTIME KEPT ITS EXECUTE BIT. The same property as the
+          # .deb's, matched the same way — against the permission string, not a
+          # numeric mode: `:perms` is rpm's own renderer for it, and it prints
+          # what `ls -l` prints, which is what the .deb check above compares.
+          # Same shape, same words, so the two are read together. A runtime that
+          # lost its mode is reported to the person as a build with no Node in
+          # it, which reads as a broken install rather than as a broken package.
+          NODE_ROW="$(rpm -qp --qf '[%{FILEMODES:perms} %{FILENAMES}\n]' "$RPM" \
+            | awk '$2 == "/usr/lib/ohmail/runtime/node"')"
+          echo "node row: $NODE_ROW"
+          # An EMPTY row is its own arm, and it has to be: the two states are
+          # "rpm answered and the mode is wrong" and "the query returned
+          # nothing", and one message for both would report a mistyped format
+          # string as a lost execute bit. The file list above already asserted
+          # the member is in the package, so nothing here can be empty for an
+          # innocent reason.
+          if [ -z "$NODE_ROW" ]; then
+            echo "the .rpm mode query named no file — read the format string, not the package" >&2
+            exit 1
+          fi
+          case "$NODE_ROW" in
+            -rwxr-xr-x*) : ;;
+            *) echo "the vendored runtime is not executable inside the .rpm: $NODE_ROW" >&2; exit 1 ;;
+          esac
+          # The package name is the one word this project spells everywhere —
+          # `dnf remove ohmail` works, and it matches /usr/bin/ohmail, the .deb
+          # and the AppImage.
+          test "$(rpm -qp --qf '%{NAME}' "$RPM")" = "ohmail"
+          # ── THE ARCHITECTURE THE FILENAME CLAIMS ──────────────────────────
+          # The same assertion the .deb makes, and it is the reason the .rpm is
+          # worth querying at all: a misconfigured `runs-on` produces a complete,
+          # working package under the other architecture's name and every check
+          # above this line passes. rpm names the architecture itself. Note the
+          # spelling is the MACHINE's (`x86_64`), not Debian's — see the
+          # artifact-name contract in the header.
+          test "$(rpm -qp --qf '%{ARCH}' "$RPM")" = "x86_64"
+          # THE .rpm INSTALLS THE SAME DESKTOP ENTRY. It is configured from the
+          # same template as the .deb's (bundle.linux.rpm.desktopTemplate), and
+          # that identity is asserted in the tree by `desktop-linux-recipe.test.ts`
+          # — but a template both sections name is a fact about the config, not a
+          # check on the artifact, and the entry's `mailto:` claim is false for
+          # everyone who installs this package if the field code is missing.
+          # Extracted with rpm2cpio into a variable; `--to-stdout` writes the one
+          # member named.
+          RPM_ENTRY="$(rpm2cpio "$RPM" | cpio -i --quiet --to-stdout ./usr/share/applications/ohmail.desktop)"
+          printf '%s\n' "$RPM_ENTRY"
+          printf '%s\n' "$RPM_ENTRY" | grep -qx 'Exec=ohmail %U' || {
+            echo "the .rpm's desktop entry does not hand the URL to the app" >&2; exit 1; }
+          printf '%s\n' "$RPM_ENTRY" | grep -q '^MimeType=.*x-scheme-handler/mailto' || {
+            echo "the .rpm's desktop entry no longer claims mailto" >&2; exit 1; }
+          printf '%s\n' "$RPM_ENTRY" | grep -qx 'StartupWMClass=ohmail' || {
+            echo "the .rpm's desktop entry cannot be matched to the window" >&2; exit 1; }
 
           # ── The AppImage carries the same tree ────────────────────────────
           # Extracted rather than mounted: a runner has no FUSE.
@@ -1189,6 +1297,16 @@ jobs:
           path: build/ohmail-linux-amd64.deb
           if-no-files-found: error
 
+      # Uploaded as its own artifact rather than beside the .deb, because the
+      # install drill below downloads THIS ONE and nothing else — a two-file
+      # artifact would put a Debian package inside a Fedora container.
+      - name: Upload the .rpm
+        uses: actions/upload-artifact@v7
+        with:
+          name: ohmail-rpm-${{ github.run_number }}
+          path: build/ohmail-linux-x86_64.rpm
+          if-no-files-found: error
+
       - name: Run summary
         if: always()
         run: |
@@ -1200,7 +1318,8 @@ jobs:
             echo "| commit | \`${GITHUB_SHA:0:9}\` |"
             echo "| toolchain | $(rustc --version) · node $(node --version) |"
             echo "| runner | $(. /etc/os-release; echo "$PRETTY_NAME") $(uname -m) |"
-            for f in build/ohmail-linux-x86_64.AppImage build/ohmail-linux-amd64.deb; do
+            for f in build/ohmail-linux-x86_64.AppImage build/ohmail-linux-amd64.deb \
+                     build/ohmail-linux-x86_64.rpm; do
               [ -f "$f" ] || continue
               echo "| $(basename "$f") | \`$(sha256sum "$f" | cut -d' ' -f1)\` · $(du -h "$f" | cut -f1) |"
             done
@@ -1250,7 +1369,7 @@ jobs:
   # ==========================================================================
 
   linux-arm64:
-    name: Linux arm64 · smoke · engine · appimage + deb
+    name: Linux arm64 · smoke · engine · appimage + deb + rpm
     # GitHub's hosted arm64 Linux runner, free for public repositories. It is a
     # NATIVE machine, not emulation: everything below compiles and runs as
     # aarch64, which is what makes the checks worth running here rather than
@@ -1296,7 +1415,7 @@ jobs:
             libayatana-appindicator3-dev \
             libssl-dev \
             build-essential curl wget file patchelf desktop-file-utils \
-            xdg-utils
+            xdg-utils rpm
 
       - name: Toolchain
         run: |
@@ -1390,33 +1509,38 @@ jobs:
         env:
           NO_STRIP: "true"
         working-directory: apps/desktop
-        run: npm run app:build:engine -- --bundles appimage,deb
+        run: npm run app:build:engine -- --bundles appimage,deb,rpm
 
       - name: Name the artifacts what the download page links
         run: |
           set -euo pipefail
           B=apps/desktop/src-tauri/target/release/bundle
-          ls -la "$B/appimage" "$B/deb"
+          ls -la "$B/appimage" "$B/deb" "$B/rpm"
           APPIMAGE="$(ls "$B"/appimage/*.AppImage | head -1)"
           DEB="$(ls "$B"/deb/*.deb | head -1)"
+          RPM="$(ls "$B"/rpm/*.rpm | head -1)"
           test -s "$APPIMAGE"
           test -s "$DEB"
+          test -s "$RPM"
           mkdir -p build
           # Renamed in place, never copied — see the Windows job. The bundler's
           # own names already carry the architecture (`…_arm64.deb`,
-          # `…_aarch64.AppImage`), so the globs above match one file each; the
-          # stable names below are what the release attaches and what the update
-          # feed points at.
+          # `…_aarch64.AppImage`, `…-1.aarch64.rpm`), so the globs above match one
+          # file each; the stable names below are what the release attaches and
+          # what the update feed points at.
           mv "$APPIMAGE" build/ohmail-linux-aarch64.AppImage
           mv "$DEB" build/ohmail-linux-arm64.deb
+          mv "$RPM" build/ohmail-linux-aarch64.rpm
           chmod +x build/ohmail-linux-aarch64.AppImage
-          ls -la build/ohmail-linux-aarch64.AppImage build/ohmail-linux-arm64.deb
+          ls -la build/ohmail-linux-aarch64.AppImage build/ohmail-linux-arm64.deb \
+            build/ohmail-linux-aarch64.rpm
 
       - name: Inspect what was produced
         run: |
           set -euo pipefail
           DEB=build/ohmail-linux-arm64.deb
           APPIMAGE=build/ohmail-linux-aarch64.AppImage
+          RPM=build/ohmail-linux-aarch64.rpm
 
           echo "--- .deb control ---"
           dpkg-deb -I "$DEB"
@@ -1471,6 +1595,84 @@ jobs:
             echo "the .deb's desktop entry does not hand the URL to the app" >&2; exit 1; }
           printf '%s\n' "$DEB_ENTRY" | grep -q '^MimeType=.*x-scheme-handler/mailto' || {
             echo "the .deb's desktop entry no longer claims mailto" >&2; exit 1; }
+
+          # ══ THE .rpm CARRIES THE SAME TREE ════════════════════════════════
+          # The x86_64 job's block carries the argument for why the .rpm is
+          # opened on its own rather than inferred from the .deb beside it, and
+          # for why every listing is read into a variable first.
+          echo "--- .rpm metadata ---"
+          rpm -qpi "$RPM"
+          # WHAT THE PACKAGE MANAGER WILL DEMAND OF THE MACHINE, PRINTED. The
+          # config declares no dependencies — the mail engine and its Node
+          # runtime are inside the artifact and the webview stack is the
+          # machine's, the same posture as the .deb — so this is a record of what
+          # the bundler adds on its own, and the one place a reader can see it
+          # change between releases.
+          echo "--- .rpm requires ---"
+          rpm -qp --requires "$RPM"
+          RPM_FILES="$(rpm -qpl "$RPM")"
+          echo "--- .rpm contents ---"
+          printf '%s\n' "$RPM_FILES"
+          # rpm lists absolute paths, so these anchor on the leading slash where
+          # the .deb's anchor on the space that ends dpkg's columns.
+          grep -qx '/usr/bin/ohmail' <<< "$RPM_FILES"
+          grep -qx '/usr/share/applications/ohmail.desktop' <<< "$RPM_FILES"
+          grep -qE '^/usr/share/icons/hicolor/128x128/apps/.+\.png$' <<< "$RPM_FILES"
+          grep -qx '/usr/lib/ohmail/engine/bin/ohmail-engine.mjs' <<< "$RPM_FILES"
+          grep -qE '^/usr/lib/ohmail/engine/drizzle/' <<< "$RPM_FILES"
+          grep -qx '/usr/lib/ohmail/runtime/node' <<< "$RPM_FILES"
+          # AND THE RUNTIME KEPT ITS EXECUTE BIT. The same property as the
+          # .deb's, matched the same way — against the permission string, not a
+          # numeric mode: `:perms` is rpm's own renderer for it, and it prints
+          # what `ls -l` prints, which is what the .deb check above compares.
+          # Same shape, same words, so the two are read together. A runtime that
+          # lost its mode is reported to the person as a build with no Node in
+          # it, which reads as a broken install rather than as a broken package.
+          NODE_ROW="$(rpm -qp --qf '[%{FILEMODES:perms} %{FILENAMES}\n]' "$RPM" \
+            | awk '$2 == "/usr/lib/ohmail/runtime/node"')"
+          echo "node row: $NODE_ROW"
+          # An EMPTY row is its own arm, and it has to be: the two states are
+          # "rpm answered and the mode is wrong" and "the query returned
+          # nothing", and one message for both would report a mistyped format
+          # string as a lost execute bit. The file list above already asserted
+          # the member is in the package, so nothing here can be empty for an
+          # innocent reason.
+          if [ -z "$NODE_ROW" ]; then
+            echo "the .rpm mode query named no file — read the format string, not the package" >&2
+            exit 1
+          fi
+          case "$NODE_ROW" in
+            -rwxr-xr-x*) : ;;
+            *) echo "the vendored runtime is not executable inside the .rpm: $NODE_ROW" >&2; exit 1 ;;
+          esac
+          # The package name is the one word this project spells everywhere —
+          # `dnf remove ohmail` works, and it matches /usr/bin/ohmail, the .deb
+          # and the AppImage.
+          test "$(rpm -qp --qf '%{NAME}' "$RPM")" = "ohmail"
+          # ── THE ARCHITECTURE THE FILENAME CLAIMS ──────────────────────────
+          # The same assertion the .deb makes, and it is the reason the .rpm is
+          # worth querying at all: a misconfigured `runs-on` produces a complete,
+          # working package under the other architecture's name and every check
+          # above this line passes. rpm names the architecture itself. Note the
+          # spelling is the MACHINE's (`aarch64`), not Debian's — see the
+          # artifact-name contract in the header.
+          test "$(rpm -qp --qf '%{ARCH}' "$RPM")" = "aarch64"
+          # THE .rpm INSTALLS THE SAME DESKTOP ENTRY. It is configured from the
+          # same template as the .deb's (bundle.linux.rpm.desktopTemplate), and
+          # that identity is asserted in the tree by `desktop-linux-recipe.test.ts`
+          # — but a template both sections name is a fact about the config, not a
+          # check on the artifact, and the entry's `mailto:` claim is false for
+          # everyone who installs this package if the field code is missing.
+          # Extracted with rpm2cpio into a variable; `--to-stdout` writes the one
+          # member named.
+          RPM_ENTRY="$(rpm2cpio "$RPM" | cpio -i --quiet --to-stdout ./usr/share/applications/ohmail.desktop)"
+          printf '%s\n' "$RPM_ENTRY"
+          printf '%s\n' "$RPM_ENTRY" | grep -qx 'Exec=ohmail %U' || {
+            echo "the .rpm's desktop entry does not hand the URL to the app" >&2; exit 1; }
+          printf '%s\n' "$RPM_ENTRY" | grep -q '^MimeType=.*x-scheme-handler/mailto' || {
+            echo "the .rpm's desktop entry no longer claims mailto" >&2; exit 1; }
+          printf '%s\n' "$RPM_ENTRY" | grep -qx 'StartupWMClass=ohmail' || {
+            echo "the .rpm's desktop entry cannot be matched to the window" >&2; exit 1; }
 
           # ── The AppImage carries the same tree ────────────────────────────
           rm -rf squashfs-root
@@ -1800,6 +2002,13 @@ jobs:
           path: build/ohmail-linux-arm64.deb
           if-no-files-found: error
 
+      - name: Upload the arm64 .rpm
+        uses: actions/upload-artifact@v7
+        with:
+          name: ohmail-rpm-aarch64-${{ github.run_number }}
+          path: build/ohmail-linux-aarch64.rpm
+          if-no-files-found: error
+
       - name: Run summary
         if: always()
         run: |
@@ -1811,7 +2020,8 @@ jobs:
             echo "| commit | \`${GITHUB_SHA:0:9}\` |"
             echo "| toolchain | $(rustc --version) · node $(node --version) |"
             echo "| runner | $(. /etc/os-release; echo "$PRETTY_NAME") $(uname -m) |"
-            for f in build/ohmail-linux-aarch64.AppImage build/ohmail-linux-arm64.deb; do
+            for f in build/ohmail-linux-aarch64.AppImage build/ohmail-linux-arm64.deb \
+                     build/ohmail-linux-aarch64.rpm; do
               [ -f "$f" ] || continue
               echo "| $(basename "$f") | \`$(sha256sum "$f" | cut -d' ' -f1)\` · $(du -h "$f" | cut -f1) |"
             done
@@ -1819,6 +2029,199 @@ jobs:
             echo 'For arm64 Linux — a Raspberry Pi desktop, Asahi on Apple silicon, an arm64'
             echo 'workstation or server. Not for Omarchy, which is x86_64 only.'
             echo 'Unsigned and without a repository: `chmod +x` the AppImage before running it.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ==========================================================================
+  # THE .rpm IS INSTALLED BY A PACKAGE MANAGER, ON THE DISTRIBUTION FAMILY IT
+  # IS FOR.
+  #
+  # Every other Linux check in this file reads the artifact from OUTSIDE — the
+  # file list, the metadata, the desktop entry pulled out with rpm2cpio. All of
+  # that can be right about a package that `dnf` then refuses, or that installs
+  # its files somewhere other than where its own manifest says. The .deb has a
+  # human behind it (someone installs it before a release goes out); the .rpm
+  # arrives with none, so this is where "it installs" stops being an inference.
+  #
+  # WHAT IT PROVES: dnf accepts the package; the binary, the desktop entry, the
+  # icon, the mail engine and the vendored Node runtime land at the paths the
+  # shell resolves at runtime; the entry validates against the freedesktop
+  # specification and still carries the field code its mailto: claim depends on;
+  # the packaged engine STARTS from the installed layout using only the runtime
+  # inside the package, with no node on PATH; and `dnf remove ohmail` takes it
+  # all away again.
+  #
+  # WHAT IT DOES NOT PROVE, stated so nobody reads it as proof: that the window
+  # opens. There is no `ohmail --version` to call — the shell is a GUI program
+  # with no command line — and a bare container has no display and none of the
+  # webview stack. So the engine start is the deepest honest check available
+  # here, and it is the same one the arm64 job runs out of its AppImage. The
+  # libraries a bare Fedora is missing are PRINTED rather than asserted: this
+  # package declares no dependencies, exactly as the .deb declares none, and
+  # turning that print into a failure would be asking Fedora for a promise
+  # Debian was never asked for.
+  #
+  # A pinned base image, deliberately: an install drill whose distribution moves
+  # under it reports a Fedora change as an ohmail regression. Bump it with a
+  # release, as a decision.
+  # ==========================================================================
+  linux-rpm-install:
+    name: Linux · the .rpm installs on Fedora
+    needs: linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # The artifact the x86_64 Linux job renamed and uploaded — the exact bytes
+      # a release attaches, not a rebuild.
+      - name: Take the .rpm the Linux job produced
+        uses: actions/download-artifact@v7
+        with:
+          name: ohmail-rpm-${{ github.run_number }}
+          path: build
+
+      - name: It is the file this job means to install
+        run: |
+          set -euo pipefail
+          ls -la build
+          test -s build/ohmail-linux-x86_64.rpm
+
+      # THE DRILL IS A FILE, NOT AN INLINE STRING, and that is not tidiness.
+      # A `docker run … bash -c '<prose and shell>'` body is executable context:
+      # one apostrophe inside a comment closes the quote and the rest of the
+      # script runs as commands of the outer shell. Written to a file with a
+      # quoted heredoc, nothing in it is expanded or re-parsed by this shell.
+      - name: Write the drill
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          cat > build/rpm-install-drill.sh <<'DRILL'
+          set -euo pipefail
+
+          echo "=== the distribution this is running on ==="
+          cat /etc/fedora-release
+          rpm --eval '%{_arch}'
+
+          echo
+          echo "=== dnf installs the package ==="
+          # `dnf install` of a local path resolves it as a package rather than a
+          # repository name. Output is not piped anywhere: a reader that closes
+          # the pipe early kills the producer, and this file's own header says
+          # what that costs.
+          dnf -y install /work/ohmail-linux-x86_64.rpm
+
+          echo
+          echo "=== and the package database now holds it ==="
+          # Read back from the DATABASE (`-q`, no `p`), which is the difference
+          # between "the file said so" and "the machine did it".
+          rpm -q ohmail
+          rpm -ql ohmail
+          test "$(rpm -q --qf '%{NAME}' ohmail)" = "ohmail"
+          test "$(rpm -q --qf '%{ARCH}' ohmail)" = "x86_64"
+
+          echo
+          echo "=== the installed paths the shell resolves at runtime ==="
+          test -x /usr/bin/ohmail
+          file /usr/bin/ohmail
+          test -f /usr/share/applications/ohmail.desktop
+          test -f /usr/lib/ohmail/engine/bin/ohmail-engine.mjs
+          test -d /usr/lib/ohmail/engine/drizzle
+          test -x /usr/lib/ohmail/runtime/node
+          ICONS="$(find /usr/share/icons/hicolor -name 'ohmail.png' -type f)"
+          printf '%s\n' "$ICONS"
+          test -n "$ICONS"
+
+          echo
+          echo "=== the desktop entry, as installed ==="
+          cat /usr/share/applications/ohmail.desktop
+          # freedesktop's own validator, from desktop-file-utils. It is what a
+          # distribution's packaging review would run.
+          desktop-file-validate /usr/share/applications/ohmail.desktop
+          ENTRY="$(cat /usr/share/applications/ohmail.desktop)"
+          printf '%s\n' "$ENTRY" | grep -qx 'Exec=ohmail %U' || {
+            echo "the installed entry does not hand the URL to the app" >&2; exit 1; }
+          printf '%s\n' "$ENTRY" | grep -q '^MimeType=.*x-scheme-handler/mailto' || {
+            echo "the installed entry no longer claims mailto" >&2; exit 1; }
+          printf '%s\n' "$ENTRY" | grep -qx 'StartupWMClass=ohmail' || {
+            echo "the installed entry cannot be matched to the window" >&2; exit 1; }
+
+          echo
+          echo "=== what a bare Fedora does not supply (printed, not asserted) ==="
+          # See the job header: this package declares no dependencies and neither
+          # does the .deb. This is the record of what a desktop has to already
+          # have — every distribution that ships a GTK browser engine does.
+          ldd /usr/bin/ohmail || true
+
+          echo
+          echo "=== the packaged engine starts from the installed layout ==="
+          # No node on PATH, no display, nothing from the container's own
+          # packages: the runtime inside the package runs the engine bundle
+          # inside the package, and it has to reach `serving`. The process status
+          # is captured directly rather than through a pipe.
+          D="$(mktemp -d)"
+          set +e
+          env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME=/root \
+            OHMAIL_KEK="$(printf 'a%.0s' $(seq 64))" \
+            OHMAIL_IMAP_HOST=127.0.0.1 OHMAIL_IMAP_PORT=59999 \
+            OHMAIL_IMAP_USER=boot@local OHMAIL_MAILBOX_ADDRESS=boot@local \
+            OHMAIL_IMAP_SECURE=0 OHMAIL_DATA_DIR="$D" \
+            /usr/lib/ohmail/runtime/node /usr/lib/ohmail/engine/bin/ohmail-engine.mjs \
+            > "$D/out" 2> "$D/err" &
+          ENGINE_PID=$!
+          set -e
+          for _ in $(seq 60); do grep -q '"event":"serving"' "$D/err" && break; sleep 0.5; done
+          SERVED="$(grep -c '"event":"serving"' "$D/err" || true)"
+          kill "$ENGINE_PID" 2>/dev/null || true
+          wait "$ENGINE_PID" 2>/dev/null || true
+          echo "--- engine stderr (last 20) ---"; tail -20 "$D/err"
+          if [ "$SERVED" -lt 1 ]; then
+            echo "the packaged engine did not reach 'serving' from the installed layout" >&2
+            exit 1
+          fi
+          echo "the packaged engine served from /usr/lib/ohmail, using only the runtime inside the package"
+
+          echo
+          echo "=== dnf remove takes it away again ==="
+          # The README tells people `sudo dnf remove ohmail`. That is a claim, so
+          # it is checked: the package name is one word and the files go.
+          dnf -y remove ohmail
+          test ! -e /usr/bin/ohmail
+          test ! -e /usr/share/applications/ohmail.desktop
+          test ! -e /usr/lib/ohmail/engine/bin/ohmail-engine.mjs
+          echo "the install drill passed end to end"
+          DRILL
+          chmod +x build/rpm-install-drill.sh
+          head -5 build/rpm-install-drill.sh
+
+      - name: Install it on Fedora and start what it installed
+        run: |
+          set -euo pipefail
+          # `--pull always` so a cached layer of the same tag cannot be what this
+          # runs against. desktop-file-utils is the validator the drill calls;
+          # everything else it needs is in the base image or inside the package.
+          docker run --rm \
+            -v "$PWD/build:/work:ro" \
+            registry.fedoraproject.org/fedora:42 \
+            bash -c 'dnf -y install desktop-file-utils findutils >/dev/null && bash /work/rpm-install-drill.sh'
+
+      - name: Run summary
+        if: always()
+        run: |
+          {
+            echo '### ohmail on Fedora — the .rpm, installed by dnf'
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| commit | \`${GITHUB_SHA:0:9}\` |"
+            echo "| package | \`ohmail-linux-x86_64.rpm\` from the x86_64 Linux job |"
+            echo "| container | \`registry.fedoraproject.org/fedora:42\` |"
+            echo
+            echo 'Installs, lands its files where the shell resolves them, starts its own mail'
+            echo 'engine from the installed layout, and uninstalls. The window is not opened here.'
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ==========================================================================

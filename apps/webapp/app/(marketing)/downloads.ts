@@ -109,8 +109,17 @@ export interface PlatformDownload {
   nameKey: string;
   /** The download the button performs. */
   primary: DownloadFormat;
-  /** A second packaging of the same app, offered quietly beside the button. */
-  secondary?: DownloadFormat;
+  /**
+   * Other packagings of the same app, offered quietly beside the button.
+   *
+   * A LIST rather than one optional `secondary`, which is what this was while Linux had
+   * exactly two packagings. A third arrived — the `.rpm` for Fedora and openSUSE — and the
+   * two shapes are not equivalent: with a single slot, adding a packaging means either a
+   * `tertiary` field or dropping one of the two already there, and both of those are edits
+   * that reach into the component. With a list, a packaging is one entry here and the page
+   * renders what it is given. The order is the order they are shown in.
+   */
+  alternates?: readonly DownloadFormat[];
 }
 
 /**
@@ -138,11 +147,26 @@ export const DOWNLOADS: readonly PlatformDownload[] = [
       url: "https://github.com/trafficflowhq/ohmail/releases/latest/download/ohmail-linux-x86_64.AppImage",
       labelKey: "linuxFormat",
     },
-    secondary: {
-      asset: "ohmail-linux-amd64.deb",
-      url: "https://github.com/trafficflowhq/ohmail/releases/latest/download/ohmail-linux-amd64.deb",
-      labelKey: "linuxFormatAlt",
-    },
+    /*
+     * THE PACKAGE-MANAGER FORMATS, x86_64 ONLY — deliberately, and for the reason the
+     * AppImage above it is x86_64 only: a browser cannot tell the two Linux architectures
+     * apart — Chrome reports the same 64-bit Linux user-agent on an arm64 machine as on an
+     * Intel one — so a link the page chooses is an x86_64 link whatever the hardware is. The
+     * release attaches all four Linux packages, and the README's table is where somebody on
+     * aarch64 is sent.
+     */
+    alternates: [
+      {
+        asset: "ohmail-linux-amd64.deb",
+        url: "https://github.com/trafficflowhq/ohmail/releases/latest/download/ohmail-linux-amd64.deb",
+        labelKey: "linuxFormatDeb",
+      },
+      {
+        asset: "ohmail-linux-x86_64.rpm",
+        url: "https://github.com/trafficflowhq/ohmail/releases/latest/download/ohmail-linux-x86_64.rpm",
+        labelKey: "linuxFormatRpm",
+      },
+    ],
   },
   {
     id: "windows",

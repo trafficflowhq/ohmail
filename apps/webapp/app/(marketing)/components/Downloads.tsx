@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Reveal } from "./Reveal";
 import {
@@ -35,10 +35,11 @@ import {
  *    reachability — a wrong guess costs a glance, not a download. The read happens in an
  *    effect so the server-rendered markup is the same for everyone and the page can stay a
  *    static, CDN-cacheable route.
- *  · **Linux gets two affordances, one button.** AppImage is the primary (it runs anywhere
- *    without a package manager); the .deb sits beside it as a text link for people who
- *    want their system to own the install. Two equal buttons would have made Linux look
- *    like two products.
+ *  · **Linux gets one button and the packages beside it.** AppImage is the primary (it
+ *    runs anywhere without a package manager); the `.deb` and the `.rpm` sit beside it as
+ *    text links for people who want their system to own the install. Equal buttons would
+ *    have made Linux look like three products, and the list is rendered from the manifest
+ *    so a fourth packaging is an entry there rather than a change here.
  *
  * ── THE MOBILE ROW ────────────────────────────────────────────────────────────────────
  *
@@ -99,14 +100,17 @@ export function Downloads() {
               </a>
               <p className="l-dl-fmt">
                 {t(p.primary.labelKey)}
-                {p.secondary ? (
-                  <>
+                {(p.alternates ?? []).map((f) => (
+                  /* Keyed by the asset name, which is the one field the manifest
+                     guarantees is unique across the whole download surface — the
+                     release cannot attach two files under one name. */
+                  <Fragment key={f.asset}>
                     {" · "}
-                    <a href={p.secondary.url} rel="noreferrer" download>
-                      {t(p.secondary.labelKey)}
+                    <a href={f.url} rel="noreferrer" download>
+                      {t(f.labelKey)}
                     </a>
-                  </>
-                ) : null}
+                  </Fragment>
+                ))}
               </p>
               {/* Rendered only for the guessed platform, and only after mount. It is a
                   label on a column that is otherwise identical to its neighbours — the
