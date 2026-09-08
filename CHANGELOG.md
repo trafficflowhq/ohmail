@@ -271,6 +271,26 @@ saying "⌘K" to everyone. It reads the visitor's own keyboard now, like the cap
 and the shortcut list said "Go to the Ohbox" — the same instruction, one word apart, in the two
 places you go looking for it. Both read the same sentence now, and so do Reads and Receipts.
 
+### A window left open no longer grows, and a parked card can be unparked
+
+**A desktop window left open stops growing in memory while it sits idle.** The shell keeps a
+memoized callback for every action, so the same function can be handed back on renders where
+nothing it depends on has moved. One reference like that kept the entire render it was created in
+alive — including everything that render had derived over the whole mailbox — and the window
+gained one such retained render per update, releasing none of them. Better dependency lists cannot
+fix that, because the problem is not which render's function survives but that any surviving
+function holds a whole render with it. Every callback in the shell now keeps a stable identity and
+reads current values through a reference, so a callback that outlives its render keeps nothing else
+alive.
+
+**A message parked from the reading pane can be unparked from the same card.** Opening a message in
+Reads or Receipts and pressing Park moved it, but the button did not change: the card was still
+holding the copy of the message it had been drawn with. Pressing Park again let that stale copy
+decide, and it still looked unparked, so the message was parked a second time instead of being put
+back. Cards are skipped when nothing they draw has changed, and messages were compared by id alone
+— right for a subject or a sender, wrong for the three fields the action bar draws and the message
+can change. Those three are now compared at the values the bar reads.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
