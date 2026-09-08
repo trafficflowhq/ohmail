@@ -213,6 +213,7 @@ import { ReadsView, type ReadsChipState } from "../views/ReadsView";
 import { ReceiptsView } from "../views/ReceiptsView";
 import { ScreenerView } from "../views/ScreenerView";
 import { SearchView } from "../views/SearchView";
+import { AddressView } from "../views/AddressView";
 import { SettingsView, type MailboxEntity, type NotificationsMeta, type PaneId } from "../views/SettingsView";
 import { TagView } from "../views/TagView";
 import { FolderView } from "../views/FolderView";
@@ -7549,6 +7550,47 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
                   else if (back.view === "screener") goScreener(back.screenerSegment);
                   else if (back.view === "triage") goTriage(back.triagePile);
                   else go(back.view);
+                }}
+              />
+            ) : null}
+
+            {/**
+              * `#/address/<addr>` — EVERYTHING FROM AND TO ONE CORRESPONDENT.
+              *
+              * The route parsed, the view existed, and every address control linked to it before
+              * this branch: `effectiveView` had no `address` case, so following an address put
+              * NOTHING on the stage under a URL naming a person. Nothing failed anywhere — the
+              * router was right, the view's own suite was green over a hand-mounted `AddressView`,
+              * and the address bar said what had been asked for.
+              *
+              * Seven props and no derivation here. `AddressView` composes the two halves of the
+              * answer itself through `shell/address-view.ts`, so this is a mount and not a place
+              * where a projection is computed: a whole-mirror derivation in the same render scope
+              * as this file's memoized callbacks is what the webview leak was made of.
+              */}
+            {effectiveView === "address" ? (
+              <AddressView
+                engine={engine}
+                version={version}
+                now={now}
+                /* `parseHash` refuses an address branch with an empty segment, so this fallback
+                   is unreachable from the router — and it is the shape the contract states a
+                   corner for (a blank address is an answered question, not a pending one), which
+                   is why it is written rather than asserted away with a `!`. */
+                address={route.address ?? ""}
+                onOpen={(hit: SearchHit) => openMessage(hit.message)}
+                /* The same map Search labels a hit's chip from — "where do I go to find this
+                   again?", which for a History message is not the folder. */
+                placeOf={consentView?.placeOf}
+                /* Escape is the step BACK, not a destination: `goAddress` is a hash assignment
+                   and stacks a history entry (see `routing.ts`), so a reader who followed an
+                   address out of Reads is returned to Reads and the keystroke agrees with the
+                   browser's own Back. A tab whose only entry IS this hash — a pasted link, a
+                   reload — has nothing behind it, and stepping back there would leave the
+                   product on a keystroke meaning "close this"; the Ohbox is the floor. */
+                onExit={() => {
+                  if (window.history.length > 1) window.history.back();
+                  else go("ohbox");
                 }}
               />
             ) : null}
