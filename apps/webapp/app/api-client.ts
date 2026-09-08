@@ -1054,6 +1054,31 @@ export interface MailboxDTO {
    */
   pendingMoves?: number;
   /**
+   * WHY those filings are outstanding — the same rows split by the operand that decides
+   * (mail 0097).
+   *
+   * The field above is a COUNT, and it was the only thing on this wire, so the strip rendered one
+   * sentence for every reason a filing can be outstanding — including two in which the sentence's
+   * own second clause ("the server is catching up") is FALSE: a deferred row is not being caught
+   * up with, and on a reader install the server is not the organizer at all.
+   *
+   * OPTIONAL on {@link pendingMoves}' rule and for the same reason: absent is a server that
+   * predates the field, and the client then renders exactly what it always rendered. `app/shell/
+   * mail-state.ts` owns the arm and the closed set of refusal classes; the members are typed
+   * loosely here for the reason `syncBlockedReason` is — the set's client-side owner is that
+   * module, which may not import this file.
+   */
+  filing?: {
+    due: number;
+    deferred: number;
+    oldestPendingAt: string | null;
+    nextAttemptAt: string | null;
+    attempts: number;
+    lastRefusalClass: string | null;
+    asOf: string;
+    lastCycleAt: string | null;
+  };
+  /**
    * WHY a `disabled` mailbox is disabled, when the lease decided it and not a person (mail
    * 0027) — the THIRD time this gap has bitten, and the most expensive of the three.
    *

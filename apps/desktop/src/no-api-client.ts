@@ -201,6 +201,16 @@ export interface MailboxDTO {
     syncBlockedReason?: string | null;
     syncBlockedSince?: string | null;
     pendingMoves?: number;
+    filing?: {
+        due: number;
+        deferred: number;
+        oldestPendingAt: string | null;
+        nextAttemptAt: string | null;
+        attempts: number;
+        lastRefusalClass: string | null;
+        asOf: string;
+        lastCycleAt: string | null;
+    };
     disabledReason?: string | null;
     createdAt?: string;
     initialImportCompletedAt?: string | null;

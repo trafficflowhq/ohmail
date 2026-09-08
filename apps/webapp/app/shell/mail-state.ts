@@ -859,6 +859,15 @@ export interface MailboxFacts {
    */
   pendingMoves?: number;
   /**
+   * THE SAME OUTSTANDING FILINGS, SPLIT BY THE OPERAND THAT DECIDES — see {@link FilingFacts}.
+   *
+   * OPTIONAL on {@link pendingMoves}' rule and read with a presence test, never `?? {}`: ABSENT is
+   * a server older than the field, and the arm then runs on the legacy count alone and produces
+   * exactly the sentence it always produced. Inventing zeros here would report "nothing is
+   * deferred" about a deployment that never said.
+   */
+  filing?: FilingFacts;
+  /**
    * HOW MUCH MAIL THE SERVER SAYS IS IN THIS MAILBOX — the first pull's denominator (mail 0083),
    * Σ `mailbox_folders.server_exists` over the folders a cycle has opened.
    *
@@ -1659,6 +1668,16 @@ export interface MailState {
    */
   pending: number;
   /**
+   * `filing` only — WHY those filings are outstanding, or `null` when the arm has not fired OR
+   * when no live mailbox reported the aggregate.
+   *
+   * The second half is the load-bearing one: `null` beside `key === "filing"` means the servers
+   * behind this account sent the COUNT and not the split, so the surface renders the sentence it
+   * always rendered. A renderer that assumed this object whenever the key was `filing` would
+   * paint an empty reason over an older deployment.
+   */
+  filing: FilingReport | null;
+  /**
    * **MAY AN EMPTY LIST BE STATED AS A SETTLED FACT?**
    *
    * ── THE DEFECT ──────────────────────────────────────────────────────────────────────────
@@ -1731,6 +1750,7 @@ const QUIET: MailState = {
   slow: false,
   screenerCandidate: false,
   pending: 0,
+  filing: null,
   // Overwritten for every state by `deriveMailState`'s wrapper — see {@link MailState.settled}.
   // `true` here so that a `QUIET` used directly as a resting value never withholds a pane's
   // ordinary empty state.
@@ -1754,6 +1774,261 @@ const QUIET: MailState = {
  * silence this whole module exists to end.
  */
 export const AWAITING_SLOW_MS = 600_000;
+
+/**
+ * ═══ WHY AN OUTSTANDING FILING IS OUTSTANDING — the four situations one sentence covered ═════
+ *
+ * Reported from real use: this strip read "Filing 1 message on your mail server… <address> · your
+ * decisions are already applied here; the server is catching up." for about ten minutes while
+ * nothing changed on the mailbox, then cleared by itself. Twice, on two mailboxes.
+ *
+ * The COUNT was right both times — one `folder_state` row really was outstanding — and
+ * {@link MailboxFacts.pendingMoves} is the only field the arm could read, so one sentence had to
+ * cover every reason a row can be outstanding. Three of the four are not "the server is catching
+ * up", and one of them says something FALSE:
+ *
+ *  · WORKING — the organizer has not reached this mailbox in its rotation yet. A 60 s tick queues
+ *    one serialized pass and each mailbox gets one bounded turn in it, so a wait of a minute or
+ *    two is the ordinary shape of the handoff. The honest version says when the last pass
+ *    finished, which is the difference between "mine is next" and "nothing is running".
+ *  · WAITING — the server REFUSED the move and the retry is scheduled. The row is DEFERRED: it is
+ *    absent from the reconciler's queue until `next_attempt_at`, so nothing is catching up.
+ *  · STUCK — refused more than once, or outstanding longer than a rotation can account for.
+ *  · SOMEBODY ELSE FILES IT — a reader install. The reconcile pass is skipped for a reader, so
+ *    the decisions made here are applied by whichever install holds the mailbox, on its own
+ *    schedule. "The server is catching up" is false by construction: the server is not the
+ *    organizer, and on a mailbox held by a machine that is asleep nothing is coming at all.
+ */
+export type FilingArm = "working" | "waiting" | "stuck" | "elsewhere";
+
+/**
+ * The aggregate `GET /mailboxes` reports for one mailbox's outstanding filings.
+ *
+ * OPTIONAL on {@link MailboxFacts}, and ABSENT is "this build cannot tell" — the same contract
+ * {@link MailboxFacts.pendingMoves} states, and the reason the legacy count is still read: an
+ * older server sends the number alone, and the arm must then behave exactly as it did before this
+ * field existed rather than going silent or inventing a reason.
+ */
+export interface FilingFacts {
+  /** Outstanding filings the next reconcile turn will pick up. */
+  due: number;
+  /** Outstanding filings that are asleep — refused, retry scheduled ahead. */
+  deferred: number;
+  /** When the oldest outstanding filing was written, or null when none is. */
+  oldestPendingAt: string | null;
+  /** When the soonest deferred filing may be attempted again, or null. */
+  nextAttemptAt: string | null;
+  /** The highest refusal count among the outstanding filings. */
+  attempts: number;
+  /** Why the worst-off outstanding filing was refused, or null. A CLOSED set on the wire. */
+  lastRefusalClass: string | null;
+  /** When this was read. The strip states it rather than running a clock over a stale figure. */
+  asOf: string;
+  /** When the organizer's last pass finished, or null where there is no heartbeat to read. */
+  lastCycleAt: string | null;
+}
+
+/** What the strip renders once the filing arm has fired. See {@link FilingArm}. */
+export interface FilingReport {
+  arm: FilingArm;
+  /** Outstanding filings across the live mailboxes — `due + deferred`. */
+  count: number;
+  /** How many of {@link count} are asleep. */
+  deferred: number;
+  /** The refusal class, narrowed to the closed set this build knows, or null. */
+  reason: FilingRefusalReason | null;
+  /** When the soonest retry is due, verbatim, or null. */
+  nextAttemptAt: string | null;
+  /** Whole minutes the oldest outstanding filing has waited, or null. */
+  waitedMinutes: number | null;
+  /** Whole seconds since the organizer's last pass finished, or null. */
+  lastPassSeconds: number | null;
+  /** For `elsewhere`: who files this mailbox, and whether they are still renewing the claim. */
+  who: { kind: string | null; name: string | null; stopped: boolean } | null;
+  /** When the facts behind this were read — the strip says "as of HH:MM". */
+  asOf: string | null;
+}
+
+/**
+ * The refusal classes this build renders a sentence for.
+ *
+ * The SERVER owns the closed set (`FILING_REFUSAL_CLASSES` in `@trafficflow/db`) and this client
+ * re-declares it, exactly as {@link SYNC_BLOCK_REASONS} re-declares its own: the shell may not
+ * import the server's packages, and a fifth member during a rolling deploy is a real possibility.
+ * An unrecognised value therefore becomes `unknown`, which HAS a sentence ("your server would not
+ * say why") — silence there would restore the invisibility this whole arm exists to end.
+ */
+export const FILING_REFUSAL_REASONS = [
+  "refused", "no_such_folder", "read_only", "over_quota", "unknown",
+] as const;
+
+export type FilingRefusalReason = (typeof FILING_REFUSAL_REASONS)[number];
+
+function filingReason(v: string | null): FilingRefusalReason | null {
+  if (v === null) return null;
+  return (FILING_REFUSAL_REASONS as readonly string[]).includes(v)
+    ? (v as FilingRefusalReason)
+    : "unknown";
+}
+
+/**
+ * How long one serialized reconcile rotation legitimately takes, as this strip must assume.
+ *
+ * NOT a configuration read and not a claim about a particular deployment: the worker's tick queues
+ * one pass over every mailbox, each gets one bounded turn, and the source's own doorbell figure
+ * puts a busy deployment's pass at about four minutes (longer on the first rotation after a
+ * restart, where every turn is a cold one). This is the floor the stuck threshold has to clear.
+ */
+export const FILING_ROTATION_ESTIMATE_MS = 240_000;
+
+/**
+ * How long an outstanding filing may wait before the strip calls it STUCK rather than WORKING.
+ *
+ * Five minutes, and the arithmetic is the whole justification: it must EXCEED
+ * {@link FILING_ROTATION_ESTIMATE_MS}, or a mailbox waiting its ordinary turn would be reported as
+ * stuck — a false alarm on the healthy path, which is how a warning becomes something people learn
+ * to ignore. A test asserts the inequality rather than the value, so the two can only move
+ * together.
+ *
+ * DATA-DRIVEN AND NEVER A FLAG: the operand is the row's own `updated_at`, which is the
+ * reconciler's queue order and the instant the intent was written. Nothing here reads a setting,
+ * so there is no state to get out of step with the rows.
+ */
+export const FILING_STUCK_MS = 300_000;
+
+/**
+ * How many refusals make an outstanding filing STUCK regardless of how long it has waited.
+ *
+ * Two, because the retry ladder's first two rungs are one minute and five: a row that has been
+ * refused twice has been refused across a gap the server had every chance to recover in, and the
+ * next rung is fifteen minutes. One refusal is WAITING — the common "refusal" is a folder briefly
+ * read-only during the provider's own maintenance, and calling that stuck would be alarming about
+ * something that is about to fix itself.
+ */
+export const FILING_STUCK_ATTEMPTS = 2;
+
+/**
+ * WHICH OF THE FOUR SENTENCES, over every live mailbox that reported the aggregate.
+ *
+ * ── ONE REPORT FOR THE ACCOUNT, AND THE WORST ARM WINS ──────────────────────────────────────
+ *
+ * The strip makes ACCOUNT-WIDE statements (`awaiting`'s `every`, and the address withheld above
+ * whenever more than one mailbox is involved), so two mailboxes with outstanding filings produce
+ * one sentence. Which one is decided by severity and not by recency: a mailbox whose filing has
+ * been refused four times is the fact worth a person's attention even while another mailbox is
+ * filing normally. Reporting the calmer of two states because it happened to come second is the
+ * inverse of the defect this whole arm exists to fix.
+ *
+ * The OPERANDS are aggregated across the mailboxes the winning arm covers — the longest wait, the
+ * soonest retry, the highest attempt count — so no number in the sentence is about a different
+ * mailbox from the one the arm chose.
+ *
+ * Returns `null` when NO live mailbox carries the aggregate. That is a real state and not an
+ * empty one: every deployment older than the field sends the count alone, and the caller then
+ * renders the sentence it always rendered rather than an arm with no reason in it.
+ */
+function filingReportOf(live: MailboxFacts[], now: number): FilingReport | null {
+  const rows = live.filter((m): m is MailboxFacts & { filing: FilingFacts } =>
+    m.filing !== undefined && m.filing !== null);
+  if (rows.length === 0) return null;
+
+  const count = rows.reduce((n, m) => n + m.filing.due + m.filing.deferred, 0);
+  const deferred = rows.reduce((n, m) => n + m.filing.deferred, 0);
+  const attempts = rows.reduce((n, m) => Math.max(n, m.filing.attempts), 0);
+  const oldestPendingAt = earliest(rows.map((m) => m.filing.oldestPendingAt));
+  const nextAttemptAt = earliest(rows.map((m) => m.filing.nextAttemptAt));
+  // The NEWEST read across the mailboxes: they are polled in one request, so these agree in
+  // practice, and where they do not the most recent is the honest "as of".
+  const asOf = rows.reduce<string | null>(
+    (best, m) => (best === null || m.filing.asOf > best ? m.filing.asOf : best), null,
+  );
+  const lastCycleAt = rows.reduce<string | null>(
+    (best, m) => {
+      const at = m.filing.lastCycleAt;
+      if (at === null) return best;
+      return best === null || at > best ? at : best;
+    }, null,
+  );
+  const reason = filingReason(
+    rows.map((m) => m.filing.lastRefusalClass).find((c) => c !== null) ?? null,
+  );
+  const waitedMinutes = minutesSince(oldestPendingAt, now);
+  const lastPassSeconds = secondsSince(lastCycleAt, now);
+  const base = {
+    count, deferred, reason, nextAttemptAt, waitedMinutes, lastPassSeconds, who: null, asOf,
+  } as const;
+  if (count === 0) return { ...base, arm: "working", reason: null, who: null };
+
+  /* ── WHO FILES THIS MAILBOX, WHEN IT IS NOT US ─────────────────────────────────────────────
+   *
+   * A READER's decisions are applied by the install that HOLDS the mailbox: `reconcileFolders`
+   * is skipped for a reader, so nothing on our side is going to file these, ever. That makes
+   * "the server is catching up" false by construction — the server is not the organizer — and
+   * on a mailbox held by a machine that is asleep it is false twice over.
+   *
+   * OUTRANKS the three arms below because it changes WHO the sentence is about. A reader whose
+   * holder has stopped renewing is also "stuck", but naming a schedule and a refusal class would
+   * describe a retry ladder on this side that is not running.
+   *
+   * A HOLDER MUST BE NAMED, not merely "the role says reader": the holder columns are rewritten
+   * by the per-cycle peek and go ALL NULL whenever it finds an empty claim folder, so a genuine
+   * stand-down decays into the holder-less shape on its own. `readerStandDown` records the same
+   * rule for the same reason, and claiming "another install files this" over a mailbox nobody
+   * holds would be a false statement about a machine. A holder-less reader therefore falls
+   * through to the ordinary arms, which describe our own side and are true there. */
+  const elsewhere = rows.find((m) =>
+    m.organizerRole === "reader"
+    && (m.filing.due + m.filing.deferred) > 0
+    && Boolean(m.organizedBy && (m.organizedBy.kind || m.organizedBy.name)));
+  if (elsewhere) {
+    return {
+      ...base,
+      arm: "elsewhere",
+      // The SCHEDULE is withheld deliberately: it is our ladder, and it is not what these rows
+      // are waiting for.
+      reason: null, nextAttemptAt: null,
+      who: {
+        kind: elsewhere.organizedBy?.kind ?? null,
+        name: elsewhere.organizedBy?.name?.trim() ? elsewhere.organizedBy.name : null,
+        // `stopped` is the holder no longer renewing its claim — a different situation from a
+        // holder that is renewing and simply has not run its own pass yet, and the two get
+        // different sentences. ABSENT reads as NOT stopped, the safe direction: telling somebody
+        // their other machine is off when it is on is the more alarming error.
+        stopped: elsewhere.organizerState === "stopped",
+      },
+    };
+  }
+
+  /* STUCK — refused past the ladder's early rungs, OR outstanding longer than a rotation can
+   * account for. The second arm is not redundant: a TRANSPORT failure writes NOTHING (no attempt
+   * count, no deferral), so a row can sit due-now for ever with `attempts` at 0 while the mail
+   * host is unreachable, and keying stuck on refusals alone would leave exactly that case saying
+   * "filing" indefinitely. See {@link FILING_STUCK_MS} for why the wait must exceed the rotation
+   * estimate. */
+  if (attempts >= FILING_STUCK_ATTEMPTS
+      || (waitedMinutes !== null && waitedMinutes * 60_000 >= FILING_STUCK_MS)) {
+    return { ...base, arm: "stuck" };
+  }
+
+  /* WAITING — a refusal is recorded and the retry is scheduled ahead. Keyed on `deferred` rather
+   * than on `attempts`, because attempts SURVIVE the deferral expiring: a row refused once whose
+   * next attempt has already come round is due again and is being worked on, which is WORKING.
+   * The class stays on the report either way — it is what the row has been through, not a
+   * schedule. */
+  if (deferred > 0) return { ...base, arm: "waiting" };
+
+  /* WORKING — the ordinary shape of the handoff. `lastPassSeconds` is the half that makes it a
+   * fact rather than reassurance. */
+  return { ...base, arm: "working" };
+}
+
+/** Whole seconds since an ISO instant, floored, never negative. */
+function secondsSince(iso: string | null, now: number): number | null {
+  if (iso === null) return null;
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return null;
+  return Math.max(0, Math.floor((now - t) / 1_000));
+}
 
 /** Whole minutes since an ISO instant, floored, never negative. */
 function minutesSince(iso: string | null, now: number): number | null {
@@ -2159,18 +2434,38 @@ function climb(input: MailStateInputs): MailState {
   // halves are about different things.
   const filing = live.filter((m) => typeof m.pendingMoves === "number" && m.pendingMoves > 0);
   const outstanding = filing.reduce((n, m) => n + (m.pendingMoves ?? 0), 0);
-  if (outstanding > 0) {
+  // ── AND *WHY* THEY ARE OUTSTANDING, WHEN THE SERVER CAN SAY (mail 0097) ────────────────
+  //
+  // The count above fires the arm; this decides which of four sentences it renders. See
+  // {@link FilingArm} for the reported defect — one sentence for four situations, one of them
+  // saying something FALSE.
+  //
+  // The report is derived over the mailboxes that CARRY the aggregate, which may be a subset of
+  // `live` during a rolling deploy. `filingReportOf` returns null when none does, and the arm
+  // then renders exactly what it rendered before this field existed.
+  const report = filingReportOf(live, now);
+  if (outstanding > 0 || (report !== null && report.count > 0)) {
     return {
       ...QUIET,
       key: "filing",
       // The mirror is not the subject here, but every state carries it for context.
       count: mirrored,
-      pending: outstanding,
+      // The LEGACY count where it exists, and the report's own total where the aggregate is the
+      // only thing on the wire. They are the same number on a current server (`due + deferred`
+      // IS `pendingMoves`); they differ only for a mailbox whose row predates one of the two,
+      // and taking the larger would double-count nothing while taking `outstanding` alone would
+      // report zero for a client whose server sends the split and not the count.
+      pending: Math.max(outstanding, report?.count ?? 0),
       address: filing.length === 1 ? filing[0]!.address : null,
+      filing: report,
       // TIME-DEPENDENT, so the strip runs its own clock: nothing in the MIRROR changes when the
       // worker drains this backlog — `folder_state` is server-side and `/sync` carries no
       // change for a move that has already been applied locally — so a state keyed only on
       // mirror movement would never re-paint and the number would freeze at whatever it was.
+      //
+      // The clock is why {@link FilingFacts.asOf} exists. The facts behind it are re-fetched
+      // every 30 s and on nothing else, so a clock alone was animating a number up to thirty
+      // seconds stale; the surface states when it last looked instead of implying it is live.
       clock: true,
     };
   }

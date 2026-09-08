@@ -113,6 +113,13 @@ export function toMailboxFacts(m: MailboxDTO): MailboxFacts {
     // turn "this build cannot tell" into "nothing is outstanding" — the wrong answer in
     // precisely the case the field was added for.
     pendingMoves: m.pendingMoves,
+    // WHY those filings are outstanding. SPREAD rather than assigned, which is a stronger rule
+    // than the line above needs and the right one here: `filing` is an OBJECT, and assigning
+    // `m.filing` when the wire did not carry one would put an explicit `undefined` on the facts —
+    // indistinguishable from absent at every reader, but a key the desktop census counts as
+    // present. A server that predates the field must produce a fact object with no `filing` key
+    // at all, so the arm falls back to the count alone.
+    ...("filing" in m ? { filing: m.filing } : {}),
     // How much mail the SERVER says is in there (mail 0083) — the first pull's denominator.
     // FORWARDED UNTOUCHED, on the same rule as the line above and with the sharpest version of
     // its consequence: a `?? 0` here would turn "no folder of this mailbox has been counted

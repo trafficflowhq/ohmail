@@ -85,6 +85,15 @@ describe("the desktop mailbox-facts seam", () => {
       organizerState: "held",
       organizeConsentedAt: "2026-09-02T09:00:00.000Z",
       pendingMoves: 4,
+      /* The filing SPLIT (mail 0097) — the engine answers it on every row. `lastCycleAt` is null
+         here as it is in production on this door: there is no heartbeat, because the organizer is
+         this process. Every member carries a value distinguishable from a default so a `?? {}` or
+         a dropped member at the seam is visible. */
+      filing: {
+        due: 3, deferred: 1, oldestPendingAt: "2026-09-02T10:31:00.000Z",
+        nextAttemptAt: "2026-09-02T10:51:00.000Z", attempts: 2, lastRefusalClass: "read_only",
+        asOf: "2026-09-02T10:46:27.719Z", lastCycleAt: null,
+      },
       serverMessageCount: 4242,
       smtpMaxSizeBytes: 26_214_400,
       /* Why sending is not set up — the local door records it when only the SUBMISSION dial is

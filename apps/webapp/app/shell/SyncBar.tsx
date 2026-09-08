@@ -80,7 +80,27 @@ import { displayAddress } from "./idn";
 // The stale label's time — "Mon 18:40" in the app's own locale, through the one stamp
 // formatter the waterline already uses rather than a second spelling of the same idea.
 import { waterlineStamp } from "./format";
-import { activeFormatLocale } from "./locale";
+import { activeFormatLocale, activeFormatZone } from "./locale";
+import { clock } from "@ohmail/client-engine";
+
+/**
+ * "14:32" in the reader's own zone — the `as of` and `next try at` halves of the filing
+ * sentences.
+ *
+ * The engine's own `clock`, not a second `Intl` call: every stamp in this product goes through
+ * one formatter reading one zone seam (`activeFormatZone`), and a strip that named a different
+ * hour from the rows beneath it is the defect `waterlineStamp`'s own comment records — reached by
+ * asking `Intl` for a pattern with no `timeZone`.
+ *
+ * A TIME AND NOT A DATE, deliberately: both sentences are about the last few minutes, and a date
+ * on them would invite reading the strip as an event log. An unparseable instant answers null and
+ * the clause is dropped, because "as of Invalid Date" is worse than no clause.
+ */
+function clockTime(iso: string): string | null {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return null;
+  return clock(at, activeFormatZone());
+}
 
 /**
  * The mailbox address a strip arm names, readably — and `null` straight through, because two of
@@ -301,7 +321,72 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean): 
         link: settings,
       };
 
-    case "filing":
+    case "filing": {
+      /* ── FOUR SENTENCES, NOT ONE (mail 0097) ─────────────────────────────────────────────────
+       *
+       * This arm rendered one sentence — "Filing N messages on your mail server… · your decisions
+       * are already applied here; the server is catching up." — for every reason a filing can be
+       * outstanding, and the second clause was FALSE in two of them: a deferred row is not being
+       * caught up with, and on a reader install the server is not the organizer at all.
+       * `mail-state.ts`'s {@link FilingArm} carries the reported sighting and the four cases.
+       *
+       * `state.filing === null` is the OLDER SERVER and it keeps the original pair of sentences,
+       * minus the false clause: the count is still true, and a build that cannot say why must not
+       * be made to guess. */
+      const f = state.filing;
+      const asOf = f?.asOf ? clockTime(f.asOf) : null;
+      const where = state.address && asOf
+        ? t("filingWhere", { address: displayAddress(state.address), at: asOf })
+        : null;
+
+      /* WHO FILES IT. Never `warn`: nothing has failed and nothing on this side is late — the
+       * mailbox is organized somewhere else, which is a configuration the person chose. Never
+       * `busy` either, because this install is not doing anything about it. */
+      if (f?.arm === "elsewhere") {
+        const name = f.who?.name;
+        const title = f.who?.kind === "cloud"
+          ? t("filingElsewhereCloud")
+          : f.who?.kind === "local" && name
+            ? t(f.who.stopped ? "filingElsewhereLocalStopped" : "filingElsewhereLocal", { name })
+            : t("filingElsewhereUnknown");
+        return {
+          tone: "", role: "status", warn: false, busy: false,
+          title,
+          detail: t("filingElsewhere", { count: f.count }),
+          // Settings → Mailboxes is where the organizing can be moved to this install, which is
+          // the one thing a person can do about this.
+          link: settings,
+        };
+      }
+
+      /* STUCK. The one arm that WARNS, and it is data-driven: the oldest outstanding filing has
+       * waited past what a rotation can account for, or the ladder has refused it twice. */
+      if (f?.arm === "stuck") {
+        return {
+          tone: "warn", role: "status", warn: true, busy: false,
+          title: t("filingStuck", { count: f.count, minutes: f.waitedMinutes ?? 0 }),
+          detail: t("filingStuckWhy", { reason: t(`filingReason_${f.reason ?? "unknown"}`) }),
+          link: settings,
+        };
+      }
+
+      /* WAITING. Calm, and NOT busy: nothing is in flight — the row is asleep until its retry.
+       * A spinner over a scheduled wait is the animation-implies-progress lie one arm up. */
+      if (f?.arm === "waiting") {
+        return {
+          tone: "", role: "status", warn: false, busy: false,
+          title: t("filingWaiting", { count: f.count }),
+          detail: t("filingWaitingWhy", {
+            reason: t(`filingReason_${f.reason ?? "unknown"}`),
+            // An unparseable or absent instant becomes an em dash rather than "Invalid Date" or
+            // a dropped placeholder: the sentence still says a retry is scheduled, which is the
+            // true part, and the clause that cannot be filled reads as missing.
+            at: (f.nextAttemptAt && clockTime(f.nextAttemptAt)) || "—",
+          }),
+          link: settings,
+        };
+      }
+
       return {
         // BUSY, not `warn`. Nothing has failed: the API files by writing `folder_state` and the
         // worker applies it on its next cycle, so a backlog is the ordinary shape of that
@@ -313,13 +398,26 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean): 
         // something they can see is already done. What is outstanding is the copy of that
         // decision on their own IMAP host.
         title: t("filing", { count: state.pending }),
-        detail: state.address ? t("filingWhere", { address: displayAddress(state.address) }) : null,
+        // THE LAST PASS is what separates a turn from a stall, and it is preferred over the
+        // address line when both are available: which mailbox it is matters less than whether
+        // anything is running. Absent (no heartbeat — every local tier) the line falls back to
+        // the address, and absent that too there is no second line, which is the honest shape
+        // for a build that can only report the count.
+        detail: f?.lastPassSeconds !== null && f?.lastPassSeconds !== undefined && asOf
+          ? t("filingPass", {
+              ago: f.lastPassSeconds < 90
+                ? t("filingPassSeconds", { seconds: f.lastPassSeconds })
+                : t("filingPassMinutes", { minutes: Math.floor(f.lastPassSeconds / 60) }),
+              at: asOf,
+            })
+          : where,
         // THE RETRY AFFORDANCE. If the host is refusing connections this does not drain on its
         // own, and Settings → Mailboxes is where the mailbox's own state and its reconnect live.
         // The link is the difference between a sentence a person can act on and one they can
         // only watch.
         link: settings,
       };
+    }
 
     case "noMailbox":
       // Reachable only when `GET /mailboxes` ANSWERED and answered zero. A probe that failed

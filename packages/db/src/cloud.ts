@@ -350,3 +350,15 @@ export {
   type AttachmentStagingStorage, type AttachmentStagingStorageConfig,
   type S3StagingStorageConfig,
 } from "./attachment-staging.js";
+
+/**
+ * WHEN THE ORGANIZER'S LAST PASS FINISHED — read from `worker_heartbeats` for the filing strip's
+ * "the last pass finished N seconds ago" clause (mail 0097).
+ *
+ * On THIS entry point and not the root barrel for the closure rule the root barrel's own header
+ * states: `worker_heartbeats` is a Cloud table, and `packages/services/src/mailbox-service.ts` —
+ * which renders the field — is inside the desktop engine's import graph. The hosted compositions
+ * pass `organizerCycleReader` as `MailboxServiceDeps.lastOrganizerCycleAt`; the local tiers pass
+ * nothing and the field is null, which the client renders as silence.
+ */
+export { readLastOrganizerCycleAt, organizerCycleReader } from "./organizer-cycle.js";

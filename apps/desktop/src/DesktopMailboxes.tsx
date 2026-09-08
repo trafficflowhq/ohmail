@@ -172,6 +172,24 @@ interface MailboxWire {
   /** OUR filings this mailbox has not applied yet — the strip's `filing` arm reads it. */
   pendingMoves?: number;
   /**
+   * WHY those filings are outstanding — the count above split by the operand that decides.
+   *
+   * The local engine answers it like any other DTO field, with `lastCycleAt` null: there is no
+   * heartbeat row here, because the organizer IS this process. The strip reads that null as
+   * silence on the "last pass" clause rather than as "no pass has ever run", which is the whole
+   * reason the field is nullable — a desktop must never be told its own organizer is dead.
+   */
+  filing?: {
+    due: number;
+    deferred: number;
+    oldestPendingAt: string | null;
+    nextAttemptAt: string | null;
+    attempts: number;
+    lastRefusalClass: string | null;
+    asOf: string;
+    lastCycleAt: string | null;
+  };
+  /**
    * The forwarding-detection notice's evidence pair (mail 0078): a standing quiet episode's
    * newest genuine inbound date, and this mailbox's dismissal. Absent on an engine that
    * predates the columns; forwarded by the `in`-spread below on the same rule as its
@@ -575,6 +593,10 @@ export async function readMailboxFactsVia(
     ...("organizerAcceptsRequests" in m ? { organizerAcceptsRequests: m.organizerAcceptsRequests } : {}),
     ...("authKind" in m ? { authKind: m.authKind } : {}),
     ...("pendingMoves" in m ? { pendingMoves: m.pendingMoves } : {}),
+    // The filing SPLIT, by the same `in` spread and the same rule: an engine that predates it
+    // must arrive with no key at all, so the strip falls back to the count alone rather than
+    // rendering an arm with no reason in it.
+    ...("filing" in m ? { filing: m.filing } : {}),
     // THE FORWARDING-DETECTION PAIR (mail 0078), forwarded by the same `in` spread and for the
     // same reason as every optional field above: absent is an engine that predates the columns
     // and must arrive absent, so the pane renders nothing rather than asserting "no episode".

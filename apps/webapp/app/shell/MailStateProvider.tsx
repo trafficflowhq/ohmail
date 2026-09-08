@@ -536,12 +536,34 @@ export function MailStateProvider({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [read]);
 
+  /**
+   * ── `refresh` READS THROUGH A REF, AND THE IDENTITY IS THE POINT ──────────────────────────
+   *
+   * It used to be `refresh: () => void read()` inline in the memo below, so it took a NEW identity
+   * on every poll — the memo's deps include `facts`, which the poller replaces every 30 s.
+   *
+   * That was harmless while its only consumers passed it straight down as a prop. It stops being
+   * harmless the moment a memoized handler DEPENDS on it, which is what re-reading the facts after
+   * a filing decision requires: a `useCallback` listing an unstable `refresh` is rebuilt 120 times
+   * an hour and on every change to any mailbox field, and a memoized callback rebuilt per render
+   * pins the render that made it — the retained-scope chain this codebase has measured once
+   * already, at about a gigabyte an idle hour. `mail-state-identity.test.tsx` holds the property
+   * (a `pendingMoves`-only change must not rebuild the shell's partition) and now holds this too.
+   *
+   * The ref is the form CLAUDE.md names for exactly this — a callback that outlives its render
+   * reads through a ref — and the assignment is in an effect rather than in the render body so a
+   * concurrent render that is thrown away cannot leave the ref pointing at its `read`.
+   */
+  const readRef = useRef(read);
+  useEffect(() => { readRef.current = read; }, [read]);
+  const refresh = useCallback(() => { void readRef.current(); }, []);
+
   const binding = useMemo<MailStateBinding>(
     () => ({
       state, mailboxes: facts, rosterProbed: probe !== undefined, mirrored, freshness,
-      refresh: () => void read(),
+      refresh,
     }),
-    [state, facts, probe, mirrored, freshness, read],
+    [state, facts, probe, mirrored, freshness, refresh],
   );
 
   return <MailStateContext.Provider value={binding}>{children}</MailStateContext.Provider>;

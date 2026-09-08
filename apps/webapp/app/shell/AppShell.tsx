@@ -1322,6 +1322,43 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
     mailboxes: facts, rosterProbed, state: mailState, refresh: refreshFacts,
   } = useMailState();
   /**
+   * ── EVERY FILING DISPATCH GOES THROUGH HERE, AND BEFORE THIS THERE WAS NO SUCH PLACE ──────
+   *
+   * A filing decision writes `folder_state` and returns; the organizer performs the IMAP move on
+   * its next turn. The strip reports that outstanding work from `GET /mailboxes`, which
+   * `MailStateProvider` reads every 30 s and ON NOTHING ELSE — not on a mutation, and not on the
+   * decision that created the outstanding row. So the sentence a person saw immediately after
+   * filing something was derived from facts read up to thirty seconds before they pressed
+   * anything, with a live clock running over that stale figure.
+   *
+   * ── WHY A HELPER RATHER THAN A CALL AT EACH DOOR ──────────────────────────────────────────
+   *
+   * Because there are five doors and they have five shapes: this handler's move and its delete,
+   * the selection's bulk move, the bulk screening plan's loop, and the Screener's own deferred
+   * dispatch. Adding a refresh at four of them is "fix the path you are looking at and not the one
+   * beside it" by construction, and the sixth door would arrive without one. One helper, and
+   * `test/filing-refresh-on-decision.test.tsx` pins every dispatch of a filing verb to it.
+   *
+   * ── AFTER THE SETTLE, NEVER AT THE PRESS ──────────────────────────────────────────────────
+   *
+   * The re-read is chained onto the mutation's promise. Firing it at the press would read the
+   * facts BEFORE the decision reached the server and report the pre-decision number — a refresh
+   * that makes the staleness worse rather than better, and one that would look like it worked.
+   *
+   * A REJECTION STILL REFRESHES, deliberately: a mutation the server refused rolls its overlay
+   * back, and what the mailbox actually owes is then exactly what a fresh read says. Swallowing
+   * the rejection here would be wrong for a different reason, so the promise is returned and the
+   * callers that need the answer (the delete's toast) keep chaining on it.
+   *
+   * `refreshFacts` is safe in a dependency list because `MailStateProvider` now returns it through
+   * a ref with a constant identity — it used to be rebuilt on every poll, which would have made
+   * every handler below it rebuild 120 times an hour. That note is at the provider.
+   */
+  const fileAndRefresh = useCallback(<T,>(dispatch: Promise<T>): Promise<T> => {
+    dispatch.then(refreshFacts, refreshFacts);
+    return dispatch;
+  }, [refreshFacts]);
+  /**
    * THE MIRROR AS IT IS. Where each message physically sits on the server.
    *
    * Every mutation, every body open and the search index read from THIS reader and never from
@@ -1355,7 +1392,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
      starts there, and one that has none is corrected by the effect on its first commit. */
   const rosterRef = useRef<RosterState>({ kind: "pending" });
   const deleting = useDeleteUndo({
-    mutate: (m) => engine.mutate(m),
+    /* THE FIFTH DOOR, WRAPPED AT THE DEP AND NOT AT THE PRESS. The delete arm below opens a
+       window rather than dispatching, so the mutation leaves from `delete-undo.ts` — after the
+       undo window closes, and for a selection in a batch. Wrapping the injected dispatcher is
+       the only place that covers both, and `test/filing-refresh-on-decision.test.tsx` pins this
+       line by name: nothing conflicts here, so a census that only read this file would have gone
+       vacuous for `message_delete` instead of red. */
+    mutate: (m) => fileAndRefresh(engine.mutate(m)),
     toast,
     copy: {
       deleted: t("ohbox.toastDeleted"),
@@ -4845,7 +4888,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
             toast(refusedMove);
             break;
           }
-          void engine.mutate({ kind: "move", messageId: m.id, folder });
+          void fileAndRefresh(engine.mutate({ kind: "move", messageId: m.id, folder }));
           toast(t("ohbox.toastMoved", { place: PLACE_LABEL[view] ?? view }));
           break;
         }
@@ -4979,7 +5022,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
       for (const messageId of ids) {
         const m = reader.get<EngineMessage>("message", messageId);
         if (!m || m.folder === folder) continue;
-        void engine.mutate({ kind: "move", messageId, folder });
+        void fileAndRefresh(engine.mutate({ kind: "move", messageId, folder }));
         moved++;
       }
       toast(t("ohbox.toastBulkMoved", { count: moved, place: PLACE_LABEL[view] ?? view }));

@@ -256,6 +256,34 @@ them. Somebody who simply REPLIES to an away reply is unaffected: their message 
 the one place that matters, so the check requires the message to actually be a delivery report
 before anybody's address is written off.
 
+### "Filing 1 message on your mail server…" now says which of four things is happening
+
+Between filing a message and the mail server holding it where you put it, ohmail showed one
+sentence: *Filing 1 message on your mail server… your decisions are already applied here; the
+server is catching up.* The count was right. The rest of it covered four different situations, and
+in two of them it was not true.
+
+There are four, and they now have four sentences:
+
+- **The organizer has not reached your mailbox yet.** One pass runs over every mailbox in turn, so
+  a wait of a minute or two is ordinary. The line now says when the last pass finished, which is
+  the difference between "mine is next" and "nothing is running", and it says when it last looked
+  rather than running a clock over a figure it has not re-read.
+- **Your mail server refused the move.** The retry is scheduled, and until then nothing is trying —
+  so "catching up" described work that was not happening. The line now says the try was refused,
+  what the server refused it for, and when the next one is due.
+- **It has not been filed for a while.** Refused more than once, or outstanding longer than a pass
+  can account for. That is the one case worth a warning, and it is the only one that gets one.
+- **Another install organizes this mailbox.** Exactly one install organizes a mailbox at a time and
+  it performs the moves; the others read. So on a mailbox your own computer organizes, your mail
+  server was never the thing that was behind — and if that computer is asleep, nothing is coming at
+  all. The line now names the machine that files this mailbox, and says when it is not running.
+
+Two things behind the sentences changed as well. A filing decision now asks the organizer to come
+sooner instead of waiting for its next turn, so the ordinary case is seconds rather than minutes.
+And the decision you just made re-reads the mailbox afterwards, so the line is about what you did
+rather than about what was true up to half a minute earlier.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
