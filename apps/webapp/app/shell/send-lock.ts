@@ -192,6 +192,25 @@ export interface SendLock {
   /** {@link sendFingerprint} of the message this key was minted for. */
   fp: string;
   /**
+   * THE SAME MESSAGE AS THE COMPOSE BUFFER HOLDS IT — the identity a LATER MOUNT can recompute.
+   *
+   * {@link fp} is the fingerprint of the mutation AS SENT, and a mount coming back after a reload
+   * cannot reproduce it: the press folds the signature into the body and the html
+   * (`withSignature`) and resolves the sending mailbox, and neither of those is in the scratch
+   * buffer. Comparing the buffer against `fp` therefore matches only for an account with no
+   * signature — a guard that silently does not guard for everybody else, which is the same defect
+   * as one that cannot fire at all.
+   *
+   * So the press records the buffer's OWN fingerprint beside the sent one, computed by the single
+   * helper the later mount uses (`composeBufferFingerprint`). One function, two moments, so the
+   * two values cannot drift into different hashes of the same text — which is the mistake this
+   * whole file exists to prevent, made one level up.
+   *
+   * Compose lane only, and absent on a record written before this field: such a record simply
+   * never latches, which is the behaviour that shipped before the latch existed.
+   */
+  bfp?: string;
+  /**
    * TRUE once this lane's send came back UNVERIFIED — issued, answer lost, nobody knows.
    *
    * It changes what the record means. An ordinary lock is a convenience: it lets a resumed press

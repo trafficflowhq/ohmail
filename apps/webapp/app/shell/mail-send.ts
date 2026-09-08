@@ -86,7 +86,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import type { EngineMessage, MutationResult, OhmailEngine } from "@ohmail/client-engine";
 import type { ToastFn } from "@ohmail/ui";
-import { clearComposeDraft, composeSessionId, readComposeRow, type MailSend } from "./compose";
+import {
+  clearComposeDraft, composePlan, composeSessionId, readComposeDraft, readComposeRow,
+  type MailSend,
+} from "./compose";
 import {
   allSendLocks, attachSendLockDraft, claimSendLock, holdOf, legacySendFingerprint_0_14_0,
   legacySendFingerprint_0_14_1, markSendLockUnverified, recordForSendKey,
@@ -264,36 +267,51 @@ export const SEND_IN_FLIGHT_PHASES: ReadonlySet<SendPhase> = new Set<SendPhase>(
  * cannot refuse the compose surface's first save.
  */
 export function sendUnsettledFromLastSession(
-  lane: string, session: string | null, ownKeys: ReadonlySet<string>, owner: string | null = null,
+  lane: string, latchedFp: string | null, ownKeys: ReadonlySet<string>, owner: string | null = null,
 ): boolean {
   /**
-   * ── A SEND OF THIS MESSAGE IS STILL OWED AN ANSWER, AND THIS MOUNT DID NOT ISSUE IT ─────────
+   * ── THE COMPOSE ON SCREEN IS THE MESSAGE A SEND IS STILL CARRYING ──────────────────────────
    *
-   * The outbox cannot answer this and it is not a near miss: a restored entry is removed from the
-   * queue BEFORE it is dispatched, so `sendPendingInOutbox` reads false for the whole window the
-   * replay is running in — measured. That window is exactly when the composer is holding text
-   * whose fate is being decided elsewhere, and a create in it is the second row.
+   * KEYED ON IDENTITY, NOT ON THE LANE, and the difference is the whole reason this holds where
+   * two earlier shapes could not. A lane is `"compose"` — the name of every message this browser
+   * will ever write. Refusing a press on the lane refuses a genuinely NEW message written after a
+   * crash, which is the worse defect of the pair: a silently unsent mail. Measured twice, in both
+   * shapes tried, against the durable lock's own kill test. Keyed on WHICH MESSAGE, a different
+   * one simply never matches, so it is never held and never refused.
    *
-   * The RECORD answers it, because the press wrote it down synchronously before the verb. Two
-   * conditions, and both matter: a live record on this lane naming THIS compose session, and the
-   * record not yet settled. It is self-clearing rather than timed — the settle releases the record
-   * the moment the result arrives, which is what stops this being the rule withdrawn in an earlier
-   * round for parking a genuinely new message: a door that starts one re-mints the session, and
-   * the record then names nothing this compose answers to.
+   * The identity is {@link composeBufferFingerprint} on both sides — the value the press recorded
+   * ({@link SendLock.bfp}) against the value the buffer computes now. The sent message's own
+   * fingerprint cannot be used: a mount after a reload cannot reproduce it (the signature and the
+   * resolved sending mailbox are not in the buffer), so that comparison would match only for an
+   * account with no signature.
    *
-   * THE CREATE GATE ONLY. The press is deliberately not asked: `resumeSendLock` compares the
-   * FINGERPRINT and therefore tells two messages apart, which is the check that makes a press
-   * safe. Refusing the press here would refuse a message nobody had pressed Send on.
+   * THE OUTBOX CANNOT ANSWER THIS and it is not a near miss: a restored entry leaves the queue
+   * BEFORE it is dispatched, so `sendPendingInOutbox` reads false for the whole replay — measured.
+   * That window is exactly when the composer holds text whose fate is being decided elsewhere.
+   * The record answers it, because the press wrote it down synchronously before the verb.
+   *
+   * ── HOW IT ENDS, AND IT IS NEVER A TIMER ────────────────────────────────────────────────────
+   *
+   *  · THE SEND SETTLES. `settleCompose` releases the record and empties the buffer, so both
+   *    halves of the comparison stop matching at once.
+   *  · IT COMES BACK UNVERIFIED. `unverifiedSendIntents` is non-empty and this yields — the
+   *    message is then PARKED by its record with the sentence that names that state, which is the
+   *    true one. Never editable-idle, and never held under the wrong sentence.
+   * WHAT DOES **NOT** END IT is the buffer moving, and that was the first shape of this and it was
+   * self-defeating: re-comparing the live buffer here meant an edit lifted the very hold that
+   * exists to prevent the edit, so the tail case still delivered twice with the guard "working".
+   * The comparison belongs to ARMING — is the message on screen at mount the one a send is
+   * carrying — and nothing after. Once armed, only the send's own fate ends it.
    */
-  if (session === null) return false;
-  return unverifiedSendIntents(lane, owner).length === 0
-    && allSendLocks(Date.now(), owner)
-      // THIS MOUNT'S OWN PRESSES ARE NOT "FROM THE LAST SESSION", and leaving them in was the
-      // whole of a measured regression: every record is written by a press, so a rule that reads
-      // them all refuses the very resume the record exists for — 23 cases went red saying so, four
-      // of them the durable lock's own kill tests. The keys this mount has claimed are excluded,
-      // which leaves exactly the inherited ones.
-      .some((r) => r.lane === lane && r.session === session && !ownKeys.has(r.key));
+  if (latchedFp === null) return false;
+  if (unverifiedSendIntents(lane, owner).length !== 0) return false;
+  return allSendLocks(Date.now(), owner)
+    // THIS MOUNT'S OWN PRESSES ARE NOT "FROM THE LAST SESSION", and leaving them in was the whole
+    // of a measured regression: every record is written by a press, so a rule that reads them all
+    // refuses the very resume the record exists for — 23 cases went red saying so, four of them
+    // the durable lock's own kill tests. The keys this mount has claimed are excluded, which
+    // leaves exactly the inherited ones.
+    .some((r) => r.lane === lane && r.bfp === latchedFp && !ownKeys.has(r.key));
 }
 
 export function sendPendingInOutbox(engine: OhmailEngine, lane: string): boolean {
@@ -303,6 +321,34 @@ export function sendPendingInOutbox(engine: OhmailEngine, lane: string): boolean
 
 /** There is one compose surface, so its send state needs one key. */
 export const COMPOSE_SEND_KEY = "compose";
+
+/**
+ * WHAT THE COMPOSE BUFFER HOLDS, AS AN IDENTITY — computed once here and used at BOTH moments.
+ *
+ * The press records this beside the sent message's own fingerprint ({@link SendLock.bfp}), and a
+ * mount coming back after a reload recomputes it from the restored buffer. Equal means the text on
+ * screen is still the message that send is carrying; different means it is something else.
+ *
+ * ONE FUNCTION, TWO MOMENTS, and that is the point rather than a convenience. The alternative —
+ * comparing the buffer against the fingerprint of the mutation AS SENT — cannot work: the press
+ * folds the signature into the body and the html and resolves the sending mailbox, none of which
+ * is in the buffer, so the comparison would match only for an account that has no signature. A
+ * guard that silently does not guard for everybody else is the same defect as one that cannot fire
+ * at all, and it is invisible from a test account with no signature set.
+ *
+ * `null` for an EMPTY buffer, which is not a message and must never match a record: a surface with
+ * no compose on it (a reply-only harness, a shell that has never opened one) would otherwise latch
+ * on somebody else's record and refuse a press it has no business refusing.
+ */
+export function composeBufferFingerprint(): string | null {
+  const fields = readComposeDraft();
+  const empty = fields.to.trim().length === 0
+    && fields.subject.trim().length === 0
+    && fields.body.trim().length === 0;
+  if (empty) return null;
+  const plan = composePlan(fields, fields.fromMailboxId ?? null);
+  return sendFingerprint(plan.mutation as unknown as MailSend);
+}
 
 /**
  * THE INLINE FORWARD'S LANE — namespaced so it can never collide with a reply lane (a bare
@@ -1463,6 +1509,22 @@ export function useMailSend(
    */
   const ownKeys = useRef(new Set<string>());
 
+  /**
+   * ── THE LATCH: WHICH MESSAGE THIS COMPOSE WAS HOLDING WHEN IT CAME UP ───────────────────────
+   *
+   * Read ONCE, at mount, and never again. That is not an optimisation, it is the whole mechanism:
+   * at mount the buffer has not been touched, so what it holds is exactly what the last session
+   * pressed Send on. Every later read is of a buffer somebody may have edited, and an edit is the
+   * thing being guarded against — a hold that re-derived its own subject from the edited text
+   * would unlock itself the instant it was needed.
+   *
+   * `useRef` with a lazy initialiser rather than an effect, because an effect runs AFTER the first
+   * render and the first render is where the compose decides whether it is editable. A hold that
+   * arrives one paint late is a hold somebody can type past.
+   */
+  const latchedFp = useRef<string | null | undefined>(undefined);
+  if (latchedFp.current === undefined) latchedFp.current = composeBufferFingerprint();
+
   const send = useCallback(
     (m: MailSend, opts?: { surface?: "inline" }) => {
       const key = sendKeyOf(m, opts?.surface ?? "compose");
@@ -1491,6 +1553,27 @@ export function useMailSend(
         session: sessionOf(key),
       }, owner.current);
       if (hold.kind === "parked") {
+        attachSendLockDraft(key, sendSubjects(m, sessionOf(key)), m.draftId ?? null, owner.current);
+        return;
+      }
+
+      /**
+       * ── HELD FOR A SEND FROM THE LAST SESSION ────────────────────────────────────────────
+       *
+       * The compose came up holding a message a send is still carrying. The surface renders that
+       * as a read-only form with a sentence, and this is the same refusal at the layer the wire
+       * is actually reached from — a caller that is not the button (a keyboard shortcut, a future
+       * Reply Run step) must not get past what the button enforces.
+       *
+       * It refuses the EDITED text as well as the identical one, and that is the point: an
+       * identical press resumes the key through `resumeSendLock` below and is harmless, while an
+       * edited one is a fingerprint mismatch, a fresh key, and a second copy at the recipient.
+       * The hold is keyed on WHICH MESSAGE, so a different message never reaches this line.
+       */
+      if (key === COMPOSE_SEND_KEY
+        && sendUnsettledFromLastSession(
+          key, latchedFp.current ?? null, ownKeys.current, owner.current,
+        )) {
         attachSendLockDraft(key, sendSubjects(m, sessionOf(key)), m.draftId ?? null, owner.current);
         return;
       }
@@ -1532,6 +1615,10 @@ export function useMailSend(
       // and the claim both need it — see `sendIdentity`.
       const id = sendIdentity(m, session);
       const fp = id.fp;
+      /* Read HERE, at the press, from the same helper the later mount reads — see `SendLock.bfp`.
+         Taken before `engine.mutate` for the same reason the claim is: what is written down has to
+         describe the message that went, not the buffer as it stands some time afterwards. */
+      const bufferFp = key === COMPOSE_SEND_KEY ? composeBufferFingerprint() : null;
       const subject = id.subjects[0];
       /**
        * THROUGH THE IDENTITY, not the fingerprint alone — that is what lets a record written by
@@ -1555,6 +1642,9 @@ export function useMailSend(
           // draft row appears); the session cannot, so it is the identity that survives the
           // window in which a duplicate delivery was reachable — see `SendLock.session`.
           ...(session !== null ? { session } : {}),
+          // AND THE BUFFER'S OWN FINGERPRINT for the compose lane — the identity a mount after a
+          // reload can recompute. See `SendLock.bfp`; `fp` above is not recomputable there.
+          ...(key === COMPOSE_SEND_KEY && bufferFp !== null ? { bfp: bufferFp } : {}),
         }, owner.current);
       }
 
@@ -1601,10 +1691,9 @@ export function useMailSend(
       stateOf: stateFor,
       send,
       /** See {@link sendUnsettledFromLastSession} — the mount's own keys are what it excludes. */
-      restoredPending: (lane: string) => sendUnsettledFromLastSession(
-        lane, lane === COMPOSE_SEND_KEY ? composeSessionId(owner.current) : null,
-        ownKeys.current, owner.current,
-      ),
+      /** See {@link sendUnsettledFromLastSession} — the identity latched at mount is the key. */
+      restoredPending: (lane: string) => lane === COMPOSE_SEND_KEY
+        && sendUnsettledFromLastSession(lane, latchedFp.current ?? null, ownKeys.current, owner.current),
     }),
     [stateFor, send],
   );
