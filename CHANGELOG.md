@@ -124,7 +124,8 @@ If your first sync has been stopping short, this is why.
 ### One draft per message
 
 A message you are writing has exactly one draft on your account, from the first thing you type
-until it is sent. Four ways it could end up with two are closed.
+until it is sent. Four ways it could end up with two are closed. One case is not, and because it
+is the same case for both promises it is stated once, under **A message still on its way is held**.
 
 Opening a compose with somebody already in the To line — from a contact, or from a mail link
 outside the app — no longer saves a draft by itself. Nothing is written to your account until you
@@ -148,10 +149,12 @@ different message, so nothing on the server could recognise it as the one alread
 
 That message is now held until it has gone — the fields are read-only, Send waits, and a line says
 why. It clears itself the moment the send completes. A different message you start in the meantime
-is not affected; only the one being sent is held.
+is not affected; only the one being sent is held — unless an older unconfirmed send from this app
+is still waiting; then the newer message is not held, and editing and sending it could deliver it a
+second time and leave a second draft.
 
-One exception, and it lasts as long as the send does. If you updated the app while a message was
-already waiting to go out, there is no record of which message that send is for — the app that
+The opposite case, and it lasts as long as the send does: if you updated the app while a message
+was already waiting to go out, there is no record of which message that send is for — the app that
 wrote it did not keep one. Until it has gone, the composer waits whatever you put in it. That is
 the only case where starting something else waits too.
 
