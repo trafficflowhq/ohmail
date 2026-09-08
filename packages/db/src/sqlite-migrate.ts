@@ -14,7 +14,12 @@
  * duplication.
  */
 import { sql } from "drizzle-orm";
-import { SQLITE_JOURNAL, type SqliteJournalEntry } from "@ohmail/db-mail";
+/* THE JOURNAL'S OWN ENTRANCE, not the package barrel. The barrel computes two migration
+   directories at module scope from `fileURLToPath(import.meta.url)`; this module is bundled into
+   the phone's engine, where `url` is a substitute that refuses by name, so importing it through
+   the barrel threw while the artifact was still initialising. The journal is a data module and
+   reaches nothing. */
+import { SQLITE_JOURNAL, type SqliteJournalEntry } from "@ohmail/db-mail/sqlite-journal";
 import { assertSqliteCapabilities } from "./dialect/index.js";
 
 /**
