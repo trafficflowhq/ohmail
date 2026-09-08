@@ -174,7 +174,12 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
     const cursorAccountId: string | null = cursor?.accountId ?? null;
     const cursorSubject: string | null = cursor?.subject ?? null;
     const d = dialect(db);
-    const executed: unknown = await db.execute(sql`
+    /* THROUGH THE SEAM'S `exec`, whose rows are POSITIONAL. `db.execute` is not a spelling
+       difference — it is a METHOD the device store's handle does not have at all, so a surviving
+       call there is a TypeError naming neither the store nor the statement. This one was proven
+       live: the pass died with `db.execute is not a function` on a phone bundle whose dialect
+       census was green, because the census counted the construct's TEXT and not the mechanism. */
+    const executed = await d.exec(db, sql`
       select account_id, subject
       from ${threads}
       where ${deps.accountId ? sql`account_id = ${deps.accountId}` : sql`true`}
@@ -186,9 +191,9 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
       order by account_id, subject
       limit ${Math.min(50, maxGroups - result.groupsScanned)}
     `);
-    const groups: Array<{ account_id: string; subject: string }> = Array.isArray(executed)
-      ? executed
-      : (executed as { rows: Array<{ account_id: string; subject: string }> }).rows;
+    // Positional, in the order the statement selected them — the narrower shape both drivers can
+    // produce honestly, which is what removes the array-or-`{rows}` split this used to carry.
+    const groups = executed.map((r) => ({ account_id: String(r[0]), subject: String(r[1]) }));
     if (groups.length === 0) break;
     const last = groups[groups.length - 1]!;
     cursor = { accountId: last.account_id, subject: last.subject };
@@ -247,7 +252,7 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
          */
         const to = d.jsonArrayElements(sql`m.to_addresses`, "xto");
         const cc = d.jsonArrayElements(sql`m.cc_addresses`, "xcc");
-        const spread = await db.execute(sql`
+        const spread = await d.exec(db, sql`
           select addr from (
             select addr, count(distinct thread_id) as spread from (
               select thread_id, lower(from_address) as addr
@@ -267,10 +272,7 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
           ) freq
           where spread >= ${THREAD_JOIN_WITNESS_SPREAD_MAX}
         `);
-        const spreadRows: Array<{ addr: string }> = Array.isArray(spread)
-          ? spread
-          : (spread as { rows: Array<{ addr: string }> }).rows;
-        for (const r of spreadRows) self.add(r.addr);
+        for (const r of spread) self.add(String(r[0]));
         selfByAccount.set(group.account_id, self);
       }
 
