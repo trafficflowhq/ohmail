@@ -56,7 +56,12 @@ export function toMailboxFacts(m: MailboxDTO): MailboxFacts {
     organizerRole: m.organizerRole === "reader" ? "reader" : "organizer",
     // FORWARDED as-is with a null floor: the three fields inside are already nullable, and the
     // object is null AS A WHOLE when nobody is named, which is the shape the banner tests.
-    organizedBy: m.organizedBy ?? null,
+    /* SPREAD, not `?? null`: absent is a read that did not ANSWER the question, and `null` is the
+       answer "nobody organizes this mailbox". The DTO declares this field non-optional and the
+       service projects it unconditionally, so absent can only be an API older than the field —
+       and collapsing the two made the first-run claim question treat a lagging read as a released
+       mailbox, one press from authorizing a takeover nobody was offered. */
+    ...("organizedBy" in m ? { organizedBy: m.organizedBy } : {}),
     organizerState: m.organizerState ?? null,
     // FORWARDED UNTOUCHED, and the missing `?? null` is the point — the rule
     // `initialImportCompletedAt` below states, applied to a control rather than to a strip.

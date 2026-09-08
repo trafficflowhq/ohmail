@@ -205,3 +205,44 @@ describe("the desktop mailbox-facts seam", () => {
     expect(got!.createdAt).toBe("2026-09-02T10:39:31.446Z");
   });
 });
+
+/**
+ * ═══ ABSENT AND `null` ARE DIFFERENT ANSWERS ABOUT WHO ORGANIZES A MAILBOX ═══════════════════
+ *
+ * This mapper read `m.organizedBy ? {…} : null`, so a wire row that did not CARRY the field
+ * arrived downstream as the wire saying "nobody organizes this mailbox". The DTO declares the
+ * field non-optional and the service projects it unconditionally, so absent can only mean an
+ * engine older than the field — a read that did not ANSWER.
+ *
+ * It matters because the first-run claim question routes on exactly that distinction, and with it
+ * collapsed here the arm written for "no answer" could never be entered: a lagging read took the
+ * claim screen away, and the screen after it is where a takeover is authorized.
+ *
+ * WATCH IT FAIL: put the ternary back — the first case reds with the key present and `null`.
+ */
+describe("the mapper keeps 'the engine did not say' apart from 'nobody organizes it'", () => {
+  const wire = (row: Record<string, unknown>): Promise<Response> =>
+    Promise.resolve(new Response(JSON.stringify({
+      items: [{
+        id: "mb-h", address: "h@example.invalid", status: "connected", lastSyncAt: null, ...row,
+      }],
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+
+  it("an OMITTED organizedBy stays omitted", async () => {
+    const [got] = await readMailboxFactsVia(async () => (await wire({})) as never);
+    expect("organizedBy" in got!, "a field the engine never sent was invented as 'nobody'")
+      .toBe(false);
+  });
+
+  it("CONTROL — an explicit null is carried as null, and an object is normalized", async () => {
+    const [free] = await readMailboxFactsVia(async () =>
+      (await wire({ organizedBy: null })) as never);
+    expect("organizedBy" in free!, "the answer 'nobody organizes this' was dropped").toBe(true);
+    expect(free!.organizedBy).toBeNull();
+
+    const [held] = await readMailboxFactsVia(async () =>
+      (await wire({ organizedBy: { kind: "cloud" } })) as never);
+    expect(held!.organizedBy, "a present holder lost the members this narrowing owns")
+      .toEqual({ kind: "cloud", name: null, since: null });
+  });
+});

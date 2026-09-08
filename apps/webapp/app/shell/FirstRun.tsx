@@ -230,6 +230,27 @@ export function readIsNotOlder(readAt?: string | null, baseline?: string | null)
   return seen >= base;
 }
 
+/**
+ * THE FLOOR ONLY EVER MOVES UP.
+ *
+ * The floor is remembered from the reads that showed a holder, and those arrive out of order for
+ * the same reason the `nobody` ones do — so an EARLIER holder read can land after a later one
+ * and, assigned rather than raised, would LOWER the floor to its own older stamp. A `nobody`
+ * carrying that same older stamp then passes the comparison, and the screen goes: the ordering
+ * rule defeated by the very disorder it was written for, one read earlier.
+ *
+ * A stamped floor is never lowered by an unstamped read either — a read that carries nothing is
+ * no evidence about which read is newer, and taking it as a reset would undo the floor for the
+ * cases most likely to have one.
+ */
+export function raiseStamp(floor: string | null, seen?: string | null): string | null {
+  const at = seen ? Date.parse(seen) : Number.NaN;
+  if (!Number.isFinite(at)) return floor;
+  const base = floor ? Date.parse(floor) : Number.NaN;
+  if (!Number.isFinite(base)) return seen ?? null;
+  return at > base ? (seen ?? null) : floor;
+}
+
 export function firstRunStep(
   facts: OnboardingFacts, at: OnboardingStep | null, rerun = false, claimAnswered = false,
   add = false,
@@ -524,7 +545,17 @@ export function FirstRun({
        says nothing (see `holderVerdict`) may not move a floor either, or a lagging read would
        raise the very bar it is supposed to fail. */
     if (step !== "elsewhere" || holderVerdict(facts.mailbox) !== "somebody") return;
-    heldStampRef.current = { mailboxId, at: facts.mailbox?.organizerEventAt ?? null };
+    /* RAISED, NEVER ASSIGNED — see {@link raiseStamp}. Holder reads arrive out of order too, and
+       an assignment let a late one lower the floor it had just set, after which a still-older
+       `nobody` passed the comparison. The floor is reset only by the mailbox changing, which the
+       key below is. */
+    const prior = heldStampRef.current !== null && heldStampRef.current.mailboxId === mailboxId
+      ? heldStampRef.current.at
+      : null;
+    heldStampRef.current = {
+      mailboxId,
+      at: raiseStamp(prior, facts.mailbox?.organizerEventAt),
+    };
   }, [step, facts.mailbox, mailboxId]);
   const path = useMemo(() => onboardingPath(facts, add === true), [facts, add]);
 

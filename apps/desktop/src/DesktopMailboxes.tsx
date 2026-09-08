@@ -184,6 +184,15 @@ interface MailboxWire {
 
 /** Whether this install can reach ONE mailbox's server right now — see {@link MailboxReachSlice}. */
 export interface MailboxReach {
+  /**
+   * WHETHER THE ELEMENT DESCRIBING THIS ROW COULD BE READ AT ALL. `false` makes every other field
+   * here meaningless, and the state line says so rather than reading them.
+   *
+   * It exists because the roster is read ELEMENT BY ELEMENT: one malformed entry is a fact about
+   * one row, and the rows around it answered perfectly well. Folding it into `reachable` would
+   * make an unreadable entry claim an outage at a mail server nothing has learned anything about.
+   */
+  answered: boolean;
   reachable: boolean;
   /** The server answered and refused the sign-in — a different fact with a different remedy. */
   signInRefused: boolean;
@@ -280,13 +289,37 @@ export async function readMailboxReachVia(
   if (typeof body !== "object" || body === null || Array.isArray(body) || !Array.isArray(items)) {
     return { rows: {}, faulted: true };
   }
+  /* ── ONE ELEMENT IS A FACT ABOUT ONE ROW, AND NEVER ABOUT THE WHOLE READ ──────────────────
+   *
+   * `const it = raw as {…}` followed by `it.mailboxId` THREW on a `null` element, and the throw
+   * left the whole function — past the poll's `.then`, so `setReach` was never called and the
+   * slice on screen stayed whatever it was. After a healthy read that means a mailbox whose
+   * socket has since died goes on saying "Up to date", and so does every row after the bad
+   * element, for as long as the roster keeps carrying it. One unreadable entry silenced the
+   * answer about every OTHER mailbox, which is the opposite of what it is evidence for.
+   *
+   * So the seam's invariant, once, and it is the same one the state line follows: a row's
+   * rendered state comes only from a verdict about THAT row. An element that names a row and
+   * cannot be read marks that row unanswered; an element that names no row is dropped, because
+   * there is nothing to attribute it to; the rest publish. The whole-body checks above stay where
+   * they are — a body that is not a roster is a fact about the READ, and that one is not per-row.
+   */
   const out: Record<string, MailboxReach> = {};
   for (const raw of items) {
-    const it = raw as {
+    const it = (typeof raw === "object" && raw !== null ? raw : {}) as {
       mailboxId?: unknown; reachable?: unknown; unreachableSince?: unknown; signInRefused?: unknown;
     };
-    if (typeof it.mailboxId !== "string" || typeof it.reachable !== "boolean") continue;
+    /* NO ID, NOTHING TO SAY IT ABOUT. Dropped rather than faulted: marking the slice would let one
+       unattributable entry speak for rows it never named. */
+    if (typeof it.mailboxId !== "string" || it.mailboxId === "") continue;
+    if (typeof it.reachable !== "boolean") {
+      out[it.mailboxId] = {
+        answered: false, reachable: false, signInRefused: false, unreachableSince: null,
+      };
+      continue;
+    }
     out[it.mailboxId] = {
+      answered: true,
       reachable: it.reachable,
       unreachableSince: typeof it.unreachableSince === "string" ? it.unreachableSince : null,
       /* ABSENT READS AS `false`, on this file's standing rule: an engine older than the field
@@ -339,13 +372,29 @@ export async function readMailboxFactsVia(
        other one — a window that assumed `reader` would put a claim banner on a mailbox this
        machine is already organizing. */
     organizerRole: m.organizerRole === "reader" ? "reader" : "organizer",
-    organizedBy: m.organizedBy
+    /* ── SPREAD, BECAUSE ABSENT AND `null` ARE DIFFERENT ANSWERS HERE TOO ──────────────────
+     *
+     * This read `m.organizedBy ? {…} : null`, which normalized a field the wire did not carry
+     * into the wire saying "nobody organizes this mailbox". The DTO declares `organizedBy` as
+     * non-optional (`dto/types.ts`) and the service projects it unconditionally, so ABSENT can
+     * only mean an engine older than the field or a body that did not carry one — a read that
+     * did not ANSWER. The first-run claim question routes on exactly that distinction, and with
+     * it collapsed here its "no answer" arm could never be reached: a lagging read took the
+     * screen away and the next press authorizes a takeover.
+     *
+     * The object's own fields are still normalized, because a present object with missing
+     * members is a shape this narrowing owns. */
+    ...("organizedBy" in m
       ? {
-          kind: m.organizedBy.kind ?? null,
-          name: m.organizedBy.name ?? null,
-          since: m.organizedBy.since ?? null,
+          organizedBy: m.organizedBy
+            ? {
+                kind: m.organizedBy.kind ?? null,
+                name: m.organizedBy.name ?? null,
+                since: m.organizedBy.since ?? null,
+              }
+            : null,
         }
-      : null,
+      : {}),
     organizerState: m.organizerState ?? null,
     /* Read HERE and nowhere else: one line above coerces the absent role away, and this is the
        last point at which "the engine never sent one" can be told from "the engine said
@@ -1218,6 +1267,11 @@ export function DesktopMailboxes(
      * The mailbox is untouched, the password is untouched, and the engine re-dials on its own;
      * a sentence implying the person must act would be asking for work that is not theirs. */
     const r = reach.rows[m.id];
+    /* THE ROW'S OWN ENTRY COULD NOT BE READ — first, because nothing else on `r` means anything
+       when this is false, and `reachable: false` sitting under it would announce an outage at a
+       mail server this read learned nothing about. Same sentence as the whole-slice arm below:
+       the question about this row went unanswered, which is what both of them are. */
+    if (r && !r.answered) return t("desktopStateUnknown");
     /* THE SERVER ANSWERED AND SAID NO — above the unreachable arm, because it is a MORE specific
        answer to the same question and the generic one would send somebody to check a network
        that is working perfectly. */
