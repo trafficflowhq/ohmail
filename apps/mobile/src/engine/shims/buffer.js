@@ -78,6 +78,15 @@ const originalToString = Buffer.prototype.toString;
 const originalWrite = Buffer.prototype.write;
 
 Buffer.from = function from(value, encodingOrOffset, length) {
+  /* THIS ARM IS REDUNDANT TODAY AND IS KEPT DELIBERATELY — do not delete it as dead code.
+     Measured: removing it leaves all nine cases in `buffer-base64url.test.ts` green, because
+     `isEncoding` below answers `true` for the name, which is exactly what stops the polyfill's own
+     `fromString` refusing it — and `byteLength` and `write` then do the decode between them. Traced
+     against the raw package: `from(s, "base64url")` throws `Unknown encoding: base64url`, and with
+     only those three patched it returns the right bytes.
+     So what this line buys is that `from` NORMALIZES THE NAME ONCE, at the entry point, instead of
+     `from`'s correctness resting on three other overrides recognising it further down. A case pins
+     that: nothing below this line ever sees the string "base64url". */
   if (typeof value === "string" && isBase64Url(encodingOrOffset)) {
     return originalFrom.call(this, value, "base64");
   }
