@@ -13,6 +13,30 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Setup credits on ohmail Cloud: whether one was granted, and why not
+
+An ohmail Cloud account on a paid plan receives a one-time pool of screening credits when it
+connects its first mailbox — a month of that plan's own allowance, held separately from the monthly
+balance and written in the same step as the mailbox itself, so a connection that fails grants
+nothing. That much is not new. What is new is that the service now records what happened each time
+it tried.
+
+Connecting a mailbox succeeds whether or not a pool was written, so an account holding no pool
+looked exactly like an account whose pool was never attempted, and the several reasons one is
+withheld looked like each other. The service now records which of four things happened — the pool
+was granted, the account already held one, it has no subscription to size one from, or its plan
+sells no credits — beside the account and the mailbox concerned. That record goes to the server's
+own log, where somebody answering a question about an account can read it. None of it is shown to
+you, and nothing about connecting a mailbox looks different. A failure to write that line can never
+become the reason a mailbox failed to connect, while a failure to write the pool itself still stops
+the connection, exactly as before.
+
+Connecting a mailbox by signing in to a provider reaches different code than connecting one with a
+password, and only the password route had ever been exercised by a test — so the pool's arrival for
+anyone signing in to a provider rested on a line nothing checked. Both provider routes are covered
+now: each grants the pool on a first connection, reconnecting a mailbox that already exists grants
+nothing, and connecting through both grants one pool between them.
+
 ### The phone chooser says what a phone can be
 
 The chooser offers three answers — ohmail Cloud, a server you run, or your own computer — and left
