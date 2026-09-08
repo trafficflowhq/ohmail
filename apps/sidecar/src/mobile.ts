@@ -54,6 +54,11 @@ import {
 } from "./engine.js";
 import type { LocalDb, OpenLocalDb } from "./db.js";
 import type { Diagnostic } from "./log.js";
+/* `@trafficflow/core/mail` and NOT the default barrel, for the reason `engine.ts:6` and
+   `log.ts:1` both give: the barrel is `export *` over twenty-odd modules and reaches the private
+   half. Type-only here, so it erases — but a specifier a later edit turns into a value import
+   would carry the whole barrel into a phone's artifact, and the census would be the only witness. */
+import type { LogFields, Logger, LogLevel } from "@trafficflow/core/mail";
 
 /**
  * ONE STATEMENT AT A TIME, ONE HANDLE, AND ROWS AS ARRAYS IN THE STATEMENT'S COLUMN ORDER.
@@ -390,6 +395,52 @@ export async function openPhoneStore(
 }
 
 /**
+ * A `Logger` OVER THE PHONE'S ONE DIAGNOSTIC — the inverse of `log.ts#diagnosticFor`.
+ *
+ * `SidecarConfig` carries two faces of the same channel and they are not interchangeable:
+ * {@link Diagnostic} is `(event, detail) => void` with the level derived from the event name, and
+ * `Logger` states its level per line. The desktop builds ONE `createSidecarLogger()` and passes
+ * both faces of it (`main.ts:311-312`, `main.ts:364`); this composition passed only the
+ * `Diagnostic`, so `config.logger` was absent on a phone and every `log?.warn` / `log?.error` in
+ * the shared sync loop optional-chained into nothing. What was lost is exactly the set of lines
+ * that describe a write the mail server did NOT accept — a refused `STORE`, a `STORE` whose
+ * bookkeeping did not commit, a read-state intent with nowhere to go. On the one install where the
+ * local store is the only other witness, "your mailbox did not take this" was discarded.
+ *
+ * A phone has no second sink to build one against, so this DERIVES the second face from the one
+ * the caller supplied rather than constructing a logger of its own. The consequence is that both
+ * faces reach the same place — which is the desktop's arrangement too, one indirection earlier.
+ *
+ * ── WHAT EACH MEMBER ANSWERS, AND WHY IT IS NOT MORE ──────────────────────────────────────
+ *
+ *  · `child(fields)` MERGES and returns another of these. `withRequestId` calls it
+ *    (`packages/api/src/middleware.ts:145`), so a stub returning itself would silently drop the
+ *    bindings, and one that threw would take a request down.
+ *  · `level` says `info`, and `debug()` is therefore a no-op rather than an `info` line. A logger
+ *    that names a level and then emits below it is lying about its own filter, and the field is
+ *    read by callers deciding whether to build an expensive detail object.
+ *  · `warn` and `error` both go to the `Diagnostic`. It re-derives a level from the event name
+ *    (`ERROR_EVENT` — `_failed`, `_fatal`, `_unavailable`), so a warning about `store_refused`
+ *    lands as `info` on the phone's own sink. That is the existing vocabulary rule and this does
+ *    not fork it; `level` rides in the FIELDS so the original severity survives in the line.
+ */
+export function loggerOver(log: Diagnostic, bound: LogFields = {}): Logger {
+  const emit = (level: LogLevel, event: string, fields?: LogFields): void => {
+    log(event, { ...bound, ...fields, level });
+  };
+  return {
+    level: "info",
+    child: (fields: LogFields): Logger => loggerOver(log, { ...bound, ...fields }),
+    /* Below `level`. See the note above: the alternative is a line the logger's own filter says
+       it did not emit. */
+    debug: (): void => undefined,
+    info: (event, fields) => { emit("info", event, fields); },
+    warn: (event, fields) => { emit("warn", event, fields); },
+    error: (event, fields) => { emit("error", event, fields); },
+  };
+}
+
+/**
  * START THE ENGINE IN THIS RUNTIME. The phone's `main()`.
  *
  * @throws when a host-only knob is present, when `machineName` or `installId` is empty, or when a
@@ -459,6 +510,11 @@ export async function startPhoneEngine(deps: PhoneEngineDeps): Promise<PhoneEngi
     organizerKind: deps.organizerKind ?? "mobile",
     ...(deps.now ? { now: deps.now } : {}),
     ...(deps.log ? { log: deps.log } : {}),
+    /* BOTH FACES OF THE ONE CHANNEL, spread on the same condition — see {@link loggerOver}. A
+       caller that supplies no `log` gets neither, which keeps the pre-existing shape for the many
+       compositions that pass nothing (`exactOptionalPropertyTypes` wants absence, not
+       `undefined`); a caller that supplies one gets the sync loop's diagnostics too. */
+    ...(deps.log ? { logger: loggerOver(deps.log) } : {}),
     ...(deps.adapterFactory ? { adapterFactory: deps.adapterFactory } : {}),
     // Hex to bytes happens HERE and nowhere else: `Buffer` is bound in this bundle by the builder's
     // `inject`, and the app-side code that reads the keystore has no such global.

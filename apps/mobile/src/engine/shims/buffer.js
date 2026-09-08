@@ -29,14 +29,21 @@
  *     as 3 bytes. It does not throw. That one is the dangerous member: a caller sizing a buffer
  *     from it allocates the wrong length and nothing reports anything.
  *
- * ── THE TRANSLATION IS EXPLICIT ANYWAY ────────────────────────────────────────────────────
+ * ── SO THE DECODE PATHS TRANSLATE NOTHING, AND THAT IS THE MEASUREMENT, NOT A SHORTCUT ────
  *
- * Decoding delegates through an explicit RFC 4648 §5 translation (`-`→`+`, `_`→`/`, re-pad) rather
- * than relying on the underlying decoder's leniency, and that is a deliberate choice with a cost
- * worth stating: because the decoder IS lenient today, removing the translation leaves every
- * end-to-end case green. It is guarded as a unit instead — `toStandardAlphabet` is exported and
- * asserted directly — so what is measured is this file's own behaviour rather than the pair of
- * this file and an undocumented property of a dependency that a version bump may withdraw.
+ * This file used to hand the decoders an explicit RFC 4648 §5→§4 translation (`-`→`+`, `_`→`/`,
+ * re-pad), justified as insurance against "an undocumented property of a dependency". The property
+ * is neither undocumented nor incidental: `base64-js/index.js:17-20` sets `revLookup['-'] = 62`
+ * and `revLookup['_'] = 63` under the comment *"Support decoding URL-safe base64 strings, as
+ * Node.js does."*, and `base64clean` in `buffer/index.js` keeps both characters and pads a short
+ * string to a whole group. So a second implementation of the same rule bought nothing and had to
+ * be kept in step with the first.
+ *
+ * What each decode path does now is name the encoding the polyfill understands and pass the STRING
+ * through untouched. Measured across every remainder (0, 2, 3), padded and unpadded, and on
+ * vectors containing both URL-safe characters: `from` returns the same bytes and `byteLength` the
+ * same number as Node, with no translation at all. The members still have to EXIST, because what
+ * the polyfill refuses is the NAME.
  *
  * ── PATCHED IN PLACE, WHICH IS WHY THE GLOBAL AND THE MODULE CANNOT DISAGREE ──────────────
  *
@@ -56,18 +63,6 @@ const polyfill = require("buffer/");
 
 const Buffer = polyfill.Buffer;
 
-/** RFC 4648 §5 → §4: the URL-safe alphabet translated to the standard one, and re-padded. */
-function toStandardAlphabet(value) {
-  const translated = String(value).replace(/-/g, "+").replace(/_/g, "/");
-  /* Padding is OPTIONAL in the URL-safe form and REQUIRED by some standard decoders. The remainder
-     can be 0 (whole groups), 2 or 3; a remainder of 1 is not a legal encoding of any byte string,
-     and it is left alone rather than "corrected" so a malformed input stays malformed. */
-  const remainder = translated.length % 4;
-  if (remainder === 2) return `${translated}==`;
-  if (remainder === 3) return `${translated}=`;
-  return translated;
-}
-
 /** §4 → §5: the standard alphabet translated to the URL-safe one, unpadded. */
 function toUrlAlphabet(value) {
   return value.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -84,17 +79,17 @@ const originalWrite = Buffer.prototype.write;
 
 Buffer.from = function from(value, encodingOrOffset, length) {
   if (typeof value === "string" && isBase64Url(encodingOrOffset)) {
-    return originalFrom.call(this, toStandardAlphabet(value), "base64");
+    return originalFrom.call(this, value, "base64");
   }
   return originalFrom.call(this, value, encodingOrOffset, length);
 };
 
 Buffer.byteLength = function byteLength(value, encoding) {
-  /* The member that answered a wrong number instead of refusing. Measured through the decode so it
-     cannot drift from what `from` actually produces — a length computed from the string's own
-     arithmetic would be a second implementation of the same rule. */
+  /* The member that answered a wrong number instead of refusing. Measured through the polyfill's
+     own decode so it cannot drift from what `from` produces — a length computed from the string's
+     arithmetic here would be a second implementation of the same rule. */
   if (typeof value === "string" && isBase64Url(encoding)) {
-    return originalByteLength.call(this, toStandardAlphabet(value), "base64");
+    return originalByteLength.call(this, value, "base64");
   }
   return originalByteLength.call(this, value, encoding);
 };
@@ -114,17 +109,16 @@ Buffer.prototype.toString = function toString(encoding, start, end) {
 Buffer.prototype.write = function write(string, offset, length, encoding) {
   /* `write` carries three optional-argument shapes — (string), (string, encoding),
      (string, offset, encoding) and (string, offset, length, encoding) — so the encoding is
-     whichever of the three trailing arguments is the URL-safe name. Translating the string and
-     handing the call on with `base64` in the same position keeps the polyfill's own argument
-     handling in charge of the rest. */
+     whichever of the three trailing arguments is the URL-safe name. Renaming it to `base64` in the
+     same position keeps the polyfill's own argument handling in charge of the rest. */
   if (isBase64Url(encoding)) {
-    return originalWrite.call(this, toStandardAlphabet(string), offset, length, "base64");
+    return originalWrite.call(this, string, offset, length, "base64");
   }
   if (isBase64Url(length)) {
-    return originalWrite.call(this, toStandardAlphabet(string), offset, "base64");
+    return originalWrite.call(this, string, offset, "base64");
   }
   if (isBase64Url(offset)) {
-    return originalWrite.call(this, toStandardAlphabet(string), "base64");
+    return originalWrite.call(this, string, "base64");
   }
   return originalWrite.call(this, string, offset, length, encoding);
 };
@@ -132,5 +126,6 @@ Buffer.prototype.write = function write(string, offset, length, encoding) {
 /* The polyfill itself, patched. Everything else it exports — `Blob`, `constants`, `kMaxLength`,
    `SlowBuffer`, `atob`, `btoa` — passes through untouched. */
 module.exports = polyfill;
-module.exports.toStandardAlphabet = toStandardAlphabet;
+/* The ENCODE half only. Its §5→§4 twin is gone with the decode translation above; the decoders
+   read the URL-safe alphabet themselves and there is nothing left for a caller to translate. */
 module.exports.toUrlAlphabet = toUrlAlphabet;

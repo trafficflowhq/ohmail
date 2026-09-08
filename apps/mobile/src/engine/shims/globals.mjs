@@ -55,6 +55,34 @@ const processShim = {
     { bigint: () => BigInt(Date.now()) * 1000000n },
   ),
   emitWarning: () => undefined,
+  /**
+   * `emit` IS NODE'S DEFAULT FOR AN UNWATCHED REJECTION, AND IT IS THE ONE MEMBER HERE THAT MAY
+   * NOT ANSWER QUIETLY.
+   *
+   * `lie` — the promise implementation inside the zip library — announces a rejection nobody
+   * handled by calling `process.emit("unhandledRejection", error, promise)` from a deferred
+   * callback (`lie/lib/index.js:148`). The stand-in had no such member, so what a phone got was
+   * `processShim.emit is not a function` thrown out of a timer: a TypeError about this file,
+   * carrying no trace of the failure it was announcing.
+   *
+   * RETHROWN, not swallowed. Node with no `unhandledRejection` listener terminates on the
+   * rejection itself, so the throw is the platform's own behaviour and, more usefully, it is the
+   * only shape in which the CAUSE survives — a no-op would turn "the archive could not be read"
+   * into a silence, which is the class of defect this whole shim directory exists to stop being
+   * discovered on a device. A non-`Error` reason is wrapped rather than thrown raw, because a
+   * thrown string arrives at a catch with `errorClass: "String"` and no message at all.
+   *
+   * Every OTHER event answers `false`, which is what Node's `EventEmitter#emit` returns when
+   * nothing is listening — and nothing is, because `on`/`once` above register nothing. A `true`
+   * here would tell a caller its notice had been delivered somewhere.
+   */
+  emit: (event, ...args) => {
+    if (event === "unhandledRejection" || event === "uncaughtException") {
+      const reason = args[0];
+      throw reason instanceof Error ? reason : new Error(String(reason));
+    }
+    return false;
+  },
   on: () => processShim,
   once: () => processShim,
   off: () => processShim,
