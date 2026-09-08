@@ -2109,6 +2109,13 @@ export interface ConsentStateWire {
    */
   signatures?: Record<string, string>;
   /**
+   * PER-MAILBOX SIGNATURE MARKUP (mail 0098) — only the mailboxes whose signature has
+   * formatting. Optional like the map above and for the same reason: a host too old to have
+   * the column omits it, which reads as "nothing here has formatting" and is the picture
+   * that server serves.
+   */
+  signaturesHtml?: Record<string, string>;
+  /**
    * WHEN this account turned OFF auto-unsubscribe on screen-out, or null for the product default —
    * which is that screening a sender out, or marking them spam, also sends the sender's one-click
    * unsubscribe request.
@@ -2311,11 +2318,26 @@ export const consent = {
       method: "PATCH",
       body: { folderMailboxes: { [mailboxId]: enabled } },
     }),
-  /** Per-mailbox signature (mail 0075): a string stores it, `null` clears it — the echo is the WHOLE map. */
-  setMailboxSignature: (mailboxId: string, signature: string | null) =>
-    api<{ signatures: Record<string, string> }>("/consent/settings", {
+  /**
+   * Per-mailbox signature (mail 0075): a string stores it, `null` clears it — the echo is the
+   * WHOLE map, and since mail 0098 BOTH maps, because a write to either changes both columns.
+   *
+   * `signatureHtml` carries the MARKUP shape and the server derives the text half from it. The
+   * two ride DIFFERENT body fields and exactly one is sent: a request naming a mailbox in both
+   * is refused before anything writes, so the caller's `null` text in the markup branch is not
+   * a placeholder — it is the absence of the other shape.
+   */
+  setMailboxSignature: (
+    mailboxId: string, signature: string | null, signatureHtml?: string | null,
+  ) =>
+    api<{
+      signatures: Record<string, string>;
+      signaturesHtml?: Record<string, string>;
+    }>("/consent/settings", {
       method: "PATCH",
-      body: { signatures: { [mailboxId]: signature } },
+      body: signatureHtml !== undefined
+        ? { signaturesHtml: { [mailboxId]: signatureHtml } }
+        : { signatures: { [mailboxId]: signature } },
     }),
   setBlockRemoteImages: (blocked: boolean) =>
     api<{ blockRemoteImagesAt: string | null }>("/consent/settings", {

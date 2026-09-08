@@ -174,6 +174,7 @@ export function InlineReply({
   onAttachments,
   sendSurfaceMaxTotalBytes,
   signatures,
+  signaturesHtml,
   sig = SIG_FOLLOWING,
   onSig,
   subjectEdit = null,
@@ -280,6 +281,13 @@ export function InlineReply({
    * drawn from a guess would serialize words the account may not sign with.
    */
   signatures?: Readonly<Record<string, string>>;
+  /**
+   * THE ACCOUNT'S STORED SIGNATURE MARKUP, server-confirmed — `useConsentState().signaturesHtml`,
+   * handed down beside {@link signatures} and gated on the same flag (mail 0098). Only the
+   * mailboxes whose signature has formatting appear; an absent KEY is "this signature is plain",
+   * and an absent MAP is "this surface cannot know", which the block reads as the plain shape.
+   */
+  signaturesHtml?: Readonly<Record<string, string>>;
   /**
    * THE SIGNATURE BLOCK'S STATE for this message — held by the SHELL (mounted-twice, like
    * `envelope` and `fromId`) and reset when the editor retargets: a removal belongs to the
@@ -808,6 +816,7 @@ export function InlineReply({
           sig={sig}
           onSig={onSig}
           signatures={signatures}
+          signaturesHtml={signaturesHtml}
           mailboxId={from.mailboxId}
           disabled={inFlight}
         />

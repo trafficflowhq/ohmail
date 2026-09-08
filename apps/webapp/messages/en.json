@@ -1057,6 +1057,7 @@
     "signature": "Signature",
     "signatureRemove": "Remove signature for this message",
     "signatureAria": "Signature — part of this message; edit or remove it here",
+    "signatureEditAsText": "Edit as text",
     "sendLater": "Send later",
     "sendLaterTitle": "Send later",
     "sendLaterWhat": "When should this message be sent?",
@@ -1322,7 +1323,7 @@
     "signatures": {
       "nav": "Signatures",
       "title": "Signature",
-      "intro": "A signature is added under new messages and replies you write from that address. It appears in the message as its own block — you can edit it there or remove it for a single message.",
+      "intro": "A signature is added under new messages and replies you write from that address. It appears in the message as its own block — you can edit it there as text, or remove it for a single message.",
       "note": "One signature per mailbox. Leave the field empty to sign with nothing.",
       "placeholder": "Write a signature…",
       "mailboxOn": "Added to messages you write from this address.",

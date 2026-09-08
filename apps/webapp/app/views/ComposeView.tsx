@@ -97,6 +97,7 @@ export function ComposeView({
   from,
   sendSurfaceMaxTotalBytes,
   signatures,
+  signaturesHtml,
   plan,
   send,
   locked,
@@ -154,6 +155,13 @@ export function ComposeView({
    * the block on screen and the tail of the sent body are one text.
    */
   signatures?: Readonly<Record<string, string>>;
+  /**
+   * THE ACCOUNT'S STORED SIGNATURE MARKUP, server-confirmed — `useConsentState().signaturesHtml`,
+   * handed down beside {@link signatures} and gated on the same flag (mail 0098). Only the
+   * mailboxes whose signature has formatting appear; an absent KEY is "this signature is plain",
+   * and an absent MAP is "this surface cannot know", which the block reads as the plain shape.
+   */
+  signaturesHtml?: Readonly<Record<string, string>>;
   /** The same object `canSend` judges and `onSend` dispatches. */
   plan: ComposePlan;
   send: SendState;
@@ -891,6 +899,7 @@ export function ComposeView({
               sig={fields.sig ?? SIG_FOLLOWING}
               onSig={(next) => onFields({ ...fields, sig: next })}
               signatures={signatures}
+              signaturesHtml={signaturesHtml}
               mailboxId={from.mailboxId}
               disabled={inFlight}
             />

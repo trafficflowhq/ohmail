@@ -111,10 +111,23 @@ export interface ConsentTransport {
   setMailboxFoldersEnabled: (
     mailboxId: string, enabled: boolean,
   ) => Promise<{ folderMailboxesOff: Record<string, string> }>;
-  /** Per-mailbox signature (mail 0075): a string stores, `null` clears; echoes the whole map. */
+  /**
+   * Per-mailbox signature (mail 0075): a string stores, `null` clears; echoes the whole map.
+   *
+   * `signatureHtml` (mail 0098) carries the MARKUP shape instead, and then the server derives
+   * the text half from it. EXACTLY ONE of the two carries the value — a call supplying both is
+   * refused at the route — so the markup form passes `null` as the text.
+   *
+   * The markup echo is OPTIONAL on the way back: a host too old to have the column omits it,
+   * which reads as "no signature anywhere has formatting" and is exactly the picture that
+   * server serves.
+   */
   setMailboxSignature: (
-    mailboxId: string, signature: string | null,
-  ) => Promise<{ signatures: Record<string, string> }>;
+    mailboxId: string, signature: string | null, signatureHtml?: string | null,
+  ) => Promise<{
+    signatures: Record<string, string>;
+    signaturesHtml?: Record<string, string>;
+  }>;
   /**
    * The account-wide appearance face (mail 0082) — OPTIONAL, unlike every method above, because
    * the desktop's hosted-door transport predates it and must keep compiling; a host that does
@@ -285,6 +298,17 @@ export interface ConsentState {
    * an absent key is "this mailbox signs with nothing", which is the resting state.
    */
   signatures: Record<string, string>;
+  /**
+   * PER-MAILBOX SIGNATURE MARKUP — `{ mailboxId: html }`, only the mailboxes whose signature has
+   * formatting in it (mail 0098).
+   *
+   * AN ABSENT KEY IS "NO FORMATTING", NEVER "NO SIGNATURE". {@link signatures} answers the
+   * latter, and the two are read together: the Settings editors seed from both, and a compose
+   * block renders the markup when it has one and the text otherwise. It shares
+   * {@link signaturesKnown} rather than carrying a flag of its own — the two maps arrive in one
+   * response and a surface that has one has both, so a second flag could only ever disagree.
+   */
+  signaturesHtml: Record<string, string>;
   /**
    * Did {@link signatures} come from the LIVE wire (or a write's echo)? `folderMailboxesKnown`'s
    * rule for the same reason: the boot cache carries no signatures, so a pane gated on `known`
@@ -467,6 +491,8 @@ const RESTING: ConsentState = {
   // "none": a compose surface must not claim the account signs with nothing before the wire
   // has said so.
   signatures: {},
+  // NO MARKUP AT REST, on `signatures`' reasoning and gated by the same flag.
+  signaturesHtml: {},
   signaturesKnown: false,
   // NOTHING FROM AN ACCOUNT. Unlike `blockRemoteImages` above, resting null is not a safe
   // *position* — it is the absence of one, and it leaves the language this device remembered in
@@ -651,7 +677,9 @@ export function useConsentState(
    * server-confirmed text only — and rethrows on refusal so the pane can say the write did
    * not land.
    */
-  setMailboxSignature: (mailboxId: string, signature: string | null) => Promise<Record<string, string>>;
+  setMailboxSignature: (
+    mailboxId: string, signature: string | null, signatureHtml?: string | null,
+  ) => Promise<Record<string, string>>;
 } {
   const [state, setState] = useState<ConsentState>(RESTING);
   /**
@@ -771,6 +799,9 @@ export function useConsentState(
           // Absent (an API before mail 0075) reads as "no signatures" — the picture that server
           // actually serves, since nothing on it can store one.
           signatures: wire.signatures ?? {},
+          // Absent (an API before mail 0098) reads as "no signature has formatting" — again the
+          // picture that server serves, since nothing on it can store markup.
+          signaturesHtml: wire.signaturesHtml ?? {},
           signaturesKnown: true,
           // NORMALISED, not trusted. The column's CHECK and `consentSettings` both close the set,
           // so an unsupported string cannot arrive from a current server — and this is the boot
@@ -1074,16 +1105,22 @@ export function useConsentState(
     }, [applyEcho]);
 
   const setMailboxSignature = useCallback(
-    async (mailboxId: string, signature: string | null): Promise<Record<string, string>> => {
+    async (
+      mailboxId: string, signature: string | null, signatureHtml?: string | null,
+    ): Promise<Record<string, string>> => {
       // The user's act outranks every read in flight — see `writeEpoch`.
       writeEpoch.current += 1;
       const at = era.current;
-      const res = await link.current.setMailboxSignature(mailboxId, signature);
+      const res = await link.current.setMailboxSignature(mailboxId, signature, signatureHtml);
       const map = res.signatures ?? {};
-      // THE WHOLE MAP FROM THE ECHO — the exceptions dial's rule: the server answers with every
-      // stored signature after the write, so a stale tab heals on its own next write, and the
-      // editor renders what the database holds rather than what the keystroke hoped.
-      applyEcho(at, (prev) => ({ ...prev, signatures: map, signaturesKnown: true }));
+      // BOTH MAPS FROM THE ECHO — the exceptions dial's rule, and it has to cover both halves
+      // because a write to EITHER changes both columns: saving markup derives the text, and
+      // saving text clears the markup. Storing only the map that was posted would leave the pane
+      // and every open composer rendering a stale half.
+      const htmlMap = res.signaturesHtml ?? {};
+      applyEcho(at, (prev) => ({
+        ...prev, signatures: map, signaturesHtml: htmlMap, signaturesKnown: true,
+      }));
       return map;
     }, [applyEcho]);
 

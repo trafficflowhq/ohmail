@@ -172,6 +172,16 @@ export interface RichEditorProps {
    * caret cannot reach, which is the inert-affordance class this app keeps closing.
    */
   editable?: boolean;
+  /**
+   * False for a READ-ONLY VIEW of a document — no toolbar at all, rather than a disabled one.
+   *
+   * `editable: false` already refuses input and greys the controls, and for a send in flight
+   * that is exactly right: the buttons are coming back. A view that will NEVER take input is a
+   * different thing, and eight permanently dead buttons above it is the inert affordance this
+   * app keeps removing. Used by the signature block and the Settings preview, which render what
+   * a message will carry and are never typed into.
+   */
+  toolbar?: boolean;
   /** Wired by the reply surface for ⌘↵ — the editor swallows keys the shell would not see. */
   onKeyDown?: (e: React.KeyboardEvent) => void;
   /**
@@ -187,7 +197,7 @@ export interface RichEditorProps {
 
 export function RichEditor({
   id, value, onChange, ariaLabel, placeholder, className, autoFocus, editable = true,
-  onKeyDown, editorRef,
+  toolbar = true, onKeyDown, editorRef,
 }: RichEditorProps) {
   /**
    * The last value this component EMITTED, so the sync effect below can tell the caller
@@ -440,13 +450,15 @@ export function RichEditor({
    */
   return (
     <div className={cls}>
-      <Toolbar
-        editor={editor}
-        editable={editable}
-        linkOpen={linkOpen}
-        onLinkToggle={() => setLinkOpen((open) => !open)}
-        onLinkClose={closeLink}
-      />
+      {toolbar ? (
+        <Toolbar
+          editor={editor}
+          editable={editable}
+          linkOpen={linkOpen}
+          onLinkToggle={() => setLinkOpen((open) => !open)}
+          onLinkClose={closeLink}
+        />
+      ) : null}
       <EditorContent editor={editor} className="rte-body" onKeyDown={onEditorKeyDown} />
     </div>
   );

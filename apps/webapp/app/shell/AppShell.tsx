@@ -140,7 +140,10 @@ import {
   type MailSend as MailSendMutation,
 } from "./compose";
 import { appendRich, EMPTY_RICH, isRichEmpty, type RichValue } from "./rich-text";
-import { SIG_FOLLOWING, effectiveSignature, withSignature, type SignatureState } from "./signature";
+import {
+  SIG_FOLLOWING, effectiveSignature, effectiveSignatureHtml, withSignature,
+  type SignatureState,
+} from "./signature";
 import { useDraftReply, type DraftedReply } from "./draft-reply";
 import { RichEditor } from "./RichEditor";
 import { TagPicker, placePicker, type TagPickerState } from "./TagPicker";
@@ -3604,6 +3607,18 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
       from.mailboxId,
     );
     /**
+     * AND THE MARKUP HALF, from the SAME state and the SAME resolved sender (mail 0098). It is
+     * non-null only while the block is showing what the mailbox stores, which is exactly when
+     * the block renders the document rather than the text — so the html part of the message
+     * carries what was on screen. `null` takes the escaped-text path, byte-identical to the
+     * send this line did not exist for.
+     */
+    const sigHtml = effectiveSignatureHtml(
+      replySig,
+      consent.signaturesKnown ? consent.signaturesHtml : {},
+      from.mailboxId,
+    );
+    /**
      * THE INLINE FORWARD'S ARM — the same builder the editor's lock judged
      * (`forwardSend`/`forwardEnvelopePlan`, one derivation), sent on the INLINE surface so
      * the outcome lands on the dock's own lane (`inlineForwardKey`) rather than the compose
@@ -3626,7 +3641,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
           mailboxId: from.mailboxId ?? parent.mailboxId,
           ...(replyAttachments.length > 0 ? { attachments: replyAttachments } : {}),
           plan: forwardEnvelopePlan(replyEnvelope, fromOptions.map((o) => o.address)),
-        }), sigText),
+        }), sigText, sigHtml),
         { surface: "inline" },
       );
       return;
@@ -3679,7 +3694,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
       // `In-Reply-To`/`References` from the parent row whatever the subject says.
       ...(replySubjectEdit !== null ? { subject: replySubjectEdit } : {}),
       ...replyEnvelopeOnWire(plan),
-    }, sigText));
+    }, sigText, sigHtml));
   });
 
   /**
@@ -4193,6 +4208,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
       consent.signaturesKnown ? consent.signatures : {},
       composeFrom.mailboxId,
     );
+    // The markup half, same state, same resolved sender (mail 0098) — see the reply arm above.
+    const sigHtml = effectiveSignatureHtml(
+      compose.sig ?? SIG_FOLLOWING,
+      consent.signaturesKnown ? consent.signaturesHtml : {},
+      composeFrom.mailboxId,
+    );
     const withWhen = (m: MailSendMutation): MailSendMutation =>
       sendAt ? { ...m, sendAt } : m;
     /**
@@ -4208,7 +4229,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
      * original key rather than releasing it, and the person is shown that it needs checking. A
      * retry that reuses the key is safe; nothing here may invent a new one.
      */
-    mailSend.send(withWhen(withSignature(plan.mutation, sigText)));
+    mailSend.send(withWhen(withSignature(plan.mutation, sigText, sigHtml)));
   });
 
   /**
@@ -6728,6 +6749,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
       replySig,
       onReplySig,
       signatures: consent.signaturesKnown ? consent.signatures : undefined,
+      // The MARKUP half beside it (mail 0098), gated on the same flag: the two maps arrive
+      // in one response, so a surface that has one has both and a second gate could only
+      // ever disagree with this one.
+      signaturesHtml: consent.signaturesKnown ? consent.signaturesHtml : undefined,
       // The subject as edited — `null` keeps the untouched reply's wire byte-identical.
       replySubjectEdit,
       onReplySubject,
@@ -6782,7 +6807,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
     [ownAddresses, absoluteTime, toggleAbsoluteTime, replyTo, replyAll, replyMode, replyBody, onReplyBody, closeReply, sendReply, mailSend, draftReplyChrome,
       replyEnvelope, replyFromId, replyAttachments, replySig, replySubjectEdit,
       onReplySig, onReplySubject,
-      consent.signatures, consent.signaturesKnown, sendSurfaceMaxTotalBytes, replyBook,
+      consent.signatures, consent.signaturesHtml, consent.signaturesKnown,
+      sendSurfaceMaxTotalBytes, replyBook,
       openSenderMenu, ownNameOf, writeTo, openReply, openForward, openSubjectRule,
       conversationOf, bodyOfMessage, hydrateBody, hydrateThread, attachments, remoteImages,
       consent.foldersEnabled, reader, barPanel],
@@ -7538,6 +7564,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
                 /* Server-confirmed only — before the live consent read lands the block cannot
                    render, so a signature is never drawn (or serialized) from a guess. */
                 signatures={consent.signaturesKnown ? consent.signatures : undefined}
+                signaturesHtml={consent.signaturesKnown ? consent.signaturesHtml : undefined}
                 plan={plan}
                 /* The row this compose is HOLDING decides too, not only the jar — see
                    `heldRowUnverified`. Read at render from the drafts the mirror holds, so it
@@ -7757,6 +7784,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
                     <SignaturesRow
                       mailboxes={facts}
                       signatures={consent.signatures}
+                      signaturesHtml={consent.signaturesHtml}
                       setMailboxSignature={consent.setMailboxSignature}
                     />
                   )

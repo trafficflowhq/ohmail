@@ -225,6 +225,13 @@ export interface MessageChrome {
    */
   signatures?: Readonly<Record<string, string>>;
   /**
+   * THE ACCOUNT'S STORED SIGNATURE MARKUP, server-confirmed — `useConsentState().signaturesHtml`,
+   * handed down beside {@link signatures} and gated on the same flag (mail 0098). Only the
+   * mailboxes whose signature has formatting appear; an absent KEY is "this signature is plain",
+   * and an absent MAP is "this surface cannot know", which the block reads as the plain shape.
+   */
+  signaturesHtml?: Readonly<Record<string, string>>;
+  /**
    * THE REPLY'S SUBJECT AS EDITED — `null` while the derived `Re:` subject stands, which keeps
    * the untouched reply's wire byte-identical. Held here for the mounted-twice reason every
    * peer above states; `onReplySubject` absent renders the subject as plain text, never a dead

@@ -159,11 +159,20 @@ export const consentOverBridge: ConsentTransport = {
       folderMailboxes: { [mailboxId]: enabled },
     }),
   // Per-mailbox signature (mail 0075) — same shape, same forwarding rule: the write lands on
-  // the account's row through the hosted route, and the echo is the WHOLE map.
-  setMailboxSignature: (mailboxId, signature) =>
-    patch<{ signatures: Record<string, string> }>({
-      signatures: { [mailboxId]: signature },
-    }),
+  // the account's row through the hosted route, and the echo is the WHOLE map. Since mail 0098
+  // both maps, because a write to either changes both columns.
+  //
+  // `signatureHtml` carries the MARKUP shape on its own body field and the server derives the
+  // text half from it; exactly one of the two is ever sent, which is why the branch is on the
+  // argument being SUPPLIED rather than on its value (an explicit `null` markup is still the
+  // markup door, and it clears the signature).
+  setMailboxSignature: (mailboxId, signature, signatureHtml) =>
+    patch<{
+      signatures: Record<string, string>;
+      signaturesHtml?: Record<string, string>;
+    }>(signatureHtml !== undefined
+      ? { signaturesHtml: { [mailboxId]: signatureHtml } }
+      : { signatures: { [mailboxId]: signature } }),
   /**
    * "APPLY FOR ALL DEVICES" FOR THE APPEARANCE FACE (OHMARCHY-PLAN.md §3a) — the last knob this
    * transport was missing, and the reason the affordance was withheld here.

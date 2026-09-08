@@ -1951,6 +1951,10 @@ export function MessagePane({
          shell's consent read, serialized by `sendReply` from the same derivation the block
          renders. `onReplySig` absent on the inert chrome renders no block there. */
       signatures={chrome.signatures}
+      /* The markup half, forwarded EXPLICITLY beside it. Both props are optional, so a
+         missing forward here compiles and renders the plain shape for a signature the send
+         carries as markup — a silent divergence no typecheck can see. */
+      signaturesHtml={chrome.signaturesHtml}
       sig={chrome.replySig}
       onSig={chrome.onReplySig}
       /* THE SUBJECT, editable in place on a reply — the edit lives on the chrome

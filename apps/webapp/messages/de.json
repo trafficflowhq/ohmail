@@ -1057,6 +1057,7 @@
     "signature": "Signatur",
     "signatureRemove": "Signatur für diese Nachricht entfernen",
     "signatureAria": "Signatur — Teil dieser Nachricht; hier bearbeiten oder entfernen",
+    "signatureEditAsText": "Als Text bearbeiten",
     "sendLater": "Später senden",
     "sendLaterTitle": "Später senden",
     "sendLaterWhat": "Wann soll diese Nachricht gesendet werden?",
@@ -1322,7 +1323,7 @@
     "signatures": {
       "nav": "Signaturen",
       "title": "Signatur",
-      "intro": "Eine Signatur wird unter neue Nachrichten und Antworten gesetzt, die du von dieser Adresse schreibst. Sie erscheint in der Nachricht als eigener Block — dort kannst du sie bearbeiten oder für eine einzelne Nachricht entfernen.",
+      "intro": "Eine Signatur wird unter neue Nachrichten und Antworten gesetzt, die du von dieser Adresse schreibst. Sie erscheint in der Nachricht als eigener Block — dort kannst du sie als Text bearbeiten oder für eine einzelne Nachricht entfernen.",
       "note": "Eine Signatur pro Postfach. Lass das Feld leer, um ohne Signatur zu senden.",
       "placeholder": "Signatur schreiben…",
       "mailboxOn": "Wird unter Nachrichten von dieser Adresse gesetzt.",
