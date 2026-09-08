@@ -2102,8 +2102,16 @@ export class OhmailEngine {
        * path, which writes exactly this — and `flushPending()` is its single, destructive reader.
        * The two writers are mutually exclusive per call: a timed-out dispatch returns a `null`
        * result here and writes from its own continuation, so nothing is recorded twice.
+       *
+       * ONLY A SETTLED ANSWER, and this is not a refinement — a `queued` result is the ABSENCE of
+       * an answer. The entry went back on the outbox and is still pending; keeping that as a late
+       * result poisons the map's one reader, because `flushPending()` returns what it drained
+       * BEFORE what it dispatches. Measured: "a 410 mid-drive does not take the persisted verbs
+       * with it" read the stale `queued` as the flush's verdict for a verb the network had since
+       * accepted. One level out it is worse — the compose adoption pass would settle a message on
+       * a send that has not settled, which is the false "Sent." this seam exists to prevent.
        */
-      if (result !== null) {
+      if (result !== null && result.status !== "queued") {
         this.lateResults.set(p.id, result);
         this.notify();
       }
