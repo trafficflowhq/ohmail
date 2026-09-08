@@ -335,9 +335,15 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean): 
        * be made to guess. */
       const f = state.filing;
       const asOf = f?.asOf ? clockTime(f.asOf) : null;
-      const where = state.address && asOf
-        ? t("filingWhere", { address: displayAddress(state.address), at: asOf })
-        : null;
+      /* TWO KEYS, AND THE UNDATED ONE IS NOT REDUNDANT. `asOf` comes from the aggregate, which an
+         older server does not send — and gating the address line on it dropped the line entirely
+         for exactly those servers, which `sync-bar-loader.test.ts` caught: the strip stopped
+         naming the mailbox it had always named. The date is an ADDITION to that sentence, so it
+         gets its own key and the original keeps working with nothing but an address. */
+      const where = state.address === null ? null
+        : asOf
+          ? t("filingWhereAsOf", { address: displayAddress(state.address), at: asOf })
+          : t("filingWhere", { address: displayAddress(state.address) });
 
       /* WHO FILES IT. Never `warn`: nothing has failed and nothing on this side is late — the
        * mailbox is organized somewhere else, which is a configuration the person chose. Never
