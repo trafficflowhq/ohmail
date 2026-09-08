@@ -1,4 +1,5 @@
 import { and, eq, inArray, isNotNull, lte, notInArray, sql } from "drizzle-orm";
+import { dialect } from "@trafficflow/db/dialect";
 import { drafts, outboundSends, recordChange, type Tx } from "@trafficflow/db";
 import { createLogger, type Logger, type OpenSendAdapter, type StorageCap } from "@trafficflow/core/mail";
 import type { Db, ServiceContext } from "./context.js";
@@ -397,6 +398,7 @@ async function claimDue(
   log: Logger,
   mailboxIds: readonly string[] | undefined,
 ): Promise<ClaimedRow[]> {
+  const d = dialect(db);
   /* NONE MEANS NONE, decided before a transaction is opened. See the field's own note: an empty
      list is a caller saying it has no mailboxes to claim for, and `inArray(col, [])` is not a
      reliable way to say that across drivers. */
@@ -434,7 +436,10 @@ async function claimDue(
       // account-count brake, which is logged as saturation below (the state must be loud).
       while (taken.length < want && eligibility.size < SCHEDULED_SEND_SCAN_ACCOUNTS) {
         const skip = ineligibleAccounts();
-        const rows: Candidate[] = await tx.select({
+        // SKIP LOCKED through the seam: on the server it is what lets several runners share one
+        // window without queueing behind each other, and on the device store it is the identity
+        // for the same reason the lock is — one serialized writer, nothing to skip.
+        const rows: Candidate[] = await d.skipLocked(tx.select({
           id: drafts.id, accountId: drafts.accountId, sendKey: drafts.sendKey,
           sendAt: drafts.sendAt, status: drafts.status,
         }).from(drafts)
@@ -449,13 +454,12 @@ async function claimDue(
             // refuses it — PGlite tolerated it, which is exactly the class of green the
             // pg-suite rule exists to distrust.
             ...(after
-              ? [sql`(${drafts.sendAt}, ${drafts.id}) > (${after.sendAt.toISOString()}::timestamptz, ${after.id}::uuid)`]
+              ? [sql`(${drafts.sendAt}, ${drafts.id}) > (${d.ts(after.sendAt)}, ${d.castUuid(after.id)})`]
               : []),
             ...(skip.length > 0 ? [notInArray(drafts.accountId, skip)] : []),
           ))
           .orderBy(drafts.sendAt, drafts.id)
-          .limit(batch * SCHEDULED_SEND_SCAN_FACTOR)
-          .for("update", { skipLocked: true });
+          .limit(batch * SCHEDULED_SEND_SCAN_FACTOR));
         if (rows.length === 0) break;
         for (const row of rows) {
           if (taken.length >= want) break;

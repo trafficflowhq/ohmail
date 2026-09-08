@@ -1521,9 +1521,9 @@ export class SendService {
       // `SKIP LOCKED`): nothing has been sent yet, every other holder of a drafts row lock is
       // a short CRUD transaction, and a reserve that waits a few milliseconds is a reserve
       // that tells the truth.
-      const [d] = await tx.select().from(drafts)
+      const [d] = await dialect(ctx.db).forUpdate(tx.select().from(drafts)
         .where(and(eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId)))
-        .for("update").limit(1);
+        .limit(1));
       if (!d) throw new ServiceError("not_found", 404, "draft not found");
 
       const [mb] = await tx.select({
@@ -1574,9 +1574,9 @@ export class SendService {
 
       if (inserted.length === 0) {
         // CONFLICT: this key was reserved before. Lock the row and branch on it.
-        const [existing] = await tx.select().from(outboundSends)
+        const [existing] = await dialect(ctx.db).forUpdate(tx.select().from(outboundSends)
           .where(and(eq(outboundSends.accountId, ctx.accountId), eq(outboundSends.idempotencyKey, idempotencyKey)))
-          .for("update").limit(1);
+          .limit(1));
         if (!existing) throw new ServiceError("internal", 500, "reservation vanished");
         return { kind: "existing", row: existing, mailboxId: d.mailboxId };
       }

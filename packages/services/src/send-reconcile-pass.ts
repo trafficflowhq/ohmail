@@ -1,4 +1,5 @@
 import { and, eq, lt, ne } from "drizzle-orm";
+import { dialect } from "@trafficflow/db/dialect";
 import { drafts, mailboxes, outboundSends, type Tx } from "@trafficflow/db";
 import { createLogger, type Logger, type OpenSendAdapter, type SendAdapter } from "@trafficflow/core/mail";
 import type { Db, ServiceContext } from "./context.js";
@@ -757,9 +758,13 @@ async function claimStale(
   db: Db, now: Date, dialWindow: number, waitWindow: number,
   accountEligible: ((accountId: string, db: Db) => Promise<boolean>) | undefined,
 ): Promise<StaleRow[]> {
+  const d = dialect(db);
   return (db as unknown as Tx).transaction(async (tx) => {
     const staleBefore = new Date(now.getTime() - SEND_STALE_AFTER_MS);
-    const page = (dialable: boolean, limit: number) => tx.select({
+    // SKIP LOCKED through the seam, restricted to the send rows: on the server it is what lets
+    // several runners share one window instead of queueing, and on the device store it is the
+    // identity for the same reason the lock is — one serialized writer, nothing to skip.
+    const page = (dialable: boolean, limit: number) => d.skipLocked(tx.select({
       id: outboundSends.id,
       accountId: outboundSends.accountId,
       idempotencyKey: outboundSends.idempotencyKey,
@@ -786,8 +791,7 @@ async function claimStale(
         dialable ? ne(mailboxes.status, "error") : eq(mailboxes.status, "error"),
       ))
       .orderBy(outboundSends.createdAt)
-      .limit(limit)
-      .for("update", { of: outboundSends, skipLocked: true });
+      .limit(limit), { of: outboundSends });
 
     /**
      * TWO WINDOWS, because a mailbox in `error` can never be resolved by dialling and would
