@@ -348,6 +348,190 @@ export const StreamShell = forwardRef<
     for (const c of el.querySelectorAll<HTMLElement>(".scast[data-sid]")) io.observe(c);
   }, [contentKey]);
 
+  /**
+   * ═══ THE STREAM HOLDS ITS PLACE WHEN A CARD ABOVE THE READER CHANGES HEIGHT ═══════════════
+   *
+   * The reader's report is "the list often jumps 50–100px during the scroll and flickers". The
+   * cause is not the scroll and not a re-keyed list: it is a card ABOVE the viewport getting
+   * taller or shorter while the reader is somewhere below it. Everything under that card moves
+   * by the difference, and since `scrollTop` is measured from the top of the content, the
+   * viewport keeps its offset and the content slides through it.
+   *
+   * Measured on a 300-card fixture, one 40-step scroll with no expands at all, every change
+   * attributed to its cause:
+   *
+   *   the intrinsic estimate resolving    `200 → 653`, `200 → 545`, `200 → 536`, `200 → 450`
+   *   a body arriving (snippet → viewer)  `653 → 500`, `567 → 414`, `545 → 455` — both directions
+   *   the viewer's content filling the clamp  `436 → 672`, `414 → 650`, `288 → 524`
+   *   the message frame re-measuring      `329 → 416`, `267 → 329`, `476 → 563`
+   *
+   * The first is fixed at its source (`stream-estimate.ts` — the estimate is now this card's own
+   * data rather than a flat 200). The other three are not estimates: they are the mail arriving,
+   * and no reservation can predict the height of a document that has not been fetched. What CAN
+   * be done is what the browser's own scroll anchoring would do — move `scrollTop` by the same
+   * amount, in the same frame, so the reader's view does not move.
+   *
+   * ── WHY THE BROWSER IS NOT DOING THIS ────────────────────────────────────────────────────
+   *
+   * The stream deliberately keeps `overflow-anchor` ON (`app.css` says so, and the reason is
+   * that the stream is not windowed the way the list columns are). Anchoring still did not fire:
+   * measured at 1440, expanding a card BELOW a fully visible reference moved that reference
+   * −63.25px with `scrollTop` unchanged at 3600 — i.e. the browser made no adjustment for a
+   * change it should have adjusted for. The cards carry `content-visibility: auto`, and a change
+   * inside a skipped subtree is not a change anchoring's candidate selection can see. So the
+   * compensation is done here, from the measurement, rather than argued about from the cascade.
+   *
+   * ── THE RULE, AND WHAT IT DELIBERATELY DOES NOT DO ───────────────────────────────────────
+   *
+   * A card whose box lies ENTIRELY ABOVE the scrollport's top and whose height changed by `d`
+   * costs `scrollTop += d`. A card that is on screen or below it costs nothing: content below
+   * the fold growing does not move anything the reader can see, and content the reader is
+   * looking at growing is the reader's own expand — moving the viewport for that would take the
+   * card they just opened out from under them.
+   *
+   * `behavior: "instant"`, because `.stream` carries `scroll-behavior: smooth` and a bare
+   * `scrollTop +=` is a scrolling API: it would ANIMATE the correction, which is the visible
+   * slide this exists to remove.
+   *
+   * SUSPENDED WHILE A LANDING IS IN FLIGHT (`jumpRef`): that loop owns `scrollTop` for the
+   * duration and re-reads the card's position every frame, so a second writer would be two
+   * loops fighting over one offset — the failure `scrollTo` documents at length.
+   *
+   * The observer is rebuilt on `contentKey` beside the near-observer, so cards a delta added are
+   * covered; heights are remembered per card id, and an id that leaves the pile is forgotten,
+   * so a card that unmounts and remounts is measured fresh rather than against a stale number.
+   */
+  /**
+   * ── HOLDING THE ANCHOR, ONE RECT PER FRAME ───────────────────────────────────────────────
+   *
+   * The mechanism is scroll anchoring's, done by hand because the browser's cannot see the
+   * changes that matter here. A card that is at least partly on screen is the ANCHOR; its offset
+   * from the top of the scrollport is remembered with the `scrollTop` it was read at. On every
+   * frame the offset is predicted from the scroll that has happened since — `remembered −
+   * (scrollTop_now − scrollTop_then)` — and any difference between that prediction and the
+   * reading is content that moved on its own. `scrollTop` absorbs exactly that difference, in
+   * the same frame, before the reader can see it.
+   *
+   * Predicting rather than "compensate only when scrollTop did not change" is the whole point:
+   * the report is of a jump DURING a scroll, so the two happen in the same frame and a rule
+   * that treats a moved scroll as permission to re-anchor would ignore precisely the case it
+   * exists for.
+   *
+   * ── WHY NOT A ResizeObserver OVER THE CARDS ──────────────────────────────────────────────
+   *
+   * That was tried first and it is the wrong instrument here, measured: over a 20-step scroll in
+   * which a per-frame poll recorded 27 card-height changes, an observer over all 60 mounted
+   * cards delivered THREE callbacks. `.scast` carries `content-visibility: auto`, and an
+   * element whose contents are skipped does not deliver resize observations for changes inside
+   * them — the observer reports when a card becomes relevant to the user and then stays quiet
+   * through the hydration, the clamp fill and the frame's re-measure, which are the three
+   * mechanisms that actually move the stream. One rect on one element per frame sees all of
+   * them, and it sees changes that are not a card at all (the waterline, the chip row).
+   *
+   * ── WHAT MOVES, MEASURED, AND WHAT IS FIXED ELSEWHERE ────────────────────────────────────
+   *
+   * One 40-step scroll over a 300-card fixture, no expands, every height change attributed:
+   *
+   *   the intrinsic estimate resolving        `200 → 653`, `200 → 545`, `200 → 536`, `200 → 450`
+   *   a body arriving (snippet → viewer)      `653 → 500`, `567 → 414`, `545 → 455` — both ways
+   *   the viewer's content filling the clamp  `436 → 672`, `414 → 650`, `288 → 524`
+   *   the message frame re-measuring          `329 → 416`, `267 → 329`, `476 → 563`
+   *
+   * The first is fixed at its source: the estimate is now the card's own data rather than a flat
+   * 200px (`stream-estimate.ts`). The other three are the mail arriving, and no reservation can
+   * predict the height of a document that has not been fetched — so they are absorbed here.
+   *
+   * SUSPENDED WHILE A LANDING IS IN FLIGHT (`jumpRef`): that loop owns `scrollTop` for its
+   * duration and re-reads the card's position every frame, so a second writer would be two loops
+   * fighting over one offset — the failure `scrollTo` documents at length below.
+   *
+   * `behavior: "instant"`, because `.stream` carries `scroll-behavior: smooth` and every
+   * scrolling API honours it: a correction left to animate is the visible slide this removes.
+   */
+  const holdRef = useRef<{ sid: string; offset: number; scrollTop: number } | null>(null);
+  const holdRafRef = useRef(0);
+  /** Drift too small to be worth a `scrollTop` write yet — see the accumulator below. */
+  const holdAccRef = useRef(0);
+  useEffect(() => {
+    const el = divRef.current;
+    if (!el || typeof requestAnimationFrame === "undefined") return;
+
+    /**
+     * THE TOPMOST CARD THAT HAS FULLY ENTERED THE SCROLLPORT — its top at or below the top edge,
+     * not merely its bottom.
+     *
+     * The obvious choice is the topmost card with ANY part of it on screen, which is what the
+     * browser's own anchoring approximates, and it holds the wrong thing: that card STRADDLES
+     * the top edge, so a change inside it leaves its top exactly where it was and moves
+     * everything below — including the card the reader is actually reading. Measured at 1440,
+     * expanding a card below a fully visible reference: the reference moved 63.25px with
+     * `scrollTop` unchanged and the straddling card's own offset drifting by 0. Holding the
+     * straddler reports no drift for precisely the shift a reader complains about.
+     *
+     * Holding the first card FULLY inside the port makes "content above the anchor" include the
+     * straddler's own contents, which is what the reader sees move. A reader's own expand of the
+     * straddling card is not affected: clicking a card selects it, and the view lands the
+     * selection at the reading line, which sets `jumpRef` and suspends this loop for the flight.
+     */
+    const pick = (rootTop: number): HTMLElement | null => {
+      for (const c of el.querySelectorAll<HTMLElement>(".scast[data-sid]")) {
+        if (c.getBoundingClientRect().top >= rootTop - 0.5) return c;
+      }
+      return null;
+    };
+    const remember = (rootTop: number) => {
+      const c = pick(rootTop);
+      holdRef.current = c
+        ? { sid: c.dataset.sid!, offset: c.getBoundingClientRect().top - rootTop, scrollTop: el.scrollTop }
+        : null;
+    };
+
+    const frame = () => {
+      holdRafRef.current = requestAnimationFrame(frame);
+      const rootRect = el.getBoundingClientRect();
+      if (rootRect.height <= 0) return; // detached, or a hidden tab: nothing to hold
+      const held = holdRef.current;
+      if (!held) { remember(rootRect.top); return; }
+      const card = el.querySelector<HTMLElement>(`.scast[data-sid="${CSS.escape(held.sid)}"]`);
+      /* The anchor left the pile or unmounted under the sliding window — take a new one rather
+         than compensate against a card that is not there. `stream-window.ts` reserves what it
+         unmounts, so nothing has moved. */
+      if (!card) { holdAccRef.current = 0; remember(rootRect.top); return; }
+      const offset = card.getBoundingClientRect().top - rootRect.top;
+      const scrolled = el.scrollTop - held.scrollTop;
+      const drift = offset - (held.offset - scrolled);
+      /**
+       * THE REMAINDER IS CARRIED, NOT DISCARDED — and the first version of this discarded it.
+       *
+       * A deadband is needed: a sub-pixel drift every frame is layout noise, and writing
+       * `scrollTop` for it would be a correction nobody asked for. But a change that arrives
+       * OVER many frames — the clamp's own half-second transition is the ordinary case — is a
+       * long run of sub-threshold drifts, and throwing each one away throws away the whole
+       * change. Measured: expanding a card above the scrollport moved the held card 13px while
+       * the loop had already absorbed 26 of the 39, i.e. it lost exactly the part that arrived
+       * a third of a pixel at a time. The accumulator keeps it and spends it when it is worth
+       * a pixel.
+       */
+      holdAccRef.current += drift;
+      if (Math.abs(holdAccRef.current) > 0.5 && !jumpRef.current) {
+        el.scrollTo({ top: el.scrollTop + holdAccRef.current, behavior: "instant" });
+        holdAccRef.current = 0;
+      }
+      /* Re-anchor every frame, from the state AFTER any correction: the anchor is a running
+         reference, not a fixed one, and a card scrolled off the top must hand over to the next
+         one or the offset it is compared against grows without bound. */
+      remember(rootRect.top);
+    };
+    holdRafRef.current = requestAnimationFrame(frame);
+    return () => {
+      if (holdRafRef.current) cancelAnimationFrame(holdRafRef.current);
+      holdRafRef.current = 0;
+      holdRef.current = null;
+      holdAccRef.current = 0;
+    };
+  }, []);
+
+
   useEffect(() => {
     const el = divRef.current;
     if (!el) return;

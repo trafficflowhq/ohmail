@@ -97,6 +97,8 @@ export { ListPane, ListGroupLabel, ListRows } from "./composites/ListPane.js";
 export type { ListPaneProps } from "./composites/ListPane.js";
 export { StreamCard, StreamArt } from "./composites/StreamCard.js";
 export type { StreamCardProps, StreamArtProps } from "./composites/StreamCard.js";
+export { estimateCardHeight, STREAM_CARD_FALLBACK_PX } from "./composites/stream-estimate.js";
+export type { StreamCardEstimateInput } from "./composites/stream-estimate.js";
 export { ReadingPane, ReadColumn } from "./composites/ReadingPane.js";
 export type { ReadingPaneProps, ReadingPaneAttachment } from "./composites/ReadingPane.js";
 export { Reader } from "./composites/Reader.js";

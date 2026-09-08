@@ -168,7 +168,17 @@
    That width is contained by the WRAPPER, not by the block: `.msg-pre-wrap` is the element that
    scrolls, so a hostile code block scrolls inside the letter and the message pane never grows a
    horizontal bar. Identical construction to `.msg-table-wrap` below, for identical reasons. */
-.msg-pre-wrap { overflow-x: auto; max-width: 100%; margin: 0 0 10px; }
+/* ONE SCROLL OWNER PER STREAM, AND THIS ELEMENT IS NOT IT.
+   `overflow-y: hidden` is load-bearing rather than tidy: CSS coerces a computed `visible` to
+   `auto` on the other axis as soon as one axis scrolls, so `overflow-x: auto` on its own makes
+   this wrapper a VERTICAL scroll container as well. Measured inside a collapsed reading-stream
+   card: computed `overflow-y: auto`, with 18 507px of real horizontal overflow — exactly the
+   element a wheel would land in on any platform whose horizontal scrollbar takes height from the
+   content box, which is what the desktop's WebKitGTK draws. The block has nothing to scroll
+   vertically (its height IS its content's), so naming the axis clips nothing; it only leaves the
+   reading stream the one thing the wheel can reach. `overscroll-behavior-x: contain` stops a
+   sideways gesture that reaches the end from becoming a history swipe. */
+.msg-pre-wrap { overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; max-width: 100%; margin: 0 0 10px; }
 .msg-pre-wrap:last-child { margin-bottom: 0; }
 .msg-pre {
   margin: 0;
@@ -199,7 +209,8 @@
 }
 
 /* A genuinely wide table scrolls INSIDE the letter; the pane never grows a horizontal bar. */
-.msg-table-wrap { overflow-x: auto; max-width: 100%; margin: 0 0 10px; }
+/* Horizontal only, for the reason `.msg-pre-wrap` above sets out at length. */
+.msg-table-wrap { overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; max-width: 100%; margin: 0 0 10px; }
 .msg-table-wrap:last-child { margin-bottom: 0; }
 .msg-table { border-collapse: collapse; font-size: 0.95em; line-height: 1.45; }
 .msg-table th,

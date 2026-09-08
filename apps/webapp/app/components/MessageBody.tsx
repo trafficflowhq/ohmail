@@ -3354,6 +3354,28 @@ a[data-ohmail-inert]{text-decoration:line-through;opacity:.75}
    makes the element a containing block for fixed and absolutely positioned descendants, so
    applying scale(1) unconditionally would change how ordinary mail lays out for no gain. */
 :root[data-ohmail-scaled] body{transform-origin:0 0;transform:scale(var(--ohmail-scale,1))}
+/* ── AND A SCALED DOCUMENT IS NOT A SCROLLER, because its overflow is not real ─────────
+   A transform is a PAINT operation: it changes nothing about layout. So a scaled mail's
+   \`documentElement\` keeps its full unscaled height while the frame around it is sized to the
+   PAINTED extent — and the difference is scrollable overflow the reader can reach and that
+   contains nothing. Measured on a collapsed Receipts card carrying a 600px newsletter grid:
+   at 1440 the frame was 369px and the document 394 (scale .935), at 390 the frame was 237
+   and the document 394 (scale .6, plus 56px of the same phantom sideways). A real wheel over
+   that card moved the frame's own document 25px and moved the stream NOT AT ALL — the mail
+   slid up inside the card and left blank behind it, which is what "the wheel lands inside an
+   unexpanded message" is.
+
+   \`overflow:hidden\` rather than the frame being made taller: the painted extent already fits
+   the frame exactly, so there is nothing to show and nothing to clip. \`hidden\` keeps the
+   document programmatically scrollable (anchors, \`scrollIntoView\`) while taking it out of the
+   wheel's chain, which is the whole of what is wanted.
+
+   GATED ON ITS OWN ATTRIBUTE AND NOT ON \`data-ohmail-scaled\`, because the two conditions are
+   not the same one: a mail whose painted extent is past {@link MAX_FRAME_PX} really is taller
+   than its frame, and that document must keep its scroller or the tail of a 20 000px mail
+   becomes unreachable. \`measure()\` sets this attribute in the same statement that writes the
+   height, so the two can never disagree. */
+:root[data-ohmail-fitclip]{overflow:hidden}
 /* ── REFLOW, GATED ON THE THIRD ROOT ATTRIBUTE ─────────────────────────────────────────
    The other answer to a mail that is wider than its column, and the one most mail should have
    been getting all along: lay it out AT the column instead of laying it out at its natural
@@ -3424,7 +3446,16 @@ a[data-ohmail-inert]{text-decoration:line-through;opacity:.75}
 :root[data-ohmail-reflow] table{table-layout:auto !important}
 :root[data-ohmail-reflow] img{height:auto !important}
 :root[data-ohmail-reflow] table[data-ohmail-datatable] td,:root[data-ohmail-reflow] table[data-ohmail-datatable] th{overflow-wrap:break-word !important}
-:root[data-ohmail-reflow] pre{white-space:pre !important;overflow-x:auto !important;overflow-wrap:normal !important}
+/* \`overflow-y:hidden\` is not decoration: CSS coerces a computed \`visible\` to \`auto\` on the
+   OTHER axis the moment one axis scrolls, so \`overflow-x:auto\` alone makes this block a
+   VERTICAL scroll container too — and on any platform whose horizontal scrollbar takes room
+   from the content box (a classic scrollbar, which is what the desktop's WebKitGTK draws) it
+   then has a scrollbar's worth of vertical overflow and captures the reader's wheel. The block
+   has nothing to scroll vertically — its height IS its content's — so naming the axis clips
+   nothing and leaves the stream the only thing a wheel can reach. \`overscroll-behavior-x\`
+   keeps a sideways gesture that reaches the block's end from turning into a history swipe.
+   Same rule, same reason, on the native path's \`.msg-pre-wrap\`/\`.msg-table-wrap\`. */
+:root[data-ohmail-reflow] pre{white-space:pre !important;overflow-x:auto !important;overflow-y:hidden !important;overscroll-behavior-x:contain;overflow-wrap:normal !important}
 `;
 
 /**
@@ -3960,6 +3991,10 @@ export function MessageBody({
     // Clearing the attribute first makes the reading a pure function of the content and the
     // column, exactly like the height, and leaves no feedback edge for either axis.
     root.removeAttribute("data-ohmail-scaled");
+    /* Off for the probe alongside the scale, and for the same reason: the reading must be a pure
+       function of the content, and a root that is not a scroll container is a root laid out
+       under different rules than the one the previous pass measured. */
+    root.removeAttribute("data-ohmail-fitclip");
     frame.style.height = `${PROBE_PX}px`;
 
     // `clientWidth` of the FRAME is the column; `scrollWidth` of the frame's root is the widest
@@ -3977,6 +4012,8 @@ export function MessageBody({
     // told to reserve the mail's full unscaled height and leave a gap under a fitted message.
     const raw = Math.ceil(root.offsetHeight * scale);
     const h = Math.min(raw, MAX_FRAME_PX);
+    /** The mail wanted more room than {@link MAX_FRAME_PX} allows, so the frame really is short. */
+    const clampedByCeiling = raw > MAX_FRAME_PX;
 
     if (scale < 1) {
       root.style.setProperty("--ohmail-scale", String(scale));
@@ -3985,6 +4022,22 @@ export function MessageBody({
       root.style.removeProperty("--ohmail-scale");
     }
     frame.style.height = h > 0 ? `${h}px` : restore;
+    /**
+     * ── THE FRAME'S HEIGHT AND ITS DOCUMENT'S SCROLLABILITY ARE ONE DECISION ────────────────
+     *
+     * A scaled document's layout height is its UNSCALED one — a transform is a paint operation —
+     * so sizing the frame to the painted extent leaves the document with scrollable overflow
+     * that has nothing in it. That overflow captured the wheel over a collapsed reading-stream
+     * card: measured, the frame's own document moved 25px at 1440 (157 at 390) while the stream
+     * did not move at all. `:root[data-ohmail-fitclip]` in the document's own stylesheet takes
+     * the root out of the wheel's chain, and it is written HERE, in the statement after the
+     * height, because the two facts are the same fact — a second place deciding it could differ
+     * from this one.
+     *
+     * NOT when the ceiling clamped the height: then the mail is genuinely taller than its frame
+     * and its own document is the only way to reach the rest of it.
+     */
+    root.toggleAttribute("data-ohmail-fitclip", scale < 1 && !clampedByCeiling && h > 0);
 
     for (let i = 0; i < scrollers.length; i++) {
       if (scrollers[i]!.scrollTop !== tops[i]) scrollers[i]!.scrollTop = tops[i]!;

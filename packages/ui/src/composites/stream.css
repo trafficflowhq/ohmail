@@ -73,17 +73,24 @@
 .sc-x .chev{width:12px;height:12px;transition:transform .3s var(--spring);transform:rotate(90deg)}
 .scast.open .sc-x .chev{transform:rotate(-90deg)}
 .scast.short .sc-x{display:none}
-/* A card that is short ONLY because its body has not arrived keeps the pill, and
-   loses the fade (an 88px gradient over two lines of snippet reads as a rendering fault).
-   These two rules are the whole visual cost of hydration; the pill, the clamp and the
-   gradient are otherwise the prototype's. */
+/* A card that is short ONLY because its body has not arrived keeps the pill: the text being
+   short is the symptom, not the answer, so the affordance stays reachable.
+
+   IT USED TO LOSE THE FADE TOO, on the reasoning that an 88px gradient over two lines of snippet
+   reads as a rendering fault — and that was true while a waiting card was two lines tall. It is
+   not any more: a card that has asked for a body now reserves the whole clamp (see the block
+   below), so the fade sits over a full-height box exactly as it does on every other card in the
+   skim. Keeping the rule cost a measured 16px of the card's height at the moment its body
+   arrived, because the fade came back and the pill's own breathing room went away with it —
+   `566 → 550` on every hydrating card at 1440. One box, one height, before and after. */
 .scast.short.pend .sc-x{display:flex}
-.scast.short.pend .sc-fade{display:none}
 /* The pill sits under the clamp with a negative top margin, which reads well behind the
    fade of a collapsed card. Where the fade is OFF — an expanded card, or a short-and-pending
    one — that overlap crowds the text above it, so give the pill its own breathing room. */
-.scast.open .sc-x,
-.scast.short.pend .sc-x{margin-top:16px;margin-bottom:22px}
+/* …and the same reasoning removes `.scast.short.pend` from this rule. The extra air was for a
+   card whose fade was off; a waiting card now keeps its fade and its clamp, so it keeps the
+   pill's ordinary margins and its height does not change when the mail lands. */
+.scast.open .sc-x{margin-top:16px;margin-bottom:22px}
 /* THE MESSAGE'S VERBS, at the foot of the card that is being read — AND THEY FLOAT WHILE IT IS
  * TALLER THAN THE ROOM.
  *
@@ -125,10 +132,33 @@
 .scast.viewer.open .sc-clip{max-height:none;overflow:visible}
 .scast.viewer.open .sc-fade{display:none}
 .scast.viewer.open .sc-x{display:flex}
-/* Only pad the LOADING state, never a real short mail: a card waiting for its viewer reserves
-   a little height so the rendered message does not pop the stream when it lands. A hydrated
-   one-paragraph mail keeps its natural height. */
-.scast.pend .sc-clip{min-height:132px}
+/* ── THE COLLAPSED CARD'S PREVIEW BOX IS THE CLAMP, NOT AT MOST THE CLAMP ─────────────────
+   This block used to reserve 132px for a card waiting for its viewer, on the reasoning that a
+   little height keeps the rendered message from popping the stream. It does not: the message
+   lands at the clamp, and 132 → 348 is a 216px pop on every card in the pile.
+
+   Measured on a 300-card fixture, one 40-step scroll with no expands, every card-height change
+   attributed to its cause: a body arriving moved cards `653 → 500`, `567 → 414`, `545 → 455`
+   (the snippet preview was TALLER than the clamped viewer, so the card shrank), and the viewer's
+   content then filling the clamp moved them `436 → 672`, `414 → 650`, `288 → 524`. Two changes
+   per card, in opposite directions, for every card the reader scrolls past.
+
+   Both are the same defect: `max-height` says "at most this tall", so the card's height is a
+   function of a document that has not arrived yet. The height this file already WANTS is the
+   clamp — `.sc-clip`'s own header, and the viewer block above, say so in as many words: "COLLAPSED
+   it stays clamped at 348 with the fade and the pill, so every card in the stream is one uniform
+   height however tall the mail". Uniform is the design; a maximum is not uniform.
+
+   So a card that has ASKED for a body reserves the clamp, and a card that HAS one keeps exactly
+   the clamp. Nothing about the arrival can change the card's height, so nothing below it moves.
+   The cost is a mail shorter than the clamp showing its remaining room behind the fade — which
+   is the same room every other card in the skim shows, and the reason the fade is there.
+
+   The OPEN card is untouched (`.scast.viewer.open .sc-clip{max-height:none}` above releases it),
+   and so is a text-only card with no body to fetch: `.scast.short` still gives a genuinely short
+   mail its natural height. */
+.scast.pend .sc-clip{min-height:348px}
+.scast.viewer:not(.open) .sc-clip{height:348px}
 .sc-viewer{padding:6px 22px 18px}
 /* The reading pane's "remote image / stylesheet blocked" bar is noise in the collapsed skim —
    a per-card status line the reader is not yet reading. It returns the moment the card is

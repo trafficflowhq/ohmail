@@ -383,6 +383,30 @@ changes, and only then: the "Last answered … ago" clause beside it keeps count
 read out again each minute. The chip's change — to "Stopping" at the press, and to the role the
 mailbox settles into afterwards — is announced as well. The text on screen is unchanged.
 
+### Reads and Receipts hold their place while you scroll
+
+Scrolling either reading stream while messages loaded moved the list under you, and the wheel
+sometimes landed inside a message you had not opened instead of on the list.
+
+Three things were moving the list. A card the browser had not laid out yet reserved a fixed guess
+at its height, and cards whose real height was two or three times that guess pushed everything
+below them when they were finally measured; the guess is now computed from each card's own sender,
+subject and preview. A collapsed card reserved room for "at most" the preview it clamps to, so its
+height changed twice when its message arrived — once when the message replaced the preview and
+again when the message's own content filled the clamp; a collapsed card now reserves exactly the
+room it clamps to and never changes size until you open it. And where something above you does
+still change height, the stream now absorbs it: the message at the top of the window stays where
+it is instead of the whole list sliding past.
+
+The wheel had a second owner. A message wider than the column is laid out at its own width and
+then shrunk to fit, and shrinking is a drawing operation — the message's own document still
+believes it is the taller, wider thing it was written as. That left the message a scrollable area
+containing nothing, and a wheel over a collapsed card scrolled that instead of the list: the mail
+slid up inside the card and left blank space behind it. A shrunk-to-fit message no longer takes the
+wheel. A message too tall to shrink into its frame at all still scrolls inside it, because that is
+the only way to reach the end of it. The wide tables and code blocks inside a message keep their
+sideways scrolling and no longer take a vertical wheel with it.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

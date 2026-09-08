@@ -6,6 +6,7 @@ import {
   type ReactNode,
 } from "react";
 import { Icon } from "../icons.js";
+import { estimateCardHeight } from "./stream-estimate.js";
 import "./stream.css";
 
 const SC_CLAMP = 348;
@@ -217,6 +218,48 @@ export function StreamCard({
     : bodyState === "failed" ? failedLabel
     : bodyState === "withheld" ? withheldLabel
     : null;
+
+  /**
+   * ── WHAT THIS CARD RESERVES WHILE IT HAS NO CONTENTS ──────────────────────────────────────
+   *
+   * `.view-reads .stream .scast` is `content-visibility: auto`, so a mounted card the reader has
+   * never approached is a BOX with nothing in it, and `contain-intrinsic-size` decides how tall
+   * that box is. It used to be one number for every card — 200px — and a card that turns out to
+   * be 650 moves everything below it by 450 the moment the browser lays it out. If the reader is
+   * mid-scroll at that moment, the content under the viewport moves with it, which is the jump.
+   *
+   * The value is written as a custom property rather than as `contain-intrinsic-size` itself so
+   * the property that reads it stays in the stylesheet beside the containment rule that needs
+   * it, and so a card in a surface that does NOT contain (the reader, a test) is unaffected.
+   *
+   * WHY A LAYOUT EFFECT AND NOT A RENDER-TIME VALUE: the estimate is a function of the card's
+   * own width, and the width is only knowable from the element. Containment skips the CONTENTS,
+   * not the element's own box, so `offsetWidth` is real for every mounted card — including one
+   * that has never been rendered. `offsetWidth` is 0 under jsdom, and `estimateCardHeight`
+   * answers the old 200 for a width of 0, so a card in a unit test reserves exactly what it
+   * reserved before.
+   */
+  useLayoutEffect(() => {
+    const card = cardRef.current;
+    if (!card) return;
+    card.style.setProperty(
+      "--sc-est",
+      `${estimateCardHeight({
+        width: card.offsetWidth,
+        subject,
+        preview: body,
+        recipients: recipients != null,
+        pill: !(isShort && !pending),
+        /* The pill's 44px touch size is a `max-width: 640px` media query, which is a fact about
+           the WINDOW rather than about the card — so it is read here and passed in. */
+        touch: typeof window !== "undefined" && window.innerWidth <= 640,
+        /* A card whose body is fetched rather than synced lays out CLAMPED, because `onNear`
+           hydrates it as it approaches — see `clamped`. `showViewer` is the arrived case and
+           `pending` the one on its way; a card carrying its whole body inline is neither. */
+        clamped: showViewer || pending,
+      })}px`,
+    );
+  }, [subject, body, recipients, isShort, pending, showViewer]);
 
   const toggle = () => {
     const clip = clipRef.current;

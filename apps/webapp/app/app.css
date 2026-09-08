@@ -247,6 +247,25 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   overflow-anchor: none;
 }
 
+/* ── AND THE READING STREAMS OPT OUT TOO, BECAUSE THEY NOW HOLD THEIR OWN ANCHOR ───────────
+   This rule used to end with "the reading stream's own scroller is deliberately left out — it is
+   not windowed", and that was right while the browser's anchoring was the only anchoring there
+   was. It is not any more: `StreamShell` holds the top of the scrollport itself, one rect per
+   frame, because the changes that actually move these streams happen inside `content-visibility`
+   subtrees where the browser's candidate selection cannot see them (measured: expanding a card
+   below a fully visible reference moved that reference 63.25px with `scrollTop` untouched).
+
+   Two anchors on one scroller is two writers on one offset, and it double-corrects everything
+   the browser CAN see. Measured with both: 200px added to a card above the reader moved
+   `scrollTop` by 400 — the browser's 200 and the stream's 200 — and left the held card 200px from
+   where it started, i.e. exactly as wrong as no anchoring at all and in the opposite direction.
+   One owner. The stream's own loop is the one that sees every case, so it is the one that keeps
+   the job. */
+.view-reads .stream,
+.view-receipts .stream {
+  overflow-anchor: none;
+}
+
 /* THE READING STREAMS' MOUNTED CARDS ARE MADE CHEAP OFF-SCREEN.
    Reads and Receipts mount an opening run of cards that grows toward the reader and never
    unmounts (`stream-window.ts` carries that argument); this rule is the other half — the
@@ -258,7 +277,21 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 .view-reads .stream .scast,
 .view-receipts .stream .scast {
   content-visibility: auto;
-  contain-intrinsic-size: auto 200px;
+  /* `--sc-est` IS THIS CARD'S OWN GUESS, and the flat 200px it replaces was the largest single
+     source of the reading stream jumping under a scroll.
+
+     A card that has never been approached has no contents, so this number IS its height; the
+     browser swaps in the real one the moment the card enters the layout margin, and everything
+     below it moves by the difference. Measured on a 300-card fixture at 390px, one 40-step
+     scroll with no expands: `200 → 242`, `200 → 450`, `200 → 536`, `200 → 545`, `200 → 653` —
+     and the step the 453px one landed on moved a fully visible card 87px against a 120px
+     scroll — which is the reported jump, in one number.
+
+     `StreamCard` computes the value from the card's own subject, preview and width
+     (`stream-estimate.ts`) and writes it here; the fallback is the old constant, so a card in a
+     surface that never runs that effect reserves exactly what it used to. `auto` still means
+     "prefer the measured height once there is one", so this only ever governs the first pass. */
+  contain-intrinsic-size: auto var(--sc-est, 200px);
 }
 
 /* …AND THE OPEN CARD GIVES THAT UP AGAIN, because containment makes it a positioning box.
@@ -664,6 +697,22 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 .rail-sync-slot {
   display: none;
 }
+/* THE PAIRED DESKTOP'S STANDING LINE, resting state, beside the sync pair's and for its reason:
+   the two declarations that decide which copy is on screen sit together, directly above the one
+   query that swaps them, so the source order that resolves them is visible in one screenful.
+   `.rail-host`'s resting `display: none` is in `rail.css` with the rest of the rail's furniture;
+   that sheet loads first, so this query still wins at width. */
+.host-strip {
+  display: flex;
+}
+/* AND THE RAIL FORM'S RESTING STATE IS HERE TOO, not in `rail.css` with the rest of its styling.
+   That sheet is concatenated AFTER this one, and a media query adds no specificity — so a
+   `display:none` there would beat the query below at every width and the line would never render
+   anywhere. Both halves of the decision live beside each other, above the one rule that swaps
+   them, which is the arrangement the sync pair already uses two lines up. */
+.rail-host {
+  display: none;
+}
 @media (min-width: 901px) {
   .sync-bar {
     display: none;
@@ -676,6 +725,18 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
      describes, reintroduced by a strip that did not know about it. */
   .unsaved-shell {
     display: none;
+  }
+  /* THE PAIRED DESKTOP'S STANDING LINE joins the SAME query, for the reason the strip above it
+     does: two complementary queries are not the same thing as one rule, and the gap between two
+     numbers once put a sentence on screen twice with two live regions reading it out. Its rail
+     copy is hidden at rest (`rail.css`) and revealed here, so exactly one is painted at every
+     width — including inside an OPEN drawer under 901px, where the rail exists but this query
+     does not match and the shell form is the visible one. */
+  .host-strip {
+    display: none;
+  }
+  .rail-host {
+    display: flex;
   }
   .rail-sync-slot {
     display: block;
@@ -1578,6 +1639,14 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   font-weight: 600;
 }
 .hm-line .addr {
+  /* THE ADDRESS ABSORBS THE ROOM — `flex-basis: 0` so its hypothetical size never breaks the line,
+     then it grows into what the sender, the notice and the time leave and ellipsizes when that is
+     nothing, exactly as the stream card's address does (`stream.css`, `.sc-line .addr`). With the
+     default `auto` basis the address's full width decided the wrap, and at a phone width the TIME
+     went under the sender while the notice glyph, pushed by its `margin-left:auto`, stayed on the
+     first line — the pair that should read as one, split across two lines (measured at 390px,
+     German "gerade eben"). */
+  flex: 1 1 0;
   min-width: 0;
   font-size:calc(11.5px + var(--type-up));
   color: var(--ink3);
@@ -1591,6 +1660,23 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   color: var(--ink3);
   font-variant-numeric: tabular-nums;
   flex: none;
+}
+/* THE NOTICE SLOT — the rule the stream card's line keeps (`stream.css`, `.sc-notice`), in this
+   line's terms: the time's size and ink, never the accent, because a block is the product doing
+   what it says and not a fault. It takes the time's `margin-left:auto` when present, so the pair is
+   pushed to the trailing edge as one and the date keeps its corner; the line's own `gap` spaces
+   them. `flex-wrap: wrap` stays the line's: where the pair does not fit beside the sender it wraps
+   under, as the time always did. The glyph's own stylesheet (`gloss.css`) draws the card that
+   opens; the phone-tier caption yield is the component's (`message-body.css`, `.mb-notice`). */
+.hm-line .mb-notice {
+  margin-left: auto;
+  flex: none;
+  min-width: 0;
+  font-size:calc(11px + var(--type-up));
+  color: var(--ink3);
+}
+.hm-line .mb-notice + .t {
+  margin-left: 0;
 }
 .hmail h3 {
   font-size: 17px;
@@ -3022,12 +3108,121 @@ input.set-tag-input {
 /* The travel sentence. It is beneath ALL THREE tiles because it is true of all
    three, so it sits outside the grid and is spaced away from it — a hint tucked
    under the last tile would read as being about that tile. */
-.door-travel {
+/* ONE CLASS LOSES TO ONE CLASS PLUS AN ELEMENT, and this rule lost for its whole life.
+   `.gate-card p` above (13px, `--ink2`, `margin: 0 0 20px`) is the more specific selector, so the
+   travel sentence rendered a size and a weight louder than the tiles' own say lines and carried
+   20px of dead space below it — measured on both faces. The declarations here were never wrong;
+   they were never applied. `.gate-card p.door-travel` is the same specificity plus this class, so
+   the intended treatment wins wherever the sentence actually renders. The bare `.door-travel` stays
+   for any future placement outside a gate card. */
+.door-travel,
+.gate-card p.door-travel {
   font-size:calc(11.5px + var(--type-up));
   color: var(--ink3);
   line-height: 1.55;
   margin: 16px 0 0;
 }
+/* ── THE TAKEOVER CARD'S SUBHEAD AND ITS LIST ─────────────────────────────────
+   A heading inside a setup card, quieter than the card's own `h1` and louder
+   than a hint — the register the settings subhead uses, since it is doing the
+   same job: naming what the rows under it are.
+
+   The list is addresses, one per line, with no bullet and no control. It is not
+   a form and not a choice: nothing here is pressed, and a checkbox or a radio
+   would offer a decision the next screen makes. `overflow-wrap` because an
+   address has no space in it to break at and a long one would widen the card. */
+.join-subhead {
+  font-size:calc(11.5px + var(--type-up));
+  font-weight: 600;
+  color: var(--ink2);
+  letter-spacing: 0.01em;
+  margin: 18px 0 6px;
+}
+.join-roster {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.join-roster li {
+  font-size:calc(12.5px + var(--type-up));
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+/* ── THE PAIRING KEY, WHERE TWO SCREENS ARE COMPARED ──────────────────────────
+   Mono and unbreakable. The twelve characters here are read against the twelve
+   the other computer shows, so a line break through the middle of them turns a
+   comparison into a puzzle. It is a chip rather than bare text because it is a
+   VALUE inside a sentence — the same register `join-code` gives a typed code. */
+.host-key {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  padding: 1px 6px;
+  border-radius: calc(var(--r-ctl) * 6 / 8);
+  background: var(--tint);
+  color: var(--ink);
+}
+
+/* ── THE OTHER COMPUTER IS NOT ANSWERING — the narrow arrangement ─────────────
+   The rail's twin (`.rail-host`, `rail.css`), for the widths where the rail is a
+   closed drawer. It joins the SAME single `min-width: 901px` query the sync line
+   and the unsaved strip already swap on — one rule, both halves, so "exactly one
+   copy is on screen" holds at every width by construction. Two complementary
+   queries left a fractional gap once and printed the sentence twice; see the
+   block above `.rail-sync-slot`.
+
+   IT IS NOT THE SYNC BAR AND MUST NOT LOOK LIKE IT. The sync bar is centred and
+   tinted and every one of its states clears itself. This is a standing fact: ink
+   on the canvas, a hairline under it, left-aligned, and a static hollow mark. No
+   tone class, no spinner, no travelling track — `desktop-host-line.test.tsx`
+   asserts their absence, because the moment this wears a transient's clothes it
+   starts reading as something that is about to fix itself. */
+/* NO `display` HERE. It is declared beside `.rail-sync-slot`, immediately above the one
+   `min-width: 901px` query, because the cascade resolves equal specificity by SOURCE ORDER and
+   this block sits two thousand lines BELOW that query — so a `display: flex` here would beat the
+   query's `display: none` and paint both copies at desktop widths. Measured by
+   `sync-notice-one-copy.test.ts`'s sweep, which is exactly the defect it was written for on the
+   sync pair. */
+.host-strip {
+  flex: none;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  padding: 8px 16px;
+  font-size:calc(11.5px + var(--type-up));
+  color: var(--ink2);
+  box-shadow: inset 0 -1px 0 var(--hair-soft);
+  background: var(--canvas);
+}
+.host-strip .rh-mark {
+  align-self: center;
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: var(--r-avatar);
+  box-shadow: inset 0 0 0 1.5px var(--ink3);
+}
+.host-strip b {
+  color: var(--ink);
+  font-weight: 600;
+}
+.host-strip a {
+  color: var(--ink2);
+  font-weight: 600;
+  white-space: nowrap;
+  text-decoration: underline;
+  text-decoration-color: var(--hair);
+  text-underline-offset: 2px;
+}
+.host-strip a:hover {
+  color: var(--ink);
+  text-decoration-color: var(--ink2);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .door-tile {
     transition: none;
@@ -3118,6 +3313,18 @@ input.set-tag-input {
   border-radius:var(--r-card);
   padding: 12px 14px;
   margin: 0 0 16px;
+}
+/* A REFUSAL AND THE HOST IT NAMED, AS ONE BLOCK. The offer belongs to the sentence above it, so
+   the gap between them is smaller than the gap to the form below — otherwise it reads as a stray
+   control in the middle of the fields. The sentence keeps its own margin when it stands alone. */
+.join-error-note {
+  margin: 0 0 16px;
+}
+.join-error-note .join-error {
+  margin: 0;
+}
+.join-error-note .join-error-use {
+  margin-top: 8px;
 }
 .join-actions {
   display: flex;
@@ -3807,7 +4014,16 @@ input.set-tag-input {
   background: var(--accent-soft);
 }
 /* A command the operator is asked to run, shown verbatim. Selectable and horizontally
-   scrollable rather than wrapped: a wrapped shell command is one a reader can copy wrongly. */
+   scrollable rather than wrapped: a wrapped shell command is one a reader can copy wrongly.
+
+   `overflow-y: hidden` is named for the reason `message-body.css`'s `.msg-pre-wrap` sets out at
+   length: CSS coerces a computed `visible` to `auto` on the other axis as soon as one axis
+   scrolls, so `overflow-x: auto` alone makes this box a VERTICAL scroll container too — and on
+   a platform whose horizontal scrollbar takes height from the content box it then has a
+   scrollbar's worth of vertical overflow and takes the wheel from the panel it sits in. The box
+   has nothing to scroll vertically (one line, `white-space: pre`), so naming the axis clips
+   nothing. Found by the reading stream's own census, one class over from the defect it was
+   written for. */
 .acct-cmd {
   font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-size:calc(12px + var(--type-up));
@@ -3818,6 +4034,8 @@ input.set-tag-input {
   border-radius: var(--r-card);
   background: var(--bg2, var(--bg));
   overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
   white-space: pre;
   user-select: text;
 }
@@ -4587,6 +4805,42 @@ input.set-tag-input {
 .rcpt-chip:hover .rcpt-name,
 .rcpt-chip[aria-expanded="true"] .rcpt-name {
   color: var(--ink);
+}
+
+/* ── "ANSWERED BY THE AWAY RESPONDER · <when>" — the mark on the message that was answered ────
+   One quiet line under the recipients, on every panel the message header wears (the focused
+   message in the reading pane and each sibling on an open thread — `AwayMark.tsx`). It is a FACT,
+   not an alert: `--ink3` like the recipients above it and nothing else, no icon, no hover, no
+   focus, no motion, and never a badge. Automatic mail is not the reader's engagement and must not
+   read as any — the responder's reply is deliberately kept out of the Ohbox, and a mark that
+   shouted would put the same thing back on screen from the other side.
+
+   `display: block` in the header's own column flow, so its left edge IS the subject's and the
+   recipients' — the mark never carries an indent of its own, and it cannot widen the panel: the
+   header's width comes from the reading column, and a block child takes what it is given.
+
+   The margin and size are the SPEC's reading-pane figures rather than its row ones, because this
+   element sits exactly where the spec puts the pane's — immediately after `.msg-rcpts`. There is
+   one placement, so there is one class and no `-pane` variant to go unused.
+
+   ONE INK, INHERITED. `.when` deliberately declares no colour: it would restate the parent's and
+   a rule that cannot change anything is not documentation, it is a rule nobody can watch work.
+   What `.when` IS for is the narrow rendering below — and the separator lives inside it (the
+   catalogue string is `{label}<stamp> · {when}</stamp>`), so the dot leaves with the stamp instead
+   of standing at the end of the line introducing nothing. */
+.away-mark {
+  display: block;
+  margin: 6px 0 0;
+  font-size:calc(11.5px + var(--type-up));
+  line-height: 1.4;
+  font-weight: 450;
+  color: var(--ink3);
+}
+/* Under 640px a card head has room for the claim or for the stamp, not both, and the claim is the
+   half that says something. The accessible name is untouched — `role="note"`'s label carries the
+   ABSOLUTE instant at every width — so nothing is lost to a reader using one. */
+@media (max-width: 640px) {
+  .away-mark .when { display: none; }
 }
 
 /* ── THE CONTACT POPOVER — Copy address · Write · Screener settings ──────────────────────────
