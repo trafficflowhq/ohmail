@@ -16,7 +16,7 @@ import {
   unhuskJunkFiledBody as unhuskJunkFiledBodyTx,
   type JunkHuskIdentity, type JunkUnhuskOutcome,
 } from "../husk-restore.js";
-import { dialect, type Dialect } from "@trafficflow/db/dialect";
+import { dialect, dialectOf, type Dialect } from "@trafficflow/db/dialect";
 import { effectForDestination } from "../rules.js";
 // The Sent shape's single source — the stale-residue cleanup must never take a Sent row (its
 // export in imap-types.ts carries the watermark argument).
@@ -1940,8 +1940,34 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    * `created` comes from `xmax = 0` — the DATABASE's answer to "did I insert this", not this
    * process's guess — cast to int because a boolean's wire representation differs between
    * drivers and `Boolean("f")` is `true`.
+   *
+   * ── AND `xmax` IS A POSTGRES SYSTEM COLUMN, SO THE DEVICE STORE NEEDS ITS OWN ARM ────────
+   *
+   * This is the ingest's FIRST write, and on the device store the statement above does not fail
+   * subtly — it fails at once, with `no such column: xmax`, before a single message can land. So
+   * this is a BRANCH rather than a seam member: `xmax` is not a construct with two spellings, it
+   * is a fact about one store's row visibility that the other does not have and cannot emulate.
+   * A member pretending otherwise would have to answer the question wrongly somewhere.
+   *
+   * The device arm is a SELECT and then one of two writes, inside the caller's transaction, and
+   * two statements are correct here for a reason that does not hold on the server: that store is
+   * reached through ONE serialized connection, so there is no second writer between them. On the
+   * server the same pair would be a lost race, which is exactly why the server keeps its single
+   * statement.
+   *
+   * Three shapes were rejected. `created_at = updated_at` reads TRUE for every row nobody has
+   * touched since insert, so a second call would report a creation. `changes()` is not scoped to
+   * a statement through this driver's proxy. And a bare `INSERT … ON CONFLICT DO NOTHING` with a
+   * follow-up read cannot tell "I inserted it" from "somebody else did" — which is the whole
+   * question.
+   *
+   * A NULL header is a singleton on both stores: NULLs are distinct in the unique index, so it
+   * anchors nothing and always creates. The device arm says that as its own branch rather than
+   * leaning on `= NULL` never matching, because the two look identical and only one is a rule.
    */
   async upsertThread(input: ThreadUpsertInput): Promise<ThreadUpsertResult> {
+    if (dialectOf(this.db) === "sqlite") return this.upsertThreadOnDeviceStore(input);
+
     const rows = await this.db.insert(threads).values({
       accountId: input.accountId,
       rootMessageIdHeader: input.rootMessageIdHeader,
@@ -1956,6 +1982,37 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     const row = rows[0];
     if (!row) throw new Error("upsertThread: ON CONFLICT DO UPDATE returned no row");
     return { id: row.id, created: Number(row.inserted) === 1 };
+  }
+
+  /** {@link upsertThread}'s device arm. See that method's own note for why it is a branch. */
+  private async upsertThreadOnDeviceStore(input: ThreadUpsertInput): Promise<ThreadUpsertResult> {
+    const insert = async (): Promise<ThreadUpsertResult> => {
+      const [created] = await this.db.insert(threads).values({
+        accountId: input.accountId,
+        rootMessageIdHeader: input.rootMessageIdHeader,
+        subject: input.subject,
+        participants: input.participants,
+        lastMessageAt: input.lastMessageAt,
+      }).returning({ id: threads.id });
+      if (!created) throw new Error("upsertThread: the insert returned no row");
+      return { id: created.id, created: true };
+    };
+
+    if (input.rootMessageIdHeader === null) return insert();
+
+    const [existing] = await this.db.select({ id: threads.id }).from(threads)
+      .where(and(
+        eq(threads.accountId, input.accountId),
+        eq(threads.rootMessageIdHeader, input.rootMessageIdHeader),
+      )).limit(1);
+    if (!existing) return insert();
+
+    // The no-op the server's conflict arm performs, kept so both arms leave the row in the same
+    // state: the merge is `mergeThreadMessage`, and `subject` is never written here because a
+    // rename is a person's decision that ingest may not undo.
+    await this.db.update(threads).set({ updatedAt: sql`${threads.updatedAt}` })
+      .where(eq(threads.id, existing.id));
+    return { id: existing.id, created: false };
   }
 
   /**
