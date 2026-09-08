@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNotNull, ne, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, ne, sql, type SQL } from "drizzle-orm";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
 import {
   assertOrganizerRole,
@@ -1126,7 +1126,10 @@ export class MailboxService {
    */
   private async messageCounts(ctx: ServiceContext): Promise<Map<string, number>> {
     const rows = await ctx.db
-      .select({ mailboxId: messages.mailboxId, n: sql<number>`count(*)::int` })
+      .select({
+        mailboxId: messages.mailboxId,
+        n: dialect(ctx.db).castInt(sql`count(*)`).mapWith(Number) as unknown as SQL<number>,
+      })
       .from(messages)
       .where(eq(messages.accountId, ctx.accountId))
       .groupBy(messages.mailboxId);
@@ -1583,14 +1586,13 @@ export class MailboxService {
     const access = await this.access(ctx.accountId);
 
     const out = await asTx(ctx).transaction(async (tx) => {
-      const [existing] = await tx.select().from(mailboxes)
+      const [existing] = await dialect(ctx.db).forUpdate(tx.select().from(mailboxes)
         .where(and(
           eq(mailboxes.accountId, ctx.accountId),
           sql`lower(${mailboxes.address}) = lower(${address})`,
           sql`${mailboxes.status} <> 'disabled'`,
         ))
-        .limit(1)
-        .for("update");
+        .limit(1));
 
       if (existing) {
         const row = existing as MailboxRow;
@@ -2267,21 +2269,20 @@ export class MailboxService {
       // to its cap. Millisecond precision, matching the DTO's
       // `toISOString()` on the other side of the comparison; the sub-millisecond loss floors the
       // baseline, which is the conservative direction.
-      const mine = await tx.select({
+      const mine = await dialect(ctx.db).forUpdate(tx.select({
         id: mailboxes.id,
         standing: sql<string | null>`to_char(${mailboxes.syncRequestedAt} at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`,
       }).from(mailboxes)
-        .where(and(eq(mailboxes.accountId, ctx.accountId), eq(mailboxes.status, "connected")))
-        .for("update");
+        .where(and(eq(mailboxes.accountId, ctx.accountId), eq(mailboxes.status, "connected"))));
       if (mine.length === 0) return [];
       // `now()` — the DATABASE's instant, at its own precision, so the returned baseline and
       // the worker's `stampMailboxSyncNow` write are the same clock. The age predicate is
       // DB-side too: no host clock decides anything here.
       const stamped = await tx.update(mailboxes)
-        .set({ syncRequestedAt: sql`now()` })
+        .set({ syncRequestedAt: dialect(ctx.db).now() })
         .where(and(
           inArray(mailboxes.id, mine.map((m) => m.id)),
-          sql`(${mailboxes.syncRequestedAt} is null or ${mailboxes.syncRequestedAt} < now() - (${gapSeconds} * interval '1 second'))`,
+          sql`(${mailboxes.syncRequestedAt} is null or ${mailboxes.syncRequestedAt} < ${dialect(ctx.db).now()} - ${dialect(ctx.db).interval(gapSeconds * 1000)})`,
         ))
         .returning({
           id: mailboxes.id,
@@ -2366,7 +2367,7 @@ export class MailboxService {
           // The column's own guard, in SQL so two consents racing produce ONE baseline
           // without this transaction having to read the row first.
           // Same cast, same reason as the mailbox row's consent — see its note.
-          screeningBaselineAt: sql`coalesce(${accountSettings.screeningBaselineAt}, ${ctx.now().toISOString()}::timestamptz)`,
+          screeningBaselineAt: sql`coalesce(${accountSettings.screeningBaselineAt}, ${dialect(ctx.db).ts(ctx.now())})`,
           updatedAt: ctx.now(),
         },
       });
@@ -2629,7 +2630,7 @@ export class MailboxService {
         // Date`. PGlite accepts the bare Date happily, so the unit suite stays green while
         // production throws — which is exactly what happened here, caught by the real-Postgres
         // run and by nothing else.
-        organizeConsentedAt: sql`coalesce(${mailboxes.organizeConsentedAt}, ${ctx.now().toISOString()}::timestamptz)`,
+        organizeConsentedAt: sql`coalesce(${mailboxes.organizeConsentedAt}, ${dialect(ctx.db).ts(ctx.now())})`,
         // Rows written before mail 0083 still carry a stand-down reason; clear it with the rest so
         // a mailbox being organized here does not also claim somebody else organizes it.
         disabledReason: null,
@@ -2908,7 +2909,10 @@ export class MailboxService {
         // application code would be both slower and a place for two writers to interleave.
         // `coalesce` covers the row whose meta is NULL.
         ...(meta
-          ? { meta: sql`coalesce(${mailboxCredentials.meta}, '{}'::jsonb) || ${JSON.stringify(meta)}::jsonb` }
+          ? {
+            meta: sql`coalesce(${mailboxCredentials.meta}, ${dialect(ctx.db).castJsonb(sql`'{}'`)}) `
+              .append(sql`|| ${dialect(ctx.db).castJsonb(JSON.stringify(meta))}`),
+          }
           : {}),
       },
     });
@@ -2941,7 +2945,7 @@ export class MailboxService {
   ): Promise<MailboxRow> {
     const base = tx.select().from(mailboxes)
       .where(and(eq(mailboxes.id, id), eq(mailboxes.accountId, ctx.accountId))).limit(1);
-    const [m] = await (opts.forUpdate ? base.for("update") : base);
+    const [m] = await (opts.forUpdate ? dialect(ctx.db).forUpdate(base) : base);
     if (!m) throw new ServiceError("not_found", 404, "mailbox not found");
     return m as MailboxRow;
   }
