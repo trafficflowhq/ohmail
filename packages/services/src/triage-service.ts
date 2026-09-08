@@ -1,4 +1,5 @@
 import { and, asc, eq, gt, sql } from "drizzle-orm";
+import { dialect } from "@trafficflow/db/dialect";
 import { assertOrganizerRole, messages, messageStates, folderState, claimIdempotencyKey, recordChange, type Tx } from "@trafficflow/db";
 import type { Db, ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
@@ -77,13 +78,13 @@ export class TriageService {
 
     return asTx(ctx).transaction(async (tx) => {
       // Cross-account guard: the message must belong to the caller's account — and the select
-      // takes the MESSAGE ROW LOCK (`FOR UPDATE`), which is what serializes concurrent
+      // takes the MESSAGE ROW LOCK, which is what serializes concurrent
       // `setState` calls on one message: the prior-state read below classifies the transition,
       // and a classification read beside an uncommitted sibling transition would mis-file the
       // re-homing (a park committing under a stale clear left the clear reading `none` — a
       // review caught it; the state row cannot carry the lock because a first park has no row
       // to lock yet). `date` rides the same select for the re-homing below.
-      const [msg] = await tx.select({
+      const [msg] = await dialect(ctx.db).forUpdate(tx.select({
         id: messages.id, date: messages.date,
         // Mail 0083 — the mailbox this message belongs to, so the role can be asked about the
         // right row. It rides the select that was already being made and already holds the lock;
@@ -92,8 +93,7 @@ export class TriageService {
       })
         .from(messages)
         .where(and(eq(messages.id, messageId), eq(messages.accountId, ctx.accountId)))
-        .limit(1)
-        .for("update");
+        .limit(1));
       if (!msg) throw new ServiceError("not_found", 404, "message not found");
       /* -- A READER DOES NOT TRIAGE (mail 0083) --------------------------------------------
        *

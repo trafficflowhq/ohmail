@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { dialect } from "@trafficflow/db/dialect";
 import { and, eq } from "drizzle-orm";
 import { assertOrganizerRole, drafts, mailboxes, recordChange, type Tx } from "@trafficflow/db";
 import type { EmailAddress } from "@trafficflow/core/mail";
@@ -66,9 +67,9 @@ export class ScheduleService {
       // whether an appointment may be made, and the send path flips `status` in its own
       // transaction. Locking serializes the two — schedule either waits and sees what the
       // claim committed, or wins and the claim's own predicates rule.
-      const [d] = await tx.select().from(drafts)
+      const [d] = await dialect(ctx.db).forUpdate(tx.select().from(drafts)
         .where(and(eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId)))
-        .for("update").limit(1);
+        .limit(1));
       if (!d) throw new ServiceError("not_found", 404, "draft not found");
 
       // A row PAST the appointment lifecycle cannot be (re-)scheduled: `sending`/`sent`/
@@ -155,11 +156,12 @@ export class ScheduleService {
         .returning({ id: drafts.id });
 
       if (cancelled.length === 0) {
-        // Zero rows is four different answers. FOR UPDATE so the read waits out whichever
+        // Zero rows is four different answers. The row lock so the read waits out whichever
         // writer beat us and reports the SETTLED state, not a snapshot from before it.
-        const [row] = await tx.select({ status: drafts.status, sendAt: drafts.sendAt }).from(drafts)
-          .where(and(eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId)))
-          .for("update").limit(1);
+        const [row] = await dialect(ctx.db).forUpdate(
+          tx.select({ status: drafts.status, sendAt: drafts.sendAt }).from(drafts)
+            .where(and(eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId)))
+            .limit(1));
         if (!row) throw new ServiceError("not_found", 404, "draft not found");
         // Already an ordinary draft with no appointment: the asked-for state. Idempotent
         // success (a double-tap, a retry after a blip) rather than an error about a schedule

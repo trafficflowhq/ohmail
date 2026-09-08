@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { dialect } from "@trafficflow/db/dialect";
 import { and, desc, eq, gt, gte, inArray, isNotNull, isNull, ne, or } from "drizzle-orm";
 import { devices, refreshTokens, sessions, users, type Tx } from "@trafficflow/db";
 import { runInTransaction, type ServiceContext } from "../context.js";
@@ -1009,8 +1010,8 @@ export class SessionLifecycle {
         // tail between the read and the write, and both interleavings handed the stale
         // presenter a mint despite a spent descendant. Every recovery of this
         // family queues here; the classification below runs on a serialized view.
-        const [session] = await tx.select().from(sessions)
-          .where(eq(sessions.id, existing.sessionId)).limit(1).for("update");
+        const [session] = await dialect(ctx.db).forUpdate(tx.select().from(sessions)
+          .where(eq(sessions.id, existing.sessionId)).limit(1));
         // The grace path's exact `renewable` reading: live session, inside any absolute cap.
         const renewable = session != null && session.revokedAt == null
           && (ttls.absoluteTtlMs == null

@@ -1,4 +1,5 @@
 import { and, asc, eq, sql } from "drizzle-orm";
+import { dialect } from "@trafficflow/db/dialect";
 import { assertOrganizerRole, assertAccountOrganizes, tags, messages, messageTags, recordChange, type Tx } from "@trafficflow/db";
 import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
@@ -227,12 +228,11 @@ export class TagsService {
       // "all refused", which is correct — a definition this install will never apply is a
       // settings screen that accepts an edit and silently does nothing.
       await assertAccountOrganizes(tx as unknown as Tx, ctx.accountId);
-      // Lock the parent FIRST. `FOR UPDATE` and not a plain select: the lock, not the read, is
-      // what a concurrent assign blocks on.
-      const locked = await tx.select({ id: tags.id }).from(tags)
+      // Lock the parent FIRST, through the seam: the lock, not the read, is what a concurrent
+      // assign blocks on.
+      const locked = await dialect(ctx.db).forUpdate(tx.select({ id: tags.id }).from(tags)
         .where(and(eq(tags.id, id), eq(tags.accountId, ctx.accountId)))
-        .for("update")
-        .limit(1);
+        .limit(1));
       if (locked.length === 0) throw new ServiceError("not_found", 404, "tag not found");
 
       const cleared = await tx.delete(messageTags)

@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { drafts, mailboxes } from "./schema-mail.js";
 import { recordChanges, type LedgerTx, type Tx } from "./change-log.js";
 import { isMailboxDisabledReason, type MailboxDisabledReason } from "./mailbox-errors.js";
+import { dialect } from "./dialect/index.js";
 
 /**
  * CLOSE THE APPOINTMENTS AN ORGANIZER IS ABOUT TO STOP BEING ABLE TO KEEP.
@@ -348,8 +349,15 @@ export async function closeStoodDownAppointments(
     // column each, rather than on two readings of one. That matters because the sentences differ
     // in the only thing they must get right: "schedule it again where the mailbox is organized
     // now" is true of a handover and false about a mailbox nobody organizes.
-    const [mb] = await tx.select({ role: mailboxes.organizerRole })
-      .from(mailboxes).where(eq(mailboxes.id, input.mailboxId)).for("update").limit(1);
+    /* THE ROW LOCK THROUGH THE SEAM. On the device store it is the identity, and that is not a
+       weakening: the store is reached through ONE serialized connection, so there is no second
+       writer for a lock to exclude — a second connection to the same file does not contend, it
+       fails. Read from the handle the CALLER passed, which every caller brands: a driver's
+       transaction object carries none of its own, and the nested one opened below carries none
+       either. */
+    const d = dialect(db);
+    const [mb] = await d.forUpdate(tx.select({ role: mailboxes.organizerRole })
+      .from(mailboxes).where(eq(mailboxes.id, input.mailboxId)).limit(1));
     if (!mb || mb.role !== "reader") {
       return { closed: 0, draftIds: [], seq: null };
     }
@@ -404,12 +412,13 @@ export async function closeRemovedMailboxAppointments(
   db: Tx, input: RemovedMailboxSendsInput,
 ): Promise<StandDownSendsResult> {
   return db.transaction(async (tx) => {
-    // The stand-down's read, with the mirrored predicate. `FOR UPDATE` for the same reason and
+    // The stand-down's read, with the mirrored predicate. The row lock for the same reason and
     // in the same order (mailbox before draft): the caller holds this row already, so this is a
     // no-op re-entry there, and it keeps the function correct for any future caller that does
     // not.
-    const [mb] = await tx.select({ status: mailboxes.status, reason: mailboxes.disabledReason })
-      .from(mailboxes).where(eq(mailboxes.id, input.mailboxId)).for("update").limit(1);
+    const d = dialect(db);
+    const [mb] = await d.forUpdate(tx.select({ status: mailboxes.status, reason: mailboxes.disabledReason })
+      .from(mailboxes).where(eq(mailboxes.id, input.mailboxId)).limit(1));
     if (!mb || mb.status !== "disabled" || mb.reason !== null) {
       return { closed: 0, draftIds: [], seq: null };
     }

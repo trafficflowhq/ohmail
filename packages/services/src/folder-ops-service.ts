@@ -1,4 +1,5 @@
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { dialect } from "@trafficflow/db/dialect";
 // `@trafficflow/core/mail`, NOT the default barrel — `folders.ts`'s rule, same reason: this
 // module is imported beside it and must never pull the classifier/drafter graph anywhere.
 import { folderNameError } from "@trafficflow/core/mail";
@@ -299,7 +300,7 @@ export class FolderOpsService {
    * lease), and a command Cloud's worker will never execute is a lie in a table.
    */
   private async requireCommandableMailbox(tx: Tx, ctx: ServiceContext, mailboxId: string): Promise<MailboxRow> {
-    const [mb] = await tx
+    const [mb] = await dialect(ctx.db).forUpdate(tx
       .select({
         id: mailboxes.id, status: mailboxes.status, trashFolder: mailboxes.trashFolder,
         // Mail 0083 — see the refusal below.
@@ -311,14 +312,13 @@ export class FolderOpsService {
         eq(mailboxes.accountId, ctx.accountId),
         isNull(mailboxes.foldersDisabledAt),
       ))
-      // FOR UPDATE, and it is the concurrency design of the whole enqueue: the overlap check
+      // The row lock, and it is the concurrency design of the whole enqueue: the overlap check
       // below reads `folder_ops` without a predicate lock, so two concurrent commands for a
       // parent and its child would each see no in-flight sibling and both insert — different
       // folder_ids, so UNIQUE stops neither, and whichever the worker ran second would execute
       // against a tree the first had reshaped. Serializing enqueues on the MAILBOX row makes
       // the second transaction's overlap read see the first's committed row.
-      .for("update")
-      .limit(1);
+      .limit(1));
     if (!mb) throw new ServiceError("not_found", 404, "mailbox not found");
     if (mb.status === "disabled") {
       throw new ServiceError(
@@ -346,7 +346,7 @@ export class FolderOpsService {
      * one, and so the census can see this door at all — it could not, because a census discovers
      * guard calls and not write doors, which is precisely how this one was missed.
      *
-     * The row lock is already held by the `.for("update")` above, so the share lock the helper
+     * The row lock is already held by the seam's lock above, so the share lock the helper
      * takes is free here and the pair is genuinely atomic against a demotion.
      */
     await assertOrganizerRole(tx, ctx.accountId, mailboxId);

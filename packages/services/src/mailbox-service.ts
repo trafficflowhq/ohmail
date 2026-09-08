@@ -1,4 +1,5 @@
 import { and, asc, eq, inArray, isNotNull, ne, sql } from "drizzle-orm";
+import { carryDialect } from "@trafficflow/db/dialect";
 import {
   assertOrganizerRole,
   mailboxes, mailboxCredentials, mailboxFolders, folderState, messages, accountSettings,
@@ -1993,7 +1994,9 @@ export class MailboxService {
       // is the point of returning anything from a delete at all — `MessageService.delete` and
       // `DraftsService.remove` both do it, and this method was the odd one out because until now
       // it emitted no change to echo.
-      const { seq } = await closeRemovedMailboxAppointments(tx, {
+      // BRANDED, because the callee composes a row lock per dialect and a driver's transaction
+      // object inherits no brand from the handle that opened it.
+      const { seq } = await closeRemovedMailboxAppointments(carryDialect(ctx.db, tx) as typeof tx, {
         accountId: ctx.accountId, mailboxId: id, now: ctx.now(),
       });
       return { seq };
