@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, sql } from "drizzle-orm";
+import { and, asc, eq, gt, sql, type SQL } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import { assertOrganizerRole, messages, messageStates, folderState, claimIdempotencyKey, recordChange, type Tx } from "@trafficflow/db";
 import type { Db, ServiceContext } from "./context.js";
@@ -182,7 +182,7 @@ export class TriageService {
             // The bound value is an ISO STRING with an explicit cast, not a Date: postgres-js
             // refuses a raw Date parameter inside a sql fragment (PGlite binds it happily —
             // the standing PGlite-green-means-nothing trap, measured on this exact line).
-            sql`(${messages.lastReadAt} is null or ${messages.lastReadAt} <= ${prior.setAt.toISOString()}::timestamptz)`,
+            sql`(${messages.lastReadAt} is null or ${messages.lastReadAt} <= ${dialect(ctx.db).ts(prior.setAt)})`,
           ));
       }
 
@@ -351,7 +351,9 @@ export class TriageService {
     if (rows.length === 0) return { current: null, remaining: 0, nextCursor: null };
 
     // The count the caller is owed, as a scalar — never as the length of a materialized pile.
-    const [tally] = await ctx.db.select({ n: sql<number>`count(*)::int` }).from(messages)
+    const [tally] = await ctx.db
+      .select({ n: dialect(ctx.db).castInt(sql`count(*)`).mapWith(Number) as unknown as SQL<number> })
+      .from(messages)
       .innerJoin(folderState, eq(folderState.messageId, messages.id))
       .where(and(...filters));
 

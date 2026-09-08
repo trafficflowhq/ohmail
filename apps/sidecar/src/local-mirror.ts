@@ -50,7 +50,8 @@
  *    every `mailbox_id` in the change feed dangle.
  */
 
-import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, sql, type SQL } from "drizzle-orm";
+import { dialect } from "@trafficflow/db/dialect";
 import {
   attachments, drafts, flagState, folderOps, folderState, mailboxFolders, messageBodies,
   messageFailures, messageInstances, messageStates, messageTags, messages, outboundSends,
@@ -144,7 +145,9 @@ export async function wipeLocalMirror(db: LocalDb, mailboxId: string): Promise<v
  * database would not have permitted.
  */
 export async function mirroredMessageCount(db: LocalDb, mailboxId: string): Promise<number> {
-  const [row] = await db.select({ n: sql<number>`count(*)::int` }).from(messages)
+  const [row] = await db
+    .select({ n: dialect(db).castInt(sql`count(*)`).mapWith(Number) as unknown as SQL<number> })
+    .from(messages)
     .where(eq(messages.mailboxId, mailboxId));
   return row?.n ?? 0;
 }

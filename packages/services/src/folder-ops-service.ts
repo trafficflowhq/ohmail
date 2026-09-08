@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 // `@trafficflow/core/mail`, NOT the default barrel — `folders.ts`'s rule, same reason: this
 // module is imported beside it and must never pull the classifier/drafter graph anywhere.
@@ -264,7 +264,7 @@ export class FolderOpsService {
     if (subtree.length === 0) return { folders: 0, messages: 0 };
 
     const [row] = await db
-      .select({ n: sql<number>`count(*)::int` })
+      .select({ n: dialect(ctx.db).castInt(sql`count(*)`).mapWith(Number) as unknown as SQL<number> })
       .from(messages)
       .leftJoin(folderState, eq(folderState.messageId, messages.id))
       .where(and(

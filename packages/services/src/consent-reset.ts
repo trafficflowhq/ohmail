@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, sql, type SQL } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   assertAccountOrganizes,
@@ -96,11 +96,14 @@ const DECISION_PILES = ["ohmail/Screener", "ohmail/Reads", "ohmail/Receipts", "o
  * Count what past decisions physically moved. Read-only, and safe to call before deciding to reset.
  */
 export async function unmovedReport(ctx: ServiceContext): Promise<UnmovedPile[]> {
+  const d = dialect(ctx.db);
   const rows = await ctx.db
     .select({
       folder: folderState.desiredFolder,
-      total: sql<number>`count(*)::int`,
-      observed: sql<number>`count(*) filter (where ${folderState.observedFolder} = ${folderState.desiredFolder})::int`,
+      total: d.castInt(sql`count(*)`).mapWith(Number) as unknown as SQL<number>,
+      observed: d.castInt(
+        sql`count(*) filter (where ${folderState.observedFolder} = ${folderState.desiredFolder})`,
+      ).mapWith(Number) as unknown as SQL<number>,
     })
     .from(folderState)
     .innerJoin(messages, eq(messages.id, folderState.messageId))

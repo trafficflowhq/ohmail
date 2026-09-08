@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
+import { dialect } from "@trafficflow/db/dialect";
 import {
   accountSettings, folderState, messages,
   screenerAttemptKey, storeScreenerSuggestion,
@@ -605,7 +606,7 @@ async function selectCandidates(
       // after the opt-in — the guard's own comment claimed "a sender … is not re-bought and not
       // re-asked", which was true until that sender sent one more message. Ten senders a cycle,
       // until the balance was gone, at the choosing of anyone who can email the account.
-      sql`not ${screenerSuggestedSenderExists(opts.accountId, sql`lower(${reps.fromAddress})`)}`,
+      sql`not ${screenerSuggestedSenderExists(dialect(db), opts.accountId, sql`lower(${reps.fromAddress})`)}`,
       // (3) THE SENSITIVITY EXCLUSION — a flagged representative is not a candidate.
       //
       // Both halves, because they are two different answers and only one of them is "we saw an

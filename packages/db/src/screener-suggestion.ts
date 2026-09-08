@@ -1,6 +1,7 @@
 import { and, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { messages, routingDecisions } from "./schema-mail.js";
 import type { Tx } from "./change-log.js";
+import type { Dialect } from "./dialect/index.js";
 
 /**
  * WHERE A BOUGHT SCREENER SUGGESTION IS STORED — the row shape, in ONE place, for the two
@@ -152,15 +153,20 @@ export async function storeScreenerSuggestion(db: Tx, row: ScreenerSuggestionRow
  * by how many routing decisions the account has accumulated. Written the other way round (all of
  * the account's suggestion rows, joined back to `messages`) it is a scan of the account.
  */
-export function screenerSuggestedSenderExists(accountId: string, senderExpr: SQL): SQL<boolean> {
+export function screenerSuggestedSenderExists(
+  d: Dialect, accountId: string, senderExpr: SQL,
+): SQL<boolean> {
+  // The id is cast through the seam: the server needs the type to pick the index, and the device
+  // store has no such type at all — its ids are text and a server cast is a syntax error there.
+  const account = d.castUuid(accountId);
   return sql<boolean>`exists (
     select 1
       from ${messages} sm
       join ${routingDecisions} rd
         on rd.message_id = sm.id
-       and rd.account_id = ${accountId}::uuid
+       and rd.account_id = ${account}
        and rd.input_provenance = ${SCREENER_SUGGESTION_PROVENANCE}
-     where sm.account_id = ${accountId}::uuid
+     where sm.account_id = ${account}
        and lower(sm.from_address) = ${senderExpr}
   )`;
 }

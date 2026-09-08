@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
+import { dialect } from "@trafficflow/db/dialect";
 import {
   workflows, workflowRuns, workflowProposals, claimIdempotencyKey,
   folderState, drafts, kbEntries, auditLog, messages, recordChange, type LedgerTx, type Tx,
@@ -280,7 +281,7 @@ export class WorkflowsService {
           eq(auditLog.action, "workflow_step"),
           sql`${auditLog.payload}->>'runId' = ${runId}`,
         ))
-        .orderBy(sql`(${auditLog.payload}->>'stepIndex')::int desc`);
+        .orderBy(sql`${dialect(ctx.db).castInt(sql`${auditLog.payload}->>'stepIndex'`)} desc`);
 
       /* ── REFUSED WHOLE ON A READER, BEFORE THE FIRST INVERSE RUNS (mail 0094) ────────────
        *

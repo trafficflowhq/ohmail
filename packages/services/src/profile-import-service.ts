@@ -486,7 +486,7 @@ export class ProfileImportService {
 
     return asTx(ctx).transaction(async (tx) => {
       // FIRST, before any read the merge will act on — see {@link PROFILE_IMPORT_LOCK_CLASS}.
-      await tx.execute(sql`select pg_advisory_xact_lock(${PROFILE_IMPORT_LOCK_CLASS}, hashtext(${ctx.accountId}))`);
+      await dialect(ctx.db).advisoryLock(tx, PROFILE_IMPORT_LOCK_CLASS, ctx.accountId);
       const changes: ChangeInput[] = [];
       const now = ctx.now();
 
@@ -736,7 +736,7 @@ export class ProfileImportService {
     // check and its insert are one serialized step: two tabs declining together write one row,
     // and a decline racing an apply cannot interleave inside either's bookkeeping.
     await asTx(ctx).transaction(async (tx) => {
-      await tx.execute(sql`select pg_advisory_xact_lock(${PROFILE_IMPORT_LOCK_CLASS}, hashtext(${ctx.accountId}))`);
+      await dialect(ctx.db).advisoryLock(tx, PROFILE_IMPORT_LOCK_CLASS, ctx.accountId);
       await recordProfileImportResolution(tx, fingerprint !== null
         ? { accountId: ctx.accountId, mailboxId, decision: "declined", fingerprint }
         // Dismissing the "written by a newer ohmail" notice. There is no payload to fingerprint

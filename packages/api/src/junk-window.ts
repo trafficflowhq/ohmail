@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, sql, type SQL } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   assertOrganizerRole,
@@ -955,7 +955,7 @@ export async function junkSweepPreview(deps: ApiDeps, accountId: string): Promis
   const countOf = new Map<string, number>();
   for (const b of boxes) {
     const [row] = await deps.db
-      .select({ n: sql<number>`count(*)::int` })
+      .select({ n: dialect(deps.db).castInt(sql`count(*)`).mapWith(Number) as unknown as SQL<number> })
       .from(messages)
       .innerJoin(folderState, eq(folderState.messageId, messages.id))
       .where(junkSweepCandidateWhere(accountId, b.id));
