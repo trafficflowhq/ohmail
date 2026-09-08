@@ -30,8 +30,11 @@
  * body), so unlike `list-window.ts` one measurement cannot stand for all of them. Every
  * mounted card's height is read after each render and cached BY MESSAGE ID; a card that has
  * never been laid out contributes {@link STREAM_CARD_ESTIMATE_PX} — the OUTER-height twin of
- * the `contain-intrinsic-size: auto 200px` box guess: the box plus the card's standing bottom
- * margin, because the cache stores outer heights and the two must mean the same thing.
+ * the `contain-intrinsic-size: auto var(--sc-est, 200px)` box guess — its FALLBACK: the box plus
+ * the card's standing bottom margin, because the cache stores outer heights and the two must mean
+ * the same thing. `StreamCard` writes `--sc-est` per card from that card's own data, so a card the
+ * browser has laid out reserves its own estimate rather than this one; what this constant twins is
+ * what a card reserves when nothing wrote the property, which is the case this cache is for.
  * The spacers are sums over that cache, so they get truer the more of the pile the reader has
  * actually passed, and `StreamShell`'s anchoring loop (which corrects a landing against the
  * REAL geometry over several frames) absorbs the drift the estimates leave.
