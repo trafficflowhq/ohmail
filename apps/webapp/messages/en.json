@@ -2828,6 +2828,7 @@
     "openTitle": "Open this draft",
     "openRecoverTitle": "Open this message — it is held until you know whether it arrived",
     "heldReopenBlocked": "Finish or put aside the message you are writing — opening this held one would replace it.",
+    "heldDiscardBlocked": "This message has a send on record, so it stays here.",
     "noSubject": "(no subject)",
     "noRecipient": "No recipient yet",
     "isReply": "Reply",

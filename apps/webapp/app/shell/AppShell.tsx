@@ -121,8 +121,8 @@ import { OhmarchyOffer, useOhmarchyOffer } from "./OhmarchyOffer";
 import type { ApplyFaceAllDevices } from "./FaceRow";
 import { ProfileImportCard, useProfileImport, type ProfileImportTransport } from "./ProfileImportCard";
 import {
-  COMPOSE_SEND_KEY, heldRowUnverified, inlineForwardKey, SEND_IN_FLIGHT_PHASES, useMailSend,
-  readReplyDraft, writeReplyDraft,
+  COMPOSE_SEND_KEY, heldRowUnverified, inlineForwardKey, SEND_IN_FLIGHT_PHASES,
+  sendPendingInOutbox, useMailSend, readReplyDraft, writeReplyDraft,
   readReplyMeta, writeReplyMeta,
 } from "./mail-send";
 import { attachSendLockDraft, holdOf } from "./send-lock";
@@ -3614,8 +3614,15 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
     /* THE PRESS-BEFORE-FIRST-SAVE RACE, CLOSED FROM THE WRITE SIDE. While a send of this surface's
        message is on the wire, the armed save must not CREATE a row: the send that carried none
        makes the adapter create one, and a create here would be the second row for one message.
-       Read off the lane's live phase rather than a ref, so it clears with the outcome. */
-    sendInFlight: SEND_IN_FLIGHT_PHASES.has(mailSend.stateOf(COMPOSE_SEND_KEY).phase),
+       Read off the lane's live phase rather than a ref, so it clears with the outcome.
+
+       AND OFF THE DURABLE OUTBOX BESIDE IT, which is the half a phase cannot supply: React state
+       starts empty on every mount, so a RELOAD inside that window came back with no row, no phase
+       and no reason to wait — and the timer created the second row while the replay was still
+       carrying the first. `version` is in this component's render path, so the read re-runs as the
+       queue drains. */
+    sendInFlight: SEND_IN_FLIGHT_PHASES.has(mailSend.stateOf(COMPOSE_SEND_KEY).phase)
+      || sendPendingInOutbox(engine, COMPOSE_SEND_KEY),
   });
   releaseDraft.current = autosave.settled;
   /**
@@ -3910,7 +3917,42 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
   );
   const discardDraft = useCallback(
     (draftId: string) => {
-      void engine.mutate({ kind: "draft_discard", draftId });
+      /**
+       * ── THE LIST'S DELETE IS A WRITE SITE, AND IT WAS THE ONE NOT COUNTED ──────────────────
+       *
+       * Every other `draft_discard` in the shell goes through the autosave hook, which asks the
+       * predicate. This one is a person pressing Delete on a row in the list and it fired straight
+       * at the wire. For a row with a send on record the server refuses it by name now, so the
+       * mutation rolled back and the row came SILENTLY back — the same ending the 500 used to
+       * give, and the reason "a discard that cannot happen says why" was true only from the
+       * composer.
+       *
+       * THE SESSION IS ASKED ABOUT ONLY FOR THE ROW THIS COMPOSE IS HOLDING — `openDraft`'s rule,
+       * for its reason: passing it unconditionally would park every draft in the account behind
+       * one unresolved send, because the session names whichever message the composer has open.
+       *
+       * `unknown` is refused with `parked`: a delete cannot be taken back, and a browser that
+       * cannot read its own record has no evidence this row is free.
+       */
+      const heldRow = readComposeRow();
+      const hold = holdOf(engine, {
+        lane: COMPOSE_SEND_KEY,
+        draftId,
+        session: heldRow !== null && heldRow === draftId ? composeSessionId() : null,
+      });
+      if (hold.kind !== "free") {
+        toast(t("drafts.heldDiscardBlocked"));
+        return;
+      }
+      void engine.mutate({ kind: "draft_discard", draftId }).then((res) => {
+        /* THE RACE, ANSWERED THE SAME WAY. A send can reserve the row between the read above and
+           this delete reaching the server — the service checks under the row lock, so one of the
+           two wins and the other is told. The overlay has already rolled back; saying why is the
+           half the person can act on. */
+        if (res.status === "rolled_back" && res.error?.code === "send_recorded") {
+          toast(t("drafts.heldDiscardBlocked"));
+        }
+      });
       // The row's life ends; the block state keyed to it goes with it.
       writeReplyMeta(`draft:${draftId}`, {});
       // The compose form may be holding the very row that was just deleted — discarding from the
@@ -3922,7 +3964,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
         if (dId === draftId) replySeedDrafts.current.delete(msgId);
       }
     },
-    [engine, autosave],
+    [engine, autosave, toast, t],
   );
   /* `autosave.draftId` goes on the mutation, so Send uses the row autosave already wrote instead
      of creating a second one — the whole point of one draft from first keystroke to delivery. */

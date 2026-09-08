@@ -2828,6 +2828,7 @@
     "openTitle": "Diesen Entwurf öffnen",
     "openRecoverTitle": "Diese Nachricht öffnen — sie wird festgehalten, bis klar ist, ob sie angekommen ist",
     "heldReopenBlocked": "Schreib die Nachricht fertig oder leg sie beiseite — diese festgehaltene zu öffnen würde sie ersetzen.",
+    "heldDiscardBlocked": "Für diese Nachricht ist ein Versand vermerkt, deshalb bleibt sie hier.",
     "noSubject": "(kein Betreff)",
     "noRecipient": "Noch kein Empfänger",
     "isReply": "Antwort",

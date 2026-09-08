@@ -1062,7 +1062,21 @@ export type Hold =
    * message under a session the record has never heard of: no warning, Send live, one press, a
    * second copy.
    */
-  | { kind: "parked"; by: "record" | "status"; draftId: string | null; session: string | null }
+  | {
+      kind: "parked";
+      by: "record" | "status";
+      /**
+       * WHAT THE MIRROR CALLS THE ROW, when `by` is `"status"` — `null` for a record park.
+       *
+       * Carried because one status is not like the others and a caller has to be able to tell:
+       * `sent` is the server's TERMINAL CONFIRMATION, so a surface must not project it into "we
+       * couldn't confirm this send". Every status past `draft` still refuses a WRITE — that is
+       * invariant S(2) and it does not vary — but what the person is TOLD does.
+       */
+      status: string | null;
+      draftId: string | null;
+      session: string | null;
+    }
   /**
    * NOBODY KNOWS. The jar threw on read, or the mirror cannot yet name the row this surface is
    * holding (a cold reload: the shell starts the engine in an effect and the rows arrive after).
@@ -1121,17 +1135,72 @@ export function holdOf(
   if (load(owner) === null) return { kind: "unknown" };
   const record = parkedComposeRecord(q.lane, q.draftId, q.session, owner);
   if (record !== null) {
-    return { kind: "parked", by: "record", draftId: record.draftId, session: record.session };
+    return {
+      kind: "parked", by: "record", status: null,
+      draftId: record.draftId, session: record.session,
+    };
   }
-  // NO ROW IS NOT A HOLD. A compose that has never been saved is named by its session alone, and
-  // the record arm above is the only thing that can speak for it.
+  /**
+   * ── NO ROW IS NOT A HOLD, AND WHAT COVERS THE SEQUENCE THAT HAS NO ROW ───────────────────
+   *
+   * A compose that has never been saved is named by its session alone, and the record arm above is
+   * the only thing in the jar that can speak for it.
+   *
+   * There IS a sequence with no row that needs covering — press Send before the first autosave,
+   * lose the response, reload: the record this browser wrote is ORDINARY (nothing observed an
+   * outcome, so nothing marked it `unverified`), and while the outbox replays that send the
+   * restored surface's timer can create a second row for the same message.
+   *
+   * PARKING ON THAT RECORD WAS TRIED HERE AND IS WRONG, which the suite proved rather than a
+   * reading: with no row the record's only name is the compose SESSION, and a genuinely new
+   * message written on the same lane answers to that name too — so the park refused a message
+   * nobody had ever pressed Send on ("a DIFFERENT message written after the crash gets a key of
+   * its own", red). A guard that refuses the right person is the failure this file's own header
+   * warns about.
+   *
+   * The discriminator that is exact is not in the jar at all: it is whether the durable OUTBOX
+   * still holds a `mail_send` for this lane. That names the actual pending verb, cannot mistake a
+   * new message for an old one, and is bounded by the queue draining rather than by a seven-day
+   * TTL. It is read where the surface already reads the engine — `sendInFlight` in `AppShell.tsx`
+   * — and refuses the CREATE there.
+   */
   if (q.draftId === null) return { kind: "free" };
   const row = engine.read().get<{ status?: unknown }>("draft", q.draftId);
   if (row === null || row === undefined || typeof row.status !== "string") return { kind: "unknown" };
   if (row.status !== "draft") {
-    return { kind: "parked", by: "status", draftId: q.draftId, session: q.session };
+    return {
+      kind: "parked", by: "status", status: row.status,
+      draftId: q.draftId, session: q.session,
+    };
   }
   return { kind: "free" };
+}
+
+/**
+ * THE SERVER SAYS THIS ROW WAS SENT, SO THE RECORD ABOUT IT IS SETTLED — release it.
+ *
+ * The confirmed path releases a record through {@link releaseSendLock}, keyed by the fingerprint
+ * the press computed. A tab that DIED holding that answer leaves the record behind with nobody to
+ * release it, and the next mount reads it as a send still owed an answer. The mirror's `sent` is
+ * the server's own terminal word about that row, so it settles the record the same way — by the
+ * ROW, which is the only name this path has.
+ */
+export function releaseSendLockForRow(
+  lane: string, draftId: string, session: string | null = null,
+  owner: string | null = storageOwner(),
+): void {
+  const rows = loadOrEmpty(owner);
+  // BOTH NAMES, for the reason everything else in this file reads both: the record was written at
+  // one moment in the message's life and is settled at another. A press before the first autosave
+  // recorded `compose:<session>` and NO row — matching on the row alone would leave exactly that
+  // record behind, which is the one this path exists for.
+  const names = new Set<string>([`draft:${draftId}`]);
+  if (session !== null) names.add(`compose:${session}`);
+  const kept = rows.filter((r) => !(
+    r.lane === lane && r.v <= SEND_LOCK_FORMAT
+    && (r.draftId === draftId || lockSubjects(r).some((n) => names.has(n)))
+  ));
+  if (kept.length !== rows.length) save(kept, owner);
 }
 
 /** `true` for every hold that is not `free` — the shape a write site's guard reads. */

@@ -236,6 +236,29 @@ export const SEND_IN_FLIGHT_PHASES: ReadonlySet<SendPhase> = new Set<SendPhase>(
   "sending", "queued", "sent",
 ]);
 
+/**
+ * ── IS A SEND OF THIS LANE'S MESSAGE STILL IN THE DURABLE OUTBOX? ───────────────────────────
+ *
+ * The phase set above is React state and starts empty on every mount, so it cannot see the one
+ * sequence that has no row at all: press Send BEFORE the first autosave, lose the response,
+ * reload. The verb is in the outbox and the replay will create the row server-side; the restored
+ * surface holds no row, so its timer creates a SECOND one for the same message, and an edit of
+ * that second row can later mint a fresh send key for a message the first has already delivered.
+ *
+ * THE OUTBOX IS THE EXACT DISCRIMINATOR, and the two weaker ones were tried and refused. The send
+ * RECORD cannot do it: with no row its only name is the compose session, and a genuinely new
+ * message on the same lane answers to that name too — parking on it refused a message nobody had
+ * pressed Send on. A TTL cannot do it either: it bounds wreckage, not this. A pending `mail_send`
+ * names the actual verb, and it stops naming it the moment the queue drains.
+ *
+ * Lane-scoped through `sendKeyOf`, the same derivation the press uses, so a reply's pending send
+ * cannot refuse the compose surface's first save.
+ */
+export function sendPendingInOutbox(engine: OhmailEngine, lane: string): boolean {
+  return engine.pendingMutations().some((p) => p.mutation.kind === "mail_send"
+    && sendKeyOf(p.mutation as unknown as MailSend) === lane);
+}
+
 /** There is one compose surface, so its send state needs one key. */
 export const COMPOSE_SEND_KEY = "compose";
 
@@ -673,6 +696,22 @@ export function heldRowUnverified(
    * able to send (invariant S(4)). The recovery sites are where `unknown` fails closed.
    */
   if (hold.kind !== "parked") return state;
+  /**
+   * ── THE MIRROR'S `sent` IS AUTHORITATIVE OVER THIS BROWSER'S "NOBODY KNOWS" ────────────────
+   *
+   * A send commits, `/sync` brings the row back as `sent`, and the tab that owned the response
+   * died before it could settle the record. The restored compose is still holding that row, so
+   * the status arm parks it — correctly, nothing may WRITE to a sent row — and projecting that
+   * park into `unverified` put "We couldn't confirm this send" on screen about a message the
+   * mirror says was delivered. A false state is worse than no state: it sends somebody to look
+   * for mail that is in their Sent folder, and it refuses the press that would have replayed the
+   * original key if it had not been sent.
+   *
+   * So the WRITE refusal and the SENTENCE part company here, and only here. The hold still says
+   * parked, so `holdOf`'s consumers keep their hands off the row; the surface says nothing.
+   * `compose-autosave.ts`'s adoption drops the row and settles the record on the same evidence.
+   */
+  if (hold.by === "status" && hold.status === "sent") return state;
   const subjects = session === null ? [`draft:${heldRow}`] : [`draft:${heldRow}`, `compose:${session}`];
   return {
     ...state,

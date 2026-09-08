@@ -44,7 +44,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { OhmailEngine } from "@ohmail/client-engine";
 import type { ComposeFields } from "./compose";
 import { COMPOSE_SEND_KEY, writeReplyMeta } from "./mail-send";
-import { holdOf } from "./send-lock";
+import { holdOf, releaseSendLockForRow } from "./send-lock";
 import { composeSessionId, parseRecipients, readComposeRow, writeComposeRow } from "./compose";
 
 /** How long the form must be still before it is written to the account. */
@@ -292,6 +292,19 @@ export function useComposeAutosave(opts: {
       const hold = holdOf(engine, {
         lane: COMPOSE_SEND_KEY, draftId: held, session: composeSessionId(),
       });
+      /* ── A ROW THE SERVER CALLS `sent` IS OVER, AND HOLDING IT IS THE FALSE STATE ──────────
+         The one status that settles rather than parks. The send committed and `/sync` brought the
+         row back; the tab that owned the answer died before it could release the record, so this
+         mount arrives holding a delivered message. Keeping it would leave the surface parked on a
+         send that is finished — and would put "we couldn't confirm this" over it. The row is let
+         go of and the record is settled on the mirror's own word, which is what the confirmed path
+         does with the answer it received. */
+      if (hold.kind === "parked" && hold.status === "sent") {
+        adopted.current = true;
+        releaseSendLockForRow(COMPOSE_SEND_KEY, held, composeSessionId());
+        writeComposeRow(null);
+        return true;
+      }
       if (hold.kind !== "free") return false;
       adopted.current = true;
       epoch.current += 1;
@@ -410,9 +423,22 @@ export function useComposeAutosave(opts: {
          which replaced the hold and turned Send back on. Re-arranging who cancels what is a race
          with a two-second window; asking again here is not. `parked` for the reason the check at
          schedule time states. */
-      if (holdOf(engine, {
+      const hold = holdOf(engine, {
         lane: COMPOSE_SEND_KEY, draftId: readComposeRow(), session: composeSessionId(),
-      }).kind === "parked") return;
+      });
+      if (hold.kind === "parked") return;
+      /* ── AND A CREATE BESIDE A ROW THE MIRROR CANNOT YET NAME ──────────────────────────────
+         The one place `unknown` refuses a WRITE, and it is scoped as narrowly as the case is.
+         A reload with a row written down and a send that is unconfirmed but not `unverified` — a
+         transport-queued send, or a record a sweep has taken — comes back to an EMPTY mirror. The
+         adoption WAITS (correctly), so this hook holds no row; without this line the timer then
+         mints a SECOND row for the message that row belongs to, which is invariant S(1) broken on
+         the very path the adoption exists for.
+         `readComposeRow() !== null` is the whole scope: with nothing written down there is no
+         message this could be a second row FOR, and a first compose in a browser that refuses
+         storage must still reach the account. The PUT arm is untouched — a row that exists is
+         still this message's row, whatever the mirror can say about it. */
+      if (draftId === null && readComposeRow() !== null && hold.kind === "unknown") return;
       /* ── AND A PRESS THAT BEAT THE FIRST SAVE IS NOT A REASON TO MAKE A ROW ────────────────
          The press-before-first-autosave race, from the write side. The composer's timer is armed,
          Send is pressed inside the two seconds, and the mutation goes out carrying NO row — so the
