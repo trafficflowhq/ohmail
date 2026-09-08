@@ -45,8 +45,8 @@
  */
 
 import { bridgeFetch } from "./bridge-fetch.js";
-import type { SenderSuggestion, SuggestSkipShown } from "../../webapp/app/shell/screener-suggest";
-import { toSuggestion, toSkips, batchSizes } from "../../webapp/app/shell/screener-suggest";
+import type { SenderSuggestion, SuggestSkipShown } from "../../webapp/app/shell/screener-suggest.js";
+import { toSuggestion, toSkips, batchSizes } from "../../webapp/app/shell/screener-suggest.js";
 
 /**
  * HOW MANY SENDERS ONE REQUEST CARRIES.

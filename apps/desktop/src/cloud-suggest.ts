@@ -30,8 +30,8 @@
  */
 
 import { bridgeAvailable, bridgeFetch } from "./bridge-fetch.js";
-import type { SuggestWire } from "../../webapp/app/shell/screener-suggest";
-import type { ScreenerSuggestWire, ScreenerWirePage } from "../../webapp/app/api-client";
+import type { SuggestWire } from "../../webapp/app/shell/screener-suggest.js";
+import type { ScreenerSuggestWire, ScreenerWirePage } from "../../webapp/app/api-client.js";
 
 /**
  * THE TWO HOSTED ROUTES THIS TRANSPORT ADDRESSES — named once, and used below.
