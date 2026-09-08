@@ -205,7 +205,16 @@ export function useAddressView({
 
   useEffect(() => {
     if (address.trim() === "") {
-      setPass(null);
+      // A BLANK ADDRESS IS AN ANSWERED QUESTION, NOT A PENDING ONE. Leaving the pass null read
+      // as `searching` below — a view showing "searching the archive" for a question nobody will
+      // ever ask, for ever. It is unreachable from the router (`parseHash` refuses an address
+      // branch with an empty segment), which is exactly why it is worth stating rather than
+      // leaving to a fallback: this is the shape a reader takes for a guarantee.
+      //
+      // `ready` with nothing, and the direction the archive serves — byte for byte what
+      // `OhmailEngine.searchAddressServer` itself answers for a blank address, so the contract
+      // and the engine cannot disagree about what "nothing to ask" looks like.
+      setPass({ address, outcome: { state: "ready", items: [], total: 0, direction: "from" } });
       return;
     }
     if (!available) {
@@ -267,8 +276,22 @@ export function useAddressView({
    * `from`", so the day the recipient index lands and the server answers `any`, this goes
    * `complete` on its own and the view's caveat disappears without a code change here.
    */
+  /**
+   * A BLANK ADDRESS IS NOT A QUESTION, so it has no shortfall — its own case, and not folded in
+   * with "the archive answered everything asked of it".
+   *
+   * Without it the rule reads `ready` + `from` against a toggle of `any` and answers
+   * `senders-only`, so a view would print "the archive cannot be searched by recipient yet" over
+   * a screen with no subject and no rows. `total === 0` is deliberately NOT the test: a real
+   * address with nothing in the from-half still HAS the shortfall — mail sent to that person may
+   * be in the archive and this door cannot see it — so keying on emptiness would hide the caveat
+   * in exactly the case a reader most needs it.
+   */
+  const asked = address.trim() !== "";
   const coverage: AddressCoverage =
-    archive.state === "ready" && archive.direction !== direction ? "senders-only" : "complete";
+    asked && archive.state === "ready" && archive.direction !== direction
+      ? "senders-only"
+      : "complete";
 
   return { items, counts: device.counts, archive, coverage };
 }
