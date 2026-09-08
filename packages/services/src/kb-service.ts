@@ -1,7 +1,7 @@
 import { and, asc, eq, gt, sql } from "drizzle-orm";
 import { kbEntries } from "@trafficflow/db";
 import type { ServiceContext, Db } from "./context.js";
-import { dialect } from "@trafficflow/db/dialect";
+import { dialect, pgOnly } from "@trafficflow/db/dialect";
 import { ServiceError } from "./errors.js";
 import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
 import { MAX_TAG_NAME_CHARS } from "./tags-service.js";
@@ -66,7 +66,13 @@ function hasTrgm(db: Db): Promise<boolean> {
   const key = db as unknown as object;
   let p = trgmCache.get(key);
   if (!p) {
-    p = db.execute(sql`select to_regprocedure('word_similarity(text,text)') is not null as ok`)
+    /* A DECLARED POSTGRES-ONLY ARM, and it is unreachable above: the guard one line up answers
+       `false` for any store that is not the server, so this statement is never composed there.
+       It stays in the caller by the seam's own contract — the fuzzy member IS the trigram arm,
+       and whether THIS deployment has the extension is a fact about the deployment, not about
+       the dialect, which is why the seam takes it as an argument rather than guessing it. The
+       question has no second spelling: `to_regprocedure` reads a Postgres catalog. */
+    p = db.execute(pgOnly(sql`select to_regprocedure('word_similarity(text,text)') is not null as ok`))
       .then((r) => Boolean(rowsOf<{ ok: boolean }>(r)[0]?.ok))
       .catch(() => false);
     trgmCache.set(key, p);

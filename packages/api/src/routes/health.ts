@@ -3,7 +3,7 @@ import { sql } from "drizzle-orm";
    handle's own brand rather than on a `typeof` probe or an environment variable — the same rule
    every other reader of the two stores follows, and the only one a caller cannot get wrong by
    forgetting to set something. */
-import { dialect, dialectOf } from "@trafficflow/db/dialect";
+import { dialect, dialectOf, pgOnly } from "@trafficflow/db/dialect";
 import { kekEnvIdentity } from "@trafficflow/core/mail";
 import { fullSchemaCensus } from "./health-census.js";
 import { API_VERSION } from "../version.js";
@@ -2159,8 +2159,16 @@ export async function probeDatabase(
     columnMarkers.length + indexMarkers.length + SCHEMA_CHECK_MARKERS.length +
     checkDefinitionMarkers.length + functionDefinitionMarkers.length;
   try {
+    /* A DECLARED POSTGRES-ONLY ARM, and the declaration is the honest form of what this already
+       was. The whole statement asks five Postgres CATALOGS — `information_schema.columns`,
+       `pg_indexes`, `pg_constraint`, `pg_proc` — whether this deployment's schema and its
+       extension are what the code expects. There is no second spelling of that question: the
+       device store's catalog is `sqlite_master` and `pragma table_info`, which is a different
+       question, and the branch above answers it and RETURNS on every path, so nothing reaches
+       here except a server. Marking it says so at the site instead of leaving a reader to derive
+       it, and the census pins how many such arms this file has. */
     const result = await db.execute(
-      sql`select 1 as one,
+      pgOnly(sql`select 1 as one,
                  to_regprocedure('word_similarity(text,text)') is not null as pg_trgm,
                  (select count(*) from information_schema.columns
                    where table_schema = 'public'
@@ -2203,7 +2211,7 @@ export async function probeDatabase(
                      and (${checkDefinitionMarkers.length > 0
                        ? sql.join(
                          checkDefinitionMarkers.map(([name, needle]) =>
-                           sql`(c.conname = ${name} and position(${needle} in pg_get_constraintdef(c.oid)) > 0)`),
+                           pgOnly(sql`(c.conname = ${name} and position(${needle} in pg_get_constraintdef(c.oid)) > 0)`)),
                          sql` or `,
                        )
                        : sql`false`
@@ -2220,11 +2228,11 @@ export async function probeDatabase(
                      and (${functionDefinitionMarkers.length > 0
                        ? sql.join(
                          functionDefinitionMarkers.map(([name, needle]) =>
-                           sql`(p.proname = ${name} and position(${needle} in p.prosrc) > 0)`),
+                           pgOnly(sql`(p.proname = ${name} and position(${needle} in p.prosrc) > 0)`)),
                          sql` or `,
                        )
                        : sql`false`
-                     })) as function_def_markers`,
+                     })) as function_def_markers`),
     );
     const dbLatencyMs = Date.now() - started;
     const row = rowsOf<{
