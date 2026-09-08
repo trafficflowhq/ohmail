@@ -22,11 +22,21 @@
  *   · the FROM of every message — everyone who has written to the user;
  *   · the TO and CC of every message — everyone the user is in a thread with, including
  *     people who have never written to them directly;
- *   · the TO and CC of the user's own SENT drafts (`status: "sent"`), which is the only
- *     record of outbound correspondence the mirror holds. `Folder` is a closed six-member
- *     union with no Sent in it, so sent MESSAGES never reach the mirror at all — the draft
- *     rows are it, and leaving them out would rank the people the user writes to below the
- *     newsletters that write to them.
+ *   · the TO and CC of the user's own SENT drafts (`status: "sent"`), a second record of
+ *     outbound correspondence, and leaving them out would rank the people the user writes to
+ *     below the newsletters that write to them.
+ *
+ * THE THIRD BULLET USED TO SAY the drafts were the ONLY record, because "`Folder` is a closed
+ * six-member union with no Sent in it, so sent MESSAGES never reach the mirror at all". That
+ * is FALSE, and it is a claim rather than a caveat, so it is corrected here rather than
+ * softened. Sent mail DOES reach the mirror as ordinary `message` entities: `recordSent`
+ * (`packages/core/src/sent-record.ts`) writes a real `messages` row for every send through the
+ * ingest path, the Sent-folder watch is the backstop behind it, and `/sync`'s snapshot selects
+ * on account and `deleted_at is null` with NO folder filter. What is true is the narrower
+ * thing: those rows carry `folder: "Sent"`, which is outside the union, so they fall through
+ * `folderLeaf()` and match no PILE VIEW. Invisible in the piles is not absent from the mirror,
+ * and anything selecting on the message FIELDS (this file, and `SearchIndex.messagesWith`)
+ * sees them.
  *
  * ── THE ROBOTS ARE EXCLUDED, AND ONLY THE OBVIOUS ONES ──────────────────────────────────
  *

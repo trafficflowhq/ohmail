@@ -25,7 +25,12 @@
 import { CALENDAR_FALLBACK_FILENAME, isCalendarMime } from "@trafficflow/core/ics";
 import type { AttachmentWire, EngineAdapter, MutationOutcome } from "./adapters/adapter.js";
 import { messageIdKey, mutationEffects, replySubject, sentOverlayMessage, type MutationEffect } from "./mutations.js";
-import { SearchIndex, type LocalSearchResult } from "./search.js";
+import {
+  SearchIndex,
+  type AddressDirection,
+  type AddressResult,
+  type LocalSearchResult,
+} from "./search.js";
 import { sendingMailboxId } from "./selectors.js";
 import { flattenResponse } from "./apply.js";
 import { MemoryMirrorStore, type EntityReader, type MirrorStore } from "./store.js";
@@ -5846,6 +5851,27 @@ export class OhmailEngine {
       this.searchCache = { version, index: SearchIndex.build(this.readerView) };
     }
     return this.searchCache.index.search(query, opts);
+  }
+
+  /**
+   * EVERY MESSAGE ON THIS DEVICE INVOLVING ONE ADDRESS — the address view's device half.
+   *
+   * The same cached {@link SearchIndex} {@link OhmailEngine.search} uses, and sharing it is not
+   * merely thrift: the index is rebuilt when the mirror's version moves, so two caches would
+   * mean the address view and the search box could disagree about what the mirror holds — one
+   * of them showing a message the other says is gone.
+   *
+   * Synchronous and total, like `search`: the answer is a map lookup over the mirror already in
+   * memory. The ARCHIVE half is a separate, later pass — see {@link OhmailEngine.searchServer}
+   * and, for the address query, `apps/webapp/app/shell/address-view.ts`, which is where the two
+   * halves are composed and where the device's answer is labelled as the device's.
+   */
+  messagesWith(address: string, direction: AddressDirection = "any"): AddressResult {
+    const version = this.readerView.version();
+    if (!this.searchCache || this.searchCache.version !== version) {
+      this.searchCache = { version, index: SearchIndex.build(this.readerView) };
+    }
+    return this.searchCache.index.messagesWith(address, direction);
   }
 
   // ── the archive pass ─────────────────────────────────────────────────────

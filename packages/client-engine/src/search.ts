@@ -3,6 +3,7 @@ import {
   MIN_FUZZY_QUERY_LEN,
   MIN_FUZZY_TERM_LEN,
   showSimilar,
+  type RankedRow,
   type SearchTier,
 } from "@trafficflow/core/search-rank";
 import type { EntityReader } from "./store.js";
@@ -72,6 +73,75 @@ export interface SearchHit {
   message: EngineMessage;
   score: number;
   matches: SearchMatch[];
+}
+
+/**
+ * WHICH SIDE OF A MESSAGE AN ADDRESS APPEARED ON — the address view's toggle, as a type.
+ *
+ * `"from"` is mail that address WROTE (it is the message's `From`); `"to"` is mail sent TO it
+ * (it is in the message's `To` or `Cc`); `"any"` is both, which is the view's default and the
+ * only one of the three that is a UNION rather than a filter.
+ *
+ * `Cc` counts as `"to"` and is deliberately not its own member. The question the view asks is
+ * "did this mail go to them", and a person copied on a message received it; splitting the two
+ * would put a distinction on screen that nobody reading their own mail is looking for.
+ */
+export type AddressDirection = "any" | "from" | "to";
+
+/**
+ * HOW MUCH MAIL THIS DEVICE HOLDS FOR ONE ADDRESS, PER DIRECTION.
+ *
+ * **`any` is the UNION and never `from + to`**, and the difference is a real message rather than
+ * an edge case: a self-CC, a mailing-list echo of your own post, and any message where somebody
+ * both wrote and was copied all sit on BOTH sides. Adding the two would count those twice and
+ * the toggle would say "All 12" over a list of eleven rows — a number a reader can disprove by
+ * counting, which is the worst kind of wrong number.
+ *
+ * So `any <= from + to`, with equality exactly when no message is on both sides.
+ */
+export interface AddressCounts {
+  /** Messages where the address is on EITHER side — each counted once. */
+  any: number;
+  /** Messages the address SENT (its `From`). */
+  from: number;
+  /** Messages sent TO the address (its `To` or `Cc`). */
+  to: number;
+}
+
+/**
+ * WHAT THIS DEVICE CAN ANSWER ABOUT ONE ADDRESS — see {@link SearchIndex.messagesWith}.
+ *
+ * `items` reuses {@link SearchHit} so a surface renders an address result with the same row it
+ * renders a search result with. **The `score` on every hit is `0` and `matches` is empty, and
+ * both are honest rather than lazy:** an address query is an EQUALITY, so there is no relevance
+ * dimension to report and nothing "matched a token". The order is the array's own — newest
+ * first — and a caller that re-sorts by `score` gets one arbitrary order for every row.
+ */
+export interface AddressResult {
+  items: SearchHit[];
+  counts: AddressCounts;
+}
+
+/**
+ * THE ADDRESS EQUALITY, IN ONE PLACE — `lower()`, and deliberately NOT `trim()`.
+ *
+ * It is the rule three other places in this tree already apply to the same question, and it is
+ * theirs rather than a fourth opinion:
+ *
+ *  · `messages_account_from_addr_idx` is `(account_id, lower(from_address), id)`
+ *    (`packages/db/src/schema-mail.ts`), so the server's index folds case and nothing else;
+ *  · `SearchService`'s own sender filter is `lower(m.from_address) = lower($1)`
+ *    (`packages/services/src/search-service.ts`) — no trim on either side;
+ *  · `address-book.ts` keys its entries `raw.toLowerCase()`, also without a trim.
+ *
+ * A trim here would make the DEVICE answer a wider question than the archive, so a message
+ * would appear on one side of the same view and not the other with nothing to say why. And
+ * `apps/webapp/app/shell/address-key.ts` sets out the general form of the argument at length
+ * for the mailbox-row version of this key: **a grouping may be narrower than the constraint it
+ * mirrors; it may never be wider.** Trimming is wider.
+ */
+export function addressMatchKey(address: string): string {
+  return address.toLowerCase();
 }
 
 export interface SearchFacets {
@@ -172,9 +242,31 @@ interface Posting {
   weight: number;
 }
 
+/** Which sides of ONE message ONE address sat on. Both can be true — see {@link AddressCounts}. */
+interface AddressSides {
+  from: boolean;
+  to: boolean;
+}
+
 export class SearchIndex {
   /** term → messageId → best field weight */
   private readonly postings = new Map<string, Map<string, Posting>>();
+  /**
+   * EXACT ADDRESS → messageId → which sides — a SEPARATE map from {@link postings}, and the
+   * separation is the whole feature.
+   *
+   * {@link tokenize} splits on every non-alphanumeric character, so `anna@corp.com` enters
+   * `postings` as the three unrelated terms `anna`, `corp`, `com` — and `com` is a term that
+   * every address on the internet shares. There is therefore no way to ask `postings` for one
+   * ADDRESS: the query `anna@corp.com` matches `anna@other.com` and `bob@corp.com` on two of its
+   * three tokens each, and a prefix arm widens it further. That is right for searching and
+   * useless for identity.
+   *
+   * So an address is stored WHOLE and lowercased, and the only operation on this map is a map
+   * lookup — no prefix arm, no trigrams, no scoring. It costs one entry per distinct address per
+   * message, which is bounded by the recipients a message actually names.
+   */
+  private readonly addresses = new Map<string, Map<string, AddressSides>>();
   private readonly trigramCache = new Map<string, Set<string>>();
   private readonly messages = new Map<string, EngineMessage>();
   private full = 0;
@@ -216,6 +308,78 @@ export class SearchIndex {
   }
 
   /**
+   * Record that ONE address sat on ONE side of ONE message. Idempotent per side, and a second
+   * call for the other side keeps the first: a self-CC is `from` AND `to`, not the later of the
+   * two.
+   *
+   * An empty address is dropped rather than stored under the key `""`. A `From` header can
+   * genuinely be blank (`messages.from_address` is `NOT NULL DEFAULT ''` on the server), and a
+   * bucket under the empty key would collect every such message and then answer them all to a
+   * caller whose address happened to normalize to nothing.
+   */
+  private indexAddress(address: string, messageId: string, side: "from" | "to"): void {
+    const key = addressMatchKey(address);
+    if (key === "") return;
+    let byMessage = this.addresses.get(key);
+    if (!byMessage) {
+      byMessage = new Map();
+      this.addresses.set(key, byMessage);
+    }
+    const sides = byMessage.get(messageId);
+    if (sides) sides[side] = true;
+    else byMessage.set(messageId, { from: side === "from", to: side === "to" });
+  }
+
+  /**
+   * EVERY MESSAGE ON THIS DEVICE INVOLVING ONE ADDRESS, newest first, with the counts for all
+   * three directions — the address view's whole device half.
+   *
+   * ── THE COUNTS ARE ALWAYS ALL THREE, WHATEVER `direction` ASKS FOR ─────────────────────
+   *
+   * `items` is filtered by `direction`; `counts` is not, and that asymmetry is deliberate. The
+   * toggle has to be able to say "All 12 · From them 9 · To them 4" while showing one of the
+   * three, and a caller that had to call three times to fill in its own control would either
+   * walk the postings three times or (far more likely) label the two it did not ask for with the
+   * number it did.
+   *
+   * ── ORDER: NEWEST FIRST, BY {@link compareRanked} WITH AN EQUAL SCORE ──────────────────
+   *
+   * Not a private date comparator. With every `score` equal, `compareRanked` degrades exactly to
+   * `date desc, nulls last, id` — which IS newest-first, with the undated-sorts-last rule and
+   * the stable `id` tail that keep a list from reshuffling itself between renders. Writing a
+   * second comparator here would be a second place for those two rules to be got wrong.
+   */
+  messagesWith(address: string, direction: AddressDirection = "any"): AddressResult {
+    const key = addressMatchKey(address);
+    const byMessage = key === "" ? undefined : this.addresses.get(key);
+    if (byMessage === undefined) return { items: [], counts: { any: 0, from: 0, to: 0 } };
+
+    const counts: AddressCounts = { any: 0, from: 0, to: 0 };
+    const rows: Array<{ hit: SearchHit; row: RankedRow }> = [];
+    for (const [id, sides] of byMessage) {
+      const message = this.messages.get(id);
+      // A posting with no message would be a torn index. `add` writes both from one call, so
+      // this cannot happen — and it is skipped rather than asserted because the alternative is
+      // throwing out of a keystroke-path selector on a mirror we could still answer from.
+      if (message === undefined) continue;
+      counts.any++;
+      if (sides.from) counts.from++;
+      if (sides.to) counts.to++;
+      const wanted = direction === "any"
+        || (direction === "from" && sides.from)
+        || (direction === "to" && sides.to);
+      if (!wanted) continue;
+      rows.push({
+        // score 0 and no matches — an equality has no relevance. See {@link AddressResult}.
+        hit: { message, score: 0, matches: [] },
+        row: { score: 0, dateMs: stampOf(message), id: message.id },
+      });
+    }
+    rows.sort((a, b) => compareRanked(a.row, b.row));
+    return { items: rows.map((r) => r.hit), counts };
+  }
+
+  /**
    * `hydrated` is the `message_body` record's text when this device has one. `m.body` is the
    * fixture world's own field and is `undefined` on every Cloud row — the two are separate
    * arguments rather than one because `types.ts` keeps them in separate records deliberately:
@@ -231,6 +395,13 @@ export class SearchIndex {
     if (whole !== undefined) this.full++;
     for (const t of tokenize(m.subject)) this.index(t, m.id, FIELD_WEIGHT.subject);
     for (const t of tokenize(`${m.from.name ?? ""} ${m.from.address}`)) this.index(t, m.id, FIELD_WEIGHT.from);
+    // THE EXACT ADDRESSES, on top of the tokens above — see {@link SearchIndex.addresses}.
+    // `?? []` on the recipients and not on `from`: the mirror is persisted on the device and a
+    // row written by a build that predates `to`/`cc` genuinely has neither, exactly as
+    // `address-book.ts` guards them; `from` has been on the DTO since the first message row.
+    this.indexAddress(m.from.address, m.id, "from");
+    for (const who of m.to ?? []) this.indexAddress(who.address, m.id, "to");
+    for (const who of m.cc ?? []) this.indexAddress(who.address, m.id, "to");
     // The snippet is indexed alongside the body: the two strings are not always prefix-related, so
     // dropping it would lose terms.
     for (const t of tokenize(`${m.snippet} ${whole ?? ""}`)) this.index(t, m.id, FIELD_WEIGHT.text);

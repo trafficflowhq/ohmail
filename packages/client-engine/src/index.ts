@@ -274,7 +274,17 @@ export {
 } from "./address-book.js";
 
 // Search.
-export { SearchIndex, type LocalSearchResult, type SearchFacets, type SearchHit, type SearchMatch } from "./search.js";
+export {
+  addressMatchKey,
+  SearchIndex,
+  type AddressCounts,
+  type AddressDirection,
+  type AddressResult,
+  type LocalSearchResult,
+  type SearchFacets,
+  type SearchHit,
+  type SearchMatch,
+} from "./search.js";
 
 // Mutation semantics (shared optimistic/demo source of truth).
 export {
