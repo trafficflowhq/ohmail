@@ -80,11 +80,31 @@ export function startEngineVitals(
      the sampler exists for. `performance.now()` is monotonic from process start. */
   const bootedAt = performance.now();
   const emit = (): void => {
-    const m = process.memoryUsage();
+    /**
+     * A RUNTIME MAY NOT HAVE A MEMORY READING, AND THIS IS THE ONE THING AT BOOT THAT ASSUMED ONE.
+     *
+     * `createSidecar` starts this sampler on every launch. On a phone the engine runs inside the
+     * app rather than in a Node process, and its `process` stand-in deliberately defines only what
+     * it can answer truthfully — so this call was `undefined is not a function`, and it took the
+     * whole launch down after a successful load, a successful migration and a successful
+     * credential seal. An instrument must never be the thing that stops the engine it measures.
+     *
+     * The stand-in is NOT given a `memoryUsage` instead: a fabricated number would enter a series
+     * whose only job is to tell a plateau from a climb, and a made-up point in that series is
+     * worse than a missing one. So the reading is absent and SAYS it is absent — the three numbers
+     * are null and `memoryReading` names why, which is a state a reader can act on rather than
+     * three zeroes that look like a very small process.
+     */
+    const m = typeof process.memoryUsage === "function" ? process.memoryUsage() : null;
     log("engine_vitals", {
-      rss: m.rss,
-      heapUsed: m.heapUsed,
-      external: m.external,
+      // NULL-SAFE because `m` is null on a runtime with no `memoryUsage` — the line above makes
+      // it so, and a non-optional read here would not compile.
+      rss: m?.rss ?? null,
+      heapUsed: m?.heapUsed ?? null,
+      external: m?.external ?? null,
+      /* WHICH of the two this line is. Without it a run of nulls is indistinguishable from a
+         sampler that is broken, and the difference decides whether anybody investigates. */
+      memoryReading: m ? "process" : "unavailable_in_this_runtime",
       // Named, never spread: the field census reads this object's keys, and a conditional spread
       // makes the whole call site unreadable to it.
       storeBytes: opts.storeBytes(),
