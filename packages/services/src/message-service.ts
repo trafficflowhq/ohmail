@@ -153,7 +153,7 @@ export interface MoveResult {
 
 /**
  * A move or delete that became a REQUEST — this install reads the mailbox, another one organizes
- * it, and the press is now waiting on that install (mail 0093).
+ * it, and the press is now waiting on that install (mail 0094).
  *
  * ── `dto` IS THE MESSAGE UNMOVED, AND THAT IS THE POINT ────────────────────────────────────
  *
@@ -183,7 +183,7 @@ export interface PatchResult {
   dto: MessageDTO;
   seq: number | null;
   /**
-   * PRESENT WHEN THE `folder` HALF BECAME A REQUEST (mail 0093) — this install reads the mailbox
+   * PRESENT WHEN THE `folder` HALF BECAME A REQUEST (mail 0094) — this install reads the mailbox
    * and another one organizes it, so the re-file is waiting on {@link PendingRequest.holder}.
    *
    * The two halves of a patch are decided SEPARATELY because they are separately permitted:
@@ -766,7 +766,7 @@ export class MessageService {
       }
 
       if (folder !== undefined) {
-        /* ── THIS IS THE MOVE DOOR UNDER ANOTHER NAME, AND IT WAS NOT GATED (mail 0093) ───────
+        /* ── THIS IS THE MOVE DOOR UNDER ANOTHER NAME, AND IT WAS NOT GATED (mail 0094) ───────
          *
          * `move` and this branch write the SAME row the SAME way — `desired_folder` with
          * `last_set_by: 'us'`, plus a `move` change — and the reconciler turns either into a
@@ -946,13 +946,13 @@ export class MessageService {
         id: messages.id, nativeLocator: messages.nativeLocator,
         // Mail 0083 — which mailbox this message is in, so the role is asked about the right row.
         mailboxId: messages.mailboxId,
-        // Mail 0093 — the name BOTH installs have for this message. A request travels between two
+        // Mail 0094 — the name BOTH installs have for this message. A request travels between two
         // stores with different primary keys, so the record names the message by its dedup key.
         dedupKey: messages.dedupKey,
       }).from(messages)
         .where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId))).limit(1);
       if (!msg) throw new ServiceError("not_found", 404, "message not found");
-      /* -- A READER MOVES NOTHING HERE — IT ASKS (mail 0083, then mail 0093) ----------------
+      /* -- A READER MOVES NOTHING HERE — IT ASKS (mail 0083, then mail 0094) ----------------
        *
        * The most direct case of the whole rule: this door writes `folder_state.desired_folder`
        * with `last_set_by='us'`, and the reconciler turns that into a physical IMAP move. On a
@@ -960,7 +960,7 @@ export class MessageService {
        * exactly what the lease exists to prevent, reached through a button rather than through a
        * sync loop.
        *
-       * Mail 0083 refused that outright. Mail 0093 keeps the refusal of the LOCAL WRITE — nothing
+       * Mail 0083 refused that outright. Mail 0094 keeps the refusal of the LOCAL WRITE — nothing
        * below this branch runs for a reader — and replaces the dead end with a request the holder
        * applies. What has NOT changed is the thing the 0083 comment was protecting: no
        * `folder_state` row is written here, so a later promotion inherits no queue of moves
@@ -1063,11 +1063,11 @@ export class MessageService {
         .where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId))).limit(1);
       if (!msg) throw new ServiceError("not_found", 404, "message not found");
 
-      /* -- A READER DELETES NOTHING HERE — IT ASKS (mail 0083 v1, then mail 0093) -----------
+      /* -- A READER DELETES NOTHING HERE — IT ASKS (mail 0083 v1, then mail 0094) -----------
        *
        * A delete is a move to Trash plus a tombstone, so the argument above applies unchanged: no
        * local `folder_state` write, no tombstone, nothing for a later promotion to inherit. What
-       * mail 0093 adds is that the press now travels as a `message.move` whose destination is the
+       * mail 0094 adds is that the press now travels as a `message.move` whose destination is the
        * WORD `trash`.
        *
        * ── AND THE TRASH LOOKUP BELOW IS DELIBERATELY NOT REACHED ON THIS PATH ──────────────

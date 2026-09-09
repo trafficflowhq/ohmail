@@ -1,5 +1,5 @@
 import type { CreateMailboxBody, UpdateMailboxBody } from "@trafficflow/services/mail";
-/* The mirror read (mail 0093). From `/mail`, the LOCAL barrel — this route is mounted by the
+/* The mirror read (mail 0094). From `/mail`, the LOCAL barrel — this route is mounted by the
    desktop engine too, and naming the root barrel here would pull the hosted schema into a shipped
    app (the rule at the top of `packages/db/src/index.ts`). */
 import { readMailboxProfile } from "@trafficflow/services/mail";
@@ -190,7 +190,7 @@ export const mailboxRoutes: Route[] = [
   },
   {
     /**
-     * §5.1 — THE SETTINGS THAT ARE ACTUALLY IN FORCE ON A MAILBOX THIS INSTALL READS (mail 0093).
+     * §5.1 — THE SETTINGS THAT ARE ACTUALLY IN FORCE ON A MAILBOX THIS INSTALL READS (mail 0094).
      *
      * On a mailbox another install organizes, this install's own responder/rules/window/signature
      * rows are NOT the answer — the ones in force are in that install's published document, and

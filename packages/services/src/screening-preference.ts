@@ -93,7 +93,7 @@ export interface ScreeningPreference {
  * reader treats as defaults. This is the RAW read for the API surface and the worker's resolution.
  */
 /**
- * A posture save's answer: the preference as it stands HERE, plus where the edit went (mail 0093).
+ * A posture save's answer: the preference as it stands HERE, plus where the edit went (mail 0094).
  *
  * `pending` is present only when nothing was written on this install — the route answers 202 — and
  * the preference alongside it is the UNCHANGED one, because that is what this install still holds.
@@ -201,7 +201,7 @@ export async function setScreeningPreference(
     set.screenerAutoApplyAt = on ? ctx.now() : null;
   }
 
-  /* ── THE SCREENING POSTURE IS APPLIED BY THE INSTALL THAT ORGANIZES (mail 0093) ──────────
+  /* ── THE SCREENING POSTURE IS APPLIED BY THE INSTALL THAT ORGANIZES (mail 0094) ──────────
    *
    * This door had no organizer gate either. `ohbox_policy` decides where NEW mail is filed and
    * arms the backlog re-route that the worker's tidy pass performs — both on the organizer's

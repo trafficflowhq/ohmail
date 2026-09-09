@@ -3982,7 +3982,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             });
           }
           await notePeekedHolder(priorStandDown as MailboxDisabledReason | null);
-          /* ── AND CACHE THE ORGANIZER'S SETTINGS DOCUMENT, ONCE PER READER CYCLE (mail 0093) ──
+          /* ── AND CACHE THE ORGANIZER'S SETTINGS DOCUMENT, ONCE PER READER CYCLE (mail 0094) ──
            *
            * A reader's own responder/rule/window/signature rows are inert: the ones in force are in
            * the published document of the install that HOLDS this mailbox. The panes used to render

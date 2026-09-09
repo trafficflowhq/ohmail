@@ -7,7 +7,7 @@ import type { ServiceContext } from "./context.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  WHAT A READER SHOWS FOR SETTINGS IT DOES NOT OWN — `mailbox_profile_mirror` (mail 0093)
+ *  WHAT A READER SHOWS FOR SETTINGS IT DOES NOT OWN — `mailbox_profile_mirror` (mail 0094)
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
  * On a mailbox another install organizes, this install's own rows are not the answer: the responder,

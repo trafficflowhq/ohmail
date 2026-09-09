@@ -111,7 +111,7 @@ export class ApprovalService {
       const [m] = await ctx.db.select({
         id: messages.id, fromAddress: messages.fromAddress, nativeLocator: messages.nativeLocator,
         observedFolder: folderState.observedFolder,
-        /* Mail 0093 — which mailbox this message is in, so the approve arm can ask who organizes
+        /* Mail 0094 — which mailbox this message is in, so the approve arm can ask who organizes
            it, and the name BOTH installs have for the message, so a request can address it. */
         mailboxId: messages.mailboxId, dedupKey: messages.dedupKey,
       }).from(messages).leftJoin(folderState, eq(folderState.messageId, messages.id))
@@ -181,7 +181,7 @@ export class ApprovalService {
       let lastSeq = await recordChange(tx, { accountId: ctx.accountId, entityType: "approval", entityId: id, op: "update", meta: null });
 
       if (approve && msg && target) {
-        /* ── AN APPROVED MOVE IS A MOVE, SO IT ASKS WHO ORGANIZES THE MAILBOX (mail 0093) ─────
+        /* ── AN APPROVED MOVE IS A MOVE, SO IT ASKS WHO ORGANIZES THE MAILBOX (mail 0094) ─────
          *
          * This arm writes `folder_state.desired_folder` with `last_set_by: 'us'` and the
          * reconciler turns that into a physical IMAP move — the same row, the same way, as

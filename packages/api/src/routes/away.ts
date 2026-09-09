@@ -27,7 +27,7 @@ export const awayRoutes: Route[] = [
       const body = await readBody<AwayResponderBody>(req);
       const result = await away(deps).put(serviceContext(deps, req), body);
       // 202 when the edit wrote nothing here and is waiting on the installs that organize this
-      // account's mailboxes (mail 0093) — the Screener route's rule. `travel` rides BESIDE the
+      // account's mailboxes (mail 0094) — the Screener route's rule. `travel` rides BESIDE the
       // responder on a mixed account, so an ordinary one-install answer is unchanged byte for byte.
       if (result.pending) {
         return jsonResponse({ ...result.responder, pending: true, travel: result.travel }, { status: 202 });

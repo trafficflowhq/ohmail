@@ -3985,7 +3985,7 @@ export async function startWorkerWithLock(
             await refreshReaderHolder(
               { mailboxId: rt.mailboxId, accountId: rt.accountId }, rt.adapter, rt.holderSeen,
             );
-            /* ── AND CACHE THE ORGANIZER'S SETTINGS DOCUMENT, ONCE PER READER CYCLE (mail 0093) ──
+            /* ── AND CACHE THE ORGANIZER'S SETTINGS DOCUMENT, ONCE PER READER CYCLE (mail 0094) ──
              *
              * A reader's own responder/rule/window/signature rows are inert: the ones in force are
              * in the published document of the install that HOLDS this mailbox. The panes rendered

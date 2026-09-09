@@ -58,7 +58,7 @@ export {
 export {
   RulesService, rulesService,
   type CreateRuleBody, type PatchRuleBody, type RuleMutation,
-  /* Mail 0093 — where a rule edit went, mailbox by mailbox. The panes that render "waiting on
+  /* Mail 0094 — where a rule edit went, mailbox by mailbox. The panes that render "waiting on
      <machine>" read these, so they are exported rather than left inside the service. */
   type RuleTravel, type RuleRequestSent, type RuleRequestResult, type RuleRemoval,
 } from "./rules-service.js";
@@ -132,7 +132,7 @@ export {
   type MarkSeenBody, type MarkSeenResult,
   type MoveBody, type MoveIdempotency, type MoveResult, type MoveRequestResult, type PatchResult,
 } from "./message-service.js";
-/* THE READER'S VIEW OF SETTINGS IT DOES NOT OWN (mail 0093) — the mirror row, no dial. */
+/* THE READER'S VIEW OF SETTINGS IT DOES NOT OWN (mail 0094) — the mirror row, no dial. */
 export {
   readMailboxProfile, type MailboxProfileView,
 } from "./profile-mirror-read.js";
@@ -141,7 +141,7 @@ export {
   profileRequestPayload, fanOutProfileEdit, profileTravelled, TRAVELLING_SIGNATURE_MAX_CHARS,
   type ProfileUpdatePayload, type ProfileTravel, type ProfileRequestSent,
 } from "./profile-request.js";
-/* THE READER'S WRITE-DOOR DISPATCH (mail 0093) — one branch for four families. See the module. */
+/* THE READER'S WRITE-DOOR DISPATCH (mail 0094) — one branch for four families. See the module. */
 export {
   routeMailboxWrite, writeReaderRequest, planAccountFanOut,
   type MailboxRoute, type PendingRequest,

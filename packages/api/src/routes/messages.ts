@@ -197,7 +197,7 @@ export const messageRoutes: Route[] = [
       const result = await message(deps).move(serviceContext(deps, req), params.id!, body, {
         idempotency: deps.idempotency ?? null,
       });
-      // 200 IS A MOVE MADE; 202 IS A MOVE ASKED FOR — the Screener route's rule (mail 0093), and
+      // 200 IS A MOVE MADE; 202 IS A MOVE ASKED FOR — the Screener route's rule (mail 0094), and
       // it is the same rule for the same reason: on a mailbox this install merely reads, nothing
       // has moved and the honest code is 202. `requestMove` stores exactly this status for the
       // idempotent replay, so the first press and its replay agree.

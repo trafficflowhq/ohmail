@@ -7,7 +7,7 @@ import {
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  THE PROFILE FAMILY'S ONE PAYLOAD — `profile.update` (mail 0093, ruling 6)
+ *  THE PROFILE FAMILY'S ONE PAYLOAD — `profile.update` (mail 0094, ruling 6)
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
  * Four doors in three files edit the configuration that travels in the organizer's published
@@ -110,7 +110,7 @@ export interface ProfileRequestSent {
  *
  * The same shape `RuleTravel` carries and for the same reason: one press on account-scoped
  * configuration can be a local write AND several requests, and reporting that as one "saved" is
- * the false state ruling 6 names as its Critical. Before mail 0093 these four doors had NO
+ * the false state ruling 6 names as its Critical. Before mail 0094 these four doors had NO
  * organizer gate at all — on a mailbox this install only reads, the edit wrote the reader's own
  * dead row and the pane showed it as done, for ever.
  */

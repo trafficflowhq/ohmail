@@ -151,7 +151,7 @@ export {
   type MarkSeenBody, type MarkSeenResult,
   type MoveBody, type MoveIdempotency, type MoveResult, type MoveRequestResult, type PatchResult,
 } from "./message-service.js";
-/* THE READER'S DISPATCH AND ITS MIRROR READ (mail 0093). In the LOCAL barrel because the doors
+/* THE READER'S DISPATCH AND ITS MIRROR READ (mail 0094). In the LOCAL barrel because the doors
    that use them are mounted by the desktop engine as well as by the hosted API. */
 export {
   routeMailboxWrite, writeReaderRequest, planAccountFanOut,

@@ -15,7 +15,7 @@ import {
 } from "./profile-request.js";
 
 /**
- * A window save's answer: the effective window and mode, plus where the edit went (mail 0093).
+ * A window save's answer: the effective window and mode, plus where the edit went (mail 0094).
  * `pending`/`travel` are absent on a one-install account, so its answer is unchanged.
  */
 export interface DormancyResult {
@@ -1134,7 +1134,7 @@ export async function setMailboxSignature(
       .limit(1);
     if (!mb) throw new ServiceError("not_found", 404, "no such mailbox on this account");
 
-    /* ── THE SIGNATURE IS PER MAILBOX, SO IT TAKES THE PER-MAILBOX DISPATCH (mail 0093) ────
+    /* ── THE SIGNATURE IS PER MAILBOX, SO IT TAKES THE PER-MAILBOX DISPATCH (mail 0094) ────
      *
      * The other three settings in this family are account-scoped and fan out.
      * `mailboxes.signature` is not: a person with two addresses has two sign-offs, and asking
@@ -1307,7 +1307,7 @@ export async function setDormancyDays(
     // the two-sided argument.
     await fenceErasedAccount(tx, ctx.accountId);
 
-    /* ── THE WINDOW IS APPLIED BY THE INSTALL THAT ORGANIZES (mail 0093) ─────────────────
+    /* ── THE WINDOW IS APPLIED BY THE INSTALL THAT ORGANIZES (mail 0094) ─────────────────
      *
      * `dormancy_days` is the cutline the screening pass does arithmetic on, in the organizer's
      * own cycle. Written where nothing organizes it is a dial wired to nothing — and this file

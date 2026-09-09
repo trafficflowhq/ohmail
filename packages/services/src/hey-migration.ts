@@ -237,7 +237,7 @@ export class HeyMigrationService {
       .innerJoin(folderState, eq(folderState.messageId, messages.id))
       .where(eq(messages.accountId, ctx.accountId));
 
-    /* ── REFUSED WHOLE ON A READER, BEFORE THE FIRST ROW IS TOUCHED (mail 0093) ────────────
+    /* ── REFUSED WHOLE ON A READER, BEFORE THE FIRST ROW IS TOUCHED (mail 0094) ────────────
      *
      * This pass writes `folder_state.desired_folder` with `last_set_by: 'us'` for every matching
      * message in the account and hands each to the reconciler, which performs a real IMAP move. It

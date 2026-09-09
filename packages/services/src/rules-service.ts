@@ -110,7 +110,7 @@ export interface RuleRequestSent {
 }
 
 /**
- * WHERE ONE RULE EDIT WENT, MAILBOX BY MAILBOX (mail 0093, ruling 6).
+ * WHERE ONE RULE EDIT WENT, MAILBOX BY MAILBOX (mail 0094, ruling 6).
  *
  * A rule belongs to the ACCOUNT and TRAVELS in the organizer's profile document, and an account may
  * hold several mailboxes with different roles. So one press is a local write for the mailboxes this
@@ -340,7 +340,7 @@ export class RulesService {
     const bodyContains = this.validBodyContains(body.bodyContains, kind);
 
     return asTx(ctx).transaction(async (tx) => {
-      /* -- A RULE GOES WHEREVER THE ACCOUNT'S MAILBOXES ARE ORGANIZED (mail 0083, then 0093) --
+      /* -- A RULE GOES WHEREVER THE ACCOUNT'S MAILBOXES ARE ORGANIZED (mail 0083, then 0094) --
        *
        * A rule is not a note: `evaluateRules` is the router, `rule-retro.ts` re-files the backlog
        * a new rule covers, and both run on the organizer's authority inside the organizer's own
@@ -553,7 +553,7 @@ export class RulesService {
       // the kind at all — validating against the caller's absent field instead of the stored row
       // is how a domain rule acquires a subject term the API says it will not accept.
       //
-      // `match` joins them for mail 0093: it is the second of the FOUR fields that identify this
+      // `match` joins them for mail 0094: it is the second of the FOUR fields that identify this
       // rule to another install, and the key must name the rule as it stands NOW — a request
       // keyed on the caller's new value would ask the applier to find a rule that does not exist
       // there yet.
@@ -703,7 +703,7 @@ export class RulesService {
     opts: { idempotency?: RuleIdempotency | null } = {},
   ): Promise<RuleRemoval> {
     const out = await asTx(ctx).transaction(async (tx): Promise<RuleRemoval> => {
-      /* -- A RULE GOES WHEREVER THE ACCOUNT'S MAILBOXES ARE ORGANIZED (0083, then 0093) -----
+      /* -- A RULE GOES WHEREVER THE ACCOUNT'S MAILBOXES ARE ORGANIZED (0083, then 0094) -----
        *
        * A rule is not a note: `evaluateRules` is the router, `rule-retro.ts` re-files the backlog
        * a new rule covers, and both run on the organizer's authority inside the organizer's own

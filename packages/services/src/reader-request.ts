@@ -14,7 +14,7 @@ import { ServiceError } from "./errors.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  THE READER'S WRITE DOORS — one dispatch, four families (mail 0093)
+ *  THE READER'S WRITE DOORS — one dispatch, four families (mail 0094)
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
  * On a mailbox this install organizes, a write door writes. On a mailbox another install holds,
@@ -26,7 +26,7 @@ import { ServiceError } from "./errors.js";
  * ── EXTRACTED FROM `ScreenerService.requestAsReader`, WHICH WAS THE ONLY ONE ────────────────
  *
  * 0.14.1 shipped this shape for a single kind (`screener.decide`) inside the Screener's own
- * service. Mail 0093 adds three families — moves, rules and profile edits — and the alternative to
+ * service. Mail 0094 adds three families — moves, rules and profile edits — and the alternative to
  * extracting was four copies of "read the eligibility, decide the branch, fence the account, write
  * the row". Four copies of a security branch is how one of them ends up asking a slightly
  * different question: the version that forgets the erasure fence, or the one that passes the wrong
@@ -122,7 +122,7 @@ export async function routeMailboxWrite(
 }
 
 /**
- * THE SYMBOLIC WORD FOR A CANONICAL FOLDER — the inverse of `MOVE_DESTINATIONS` (mail 0093).
+ * THE SYMBOLIC WORD FOR A CANONICAL FOLDER — the inverse of `MOVE_DESTINATIONS` (mail 0094).
  *
  * A `message.move` request names a WORD, never an IMAP path: the applier resolves it against the
  * mailbox on the machine that is actually connected, and a reader writing a path would be writing
@@ -186,7 +186,7 @@ export function moveDestinationWord(folder: string): string {
 const READ_CHUNK = 500;
 
 /**
- * REFUSE A BULK MOVE ON A READER, BY NAME, AND REFUSE IT WHOLE (mail 0093).
+ * REFUSE A BULK MOVE ON A READER, BY NAME, AND REFUSE IT WHOLE (mail 0094).
  *
  * Two doors move MANY messages from one press: `WorkflowsService.undoRun` (one move per recorded
  * step of a run, unbounded) and the Hey migration's RE-ROUTE PASS — `rerouteToMatchRules`, the
@@ -288,7 +288,7 @@ export interface AccountFanOut {
 
 /**
  * PLAN THE FAN-OUT for an ACCOUNT-SCOPED door: rules, the away responder, the screening preference,
- * the dormancy window (mail 0093, ruling 6).
+ * the dormancy window (mail 0094, ruling 6).
  *
  * ── WHAT THIS REPLACES, AND WHY IT IS NOT JUST A WIDER REFUSAL ─────────────────────────────
  *

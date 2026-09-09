@@ -282,7 +282,7 @@ export class WorkflowsService {
         ))
         .orderBy(sql`(${auditLog.payload}->>'stepIndex')::int desc`);
 
-      /* ── REFUSED WHOLE ON A READER, BEFORE THE FIRST INVERSE RUNS (mail 0093) ────────────
+      /* ── REFUSED WHOLE ON A READER, BEFORE THE FIRST INVERSE RUNS (mail 0094) ────────────
        *
        * `applyInverse`'s `file_message` arm re-sets `folder_state.desired_folder` with
        * `last_set_by: 'us'`, which the reconciler turns into a physical IMAP move — so an undo

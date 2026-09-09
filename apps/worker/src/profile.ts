@@ -1331,7 +1331,7 @@ type MarkerFact =
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  THE READER'S SIDE — caching the organizer's document in `mailbox_profile_mirror` (mail 0093)
+ *  THE READER'S SIDE — caching the organizer's document in `mailbox_profile_mirror` (mail 0094)
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
  * Everything above is the ORGANIZER's half: serialize this store, publish it. This is the other
