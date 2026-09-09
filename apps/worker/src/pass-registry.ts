@@ -190,6 +190,20 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     owns: "conversations a forward's fresh header chain split in two are merged (core's join verdict, one implementation)",
     fence: "leader lock; per-account isolation",
   },
+  /**
+   * A REPAIR WITH AN END, and the row says so: once a release carrying
+   * `MessageDTO.autoReplyByUs` has reached every client this pass and its sweep can be deleted
+   * outright. Nothing else depends on it.
+   */
+  {
+    name: "away_reply_flag_redeliver",
+    module: `${W}/away-reply-flag-redeliver.ts`, entry: "awayReplyFlagRedeliverPass",
+    triggers: ["cycle-tail"],
+    cadence: "ONCE PER WORKER PROCESS, on the first cycle tail after start — the gate belongs to `away-reply-sweep.ts#makeAwayReplySweep`, which closes it only on an attempt where every account walked to exhaustion, and is retried every AWAY_REPLY_REDELIVER_RETRY_MS (15 min) while any account is still owed. No CLI and no sidecar: the desktop carries the flag through its own sync, not by running this",
+    budget: "AWAY_REPLY_REDELIVER_BATCH (200/page) / AWAY_REPLY_REDELIVER_MAX_PAGES (5000, a safety bound rather than a budget — the walk is meant to reach the end of the candidate set, and a short page is what ends it)",
+    owns: "responder replies written BEFORE the auto-reply flag existed are re-delivered once, so a warm mirror stops presenting them in the Ohbox as the person's own mail",
+    fence: "leader lock; writes change_log rows ONLY — no message, no folder_state, nothing moved",
+  },
   {
     name: "inbound_quiet",
     module: `${W}/inbound-quiet.ts`, entry: "inboundQuietPass",
