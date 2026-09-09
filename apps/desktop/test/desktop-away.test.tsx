@@ -192,9 +192,22 @@ describe("the away responder on the hosted door", () => {
     expect(puts[0]!.url).toBe(AWAY_PATH);
     // A FULL REPLACE, every field named — the route stores what it is handed. A partial body would
     // blank the fields it omitted on a row somebody had already filled in.
+    //
+    // `piles` IS ONE OF THOSE FIELDS, and that is why it is named here rather than allowed to be
+    // absent. Mail 0096 gave the responder a pile scope whose column default is the narrow
+    // `{INBOX}`, and this endpoint is a full replace: a client that sent the other six fields and
+    // omitted this one would reset somebody's Reads opt-in on every unrelated save — a body edit,
+    // or the save that turns the responder off. The migration's own docblock says exactly that of
+    // an API one deploy older. So the pane sends the scope it is showing.
+    //
+    // The value is written as a LITERAL rather than imported from `AWAY_PILES_DEFAULT`: this
+    // assertion is about the bytes on the wire, and a default widened to include `ohmail/Reads`
+    // would opt every existing responder into Reads without anybody asking — the defect that
+    // migration exists to close. Against the constant this test would go green for it.
     expect(puts[0]!.body).toEqual({
       enabled: true, body: "Back Monday.",
       startsAt: null, endsAt: null, audience: "screened_in", throttle: "per_day",
+      piles: ["INBOX"],
     });
     expect(hostEl.textContent).toContain("Saved.");
     // …and no second read: the control renders the PUT's own echo.
