@@ -94,7 +94,7 @@ import { workflowDrainPass, workflowTimeScanPass, unconfiguredDrafter } from "./
 import { bubbleUpPass } from "./bubble-up-cron.js";
 import { threadJoinHealPass, type ThreadJoinHealCursor } from "./thread-join-heal.js";
 import { inboundQuietPass } from "./inbound-quiet.js";
-import { makeAwayReplySweep } from "./away-reply-flag-redeliver.js";
+import { makeAwayReplySweep } from "./away-reply-sweep.js";
 import { ruleRetroPass } from "./rule-retro.js";
 import { ohboxTidyPass } from "./ohbox-tidy.js";
 import { screenerAutoApplyPass } from "./screener-auto.js";
