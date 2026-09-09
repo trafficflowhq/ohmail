@@ -7,6 +7,7 @@
     ".": "./src/index.ts",
     "./mail": "./src/mail.ts",
     "./ics": "./src/ics.ts",
+    "./away-scope": "./src/away-scope.ts",
     "./net": "./src/net/index.ts",
     "./adapters/http-host": "./src/adapters/http-host.ts",
     "./adapters/imap": "./src/adapters/imap.ts",
@@ -20,7 +21,8 @@
     "./destinations": "./src/destinations.ts",
     "./drain-policy": "./src/drain-policy.ts",
     "./reply-subject": "./src/reply-subject.ts",
-    "./search-rank": "./src/search-rank.ts"
+    "./search-rank": "./src/search-rank.ts",
+    "./pair-link": "./src/pair-link.ts"
   },
   "dependencies": {
     "drizzle-orm": "0.36.4",

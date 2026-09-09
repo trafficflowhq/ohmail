@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle, type PgliteDatabase } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
@@ -36,6 +39,106 @@ export const PG_TEST_URL = process.env.DATABASE_URL_PG_TEST
 /** Set this to `1` in CI so a missing Postgres FAILS the suite instead of skipping it. */
 export const REQUIRE_PG_ENV = "TF_REQUIRE_PG";
 
+/** One applied row of a journal table: the migration's stamp and the sha256 the migrator stored. */
+interface AppliedRow { hash: string; created_at: string | number }
+
+/**
+ * `when` → sha256 of the migration file, for every migration this tree declares.
+ *
+ * The hash is exactly what the migrator writes into a journal table's `hash` column, so a
+ * comparison against it needs nothing but the file on disk.
+ */
+function declaredMigrations(dir: string): Map<number, string> {
+  const journal = JSON.parse(
+    readFileSync(join(dir, "meta", "_journal.json"), "utf8"),
+  ) as { entries: Array<{ when: number; tag: string }> };
+  const out = new Map<number, string>();
+  for (const e of journal.entries) {
+    const sql = readFileSync(join(dir, `${e.tag}.sql`));
+    out.set(Number(e.when), createHash("sha256").update(sql).digest("hex"));
+  }
+  return out;
+}
+
+/** The first twelve hex characters of a stored hash — enough to tell two apart in a sentence. */
+function shortHash(h: string): string {
+  return String(h).slice(0, 12);
+}
+
+/**
+ * IS THIS DATABASE'S SCHEMA THE ONE THIS TREE DECLARES? A sentence naming the drift, or `null`.
+ *
+ * The migrator decides what to replay from each journal's `when` — the migration folder's own
+ * millisecond stamp — and it applies only a migration stamped strictly AFTER the latest one the
+ * database has already recorded. Two consequences follow, and both are silent:
+ *
+ *   - A migration EDITED IN PLACE — same `when`, new statements — is already recorded as applied,
+ *     so its new statements never run. The database then sits behind this tree for good, and
+ *     nothing says so. That is not hypothetical: one migration here was amended four times after
+ *     it had first run, and a long-lived test database carried the pre-amendment version for
+ *     weeks. The missing column surfaced as a caught-and-logged write failure three layers away,
+ *     and the component that got blamed was not the one that was wrong.
+ *   - A database carrying a stamp HIGHER than anything this tree declares will record every
+ *     migration this tree adds as applied WITHOUT RUNNING IT, because each new one is below the
+ *     latest stamp already recorded. Nothing raises when that happens either.
+ *
+ * Either way the schema is not this tree's, and a test run against it measures a database nobody
+ * has counted — which fails as a defect in whatever the test was about. So drift is DETECTED
+ * rather than assumed away: every applied row must correspond to a migration this tree declares,
+ * matched on `when` AND on the file's own sha256.
+ *
+ * A database that is merely BEHIND — later migrations missing — is deliberately NOT drift. The
+ * migrator applies those itself, which is the ordinary case. Only a database that is AHEAD, or
+ * one whose recorded content disagrees with the file, is unfixable by running anything.
+ *
+ * This function answers the question and does not decide what to do about it, because the two
+ * callers hold two different policies. A database created for one test file is dropped and
+ * rebuilt. A long-lived shared one is REFUSED, since dropping a database other runs are using
+ * would be a worse failure than the one being reported. Each caller names its own policy.
+ */
+export async function journalDrift(url: string): Promise<string | null> {
+  const sql = postgres(url, { max: 1, onnotice: () => { /* quiet */ } });
+  try {
+    for (const spec of JOURNALS) {
+      // The schema name comes from this repository's own spec table, never from caller input; the
+      // identifier is quoted regardless so a spec rename can never become an injection.
+      const table = `"${spec.migrationsSchema.replace(/"/g, '""')}"."__drizzle_migrations"`;
+      const present = await sql.unsafe(`SELECT to_regclass('${table}') IS NOT NULL AS ok`);
+      if (!present[0]?.ok) continue;                       // never migrated: not drift
+      const rows = await sql.unsafe(
+        `SELECT hash, created_at FROM ${table} ORDER BY created_at`,
+      ) as unknown as AppliedRow[];
+      const declared = declaredMigrations(spec.dir);
+      if (declared.size === 0) {
+        return `${spec.name}: this tree declares no migrations at all, so nothing this database `
+          + "records can be matched against it";
+      }
+      const treeMax = Math.max(...declared.keys());
+      for (const r of rows) {
+        const want = declared.get(Number(r.created_at));
+        if (want === undefined) {
+          return `${spec.name}: this database records a migration applied at ${r.created_at} `
+            + `(hash ${shortHash(r.hash)}) that this tree does not declare. This tree's own `
+            + `latest ${spec.name} migration is ${treeMax}, which is BELOW it — so every `
+            + "migration this tree adds would be recorded here as applied WITHOUT RUNNING, "
+            + "because the migrator applies only a stamp strictly after the latest one recorded, "
+            + "and raises nothing when it skips one.";
+        }
+        if (want !== r.hash) {
+          return `${spec.name}: the migration applied at ${r.created_at} has been edited since it `
+            + `ran here (this database recorded hash ${shortHash(r.hash)}, this tree's file `
+            + `hashes to ${shortHash(want)}). Its stamp is already recorded, so the file's `
+            + `current statements will never run on this database. This tree's latest `
+            + `${spec.name} migration is ${treeMax}.`;
+        }
+      }
+    }
+    return null;
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+}
+
 /**
  * Is a real Postgres reachable — and is it ALLOWED to be missing?
  *
@@ -49,6 +152,23 @@ export const REQUIRE_PG_ENV = "TF_REQUIRE_PG";
  * `TF_REQUIRE_PG=1` (what `pnpm test:pg` and CI set) an unreachable Postgres THROWS here, and the
  * file fails loudly instead of quietly not running. `pnpm test` on a laptop behaves exactly as
  * before.
+ *
+ * ── AND "AVAILABLE" MEANS THIS TREE'S SCHEMA, NOT MERELY A SERVER THAT ANSWERS ─────────────
+ *
+ * The database this reaches is long-lived and SHARED by every `*.pg.test.ts` in the workspace.
+ * A run that migrated it from a different tree leaves its journal ahead of, or disagreeing with,
+ * the migrations declared here — and from then on {@link journalDrift} explains exactly what
+ * that costs: this tree's own migrations get recorded as applied without ever running, so the
+ * files below assert against columns and constraints that are not there. The failures land on
+ * whatever each test was about, name the wrong component, and survive every re-run.
+ *
+ * A shared database is not ours to drop, so the policy here is REFUSAL rather than repair: the
+ * sentence goes to stderr and this answers false, which turns every dependent file into a
+ * skip-with-a-reason instead of a suite full of reds that belong to nobody. Under
+ * `TF_REQUIRE_PG=1` it throws for the same reason an unreachable server does — a gate that can
+ * disappear in CI is not a gate.
+ *
+ * The repair is to reset that database to this tree's journals and run again.
  */
 export async function realPgAvailable(url: string = PG_TEST_URL): Promise<boolean> {
   const c = postgres(url, { max: 1, connect_timeout: 3, onnotice: () => {} });
@@ -67,5 +187,14 @@ export async function realPgAvailable(url: string = PG_TEST_URL): Promise<boolea
         "start it (docker compose up -d) or unset the variable. These tests are not optional in CI.",
     );
   }
-  return up;
+  if (!up) return false;
+
+  const drift = await journalDrift(url);
+  if (drift === null) return true;
+  const sentence =
+    `the database at ${new URL(url).host}${new URL(url).pathname} is not this tree's schema — `
+    + `${drift} Reset it to this tree's journals before running these tests; nothing was measured.`;
+  process.stderr.write(`[pg] refusing this database: ${sentence}\n`);
+  if (process.env[REQUIRE_PG_ENV] === "1") throw new Error(`${REQUIRE_PG_ENV}=1 and ${sentence}`);
+  return false;
 }
