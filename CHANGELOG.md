@@ -199,8 +199,9 @@ mouse does nothing: the desktop already has x and Cmd-click.
 
 Press either key on the message you are looking at and it goes to the Trash folder on your own
 mail server. It is a move, never a permanent erase — ohmail does not expunge mail, and what
-happens after the move is your mail server's Trash policy. Both keys work on every list that
-shows a message with a cursor on it, and both are listed in the shortcut sheet (`?`).
+happens after the move is your mail server's Trash policy. Both keys work, with Use folders on,
+on every list that shows a message with a cursor on it, and both are listed in the
+shortcut sheet (`?`).
 
 The press is undoable, and the undo is real rather than cosmetic. There is no un-delete on the
 wire, so instead of sending the request and offering to take it back, the press hides the message
