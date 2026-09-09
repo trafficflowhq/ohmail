@@ -1443,7 +1443,10 @@
     "protectedLabel": "Bestätigungscode",
     "protectedRedacted": "(geschwärzt)",
     "expandCard": "Aufklappen",
-    "collapseCard": "Zuklappen"
+    "collapseCard": "Zuklappen",
+    "awayAnswered": "Vom Abwesenheitsassistenten beantwortet",
+    "awayAnsweredAt": "{label}<stamp> · {when}</stamp>",
+    "awayAnsweredAria": "Vom Abwesenheitsassistenten beantwortet {whenLong}"
   },
   "nav": {
     "skip": "Zum Inhalt springen",

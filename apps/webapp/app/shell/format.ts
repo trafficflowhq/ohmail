@@ -486,7 +486,14 @@ export function firstName(m: EngineMessage): string {
  * `displayTime` answers "" — so a caller interpolating it prints nothing rather than
  * "Invalid Date".
  */
-export function fullDateTime(m: EngineMessage): string {
+/*
+ * `Pick<…, "date">` and not the whole message, because `date` is all it reads. The away-answer
+ * mark needs the absolute form of an instant that is NOT the message's arrival — the responder's
+ * `awayRepliedAt` — and the alternative was to spread a message with the field swapped in, which
+ * costs a copy per render and reads as though some other field mattered. `displayTime` above
+ * already takes a `Pick` for the same reason.
+ */
+export function fullDateTime(m: Pick<EngineMessage, "date">): string {
   if (!m.date) return "";
   const d = new Date(m.date);
   if (Number.isNaN(d.getTime())) return "";

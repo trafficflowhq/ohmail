@@ -4807,6 +4807,42 @@ input.set-tag-input {
   color: var(--ink);
 }
 
+/* ── "ANSWERED BY THE AWAY RESPONDER · <when>" — the mark on the message that was answered ────
+   One quiet line under the recipients, on every panel the message header wears (the focused
+   message in the reading pane and each sibling on an open thread — `AwayMark.tsx`). It is a FACT,
+   not an alert: `--ink3` like the recipients above it and nothing else, no icon, no hover, no
+   focus, no motion, and never a badge. Automatic mail is not the reader's engagement and must not
+   read as any — the responder's reply is deliberately kept out of the Ohbox, and a mark that
+   shouted would put the same thing back on screen from the other side.
+
+   `display: block` in the header's own column flow, so its left edge IS the subject's and the
+   recipients' — the mark never carries an indent of its own, and it cannot widen the panel: the
+   header's width comes from the reading column, and a block child takes what it is given.
+
+   The margin and size are the SPEC's reading-pane figures rather than its row ones, because this
+   element sits exactly where the spec puts the pane's — immediately after `.msg-rcpts`. There is
+   one placement, so there is one class and no `-pane` variant to go unused.
+
+   ONE INK, INHERITED. `.when` deliberately declares no colour: it would restate the parent's and
+   a rule that cannot change anything is not documentation, it is a rule nobody can watch work.
+   What `.when` IS for is the narrow rendering below — and the separator lives inside it (the
+   catalogue string is `{label}<stamp> · {when}</stamp>`), so the dot leaves with the stamp instead
+   of standing at the end of the line introducing nothing. */
+.away-mark {
+  display: block;
+  margin: 6px 0 0;
+  font-size:calc(11.5px + var(--type-up));
+  line-height: 1.4;
+  font-weight: 450;
+  color: var(--ink3);
+}
+/* Under 640px a card head has room for the claim or for the stamp, not both, and the claim is the
+   half that says something. The accessible name is untouched — `role="note"`'s label carries the
+   ABSOLUTE instant at every width — so nothing is lost to a reader using one. */
+@media (max-width: 640px) {
+  .away-mark .when { display: none; }
+}
+
 /* ── THE CONTACT POPOVER — Copy address · Write · Screener settings ──────────────────────────
    Placed fixed from the pressed chip's rectangle (`placePicker`), like the sender sheet; the
    items inside are the pill's own `.mmenu`, re-grounded to sit in flow under the head. */

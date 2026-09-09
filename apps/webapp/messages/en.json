@@ -1443,7 +1443,10 @@
     "protectedLabel": "Verification code",
     "protectedRedacted": "(redacted)",
     "expandCard": "Expand",
-    "collapseCard": "Collapse"
+    "collapseCard": "Collapse",
+    "awayAnswered": "Answered by the away responder",
+    "awayAnsweredAt": "{label}<stamp> · {when}</stamp>",
+    "awayAnsweredAria": "Answered by the away responder {whenLong}"
   },
   "nav": {
     "skip": "Skip to content",

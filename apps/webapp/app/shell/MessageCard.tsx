@@ -32,6 +32,7 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from "react"
 import { useTranslations } from "next-intl";
 import { Avatar, Button, Icon } from "@ohmail/ui";
 import { isProtectedMessage, type EngineMessage } from "@ohmail/client-engine";
+import { AwayMark } from "./AwayMark";
 import { isPreviewable } from "../components/AttachmentPreview";
 import { AttachmentStrip } from "../components/AttachmentStrip";
 import { MessageBody } from "../components/MessageBody";
@@ -279,6 +280,12 @@ export function MessageHeader({
       </div>
       {subjectLine}
       <MessageRecipients message={message} notice={notice} />
+      {/* "Answered by the away responder · <when>" — drawn iff the server stamped this
+          message, immediately under the recipients. One mount, and it serves every panel
+          this header wears: the focused message in the reading pane (`MessagePane`
+          composes this same header) and every sibling on an open thread. See
+          `AwayMark` for why the mark is on the ORIGINAL and never on the Sent copy. */}
+      <AwayMark message={message} now={now} />
     </>
   );
 }
