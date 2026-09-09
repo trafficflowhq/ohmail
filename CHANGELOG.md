@@ -652,6 +652,36 @@ quietly: the four Settings → General rows every surface shares may no longer d
 and the two disclosure pages are now held to the same constant the download page reads — in both
 directions, so a page can neither over-claim a build nor keep hedging about one after it ships.
 
+### Connecting to a server you run works on a new install
+
+Choosing "Your own server" on an install that had not yet connected to anything answered with a
+sentence about this app's own mail engine not being configured — on the screen whose whole job is
+to configure it — and went no further. The address step asks the engine what is at the address you
+typed, and a new install has no engine running yet, so the question could not be asked at all. That
+was the main way into this door, on exactly the installs most likely to use it.
+
+The order now depends on what there is to lose. An install with no mailbox connected has no copy of
+your mail and no saved sign-in, so nothing a mistyped address could cost: it points itself at the
+address first and then asks that server whether it is there, and reports the server's own answer if
+it is not. An install that already has a mailbox keeps asking first and is not touched until the
+server has answered — a wrong address there would discard the copy it holds, which is why that
+order exists.
+
+Asking first also means the server that is being LEFT does the asking, and on a new install that
+matters twice: if you run your own certificate authority, its certificate reaches the engine only
+when the engine is configured for your server, so the address could fail its own check on a
+certificate that is perfectly good. On this path the engine doing the checking is your server's.
+
+### The address you type is dialled by a connection made for it
+
+When this app is paired with another computer of yours, every connection it makes is verified
+against that computer's identity. The question "is there an ohmail server at this address?" was
+going out over that same connection — so if that computer was off, a server you run that was up and
+answering was reported as unreachable, with a sentence telling you to check that the other computer
+was switched on. The address you type is now dialled by a connection made for it. Asking about the
+computer this install is actually paired with still goes over that computer's own verified
+connection.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

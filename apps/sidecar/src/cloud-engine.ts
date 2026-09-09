@@ -863,6 +863,28 @@ function errorCode(err: unknown): string | null {
 }
 
 export async function createCloudSidecar(config: CloudSidecarConfig): Promise<CloudSidecar> {
+  /**
+   * THE TRANSPORT FOR A QUESTION ABOUT SOMEBODY ELSE'S ADDRESS — the injected seam, and NEVER the
+   * one this door is pinned to.
+   *
+   * Captured before the pinning below, because after it `config.fetchImpl` is two different things
+   * wearing one name: the test seam, or the transport built for the CONFIGURED host. A candidate
+   * probe that read it got the second — so the question "is there an ohmail server at the address I
+   * just typed" went out through the transport belonging to the door the person is trying to LEAVE.
+   *
+   * The reachable shape is the ordinary one. Somebody paired with a computer of their own, that
+   * computer is off, and they open the middle door to move to a server they run. The pinned
+   * transport refuses before it dials anything — it cannot establish the other machine's identity —
+   * so a self-hosted server that is up and answering was reported as unreachable with a sentence
+   * about a machine that has nothing to do with the address they typed, telling them to check it is
+   * switched on. `cloud-probe-candidate-transport.test.ts` is that case.
+   *
+   * The NO-CANDIDATE arm deliberately still reads `config.fetchImpl`: it asks about the door this
+   * engine IS on, and that question belongs on that door's own connection, pin included. Answering
+   * it over an unpinned one would be the opposite mistake and a worse one, so both arms are pinned
+   * by test rather than by whichever value happened to be in scope.
+   */
+  const injectedFetch = config.fetchImpl;
   /* THE ONE SEAM. Everything this engine says to its server goes through the `fetchImpl` the
      bearer client, the mirror, the proxy and the wake channel are all handed — so pinning is done
      once, here, rather than at four call sites where the fifth would be the one that forgot. */
@@ -1389,16 +1411,16 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
             const pinned = createHostFetch({
               origin, pin, dataDir: config.dataDir, ...(log ? { log } : {}),
             });
-            const said = await probeCloudDoor(origin, config.fetchImpl ?? pinned);
+            const said = await probeCloudDoor(origin, injectedFetch ?? pinned);
             return refuseUnlessDesktopHost(said, origin);
           }
-          return refuseUnlessDesktopHost(await probeCloudDoor(origin, config.fetchImpl ?? fetch), origin);
+          return refuseUnlessDesktopHost(await probeCloudDoor(origin, injectedFetch ?? fetch), origin);
         }
 
         /* THE ORIGIN, NOT A BASE — `probeCloudDoor` is what decides whether the API is at the
            root or under `/api`, because that answer comes from the server's own greeting and not
            from anything this window could know. */
-        return probeCloudDoor(origin, config.fetchImpl ?? fetch);
+        return probeCloudDoor(origin, injectedFetch ?? fetch);
       }
 
       if (req.method === "POST" && path === "/cloud/signin/challenge") {

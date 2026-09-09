@@ -43,7 +43,7 @@
  */
 
 import { engineConfigure, bridgeFetch, type EngineStatus } from "./bridge-fetch.js";
-import { sentence, settle, signInToCloud, stalled, type DoorResult } from "./doors.js";
+import { sentence, settle, signInToCloud, stalled, standingEngine, type DoorResult } from "./doors.js";
 import {
   apiBaseFor,
   normalizeOrigin,
@@ -87,13 +87,24 @@ export function selfHostProblem(typed: string): string | null {
 }
 
 /**
- * ASK THE ENGINE WHAT IS AT THE ADDRESS IT WAS JUST POINTED AT. Null when there is an ohmail
- * server there; a sentence when there is not.
+ * ASK THE ENGINE WHAT IS AT AN ADDRESS. Null when there is an ohmail server there; a sentence when
+ * there is not.
  *
- * The engine probes what it is CONFIGURED for and never a URL from this window — see the route in
- * `cloud-engine.ts` for why that distinction is load-bearing rather than stylistic. So this must be
- * called after `engine_configure` has been accepted and the engine has settled, which is the order
- * {@link enterSelfHostDoor} takes and the order the address step takes.
+ * WITH A CANDIDATE, the engine dials the origin given here — validated through the same parse this
+ * file uses, with the path composed engine-side — and nothing about this install is configured by
+ * asking. WITHOUT one, it answers about the door it is already configured for, over that door's own
+ * transport, pin included. Both arms exist and the caller chooses; see the route in
+ * `cloud-engine.ts` for what the candidate arm widens and what it buys.
+ *
+ * ── THIS COMMENT USED TO SAY THE OPPOSITE, AND THAT IS WHY IT IS SPELLED OUT ──────────────────
+ *
+ * It read *"the engine probes what it is CONFIGURED for and never a URL from this window"* while
+ * the code beneath it passed a window-supplied candidate straight through. A false comment about a
+ * trust boundary is worse than none: it describes a boundary that WOULD be correct, so five review
+ * rounds read it and looked no further, and the ordering defect it hid — a fresh install being told
+ * its engine is not configured by the screen that configures it — survived all five. What the
+ * boundary actually is: the ORIGIN may come from the window, the PATH never does, and
+ * `normalizeOrigin` decides what an origin may be.
  */
 export async function probeConfiguredServer(candidateOrigin?: string): Promise<string | null> {
   let res: Response;
@@ -150,6 +161,35 @@ export interface SelfHostStep {
  * A REFUSAL NOW COSTS NOTHING. The settings file is untouched, the previous door is still the
  * configured one, and its mirror and session are where they were. Only a server that answered as an
  * ohmail server, set up and self-hosted, gets as far as replacing the engine.
+ *
+ * ── AND ON A FRESH INSTALL THERE IS NO ENGINE TO ASK, WHICH MADE THIS DOOR IMPOSSIBLE ─────────
+ *
+ * The probe is a request to the local engine, and a fresh install has none: nothing is configured,
+ * so the shell is `NotConfigured` and `Engine::request` answers every bridge request with *"the
+ * engine has not been configured: nothing set OHMAIL_IMAP_HOST, OHMAIL_IMAP_USER"*. Measured on a
+ * fresh HOME with the shipped build, whose own log says `not started — nothing set …` and which
+ * spawns no engine process at all. So the first act of the door was refused by this app talking
+ * about itself, on the screen whose entire job is to configure it, and `engineConfigure` was never
+ * reached — the primary path of this whole door, on the installs most likely to walk it.
+ *
+ * THE ORDER IS THEREFORE DECIDED BY WHAT THERE IS TO LOSE, and the shell is the authority on that
+ * rather than a guess: `state === "not_configured"` means no door has been chosen, so there is no
+ * mirror, no sealed session and no settings for a mistyped address to cost. That install configures
+ * FIRST and asks the engine that results — which is an engine built for the CANDIDATE, so the
+ * question is answered by a transport dialling the address that was typed.
+ *
+ * That second property is why this is not merely a workaround for an empty install. The operator's
+ * private certificate authority reaches the engine as `NODE_EXTRA_CA_CERTS`, and the shell composes
+ * it only for a SELF-HOSTED cloud configuration — so an engine configured for any other door proves
+ * the candidate without the candidate's own trust material and fails TLS on a certificate that is
+ * perfectly good. On the fresh path the engine doing the proving IS the candidate's, so the CA is
+ * in place for its own proof. An install that already holds a door still probes first and still
+ * carries that gap; it is a narrower case (somebody moving an existing install to a private-CA
+ * server) and it is recorded rather than quietly fixed here, because closing it means giving the
+ * probe a per-origin trust store rather than reordering anything.
+ *
+ * Everything ELSE keeps the probe-first order exactly: an install with a door to lose must not
+ * discard it for a typo, which is the finding that put the probe first in the first place.
  */
 export async function configureSelfHostDoor(typedOrigin: string, address: string): Promise<SelfHostStep> {
   const addressProblem = selfHostProblem(typedOrigin);
@@ -163,11 +203,52 @@ export async function configureSelfHostDoor(typedOrigin: string, address: string
      nothing checks. */
   if (base === null) return { status: null, problem: selfHostProblem(typedOrigin) };
 
+  /**
+   * IS THERE ANYTHING FOR A WRONG ADDRESS TO COST? — the shell's own state, read at the submit.
+   *
+   * `not_configured` is the shell's word for "no door has been chosen", and it is the one state in
+   * which nothing can be lost AND nothing can be asked. Read here rather than passed in for
+   * `enterLocalDoor`'s reason: a door opened from Settings may have been on screen for minutes,
+   * and the order this submit takes has to come from what is true now.
+   *
+   * A shell that will not answer at all is NOT read as a fresh install. That is the difference
+   * between "there is no door yet" and "we could not find out", and only the first is safe to
+   * configure over — so anything else keeps the probe-first order and reports what it finds.
+   */
+  const standing = await standingEngine();
+  const nothingToLose = standing !== null && standing.state === "not_configured";
+
+  if (nothingToLose) {
+    /* CONFIGURE, THEN PROVE — and the proof goes through the engine that results, which is the
+       candidate's own. See the note above for both reasons this order is right HERE and wrong
+       everywhere else. */
+    const step = await configureFor(base, address);
+    if (step.problem !== null) return step;
+    const unreachable = await probeConfiguredServer();
+    /* THE SERVER'S OWN SENTENCE, and the status is dropped with it: the address step has not been
+       passed, so the card stays on the address field with the engine's words above it. The install
+       is left pointed at an address that did not answer, which on an install with no door is
+       nothing lost — the next attempt reconfigures it — and it is why this arm exists only there. */
+    if (unreachable !== null) return { status: null, problem: unreachable };
+    return step;
+  }
+
   /* PROVE, THEN COMMIT — the local door's ordering, for the same class of reason: the step that
      cannot be undone goes after the step that can fail. */
   const unreachable = await probeConfiguredServer(typedOrigin);
   if (unreachable !== null) return { status: null, problem: unreachable };
 
+  return configureFor(base, address);
+}
+
+/**
+ * POINT THIS INSTALL AT A BASE AND WAIT FOR THE ENGINE TO COME BACK.
+ *
+ * The half both orders above share, factored out so they cannot come to disagree about what a
+ * failed configure or a stalled engine says — two spellings of one refusal is how two arms of one
+ * door start describing the same state differently.
+ */
+async function configureFor(base: string, address: string): Promise<SelfHostStep> {
   try {
     await engineConfigure({ mode: "cloud", cloudUrl: base, address: address.trim() });
   } catch (err) {
