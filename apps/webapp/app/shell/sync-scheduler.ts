@@ -2,9 +2,11 @@ import {
   MutationRejectedError,
   type EngineAdapter,
   type ListOlderFn,
+  type ListTrashFn,
   type MessageBodyWire,
   type MutationOutcome,
   type OhmailEngine,
+  type RestoreFromTrashFn,
   type SnapshotFn,
   type SyncParams,
   type SyncResponse,
@@ -423,7 +425,15 @@ export class ForeignSessionError extends Error {
  * "the wrapper forgot" from a silent behaviour change into something a reader can check against
  * a list — and the imported types are the package's own, so a rename over there fails here.
  */
-type GatedAdapter = EngineAdapter & { snapshot?: SnapshotFn; listMessages?: ListOlderFn };
+type GatedAdapter = EngineAdapter & {
+  snapshot?: SnapshotFn;
+  listMessages?: ListOlderFn;
+  /* The Trash pair, named here for the reason above and NOT as one field: the engine binds them
+     independently, so an object literal that forwards the list and forgets the verb produces a
+     Trash view whose every Restore button is dead — on the live path only. */
+  listTrash?: ListTrashFn;
+  restoreFromTrash?: RestoreFromTrashFn;
+};
 
 /**
  * ═══ WHOSE MIRROR IS THIS, AND MAY IT MERGE? ══════════════════════════════════════════════
@@ -1118,6 +1128,30 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
          */
         ...(adapter.listMessages
           ? { listMessages: gatedRead(adapter.listMessages.bind(adapter), "a page of older mail") }
+          : {}),
+
+        /*
+         * ── TRASH — FORWARDED, GATED, AND SPREAD, both of them ────────────────────────────
+         *
+         * `listMessages`' rule three times over, and the reasons are the same three:
+         *
+         * SPREAD: `OhmailEngine.trashAvailable()` decides whether the palette offers the row and
+         * whether the chord works at all. Defining these unconditionally would put a Trash
+         * destination in the demo's palette over fixtures that have no server to ask.
+         *
+         * GATED: a Trash page is somebody's deleted mail — the most private list in the product
+         * — and the restore MOVES it. A foreign session must reach neither.
+         *
+         * TWO LINES: the engine binds the pair independently, so forwarding one and not the
+         * other is a coherent program. `trashAvailable()` asks for both, so a half-forward
+         * turns the feature off rather than half on — which is the safe direction and is why the
+         * gate reports the pair.
+         */
+        ...(adapter.listTrash
+          ? { listTrash: gatedRead(adapter.listTrash.bind(adapter), "your deleted mail") }
+          : {}),
+        ...(adapter.restoreFromTrash
+          ? { restoreFromTrash: gatedRead(adapter.restoreFromTrash.bind(adapter), "restoring a message") }
           : {}),
 
         /*

@@ -976,6 +976,114 @@ export type ListOlderOutcome =
   | { state: "ready"; items: EngineMessage[]; nextCursor: string | null }
   | { state: "failed"; error: string; code: string | null };
 
+// ── the Trash read, and putting one message back ───────────────────────────
+//
+// MAIL THIS ACCOUNT DELETED IN OHMAIL, which is off-mirror by construction. A delete tombstones
+// the row (`apply.ts` rule 4, `entity: null`), so the mirror holds NOTHING for a deleted message
+// on any door — there is no local list to filter, and this is not a projection over `reader`. It
+// is `listOlder`'s shape one verb over: the server answers a page, the view holds it in its own
+// state, and it is gone when the view changes.
+//
+// AND THE RESTORE IS NOT AN `EngineMutation`. It cannot be: `mutate` REJECTS a mutation whose
+// local effects are empty (404 `not_found`), and a mutation over a row the mirror does not hold
+// has no local effects by definition. So there is no optimistic overlay and no outbox entry
+// here; the durable record of a pressed restore is the intents journal the surface keeps
+// (`delete-intents.ts`), exactly as the delete's own held window does.
+
+/**
+ * `GET /messages?view=trash&cursor=&limit=` as this client reads it.
+ *
+ * The items are `MessageDTO`s with two additions the list renders — `trashedAt` and a
+ * server-RESOLVED `restoreTo` — so an {@link EngineMessage} plus those two, with no conversion
+ * and no second shape (the same reasoning as {@link ListOlderWire}). Both are optional at the
+ * type level because a client can be newer than the server it talks to: a build that predates
+ * them reads `undefined` and the view falls back to the message's own date and to the inbox,
+ * which is what those two values MEAN when nothing said otherwise.
+ */
+export interface TrashRowWire extends EngineMessage {
+  trashedAt?: string;
+  restoreTo?: string;
+}
+
+export interface ListTrashWire {
+  items: TrashRowWire[];
+  nextCursor: string | null;
+}
+
+/**
+ * The transport {@link OhmailEngine.listTrash} runs on. Optional everywhere, exactly as
+ * {@link ListOlderFn} is: the demo is fixtures and zero network, and a surface with no server
+ * behind it must be able to say "Trash is not available here" rather than spin.
+ */
+export type ListTrashFn = (opts: { cursor?: string; limit?: number }) => Promise<ListTrashWire | null>;
+
+/**
+ * `POST /messages/:id/restore` as this client calls it.
+ *
+ * `restoreTo` is the folder the server decided on — which may not be the row's own `restoreTo`
+ * if the origin folder disappeared between the page and the press — so the toast names THIS
+ * value, not the one the row was rendered with. `pending` is always true and is carried rather
+ * than assumed: the restore is a filing the mail server has not performed yet, and a surface
+ * that treated the 200 as "done" would be claiming the mail is back.
+ */
+export interface RestoreFromTrashWire {
+  restoreTo: string;
+  pending: boolean;
+}
+
+export type RestoreFromTrashFn = (messageId: string) => Promise<RestoreFromTrashWire | null>;
+
+/**
+ * The adapter capabilities the two reach for.
+ *
+ * Declared STRUCTURALLY here, exactly as {@link ListMessagesCapableAdapter} and the three beside
+ * it are, and carrying the identical wiring risk: `apps/webapp/app/shell/sync-scheduler.ts`
+ * rebuilds the adapter surface as an object literal, and a literal that forgets a structural
+ * capability still satisfies `EngineAdapter` — the failure is invisible in the suite and live on
+ * the LIVE path only. That wrapper must spread these the way it spreads the others,
+ * conditionally and never unconditionally.
+ *
+ * TWO capabilities and not one, for `ListMessagesCapableAdapter`'s own reason: a wrapper forwards
+ * them one at a time, so a client can legitimately have the list and not the verb, and deriving
+ * one from the other would make a control call a method that is not there. They are reported
+ * TOGETHER by {@link OhmailEngine.trashAvailable}, because a Trash view you cannot restore from
+ * is not the feature.
+ */
+interface ListTrashCapableAdapter {
+  listTrash?: ListTrashFn;
+}
+interface RestoreFromTrashCapableAdapter {
+  restoreFromTrash?: RestoreFromTrashFn;
+}
+
+/**
+ * What one Trash page answered — {@link ListOlderOutcome}'s three states, for the same reasons.
+ *
+ * `unavailable` is a real answer and never an error: the demo has no server, and a surface must
+ * render "Trash is not available here" rather than an empty list that reads as "you have deleted
+ * nothing". `failed` carries the server's code beside its text so a surface can tell a sentence
+ * written for a person from one written for a log.
+ */
+export type ListTrashOutcome =
+  | { state: "unavailable" }
+  | { state: "ready"; items: TrashRowWire[]; nextCursor: string | null }
+  | { state: "failed"; error: string; code: string | null };
+
+/**
+ * What one restore answered.
+ *
+ * `rolled_back` is the vocabulary the held-verb window already branches on for a delete
+ * (`delete-undo.ts` reads `res.status === "rolled_back"` to put the row back and say so), so the
+ * restore answers in the same words rather than in a second dialect the surface would have to
+ * translate. A 409 `not_in_trash` — the message is no longer there, restored from another client
+ * or filed by its owner — arrives as `rolled_back` with that code, because from the surface's
+ * point of view it is exactly a press that did not take effect.
+ */
+export type RestoreOutcome =
+  | { state: "unavailable" }
+  | { state: "restored"; restoreTo: string; pending: boolean }
+  | { state: "rolled_back"; error: string; code: string | null };
+
 // ── attachments ────────────────────────────────────────────────────────────
 //
 // ohmail STORES NO ATTACHMENT BYTES, anywhere, ever. Metadata is synced at ingest; the bytes live
@@ -1815,6 +1923,14 @@ export class OhmailEngine {
   private readonly serverAddressSearches = new Map<string, Promise<ServerAddressOutcome>>();
   /** `GET /messages`, or `null` when this adapter has none — see {@link ListMessagesCapableAdapter}. */
   private readonly listOlderFn: ListOlderFn | null;
+  /** The Trash page transport, bound once in the constructor. See {@link ListTrashFn}. */
+  private readonly listTrashFn: ListTrashFn | null;
+  /** The restore verb's transport, bound once in the constructor. See {@link RestoreFromTrashFn}. */
+  private readonly restoreFromTrashFn: RestoreFromTrashFn | null;
+  /** In-flight Trash pages by cursor+limit — single-flight, {@link OhmailEngine.listOlder}'s rule. */
+  private readonly trashPages = new Map<string, Promise<ListTrashOutcome>>();
+  /** In-flight restores by message id, so a double press is one request. */
+  private readonly restoreCalls = new Map<string, Promise<RestoreOutcome>>();
   /** In-flight out-of-window pages by view+cursor — see {@link OhmailEngine.listOlder}. */
   private readonly olderPages = new Map<string, Promise<ListOlderOutcome>>();
 
@@ -1904,6 +2020,12 @@ export class OhmailEngine {
     // one source means `listOlderAvailable()` and `listOlder` cannot disagree, and there is no
     // second way for a host to arm a capability the gate did not forward.
     this.listOlderFn = (opts.adapter as ListMessagesCapableAdapter).listMessages?.bind(opts.adapter) ?? null;
+    // The Trash pair, bound by the SAME rule and INDEPENDENTLY of each other and of the list
+    // above: an adapter wrapper forwards structural capabilities one at a time, so deriving
+    // either from another would make a control call a method that is not there.
+    this.listTrashFn = (opts.adapter as ListTrashCapableAdapter).listTrash?.bind(opts.adapter) ?? null;
+    this.restoreFromTrashFn =
+      (opts.adapter as RestoreFromTrashCapableAdapter).restoreFromTrash?.bind(opts.adapter) ?? null;
     // And a fourth time, same rule: bound ONCE here so `hydrateThread` cannot decide it has a
     // batch route and then call something else.
     this.fetchBodiesFn = (opts.adapter as FetchBodiesCapableAdapter).fetchBodies?.bind(opts.adapter) ?? null;
@@ -6232,6 +6354,143 @@ export class OhmailEngine {
       });
 
     this.olderPages.set(key, request);
+    return request;
+  }
+
+  // ── Trash: mail this account deleted, and putting one back ───────────────
+
+  /**
+   * Can this client see and restore deleted mail at all?
+   *
+   * BOTH capabilities, deliberately. A Trash view whose Restore button cannot work is not the
+   * feature — it is a list of mail with one dead control on every row — so the palette row, the
+   * chord and the rail entry are gated on the pair. `false` for the demo (`?demo=1` is fixtures
+   * and zero network), which must read as "Trash is not available here" and not as an empty
+   * Trash.
+   *
+   * Resolved from the adapter's own optional capabilities, so it cannot disagree with what the
+   * two methods below will do.
+   */
+  trashAvailable(): boolean {
+    return this.listTrashFn !== null && this.restoreFromTrashFn !== null;
+  }
+
+  /**
+   * ONE PAGE OF MAIL THIS ACCOUNT DELETED — `GET /messages?view=trash&cursor=`.
+   *
+   * ── THE RESULT DOES NOT GO IN THE MIRROR, AND HERE THAT IS STRUCTURAL ───────────────────
+   *
+   * {@link OhmailEngine.listOlder}'s rule, and this is the case where it cannot be otherwise: a
+   * delete TOMBSTONES the row (`apply.ts` rule 4), so the mirror holds `entity: null` for every
+   * message in this list. Writing these rows in would resurrect them into every pile — the apply
+   * contract's rule 4 says a later create resurrects, and that is exactly what a mirror write
+   * would look like — putting deleted mail back in somebody's Ohbox while the mail server has it
+   * in Trash. So the items are RETURNED, the view holds them in its own state, and they are gone
+   * when the view changes.
+   *
+   * There is no "prefer your own mirror row by id" advice here, unlike `listOlder`: the mirror
+   * has no row to prefer.
+   *
+   * ── SINGLE-FLIGHT, AND WHY IT NEVER REJECTS ─────────────────────────────────────────────
+   *
+   * Keyed on the page being asked for, so a list settling its "reached the bottom" effect twice
+   * issues one request. The caller is a React effect, so the outcome is a VALUE the UI renders
+   * rather than a rejection nobody catches — `listOlder`'s own argument, unchanged.
+   *
+   * `GET /messages` is `cost: "read"` on the server, so this caller changes no cost class.
+   */
+  async listTrash(opts: { cursor?: string; limit?: number } = {}): Promise<ListTrashOutcome> {
+    const fn = this.listTrashFn;
+    if (fn === null) return { state: "unavailable" };
+
+    // JSON rather than a joined string, for `listOlder`'s reason: no hand-picked delimiter, and
+    // no control character in this file (a single one makes tooling classify the whole file as
+    // binary and skip it).
+    const key = JSON.stringify([opts.cursor ?? null, opts.limit ?? null]);
+    const inFlight = this.trashPages.get(key);
+    if (inFlight) return inFlight;
+
+    const request = fn(opts)
+      .then((wire): ListTrashOutcome => {
+        // `null` ⇒ this transport serves no Trash. It must NOT become an empty `ready`: "there
+        // is nothing in Trash" is a claim, and this is the case where nothing was asked.
+        if (wire === null) return { state: "unavailable" };
+        return {
+          state: "ready",
+          items: Array.isArray(wire.items) ? wire.items : [],
+          nextCursor: typeof wire.nextCursor === "string" && wire.nextCursor !== "" ? wire.nextCursor : null,
+        };
+      })
+      .catch((err: unknown): ListTrashOutcome => ({
+        state: "failed",
+        error: err instanceof Error ? err.message : String(err),
+        code: err instanceof MutationRejectedError ? err.code : null,
+      }))
+      .finally(() => {
+        this.trashPages.delete(key);
+      });
+
+    this.trashPages.set(key, request);
+    return request;
+  }
+
+  /**
+   * PUT ONE DELETED MESSAGE BACK WHERE IT WAS — `POST /messages/:id/restore`.
+   *
+   * ── NOT AN `EngineMutation`, AND IT COULD NOT BE ────────────────────────────────────────
+   *
+   * {@link OhmailEngine.mutate} REJECTS a mutation whose local effects are empty — 404
+   * `not_found`, the guard that stops a surface dispatching over a row nothing holds — and a
+   * mutation over a tombstoned message has no local effects by definition. So this is a plain
+   * call with no optimistic overlay and no outbox entry: the mirror holds nothing to overlay,
+   * and there is nothing to roll back.
+   *
+   * The durable record of a pressed restore is therefore the SURFACE's, in the same journal the
+   * held delete already writes (`delete-intents.ts`): the intent lands before the window's timer
+   * is armed, the window's close calls this, and a tab killed inside the window replays it at the
+   * next launch. That is why the journal's entries carry which verb they are.
+   *
+   * ── AND IT DOES NOT CLAIM THE MAIL IS BACK ──────────────────────────────────────────────
+   *
+   * `pending` comes back true. The server has recorded the intent; the mail server performs the
+   * move on the organizer's next turn, the tombstone is cleared when the message is OBSERVED in
+   * the target folder, and the row reappears in its pile through the ordinary drain. A surface
+   * that read the 200 as "restored" would be showing mail in a place the server does not have it
+   * — the false state the desired/observed split exists to prevent.
+   *
+   * `restoreTo` is the server's answer and may differ from the row's rendered one (the origin
+   * folder can disappear between the page and the press), so the toast names THIS value.
+   *
+   * Single-flight per message id: a double press, or a window closing while a replay is in
+   * flight, is one request.
+   */
+  async restoreFromTrash(messageId: string): Promise<RestoreOutcome> {
+    const fn = this.restoreFromTrashFn;
+    if (fn === null) return { state: "unavailable" };
+    const inFlight = this.restoreCalls.get(messageId);
+    if (inFlight) return inFlight;
+
+    const request = fn(messageId)
+      .then((wire): RestoreOutcome => {
+        // `null` ⇒ no restore route behind this transport. Same rule as the page above: it is
+        // not a refusal and must not be reported as one.
+        if (wire === null) return { state: "unavailable" };
+        return {
+          state: "restored",
+          restoreTo: typeof wire.restoreTo === "string" && wire.restoreTo !== "" ? wire.restoreTo : "INBOX",
+          pending: wire.pending !== false,
+        };
+      })
+      .catch((err: unknown): RestoreOutcome => ({
+        state: "rolled_back",
+        error: err instanceof Error ? err.message : String(err),
+        code: err instanceof MutationRejectedError ? err.code : null,
+      }))
+      .finally(() => {
+        this.restoreCalls.delete(messageId);
+      });
+
+    this.restoreCalls.set(messageId, request);
     return request;
   }
 

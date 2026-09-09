@@ -19,10 +19,13 @@ import {
 } from "../types.js";
 import type {
   ListOlderWire,
+  ListTrashWire,
+  RestoreFromTrashWire,
   ServerAddressOpts,
   ServerAddressWire,
   ServerSearchOpts,
   ServerSearchWire,
+  TrashRowWire,
 } from "../engine.js";
 import type { AttachmentWire, EngineAdapter, MutationOutcome, SyncParams } from "./adapter.js";
 
@@ -878,6 +881,62 @@ export class HttpAdapter implements EngineAdapter {
     return {
       items: Array.isArray(wire.items) ? wire.items : [],
       nextCursor: typeof wire.nextCursor === "string" && wire.nextCursor !== "" ? wire.nextCursor : null,
+    };
+  }
+
+  // ── Trash ────────────────────────────────────────────────────────────────
+
+  /**
+   * `GET /messages?view=trash&cursor=` — one keyset page of mail this account deleted in ohmail.
+   *
+   * `view=trash` is passed as the literal and NOT through {@link SERVER_VIEW_OF}: that table maps
+   * the client's six pile names onto the server's, and Trash is not one of them — it is the
+   * provider's own folder, and both ends already spell it the same way. Putting it in that table
+   * would invite the next reader to think Trash is a seventh pile.
+   *
+   * The rows in this page are TOMBSTONED on the server's side (every other list excludes
+   * `deleted_at`), so `trashedAt` and `restoreTo` ride along per item. Both are read
+   * forward-compatibly (§8) — a server that predates them sends neither, and the engine's type
+   * has them optional, so the view falls back to the message's own date and to the inbox, which
+   * is what those two values MEAN when nothing said otherwise.
+   *
+   * A non-2xx THROWS through `rejectionOf`, exactly as `listMessages` does, so a 402 from the
+   * spend gate arrives carrying the server's own sentence.
+   */
+  async listTrash(opts: { cursor?: string; limit?: number } = {}): Promise<ListTrashWire | null> {
+    const q = new URLSearchParams({ view: "trash" });
+    if (opts.cursor) q.set("cursor", opts.cursor);
+    if (opts.limit !== undefined) q.set("limit", String(opts.limit));
+    const res = await this.request("GET", `/messages?${q.toString()}`);
+    if (!res.ok) throw await this.rejectionOf(res);
+    const wire = (await res.json()) as { items?: TrashRowWire[]; nextCursor?: string | null };
+    return {
+      items: Array.isArray(wire.items) ? wire.items : [],
+      nextCursor: typeof wire.nextCursor === "string" && wire.nextCursor !== "" ? wire.nextCursor : null,
+    };
+  }
+
+  /**
+   * `POST /messages/:id/restore` — put one deleted message back where it was.
+   *
+   * NO `Idempotency-Key`, and the route declares no idempotency either. The verb is idempotent in
+   * the STATE: a second request finds the message no longer in Trash and answers 409
+   * `not_in_trash`, which is a true sentence about a completed restore. An idempotency row would
+   * replay the first 200 instead and tell a client that pressed twice it had just restored
+   * something.
+   *
+   * `restoreTo` is the SERVER's answer, which may not equal the row's rendered one — the origin
+   * folder can disappear between the page and the press — so it is read off the response rather
+   * than assumed. `pending` defaults true when absent: the honest reading of a missing field here
+   * is "the mail server has not done it yet", never "it is done".
+   */
+  async restoreFromTrash(messageId: string): Promise<RestoreFromTrashWire | null> {
+    const res = await this.request("POST", `/messages/${encodeURIComponent(messageId)}/restore`);
+    if (!res.ok) throw await this.rejectionOf(res);
+    const wire = (await res.json()) as { restoreTo?: string; pending?: boolean };
+    return {
+      restoreTo: typeof wire.restoreTo === "string" && wire.restoreTo !== "" ? wire.restoreTo : "INBOX",
+      pending: wire.pending !== false,
     };
   }
 

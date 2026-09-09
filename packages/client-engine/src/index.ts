@@ -377,6 +377,15 @@ export {
   type ListOlderFn,
   type ListOlderOutcome,
   type ListOlderWire,
+  // The Trash pair — two more structural capabilities a wrapper forwards by hand, for the same
+  // reason and with the same risk. See `ListTrashCapableAdapter` / `RestoreFromTrashCapableAdapter`.
+  type ListTrashFn,
+  type ListTrashOutcome,
+  type ListTrashWire,
+  type RestoreFromTrashFn,
+  type RestoreFromTrashWire,
+  type RestoreOutcome,
+  type TrashRowWire,
   type FetchBodiesFn,
   type ServerSearchOutcome,
   SERVER_ADDRESS_DIRECTIONS,
