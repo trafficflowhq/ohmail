@@ -197,6 +197,11 @@ export class AwayResponderService {
           startsAt: startsAt === null ? null : startsAt.toISOString(),
           endsAt: endsAt === null ? null : endsAt.toISOString(),
           audience, throttle,
+          /* THE SCOPE TRAVELS TOO (ruling of 2026-09-10). It is the SAME `piles` the local upsert
+             below writes — read once from `validPiles` and used by both arms — because a request
+             carrying a different scope from the one written here would make a mixed account answer
+             two different sets of mail depending on which install holds which mailbox. */
+          piles,
         },
       };
 

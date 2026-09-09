@@ -50,7 +50,16 @@ import {
  */
 export const TRAVELLING_SIGNATURE_MAX_CHARS = 2000;
 
-/** The travelling half of the away responder — the fields the published document carries. */
+/**
+ * The travelling half of the away responder — the fields ONE `profile.update` REQUEST carries.
+ *
+ * NOT the same list as the published document's `ProfileAwayResponder`
+ * (`@trafficflow/core/adapters/organizer-profile`), and the one that differs is {@link piles}: a
+ * request carries it, that document does not. The sentence here used to say "the fields the
+ * published document carries" and the two lists were the same, which is why the difference is
+ * called out rather than left to be inferred — the document's own shape is a separate ruling, and
+ * an import from a document therefore still takes the column's narrow default.
+ */
 export interface ProfileAwayResponderPatch {
   enabled: boolean;
   body: string | null;
@@ -58,6 +67,23 @@ export interface ProfileAwayResponderPatch {
   endsAt: string | null;
   audience: string;
   throttle: string;
+  /**
+   * WHICH PILES GET A REPLY — folder names (mail 0096).
+   *
+   * Added by the ruling "the away responder's pile scope travels in the profile fan-out"
+   * (2026-09-10). Before it, a save on a MIXED or READER account that changed the scope wrote
+   * nothing locally, sent one request per held mailbox carrying the other six fields, and the
+   * organizer's applier dropped the key it never received — so the pane showed the old scope back
+   * and the person read it as a setting that reverted itself.
+   *
+   * `string[]` and not `AwayPile[]`: this is what a door produced and it crosses an install
+   * boundary, so the receiving half validates it again against the closed set rather than
+   * trusting this type. It is REQUIRED here — every door that builds this patch runs the input
+   * through `validPiles`, which always answers an array — while the wire's own reading of it is
+   * OPTIONAL, because an install one release older sends no `piles` at all and its saves must
+   * keep working.
+   */
+  piles: string[];
 }
 
 /** The partial. Every field optional; present replaces, absent is not mentioned. */
@@ -79,6 +105,16 @@ export interface ProfileUpdatePayload {
  * of the caller's object so that a door which grows a field cannot silently start sending it: the
  * shape is defined by ruling 6 and the drain that applies these requests, and a new member is a
  * ruling, not a commit.
+ *
+ * ONE MEMBER HAS BEEN ADDED THAT WAY, and it is named here because this docblock is the rule it
+ * had to satisfy: `piles` inside {@link ProfileAwayResponderPatch}, by the ruling "the away
+ * responder's pile scope travels in the profile fan-out" (2026-09-10). Cited by date and subject
+ * rather than by commit, because a sha in a source comment is a pointer that a rebase turns into
+ * a survivor no sweep can clear.
+ *
+ * Note that the copy is per TOP-LEVEL field: `awayResponder` is assigned whole, so a member added
+ * to that interface travels the moment the type admits it. That is precisely why the interface —
+ * not this function — is where the ruling is recorded.
  */
 export function profileRequestPayload(p: ProfileUpdatePayload): Record<string, unknown> {
   const out: Record<string, unknown> = {};

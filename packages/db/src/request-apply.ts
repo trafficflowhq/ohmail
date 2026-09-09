@@ -283,6 +283,28 @@ export const PROFILE_SIGNATURE_MAX = 2_000;
 const AWAY_AUDIENCES: ReadonlySet<string> = new Set(["screened_in", "everyone"]);
 /** `away_responders.throttle` — the closed four `away_responders_throttle_closed` enforces. */
 const AWAY_THROTTLES: ReadonlySet<string> = new Set(["always", "per_message", "per_day", "per_week"]);
+/**
+ * `away_responders.piles` — the closed pair `away_responders_piles_closed` (mail 0096) enforces.
+ *
+ * ── WHY THIS IS A SECOND SPELLING OF `AWAY_ANSWERABLE_PILES` AND NOT AN IMPORT ──────────────
+ *
+ * The canonical set is `@trafficflow/core/away-scope`'s `AWAY_ANSWERABLE_PILES`, and importing it
+ * HERE does not compile: `@trafficflow/core` depends on `@trafficflow/db`, never the reverse
+ * (`organizer-role.ts#CAPABILITY_REQUESTS` states the direction at length), so the import answers
+ * `TS2307: Cannot find module '@trafficflow/core/away-scope'` — measured, not assumed.
+ *
+ * So it takes the arrangement {@link MOVE_DESTINATIONS} already documents forty lines up, for the
+ * same reason and with the same obligation: the literal is restated and `request-apply.test.ts`
+ * HOLDS THE TWO EQUAL. The equality is the point — a third pile added to the core set and not to
+ * this one would be a scope a person can choose, that travels, and that the organizer's applier
+ * then refuses as `invalid_payload`, which is a save that appears to work and changes nothing on
+ * the one install whose row the responder reads.
+ *
+ * Exported for that guard alone. `AWAY_AUDIENCES` and `AWAY_THROTTLES` above are not exported and
+ * have no such guard, which is a gap in their favour rather than a precedent: both are closed by
+ * a CHECK as well, and widening either is a ruling that would come through this file anyway.
+ */
+export const AWAY_PILES: ReadonlySet<string> = new Set(["INBOX", "ohmail/Reads"]);
 /** `account_settings.ohbox_policy` — the closed pair, or `null` for "the product default". */
 const OHBOX_POLICY_VALUES: ReadonlySet<string> = new Set(["people_only", "people_and_replied"]);
 
@@ -294,6 +316,21 @@ export interface ProfileAwayUpdate {
   endsAt: Date | null;
   audience: string;
   throttle: string;
+  /**
+   * WHICH PILES GET A REPLY (mail 0096), or ABSENT from an install one release older.
+   *
+   * THE ONE OPTIONAL MEMBER OF THIS INTERFACE, and it is optional for a compatibility reason
+   * rather than a stylistic one. Every other field is required because a request that carries an
+   * away responder at all carries those six; `piles` began travelling with the ruling of
+   * 2026-09-10, so a request written by a 0.15 install has an `awayResponder` and no `piles`, and
+   * refusing that record would 400 that install's every responder save — including the save that
+   * turns the responder OFF, which is the one save nobody may be prevented from making.
+   *
+   * ABSENT therefore means "this request is not about the scope", and {@link applyProfileUpdate}
+   * leaves the stored array alone. That is the recoverable direction: an existing row keeps the
+   * scope it had, and a row created by such a request takes the column's own narrow default.
+   */
+  piles?: string[];
 }
 
 /** A `profile.update` payload, validated. Every field optional; at least one present. */
@@ -372,6 +409,32 @@ export function validateProfileUpdatePayload(payload: unknown): ValidatedProfile
       enabled: r.enabled, body: (r.body as string | null), startsAt, endsAt,
       audience: r.audience, throttle: r.throttle,
     };
+    /* ── THE PILE SCOPE, WHEN THE SENDER IS NEW ENOUGH TO HAVE ONE (ruling of 2026-09-10) ──
+     *
+     * `in` and not a truthiness check, because the three states are distinguishable and mean
+     * different things: ABSENT is an older install that has no scope to send, and the stored
+     * array is left alone; an EMPTY array is "answer nobody", which is what unticking every box
+     * means and is a coherent thing to ask for; and a NON-MEMBER refuses the whole record.
+     *
+     * A non-member refuses rather than being filtered out. Filtering would store a NARROWER scope
+     * than the request asked for and ack it `applied`, so the person would be told their edit
+     * travelled while the responder answered a different set of mail — and the surface would then
+     * state a scope nobody chose. The refusal reaches the reader as `invalid_payload`
+     * (`request-drain.ts`), which is a decision somebody can act on.
+     */
+    if ("piles" in r) {
+      const p = r.piles;
+      if (!Array.isArray(p)) return null;
+      const piles: string[] = [];
+      for (const member of p) {
+        if (typeof member !== "string" || !AWAY_PILES.has(member)) return null;
+        /* DUPLICATES COLLAPSED, exactly as the local door's `validPiles` collapses them. The value
+           is a SET ("which piles"), the CHECK is containment and admits `{INBOX,INBOX}`, and the
+           two write paths producing different rows for the same ask is a diff nobody can read. */
+        if (!piles.includes(member)) piles.push(member);
+      }
+      out.awayResponder.piles = piles;
+    }
   }
 
   // Nothing recognised — see the header. An empty ask is not a change.
@@ -441,15 +504,33 @@ export async function applyProfileUpdate(
        the organizer's own `put` has. `subject` is deliberately not written: the responder has been
        reply-only since mail 0087 and derives `Re: <what they wrote>`, so a request carrying one
        would be writing a dead column. */
-    await tx.insert(awayResponders).values({
+    const awayValues: typeof awayResponders.$inferInsert = {
       accountId, enabled: a.enabled, body: a.body,
       startsAt: a.startsAt, endsAt: a.endsAt, audience: a.audience, throttle: a.throttle,
-    }).onConflictDoUpdate({
+    };
+    const awaySet: Partial<typeof awayResponders.$inferInsert> = {
+      enabled: a.enabled, body: a.body, startsAt: a.startsAt, endsAt: a.endsAt,
+      audience: a.audience, throttle: a.throttle, updatedAt: now,
+    };
+    /* THE SCOPE IS NAMED IN BOTH ARMS ONLY WHEN THE REQUEST CARRIED ONE (ruling of 2026-09-10).
+     *
+     * Named in the SET as well as in `values`, and this is the half that was missing: the whole
+     * row is replaced together, so a scope present on the wire and absent from the SET is a field
+     * that travels and is ignored — the reader's pane shows the scope it asked for coming back as
+     * the old one, with the request acked `applied`.
+     *
+     * And ABSENT must leave the column untouched rather than write the default, which is why this
+     * is a conditional on the payload rather than a `?? AWAY_PILES_DEFAULT`: an older install's
+     * save would otherwise NARROW a scope its own pane never showed and never offered. The insert
+     * arm needs no such branch — an omitted column takes the table's own `'{INBOX}'`, the narrow
+     * member, which is the same value the local door infers for an omitted list. */
+    if (a.piles !== undefined) {
+      awayValues.piles = a.piles;
+      awaySet.piles = a.piles;
+    }
+    await tx.insert(awayResponders).values(awayValues).onConflictDoUpdate({
       target: awayResponders.accountId,
-      set: {
-        enabled: a.enabled, body: a.body, startsAt: a.startsAt, endsAt: a.endsAt,
-        audience: a.audience, throttle: a.throttle, updatedAt: now,
-      },
+      set: awaySet,
     });
     wrote.push("awayResponder");
   }
