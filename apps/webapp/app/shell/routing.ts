@@ -36,6 +36,19 @@ export const VIEWS = [
    * keys skip it, for the same reason History is not.
    */
   "drafts",
+  /**
+   * TRASH — mail you deleted in ohmail, and the one place it can be seen and put back.
+   *
+   * Reached from the palette or `g t` and NOT from a permanent rail row: the rail's places are
+   * where mail IS, and a bin you visit once a month does not earn a line beside the Ohbox. The
+   * rail grows a transient entry for exactly as long as this view is the route (`AppShell`'s
+   * `railGroups`), so the place you are in is nameable in the sidebar and gone the moment you
+   * leave.
+   *
+   * Deliberately NOT one of `PILE_IDS`, so the number keys skip it — for History's and Drafts'
+   * reason: the digits reach the piles, and this is not one.
+   */
+  "trash",
   "settings",
 ] as const;
 /**
@@ -92,7 +105,7 @@ export type PaneId = (typeof PANE_IDS)[number];
  * unsent mail), and the Screener's rows are SENDERS, not messages, so a message id says
  * nothing its list can locate. A `m/<id>` tail on any of the excluded views normalizes away.
  */
-const MESSAGE_VIEWS: readonly string[] = ["ohbox", "reads", "receipts", "history", "search", "tag", "folder", "triage", "address"];
+const MESSAGE_VIEWS: readonly string[] = ["ohbox", "reads", "receipts", "history", "search", "tag", "folder", "triage", "address", "trash"];
 
 /**
  * Split a raw hash path from its `m/<id>` tail — the OPEN MESSAGE, when the URL names one.

@@ -445,6 +445,8 @@
     "history": "Historie",
     "drafts": "Entwürfe",
     "historyTitle": "Alte Post von Absendern, die du nie entschieden hast",
+    "trash": "Papierkorb",
+    "trashTitle": "Mails, die du in ohmail gelöscht hast",
     "search": "Suche",
     "settings": "Einstellungen",
     "mailboxes": "Postfächer",
@@ -901,6 +903,19 @@
     "emptyTitle": "Hier hat sich noch nichts abgelegt.",
     "emptyHint": "In der Historie liegt alte Post von Absendern, über die du nie entschieden hast. Schreibt einer davon wieder, landet er im Screener und bringt diese Post mit.",
     "placeChip": "Historie"
+  },
+  "trash": {
+    "empty": "Der Papierkorb ist leer. Mails, die du in ohmail löschst, erscheinen hier.",
+    "foot": "Mails, die du in ohmail gelöscht hast. In anderen Apps gelöschte Mails bleiben im Papierkorb deines Mailservers — und dein Mailserver entscheidet, wie lange er sie behält.",
+    "deletedAt": "Gelöscht {when}",
+    "restore": "Wiederherstellen",
+    "restoreKey": "Dorthin zurücklegen, wo sie war",
+    "toastRestored": "Wiederhergestellt in {place}.",
+    "toastRestoreUndone": "Bleibt im Papierkorb.",
+    "toastRestoreFailed": "Konnte nicht wiederhergestellt werden — sie ist noch im Papierkorb.",
+    "noErase": "ohmail löscht nie unwiderruflich — zum endgültigen Entfernen nutze deinen eigenen Mail-Client.",
+    "restoring": "Wird wiederhergestellt…",
+    "unavailable": "Der Papierkorb ist hier nicht verfügbar."
   },
   "tag": {
     "metaCount": "{count, plural, one {1 Nachricht} other {# Nachrichten}}",
@@ -2636,6 +2651,7 @@
     "goResurface": "Zu Wieder auftauchen",
     "goDrafts": "Zu Entwürfe",
     "goHistory": "Zur Historie",
+    "goTrash": "Zum Papierkorb",
     "goSettings": "Zu den Einstellungen",
     "pull": "Neue Mails jetzt abrufen",
     "frSend": "Antwort senden, nächste Nachricht",

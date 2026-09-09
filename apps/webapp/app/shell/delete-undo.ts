@@ -66,7 +66,7 @@ import type { EntityReader, EngineMessage } from "@ohmail/client-engine";
 import type { ToastFn } from "@ohmail/ui";
 import type { KeyBinding } from "./keymap";
 import { isModalOpen } from "./modal-gate";
-import { armDeleteIntent, disarmDeleteIntent, takeDeleteIntents } from "./delete-intents";
+import { armDeleteIntent, disarmDeleteIntent, takeDeleteIntents, type HeldVerb } from "./delete-intents";
 import { UNDO_MS } from "./screener-state";
 
 export { UNDO_MS };
@@ -130,8 +130,42 @@ export interface DeleteUndoCopy {
   failedMany?: (count: number) => string;
 }
 
+/**
+ * WHICH VERB THIS WINDOW HOLDS, and the dispatch it commits to.
+ *
+ * ── WHY THE VERB IS INJECTED RATHER THAN BRANCHED ON ──────────────────────────────────────
+ *
+ * `createDeleteUndo` used to know one dispatch: `engine.mutate({ kind: "message_delete", … })`.
+ * The restore cannot be an `EngineMutation` at all — the engine REJECTS a mutation whose local
+ * effects are empty, and a mutation over a tombstoned row has none — so a second window would
+ * have needed a second copy of the timer, the journal write, the idempotence-over-the-set rule
+ * and the toast ceremony. Two copies of that is how a `pagehide` commit comes to be right for
+ * one verb and wrong for the other.
+ *
+ * So the window is verb-agnostic: it holds ids, it arms a timer, it writes ONE journal row for
+ * the press naming this verb, and when the window closes it calls `dispatch` per id. The delete
+ * passes a function that calls `engine.mutate`; the restore passes one that calls
+ * `engine.restoreFromTrash`. Neither is special-cased here.
+ *
+ * `dispatch` answers a STATUS STRING and not a boolean, because the two verbs already agree on
+ * the vocabulary: `"rolled_back"` is what the engine's mutation outcome says for a refused
+ * delete and what {@link RestoreOutcome} was given for a refused restore, precisely so this
+ * one comparison covers both.
+ */
+export type HeldDispatch = (messageId: string) => Promise<{ status: string }>;
+
 export interface DeleteUndoDeps {
-  mutate: (m: { kind: "message_delete"; messageId: string }) => Promise<{ status: string }>;
+  /**
+   * The verb this window holds — `"delete"` unless a caller says otherwise, so every existing
+   * construction site is unchanged and the journal keeps writing the legacy shape it wrote.
+   */
+  verb?: HeldVerb;
+  /**
+   * What the window commits, per message. Kept named `mutate` at every existing call site by
+   * being ONE function of an id: the delete's caller passes
+   * `(id) => engine.mutate({ kind: "message_delete", messageId: id })`.
+   */
+  mutate: HeldDispatch;
   toast: ToastFn;
   copy: DeleteUndoCopy;
   /** Called whenever the held set changes, with a NEW set. */
@@ -238,7 +272,7 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
       if (refused > 0) deps.toast(say(deps.copy.failed, deps.copy.failedMany, refused));
     };
     for (const messageId of ids) {
-      void deps.mutate({ kind: "message_delete", messageId }).then(
+      void deps.mutate(messageId).then(
         (res) => { if (res.status === "rolled_back") refused += 1; settled(); },
         () => { refused += 1; settled(); },
       );
@@ -299,7 +333,9 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
          it atomically. Between this line and the dispatch there is a window in which the request
          has been reported done and not yet sent; the journal is what survives a tab closed inside
          it. Synchronous, and it cannot throw — see `delete-intents.ts`. */
-      armDeleteIntent({ id: pressId, messageIds: ids, at: clock() });
+      /* THE VERB RIDES THE ROW. `"delete"` is the default, so a caller that says nothing writes
+         exactly the shape previous builds wrote and a replay in an OLDER build reads it. */
+      armDeleteIntent({ id: pressId, messageIds: ids, at: clock(), kind: deps.verb ?? "delete" });
       const timer = arm(() => commit(pressId), windowMs);
       open.set(pressId, { ids, timer });
       for (const id of ids) heldBy.set(id, pressId);
@@ -337,20 +373,68 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
  * (the mailbox changed hands while the tab was closed) is dropped rather than retried for ever.
  */
 export function replayDeleteIntents(
-  mutate: DeleteUndoDeps["mutate"],
+  mutate: HeldDispatch,
   nowMs: number,
+  /**
+   * THE RESTORE'S DISPATCH — and its ABSENCE is a real state, not a missing argument.
+   *
+   * A surface can have the delete key and no restore transport: the demo, a build talking to a
+   * server with no restore route, a shell that never mounts the Trash view. On such a surface a
+   * stranded `{kind: "restore"}` row must be DROPPED — cleared from the journal and never
+   * dispatched — and it must specifically NOT fall through to `mutate`, which would DELETE the
+   * message somebody asked to restore. That is the one outcome in this file that would be worse
+   * than losing the request, so it is a separate parameter rather than a branch inside `mutate`:
+   * a caller cannot accidentally satisfy it.
+   */
+  restore?: HeldDispatch,
 ): number {
   const intents = takeDeleteIntents(nowMs);
   for (const intent of intents) {
+    /* DISPATCH BY KIND. A row with no `kind` reads as `delete` (the journal's own default — see
+       `DeleteIntent.kind`), so every row a previous build wrote replays exactly as it did. */
+    const kind = intent.kind ?? "delete";
+    const fn = kind === "restore" ? restore : mutate;
+    if (fn === undefined) {
+      /* A held restore with nowhere to send it. Cleared, silently, for the reason a refusal is
+         silent here: the person expressed this in a previous session and the toast that offered
+         to take it back is long gone. Retrying it for ever would be a journal that only grows,
+         and replaying it as a DELETE would be the product doing the opposite of what was asked. */
+      disarmDeleteIntent(intent.id);
+      continue;
+    }
     /* THE ENTRY IS CLEARED WHEN THE WHOLE PRESS HAS SETTLED, not per message: a press is the unit
        it was recorded in, and clearing it early would drop the record of the messages still in
        flight. `Promise.allSettled` rather than `all`, because one refusal must not strand the
        rest of the press in the journal for ever. */
     void Promise.allSettled(
-      intent.messageIds.map((messageId) => mutate({ kind: "message_delete", messageId })),
+      intent.messageIds.map((messageId) => fn(messageId)),
     ).then(() => disarmDeleteIntent(intent.id));
   }
   return intents.length;
+}
+
+/**
+ * THE RESTORE, AS A {@link HeldDispatch} — one mapping, in the file that owns the vocabulary.
+ *
+ * `engine.restoreFromTrash` answers `{ state }` and this window branches on `{ status }`, so
+ * something has to translate. It is HERE and not at each call site because there are two call
+ * sites — the held window's commit and the boot replay — and two copies of a mapping whose
+ * whole job is to decide "did that press take effect" is how one of them comes to read a
+ * refusal as a success.
+ *
+ * `unavailable` maps to `rolled_back`, which is the honest answer rather than the literal one:
+ * the surface only wires this when `trashAvailable()` is true, so reaching it means the
+ * transport went away mid-flight — the press did not take effect, the row must come back, and
+ * the failure sentence is the one to say. Mapping it to a success would leave a row missing
+ * from the list with the message still in Trash.
+ */
+export function restoreDispatch(
+  restoreFromTrash: (messageId: string) => Promise<{ state: string }>,
+): HeldDispatch {
+  return async (messageId) => {
+    const outcome = await restoreFromTrash(messageId);
+    return { status: outcome.state === "restored" ? "applied" : "rolled_back" };
+  };
 }
 
 /**
@@ -439,7 +523,8 @@ export function useDeleteUndo(deps: Omit<DeleteUndoDeps, "onHeld">): {
   latest.current = deps;
   const queue = useMemo(
     () => createDeleteUndo({
-      mutate: (m) => latest.current.mutate(m),
+      mutate: (id) => latest.current.mutate(id),
+      ...(latest.current.verb ? { verb: latest.current.verb } : {}),
       toast: (msg, opts) => latest.current.toast(msg, opts),
       get copy() { return latest.current.copy; },
       refusal: (mailboxId) => latest.current.refusal(mailboxId),
@@ -480,15 +565,21 @@ export function useDeleteUndo(deps: Omit<DeleteUndoDeps, "onHeld">): {
  * replay (a surface with no engine to dispatch on) should be able to say so by not calling it.
  */
 export function useDeleteIntentReplay(
-  mutate: DeleteUndoDeps["mutate"],
+  mutate: HeldDispatch,
   now: () => number,
   enabled = true,
+  /**
+   * The restore dispatch, when this shell has one. Omitted, a stranded restore is dropped
+   * rather than sent — see {@link replayDeleteIntents}, where the reason it is a separate
+   * parameter is written out: falling through to `mutate` would delete the message.
+   */
+  restore?: HeldDispatch,
 ): void {
   const ran = useRef(false);
   useEffect(() => {
     if (!enabled || ran.current) return;
     ran.current = true;
-    replayDeleteIntents(mutate, now());
+    replayDeleteIntents(mutate, now(), restore);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled]);
 }

@@ -12,6 +12,19 @@
  * named that hole and called it a follow-up; review ranked it MAJOR, correctly: it is silent, and
  * it is silent in the direction where the product did not do what it said it did.
  *
+ * ── AND IT IS NO LONGER ONLY A DELETE ─────────────────────────────────────────────────────
+ *
+ * Restoring a message out of Trash is held by the same window, for the identical reason: there
+ * is no un-restore on the wire, so the only undo this product can honour is a delayed commit.
+ * One journal for both verbs — the hole is the same hole, and two journals would be two places
+ * to get the `pagehide` commit right. Each row therefore says which verb it is, and a row that
+ * does not say (every row a previous build wrote) is a delete. See {@link DeleteIntent.kind}.
+ *
+ * The names here still say "delete" — `armDeleteIntent`, `DELETE_INTENTS_PREFIX`, the storage
+ * KEY. The prefix and the key are deliberately unchanged: renaming the key would orphan every
+ * stranded row a previous build left in somebody's browser, which is the exact loss this file
+ * exists to prevent, arriving through a rename.
+ *
  * This is `screener-intents.ts`'s answer applied to the same shape, and it is the same answer
  * because it is the same problem — that file's own header states the class ("this product decides
  * in memory and persists afterwards"), met at the Screener's consent gate. Here it is met at the
@@ -57,7 +70,38 @@ export interface DeleteIntent {
   messageIds: string[];
   /** Epoch ms at the press, from the caller's clock. */
   at: number;
+  /**
+   * WHICH VERB WAS HELD — and ABSENT means `delete`, which is the legacy shape.
+   *
+   * The window is not a delete's any more: restoring a message out of Trash is held the same
+   * way, for the same reason (there is no un-restore on the wire either, so the only undo this
+   * product can honour is a delayed commit). One journal for both, because the failure it
+   * exists to prevent is the same one — a tab closed inside the window losing a request the
+   * toast already reported.
+   *
+   * OPTIONAL rather than required, and that is a compatibility decision rather than laziness:
+   * every row a previous build wrote carries no `kind`, and a reader that demanded one would
+   * DROP those rows — losing exactly the deletes this journal exists to save, through the
+   * upgrade instead of through the crash. So absent reads as `delete`, which is what those
+   * rows are.
+   *
+   * A row whose `kind` this build does not recognise is DROPPED rather than guessed at. That
+   * is the opposite direction from the legacy shape and it is deliberate: an unknown verb names
+   * an action this build cannot perform, and replaying it as a delete would delete mail on the
+   * strength of a word we could not read.
+   */
+  kind?: HeldVerb;
 }
+
+/**
+ * The verbs the held window may be holding. A CLOSED set, because {@link replayDeleteIntents}
+ * dispatches on it: a member this build does not know is a row it must drop, not one it may
+ * approximate.
+ */
+export type HeldVerb = "delete" | "restore";
+
+/** Every member of {@link HeldVerb}, for the reader's membership test. */
+const HELD_VERBS: readonly string[] = ["delete", "restore"];
 
 /**
  * How long a stranded intent is still acted on. A day, matching the Screener's — past that the
@@ -102,7 +146,7 @@ function read(): DeleteIntent[] {
     const out: DeleteIntent[] = [];
     for (const r of parsed) {
       if (typeof r !== "object" || r === null) continue;
-      const row = r as Partial<DeleteIntent> & { messageId?: unknown };
+      const row = r as Partial<DeleteIntent> & { messageId?: unknown; kind?: unknown };
       if (typeof row.at !== "number" || !Number.isFinite(row.at)) continue;
       const ids = Array.isArray(row.messageIds)
         ? row.messageIds.filter((x): x is string => typeof x === "string" && x.length > 0)
@@ -110,10 +154,19 @@ function read(): DeleteIntent[] {
           ? [row.messageId]
           : [];
       if (ids.length === 0) continue;
+      /* THE VERB, or the legacy default. A row with no `kind` is a delete (see the field's own
+         block); a row whose `kind` is a string this build does not know is DROPPED, because
+         replaying an unreadable verb as a delete would delete mail on a guess. */
+      let kind: HeldVerb = "delete";
+      if (row.kind !== undefined) {
+        if (typeof row.kind !== "string" || !HELD_VERBS.includes(row.kind)) continue;
+        kind = row.kind as HeldVerb;
+      }
       out.push({
         id: typeof row.id === "string" && row.id.length > 0 ? row.id : ids[0]!,
         messageIds: ids,
         at: row.at,
+        kind,
       });
     }
     return out;

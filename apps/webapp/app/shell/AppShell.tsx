@@ -168,7 +168,7 @@ import {
   type RosterState,
 } from "./mail-state";
 /* Backspace/Delete → Trash, and the window in which it has not happened yet. See the module. */
-import { deleteKeyBindings, hideMessages, useDeleteIntentReplay, useDeleteUndo } from "./delete-undo";
+import { deleteKeyBindings, hideMessages, restoreDispatch, useDeleteIntentReplay, useDeleteUndo } from "./delete-undo";
 import { useStableCallback } from "./stable-callback";
 /* The once-per-change line above the Ohbox, and the shape of the press that ends it. */
 import { OrganizerNotice, type OrganizerNoticeTransport } from "./OrganizerNotice";
@@ -1469,7 +1469,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
        the only place that covers both, and `test/filing-refresh-on-decision.test.tsx` pins this
        line by name: nothing conflicts here, so a census that only read this file would have gone
        vacuous for `message_delete` instead of red. */
-    mutate: (m) => fileAndRefresh(engine.mutate(m)),
+    mutate: (messageId) => fileAndRefresh(engine.mutate({ kind: "message_delete", messageId })),
     toast,
     copy: {
       deleted: t("ohbox.toastDeleted"),
@@ -1498,7 +1498,19 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * it, which is a durable record of nothing. Demo excluded: the fixture world has no server to
    * carry a delete to, and replaying one there would mutate a demo somebody is looking at.
    */
-  useDeleteIntentReplay((m) => engine.mutate(m), () => Date.now(), !demo);
+  useDeleteIntentReplay(
+    (messageId) => engine.mutate({ kind: "message_delete", messageId }),
+    () => Date.now(),
+    !demo,
+    /* THE RESTORE'S REPLAY, wired only where the transport exists. Omitted, `delete-undo.ts`
+       DROPS a stranded restore rather than sending it — never falling through to the delete,
+       which would delete the message somebody asked to put back. `trashAvailable()` is the same
+       answer the palette row and the chord read, so the surface cannot offer a verb whose
+       replay would be dropped. */
+    engine.trashAvailable()
+      ? restoreDispatch((messageId) => engine.restoreFromTrash(messageId))
+      : undefined,
+  );
   const refusalCopy = useMemo(
     () => ({
       named: (name: string) => t("screener.readerMoveRefused", { name }),

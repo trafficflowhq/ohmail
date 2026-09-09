@@ -445,6 +445,8 @@
     "history": "History",
     "drafts": "Drafts",
     "historyTitle": "Old mail from senders you never screened",
+    "trash": "Trash",
+    "trashTitle": "Mail you deleted in ohmail",
     "search": "Search",
     "settings": "Settings",
     "mailboxes": "Mailboxes",
@@ -901,6 +903,19 @@
     "emptyTitle": "Nothing has settled here yet.",
     "emptyHint": "History holds old mail from senders you never made a decision about. If one of them writes again, they go to the Screener and bring this mail with them.",
     "placeChip": "History"
+  },
+  "trash": {
+    "empty": "Nothing in Trash. Mail you delete in ohmail appears here.",
+    "foot": "Mail you deleted in ohmail. Mail trashed in other apps stays in your mail server's Trash, and your mail server decides how long Trash keeps it.",
+    "deletedAt": "Deleted {when}",
+    "restore": "Restore",
+    "restoreKey": "Restore it to where it was",
+    "toastRestored": "Restored to {place}.",
+    "toastRestoreUndone": "Kept in Trash.",
+    "toastRestoreFailed": "Couldn't restore \u2014 it's still in Trash.",
+    "noErase": "ohmail never erases mail \u2014 to remove it for good, use your own mail client.",
+    "restoring": "Restoring\u2026",
+    "unavailable": "Trash is not available here."
   },
   "tag": {
     "metaCount": "{count, plural, one {1 message} other {# messages}}",
@@ -2636,6 +2651,7 @@
     "goResurface": "Go to Resurface",
     "goDrafts": "Go to Drafts",
     "goHistory": "Go to History",
+    "goTrash": "Go to Trash",
     "goSettings": "Go to Settings",
     "pull": "Pull new mail now",
     "frSend": "Send this reply, next message",
