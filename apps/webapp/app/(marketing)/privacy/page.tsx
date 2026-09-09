@@ -95,15 +95,13 @@ export default function PrivacyPage() {
         <h2>The ohmail product</h2>
         <p>
           ohmail Desktop is designed so your mail never touches our servers, and
-          on macOS that is how it works today: the app is a real mail client that
-          connects to your own IMAP server and organises your mailbox on your
-          machine, with no ohmail server in the loop. It makes one signed check
-          for its own updates, and can optionally sign in to ohmail Cloud; the
-          default local mode talks only to your mail server and that update feed.
-          No telemetry, no analytics. The Windows and Linux builds are still the
-          interface running on a fictional mailbox, with only that same update
-          check, while their engine lands. The interface-only demo on this site
-          makes no network calls at all.
+          on macOS, Windows and Linux alike that is how it works today: the app is
+          a real mail client that connects to your own IMAP server and organises
+          your mailbox on your machine, with no ohmail server in the loop. It makes
+          one signed check for its own updates, and can optionally sign in to
+          ohmail Cloud; the default local mode talks only to your mail server and
+          that update feed. No telemetry, no analytics. The interface-only demo on
+          this site makes no network calls at all.
         </p>
         <p>
           Your mailbox stays the original. ohmail Cloud holds a synced{" "}

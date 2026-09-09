@@ -43,9 +43,8 @@ export default function SubprocessorsPage() {
         <p>
           <strong>ohmail Desktop uses none of this.</strong> It has no account and
           no server of ours: nothing on this page touches you if you never sign up
-          for Cloud. On macOS the app is already a real mail client, running
-          against your own server rather than ours; the Windows and Linux builds
-          hold no mail yet, their engine still landing.
+          for Cloud. On macOS, Windows and Linux alike the app is a real mail
+          client, running against your own server rather than ours.
         </p>
         <p>
           Not all of these are processing on any given day. They are listed
