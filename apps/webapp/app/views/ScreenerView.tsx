@@ -63,6 +63,7 @@ import type { HeldBodyStall, ScreenerState, SpamRow } from "../shell/screener-st
 import type { SuggestBatchControl } from "../shell/screener-suggest";
 import type { RemoteImagesChrome } from "../shell/remote-images";
 import { MessageBody } from "../components/MessageBody";
+import { BlockNoticeGloss, type BlockNotice } from "../components/BlockNotice";
 
 
 /**
@@ -1760,7 +1761,14 @@ function HeldUnsubscribe({
   );
 }
 
-function HeldMail({
+/**
+ * ONE HELD MESSAGE, PREVIEWED — the head line (sender · address · notice · time), the subject, the
+ * body through the same viewer every other surface uses, and the body-state line under it.
+ *
+ * Exported for the width-fit harness (`scripts/fit-harness`), which measures this card's head with
+ * a notice in it at every width the product is used at; `ScreenerView` is its only product caller.
+ */
+export function HeldMail({
   messageId,
   from,
   address,
@@ -1825,6 +1833,16 @@ function HeldMail({
 }) {
   const t = useTranslations("body");
   const tm = useTranslations("message");
+  /**
+   * WHAT THIS MESSAGE HAD REFUSED, as the viewer reports it (`MessageBody.onNotice`) — worn in the
+   * head line as the glyph and two-word caption the stream card and the message header wear, so
+   * the bar above the body keeps only its controls and the Screener says the fact in the one
+   * shape every other surface says it in. Plain state, not keyed: every mount of this card is
+   * keyed by its message (`key={h.id}` in the piles, the junk key in `JunkPreview`), so a card is
+   * never re-pointed at another message. `setNotice` is a state setter and therefore stable, which
+   * keeps the viewer's effect from re-firing on every render of this card.
+   */
+  const [notice, setNotice] = useState<BlockNotice | null>(null);
   /**
    * A CONSENT DECISION MUST NOT BE TAKEN ON TEXT THAT SILENTLY ISN'T THE MAIL.
    *
@@ -1910,6 +1928,10 @@ function HeldMail({
       <div className="hm-line">
         <b>{from}</b>
         {address ? <span className="addr">{address}</span> : null}
+        {/* Before the time, so the date keeps its corner and the notice leads into it — the stream
+            card's order. A protected message mounts the block below and never the viewer, so no
+            report arrives for it and nothing here needs to gate on that. */}
+        {notice ? <BlockNoticeGloss notice={notice} /> : null}
         <span className="t num">{time ?? ""}</span>
       </div>
       <h3>{subject}</h3>
@@ -1945,6 +1967,7 @@ function HeldMail({
             imageProxy={imageProxy}
             onLoadRemote={onLoadRemote}
             loadTrackingPixels={loadTrackingPixels ?? false}
+            onNotice={setNotice}
           />
         )}
       </div>

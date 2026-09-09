@@ -1611,6 +1611,14 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   font-weight: 600;
 }
 .hm-line .addr {
+  /* THE ADDRESS ABSORBS THE ROOM — `flex-basis: 0` so its hypothetical size never breaks the line,
+     then it grows into what the sender, the notice and the time leave and ellipsizes when that is
+     nothing, exactly as the stream card's address does (`stream.css`, `.sc-line .addr`). With the
+     default `auto` basis the address's full width decided the wrap, and at a phone width the TIME
+     went under the sender while the notice glyph, pushed by its `margin-left:auto`, stayed on the
+     first line — the pair that should read as one, split across two lines (measured at 390px,
+     German "gerade eben"). */
+  flex: 1 1 0;
   min-width: 0;
   font-size:calc(11.5px + var(--type-up));
   color: var(--ink3);
@@ -1624,6 +1632,23 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   color: var(--ink3);
   font-variant-numeric: tabular-nums;
   flex: none;
+}
+/* THE NOTICE SLOT — the rule the stream card's line keeps (`stream.css`, `.sc-notice`), in this
+   line's terms: the time's size and ink, never the accent, because a block is the product doing
+   what it says and not a fault. It takes the time's `margin-left:auto` when present, so the pair is
+   pushed to the trailing edge as one and the date keeps its corner; the line's own `gap` spaces
+   them. `flex-wrap: wrap` stays the line's: where the pair does not fit beside the sender it wraps
+   under, as the time always did. The glyph's own stylesheet (`gloss.css`) draws the card that
+   opens; the phone-tier caption yield is the component's (`message-body.css`, `.mb-notice`). */
+.hm-line .mb-notice {
+  margin-left: auto;
+  flex: none;
+  min-width: 0;
+  font-size:calc(11px + var(--type-up));
+  color: var(--ink3);
+}
+.hm-line .mb-notice + .t {
+  margin-left: 0;
 }
 .hmail h3 {
   font-size: 17px;

@@ -4,21 +4,25 @@
  * THE BLOCKING DISCLOSURE, WORN AS A GLYPH — one component for every sentence the sanitizer has
  * to say about what it refused.
  *
- * `MessageBody` renders a mail and, above it, a bar: "A tracking pixel was blocked." — or "3
- * remote images blocked. One of them is a tracking pixel." or "A remote stylesheet was blocked, so
- * this message may look plain." In the reading pane that bar is right: one message, one strip,
- * and the "Show images" button beside the sentence is the thing a reader came for. In the reading
- * STREAM it was wrong: a full-width boxed line above every such card, spending a line of a surface
- * built for skimming on a fact that is true, rarely wanted, and identical from card to card.
+ * `MessageBody` renders a mail and, above it, used to say a bar: "A tracking pixel was blocked."
+ * — or "3 remote images blocked. One of them is a tracking pixel." or "A remote stylesheet was
+ * blocked, so this message may look plain." In the reading STREAM that was a full-width boxed
+ * line above every such card, spending a line of a surface built for skimming on a fact that is
+ * true, rarely wanted, and identical from card to card. In the reading pane, on a conversation
+ * panel and in the Screener it was one strip per message — cheaper, and still a second shape for
+ * the same fact once the stream had moved it into the card's head.
  *
- * So the stream's card states it in its own head — the sender · address · time line — as a
- * two-word caption and the (i) glyph, with the whole sentence in the glyph's card (`Gloss`, the
- * shared detail-on-demand primitive: hover, focus and a press open it; Escape and a press outside
- * close it; it is reachable by keyboard and by a finger, and its sentence is the trigger's
- * accessible description while the card is closed, so a screen reader announces the caption and
- * then the sentence). The fact does not get quieter than that: it is in the DOM and in the
- * accessibility tree for every affected message, and "blocked" stays true of the document — this
- * file changes where the sentence stands, never whether the block happens.
+ * So every surface states it in its own meta line — the stream card's sender · address · time
+ * line, the right cluster of the message header the reading pane and a conversation panel share,
+ * the Screener card's head line — as a two-word caption and the (i) glyph, with the whole
+ * sentence in the glyph's card (`Gloss`, the shared detail-on-demand primitive: hover, focus and a
+ * press open it; Escape and a press outside close it; it is reachable by keyboard and by a
+ * finger, and its sentence is the trigger's accessible description while the card is closed, so a
+ * screen reader announces the caption and then the sentence). Where the header has a "details"
+ * disclosure it prints the sentence in full as well. The fact does not get quieter than that: it
+ * is in the DOM and in the accessibility tree for every affected message, and "blocked" stays
+ * true of the document — this file changes where the sentence stands, never whether the block
+ * happens. `test/block-notice-surfaces.test.tsx` holds every surface that mounts the viewer to it.
  *
  * ── ONE COMPONENT, ONE CAPTION SLOT, THREE SIBLINGS ─────────────────────────────────────────
  *

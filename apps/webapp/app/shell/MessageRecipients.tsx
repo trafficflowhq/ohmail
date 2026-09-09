@@ -51,6 +51,7 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Icon } from "@ohmail/ui";
 import type { EngineMessage } from "@ohmail/client-engine";
+import type { BlockNotice } from "../components/BlockNotice";
 import { ContactPopover, type ContactPopoverState } from "./ContactPopover";
 import { fullDateTime, recipientRows, type RecipientRowChip } from "./format";
 import { displayAddress } from "./idn";
@@ -60,8 +61,17 @@ import { placePicker } from "./TagPicker";
 export function MessageRecipients({
   message,
   max,
+  notice = null,
 }: {
   message: EngineMessage;
+  /**
+   * WHAT THIS MESSAGE'S BODY HAD REFUSED, as the panel that mounts the body reports it. It arrives
+   * HERE rather than staying in `MessageHeader` because the details `<dl>` moved into this
+   * component with the rest of the recipients block: the glyph keeps the header's right cluster,
+   * and the full sentence is printed by the disclosure that owns it. `null` — nothing refused, or
+   * a caller with no report to make — renders nothing.
+   */
+  notice?: BlockNotice | null;
   /**
    * How many chips to draw before the rest folds into a count. OMITTED ⇒ no cap, which is the
    * reading pane's form: every recipient named, nothing standing in for a person.
@@ -266,6 +276,14 @@ export function MessageRecipients({
           {message.physicalFolder ? (
             <div>
               <dd>{to("onServer", { folder: message.physicalFolder })}</dd>
+            </div>
+          ) : null}
+          {/* The blocking disclosure IN FULL — the sentence the glyph above describes, said once
+              more where a reader who opened "details" is already reading facts about this
+              message. `.msg-rcpt-notice` is the tests' hook. */}
+          {notice ? (
+            <div>
+              <dd className="msg-rcpt-notice">{notice.text}</dd>
             </div>
           ) : null}
         </dl>

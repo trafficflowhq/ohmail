@@ -71,13 +71,27 @@
 .mb-bar-btn:hover { transform: translateY(-1px); box-shadow: var(--lift-2); }
 .mb-bar-btn:disabled { cursor: default; opacity: 0.55; transform: none; box-shadow: var(--lift-0); }
 
-/* THE CONTROLS ALONE. When the host states the blocking disclosure itself — the reading stream's
-   card head carries it as a glyph and a two-word caption (`BlockNotice`, through `onNotice`) —
-   this bar has no sentence left to box, and a box around a lone button is the strip that move
+/* THE CONTROLS ALONE. When the host states the blocking disclosure itself — its meta line carries
+   it as a glyph and a two-word caption (`BlockNotice`, through `onNotice`: the stream card's head,
+   the message header, the Screener card's line) — this bar has no sentence left to box, and a box around a lone button is the strip that move
    exists to remove. So it withdraws to what it still owns, "Show images" and the dark toggle, at
    the trailing edge above the body: no ground, no ring, the pill's own lift is its edge. Two
    classes, so the phone rule on `.mb-bar` below cannot put the padding back. */
 .mb-bar.mb-bar-quiet { justify-content: flex-end; padding: 0 0 8px; background: none; box-shadow: none; }
+
+/* AT THE PHONE TIER THE CAPTION YIELDS TO THE GLYPH, on every host at once. A message header at
+   390px holds an avatar, a name, an address and the ⋯ · stamp cluster; a Screener card's line a
+   sender, an address and a time; a two-word caption beside them would take the address's room.
+   The caption stays in the accessibility tree — clipped, not `display:none` — so the trigger keeps
+   its name and a reader still hears "Tracker blocked" before the sentence. Keyed on the
+   component's own hook (`mb-notice`, `BlockNoticeGloss`) rather than on a host's slot, so it is one
+   rule wherever the glyph stands; the stream's line says the same thing for the same boundary on
+   its own slot (`stream.css`, `.sc-line .sc-notice`). Same boundary as the shell's other phone
+   rules (`app.css`, `max-width: 640px`). */
+@media (max-width: 640px) {
+  .mb-notice .gloss-cap { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .mb-notice .gloss-t { gap: 0; }
+}
 
 /* ── the way back to the sender's own rendering ─────────────────────────────────────────
    The quietest control on the surface, by intent. Mail that declares no canvas is set in the

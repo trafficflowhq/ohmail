@@ -35,6 +35,7 @@ import { isProtectedMessage, type EngineMessage } from "@ohmail/client-engine";
 import { isPreviewable } from "../components/AttachmentPreview";
 import { AttachmentStrip } from "../components/AttachmentStrip";
 import { MessageBody } from "../components/MessageBody";
+import { BlockNoticeGloss, type BlockNotice } from "../components/BlockNotice";
 import { opensInSystemViewer } from "./open-attachment";
 import { replyAllRecipients } from "./compose-from";
 import {
@@ -56,9 +57,10 @@ import { MoreMenu, type MoreMenuItem } from "./MoreMenu";
  *
  * Reads `ownAddresses` and `openSenderMenu` off the chrome rather than as props, for the reason
  * the whole chrome exists: the pane is mounted twice and holds no engine hook, and the header is
- * rendered inside both mounts. `onEnterReader` is the one thing a CALLER varies — the reader
- * affordance on the split-column focused message — so it comes as a prop. (`onCollapse` left
- * with the peek rows: there is no fold to operate any more.)
+ * rendered inside both mounts. `onEnterReader` and `notice` are the two things a CALLER varies —
+ * the reader affordance on the split-column focused message, and what the body the caller mounts
+ * had refused — so they come as props. (`onCollapse` left with the peek rows: there is no fold to
+ * operate any more.)
  *
  * ── THE ⋯ MENU — the message's verbs, per panel, LEFT of the stamp ─────────────────────────
  *
@@ -77,10 +79,21 @@ export function MessageHeader({
   message,
   now,
   onEnterReader,
+  notice = null,
 }: {
   message: EngineMessage;
   now: Date;
   onEnterReader?: () => void;
+  /**
+   * WHAT THIS MESSAGE'S BODY HAD REFUSED — the viewer's report (`MessageBody.onNotice`), handed up
+   * by the panel that mounts the body (`MessageCard` below; `MessagePane` for the focused message)
+   * and worn HERE, in the header's right cluster, as the same glyph and two-word caption the
+   * reading stream's card wears in its head (`BlockNoticeGloss`): one fact, one shape on every
+   * surface. `null` — nothing refused, no body on screen yet, a caller with no report to make —
+   * renders nothing. The open "details" block prints the whole sentence under the exact date, so
+   * the fact is reachable by hover, focus, a press and a disclosure alike.
+   */
+  notice?: BlockNotice | null;
 }) {
   const tm = useTranslations("message");
   const tr = useTranslations("screening");
@@ -203,6 +216,11 @@ export function MessageHeader({
           {address ? <small>{address}</small> : null}
         </button>
         <span className="t num">
+          {/* THE BLOCKING NOTICE LEADS THE CLUSTER — a fact before the controls, so the ⋯ menu
+              keeps its place left of the stamp and the date keeps the corner (the order
+              `test/conversation.test.ts` holds). The component the stream card's head wears; the
+              trigger inherits this cluster's type and ink, and the primitive decides the rest. */}
+          {notice ? <BlockNoticeGloss notice={notice} /> : null}
           {/* The ⋯ LEFT of the date, date on the right — the menu is an object in the header's
               quiet cluster, and the stamp keeps the outer edge. A real disclosure: haspopup
               with a LIVE expanded (the literal-false defect the pill already fixed), and the
@@ -260,7 +278,7 @@ export function MessageHeader({
         </span>
       </div>
       {subjectLine}
-      <MessageRecipients message={message} />
+      <MessageRecipients message={message} notice={notice} />
     </>
   );
 }
@@ -300,6 +318,25 @@ export function MessageCard({
     [message.id],
   );
   const nativeBody = bodyRendering === `${message.id}:prose`;
+
+  /**
+   * ── WHAT THE BODY HAD REFUSED — reported by the viewer, worn by the header ──────────────────
+   *
+   * `MessageBody` says what it refused (`onNotice`: the caption a meta line shows and the whole
+   * sentence behind it) and this panel puts it in its own header, the way the stream card puts it
+   * in its head — so the sentence leaves the bar above the body and every surface wears one shape.
+   * Keyed by message for the reason `bodyRendering` above is: a panel re-pointed at another
+   * message must not wear the last message's glyph for the frame between the re-point and the
+   * viewer's next report. The setter is built per message so the viewer's effect re-fires once on
+   * a re-point and never once per render; the viewer itself reports only when its three strings
+   * change, so a message with nothing refused costs no re-render here.
+   */
+  const [noticeFor, setNoticeFor] = useState<{ id: string; notice: BlockNotice | null } | null>(null);
+  const onNotice = useCallback(
+    (notice: BlockNotice | null) => setNoticeFor({ id: message.id, notice }),
+    [message.id],
+  );
+  const notice = noticeFor?.id === message.id ? noticeFor.notice : null;
 
   /**
    * The framed rendering's unresolved `cid:` images — the same forwarding `MessagePane` does,
@@ -361,7 +398,7 @@ export function MessageCard({
   return (
     <article className="pm" data-conv-id={message.id}>
       <div className="pm-in">
-        <MessageHeader message={message} now={now} />
+        <MessageHeader message={message} now={now} notice={notice} />
         <div className="pm-body">
           <MessageBody
             messageId={message.id}
@@ -382,6 +419,7 @@ export function MessageCard({
             cidImages={chrome.attachments ? chrome.attachments.cidImagesOf(message.id) : undefined}
             onCidImages={chrome.attachments ? onCidImages : undefined}
             onRenderMode={onRenderMode}
+            onNotice={onNotice}
           />
         </div>
         {attachments ? (

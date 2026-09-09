@@ -15,6 +15,7 @@ import { opensInSystemViewer } from "./open-attachment";
 import { MessageBody } from "../components/MessageBody";
 import { ConversationPanels } from "./Conversation";
 import { MessageHeader } from "./MessageCard";
+import type { BlockNotice } from "../components/BlockNotice";
 import { PLACE_LABEL, dayNine, dayValue, hueOf, nextWeekNine, tagsOfMessage, tomorrowNine, withheldCopyKey } from "./format";
 import { activeFormatLocale } from "./locale";
 import { replyAllRecipients } from "./compose-from";
@@ -1598,6 +1599,22 @@ export function MessagePane({
   const nativeBody = bodyRendering === `${message.id}:prose`;
 
   /**
+   * WHAT THE BODY HAD REFUSED, worn by the header. `MessageBody` reports it (`onNotice`) and the
+   * focused message's `MessageHeader` below wears it in its right cluster — the same glyph and
+   * caption the stream card wears in its head — so the bar above the body keeps only its
+   * controls. Keyed by message exactly as `bodyRendering` is, and for the same reason: this pane
+   * is one instance re-pointed by selection, and the last message's answer must not decide this
+   * one's header for the frame before its body reports. `MessageCard` carries the same block and
+   * the longer argument.
+   */
+  const [noticeFor, setNoticeFor] = useState<{ id: string; notice: BlockNotice | null } | null>(null);
+  const onNotice = useCallback(
+    (notice: BlockNotice | null) => setNoticeFor({ id: message.id, notice }),
+    [message.id],
+  );
+  const notice = noticeFor?.id === message.id ? noticeFor.notice : null;
+
+  /**
    * The framed rendering's unresolved `cid:` images, reported by `MessageBody` and forwarded to
    * the attachment seam — which fetches the parts' own bytes and grows the map handed back down
    * as `cidImages` below. Stable per message so the effect that calls it does not refire per
@@ -1668,6 +1685,7 @@ export function MessagePane({
         cidImages={chrome.attachments ? chrome.attachments.cidImagesOf(message.id) : undefined}
         onCidImages={chrome.attachments ? onCidImages : undefined}
         onRenderMode={onRenderMode}
+        onNotice={onNotice}
       />
     </div>
   );
@@ -1877,14 +1895,18 @@ export function MessagePane({
    * entry where the shell offers the sheet), and the recipients line whose "details" press
    * reveals the full To/Cc, the exact date and where the message physically sits
    * (`physicalFolder`). `onEnterReader` rides here now — the from-line it used to hang off is
-   * gone from `ReadingPane`.
+   * gone from `ReadingPane`. So does `notice`: what the body below had refused, worn in the
+   * header's right cluster as the stream card wears it (`onNotice`, above), and printed in full
+   * by the "details" press.
    *
    * NO LARGE `<h2>` AND NO THREAD LEDE ANY MORE: the 24px heading (and the one-time lede the
    * thread wrapper opened with) is deleted with the viewer redesign — the subject is per
    * message, in the header, uniformly, on a single message exactly as on every thread panel.
    * `test/conversation.test.ts` holds the absence.
    */
-  const focusedHeader = <MessageHeader message={message} now={now} onEnterReader={onEnterReader} />;
+  const focusedHeader = (
+    <MessageHeader message={message} now={now} onEnterReader={onEnterReader} notice={notice} />
+  );
 
   const bodyNoteFailed = body.state === "failed" || stalled;
 

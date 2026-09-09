@@ -3771,11 +3771,13 @@ export interface MessageBodyProps {
    *
    * Present, it is called (from an effect, never during render) with what this message had refused
    * and how that is said — the caption a meta line shows and the whole sentence behind it
-   * (`BlockNotice`) — or `null` when nothing was refused. The reading stream's card passes it and
-   * puts the fact in its head as a glyph; the bar here keeps only the controls it still owns
-   * ("Show images", the dark toggle), with no sentence and no box around them. Absent — the reading
-   * pane, the Ohbox card, the Screener, every bare test mount — the bar says the sentence exactly
-   * as it always has. The fact is stated in every case; what moves is where.
+   * (`BlockNotice`) — or `null` when nothing was refused. Every surface that mounts this viewer
+   * passes it and puts the fact in its own meta line as a glyph — the reading stream's card head,
+   * the message header the reading pane and a conversation panel share, the Screener card's line
+   * (`test/block-notice-surfaces.test.tsx` is the census) — and the bar here keeps only the
+   * controls it still owns ("Show images", the dark toggle), with no sentence and no box around
+   * them. Absent — a bare mount with no meta line to carry the fact — the bar says the sentence
+   * exactly as it always has. The fact is stated in every case; what moves is where.
    *
    * A callback and not a value the host computes, for the reason `onRenderMode` is one: the terms
    * are fields of the sanitize pass this component already runs, and asking for them from outside
@@ -4375,8 +4377,9 @@ export function MessageBody({
     imageProxy != null && imgSource !== null && onLoadRemote != null && !remoteLoaded && !proseView;
   /**
    * THE HOST SAYS IT, OR THE BAR DOES — never both, never neither. `onNotice` present means the
-   * mounting surface states the blocking disclosure in its own chrome (the stream card's head),
-   * so the sentence and its glyph leave this bar; what stays is a control with a job.
+   * mounting surface states the blocking disclosure in its own chrome (a meta line: the stream
+   * card's head, the message header, the Screener card's line), so the sentence and its glyph
+   * leave this bar; what stays is a control with a job.
    */
   const hostTakesNotice = onNotice != null;
   const barSaysIt = hasBlocked && !hostTakesNotice;
