@@ -624,6 +624,33 @@ line rather than sending. Both now report themselves as multi-line text boxes, k
 they already had — "Message body" and "Reply body". Nothing about typing, sending or formatting
 changes.
 
+### Sentences in the app and on the site say what the product does
+
+Eight sentences were saying something the software does not do, and each is now the plain fact:
+
+- Settings → About said the publisher "writes and signs this app". The builds are not signed —
+  there is no Apple Developer ID and no Authenticode certificate, which is the item in
+  "Still to come" below — so the line claims only what is true.
+- The composer's footnote said a message you are writing is "kept in this browser until you send
+  it". It is not a browser in the desktop app, and drafts are saved to your account after a
+  moment, which is what puts them in Drafts on your other devices. The footnote now says that,
+  the way the Drafts pile already did.
+- The inline editor invited you to "write your reply" while forwarding. Forwarding gets the
+  composer's own placeholder.
+- Settings → Mailboxes headed itself "Cloud mailboxes" on a server you run yourself. That build
+  says "Mailboxes on this server".
+- Picture quality said attachments are compressed "in this browser". The compression is local
+  either way; the row now says "on this device", which is true in the desktop window too.
+- The local mailbox form pointed at a password note "above your provider". It is under it.
+- The privacy notice and the subprocessor page still described the Windows and Linux builds as an
+  interface running on a fictional mailbox with the engine still landing. Every build has been a
+  real mail client since 0.7.0. Both pages name all three platforms.
+
+German moved with all of them. Two checks came with the work, so the same drift cannot happen
+quietly: the four Settings → General rows every surface shares may no longer describe a browser,
+and the two disclosure pages are now held to the same constant the download page reads — in both
+directions, so a page can neither over-claim a build nor keep hedging about one after it ships.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
