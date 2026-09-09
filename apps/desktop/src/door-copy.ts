@@ -306,7 +306,7 @@ const EN = {
   aboutAppLabel: "ohmail for desktop",
   aboutAppWhy: "The build running in this window.",
   aboutPublisher: "Published by",
-  aboutPublisherWhy: "The company that writes and signs this app.",
+  aboutPublisherWhy: "The company that writes this app.",
   aboutLicence: "Licence",
   aboutLicenceWhy:
     "Free software. The source of this app is published, and you may build it yourself.",

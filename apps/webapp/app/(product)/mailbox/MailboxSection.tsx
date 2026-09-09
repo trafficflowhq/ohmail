@@ -92,6 +92,9 @@ import { AGO_COPY, agoStamp, dayStamp } from "../../shell/format";
 import { claimLeftBehind, isSyncBlockReason, readerStandDown, showInboundQuiet } from "../../shell/mail-state";
 import { useMailState } from "../../shell/MailStateProvider";
 import { displayAddress } from "../../shell/idn";
+/* WHICH BUILD THIS IS, at compile time — the same constant `AccountSection` and `LoginScreen`
+   read for the same kind of question. It decides one word of copy below and nothing else. */
+import { SELF_HOST_BUILD } from "../../hello";
 
 /**
  * `list` → the pane at rest. `form` → typing credentials for a NEW mailbox. `edit` → changing the
@@ -1992,8 +1995,15 @@ export function MailboxSection() {
       {/* THE MODE THIS PANE IS SHOWING. An install is Cloud OR local, never both in parallel
           (desktop is per-install, not per-mailbox), so the pane names which one
           it is rather than leaving the reader to infer it from the connect ceremony below. The
-          desktop's own pane heads itself "Local mailboxes on this computer" for the same reason. */}
-      <h2 className="acct-h">{t("modeCloud")}</h2>
+          desktop's own pane heads itself "Local mailboxes on this computer" for the same reason.
+
+          AND THE SELF-HOST BUILD IS A THIRD ANSWER, not a spelling of the first. This heading was
+          "Cloud mailboxes" on every browser build, so an operator running their own server read a
+          claim about a hosted service they had deliberately not bought. `SELF_HOST_BUILD` is the
+          build arm, decided at compile time, so the managed bundle keeps exactly the string it
+          had. The self-host wording matches that build's own vocabulary elsewhere ("AI on this
+          server", "Accounts on this server"). */}
+      <h2 className="acct-h">{SELF_HOST_BUILD ? t("modeSelfhost") : t("modeCloud")}</h2>
       {/* A failed read is not an empty result — "Reading your mailboxes…" is only true while a read is outstanding. A
           read that came back refused is not still running, and saying it is would trade one
           permanent false sentence for another. The reason renders below, in `error`. */}

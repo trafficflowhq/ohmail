@@ -309,7 +309,11 @@ describe("the window against a serving engine", () => {
         // rather than a microtask — so the render that answers it is one turn of the loop away.
         await new Promise((resolve) => setTimeout(resolve, 0));
       });
-      expect(el.textContent ?? "").toMatch(/Kept in this browser until you send it/i);
+      /* The composer's own draft note, whichever it is — this case is about the menu command
+         opening the view. The words changed once already (they said "in this browser" on a
+         desktop window, and they said the account was not written to when autosave writes it),
+         so the assertion reads the catalogue rather than restating a sentence. */
+      expect(el.textContent ?? "").toContain(messages.compose.draftNote);
     } finally {
       // The hash is per-document and this file renders more than once into it.
       window.location.hash = "";

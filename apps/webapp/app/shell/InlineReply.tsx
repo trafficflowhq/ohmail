@@ -795,7 +795,11 @@ export function InlineReply({
         key={message.id}
         className="reply-editor"
         ariaLabel={t("editorAria")}
-        placeholder={t("placeholder")}
+        /* THE PLACEHOLDER FOLLOWS THE MODE, like `forwardHead` and the forwarding note above.
+           One key served both, so a forward — which has no reply in it — invited the author to
+           "Write your reply…". The forward's sentence is the compose editor's own, because it is
+           the same act: a message of your own, above the one being passed on. */
+        placeholder={mode === "forward" ? t("forwardPlaceholder") : t("placeholder")}
         autoFocus
         value={value}
         /* The text is never taken away from the author, not even mid-send: a failed send
