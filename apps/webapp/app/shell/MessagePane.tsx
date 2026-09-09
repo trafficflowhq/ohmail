@@ -46,6 +46,17 @@ export type MoveTarget = Extract<OhmailView, "ohbox" | "reads" | "receipts" | "s
  * caller has to know the current state to use it correctly.
  */
 export type MessageAction =
+  /**
+   * PUT THIS MESSAGE BACK WHERE IT WAS — dispatched only from the Trash reading pane's one
+   * primary verb and from `⇧⌫` there. It is not a filing verb and carries no folder: the
+   * destination was recorded when the message was deleted and is resolved by the server, so a
+   * client naming one would be a second opinion about somebody's own mail.
+   *
+   * The shell answers it by opening a HELD window exactly as the delete key does, for the same
+   * reason — there is no un-restore on the wire — so the row leaves the list at the press and
+   * the request goes out when the Undo window closes.
+   */
+  | "restore"
   | "reply"
   /**
    * Reply to EVERYONE on the message — sender plus the other To/Cc recipients. Dispatched only
@@ -299,8 +310,26 @@ function ActionBar({
   onAction,
   onScreen,
   onTag,
+  trash,
 }: {
   message: EngineMessage;
+  /**
+   * THE BAR OVER A MESSAGE THAT IS IN TRASH — one primary verb and the read switch, nothing
+   * else, decided by an EARLY RETURN below rather than by gating each of the eleven groups.
+   *
+   * Every other verb here is wrong over a trashed row and wrong in a different way: the filing
+   * segment would move mail out of Trash by a route that records no restore, the three horizons
+   * would schedule a return for a message that is not in a pile, Tag would label mail on its way
+   * out, and Delete would ask to delete something already deleted. Gating them one by one would
+   * be eleven predicates that all say the same thing, and the twelfth group somebody adds would
+   * arrive ungated — the "fix the path you are looking at and the one beside it" failure by
+   * construction.
+   *
+   * The read switch STAYS. Reading a message in Trash is reading, the flag is the mailbox's own
+   * and the write is `\Seen`, which is legitimate for a reader and unrelated to where the message
+   * sits.
+   */
+  trash?: boolean;
   /** The clock the resurface presets are computed against — tomorrow/next week from here. */
   now: Date;
   panel: BarPanel | null;
@@ -325,6 +354,9 @@ function ActionBar({
   /* "today", for the date picker's cell label — the Screener's own word for it, read across the
      namespace as `tr("action")` is, rather than a second copy of the same word. */
   const ts = useTranslations("screener");
+  /* Trash's own words — one namespace for the view, its verb and its four toasts, so the pill
+     and the toast that follows a press cannot be worded apart. */
+  const tt = useTranslations("trash");
   const press = useKeyPress();
   const chrome = useMessageChrome();
   /** The runtime density measurement — which groups ACTUALLY fit; see `bar-density.ts`. */
@@ -594,6 +626,81 @@ function ActionBar({
   const markRead = () => {
     if (!press("shift+i")) onAction("unread");
   };
+
+  /* ── THE BAR IN TRASH: RESTORE, THEN THE READ SWITCH ───────────────────────────────────────
+   *
+   * Placed HERE, after every hook and derivation this component owns and before the eleven
+   * groups are composed, for two reasons that are both mechanical. React requires every hook to
+   * run on every render, so the return cannot sit above them; and the `trash` prop's own block
+   * explains why it is one return rather than eleven predicates.
+   *
+   * No density measurement, no More menu and no admission walk: two controls fit every width a
+   * message is read at, so the machinery that decides which groups the row can hold has nothing
+   * to decide. That is also why the row carries no `data-*` shape attributes — the container
+   * queries in `action-bar.css` switch groups that are not here.
+   *
+   * Restore wears `abar-b abar-solo primary`, the SAME class the pill's first verb wears today
+   * (Reply's), read off that button rather than given a class of its own: it is the one primary
+   * verb of this bar, and a second accent rule would be a second answer to what "primary" looks
+   * like. The read switch is the resting bar's own three-way slot, transcribed — a trashed
+   * message can be resurfaced-pinned like any other (the pin is our triage state and survives a
+   * delete), so the `Done` face is kept rather than dropped as unreachable.
+   */
+  if (trash) {
+    return (
+      <div className="abar abar-trash">
+        <div className="abar-g">
+          <button
+            type="button"
+            className="abar-b abar-solo primary"
+            onClick={() => onAction("restore")}
+          >
+            {tt("restore")}
+            <Key chord="shift+Backspace" />
+          </button>
+        </div>
+        <div className="abar-g abar-read-g">
+          {isResurfaced(message) ? (
+            <button
+              type="button"
+              className="abar-b abar-solo abar-read abar-done"
+              aria-label={t("actionDone")}
+              title={compact ? t("actionDone") : undefined}
+              onClick={() => onAction("resurface_done")}
+            >
+              <Icon name="check" size={13} className="abar-check" />
+              <span className="abar-read-lab">{t("actionDone")}</span>
+              <Key chord="shift+i" />
+            </button>
+          ) : read ? (
+            <button
+              type="button"
+              className="abar-b abar-solo abar-read"
+              aria-label={t("actionMarkUnread")}
+              title={compact ? t("actionMarkUnread") : undefined}
+              onClick={markUnread}
+            >
+              <span className="abar-dot" aria-hidden="true" />
+              <span className="abar-read-lab">{t("actionMarkUnread")}</span>
+              <Key chord="u" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="abar-b abar-solo abar-read"
+              aria-label={t("actionMarkRead")}
+              title={compact ? t("actionMarkRead") : undefined}
+              onClick={markRead}
+            >
+              <span className="abar-dot abar-dot-off" aria-hidden="true" />
+              <span className="abar-read-lab">{t("actionMarkRead")}</span>
+              <Key chord="shift+i" />
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   /**
    * THE MESSAGE'S CURRENT PILE, REPORTED BY THE BUTTON THAT PUT IT THERE (TRI-F12).
@@ -1279,6 +1386,7 @@ export function MessagePane({
   onEnterReader,
   onAction,
   onAddTag,
+  trash,
 }: {
   message: EngineMessage;
   tags: TagDTO[];
@@ -1286,6 +1394,11 @@ export function MessagePane({
   onEnterReader?: () => void;
   onAction: (action: MessageAction) => void;
   onAddTag: (messageId: string, anchor: HTMLElement | null) => void;
+  /**
+   * THIS MESSAGE IS IN TRASH — forwarded to {@link ActionBar}, whose own block carries the
+   * argument. Absent everywhere else, so every existing mount of this pane is byte-identical.
+   */
+  trash?: boolean;
 }) {
   const t = useTranslations("ohbox");
   /** The conversation's copy lives with the reply's — one namespace owns the thread. */
@@ -1927,6 +2040,7 @@ export function MessagePane({
       onAction={onAction}
       onScreen={(anchor) => chrome.openSenderMenu(message.id, anchor)}
       onTag={(anchor) => onAddTag(message.id, anchor)}
+      trash={trash}
     />
   );
 

@@ -81,6 +81,22 @@ export interface MessageRowProps {
    */
   onToggleTime?: () => void;
   subject: string;
+  /**
+   * A QUIET DESTINATION GLOSS AFTER THE SUBJECT — "← Reads", where a restore would put this
+   * message back.
+   *
+   * The Trash list is the only list whose rows are somewhere they are leaving, so it is the only
+   * one that has a destination to name. It rides the subject's own line and is the FIRST thing
+   * to go: `.trash-to` is inside the badge strip's unbounded tail, and it is hidden outright
+   * under 640px, because a phone-width row has one line for the subject and the subject is what
+   * the reader is looking for.
+   *
+   * A STRING and not a node: the row is a `<button>`, and a caller passing markup here would be
+   * one paste away from putting a control inside one — which the HTML parser resolves by closing
+   * the row, the exact failure {@link MessageRowProps.onToggleTime} records. Absent ⇒ nothing is
+   * rendered and every existing row is byte-identical.
+   */
+  destination?: string;
   preview?: string;
   /** Receipts: right-aligned amount. */
   amount?: string;
@@ -237,6 +253,7 @@ export function MessageRow(props: MessageRowProps) {
     timeTitle,
     onToggleTime,
     subject,
+    destination,
     preview,
     amount,
     unread,
@@ -400,6 +417,9 @@ export function MessageRow(props: MessageRowProps) {
           the pressure order in row.css. */}
       <span className="row-mid">
         <span className="subj">{subject}</span>
+        {/* The gloss sits between the subject and the badge strip, on the subject's own line —
+            see {@link MessageRowProps.destination}. A plain span, no control. */}
+        {destination ? <span className="trash-to">{`\u2190 ${destination}`}</span> : null}
         {keep.length || tail.length ? (
           <span className="badges">
             {keep}

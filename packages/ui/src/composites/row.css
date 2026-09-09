@@ -70,6 +70,16 @@
 .row .badges > .bdg-tail{display:inline-flex;gap:6px;flex:0 1 auto;min-width:0;overflow:hidden;padding:2px;margin:-2px}
 .row .badges > .bdg-tail > *{flex:none}
 
+/* WHERE A RESTORE WOULD PUT IT — the Trash row's destination gloss (`MessageRowProps
+   .destination`). The FIRST thing to yield: `flex:0 1 auto` with `min-width:0` after a subject
+   pinned at `min-width:6ch`, so a long subject clips this rather than the other way round, and
+   under 640px it is not drawn at all — a phone-width row has one line and the subject is what
+   the reader came for. Quiet ink and a lighter weight than the subject beside it: it is a gloss
+   on the row, never a second title. */
+.row .trash-to{flex:0 1 auto;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;
+  font-size:calc(11px + var(--type-up));color:var(--ink3);font-weight:450}
+@media (max-width:640px){.row .trash-to{display:none}}
+
 /* THREAD PARTICIPANT CIRCLES — the conversation's faces in the subject line's badge strip,
    standing immediately after its `⤷ N` count. They are NOT the row's lead: the lead is one
    sender's full-size circle on every row, because it is what decides where a row's text begins,

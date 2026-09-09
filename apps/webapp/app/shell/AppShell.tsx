@@ -82,7 +82,7 @@ import {
 } from "./engine";
 import { PullNewMail, usePullNewMail } from "./PullNewMail";
 import { useOlderMail } from "./older-mail";
-import { PLACE_LABEL, avatarHue, hueOf, initialsOf, resurfaceLabel, tomorrowNine } from "./format";
+import { PLACE_LABEL, avatarHue, hueOf, initialsOf, placeLabel, resurfaceLabel, tomorrowNine } from "./format";
 import { activeFormatLocale, activeFormatZone } from "./locale";
 import { displayAddress, displayDomain } from "./idn";
 import { MessagePane, type BulkAction, type MessageAction } from "./MessagePane";
@@ -169,6 +169,7 @@ import {
 } from "./mail-state";
 /* Backspace/Delete → Trash, and the window in which it has not happened yet. See the module. */
 import { deleteKeyBindings, hideMessages, restoreDispatch, useDeleteIntentReplay, useDeleteUndo } from "./delete-undo";
+import { isModalOpen } from "./modal-gate";
 import { useStableCallback } from "./stable-callback";
 /* The once-per-change line above the Ohbox, and the shape of the press that ends it. */
 import { OrganizerNotice, type OrganizerNoticeTransport } from "./OrganizerNotice";
@@ -219,6 +220,8 @@ import { AddressView } from "../views/AddressView";
 import { SettingsView, type MailboxEntity, type NotificationsMeta, type PaneId } from "../views/SettingsView";
 import { TagView } from "../views/TagView";
 import { FolderView } from "../views/FolderView";
+import { TrashView } from "../views/TrashView";
+import { useTrashPage } from "./trash-page";
 import { TriageView } from "../views/TriageView";
 import { ComposeView } from "../views/ComposeView";
 import { DraftsView } from "../views/DraftsView";
@@ -1493,13 +1496,71 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     ),
   });
   /**
+   * RESTORE, HELD THE SAME WAY THE DELETE IS — a SECOND window over the same machinery.
+   *
+   * Two windows and not one queue with two verbs in it, because the two hold different things:
+   * a held delete subtracts from `presented` (the row has to leave every pile), and a held
+   * restore subtracts from the TRASH PAGE, which is off-mirror and has no reader to wrap. One
+   * queue would publish one held set that both surfaces would have to filter by, and each would
+   * then be hiding the other's rows.
+   *
+   * The refusal is the same one: a restore writes a desired folder and the reconciler turns it
+   * into a real IMAP move, so on a mailbox another install organizes it is two organizers moving
+   * one person's mail. `readerMoveRefusal` over the same roster ref, asked at the press.
+   *
+   * The dispatch is `restoreDispatch` over `engine.restoreFromTrash` — NOT `engine.mutate`,
+   * which would reject a mutation over a tombstoned row (its local effects are empty by
+   * definition). `delete-undo.ts`'s header carries that whole argument.
+   *
+   * The TOAST names the server's answer and not the row's: the origin folder can disappear
+   * between the page and the press, so `restoreTo` is read off the response. That is why the
+   * copy's `restored` sentence is resolved per press below rather than once here — see the
+   * `restore` arm of `onMessageAction`.
+   */
+  const restoring = useDeleteUndo({
+    verb: "restore",
+    /* THE DISPATCH RAISES THE PLACE SENTENCE, because that is the one moment the place is known
+       — see `restoreDispatch`, where the alternative (a second call at the press) is named as
+       the thing that would silently cancel the undo window. */
+    mutate: (messageId) => fileAndRefresh(
+      restoreDispatch(
+        (id) => engine.restoreFromTrash(id),
+        (restoreTo) => toast(t("trash.toastRestored", { place: placeLabel(restoreTo) })),
+      )(messageId),
+    ),
+    toast,
+    copy: {
+      /* THE PLACE IS NOT KNOWN AT THE PRESS. The window's `deleted` sentence is said the moment
+         the row is hidden, and the destination arrives with the server's answer seconds later —
+         so this one says what is TRUE then ("Restoring…") and the arm that reads the response
+         says where it went. A sentence naming a place before the server has answered would be
+         the false-state failure this whole seam exists to avoid. */
+      deleted: t("trash.restoring"),
+      undo: t("screener.toastUndo"),
+      undone: t("trash.toastRestoreUndone"),
+      failed: t("trash.toastRestoreFailed"),
+    },
+    refusal: (mailboxIds) => readerMoveRefusal(
+      rosterRef.current,
+      mailboxIds.map((id) => id ?? ""),
+      refusalCopy,
+    ),
+  });
+
+  /**
    * WHAT A KILLED TAB LEFT BEHIND, finished at the next launch. The other half of the durable
    * record `delete-intents.ts` keeps; without it the journal would grow and nothing would act on
    * it, which is a durable record of nothing. Demo excluded: the fixture world has no server to
    * carry a delete to, and replaying one there would mutate a demo somebody is looking at.
    */
   useDeleteIntentReplay(
-    (messageId) => engine.mutate({ kind: "message_delete", messageId }),
+    /* THROUGH `fileAndRefresh`, LIKE EVERY OTHER FILING DISPATCH — and this line is a fix rather
+       than a transcription. The replay used to read `(m) => engine.mutate(m)`, which carried no
+       `kind:` literal, so `filing-refresh-on-decision.test.tsx`'s census could not SEE it: a
+       filing dispatch invisible to the guard that exists to find exactly that. Naming the verb
+       here made the census name it, and the census was right — a replayed delete moves mail, so
+       the count the filing strip renders is stale until the facts are re-read. */
+    (messageId) => fileAndRefresh(engine.mutate({ kind: "message_delete", messageId })),
     () => Date.now(),
     !demo,
     /* THE RESTORE'S REPLAY, wired only where the transport exists. Omitted, `delete-undo.ts`
@@ -1508,7 +1569,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
        answer the palette row and the chord read, so the surface cannot offer a verb whose
        replay would be dropped. */
     engine.trashAvailable()
-      ? restoreDispatch((messageId) => engine.restoreFromTrash(messageId))
+      ? (messageId) => fileAndRefresh(
+          restoreDispatch((id) => engine.restoreFromTrash(id))(messageId),
+        )
       : undefined,
   );
   const refusalCopy = useMemo(
@@ -1935,6 +1998,18 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * and for the standalone desktop client, and the view renders no control at all in that case.
    */
   /** The open folder's entity id, for the reach-past hook below — route-derived, shell-early. */
+  /**
+   * THE TRASH PAGE — off-mirror, fetched on arrival, dropped on leaving.
+   *
+   * `route.view` and not `effectiveView`: this is a fetch, and `effectiveView` is derived from
+   * things that can withhold the stage (the seed screen). Rendering the seed screen over Trash
+   * should not throw away a page that has already arrived, and arriving BACK at Trash from the
+   * seed screen should not need a second fetch.
+   *
+   * The held-restore ids are subtracted here rather than in the view — one place, so the list
+   * and the row count in the rail entry can never disagree about how many rows there are.
+   */
+  const trashPage = useTrashPage(engine, route.view === "trash", restoring.held);
   const folderIdForOlder = route.view === "folder" ? (route.folderId ?? undefined) : undefined;
   /**
    * DELIBERATELY NO CLIENT-DERIVED BOUNDARY for the folder reach-past. The obvious one — the
@@ -4907,6 +4982,37 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
           }
           break;
         }
+        case "restore": {
+          /**
+           * RESTORE — the Trash pane's one primary verb, and `⇧⌫` there.
+           *
+           * ── HELD, EXACTLY AS THE DELETE IS ───────────────────────────────────────────────
+           *
+           * There is no un-restore on the wire (a second press would 409 `not_in_trash`, which
+           * is true but is not an undo), so the only undo this wire can honour is the delayed
+           * commit — the row leaves the Trash list at the press, the toast carries Undo for
+           * `UNDO_MS`, and `POST /messages/:id/restore` goes out when the window closes. The
+           * `restoring` window above owns all of that.
+           *
+           * ── AND THE PLACE IS NAMED BY THE SERVER, AFTERWARDS ─────────────────────────────
+           *
+           * The row's own `restoreTo` is what the LIST was rendered with, and the origin folder
+           * can be deleted between the page and the press — so the confirming toast is raised by
+           * the window's DISPATCH, when the server has answered, rather than here. Raising it
+           * here would need a second `restoreFromTrash` call at the press, which would issue the
+           * request immediately and cancel the undo window with every guard still green; see
+           * `restoreDispatch`. A press that never reaches the server raises no place sentence at
+           * all — the window's `failed` arm says the mail is still in Trash, which is the truth.
+           *
+           * The reader sheet closes only if the press ACTED, which is the delete arm's own
+           * ordering and for its measured reason: reversed, a refused reader restore closed the
+           * sheet over the very message it had declined to touch.
+           */
+          if (restoring.remove({ id: m.id, mailboxId: m.mailboxId }) && readerFor === m.id) {
+            setReaderFor(null);
+          }
+          break;
+        }
         case "resurface_now":
           /**
            * "NOW" IS A STATE, NOT A DATE, and that is the only thing separating this arm from
@@ -6059,6 +6165,19 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     { chord: "g b", group: "navigate", label: t("shortcuts.goResurface"), run: () => goTriage("resurface") },
     { chord: "g d", group: "navigate", label: t("shortcuts.goDrafts"), run: () => go("drafts") },
     { chord: "g h", group: "navigate", label: t("shortcuts.goHistory"), run: () => go("history") },
+    /* `g t` — the destination-row rule: ONE message for the chord, the palette row and the `?`
+       sheet, so the three lists of the same instruction cannot drift by a word. `disabled` where
+       the client has no Trash transport (the demo), which keeps the sheet LISTING it — "a
+       shortcut that vanishes from the documentation when the list is empty is a shortcut nobody
+       learns" — with the reason on the row. */
+    {
+      chord: "g t",
+      group: "navigate",
+      label: t("shortcuts.goTrash"),
+      disabled: !engine.trashAvailable(),
+      disabledReason: "trash_unavailable",
+      run: () => go("trash"),
+    },
     { chord: "g ,", group: "navigate", label: t("shortcuts.goSettings"), run: () => go("settings") },
     { chord: "/", group: "navigate", label: t("shortcuts.search"), run: () => go("search") },
     {
@@ -6340,9 +6459,36 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       label: t("shortcuts.deleteKey"),
       canDelete:
         focused != null
-        && reader.get<EngineMessage>("message", focused.id) != null,
+        && reader.get<EngineMessage>("message", focused.id) != null
+        /* NOT IN TRASH. The message is already there, so ⌫ has nothing to move it to, and
+           deleting twice is not a thing this product can do — it never erases mail. Refused as
+           `disabled` (with the reason, which the `?` sheet prints on the row) rather than by
+           withholding the binding: withholding it would let the key fall through to whatever is
+           behind, and would take the two keycaps out of the documentation exactly where a reader
+           is most likely to reach for them. */
+        && route.view !== "trash",
+      disabledReason: "no_erase",
       run: (m) => onMessageAction("delete", m),
     }),
+    /* ⇧⌫ — RESTORE, and only in Trash. The mirror image of ⌫: the key that removes mail from a
+       pile is the key that brings it back from the bin, one modifier apart, so the two are one
+       gesture to learn. Listed at every route so the sheet documents it (the rule above), inert
+       everywhere else with no reason attached — a key that is simply not applicable here needs
+       no sentence, where one that CANNOT EVER work does. */
+    {
+      chord: "shift+Backspace",
+      group: "message",
+      label: t("trash.restoreKey"),
+      disabled: route.view !== "trash" || focused == null,
+      /* A HELD KEY IS ONE PRESS, and a question on screen owns the key — `deleteKeyBindings`'
+         own two `when` conditions, for its own two measured reasons: Backspace repeats faster
+         than any key somebody leans on, and `isModalOpen` is a DOM read that cannot be a
+         `disabled` flag because the More menu opens without the shell re-rendering. */
+      when: (e) => !e.repeat && !isModalOpen(e.view?.document ?? document),
+      run: () => {
+        if (focused) onMessageAction("restore", focused);
+      },
+    },
     {
       chord: "mod+k",
       group: "app",
@@ -6418,6 +6564,18 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       },
       { id: "search", label: t("palette.search"), keys: ["/"], run: () => go("search") },
       { id: "compose", label: t("palette.newMessage"), keys: ["c"], run: () => go("compose") },
+      {
+        /* THE DESTINATION ROW, reading the registry's own wording (`shortcuts.goTrash`) exactly
+           as the four rows above it do — one message per destination, in the namespace the
+           binding labels live in. Declared `disabled` where the client has no Trash transport
+           rather than silently absent: a row that is missing teaches nothing, and a row that
+           says why is how somebody learns the demo has no mailbox behind it. */
+        id: "go-trash",
+        label: t("shortcuts.goTrash"),
+        keys: ["g", "t"],
+        disabled: !engine.trashAvailable(),
+        run: () => go("trash"),
+      },
       { id: "settings", label: t("palette.openSettings"), run: () => go("settings") },
     ];
     /* THE TWO ROWS THAT ACT ON THE OPEN MESSAGE, and they say so when there is none.
@@ -6462,7 +6620,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       },
     });
     return list;
-  }, [t, tags, selectedOhbox, toggleTag, theme, onMessageAction, startFR]);
+  }, [t, tags, selectedOhbox, toggleTag, theme, onMessageAction, startFR, engine]);
 
   /**
    * THE ONE NUMBER A NATIVE SHELL IS TOLD — see `AppShell`'s `onUnread`.
@@ -6616,6 +6774,53 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             ),
           }]
         : []),
+      /* ── TRASH, WHILE YOU ARE IN IT ───────────────────────────────────────────────────────
+         A `custom` group spread into the rail ONLY while Trash is the route, positioned after
+         the Folders group (after Tags when folders are off) and before the dock — the rail's
+         lower part. It disappears the moment the route leaves, because the memo's deps carry
+         `route.view` and the group is a conditional spread rather than a hidden node: outside
+         Trash the rail is BYTE-IDENTICAL to today, no extra `.rgroup`, nothing — the parity
+         shape `test/folders-rail.test.tsx` already pins for the Folders group, pinned again for
+         this one.
+         `items: []`, so `numberNav` reads nothing here and the digits are unchanged. A place
+         reached by ⌘K and `g t` does not earn a number, and taking one would renumber every
+         pile below it while somebody is standing in Trash. */
+      ...(route.view === "trash"
+        ? [{
+            items: [],
+            custom: (
+              <div className="rgroup rsub trash-rail" data-testid="rail-trash">
+                <div className="frow">
+                  {/* The twisty column as an empty SPACER, exactly as a leaf folder row uses
+                      it: it is what makes this label align with the folder labels above rather
+                      than sitting 14px to their left. */}
+                  <span className="ftw" />
+                  <button
+                    type="button"
+                    className="ritem on"
+                    aria-current="page"
+                    data-rail-id="trash"
+                    title={t("rail.trashTitle")}
+                    onClick={() => {
+                      setRailOpen(false);
+                      go("trash");
+                    }}
+                  >
+                    <Icon name="folder" className="fglyph" />
+                    <span className="flabel">{t("rail.trash")}</span>
+                    {/* THE PAGE'S ROW COUNT, and never "hot": nothing in Trash is new for
+                        anybody, and an accent number here would read as a demand. Empty while
+                        the first page is in flight — a `0` would claim the bin is empty before
+                        the server has answered. */}
+                    <span className="cnt num">
+                      {trashPage.items.length > 0 ? trashPage.items.length : ""}
+                    </span>
+                  </button>
+                </div>
+              </div>
+            ),
+          }]
+        : []),
       {
         items: [
           /**
@@ -6649,6 +6854,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       tagGroups, tags, createTagAlone, consent.foldersEnabled, consent.known, folders,
       folderUnread, folderVerbs, folderMailboxes, demo, syncStatus.bootstrapping, route.view,
       route.folderId, facts,
+      /* The count the transient entry renders. `route.view` is already here (the spread's own
+         condition), so this is the only new dependency the entry needs. */
+      trashPage.items.length,
     ],
   );
 
@@ -7827,6 +8035,22 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                 onCancelSchedule={cancelSchedule}
                 onEditScheduled={editScheduled}
                 repliesHere={draftRepliesHere}
+              />
+            ) : null}
+
+            {effectiveView === "trash" ? (
+              <TrashView
+                page={trashPage}
+                tags={tags}
+                threadParticipants={participantsOf}
+                now={now}
+                /* The URL's open message (`#/trash/m/<id>`) — a link into one deleted message,
+                   which is the reveal target the window has to mount. */
+                locateId={route.messageId}
+                onOpen={(m) => setReaderFor(m.id)}
+                hydrateBody={hydrateBody}
+                onAction={onMessageAction}
+                onAddTag={openTagPicker}
               />
             ) : null}
 

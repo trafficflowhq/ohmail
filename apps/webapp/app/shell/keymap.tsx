@@ -69,10 +69,14 @@ export const BINDING_GROUPS: BindingGroup[] = ["navigate", "message", "screener"
  * nothing at all — no cursor, no sentence, no request — and the `?` sheet was the only place
  * that state was visible. Reported from a real Ohbox, where ⌫ read as broken.
  *
- * The declaring site says which of the two it is; a binding that omits this keeps exactly the
- * old behaviour, which is what makes the rule additive rather than a new precedence.
+ * The declaring site says which it is; a binding that omits this keeps exactly the old
+ * behaviour, which is what makes the rule additive rather than a new precedence.
+ *
+ * A TOKEN, never a sentence: the dispatcher acts on `"no_cursor"` alone, and every other member
+ * is a reason the `?` sheet turns into words. Trash's two are keys that cannot work there at all,
+ * so they must keep falling through rather than promise a second press.
  */
-export type DisabledReason = "no_cursor";
+export type DisabledReason = "no_cursor" | "no_erase" | "trash_unavailable";
 
 /**
  * PUT A CURSOR ON THE FIRST ROW, and say so — the host's half of the rule above.
@@ -130,11 +134,10 @@ export interface KeyBinding {
    */
   disabled?: boolean;
   /**
-   * WHY it is inert, when the answer is one the dispatcher can act on — see
-   * {@link DisabledReason}. Set it exactly where `disabled` became true for want of a cursor
-   * and nowhere else: a binding resting for another reason (a 1:1 message has nobody to reply
-   * to all of, a row the mirror does not hold cannot be deleted) must keep falling through, and
-   * saying `"no_cursor"` there would promise a second press that cannot work.
+   * WHY it is inert — see {@link DisabledReason}. Set it only where the answer is one of that
+   * union's, and only on a `disabled` row: an explanation for an active binding is a sentence
+   * nothing can be true of. `"no_cursor"` is the one the dispatcher acts on; the others are read
+   * by the `?` sheet, which prints the row's reason as its `title`.
    */
   disabledReason?: DisabledReason;
   /**

@@ -271,3 +271,16 @@ button.ftw:hover{color:var(--ink)}
   .fmore{position:relative}
   .fmore::before{content:"";position:absolute;left:0;right:0;top:50%;height:44px;translate:0 -50%;z-index:1}
 }
+
+/* ── THE TRANSIENT TRASH ENTRY ──────────────────────────────────────────────────────────────
+   Present in the rail only while Trash is the route (`AppShell`'s `railGroups` spreads it
+   conditionally, so the rail outside Trash is byte-identical). It borrows the Folders row idiom
+   — `.frow` / `.ftw` / `.fglyph` / `.flabel` / `.cnt` inside `.rsub` — so every measure it has
+   is one the rail already defines and nothing here sets a size.
+
+   ENTER ONLY. The route change unmounts the group in the same frame, so a leave animation would
+   have to hold the rail non-identical for its own duration — which is exactly the parity claim
+   the rail carries. `both` so the entry does not flash at its start position on a slow frame. */
+.trash-rail{animation:trash-in .22s var(--swift) both}
+@keyframes trash-in{from{opacity:0;translate:0 4px}to{opacity:1;translate:none}}
+@media (prefers-reduced-motion:reduce){.trash-rail{animation:none}}

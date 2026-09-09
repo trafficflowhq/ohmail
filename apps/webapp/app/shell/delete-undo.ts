@@ -64,7 +64,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { EntityReader, EngineMessage } from "@ohmail/client-engine";
 import type { ToastFn } from "@ohmail/ui";
-import type { KeyBinding } from "./keymap";
+import type { DisabledReason, KeyBinding } from "./keymap";
 import { isModalOpen } from "./modal-gate";
 import { armDeleteIntent, disarmDeleteIntent, takeDeleteIntents, type HeldVerb } from "./delete-intents";
 import { UNDO_MS } from "./screener-state";
@@ -429,11 +429,33 @@ export function replayDeleteIntents(
  * from the list with the message still in Trash.
  */
 export function restoreDispatch(
-  restoreFromTrash: (messageId: string) => Promise<{ state: string }>,
+  restoreFromTrash: (messageId: string) => Promise<{ state: string; restoreTo?: string }>,
+  /**
+   * WHERE IT WENT, said when the SERVER has said it — and never at the press.
+   *
+   * The window's own `deleted` sentence is raised the moment the row is hidden, seconds before
+   * anything reaches a server, so it cannot name a place: the row was rendered with the origin
+   * the LIST knew, and that folder can be deleted between the page and the press. The server
+   * resolves the destination and answers with it, and this is the one moment that answer exists.
+   *
+   * It has to be a callback ON THE DISPATCH rather than a second call at the press site, and
+   * that is not a style preference — a second `restoreFromTrash` at the press would ISSUE THE
+   * REQUEST THEN, which is precisely what the held window exists to postpone. The whole undo
+   * would be gone and the suite would still be green, because the request does go out and the
+   * row does leave the list.
+   *
+   * Only on a real restore. A refusal says nothing here; the window's own `failed` sentence is
+   * the one that lands, and it says the mail is still in Trash.
+   */
+  onRestored?: (restoreTo: string) => void,
 ): HeldDispatch {
   return async (messageId) => {
     const outcome = await restoreFromTrash(messageId);
-    return { status: outcome.state === "restored" ? "applied" : "rolled_back" };
+    if (outcome.state === "restored") {
+      onRestored?.(outcome.restoreTo && outcome.restoreTo !== "" ? outcome.restoreTo : "INBOX");
+      return { status: "applied" };
+    }
+    return { status: "rolled_back" };
   };
 }
 
@@ -461,6 +483,14 @@ export function deleteKeyBindings(input: {
   label: string;
   /** The strip's own render gates, resolved by the caller exactly as `d`'s are. */
   canDelete: boolean;
+  /**
+   * WHY the keys are inert, for the `?` sheet's row — see `KeyBinding.disabledReason`.
+   *
+   * The gates above are several and most need no sentence: nothing focused, no row in the mirror.
+   * The one that does is Trash, where the keys can never work because the product does not erase
+   * mail. Optional, so a caller with nothing to explain says nothing.
+   */
+  disabledReason?: DisabledReason;
   run: (m: EngineMessage) => void;
 }): KeyBinding[] {
   const disabled = input.focused == null || !input.canDelete;
@@ -501,9 +531,15 @@ export function deleteKeyBindings(input: {
   const when = (e: KeyboardEvent) =>
     !e.repeat && !isModalOpen(e.view?.document ?? document);
   const run = () => { if (input.focused) input.run(input.focused); };
+  /* THE CALLER'S OWN REASON WINS over `no_cursor`. A key that cannot work in this view at all
+     must not claim the cursor is what is missing: `"no_cursor"` places one and promises a second
+     press, and in Trash no press works. Both chords carry the same answer. */
+  const reason = disabled && input.disabledReason
+    ? ({ disabledReason: input.disabledReason } as const)
+    : parked;
   return [
-    { chord: "Backspace", group: "message", label: input.label, disabled, ...parked, when, run },
-    { chord: "Delete", group: "message", label: input.label, disabled, ...parked, when, run },
+    { chord: "Backspace", group: "message", label: input.label, disabled, ...reason, when, run },
+    { chord: "Delete", group: "message", label: input.label, disabled, ...reason, when, run },
   ];
 }
 

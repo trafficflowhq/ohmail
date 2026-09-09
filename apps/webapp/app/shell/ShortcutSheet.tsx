@@ -15,7 +15,10 @@
 import { useEffect } from "react";
 import { useTranslations } from "next-intl";
 import { Icon, Kbd } from "@ohmail/ui";
-import { chordKeys, groupedBindings, useKeymap, type BindingGroup, type KeyBinding } from "./keymap";
+import {
+  chordKeys, groupedBindings, useKeymap,
+  type BindingGroup, type DisabledReason, type KeyBinding,
+} from "./keymap";
 
 /**
  * `KeyboardEvent.key` values that are a modifier being held, not a keystroke being made.
@@ -27,8 +30,23 @@ const MODIFIER_KEYS = new Set([
   "Fn", "FnLock", "Hyper", "Super", "Symbol", "SymbolLock",
 ]);
 
+/** One printed row: an instruction, the chords that reach it, and why it is inert here. */
+interface Row {
+  label: string;
+  chords: string[];
+  disabled: boolean;
+  /**
+   * WHY it is inert here, when a binding on the row said so — see `KeyBinding.disabledReason`.
+   * Folded exactly as `disabled` is: kept only while every chord on the row rests for the SAME
+   * reason, because a row is one instruction with several spellings.
+   */
+  reason: DisabledReason | undefined;
+}
+
 export function ShortcutSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   const t = useTranslations("shortcuts");
+  /* Trash's reasons live in their own namespace, where the view that raises them reads them. */
+  const tRoot = useTranslations();
   const { bindings, mod } = useKeymap();
 
   useEffect(() => {
@@ -70,7 +88,13 @@ export function ShortcutSheet({ open, onClose }: { open: boolean; onClose: () =>
    * bindings borrow the `g` chord's sentence for exactly this reason. A row is inert only when
    * every chord on it is.
    */
-  type Row = { label: string; chords: string[]; disabled: boolean; needsCursor: boolean };
+  /* ONE SENTENCE PER TOKEN — a `Record` over the union, so a new reason in `keymap.tsx` is a
+     type error here until somebody writes its words. */
+  const REASON_TEXT: Record<DisabledReason, string> = {
+    no_cursor: t("needsCursor"),
+    no_erase: tRoot("trash.noErase"),
+    trash_unavailable: tRoot("trash.unavailable"),
+  };
   const rows = (items: KeyBinding[]): Row[] => {
     const out: Row[] = [];
     for (const b of items) {
@@ -83,13 +107,13 @@ export function ShortcutSheet({ open, onClose }: { open: boolean; onClose: () =>
 
          FOLDED THE SAME WAY `disabled` IS, and it has to be: a row is one instruction with
          several spellings, and it only needs a cursor if EVERY chord on it is waiting for one. */
-      const needsCursor = b.disabled === true && b.disabledReason === "no_cursor";
+      const reason = b.disabled === true ? b.disabledReason : undefined;
       const row = out.find((r) => r.label === b.label);
       if (row) {
         row.chords.push(b.chord);
         row.disabled = row.disabled && Boolean(b.disabled);
-        row.needsCursor = row.needsCursor && needsCursor;
-      } else out.push({ label: b.label, chords: [b.chord], disabled: Boolean(b.disabled), needsCursor });
+        if (row.reason !== reason) row.reason = undefined;
+      } else out.push({ label: b.label, chords: [b.chord], disabled: Boolean(b.disabled), reason });
     }
     return out;
   };
@@ -115,12 +139,10 @@ export function ShortcutSheet({ open, onClose }: { open: boolean; onClose: () =>
                   <li
                     key={row.chords[0]}
                     className={row.disabled ? "off" : undefined}
-                    /* The remedy, on the row that needs it. A `title` and not a visible line: the
+                    /* The reason, on the row that has one. A `title` and not a visible line: the
                        sheet is a scan of forty rows and a sentence under every greyed one would
-                       bury the ones that are live. The rows that need a cursor also get the hint
-                       for free the moment a verb is pressed — this is for the reader who opened
-                       the sheet to find out WHY. */
-                    {...(row.needsCursor ? { title: t("needsCursor") } : {})}
+                       bury the ones that are live. */
+                    {...(row.reason ? { title: REASON_TEXT[row.reason] } : {})}
                   >
                     <span className="ks-keys">
                       {row.chords.map((chord, c) => (
