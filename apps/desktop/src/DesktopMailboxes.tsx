@@ -83,7 +83,7 @@
  * door could perform. The control is below, beside the resync, on the local door alone.
  */
 
-import { Fragment, useEffect, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { Button, SettingsActions, SettingsBanner, SettingsNote, SettingsRow, SettingsSection, SettingsVerdict } from "@ohmail/ui";
 
@@ -211,13 +211,126 @@ export interface MailboxReach {
 export interface MailboxReachSlice {
   /** What the engine said, per mailbox id. Empty when it said nothing. */
   rows: Record<string, MailboxReach>;
+  /** WHERE THIS POLL LANDED — see {@link MailboxReachPollState}. */
+  state: MailboxReachPollState;
+  /** WHICH silence or fault it was; `null` for a verdict and for a poll that has not landed. */
+  reason: MailboxReachPollReason | null;
+  /** The engine's status when it answered; `null` when nothing arrived. */
+  status: number | null;
   /**
-   * THE ROUTE ANSWERED, AND THE ANSWER WAS NOT A VERDICT — so every row is unknown.
+   * WHAT THE TRANSPORT THREW, class and message, bounded — the only diagnosis a silence carries.
    *
-   * `false` for the three silences below, which are "cannot tell" and leave each row exactly as
-   * it was. `true` only when the engine on this machine was reached and refused or failed.
+   * It exists so a repeat of the reading below can be NAMED rather than guessed at: the bridge's
+   * own refusals are sentences about this process's pipe ("32 requests are already waiting on the
+   * engine; this one was not sent", "the engine is still starting"), and none of them reaches the
+   * engine's log, because a request the shell refused to send was never sent. Bounded because a
+   * thrown value is somebody else's string, and no address or credential is in reach of it: the
+   * bridge composes these lines itself and the page never holds the engine's token.
    */
-  faulted: boolean;
+  detail: string | null;
+}
+
+/**
+ * WHERE ONE POLL OF THE REACH ROUTE LANDED — and the reason "silence" is not one state.
+ *
+ * There used to be two: a verdict, and `faulted` for "the engine answered and what it answered
+ * was not a verdict". Everything else — a transport that never delivered the question, and an
+ * engine answering 404 because it predates the route — arrived as an un-faulted empty map, which
+ * is byte for byte the value a healthy engine holding no runtimes produces. So a silence and an
+ * answer were one state, and the row read whatever it read before this existed.
+ *
+ * MEASURED, and this is the reading the four states are for: on the Windows guest, 2026-09-09,
+ * the Settings row for a mailbox this install organizes read "Up to date" for eleven samples of
+ * eleven across a nine-minute cut, while the engine's own log held the death (ECONNRESET), six
+ * failed re-dials and twenty-four failed cycles, and the engine's outage clock stayed armed the
+ * whole time. The engine was right and the pane never received its answer; with one state for
+ * "no answer" and "answered healthy", nothing on screen or in the log could tell the two apart.
+ *
+ *  · `unasked`  — no poll has landed yet, or this is not the local door. Nothing is claimed and
+ *                 nothing denied: the row keeps its ordinary state, which is what keeps the pane
+ *                 from flashing "Can't check" on the tick between mounting and the first answer.
+ *  · `verdict`  — the engine answered with a roster. A row it NAMES is decided by that record; a
+ *                 row it does not name ordinarily has no local runtime at all, which is the state
+ *                 of every mailbox ohmail Cloud organizes — see {@link reachUnknownForRow} for
+ *                 the one row where that absence is news instead.
+ *  · `silent`   — nothing was answered, and WHICH silence decides the sentence: `route-absent` is
+ *                 an engine older than the route (an ordinary state on a desktop that updates on
+ *                 its own schedule, and on a transport that does not carry the local routes);
+ *                 `transport-threw` is the question never arriving, which is not ordinary.
+ *  · `faulted`  — the engine on this machine was reached and refused or fell over.
+ */
+export type MailboxReachPollState = "unasked" | "verdict" | "silent" | "faulted";
+
+/**
+ * WHICH silence or fault this was.
+ *
+ * It reaches the LOG and never a sentence. The row has one honest thing to say for all of them —
+ * "Can't check the mail server right now" — because every one of them is the same fact from the
+ * person's side: this install cannot say. Which of them it was is the diagnostician's question.
+ */
+export type MailboxReachPollReason =
+  /** THE QUESTION NEVER ARRIVED: the bridge itself rejected, so the engine never saw a request. */
+  | "transport-threw"
+  /** 404 — an engine that predates the route, or a transport that does not carry the local ones. */
+  | "route-absent"
+  /** The engine answered and refused or fell over: any other non-OK status. */
+  | "refused"
+  /** An OK answer whose body is not JSON. */
+  | "unparseable-body"
+  /** A body that parsed and is not a roster. */
+  | "not-a-roster";
+
+/** A poll that has not landed. A fresh object per call, on {@link readMailboxReachVia}'s rule. */
+export const unaskedReach = (): MailboxReachSlice =>
+  ({ rows: {}, state: "unasked", reason: null, status: null, detail: null });
+
+/**
+ * WHAT THE TRANSPORT THREW, as one bounded line — see {@link MailboxReachSlice.detail}.
+ *
+ * `err.name` and not the constructor: an `AbortError` is a plain `Error` whose NAME carries the
+ * fact, which is the shape the bridge produces for the one call it bounds.
+ */
+function describeThrown(err: unknown): string {
+  const text = err instanceof Error ? `${err.name}: ${err.message}` : `${typeof err}: ${String(err)}`;
+  return text.length > 240 ? `${text.slice(0, 240)}\u2026` : text;
+}
+
+/**
+ * WHETHER AN ABSENT RECORD ABOUT ONE ROW MEANS "CANNOT CHECK" — the whole of the fix, in one
+ * pure function, because a rule that decides a sentence has to be assertable without a render.
+ *
+ * `rows[id]` being absent is FOUR different facts, and the pane used to act on one of them:
+ * only a `faulted` slice said "Can't check", so a transport that threw and an engine answering
+ * 404 both left the ladder to fall through to "Up to date" — over an install whose own log held
+ * the outage. Each arm below is a different answer to "is this absence news?", and each is
+ * watched by a case in `desktop-mailboxes.test.ts` that reddens when that arm alone is flipped.
+ */
+export function reachUnknownForRow(
+  slice: Pick<MailboxReachSlice, "state" | "reason">,
+  organizedHere: boolean,
+): boolean {
+  switch (slice.state) {
+    /* NOTHING HAS BEEN ASKED YET — the mount before the first answer, or another door. A pane
+       that read this as "cannot check" would print the sentence for a tick every time somebody
+       opened Settings, which is a false alarm with a true one's words. */
+    case "unasked": return false;
+    /* THE ENGINE ANSWERED SOMETHING THAT IS NOT A VERDICT. Unchanged: this arm is what the pane
+       already did, and it is the one silence that was already news. */
+    case "faulted": return true;
+    /* A 404 IS AN ORDINARY STATE AND A THROW IS NOT, and folding the two is what this fix undoes.
+       An engine older than the route cannot answer and is not broken; the desktop's own frame
+       door, by contrast, serves this route in the same build as the window, so a throw there is
+       the question failing to arrive at an engine that would have answered it. */
+    case "silent": return slice.reason === "transport-threw";
+    /* A ROSTER THAT DOES NOT NAME THIS ROW. For a mailbox this computer does not file, that is
+       the ordinary and correct answer — ohmail Cloud organizes it, this process holds no
+       connection for it, and a row reading "Organized by ohmail Cloud" must not start saying
+       "Can't check". For a row whose own description says THIS COMPUTER FILES IT, the engine
+       holds a runtime and the route answers from every runtime it holds, so an absence is a
+       missing answer rather than an answer — and "Up to date" would be a claim with nothing
+       behind it, which is the shape the whole of this function exists to refuse. */
+    case "verdict": return organizedHere;
+  }
 }
 
 /**
@@ -254,25 +367,31 @@ export async function readMailboxReachVia(
 ): Promise<MailboxReachSlice> {
   /* Fresh objects rather than a shared constant: `rows` is handed to a `useState` setter and a
      module-level literal would be one object shared by every poll of every pane. */
-  const silent = (): MailboxReachSlice => ({ rows: {}, faulted: false });
+  const silent = (
+    reason: MailboxReachPollReason, over: Partial<MailboxReachSlice> = {},
+  ): MailboxReachSlice => ({ rows: {}, state: "silent", reason, status: null, detail: null, ...over });
+  const faulted = (reason: MailboxReachPollReason, status: number): MailboxReachSlice =>
+    ({ rows: {}, state: "faulted", reason, status, detail: null });
   let res: Response;
   try {
     res = await fetchImpl("/local/mailboxes/connections");
-  } catch {
-    /* THE QUESTION NEVER ARRIVED. Nothing was answered, so nothing is known. */
-    return silent();
+  } catch (err) {
+    /* THE QUESTION NEVER ARRIVED. Nothing was answered, so nothing is known — and the throw is
+       CARRIED rather than swallowed, because it is the only account of a silence that leaves no
+       trace in the engine's log: a request the shell refused to send was never sent. */
+    return silent("transport-threw", { detail: describeThrown(err) });
   }
   /* THE ENGINE PREDATES THE ROUTE — the one non-OK status that is genuinely silence, and the
      reason this is a status test rather than `!res.ok`. */
-  if (res.status === 404) return silent();
-  if (!res.ok) return { rows: {}, faulted: true };
+  if (res.status === 404) return silent("route-absent", { status: 404 });
+  if (!res.ok) return faulted("refused", res.status);
   let body: unknown;
   try {
     body = await res.json();
   } catch {
     /* AN OK RESPONSE THAT IS NOT A VERDICT. `readMirrorFreshness` rejects on the same grounds and
        for the same reason: an unanswerable question must not be dressed as an answer. */
-    return { rows: {}, faulted: true };
+    return faulted("unparseable-body", res.status);
   }
   /* ── AND A BODY THAT PARSED IS STILL NOT NECESSARILY A VERDICT ──────────────────────────────
    *
@@ -287,7 +406,7 @@ export async function readMailboxReachVia(
    * the case that keeps this from being a check that fires on everything. */
   const items = (body as { items?: unknown } | null)?.items;
   if (typeof body !== "object" || body === null || Array.isArray(body) || !Array.isArray(items)) {
-    return { rows: {}, faulted: true };
+    return faulted("not-a-roster", res.status);
   }
   /* ── ONE ELEMENT IS A FACT ABOUT ONE ROW, AND NEVER ABOUT THE WHOLE READ ──────────────────
    *
@@ -328,7 +447,7 @@ export async function readMailboxReachVia(
       signInRefused: it.signInRefused === true,
     };
   }
-  return { rows: out, faulted: false };
+  return { rows: out, state: "verdict", reason: null, status: res.status, detail: null };
 }
 
 /**
@@ -696,7 +815,13 @@ export function DesktopMailboxes(
    * immediately rather than after a delay — a person opening Settings during an outage is
    * exactly who this line is for.
    */
-  const [reach, setReach] = useState<MailboxReachSlice>({ rows: {}, faulted: false });
+  const [reach, setReach] = useState<MailboxReachSlice>(unaskedReach);
+  /* THE ROWS THIS PANE IS SHOWING, for the poll's log line and for nothing else — through a REF
+     because the poll must not RESTART when the facts poller lands. `facts` in the dependency list
+     would tear the interval down and re-issue a read twice a minute, and a callback that outlives
+     the render it was made in has to read the current value rather than the one it closed over. */
+  const factsRef = useRef<MailboxFacts[] | null>(facts);
+  factsRef.current = facts;
   useEffect(() => {
     /* ── LOCAL DOOR ONLY ──────────────────────────────────────────────────────────────────
      *
@@ -706,7 +831,11 @@ export function DesktopMailboxes(
      * does not exist, for as long as the pane is open. The state it would fill is meaningless
      * there anyway: a Cloud mailbox's connection belongs to a worker on a shard, not to this
      * machine. `door` is in the dependency list, so switching doors starts or stops it. */
-    if (door !== "local") { setReach({ rows: {}, faulted: false }); return; }
+    /* `unaskedReach()` AND NOT A SILENT SLICE: on another door nothing has been asked, and the
+       difference decides a sentence now — a slice that says "asked, no answer" would put "Can't
+       check the mail server right now" on every hosted row, whose connection belongs to a worker
+       on a shard and was never this machine's to report. */
+    if (door !== "local") { setReach(unaskedReach()); return; }
     let live = true;
     /* THE SEQUENCE GUARD. Two reads are in flight whenever one takes longer than the interval —
        an engine mid-reconnect is exactly when it will — and promises settle in whatever order
@@ -716,11 +845,54 @@ export function DesktopMailboxes(
        strictly newer response is allowed to write. */
     let issued = 0;
     let shown = 0;
+    /* ── THE POLL SAYS WHERE IT LANDED, ONCE PER CHANGE ────────────────────────────────────
+     *
+     * The five landings this line tells apart are the ones the row's sentence is derived from:
+     * the engine answered badly; nothing arrived, and which silence it was; it answered a roster
+     * that does not name a row this pane is showing; and it named one — reachable, or not. Before
+     * this, a silence and a healthy verdict produced the same screen AND the same nothing
+     * anywhere else, which is why a nine-minute outage on the Windows guest could be measured on
+     * screen and not attributed afterwards to either half of the pair.
+     *
+     * ON CHANGE, not per poll: four lines a minute for as long as Settings is open would bury the
+     * transition that anybody is actually looking for.
+     *
+     * `console` IS THE WHOLE OF THIS PANE'S REACH, said here so that a later reader does not take
+     * the line for a field instrument. The window holds two shell commands and has no route into
+     * the engine's log, so this is visible in the web inspector and nowhere else; the half a
+     * released install would be diagnosed from is one line where the engine's roster route
+     * ANSWERS, and that line is not in this change. */
+    let noted = "";
+    const noteLanding = (r: MailboxReachSlice): void => {
+      const rows = (factsRef.current ?? []).filter((m) => m.status !== "disabled");
+      const named = rows.filter((m) => r.rows[m.id] !== undefined);
+      const answered = named.filter((m) => r.rows[m.id]!.answered);
+      const line = JSON.stringify({
+        where: r.state,
+        ...(r.reason === null ? {} : { reason: r.reason }),
+        ...(r.status === null ? {} : { status: r.status }),
+        ...(r.detail === null ? {} : { detail: r.detail }),
+        /* COUNTS AND NEVER IDS OR ADDRESSES. Which mailbox is on which provider is the
+           identifying signal this product keeps out of diagnostics, and the row's own sentence
+           on screen is what pairs a count with a row. */
+        rows: {
+          shown: rows.length,
+          withoutRecord: rows.length - named.length,
+          unanswered: named.length - answered.length,
+          reachable: answered.filter((m) => r.rows[m.id]!.reachable).length,
+          unreachable: answered.filter((m) => !r.rows[m.id]!.reachable).length,
+        },
+      });
+      if (line === noted) return;
+      noted = line;
+      console.info("ohmail reach poll:", line);
+    };
     const read = (): void => {
       const seq = ++issued;
       void readMailboxReachVia(bridgeFetch).then((r) => {
         if (!live || seq <= shown) return;
         shown = seq;
+        noteLanding(r);
         setReach(r);
       });
     };
@@ -1249,6 +1421,23 @@ export function DesktopMailboxes(
    * What each mailbox is doing, in one line. A closure rather than a module function so it reads
    * the same translator the rest of the pane does; there is nothing to share it with.
    */
+  /**
+   * WHETHER THIS COMPUTER FILES THIS MAILBOX — the row's own claim, in one place.
+   *
+   * The description renders "Organized on this computer" from it and the state ladder reads it to
+   * decide whether an ABSENT connection record is news (see {@link reachUnknownForRow}). Two
+   * spellings of one rule is how the two halves of a row come to contradict each other, so the
+   * expression the description carried is now this and the ladder asks the same question.
+   *
+   * `organizeConsentedAt` and not the role alone: the column rests at `'organizer'` and the
+   * mapper coerces anything that is not literally `"reader"` to it, so the role by itself says
+   * this about a mailbox that was connected and never agreed to, while nothing is filed and
+   * `ohmail/*` does not exist.
+   */
+  const organizesHere = (m: MailboxFacts): boolean =>
+    !cloud && m.status !== "disabled" && m.organizerRole !== "reader"
+    && Boolean(m.organizeConsentedAt);
+
   const stateOf = (m: MailboxFacts): string => {
     if (m.status === "error") {
       return t("desktopStateError", { code: m.errorCode ?? t("desktopUnknownCode") });
@@ -1278,9 +1467,13 @@ export function DesktopMailboxes(
     if (r?.signInRefused) return t("desktopStateSignInRefused");
     /* ── THE ENGINE COULD NOT SAY, AND THAT IS ITS OWN SENTENCE ─────────────────────────────
      *
-     * Only when the row has no answer of its own: a slice that faulted carries none, but the
-     * check is written on the row rather than on the verdict so a future partial answer keeps
-     * whatever it managed to say.
+     * Only when the row has no answer of its own — the check is written on the row rather than on
+     * the poll, so a partial answer keeps whatever it managed to say — and then only when that
+     * absence is NEWS: {@link reachUnknownForRow} owns that decision, and it owns it because the
+     * arm used to read `reach.faulted` alone. A transport that threw and an engine answering 404
+     * both left this arm unentered and the ladder fell through to "Up to date"; that is the
+     * Windows reading of 2026-09-09, eleven samples of eleven over a nine-minute cut the engine
+     * had recorded correctly the whole time.
      *
      * NOT `desktopStateUnreachable`. That sentence — "Can't reach the mail server" — is a claim
      * about the PERSON'S MAIL SERVER, and what actually happened is that the engine on this
@@ -1293,7 +1486,7 @@ export function DesktopMailboxes(
      * next good answer replaces it, rather than asserting an outage and then withdrawing it. No
      * debounce for that reason — a delay would hold a true outage back by as long as it holds a
      * false one, and this arm no longer claims anything that needs holding back. */
-    if (!r && reach.faulted) return t("desktopStateUnknown");
+    if (!r && reachUnknownForRow(reach, organizesHere(m))) return t("desktopStateUnknown");
     if (r && !r.reachable) {
       /* `agoStamp(...).rel` AND NOT `day(...)`: an outage is a DURATION, and the neighbouring
          `day` stamp is deliberately date-only because the sentences it serves are standing facts
@@ -1738,8 +1931,7 @@ export function DesktopMailboxes(
                  agreed to, while nothing is filed and `ohmail/*` does not exist. Reachable from
                  this pane's own Add mailbox: connect, then cancel at the consent screen.
                  `organizeConsentedAt` is the truth-condition and it is already on the facts. */
-              !cloud && shown.status !== "disabled" && shown.organizerRole !== "reader"
-              && Boolean(shown.organizeConsentedAt) ? (
+              organizesHere(shown) ? (
                 <>
                   {t("desktopLastChecked", { when: when(shown.lastSyncAt) })}
                   {" · "}

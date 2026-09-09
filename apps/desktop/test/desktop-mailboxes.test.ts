@@ -2360,3 +2360,275 @@ describe("the pane tells the truth about the outage, the holder and the standing
       .not.toContain(mailboxCopy.stateReleased!.replace("{when}", "—"));
   });
 });
+
+/**
+ * ═══ A ROW NOTHING ANSWERED ABOUT MUST NOT READ AS A HEALTHY ONE ═══════════════════════════
+ *
+ * MEASURED, on Windows, 2026-09-09: during a nine-minute cut of port 993
+ * the Settings row for the mailbox that install organizes read "Up to date" for eleven samples of
+ * eleven, while the engine's own log held the death (`mailbox_connection_unavailable`,
+ * ECONNRESET, detected by the adapter's own event), six `mailbox_reconnect_failed` and
+ * twenty-four `sync_cycle_failed`. The engine was RIGHT: its outage clock was armed at the death
+ * and never cleared — the one drain that returned in the span landed 664 ms BEFORE it, so the one
+ * site that clears the clock did not run — and the row's "Last checked" stamp, which comes from
+ * the shared facts poller, froze at the death second and went fresh at the reconnect second. The
+ * two halves of one row disagreed for nine minutes.
+ *
+ * WHAT THE VALUE NEEDS is the pane's own reach poll, and `readMailboxReachVia` answered a SILENT
+ * slice — `{rows:{}, faulted:false}` — for a transport that threw and for a 404 alike. With no
+ * record for the row and no fault on the slice, `stateOf`'s outage arm cannot be entered and the
+ * ladder falls through to "Up to date". So the fix is the poll's own state, named:
+ * `unasked | verdict | silent | faulted`, plus WHICH silence, and one rule over the absence —
+ * `reachUnknownForRow`.
+ *
+ * ── EVERY ARM OF THAT RULE HAS A CASE HERE, AND EACH WAS WATCHED RED ────────────────────────
+ *
+ *  · `case "silent": return slice.reason === "transport-threw"` → true unconditionally reddens
+ *    the 404 control; false unconditionally reddens the Windows case, which is the red-before;
+ *  · `case "verdict": return organizedHere` → true unconditionally reddens the Cloud-organized
+ *    control; false unconditionally reddens the filed-row case;
+ *  · `case "unasked": return false` → true reddens the first-paint control;
+ *  · `case "faulted": return true` → false reddens the 500 case;
+ *  · and restoring the whole arm to `if (!r && reach.faulted)` reddens the Windows case, the
+ *    filed-row case and nothing else.
+ */
+describe("the pane says it cannot check, rather than that the mailbox is up to date", () => {
+  const copy = (messages as unknown as { mailboxes: Record<string, string> }).mailboxes;
+
+  /**
+   * THE SHAPE OF THE ROW THAT WAS MEASURED — one whose own description says THIS COMPUTER
+   * FILES IT.
+   *
+   * `organizeConsentedAt` and not the role alone, because that is what `organizesHere` reads and
+   * what the guest's row rendered ("Organized on this computer"): the role column rests at
+   * `'organizer'`, so a row that was connected and never agreed to would otherwise qualify.
+   */
+  const FILED: MailboxFacts = {
+    ...MAILBOX,
+    organizerRole: "organizer",
+    organizeConsentedAt: "2026-08-01T09:00:00.000Z",
+  };
+
+  const roster = (items: unknown[]): Response => new Response(JSON.stringify({ items }), {
+    status: 200, headers: { "content-type": "application/json" },
+  });
+  /** A bridge that rejects, in the shell's own words. */
+  const throwing = (message: string) => () => { throw new Error(message); };
+
+  /**
+   * THE RED-BEFORE. The bridge's refusal is quoted from the shell that produces it
+   * (`MAX_PENDING_REQUESTS`, `apps/desktop/src-tauri/src/engine.rs`) — a request the shell
+   * refuses to send is never sent, so it leaves nothing in the engine's log either, which is why
+   * the Windows reading could be measured on screen and attributed to neither half afterwards.
+   */
+  it("THE WINDOWS READING — a bridge that throws never leaves the row saying 'Up to date'", async () => {
+    FACTS = [FILED];
+    bridgeReply = throwing("32 requests are already waiting on the engine; this one was not sent");
+
+    const text = (await render("local")).textContent ?? "";
+    expect(bridged, "the pane never asked the reach question at all")
+      .toContainEqual({ url: "/local/mailboxes/connections", method: "GET" });
+    expect(text, "a row nothing answered about read as a healthy mailbox — the Windows reading")
+      .not.toContain(copy.desktopStateUpToDate!);
+    expect(text, "the row said nothing about a question that never arrived")
+      .toContain(copy.desktopStateUnknown!);
+    expect(text, "a question that never arrived was reported as the person's server being down")
+      .not.toContain(copy.desktopStateUnreachable!);
+    expect(text, "a slice with no per-row answer invented a duration for an outage")
+      .not.toContain("Last answered");
+  });
+
+  /**
+   * THE OTHER SILENCE, AND IT MUST NOT MOVE: a 404 is an engine older than the route, which is an
+   * ordinary state on a desktop that updates on its own schedule. The desktop's own frame door
+   * serves this route in the same build as the window, so a 404 there cannot be that build's
+   * engine refusing — which is exactly why the two silences are told apart rather than merged.
+   */
+  it("CONTROL — a 404 stays ordinary, even on a row this computer files", async () => {
+    FACTS = [FILED];
+    bridgeReply = () => new Response(null, { status: 404 });
+
+    const text = (await render("local")).textContent ?? "";
+    expect(text, "an engine older than the route was read as a question that could not be asked")
+      .not.toContain(copy.desktopStateUnknown!);
+    expect(text).toContain(copy.desktopStateUpToDate!);
+  });
+
+  /**
+   * THE FIRST PAINT. `unasked` is not a silence: nothing has been asked yet. Read as one, the
+   * sentence would appear for a tick every time somebody opened Settings — a false alarm wearing
+   * a true one's words, which is the failure this whole file is about, inverted.
+   *
+   * Driven with a read that never settles, which is the state the pane is in between mounting and
+   * its first answer.
+   */
+  it("CONTROL — before the first answer lands the row keeps its ordinary state", async () => {
+    FACTS = [FILED];
+    bridgeReply = () => new Promise<Response>(() => { /* never settles */ });
+
+    const text = (await render("local")).textContent ?? "";
+    expect(text, "the pane announced it could not check before it had asked")
+      .not.toContain(copy.desktopStateUnknown!);
+    expect(text).toContain(copy.desktopStateUpToDate!);
+  });
+
+  /**
+   * A VERDICT THAT DOES NOT NAME A ROW THIS COMPUTER FILES. The engine answers this route from
+   * every runtime it holds, and a mailbox it organizes has one, so the absence is a missing
+   * answer rather than an answer — and "Up to date" would be a claim with nothing behind it.
+   */
+  it("a roster that skips a row this computer files is a missing answer, not a healthy one", async () => {
+    FACTS = [FILED];
+    bridgeReply = () => roster([{ mailboxId: "some-other-row", reachable: true, unreachableSince: null }]);
+
+    const text = (await render("local")).textContent ?? "";
+    expect(text, "a row the engine said nothing about read as a working mailbox")
+      .not.toContain(copy.desktopStateUpToDate!);
+    expect(text).toContain(copy.desktopStateUnknown!);
+  });
+
+  /**
+   * AND THE ROW THAT MUST NOT MOVE — a mailbox ohmail Cloud organizes. This install holds no
+   * connection for it, so the roster naming no record for it is the ORDINARY answer, and the row
+   * reads what it read before this change. Measured on the same pass, on a mailbox organized in
+   * ohmail Cloud: ten readings of ten, "Organized by ohmail Cloud". A rule that fired on every
+   * absent record would have replaced that sentence with "Can't check the mail server right now".
+   */
+  it("CONTROL — a Cloud-organized row keeps its sentence when the roster has no record", async () => {
+    FACTS = [{
+      ...MAILBOX,
+      organizerRole: "reader",
+      organizedBy: { kind: "cloud", name: "ohmail Cloud", since: "2026-08-30T09:00:00.000Z" },
+      organizerState: "held",
+      organizeConsentedAt: null,
+    }];
+    bridgeReply = () => roster([]);
+
+    const text = (await render("local")).textContent ?? "";
+    expect(text, "a row this install does not organize was told this install could not check it")
+      .not.toContain(copy.desktopStateUnknown!);
+    expect(text, "the reader sentence was replaced by a fact about somebody else's connection")
+      .toContain(copy.stateReading!);
+  });
+
+  /** The arm that already worked, kept: the engine answered and it was not a verdict. */
+  it("CONTROL — an engine that answers 500 about its own sockets still says so", async () => {
+    FACTS = [FILED];
+    bridgeReply = () => new Response(null, { status: 500 });
+
+    const text = (await render("local")).textContent ?? "";
+    expect(text).toContain(copy.desktopStateUnknown!);
+    expect(text).not.toContain(copy.desktopStateUpToDate!);
+  });
+
+  /** THE POSITIVE HALF, both ways: a verdict about this row decides the row. */
+  it("CONTROL — a verdict about this row is what the row renders, either way", async () => {
+    FACTS = [FILED];
+    bridgeReply = () => roster([{ mailboxId: "mbx-1", reachable: true, unreachableSince: null }]);
+    let text = (await render("local")).textContent ?? "";
+    expect(text, "a healthy verdict was overridden by the absence rule").toContain(copy.desktopStateUpToDate!);
+    expect(text).not.toContain(copy.desktopStateUnknown!);
+    await act(async () => { root!.unmount(); });
+    root = null;
+
+    bridgeReply = () => roster([{
+      mailboxId: "mbx-1",
+      reachable: false,
+      unreachableSince: new Date(Date.now() - 20 * 60_000).toISOString(),
+    }]);
+    text = (await render("local")).textContent ?? "";
+    expect(text, "the outage sentence lost its place to the absence rule")
+      .toContain("Can't reach the mail server");
+    expect(text, "an answered outage was reported as an unanswerable question")
+      .not.toContain(copy.desktopStateUnknown!);
+    expect(text).toContain("20 minutes ago");
+  });
+
+  /**
+   * THE POLL SAYS WHERE IT LANDED — the instrument, and the reason it exists: before it, a
+   * silence and a healthy verdict produced the same screen AND the same nothing anywhere else.
+   * It is the web inspector's line and not the engine's log (the window has no route into that),
+   * which is stated here so nobody reads it as a field instrument it is not.
+   */
+  it("the poll reports its landing, once per change, with which silence it was", async () => {
+    FACTS = [FILED];
+    const said: string[] = [];
+    vi.spyOn(console, "info").mockImplementation((...args: unknown[]) => {
+      said.push(args.map((a) => String(a)).join(" "));
+    });
+    const lines = (): string[] => said.filter((l) => l.includes("ohmail reach poll:"));
+    bridgeReply = throwing("the engine is still starting");
+
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await render("local");
+      expect(lines().length, "the landing was never reported").toBe(1);
+      expect(lines()[0], "the state the row was derived from was not named")
+        .toContain('"where":"silent"');
+      expect(lines()[0], "which silence it was is the whole diagnosis")
+        .toContain('"reason":"transport-threw"');
+      expect(lines()[0], "the transport's own account of the refusal was dropped")
+        .toContain("the engine is still starting");
+      expect(lines()[0], "the row the answer was owed about was not counted")
+        .toContain('"withoutRecord":1');
+
+      /* THE SAME LANDING AGAIN IS NOT NEWS: at four polls a minute a line each would bury the
+         transition anybody is reading the log for. */
+      await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+      expect(lines().length, "an unchanged landing was reported twice").toBe(1);
+
+      /* …AND A LANDING THAT DIFFERS IS. Without this the de-duplication would be indistinguishable
+         from a line that only ever fires once. */
+      bridgeReply = () => roster([{
+        mailboxId: "mbx-1", reachable: false, unreachableSince: new Date().toISOString(),
+      }]);
+      await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+      expect(lines().length, "the poll's recovery into a verdict went unreported").toBe(2);
+      expect(lines()[1]).toContain('"where":"verdict"');
+      expect(lines()[1], "an answered outage was not counted as one").toContain('"unreachable":1');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /**
+   * THE READER'S OWN ARMS, without a render: each landing carries the state, the reason and the
+   * status it was reached by. The pane's sentence is derived from these three, so they are pinned
+   * here rather than inferred from the screen.
+   */
+  it("every landing carries its state, its reason and the status it came from", async () => {
+    const { readMailboxReachVia } = await import("../src/DesktopMailboxes.js");
+    const answers = (res: () => Response | Promise<Response>) =>
+      readMailboxReachVia(async () => res());
+
+    expect(await answers(() => new Response(JSON.stringify({ items: [] }), {
+      status: 200, headers: { "content-type": "application/json" },
+    }))).toEqual({ rows: {}, state: "verdict", reason: null, status: 200, detail: null });
+
+    expect(await answers(() => new Response(null, { status: 404 })))
+      .toEqual({ rows: {}, state: "silent", reason: "route-absent", status: 404, detail: null });
+
+    expect(await answers(() => new Response(null, { status: 401 })))
+      .toEqual({ rows: {}, state: "faulted", reason: "refused", status: 401, detail: null });
+
+    expect(await answers(() => new Response("not json", {
+      status: 200, headers: { "content-type": "application/json" },
+    }))).toEqual({ rows: {}, state: "faulted", reason: "unparseable-body", status: 200, detail: null });
+
+    expect(await answers(() => new Response("{}", {
+      status: 200, headers: { "content-type": "application/json" },
+    }))).toEqual({ rows: {}, state: "faulted", reason: "not-a-roster", status: 200, detail: null });
+
+    const threw = await readMailboxReachVia(() => { throw new Error("the engine has stopped"); });
+    expect(threw.state).toBe("silent");
+    expect(threw.reason).toBe("transport-threw");
+    expect(threw.status, "a question that never arrived reported a status it never got").toBeNull();
+    expect(threw.detail).toBe("Error: the engine has stopped");
+
+    /* A THROWN VALUE IS SOMEBODY ELSE'S STRING — bounded, and a non-Error still says something. */
+    const long = await readMailboxReachVia(() => { throw new Error("x".repeat(400)); });
+    expect((long.detail ?? "").length, "an unbounded line went into the log").toBeLessThanOrEqual(241);
+    const odd = await readMailboxReachVia(() => { throw "just a string"; });
+    expect(odd.detail).toContain("just a string");
+  });
+});
