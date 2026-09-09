@@ -94,6 +94,7 @@ import { workflowDrainPass, workflowTimeScanPass, unconfiguredDrafter } from "./
 import { bubbleUpPass } from "./bubble-up-cron.js";
 import { threadJoinHealPass, type ThreadJoinHealCursor } from "./thread-join-heal.js";
 import { inboundQuietPass } from "./inbound-quiet.js";
+import { awayReplyFlagRedeliverPass } from "./away-reply-flag-redeliver.js";
 import { ruleRetroPass } from "./rule-retro.js";
 import { ohboxTidyPass } from "./ohbox-tidy.js";
 import { screenerAutoApplyPass } from "./screener-auto.js";
@@ -172,6 +173,20 @@ export const THREAD_JOIN_HEAL_EVERY_MS = 6 * 60 * 60 * 1000;
  * would be a fleet-wide grouped aggregate bought against no user-visible latency.
  */
 export const INBOUND_QUIET_EVERY_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * THE AWAY-REPLY FLAG RE-DELIVERY RUNS ONCE PER WORKER PROCESS — not on an interval.
+ *
+ * The pass has no durable marker, deliberately (`away-reply-flag-redeliver.ts` records the two
+ * shapes that were tried and why both were rejected, one of them for being silently wrong). So the
+ * gate is the process: one sweep of every served account on the first cycle after start, and then
+ * never again until the next restart. Repairing a mailbox costs tens of change rows at most, so a
+ * repeat per deploy is a bounded and visible cost — where a hardcoded cutoff would be an unbounded
+ * and invisible one.
+ *
+ * It is a REPAIR, not a feature: once a release carrying `autoReplyByUs` has reached every client,
+ * this and the pass it calls can be deleted outright.
+ */
 
 /**
  * ENFORCED SYNC — how often the worker scans for mailboxes the API has stamped `sync_requested_at`.
@@ -855,6 +870,11 @@ export async function startWorkerWithLock(
      * bounded grouped aggregate per served account.
      */
     let lastInboundQuietAt = 0;
+    /**
+     * FALSE until the one sweep has run, so the flag reaches warm mirrors on the first cycle after
+     * the deploy and the walk is never repeated inside one process. See the constant's docblock.
+     */
+    let awayReplyRedeliverDone = false;
     /**
      * Where each account's LAST gated heal run stopped, kept only while it stopped on its
      * BUDGET. An account holding more duplicate-name groups than one run's cap would otherwise
@@ -5074,6 +5094,41 @@ export async function startWorkerWithLock(
               reason: "the quiet-mailbox judgment was skipped this pass; episodes already " +
                 "stamped stand, nothing is cleared or tripped, and the next gated run " +
                 "re-reads reality — syncing is untouched",
+            });
+          }
+        }
+      }
+
+      // ── RE-DELIVER `autoReplyByUs` TO MIRRORS THAT PREDATE IT ──────────────────────────
+      //
+      // The flag is computed at materialize time, so it reaches a message only when a change_log
+      // row for that message does. Every responder reply already sitting in somebody's Ohbox was
+      // written before the flag existed, so without this pass the client half filters on a field
+      // those rows do not carry and the replies stay in "Earlier" for ever — the fix invisible on
+      // exactly the mailboxes that reported the bug. Found by review as a HIGH.
+      //
+      // ONCE PER PROCESS, on the first cycle: see the gate's docblock for why there is no
+      // durable marker and no interval. Its OWN try/catch and loop like every pass here — one
+      // account's failure must not skip the rest, and this one must never abort a cycle: it
+      // writes no state of its own, so the next gated run simply re-reads reality. It moves
+      // nothing and touches no message row; a change_log row is a re-read instruction.
+      if (!awayReplyRedeliverDone) {
+        // Set BEFORE the loop, not after: a per-account failure is caught below and must not make
+        // the whole fleet's sweep repeat on the next cycle. A mailbox missed here is repaired on
+        // the next worker start, which is the same guarantee every other account already has.
+        awayReplyRedeliverDone = true;
+        for (const accountId of passAccounts) {
+          if (stopped) return;
+          try {
+            await asDatabaseFault("cycle.awayReplyFlagRedeliverPass",
+              () => awayReplyFlagRedeliverPass(db as unknown as Tx, { accountId, log }));
+          } catch (err) {
+            noteIfSharedDatabaseFault(err);
+            log.error("away_reply_flag_redeliver_failed", {
+              accountId, err,
+              reason: "no change row for this account committed partially — each page is one " +
+                "transaction — and the candidate predicate is the rows' own state, so the next " +
+                "gated run re-reads reality and resumes; no message was moved or altered",
             });
           }
         }
