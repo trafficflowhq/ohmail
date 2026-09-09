@@ -242,6 +242,33 @@ once for the whole page, whatever its length. The desktop's store answers one qu
 so a list held it for the whole of that work; it now holds it for a fraction of it, and mail
 arriving in the background waits behind it less.
 
+### A self-hosted install listens only where you told it to
+
+The self-host stack's front door published ports 80 and 443 with no address, which binds every
+interface the machine has. On a rented server that includes its public IP, so an install reached
+only over a tailnet or a home LAN — on a name no public DNS resolves — was still answering the
+internet on 443. The hostname was never the boundary; the open socket is.
+
+`OHMAIL_BIND` in `.env` is now the one place that is decided, and it defaults to `127.0.0.1`:
+nothing outside the machine can connect until an operator says otherwise. `0.0.0.0` is the
+explicit choice for a public domain and means reachable from every interface of that box;
+a private install names its tailnet or LAN address instead.
+
+**If you run a self-hosted install on a public domain, set `OHMAIL_BIND=0.0.0.0` when you take
+the new compose file.** Without it the stack comes back up on loopback and your domain stops
+answering — and the certificate renewal stops too, because a public authority has to reach port
+80 from the internet to validate the name. The operator guide and `.env.example` both say so
+beside the value.
+
+### Two self-hosted stacks on one machine no longer adopt each other
+
+The compose project name was the fixed string `ohmail`. Compose identifies an install by that
+name and names every container, volume and network after it, so a second stack on the same
+machine was the same project: `docker compose up` in the second directory adopted the first
+install's containers and volumes and mutated them, with nothing reported anywhere. `OHMAIL_PROJECT`
+now names each stack, defaulting to the name every existing install already has — so a single
+stack is untouched, and two of them share nothing.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

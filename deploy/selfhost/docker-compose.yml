@@ -31,12 +31,27 @@
 # the recipe beside it, and any of the three can be rebuilt from a clone:
 # `docker build -f apps/server/Dockerfile .` from the repository root.
 #
+# TWO THINGS AN OPERATOR DECIDES ABOUT THIS FILE BEFORE ANYTHING ELSE, both in `.env`:
+# OHMAIL_BIND, the address the front door listens on (loopback by default — see the `proxy`
+# service), and OHMAIL_PROJECT, which is what lets a second stack exist on the same box without
+# adopting the first one's containers.
+#
 # Start order is dependency-checked, not hoped for: `api` waits for a HEALTHY database and
 # a created bucket; `organizer` waits for a HEALTHY `api`, whose /health only answers after
 # its boot migrations verified the schema — so the organizer can never race a cold
 # database's migration.
 
-name: ohmail
+# WHAT THIS STACK IS CALLED, and why it is a variable rather than the literal it was.
+#
+# Compose names every container, volume and network after the project. A hardcoded name means
+# two ohmail stacks on ONE box are the SAME project: the second `docker compose up` adopts the
+# first one's containers and volumes and mutates them — a household install replaced by a test
+# install, with no error anywhere. Set OHMAIL_PROJECT per stack and they are two installs that
+# share nothing.
+#
+# The default is the name every existing install already has, so nothing moves for anyone who
+# runs one stack: changing it would orphan their volumes.
+name: ${OHMAIL_PROJECT:-ohmail}
 
 services:
   proxy:
@@ -60,8 +75,26 @@ services:
       # stay the same value the api and organizer read, which the shared default guarantees.
       S3_BUCKET: ${S3_BUCKET:-ohmail-staging}
     ports:
-      - "80:80"
-      - "443:443"
+      # ── WHERE THIS INSTALL LISTENS, WHICH IS NOT THE SAME QUESTION AS WHAT IT IS CALLED ──
+      #
+      # These two lines used to read `"80:80"` and `"443:443"`, and a publish with no address
+      # binds 0.0.0.0 AND [::] — every interface the box has. On a rented VPS that includes its
+      # public IP, so an install reached only over a tailnet or a LAN, on a name no public DNS
+      # resolves, was still answering the internet on 443. The hostname is not the boundary; the
+      # socket is. (`mailpit` below has had it right all along.)
+      #
+      # The default is now LOOPBACK, which is the direction a default has to fail in: an install
+      # that is unreachable until its operator says otherwise, rather than one that is public
+      # until its operator notices. OHMAIL_BIND is the one place that decision is made —
+      # `0.0.0.0` for a public domain, the tailnet or LAN address for a private install, and
+      # `127.0.0.1` when a TLS terminator on this same box is the only thing that dials in
+      # (see OHMAIL_EXTERNAL_TLS in .env.example).
+      #
+      # AN EXISTING PUBLIC INSTALL MUST SET `OHMAIL_BIND=0.0.0.0` when it takes this file, or it
+      # stops answering. That is stated in .env.example, in the operator guide and in the
+      # release notes, because a silent change of posture in either direction is the failure.
+      - "${OHMAIL_BIND:-127.0.0.1}:80:80"
+      - "${OHMAIL_BIND:-127.0.0.1}:443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

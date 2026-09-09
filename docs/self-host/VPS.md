@@ -390,22 +390,18 @@ than a mis-set variable.
 
 ### 2. Bind the proxy to the private interface
 
-This step is the difference between "private" and "private in intent", and
-it is the one the compose file does not do for you.
+This step is the difference between "private" and "private in intent". It
+used to be an edit to `docker-compose.yml` that this guide asked you to make
+by hand; it is one line in `.env` now, and the default already errs the safe
+way.
 
-As shipped, the proxy publishes `80:80` and `443:443`, which binds **every
-interface on the box**. On a rented VPS that includes its public IP — so an
-install you think of as tailnet-only is answering the internet on port 443,
-regardless of what its hostname is or who can resolve it.
+`OHMAIL_BIND` is the address the front door listens on, and it defaults to
+`127.0.0.1` — loopback, nothing outside the box. Set it to the address your
+private network gave the box (`tailscale ip -4`, or
+`ip -4 addr show tailscale0`):
 
-Find the address your private network gave the box (`tailscale ip -4`, or
-`ip -4 addr show tailscale0`) and pin the publish to it in
-`docker-compose.yml`, under the `proxy` service:
-
-```yaml
-    ports:
-      - "100.x.y.z:80:80"
-      - "100.x.y.z:443:443"
+```sh
+OHMAIL_BIND=100.x.y.z
 ```
 
 Recreate the proxy and check:
@@ -416,10 +412,18 @@ ss -tlnH | awk '{print $4}' | grep -E ':(80|443)$'
 ```
 
 Every line should carry the private address. If any line reads `0.0.0.0:443`
-or `[::]:443`, the install is still listening on the public interface. A
-firewall that drops 80/443 on the public interface achieves the same thing
-and is worth having as well, but the bind is the part that cannot be
+or `[::]:443`, the install is listening on every interface the box has — on a
+rented VPS that includes its public IP, so an install you think of as
+tailnet-only would be answering the internet on 443, whatever its hostname is
+and whoever can resolve it. A firewall that drops 80/443 on the public
+interface is worth having as well, but the bind is the part that cannot be
 misconfigured open.
+
+**If you are updating an install that serves a public domain**, this default
+is a change of posture and you have to say so: set `OHMAIL_BIND=0.0.0.0`
+before you bring the stack back up, or the domain stops answering. The
+certificate renewal needs it too — a public authority reaches port 80 from
+the internet or it cannot validate the name.
 
 ### What needs no inbound connection, and why
 

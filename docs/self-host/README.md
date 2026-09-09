@@ -52,6 +52,16 @@ Whichever path you take, read [BACKUP.md](./BACKUP.md) once the stack is up.
 The nightly backup is part of setup, not an appendix: it is one cron line,
 and the day it matters it is the only thing that does.
 
+**Two stacks on one box.** Compose identifies an install by its project name,
+and every container, volume and network is named after it. Two ohmail stacks
+that share that name are one project, so the second `docker compose up` adopts
+and mutates the first one's containers and volumes — a household install
+replaced by a test install, with nothing reported anywhere. Give each stack
+its own directory, its own `.env`, its own `OHMAIL_PROJECT`, and either its
+own `OHMAIL_BIND` address or a different port. Changing `OHMAIL_PROJECT` on a
+running install orphans that install's volumes, its database included, so
+choose it before first boot.
+
 ## Where this stands
 
 Plainly, so you can decide with open eyes:
@@ -110,6 +120,13 @@ Every path lands on the same stack, so every guide shares the same facts:
   and never changed. Everything else has a working default. The
   authoritative list, with a sentence beside each value, is
   [`deploy/selfhost/.env.example`](../../deploy/selfhost/.env.example).
+- **The stack listens on loopback until you say otherwise.** `OHMAIL_BIND`
+  is the address the front door publishes on, and it defaults to
+  `127.0.0.1`: nothing outside the box can connect. A public domain needs
+  `OHMAIL_BIND=0.0.0.0` — reachable from every interface of this box, its
+  public IP included — and a private install names its tailnet or LAN
+  address instead. The hostname is not the boundary; the socket is, which is
+  why this is a decision and not a default that suits everyone.
 - **First boot migrates the database, then prints a one-time setup token**
   to the API service's log. Reading that log proves you control the box —
   that is the whole first-account ceremony.
