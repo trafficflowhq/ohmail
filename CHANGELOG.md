@@ -40,7 +40,7 @@ replies no longer appear in the Ohbox; they stay in your mail server's Sent fold
 you send lives. Mail the responder answered also stops counting as mail you have already handled,
 so your rules and the tidying pass can file it as they would anything else.
 
-Fixed on ohmail Cloud on <date>; in the desktop app with this release.
+Fixed on ohmail Cloud on 2026-09-09; in the desktop app with this release.
 
 ### Still to come
 
