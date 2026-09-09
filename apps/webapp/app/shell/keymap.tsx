@@ -224,14 +224,23 @@ interface Registry {
    * A CLAIM RATHER THAN A PROP, for the reason `claimWriting` is one: the host that owns the
    * cursor (`AppShell`) is a CHILD of this provider, so there is no prop to pass it down by.
    *
-   * ── AND ONLY THE INNERMOST CLAIM IS ASKED ────────────────────────────────────────────────
+   * ── EXACTLY ONE PLACER ANSWERS, AND NOTHING FALLS THROUGH ────────────────────────────────
    *
-   * Claims stack, and the last one registered decides — nothing falls through to an outer one.
-   * The fallthrough is the tempting shape and it is wrong: a placer answers `false` both for "my
-   * list is empty" and for "this is not a surface I hold a cursor for", and those two cannot be
-   * told apart from here. An outer host asked after an inner one declined would place a cursor in
-   * a list the pressed binding does not act on — a verb aimed at one message and a selection ring
-   * drawn on another. One claimant, one answer.
+   * The one claimed MOST RECENTLY, and no other is consulted — not even when it declines. The
+   * fallthrough is the tempting shape and it is wrong: a placer answers `false` both for "my list
+   * is empty" and for "this is not a surface I hold a cursor for", and those two cannot be told
+   * apart from here. A second host asked after the first declined would place a cursor in a list
+   * the pressed binding does not act on — a verb aimed at one message and a selection ring drawn
+   * on another.
+   *
+   * "MOST RECENTLY" IS NOT "INNERMOST", and the difference is worth naming because this file
+   * already carries the scar: React runs a CHILD's effects before its parent's, so on one mount
+   * pass the OUTERMOST host claims last (see {@link BindingScope}, which exists because binding
+   * layers hit exactly this). That is not a precedence anybody chose, and it is not one this app
+   * relies on — `AppShell` is the only claimant, because it is the only component that holds a
+   * cursor for the lists it renders. A surface with a cursor of its own (a split view's `shown`)
+   * would need a SCOPE here the way bindings do, and there is nothing to scope yet; until then a
+   * host that cannot place answers `false` and the key stays as inert as it is today.
    */
   claimCursorPlacer: (place: CursorPlacer) => () => void;
 }
@@ -421,10 +430,12 @@ export function KeymapProvider({ children }: { children: ReactNode }) {
   }, []);
 
   /**
-   * THE CURSOR PLACERS, innermost last — see {@link Registry.claimCursorPlacer}.
+   * THE CURSOR PLACERS, most recent last — see {@link Registry.claimCursorPlacer}.
    *
    * A ref for the reason `writingSurfaces` is one: the dispatcher reads it at KEYPRESS time and
-   * nothing renders from it, so a claim must not re-render the provider's whole subtree.
+   * nothing renders from it, so a claim must not re-render the provider's whole subtree. A LIST
+   * rather than one slot so that a claim released out of order cannot clear somebody else's —
+   * the argument `writingSurfaces` makes for being a count.
    */
   const placers = useRef<CursorPlacer[]>([]);
   const claimCursorPlacer = useCallback((place: CursorPlacer) => {
@@ -557,6 +568,8 @@ export function KeymapProvider({ children }: { children: ReactNode }) {
       for (const b of parked) {
         if (chordPrefix(b.chord)) continue;
         if (!chordMatches(b.chord, e) || !eligible(b)) continue;
+        /* THE MOST RECENT CLAIM, AND ONLY IT — see {@link Registry.claimCursorPlacer} for why a
+           declining placer is not followed by a second one. */
         const place = placers.current[placers.current.length - 1];
         /* NOTHING PLACED ⇒ NOTHING CONSUMED. An empty list, or a surface whose cursor no
            claimant holds: the press stays exactly as inert as it is today, `preventDefault`

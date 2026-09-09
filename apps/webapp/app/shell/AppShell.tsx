@@ -5763,11 +5763,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * group renders the Ohbox while `focused` stays null, and placing an Ohbox cursor for a verb
    * that would act on nothing is the one outcome worth refusing.
    *
-   * The DOM row is the last gate and it is doing real work: it is what a click would have hit, so
-   * requiring it keeps this on the click's own path — and it is `false` for every surface that
-   * holds a list in state without rendering it (the seed screen owes a first run over a mirror
-   * that may already carry rows). A `false` consumes nothing: the keypress stays exactly as inert
-   * as it was, which is what an empty list should feel like.
+   * The DOM row is read because the scroll needs the element, and the null-check that comes with
+   * it earns its keep twice: it is what a click would have hit, so this stays on the click's own
+   * path, and it is `null` for a surface that holds a list in state without rendering it (the
+   * seed screen owes a first run over a mirror that may already carry rows). A `false` consumes
+   * nothing: the keypress stays exactly as inert as it was, which is what an empty list should
+   * feel like.
    */
   const placeCursor = useStableCallback((label: string): boolean => {
     if (focused != null) return false;
