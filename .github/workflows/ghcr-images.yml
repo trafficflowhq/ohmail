@@ -32,14 +32,20 @@
 #                      that; on a first release this gate is EXPECTED to fail, its message
 #                      names the one-time fix, and — because promotion has not run — the
 #                      public tags have not moved at all.
-#   4. promote       — only after 1–3 are green do the real `<version>`/`latest` tags move,
-#                      as manifest-list compositions of the staged pair (no rebuild, so what
-#                      was checked is what ships), and the promoted tags are then asserted
-#                      anonymously pullable themselves.
+#   4. promote       — only after 1–3 are green do the real tags move, as manifest-list
+#                      compositions of the staged pair (no rebuild, so what was checked is what
+#                      ships), and the promoted tags are then asserted anonymously pullable
+#                      themselves. In TWO passes with a gate between them: every `<version>`
+#                      manifest first, then — and only once all three are readable — `latest`,
+#                      pointed at the version manifest rather than recomposed from the staging
+#                      pair. See the step comments for the skew that ordering exists to stop.
 #
-# Promotion itself is three registry writes; each is retried once, and a failure prints
-# exactly which images moved — re-running the job heals forward, because the run's staging
-# tags persist (they are the release's audit trail; prune them by hand if they bother you).
+# Promotion is six registry writes; each is retried once, and a failure prints exactly which
+# tags moved — re-running the job heals forward, because the run's staging tags persist (they
+# are the release's audit trail; prune them by hand if they bother you). Nothing makes three
+# images one atomic write, so the remaining window is three writes of `latest` long, with every
+# version tag already whole behind it; an install that cannot tolerate that pins
+# OHMAIL_IMAGE_TAG.
 #
 # Multi-arch: linux/amd64 + linux/arm64, each built AND BOOTED NATIVELY — GitHub's hosted
 # arm64 runners (`ubuntu-24.04-arm`) are free for public repositories, which is both faster
@@ -352,7 +358,29 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Promote the staged pair to the version tag and latest
+      # ── TWO PASSES, AND `latest` IS THE SECOND ONE ────────────────────────────────────
+      #
+      # This used to be one pass that created `<version>` AND `latest` for each image in turn.
+      # The three images are three registry writes and nothing can make them one, so a puller
+      # arriving mid-promotion sees a mixture — and under the old order that mixture could be a
+      # NEW `latest` server beside an OLD `latest` worker. That skew is not cosmetic: an API and
+      # an organizer from different releases accept scheduled mail without ever running its
+      # sender clock, which looks healthy from both processes.
+      #
+      # Splitting the passes fixes the half that can be fixed, and pins the half that cannot:
+      #
+      #  · PASS 1 writes one manifest list per image under `<version>` and nothing else. If it
+      #    fails part-way, no public tag has moved at all — `latest` still names the previous
+      #    release, whole, and `<version>` is a tag no compose file names yet.
+      #  · A GATE between them: all three `<version>` manifests must be readable before any
+      #    `latest` moves. A version tag never exists for one image without the others, which is
+      #    what makes `OHMAIL_IMAGE_TAG=<version>` — the pinning .env.example recommends — an
+      #    atomic choice.
+      #  · PASS 2 points `latest` at the version manifest that was just checked, so the two tags
+      #    of one image can never disagree about digests. The remaining window is three writes
+      #    long and it is stated rather than papered over; an install that cannot tolerate it
+      #    pins the version.
+      - name: Pass 1 — one manifest list per image, under the version tag only
         env:
           V: ${{ needs.version.outputs.version }}
           RUN: ${{ github.run_id }}
@@ -364,16 +392,52 @@ jobs:
             for attempt in 1 2; do
               if docker buildx imagetools create \
                    -t "ghcr.io/trafficflowhq/$IMG:$V" \
-                   -t "ghcr.io/trafficflowhq/$IMG:latest" \
                    "ghcr.io/trafficflowhq/$IMG:stage-$V-$RUN-amd64" \
                    "ghcr.io/trafficflowhq/$IMG:stage-$V-$RUN-arm64"; then
                 ok=1; break
               fi
-              echo "imagetools create failed for $IMG (attempt $attempt)"
+              echo "imagetools create failed for $IMG:$V (attempt $attempt)"
             done
             if [ "$ok" -ne 1 ]; then
-              echo "PROMOTION INCOMPLETE. Tags already moved this run: ${MOVED:-none}."
+              echo 'PROMOTION INCOMPLETE, and latest has NOT moved for any image.'
+              echo "Version tags written this run: ${MOVED:-none}."
               echo "The run's staging tags persist — re-run this workflow to finish the set."
+              exit 1
+            fi
+            MOVED="$MOVED $IMG"
+          done
+
+      - name: The gate — every version manifest is readable before any latest moves
+        env:
+          V: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          for IMG in ohmail-server ohmail-worker ohmail-web; do
+            docker buildx imagetools inspect --raw "ghcr.io/trafficflowhq/$IMG:$V" > /dev/null \
+              || { echo "ghcr.io/trafficflowhq/$IMG:$V is not readable — refusing to move latest"; exit 1; }
+          done
+          echo "all three $V manifests readable"
+
+      - name: Pass 2 — latest, last, pointed at the version manifest just checked
+        env:
+          V: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          MOVED=""
+          for IMG in ohmail-server ohmail-worker ohmail-web; do
+            ok=0
+            for attempt in 1 2; do
+              if docker buildx imagetools create \
+                   -t "ghcr.io/trafficflowhq/$IMG:latest" \
+                   "ghcr.io/trafficflowhq/$IMG:$V"; then
+                ok=1; break
+              fi
+              echo "imagetools create failed for $IMG:latest (attempt $attempt)"
+            done
+            if [ "$ok" -ne 1 ]; then
+              echo "LATEST INCOMPLETE. Moved this run: ${MOVED:-none}."
+              echo "Every $V tag is in place, so an install pinned to $V is whole."
+              echo "Re-run this workflow to finish the set."
               exit 1
             fi
             MOVED="$MOVED $IMG"
