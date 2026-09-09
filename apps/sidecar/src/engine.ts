@@ -214,6 +214,12 @@ export interface SidecarConfig {
   /** How long to wait between cycles when the mailbox is quiet. */
   pollIntervalMs?: number;
   /**
+   * THE HEARTBEAT WINDOW — how long a connection has to answer an IMAP NOOP before this install
+   * treats it as dead. Absent means {@link DEFAULT_HEARTBEAT_TIMEOUT_MS}; a value that is not a
+   * positive number refuses the boot (see {@link resolveHeartbeatTimeoutMs}).
+   */
+  heartbeatTimeoutMs?: number;
+  /**
    * Diagnostics. NEVER stdout in the real process — stdout is the frame stream.
    *
    * Production passes `createSidecarLog()`, which is `packages/core`'s hardened logger. The same
@@ -975,6 +981,80 @@ export const LOCAL_CONNECTION_DEAD_AFTER_MS = 120_000;
 export const LOCAL_CONNECTION_DEAD_AFTER_CYCLES = 8;
 
 /**
+ * HOW LONG A HEARTBEAT MAY GO UNANSWERED BEFORE THE CONNECTION IS CALLED DEAD.
+ *
+ * The two detectors above this one cover the two deaths that ANNOUNCE themselves: a socket the
+ * driver reports (`error`/`close`, seconds) and a lease that has been unreadable over failing
+ * cycles ({@link LOCAL_CONNECTION_DEAD_AFTER_MS}, two minutes of cycles that RAN and threw).
+ * Neither covers the link that goes HALF-OPEN — the socket still there, every command hanging,
+ * nothing emitted and no cycle completing to fail. On that shape the fastest thing in the process
+ * is a clock measured in minutes: imapflow's socket inactivity timer at 120 s
+ * (`SIDECAR_NET_TIMEOUTS`) or the adapter's read deadline at 180 s. Until one of them fires
+ * `connectionDeadSince` is NULL, which is the state every heal in this file keys on — so no
+ * re-dial is attempted, "Sync now" answers 202 and opens no replacement, and Settings can still
+ * read as served.
+ *
+ * THIRTY SECONDS, and the number is chosen from what a NOOP costs and what a false positive
+ * costs. A NOOP on a live connection is one round trip and answers in milliseconds; a server
+ * taking half a minute over it is one this process cannot drain anyway. The cost of being wrong
+ * is ONE re-dial of ONE socket that this process owns — not a re-attach storm across a shard —
+ * which is the same asymmetry that makes the cycle-count arm safe here.
+ *
+ * IT IS NOT THE OTHER BOUND MADE SHORTER. {@link LOCAL_CONNECTION_DEAD_AFTER_MS} must stay long
+ * enough not to fire on a legitimate quiet stretch, because it counts cycles that failed for any
+ * connection reason. This one fires only when the connection was ASKED a question and did not
+ * answer, which is a stronger observation and can therefore be made on a shorter clock.
+ */
+export const DEFAULT_HEARTBEAT_TIMEOUT_MS = 30_000;
+
+/**
+ * THE HEARTBEAT WINDOW THIS LAUNCH USES — and a value that is not a positive number REFUSES THE
+ * BOOT rather than being quietly replaced by the default.
+ *
+ * The worker's polling interval is the standing example of the other choice: `config.ts` accepts
+ * an empty, zero, negative or non-numeric value and hands it to Node, which turns it into a
+ * one-millisecond timer — a misconfiguration that presents as a runaway rather than as a refusal
+ * to boot, which is the harder failure to diagnose by an order of magnitude. The same shape here
+ * would be worse in the other direction: `0` or `NaN` would make every poll declare the mailbox
+ * unreachable and re-dial it, so a typo in one environment variable would look exactly like a
+ * mail server that had gone down.
+ *
+ * So the value is ruled ONCE, at boot, before any door is mounted — and the refusal names the
+ * variable a person has to change. It reports the TYPE of a non-number rather than echoing it: a
+ * duration knob is not a secret, but the environment this reads from carries several, and a
+ * refusal that prints whatever it was handed is a habit worth not having.
+ */
+export function resolveHeartbeatTimeoutMs(config: { heartbeatTimeoutMs?: number }): number {
+  const raw: unknown = config.heartbeatTimeoutMs;
+  if (raw === undefined) return DEFAULT_HEARTBEAT_TIMEOUT_MS;
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) {
+    const said = typeof raw === "number"
+      ? (Number.isNaN(raw) ? "not a number (NaN — the value supplied is not numeric)" : String(raw))
+      : `not a number (${typeof raw})`;
+    throw new Error(
+      "OHMAIL_HEARTBEAT_MS must be a positive number of milliseconds — the window a connection " +
+      `has to answer an IMAP NOOP in before it is treated as dead. It is ${said}. Refused at ` +
+      "startup rather than replaced by the default: a zero or unreadable window would make every " +
+      "poll declare this mailbox unreachable and re-dial it, which is indistinguishable from the " +
+      "mail server being down.",
+    );
+  }
+  return raw;
+}
+
+/**
+ * HOW OFTEN THE ROSTER ROUTE SAYS IT ANSWERED, at rest — the floor under its one log line.
+ *
+ * The Settings pane polls `GET /local/mailboxes/connections` every 15 s while it is open, and a
+ * line per answer would be four a minute for as long as somebody leaves the screen up. A line
+ * only ON CHANGE is the other extreme and it is worse than it looks: an answer that never
+ * changes and a QUESTION THAT STOPPED ARRIVING then produce the same log — nothing — which is
+ * exactly the pair this instrument exists to tell apart. So the line is emitted on a change or
+ * once a minute, whichever comes first: at rest that is a trail whose GAP is the reading.
+ */
+export const LOCAL_CONNECTIONS_LOG_EVERY_MS = 60_000;
+
+/**
  * THE DEADLINES THIS PROCESS DIALS WITH — the persistent-process set, never the serverless one.
  *
  * `ImapAdapter` resolves `{ ...DEFAULT_NET_TIMEOUTS, ...config.timeouts }`, and
@@ -1243,6 +1323,20 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
   const log = config.log ?? ((): void => undefined);
   const now = config.now ?? ((): Date => new Date());
   const address = config.address ?? config.imap.auth.user;
+  /* RULED ONCE, HERE, BEFORE ANY DOOR IS MOUNTED — a heartbeat window that is not a positive
+     number is a refusal to start and not a value to fall back from. See
+     `resolveHeartbeatTimeoutMs` for why this one is refused where the host knobs below degrade. */
+  const heartbeatTimeoutMs = resolveHeartbeatTimeoutMs(config);
+  /**
+   * THE ROSTER ROUTE'S INSTRUMENT, kept per PROCESS because the route is one route.
+   *
+   * `line` is the last summary emitted and `at` when it was emitted; together they are the
+   * change-or-once-a-minute rule {@link LOCAL_CONNECTIONS_LOG_EVERY_MS} states. Counts only —
+   * which mailbox is on which provider is the identifying signal this package keeps out of
+   * diagnostics, and the row ids are already in the answer the pane holds.
+   */
+  let connectionsAnsweredLine = "";
+  let connectionsAnsweredAt = 0;
 
   /**
    * THE REQUEST-CHANNEL SIGNING KEY FOR ONE MAILBOX, derived rather than stored.
@@ -2776,7 +2870,18 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * and the duration bound over failing cycles (the arm that works for a connection whose
        * death produced no event at all).
        */
-      let connectionDeadBy: "event" | "bound" | null = null;
+      let connectionDeadBy: "event" | "bound" | "heartbeat" | null = null;
+      /**
+       * WHETHER THIS RUNTIME HAS ALREADY SAID ITS CONNECTION CANNOT BE PROBED — once per
+       * attachment, because it is a property of the adapter and not of a poll.
+       *
+       * An adapter with no {@link MailboxAdapter.noop} is not a failing connection: it is one
+       * nobody can ask, so the heartbeat is skipped and the socket deadline remains the only
+       * detector for a half-open link. That is the state this install shipped with before the
+       * heartbeat existed, and it has to be legible in the log — otherwise "no heartbeat lines"
+       * reads as "the link never went quiet" when it may mean "nothing was ever asked".
+       */
+      let heartbeatUnaskable = false;
       /**
        * THE SERVER ANSWERED AND REFUSED THE SIGN-IN — a different thing from an unreachable one,
        * and the difference decides both what we do and what the person is told.
@@ -3068,6 +3173,115 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             "of the cycles themselves; the next drain re-dials and re-reads the lease before it " +
             "moves anything",
         });
+      };
+
+      /**
+       * THE THIRD DETECTOR — A HEARTBEAT, for the death that emits nothing AND fails no cycle.
+       *
+       * The other two are above: `noteConnectionDead` (the driver's own `error`/`close`) and
+       * `noteCycleFailed` (the duration bound over cycles that ran and threw). Both need
+       * something to HAPPEN. A half-open link is the shape where nothing does: the socket answers
+       * TCP, every IMAP command hangs, no event is emitted, and the drain that would have failed
+       * is parked inside a command instead of returning — so the bound never counts a cycle
+       * either. Until imapflow's inactivity timer (120 s) or the adapter's read deadline (180 s)
+       * fires, this file's whole heal is unreachable, because every path into it asks whether
+       * `connectionDeadSince` is set.
+       *
+       * So this ASKS. One NOOP, under {@link DEFAULT_HEARTBEAT_TIMEOUT_MS}'s window, and a
+       * connection that does not answer inside it is stamped dead exactly as the other two
+       * detectors stamp it — same field, same clock, same ladder. Nothing else about the heal
+       * changes, which is the point: the defect was never the re-dial, it was that nothing knew.
+       *
+       * ── IT RUNS ON THE PUBLIC ENTRY POINT, NOT INSIDE `serialize` ─────────────────────────
+       *
+       * `redialIfDead`'s own reason, and it applies twice over here: `serialize` chains onto
+       * `tail`, so a heartbeat queued behind a drain that is HANGING would wait for exactly the
+       * hang it is trying to detect. On the queue it would be a detector that cannot fire in the
+       * case it exists for.
+       *
+       * ── A REJECTION IS NOT THIS ARM'S NEWS, AND THAT IS DELIBERATE ────────────────────────
+       *
+       * The verdict is "did it answer AT ALL", so a NOOP that comes back refused counts as an
+       * answer: the server is talking. A NOOP that REJECTS because the client already knows the
+       * socket is gone is the EVENT detector's case — the driver has emitted, `noteConnectionDead`
+       * has stamped, and this pass returns at the guard above. Treating a rejection as this
+       * detector's evidence would also take the duration bound's own case away from it: the fake
+       * in `reconnect-after-close.test.ts` models a silent death as commands that throw, so a
+       * heartbeat that stamped on a throw would make the bound unreachable in the one file that
+       * proves it, which is this repository's "a second mechanism covers for the one under test"
+       * shape.
+       *
+       * ── AND IT ENDS THE WEDGED CONNECTION WITH `forceClose`, NEVER `close` ────────────────
+       *
+       * A polite `close()` issues a LOGOUT, IMAP commands are serialized, and the abandoned NOOP
+       * is exactly what that LOGOUT queues behind — so the re-dial's own teardown would wait out
+       * the 120 s it just saved, and the heartbeat would buy nothing at all. `forceClose`
+       * destroys the socket, which is also the only thing that ends the abandoned command. It
+       * sets the adapter's `closing` flag first, so the death this install caused emits no report
+       * and cannot double-stamp the clock a person is watching.
+       */
+      const heartbeat = async (): Promise<void> => {
+        /* NOTHING TO PROVE: a stopped runtime and a connection already known dead are both
+           states in which asking changes nothing. The second is what keeps a heartbeat off a
+           ladder that is already running — `redialIfDead` owns that connection now. */
+        if (stopped || connectionDeadSince !== null) return;
+        const who = adapter;
+        const gen = generation;
+        const probe = who.noop?.bind(who);
+        if (probe === undefined) {
+          if (!heartbeatUnaskable) {
+            heartbeatUnaskable = true;
+            log("mailbox_heartbeat_unavailable", {
+              mailboxId: mb.id,
+              reason: "this connection cannot be asked to prove itself — the adapter implements " +
+                "no NOOP — so a link that goes half-open is detected only when the socket " +
+                "deadline fires, which is minutes rather than seconds. Not a failure: nothing " +
+                "was asked, which is a different fact from nothing answering",
+            });
+          }
+          return;
+        }
+        let settled: Promise<"answered">;
+        try {
+          /* SETTLED, not resolved — see the header: an answer and a refusal are both the server
+             talking, and this detector asks only whether it talked. */
+          settled = probe().then(() => "answered" as const, () => "answered" as const);
+        } catch {
+          /* A synchronous throw out of the call is the same fact as a rejection, and is handled
+             the same way: not this arm's news. */
+          return;
+        }
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const elapsed = new Promise<"silent">((resolve) => {
+          timer = setTimeout(() => resolve("silent"), heartbeatTimeoutMs);
+          timer.unref?.();
+        });
+        const verdict = await Promise.race([settled, elapsed]);
+        if (timer !== undefined) clearTimeout(timer);
+        if (verdict === "answered") return;
+        /* RE-CHECKED AFTER THE AWAIT, and the generation with it: this heartbeat was issued on ONE
+           connection, and a re-dial or a `detach()` can land while it is outstanding. Marking the
+           replacement dead on the strength of a question asked of its predecessor is the exact
+           defect `noteConnectionDead`'s stale-report check exists for. */
+        if (stopped || gen !== generation || connectionDeadSince !== null) return;
+        connectionDeadSince = now();
+        connectionDeadBy = "heartbeat";
+        /* THE PERSON'S CLOCK, on `noteConnectionDead`'s rule: it starts at the first observation
+           and is cleared only by a cycle that was actually SERVED. */
+        outageSince ??= connectionDeadSince;
+        log("mailbox_connection_unavailable", {
+          mailboxId: mb.id,
+          detectedBy: "heartbeat",
+          totalMs: heartbeatTimeoutMs,
+          reason: "the connection did not answer an IMAP NOOP inside the heartbeat window while " +
+            "its socket was still open, which is the half-open link no connection event and no " +
+            "failing cycle describes; this pass ends that connection and re-dials, and the " +
+            "organizer lease is re-read before anything is moved",
+        });
+        /* THE INSTANCE, NEVER THE BINDING — `noteConnectionDead`'s rule, for the same reason: by
+           the time this runs a re-dial may have installed a new adapter, and destroying the
+           healthy replacement is the opposite of the repair. */
+        try { who.forceClose?.(); } catch { /* the socket is going away regardless */ }
       };
 
       let adapter: MailboxAdapter = dialAdapter();
@@ -5233,6 +5447,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         // counts and every failure counter exempts.
         /* THE POLL PASSES NOTHING, so the ladder holds for it — `force` reaches here only from
            the resync route's wrapper, which is a person pressing a button. */
+        /* THE DETECTOR BEFORE THE HEAL, and in this order for one reason: `redialIfDead` returns
+           immediately while `connectionDeadSince` is null, so a half-open link reached the drain
+           with nothing known and hung inside it. Asking first is what gives the heal something to
+           act on — and on this pass, not the next one. It never throws; see `heartbeat`. */
+        await heartbeat();
         await redialIfDead({ force: opts.force === true });
         try {
           const cycles = await drainPass(maxCycles);
@@ -6462,6 +6681,43 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               unreachableSince: r.connection.unreachableSince?.toISOString() ?? null,
               signInRefused: r.connection.signInRefused,
             }));
+            /* ── ONE LINE WHERE THIS ROUTE ANSWERS — the instrument, and what it is FOR ───────
+             *
+             * On one platform this poll stopped arriving at the engine altogether while
+             * `GET /mailboxes` on the same transport went on answering, and nothing about that
+             * refusal reached this log: the shell declines a bridge request when its queue is
+             * full, which returns before a frame is written, so the engine never saw the
+             * question. From the log side "the question never arrived" and "the answer was
+             * refused" were the same absence, and there was no way to tell them apart after the
+             * fact. This line is the half that was missing — it says the question ARRIVED and
+             * what was answered — so the pane's own five-state console line and this one
+             * together name which side of the pipe the silence is on.
+             *
+             * COUNTS, NEVER IDS OR ADDRESSES, on the answer's own rule two comments up: which
+             * mailbox is on which provider is the identifying signal this package keeps out of
+             * diagnostics, and the pane already holds the ids. `mailboxes` is how many runtimes
+             * this install holds, `serving` how many of them have a live connection, `refused`
+             * how many are waiting for a person because the server rejected the sign-in; the
+             * unreachable count is the arithmetic and is not a fourth field.
+             *
+             * Change-or-once-a-minute — see {@link LOCAL_CONNECTIONS_LOG_EVERY_MS} for why a
+             * line only on change is the one shape that cannot answer the question. */
+            const serving = items.filter((i) => i.reachable).length;
+            const refused = items.filter((i) => i.signInRefused).length;
+            const answeredLine = JSON.stringify({ mailboxes: items.length, serving, refused });
+            const answeredAt = now().getTime();
+            if (answeredLine !== connectionsAnsweredLine
+              || answeredAt - connectionsAnsweredAt >= LOCAL_CONNECTIONS_LOG_EVERY_MS) {
+              connectionsAnsweredLine = answeredLine;
+              connectionsAnsweredAt = answeredAt;
+              log("local_mailbox_connections_answered", {
+                mailboxes: items.length, serving, refused,
+                reason: "the Settings pane asked this install which of its mailboxes it can " +
+                  "reach right now, and this is what it was told. A GAP in these lines while the " +
+                  "pane is open means the question stopped arriving — the answer would have been " +
+                  "logged either way",
+              });
+            }
             return new Response(JSON.stringify({ items }), {
               status: 200, headers: { "content-type": "application/json" },
             });

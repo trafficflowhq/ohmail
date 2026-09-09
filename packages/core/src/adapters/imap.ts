@@ -1462,6 +1462,24 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     this.established = false;
   }
 
+  /**
+   * IMAP NOOP — see {@link MailboxAdapter.noop}. RAW, and not through {@link bounded}.
+   *
+   * Every other command here goes through `bounded`, which composes the read deadline
+   * ({@link IMAP_READ_DEADLINE_MS}, 180 s) with the pass budget and retires the connection on a
+   * breach. A heartbeat cannot: it exists to answer "is this link still there?" on a window an
+   * order of magnitude shorter than that, and its caller supplies it. Sending this through
+   * `bounded` would make the fast detector as slow as the slow one, which is the whole defect it
+   * was added to close.
+   *
+   * `assertUsable` still applies: a connection this class has already retired refuses rather
+   * than sending a command into a destroyed socket.
+   */
+  async noop(): Promise<void> {
+    this.assertUsable();
+    await this.client.noop();
+  }
+
   async capabilities(): Promise<ImapCapabilities> {
     const c = this.client.capabilities;
     const base: ImapCapabilities = {

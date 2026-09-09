@@ -226,6 +226,12 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): SidecarConf
     },
     ...(env.OHMAIL_MAILBOX_ADDRESS ? { address: env.OHMAIL_MAILBOX_ADDRESS } : {}),
     ...(env.OHMAIL_POLL_MS ? { pollIntervalMs: Number(env.OHMAIL_POLL_MS) } : {}),
+    // The heartbeat window, on `OHMAIL_POLL_MS`'s idiom: absent means the product default, and
+    // the ENGINE rules on the value. Unlike the host knobs below, a garbage value here REFUSES
+    // the boot (`resolveHeartbeatTimeoutMs`) — `Number("garbage")` is NaN, and a NaN window would
+    // declare every mailbox unreachable on every poll, which is a misconfiguration wearing an
+    // outage's clothes rather than a degraded feature.
+    ...(env.OHMAIL_HEARTBEAT_MS ? { heartbeatTimeoutMs: Number(env.OHMAIL_HEARTBEAT_MS) } : {}),
     ...(Object.keys(keks).length > 0 ? { keks } : {}),
     // ── HOST MODE (Phase 3) — three knobs, all of them the shell's, none of them required ────
     //
