@@ -122,6 +122,20 @@ export function useMessageVerbs(input: MessageVerbsInput): void {
 
   /** Every verb rests on a view with no cursor. One predicate so none of them can forget it. */
   const none = shown == null;
+  /**
+   * …AND THE REASON, so the dispatcher can offer to place the cursor rather than drop the key —
+   * see `keymap.tsx#DisabledReason`. Spread into every binding whose `disabled` is `none` or
+   * `none || <something else>`: when `none` is false this object is EMPTY, so a verb resting for
+   * its own reason (a 1:1 message, a `no_forward` one, no chrome to open a strip in) keeps
+   * falling through exactly as it does today.
+   *
+   * WHAT THIS DOES AND DOES NOT BUY IN THESE THREE VIEWS. Folder, Tag and History hold their
+   * cursor in view-local state and claim no `useCursorPlacer`, so the innermost claim is the
+   * shell's, which answers `false` for a route it holds no cursor for — the key stays as inert
+   * as it is today. The declaration is here because it is TRUE of the binding and because the
+   * host that supplies a placer is the only thing missing; a gap row names that half.
+   */
+  const parked = none ? ({ disabledReason: "no_cursor" } as const) : {};
 
   useKeyBindings([
     /**
@@ -150,6 +164,7 @@ export function useMessageVerbs(input: MessageVerbsInput): void {
       group: "message",
       label: labels.reply,
       disabled: none,
+      ...parked,
       run: () => shown && onAction("reply", shown),
     },
     {
@@ -160,6 +175,7 @@ export function useMessageVerbs(input: MessageVerbsInput): void {
       group: "message",
       label: labels.replyAll,
       disabled: none || !canReplyAll(shown!),
+      ...parked,
       run: () => shown && onAction("reply_all", shown),
     },
     {
@@ -170,6 +186,7 @@ export function useMessageVerbs(input: MessageVerbsInput): void {
       group: "message",
       label: labels.forward,
       disabled: none || shown!.sensitivity?.no_forward === true,
+      ...parked,
       run: () => shown && onAction("forward", shown),
     },
     {
@@ -177,6 +194,7 @@ export function useMessageVerbs(input: MessageVerbsInput): void {
       group: "message",
       label: labels.answerLater,
       disabled: none,
+      ...parked,
       run: () => shown && onAction("later", shown),
     },
     {
@@ -184,6 +202,7 @@ export function useMessageVerbs(input: MessageVerbsInput): void {
       group: "message",
       label: labels.park,
       disabled: none,
+      ...parked,
       run: () => shown && onAction("aside", shown),
     },
     {
@@ -191,6 +210,7 @@ export function useMessageVerbs(input: MessageVerbsInput): void {
       group: "message",
       label: labels.resurface,
       disabled: none,
+      ...parked,
       run: () => shown && onAction("resurface", shown),
     },
     {
@@ -201,6 +221,7 @@ export function useMessageVerbs(input: MessageVerbsInput): void {
       group: "message",
       label: labels.screen,
       disabled: none,
+      ...parked,
       run: () => shown && onScreen(shown.id, anchorFor(scope, shown.id)),
     },
     {
@@ -208,6 +229,7 @@ export function useMessageVerbs(input: MessageVerbsInput): void {
       group: "message",
       label: labels.tag,
       disabled: none,
+      ...parked,
       run: () => shown && onAddTag(shown.id, anchorFor(scope, shown.id)),
     },
     {
@@ -219,6 +241,7 @@ export function useMessageVerbs(input: MessageVerbsInput): void {
       group: "message",
       label: labels.move,
       disabled: none || !setBarPanel,
+      ...parked,
       run: () => {
         if (!shown || !setBarPanel) return;
         setBarPanel(
@@ -235,6 +258,7 @@ export function useMessageVerbs(input: MessageVerbsInput): void {
       group: "message",
       label: barPanel?.panel === "delete" ? labels.deleteConfirm : labels.deleteAsk,
       disabled: none || !setBarPanel || !canDelete(shown!),
+      ...parked,
       /* A HELD KEY IS ONE PRESS — auto-repeat would walk the ask and the confirm on its own,
          turning a finger resting on `d` into an un-undoable delete. The shell's binding states
          this as a review finding; the same ceremony needs the same guard. */

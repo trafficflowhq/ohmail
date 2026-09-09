@@ -2639,7 +2639,11 @@
     "deleteAsk": "Delete — asks first",
     "deleteConfirm": "Confirm the delete",
     "deleteKey": "Move it to Trash",
-    "panelClose": "Close the open row"
+    "panelClose": "Close the open row",
+    "needsCursor": "Select a message first — ↑/↓ or click a row"
+  },
+  "cursor": {
+    "placed": "First message selected. Press again: {label}"
   },
   "columns": {
     "railHandle": "Sidebar width",

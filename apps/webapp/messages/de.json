@@ -2639,7 +2639,11 @@
     "deleteAsk": "Löschen — fragt zuerst",
     "deleteConfirm": "Löschen bestätigen",
     "deleteKey": "In den Papierkorb verschieben",
-    "panelClose": "Offene Zeile schließen"
+    "panelClose": "Offene Zeile schließen",
+    "needsCursor": "Wähle zuerst eine Nachricht — ↑/↓ oder Klick auf eine Zeile"
+  },
+  "cursor": {
+    "placed": "Erste Nachricht ausgewählt. Noch einmal drücken: {label}"
   },
   "columns": {
     "railHandle": "Breite der Seitenleiste",

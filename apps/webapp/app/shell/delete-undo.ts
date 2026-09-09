@@ -381,6 +381,23 @@ export function deleteKeyBindings(input: {
 }): KeyBinding[] {
   const disabled = input.focused == null || !input.canDelete;
   /**
+   * NO CURSOR IS ITS OWN REASON — see `keymap.tsx#DisabledReason`.
+   *
+   * The whole of the reported defect: a freshly opened list has no cursor, so both chords were
+   * `disabled`, and the dispatcher dropped them before the chord was matched. ⌫ on an Ohbox
+   * nobody had touched did nothing — no cursor, no sentence, no request. It now places the cursor
+   * on the first row and says which verb the next press runs.
+   *
+   * `focused == null` ALONE, never `disabled`. `canDelete` is the strip's own render gates
+   * resolved by the host, and a row it refuses is refused with a cursor on it too — claiming
+   * `"no_cursor"` there would place a cursor and promise a second press that cannot work. Where
+   * the two overlap (a caller whose `canDelete` folds in `focused != null`, as both callers'
+   * does) this is still the honest answer: the cursor is what is missing, and whatever the gates
+   * then say about the row the cursor lands on is the same answer a click would have got.
+   */
+  const noCursor = input.focused == null;
+  const parked = noCursor ? ({ disabledReason: "no_cursor" } as const) : {};
+  /**
    * A HELD KEY IS ONE PRESS, AND A QUESTION ON SCREEN OWNS THE KEY. Both are `when` conditions,
    * which is what makes them right rather than merely convenient:
    *
@@ -401,8 +418,8 @@ export function deleteKeyBindings(input: {
     !e.repeat && !isModalOpen(e.view?.document ?? document);
   const run = () => { if (input.focused) input.run(input.focused); };
   return [
-    { chord: "Backspace", group: "message", label: input.label, disabled, when, run },
-    { chord: "Delete", group: "message", label: input.label, disabled, when, run },
+    { chord: "Backspace", group: "message", label: input.label, disabled, ...parked, when, run },
+    { chord: "Delete", group: "message", label: input.label, disabled, ...parked, when, run },
   ];
 }
 

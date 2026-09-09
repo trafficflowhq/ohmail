@@ -70,14 +70,26 @@ export function ShortcutSheet({ open, onClose }: { open: boolean; onClose: () =>
    * bindings borrow the `g` chord's sentence for exactly this reason. A row is inert only when
    * every chord on it is.
    */
-  const rows = (items: KeyBinding[]): Array<{ label: string; chords: string[]; disabled: boolean }> => {
-    const out: Array<{ label: string; chords: string[]; disabled: boolean }> = [];
+  type Row = { label: string; chords: string[]; disabled: boolean; needsCursor: boolean };
+  const rows = (items: KeyBinding[]): Row[] => {
+    const out: Row[] = [];
     for (const b of items) {
+      /* WHY THE ROW SAYS SO. Until this sheet carried the sentence, a greyed row was the ONLY
+         place a person could learn that a verb was resting, and it did not say what for — the
+         report that started this was "⌫ does nothing", from an Ohbox whose list had simply never
+         been touched. `no_cursor` is the one reason with a remedy the reader can act on, so it is
+         the one that gets a sentence; a row resting because a message has nobody to reply to all
+         of has nothing to tell them to do.
+
+         FOLDED THE SAME WAY `disabled` IS, and it has to be: a row is one instruction with
+         several spellings, and it only needs a cursor if EVERY chord on it is waiting for one. */
+      const needsCursor = b.disabled === true && b.disabledReason === "no_cursor";
       const row = out.find((r) => r.label === b.label);
       if (row) {
         row.chords.push(b.chord);
         row.disabled = row.disabled && Boolean(b.disabled);
-      } else out.push({ label: b.label, chords: [b.chord], disabled: Boolean(b.disabled) });
+        row.needsCursor = row.needsCursor && needsCursor;
+      } else out.push({ label: b.label, chords: [b.chord], disabled: Boolean(b.disabled), needsCursor });
     }
     return out;
   };
@@ -100,7 +112,16 @@ export function ShortcutSheet({ open, onClose }: { open: boolean; onClose: () =>
               <h4>{groupLabel(g.group)}</h4>
               <ul>
                 {rows(g.items).map((row) => (
-                  <li key={row.chords[0]} className={row.disabled ? "off" : undefined}>
+                  <li
+                    key={row.chords[0]}
+                    className={row.disabled ? "off" : undefined}
+                    /* The remedy, on the row that needs it. A `title` and not a visible line: the
+                       sheet is a scan of forty rows and a sentence under every greyed one would
+                       bury the ones that are live. The rows that need a cursor also get the hint
+                       for free the moment a verb is pressed — this is for the reader who opened
+                       the sheet to find out WHY. */
+                    {...(row.needsCursor ? { title: t("needsCursor") } : {})}
+                  >
                     <span className="ks-keys">
                       {row.chords.map((chord, c) => (
                         <span key={chord} className="ks-chord">

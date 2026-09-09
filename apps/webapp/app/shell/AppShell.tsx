@@ -147,7 +147,7 @@ import {
 import { useDraftReply, type DraftedReply } from "./draft-reply";
 import { RichEditor } from "./RichEditor";
 import { TagPicker, placePicker, type TagPickerState } from "./TagPicker";
-import { KeymapProvider, useKeyBindings, useModGlyph, type KeyBinding } from "./keymap";
+import { KeymapProvider, useCursorPlacer, useKeyBindings, useModGlyph, type KeyBinding } from "./keymap";
 import { createSeenBatcher } from "./seen-batch";
 import { readColumnHidden, readColumnHiddenFor, watchZeroPushTier, zeroPushTier } from "./narrow";
 import { ZoneCursor, currentZone, setRailSummon } from "./zone-nav";
@@ -632,6 +632,16 @@ export function showDesktopCta(opts: { demo: boolean; desktop: boolean }): boole
  * their dismissal.
  */
 export const DESKTOP_CTA_DISMISSED = "ohmail.desktopCtaDismissed";
+
+/**
+ * HOW LONG THE CURSOR HINT STANDS — the one line the first press of a message verb on a
+ * cursorless list shows (`placeCursor`). Shorter than the toast's 2600 ms default, because this
+ * one carries no action to reach for and the second press is meant to follow it immediately.
+ *
+ * Exported so a guard reads the number rather than restating it: a hint that outlives the press
+ * it explains, or vanishes before it can be read, is a difference a test should be able to see.
+ */
+export const CURSOR_HINT_MS = 2400;
 
 /**
  * A subtle, dismissible line at the foot of the rail: "Get ohmail for desktop", linking to the
@@ -5733,6 +5743,63 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   useEffect(() => setBarPanel(null), [focusedId]);
 
   /**
+   * PUT THE CURSOR ON THE FIRST ROW — the first press of a message verb on a list that has rows
+   * and no cursor on any of them. See `keymap.tsx#DisabledReason` for the dispatcher's half.
+   *
+   * ── WHY A PRESS AND NOT AN ARRIVAL ──────────────────────────────────────────────────────────
+   *
+   * `selectedOhbox` above records what happened the last time a list opened with a cursor already
+   * on something: `?? allOhbox[0]` meant an Ohbox nobody had touched reported its newest unread as
+   * "the open one", which fetched a body from the user's own server and put somebody's mail in the
+   * reading column on arrival. ⌫ is that hazard with a delete on the end of it — a key whose first
+   * press files the top message because a list happened to be under it. So nothing is placed until
+   * somebody presses something, and the press that places performs nothing.
+   *
+   * ── AND WHY IT ANSWERS `false` MORE OFTEN THAN IT LOOKS ─────────────────────────────────────
+   *
+   * Three views, the three whose cursor this shell holds, and the SAME three `focused` reads —
+   * anything else and the ring would land on a row the pressed verb does not act on. `route.view`
+   * and not `effectiveView`, again because that is what `focused` reads: a `tag` route with no
+   * group renders the Ohbox while `focused` stays null, and placing an Ohbox cursor for a verb
+   * that would act on nothing is the one outcome worth refusing.
+   *
+   * The DOM row is the last gate and it is doing real work: it is what a click would have hit, so
+   * requiring it keeps this on the click's own path — and it is `false` for every surface that
+   * holds a list in state without rendering it (the seed screen owes a first run over a mirror
+   * that may already carry rows). A `false` consumes nothing: the keypress stays exactly as inert
+   * as it was, which is what an empty list should feel like.
+   */
+  const placeCursor = useStableCallback((label: string): boolean => {
+    if (focused != null) return false;
+    const first =
+      route.view === "ohbox"
+        ? (allOhbox[0] ?? null)
+        : route.view === "reads"
+          ? (partition.fresh[0] ?? partition.seen[0] ?? null)
+          : route.view === "receipts"
+            ? (receipts[0] ?? null)
+            : null;
+    if (first == null) return false;
+    const row = document.querySelector<HTMLElement>(`.view .row[data-id="${CSS.escape(first.id)}"]`);
+    if (row == null) return false;
+    if (route.view === "ohbox") setOhboxSel(first.id);
+    else if (route.view === "reads") setReadsCur(first.id);
+    else setReceiptsCur(first.id);
+    /* The same nudge a click's selection gets — `block: "nearest"`, the whole list's convention
+       (`ReadsView`, `ReceiptsView`, `TriageView`). Optional-chained on the METHOD, not the node:
+       jsdom mounts these views without implementing it (`RulesView`'s precedent). */
+    row.scrollIntoView?.({ block: "nearest" });
+    /* ONE LINE, THE VERB THE NEXT PRESS RUNS, and the toast primitive's own live region announces
+       it (`role="status" aria-live="polite"`). No action button: there is nothing to undo about a
+       cursor, and an Undo beside it would read as "put the mail back". Focus does not move — the
+       person is already on the keyboard, and `.row.sel` is the ring the list already draws. */
+    toast(t("cursor.placed", { label }), { duration: CURSOR_HINT_MS });
+    return true;
+  });
+  useCursorPlacer(placeCursor);
+
+
+  /**
    * ESCAPE HAS ONE OWNER, and this ORDERED LIST is it.
    *
    * Before the registry, Escape was handled by `Reader` (close), `AppShell` (the (i)
@@ -5943,6 +6010,21 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
      Escape. `pushTier` is the subscribed fact above, so the gate follows `w` and resizes. */
   const zeroSheetUp = pushTier && readerFor != null;
 
+  /**
+   * NO CURSOR IS ITS OWN REASON — spread into every `message` binding below whose `disabled`
+   * begins `focused == null`. See `keymap.tsx#DisabledReason` and `placeCursor` above.
+   *
+   * EMPTY when a cursor exists, so a verb resting for its own reason keeps falling through: `⇧R`
+   * on a message with nobody else on it, `⇧F` on a `no_forward` one or a row the mirror does not
+   * hold, `d` with the folders foundation off. Placing a cursor for one of those would show a
+   * sentence promising a second press that cannot work.
+   *
+   * NOT on `f`, `mod+Enter` or the two Zero exits: none of them rests on a cursor (an empty Answer
+   * Later pile, no run in flight, no reply open, no sheet up), and `p` is an `app` verb — the
+   * dispatcher's rule is scoped to `message` for exactly that reason.
+   */
+  const noCursor = focused == null ? ({ disabledReason: "no_cursor" } as const) : {};
+
   /* ── the global key map. Views declare their own; see `keymap.tsx` for precedence. ── */
   const globalKeys: KeyBinding[] = [
     { chord: "g o", group: "navigate", label: t("shortcuts.goOhbox"), run: () => go("ohbox") },
@@ -6002,6 +6084,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
        * has a pane to land in. A TOGGLE, as before: `r` on the open editor closes it.
        */
       disabled: focused == null,
+      ...noCursor,
       run: () => {
         if (!focused) return;
         if (readerMessage != null || route.view === "ohbox") toggleReply(focused.id);
@@ -6017,6 +6100,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       group: "message",
       label: t("shortcuts.replyAll"),
       disabled: focused == null || replyAllRecipients(focused, ownAddresses) === null,
+      ...noCursor,
       run: () => {
         if (!focused) return;
         if (readerMessage != null || route.view === "ohbox") toggleReply(focused.id, true);
@@ -6063,6 +6147,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
         focused == null ||
         focused.sensitivity?.no_forward === true ||
         mirrorHolds(focused.id) === false,
+      ...noCursor,
       run: () => {
         if (!focused) return;
         if (readerMessage != null || route.view === "ohbox") openForward(focused.id);
@@ -6125,6 +6210,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       group: "message",
       label: t("shortcuts.screen"),
       disabled: focused == null,
+      ...noCursor,
       run: () => {
         if (!focused) return;
         openSenderMenu(
@@ -6146,6 +6232,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       group: "message",
       label: t("shortcuts.answerLater"),
       disabled: focused == null,
+      ...noCursor,
       run: () => focused && onMessageAction("later", focused),
     },
     {
@@ -6155,6 +6242,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       // Park rather than Archive is the honest mapping, not a missing feature.
       label: t("shortcuts.park"),
       disabled: focused == null,
+      ...noCursor,
       run: () => focused && onMessageAction("aside", focused),
     },
     {
@@ -6162,6 +6250,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       group: "message",
       label: t("shortcuts.resurface"),
       disabled: focused == null,
+      ...noCursor,
       run: () => focused && onMessageAction("resurface", focused),
     },
     {
@@ -6173,6 +6262,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       group: "message",
       label: t("shortcuts.move"),
       disabled: focused == null,
+      ...noCursor,
       run: () => {
         if (!focused) return;
         setBarPanel((p) =>
@@ -6201,6 +6291,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       disabled:
         focused == null
         || reader.get<EngineMessage>("message", focused.id) == null,
+      ...noCursor,
       /* A HELD KEY IS ONE PRESS. Key auto-repeat would otherwise walk the whole ceremony on
          its own — the first repeat opens the ask, a later repeat confirms it — turning a
          finger resting on `d` into an un-undoable delete (review finding, round 1). The

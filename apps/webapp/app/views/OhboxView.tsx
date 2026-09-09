@@ -1508,6 +1508,22 @@ export function OhboxView({
    * are not on screen.
    */
   const deletePicked = useCallback(() => runBulk("delete"), [runBulk]);
+  /**
+   * NO CURSOR IS ITS OWN REASON — spread into every `message` binding below whose `disabled` is
+   * `selected == null`. See `keymap.tsx#DisabledReason`.
+   *
+   * This is the view the defect was reported against: an Ohbox nobody had touched has no cursor,
+   * so ↵, `t`, `x`, `u` and `⇧I` here — and the shell's nine verbs under them — were all
+   * `disabled`, and the dispatcher dropped each one before the chord was matched. Every one of
+   * those presses did nothing at all, with the `?` sheet the only place that state showed. The
+   * first press now places the cursor on the first row and says which verb the next press runs.
+   *
+   * NOT on `⇧U` or the four extend chords: those rest on the PICK (`picked.size`, `order.length`),
+   * not on the cursor, and ⇧↓ is how a pick starts. The selection layer above is absent rather
+   * than disabled when nothing is picked, so none of it can be reached by this rule either.
+   */
+  const noCursor = selected == null ? ({ disabledReason: "no_cursor" } as const) : {};
+
   const keys: KeyBinding[] = [
     {
       chord: "j",
@@ -1558,6 +1574,7 @@ export function OhboxView({
          key sheet promising "open the message" beside it would be documenting a dead key. `j`
          is the way in, which is what the resting column itself says. */
       disabled: selected == null,
+      ...noCursor,
       // ↵ on a focused button presses the button; that is the browser's and it stays so.
       when: (e) => (e.target as HTMLElement).tagName !== "BUTTON",
       // The `: onEnterReader()` arm is gone with the boolean it depended on. It meant
@@ -1736,6 +1753,7 @@ export function OhboxView({
       group: "message",
       label: t("keyTag"),
       disabled: selected == null,
+      ...noCursor,
       run: () =>
         selected &&
         onAddTag(
@@ -1750,6 +1768,7 @@ export function OhboxView({
       group: "message",
       label: t("keyPick"),
       disabled: selected == null,
+      ...noCursor,
       run: () => selected && togglePick(selected.id),
     },
     {
@@ -1770,6 +1789,7 @@ export function OhboxView({
       group: "message",
       label: t("keyMarkUnread"),
       disabled: selected == null,
+      ...noCursor,
       run: () => selected && markUnread(selected),
     },
     {
@@ -1777,6 +1797,7 @@ export function OhboxView({
       group: "message",
       label: t("keyMarkRead"),
       disabled: selected == null,
+      ...noCursor,
       run: () => selected && markRead(selected),
     },
     {

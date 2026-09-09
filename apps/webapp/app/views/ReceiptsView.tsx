@@ -367,6 +367,11 @@ export function ReceiptsView({
       group: "message",
       label: tr("keyExpand"),
       disabled: current == null,
+      /* NO CURSOR IS ITS OWN REASON — `keymap.tsx#DisabledReason`. A freshly opened stream has no
+         cursor, so this was dropped before the chord was matched and ↵ did nothing at all; the
+         first press now places the cursor on the first card (the shell holds this view's cursor,
+         so `AppShell.placeCursor` can answer) and says that the next press expands it. */
+      ...(current == null ? ({ disabledReason: "no_cursor" } as const) : {}),
       when: (e) => (e.target as HTMLElement).tagName !== "BUTTON",
       run: () =>
         current &&

@@ -58,6 +58,37 @@ export type BindingGroup = "navigate" | "message" | "screener" | "app";
 
 export const BINDING_GROUPS: BindingGroup[] = ["navigate", "message", "screener", "app"];
 
+/**
+ * WHY a binding is resting — the ONE answer the dispatcher can do something about.
+ *
+ * A union of one, and deliberately not a second boolean beside `disabled`. Every message verb
+ * in this app is `disabled` while the list under it has no cursor, and until this existed the
+ * dispatcher could not tell that apart from "disabled because this message may not be
+ * forwarded": both are a `true`, and it dropped the binding before the chord was even matched
+ * (the filter below). So the FIRST press of any message verb on a freshly opened list did
+ * nothing at all — no cursor, no sentence, no request — and the `?` sheet was the only place
+ * that state was visible. Reported from a real Ohbox, where ⌫ read as broken.
+ *
+ * The declaring site says which of the two it is; a binding that omits this keeps exactly the
+ * old behaviour, which is what makes the rule additive rather than a new precedence.
+ */
+export type DisabledReason = "no_cursor";
+
+/**
+ * PUT A CURSOR ON THE FIRST ROW, and say so — the host's half of the rule above.
+ *
+ * `label` is the label of the binding that was PRESSED, so the sentence the host shows names
+ * the verb the second press will run ("press again: Move it to Trash"). The return says whether
+ * a cursor was actually placed: `false` means there was nothing to place one on (an empty list,
+ * or a surface this host holds no cursor for), and the keypress is then left exactly as inert as
+ * it is today rather than consumed.
+ *
+ * A boolean and not a message id: the dispatcher has no business knowing which row, and every
+ * host already owns that choice (the Ohbox's first presented row is not the same question as
+ * Reads' first fresh one).
+ */
+export type CursorPlacer = (label: string) => boolean;
+
 /** How long the first key of a sequence stays armed. */
 const SEQUENCE_MS = 1200;
 
@@ -98,6 +129,14 @@ export interface KeyBinding {
    * shortcut nobody learns.
    */
   disabled?: boolean;
+  /**
+   * WHY it is inert, when the answer is one the dispatcher can act on — see
+   * {@link DisabledReason}. Set it exactly where `disabled` became true for want of a cursor
+   * and nowhere else: a binding resting for another reason (a 1:1 message has nobody to reply
+   * to all of, a row the mirror does not hold cannot be deleted) must keep falling through, and
+   * saying `"no_cursor"` there would promise a second press that cannot work.
+   */
+  disabledReason?: DisabledReason;
   /**
    * A condition ON THE EVENT, not on the app — it decides whether this keypress is ours,
    * and a `false` falls through to the next binding. It exists for exactly one thing:
@@ -178,6 +217,23 @@ interface Registry {
    * deliberate act, not a keystroke that missed its field.
    */
   claimWriting: () => () => void;
+  /**
+   * OFFER TO PLACE THE CURSOR for as long as the caller is mounted — see {@link CursorPlacer}
+   * and {@link useCursorPlacer}. Returns the release, the shape `claimWriting` already set.
+   *
+   * A CLAIM RATHER THAN A PROP, for the reason `claimWriting` is one: the host that owns the
+   * cursor (`AppShell`) is a CHILD of this provider, so there is no prop to pass it down by.
+   *
+   * ── AND ONLY THE INNERMOST CLAIM IS ASKED ────────────────────────────────────────────────
+   *
+   * Claims stack, and the last one registered decides — nothing falls through to an outer one.
+   * The fallthrough is the tempting shape and it is wrong: a placer answers `false` both for "my
+   * list is empty" and for "this is not a surface I hold a cursor for", and those two cannot be
+   * told apart from here. An outer host asked after an inner one declined would place a cursor in
+   * a list the pressed binding does not act on — a verb aimed at one message and a selection ring
+   * drawn on another. One claimant, one answer.
+   */
+  claimCursorPlacer: (place: CursorPlacer) => () => void;
 }
 
 const KeymapContext = createContext<Registry | null>(null);
@@ -364,6 +420,20 @@ export function KeymapProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  /**
+   * THE CURSOR PLACERS, innermost last — see {@link Registry.claimCursorPlacer}.
+   *
+   * A ref for the reason `writingSurfaces` is one: the dispatcher reads it at KEYPRESS time and
+   * nothing renders from it, so a claim must not re-render the provider's whole subtree.
+   */
+  const placers = useRef<CursorPlacer[]>([]);
+  const claimCursorPlacer = useCallback((place: CursorPlacer) => {
+    placers.current = [...placers.current, place];
+    return () => {
+      placers.current = placers.current.filter((p) => p !== place);
+    };
+  }, []);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       /*
@@ -408,10 +478,28 @@ export function KeymapProvider({ children }: { children: ReactNode }) {
        * opts back in with `inWriting` (the send-later digits, the `?` sheet).
        */
       const writing = writingSurfaces.current > 0;
-      const live = ordered().filter((b) =>
-        !b.disabled
-        && (b.inInput || !typing)
-        && !(writing && !typing && !b.inWriting && chordSpellsCharacter(b.chord)));
+      const all = ordered();
+      /* The two focus rules, factored out because the parked walk at the bottom of this handler
+         has to apply exactly the same ones: a message verb pressed inside a text field is a
+         character, and one pressed behind a mounted composer is prose. Neither may place a
+         cursor either, so the filter is shared rather than restated. */
+      const reachable = (b: KeyBinding) =>
+        (b.inInput || !typing)
+        && !(writing && !typing && !b.inWriting && chordSpellsCharacter(b.chord));
+      const live = all.filter((b) => !b.disabled && reachable(b));
+      /**
+       * THE MESSAGE VERBS RESTING FOR WANT OF A CURSOR — see {@link DisabledReason}.
+       *
+       * Not merged into `live`: these must not RUN, and the walk that uses them is the last
+       * thing this handler tries, after every existing walk has failed. So nothing that does
+       * something today changes behaviour — the only presses this can reach are the ones that
+       * were silently doing nothing at all.
+       */
+      const parked = all.filter((b) =>
+        b.disabled === true
+        && b.disabledReason === "no_cursor"
+        && b.group === "message"
+        && reachable(b));
       const eligible = (b: KeyBinding) => !b.when || b.when(e);
 
       // A sequence in flight wins outright: after `g`, the `o` belongs to "go to Ohbox"
@@ -448,6 +536,35 @@ export function KeymapProvider({ children }: { children: ReactNode }) {
           return;
         }
       }
+
+      /**
+       * NOTHING LIVE OWNS THIS KEY — BUT A MESSAGE VERB MAY BE RESTING FOR WANT OF A CURSOR.
+       *
+       * The first press PLACES the cursor and says so; it performs nothing. The second press is
+       * an ordinary press of a live binding, because by then the host has a cursor and the
+       * binding is no longer disabled — there is no second code path and no state kept here.
+       *
+       * WHY NOT PLACE A CURSOR WHEN THE LIST OPENS, which is the shorter fix: the Ohbox
+       * deliberately stopped doing that (`AppShell.selectedOhbox` records why — a fallback
+       * selection fetched a body and put somebody's mail in the reading column on arrival), and
+       * a ⌫ that files the first message because a list happened to be under the cursor is that
+       * hazard with a delete on the end of it. A press is a deliberate act; an arrival is not.
+       *
+       * LAST, after both walks above, so this can only reach a keypress that was already inert.
+       * The single-chord guard is the same one the walk above uses: a `no_cursor` sequence would
+       * be a two-key chord whose first key means nothing yet, and no message verb is one.
+       */
+      for (const b of parked) {
+        if (chordPrefix(b.chord)) continue;
+        if (!chordMatches(b.chord, e) || !eligible(b)) continue;
+        const place = placers.current[placers.current.length - 1];
+        /* NOTHING PLACED ⇒ NOTHING CONSUMED. An empty list, or a surface whose cursor no
+           claimant holds: the press stays exactly as inert as it is today, `preventDefault`
+           included, rather than being swallowed by a rule that could not act on it. */
+        if (!place || !place(b.label)) return;
+        e.preventDefault();
+        return;
+      }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
@@ -475,9 +592,9 @@ export function KeymapProvider({ children }: { children: ReactNode }) {
     // `version` is the dependency that matters: it changes when a layer is added, removed
     // or reshaped, which is exactly when the overlay's content changes. `press` is NOT
     // subject to it — it resolves its handler when it is called.
-    () => ({ register, bindings: ordered(), press, mod, claimWriting }),
+    () => ({ register, bindings: ordered(), press, mod, claimWriting, claimCursorPlacer }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [register, ordered, press, mod, claimWriting, version],
+    [register, ordered, press, mod, claimWriting, claimCursorPlacer, version],
   );
 
   return <KeymapContext.Provider value={value}>{children}</KeymapContext.Provider>;
@@ -503,6 +620,26 @@ export function useWritingSurface(): void {
 }
 
 /**
+ * OFFER TO PLACE THE CURSOR for as long as the caller is mounted — the shell's half of
+ * {@link DisabledReason}. See {@link Registry.claimCursorPlacer} for the precedence rule.
+ *
+ * `place` is read through a ref, never closed over, so the dispatcher calls the closure the
+ * CURRENT render published rather than the one that was live when the effect ran. That is the
+ * same defect `Registry.press` exists to avoid, and it bites harder here: the placer's whole job
+ * is to read the list and the cursor as they are at the keypress, and a stale one would place a
+ * cursor from a list the user has since left.
+ */
+export function useCursorPlacer(place: CursorPlacer): void {
+  const { claimCursorPlacer } = useKeymap();
+  const latest = useRef(place);
+  latest.current = place;
+  useEffect(
+    () => claimCursorPlacer((label) => latest.current(label)),
+    [claimCursorPlacer],
+  );
+}
+
+/**
  * Declare bindings for as long as the caller is mounted.
  *
  * `bindings` is read through a ref on every keypress, so handlers are never stale and the
@@ -523,7 +660,11 @@ export function useKeyBindings(bindings: KeyBinding[], scope: BindingScope = "vi
      grep-family tool skips it in silence. JSON escapes its own delimiters, so the encoding is
      unambiguous for every string, and every byte of it is printable. */
   const shape = JSON.stringify(
-    bindings.map((b) => [b.chord, b.group, b.label, b.disabled === true, b.inInput === true]),
+    /* `disabledReason` is part of the SHAPE: the `?` sheet reads it (a row resting for want of a
+       cursor carries the sentence that says so), and it can move while `disabled` stays true —
+       `⇧R` on a 1:1 message is disabled before AND after the cursor arrives, for two different
+       reasons. Without it here the layer never re-registers and the sheet keeps the old title. */
+    bindings.map((b) => [b.chord, b.group, b.label, b.disabled === true, b.inInput === true, b.disabledReason ?? ""]),
   );
 
   useEffect(
@@ -550,9 +691,10 @@ export function useOptionalKeyBindings(bindings: KeyBinding[], scope: BindingSco
   const ctx = useContext(KeymapContext);
   const latest = useRef(bindings);
   latest.current = bindings;
-  // The same JSON shape key as `useKeyBindings`, for the same collision argument.
+  // The same JSON shape key as `useKeyBindings`, `disabledReason` included, for the same
+  // collision argument and the same staleness one.
   const shape = JSON.stringify(
-    bindings.map((b) => [b.chord, b.group, b.label, b.disabled === true, b.inInput === true]),
+    bindings.map((b) => [b.chord, b.group, b.label, b.disabled === true, b.inInput === true, b.disabledReason ?? ""]),
   );
   const register = ctx ? ctx.register : null;
   useEffect(

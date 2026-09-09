@@ -197,6 +197,12 @@ const BASE_MESSAGE_NAMESPACES = [
   // reason `body` is: the guard compares this array against what the sources READ. Without it
   // the binary renders `host.lead` where the one sentence that sells the tier belongs.
   "host",
+  // `cursor` is one sentence: the line the FIRST press of a message verb on a list with no
+  // cursor shows, naming the verb the second press will run (`AppShell.placeCursor`). Read by
+  // `AppShell` through its unscoped `useTranslations()`, so the derivation in
+  // `test/desktop-messages.test.ts` counts it by the dotted key — the shape the header above
+  // warns is the one a reader misses. Reachable on every door: any list opens without a cursor.
+  "cursor",
   "reply", "ribbon", "screener", "screening", "search", "session", "settings",
   // `sync` is the shell's failing-sync strip. The desktop compiles it and
   // can never render it (a fixtures engine is permanently settled), but the guard compares
