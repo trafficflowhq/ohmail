@@ -701,6 +701,24 @@ answer by the same engine — sharpened it. Both doors read one answer through o
 with one component now, so a refusal cannot read two ways depending on which door you came in
 through.
 
+### A message the away responder answered says so
+
+The away responder answers mail that arrives while you are away, and its reply goes to your Sent
+folder — which is not where you look when you come back. So there was nothing on the mail itself to
+tell you a correspondent had already heard from you: you read it as if nobody had.
+
+A message the responder answered now carries one quiet line under the recipients — "Answered by the
+away responder", with the time it was answered. It is a fact, not a badge: no colour, nothing to
+press, and it never counts as mail you have dealt with. On a phone the line reads as the sentence
+alone and the time drops away; a screen reader is given the exact date and time at every width.
+
+Only messages the responder actually answered are marked. A reply it decided to hold back, one the
+per-sender limit refused, and one still waiting to be sent leave the message unmarked, because
+saying somebody was answered when they were not is worse than saying nothing. The reply in Sent is
+untouched — the line is about the message that was answered, never about the copy of the answer.
+
+On the web from the day this landed; in the desktop app with this release.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
