@@ -60,6 +60,23 @@ there while the list scrolled. It is the list's first block now: on a desktop it
 the top while the rows pass under it; on a phone it is read at the top and scrolls away with the
 list. The sentence and its "Away settings" link are unchanged.
 
+### Your signature is part of what moves between your devices
+
+One install organizes a mailbox at a time; your other devices read it. What the organizing install
+publishes about a mailbox — screened senders, rules, notification choices, the away reply, tag
+names — now carries the mailbox's signature too, so a device that only reads that mailbox has the
+sign-off for the address instead of nothing. One signature per mailbox, as before. A settings
+message written by an older ohmail simply has no signature in it, which reads as "no signature"
+rather than as somebody else's, and an older ohmail reading a newer message ignores the field and
+applies the rest.
+
+The install doing the organizing also learns to carry out three more kinds of request on behalf of
+the others: moving a message, changing a per-mailbox setting, and writing, changing or removing a
+rule. It publishes which of them it is able to do, one by one, so another device can tell before it
+asks rather than leaving you watching a request that was never going to be picked up. A request it
+does not recognise is left where it is rather than thrown away — it happens as soon as that install
+updates.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
