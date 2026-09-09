@@ -40,6 +40,30 @@ import { silentLogger, type Logger } from "@trafficflow/core/mail";
  * is one `change_log` row per affected message, on a path the product already uses for "this
  * entity changed, fetch it again".
  *
+ * ── IT RUNS TO EXHAUSTION, AND THE GATE CLOSES ONLY WHEN IT HAS ────────────────────────────
+ *
+ * The first version of this pass had a PAGE BUDGET — five pages of two hundred — and that is a
+ * defect, not a safeguard, because re-delivery does not change the candidate predicate and the
+ * cursor started at `null` on every run: an account with more than a thousand matching replies had
+ * its first thousand re-sent on every worker start and the remainder re-sent NEVER. Permanently
+ * stale rows, on the largest mailboxes, with the pass reporting a full day's work each time. Found
+ * by review as a HIGH.
+ *
+ * So the walk continues until a page comes back short or empty, and {@link
+ * AWAY_REPLY_REDELIVER_MAX_PAGES} is a SAFETY BOUND rather than a budget: reaching it means a bug,
+ * so the result says `exhausted: false` and carries a `cursor`, and the caller resumes there
+ * instead of starting over. {@link makeAwayReplySweep} closes its gate only on a sweep in which
+ * every account reported `exhausted`.
+ *
+ * ── ONE SCOPE CONSEQUENCE, NAMED ───────────────────────────────────────────────────────────
+ *
+ * The candidate set is account-global, and `update` is an upsert on a mirror — so a client whose
+ * window never reached back to one of these replies will now hold it. That is a real message of
+ * the account, described correctly, filtered out of the Ohbox by the flag itself and visible only
+ * in the Sent folder view; it is a widening of a mirror's window, not a false state. It is also
+ * not avoidable server-side: `change_log` is per ACCOUNT by design, so a per-client scope is not
+ * expressible here. Recorded as a gap row rather than worked around.
+ *
  * ── WHY IT RUNS ONCE PER WORKER PROCESS AND CARRIES NO DURABLE MARKER ───────────────────────
  *
  * Two shapes were tried before this one and both are worth recording, because the second LOOKED
@@ -91,8 +115,15 @@ import { silentLogger, type Logger } from "@trafficflow/core/mail";
 
 /** One page. Small on purpose: the whole candidate set is one account's responder replies. */
 export const AWAY_REPLY_REDELIVER_BATCH = 200;
-/** Pages per run, so a pathological account cannot hold the cycle. */
-export const AWAY_REPLY_REDELIVER_MAX_PAGES = 5;
+/**
+ * A SAFETY BOUND, NOT A BUDGET — one million rows at the default page size.
+ *
+ * The walk is meant to reach the end of the candidate set; this exists only so that a bug in the
+ * cursor cannot spin a worker cycle for ever. Reaching it is reported (`exhausted: false`) and the
+ * caller resumes from the returned cursor, so even the pathological case makes progress rather
+ * than repeating its first page — which is exactly what the old five-page budget did.
+ */
+export const AWAY_REPLY_REDELIVER_MAX_PAGES = 5_000;
 
 export interface AwayReplyRedeliverDeps {
   /** Scope to ONE account — the worker loops its served accounts. */
@@ -102,6 +133,8 @@ export interface AwayReplyRedeliverDeps {
   batch?: number;
   /** Test seam. Default {@link AWAY_REPLY_REDELIVER_MAX_PAGES}. */
   maxPages?: number;
+  /** Resume point from a previous run that did not exhaust the set. `null` starts at the top. */
+  afterId?: string | null;
 }
 
 export interface AwayReplyRedeliverResult {
@@ -109,8 +142,15 @@ export interface AwayReplyRedeliverResult {
   examined: number;
   /** `change_log` rows written — the number of mirrors' rows that will be refreshed. */
   redelivered: number;
-  /** The page budget ended the walk rather than the candidate set. */
-  capped: boolean;
+  /**
+   * TRUE ⇒ the walk reached the END of the candidate set for this account.
+   *
+   * The gate that stops the sweep repeating reads THIS and nothing else, so an account whose walk
+   * was cut short keeps the sweep open instead of being silently abandoned.
+   */
+  exhausted: boolean;
+  /** Where to resume when `exhausted` is false. Null when there is nothing left to do. */
+  cursor: string | null;
 }
 
 /**
@@ -128,9 +168,11 @@ export async function awayReplyFlagRedeliverPass(
   const log = deps.log ?? silentLogger;
   const batch = deps.batch ?? AWAY_REPLY_REDELIVER_BATCH;
   const maxPages = deps.maxPages ?? AWAY_REPLY_REDELIVER_MAX_PAGES;
-  const result: AwayReplyRedeliverResult = { examined: 0, redelivered: 0, capped: false };
+  const result: AwayReplyRedeliverResult = {
+    examined: 0, redelivered: 0, exhausted: false, cursor: null,
+  };
 
-  let afterId: string | null = null;
+  let afterId: string | null = deps.afterId ?? null;
   for (let page = 0; page < maxPages; page++) {
     const rows = await db.select({ id: messages.id })
       .from(messages)
@@ -153,7 +195,7 @@ export async function awayReplyFlagRedeliverPass(
 
     // `break`, never `return`: an early return here would skip the log line below, and a
     // pass that ran silently is indistinguishable from one that never did.
-    if (rows.length === 0) break;
+    if (rows.length === 0) { result.exhausted = true; break; }
     result.examined += rows.length;
 
     // ONE TRANSACTION PER PAGE, `db.transaction` directly — the sibling passes' shape. The type
@@ -174,11 +216,15 @@ export async function awayReplyFlagRedeliverPass(
     result.redelivered += rows.length;
     afterId = rows[rows.length - 1]!.id;
 
-    if (rows.length < batch) break;
-    if (page === maxPages - 1) result.capped = true;
+    // A SHORT PAGE IS THE END OF THE SET — `limit batch` returned fewer than it could, so there is
+    // nothing after it. This is the ordinary exit.
+    if (rows.length < batch) { result.exhausted = true; break; }
+    // Falling out of the loop instead means the safety bound was reached: not exhausted, and the
+    // cursor goes back to the caller so the next attempt continues from here.
+    if (page === maxPages - 1) result.cursor = afterId;
   }
 
-  if (result.redelivered > 0 || result.capped) {
+  if (result.redelivered > 0 || !result.exhausted) {
     /**
      * `marked`, not `redelivered`, and the difference is not cosmetic: `log.ts#ALLOWED_FIELDS` is
      * an ALLOWLIST that DROPS an unregistered key rather than failing, so a field named
@@ -190,8 +236,125 @@ export async function awayReplyFlagRedeliverPass(
      */
     log.info("away_reply_flag_redelivered", {
       accountId: deps.accountId,
-      examined: result.examined, marked: result.redelivered, capped: result.capped,
+      examined: result.examined, marked: result.redelivered, capped: !result.exhausted,
     });
   }
   return result;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════════════════
+   THE PER-PROCESS SWEEP — the gate, extracted so it can be control-tested
+   ══════════════════════════════════════════════════════════════════════════════════════════ */
+
+export interface AwayReplySweepRun {
+  /** Accounts walked in this attempt. Zero once the gate has closed. */
+  accounts: number;
+  /** `change_log` rows written across every account in this attempt. */
+  redelivered: number;
+  /** Accounts whose walk threw. Their cursor is kept and the gate stays open. */
+  failed: number;
+  /** TRUE ⇒ every account is exhausted and this process will not sweep again. */
+  done: boolean;
+}
+
+export interface AwayReplySweep {
+  /** Has the gate closed for this process. */
+  readonly done: boolean;
+  /** One attempt over the given accounts. A no-op once {@link done}. */
+  runOnce(
+    db: Tx, accountIds: readonly string[],
+    opts?: { log?: Logger; batch?: number; maxPages?: number;
+             onError?: (accountId: string, err: unknown) => void },
+  ): Promise<AwayReplySweepRun>;
+}
+
+/**
+ * THE SWEEP'S STATE, AND WHY IT IS A VALUE RATHER THAN TWO VARIABLES IN THE CYCLE.
+ *
+ * It holds exactly two things: whether the gate has closed, and where each account's walk stopped.
+ * Both used to be locals in `index.ts`, which made the one behaviour under review — "once per
+ * process, and re-swept by the next process" — reachable only by booting a worker. Review filed
+ * that as a GUARD row and it was the right call: the first version of the gate closed BEFORE the
+ * account loop, so a single account's failure retired the whole fleet's sweep, and no test could
+ * see it.
+ *
+ * As a value it is directly testable: `runOnce` twice on one instance is the once-per-process
+ * claim, and a SECOND instance is a restart. `away-reply-warm-mirror.test.ts` asserts both, and
+ * that an unexhausted account keeps the gate open and resumes from its cursor.
+ *
+ * ── WHAT "DONE" MEANS, EXACTLY ─────────────────────────────────────────────────────────────
+ *
+ * Every account walked to exhaustion in ONE attempt. Not "we tried": an account that threw, and an
+ * account whose walk hit the safety bound, both leave the gate open so the next attempt continues
+ * from that account's cursor. A sweep is therefore never abandoned half-done, which is the shape
+ * the page budget shipped with.
+ *
+ * ── AND WHY THE PROCESS IS THE RIGHT GRANULARITY ───────────────────────────────────────────
+ *
+ * The deploy order is API → worker → web — verified in the train's own script
+ * (`deploy-0150-apiworker.sh` runs `deploy-api.sh`, sets the aliases, reads `/health` twice, and
+ * only then runs `deploy-worker.sh`; the web is a separate script run later). So the worker that
+ * carries this pass starts AFTER the API that knows the flag, and the first sweep's change rows
+ * are re-materialized by an API that sets it.
+ *
+ * The residual is narrow and worth naming rather than hiding: that script has `set -u` and no
+ * abort between the two halves, so a FAILED API deploy still proceeds to the worker, and a sweep
+ * spent against the old API delivers rows without the flag. Nothing is corrupted — the rows are
+ * re-sent as they were — but that sweep is wasted. It is redone at the NEXT worker start, which is
+ * every subsequent deploy, and the deploy step carries the operational half: do not proceed to the
+ * worker unless the API deploy returned 0 and both health reads show the new version.
+ *
+ * A periodic re-sweep (a daily belt) was considered and REJECTED, with its cost: the candidate set
+ * is only the responder's own replies — tens of rows per mailbox — so a daily belt would re-deliver
+ * those same rows to every client every day, for ever, to cover a window that a worker restart
+ * already closes. It has no natural end either, since ending it needs the hardcoded date this
+ * design exists to avoid. This is a REPAIR: it should be deleted once the release carrying the flag
+ * has rolled out, not put on a timer.
+ */
+export function makeAwayReplySweep(): AwayReplySweep {
+  let done = false;
+  /** accountId → resume point, for accounts whose last walk did not reach the end. */
+  const cursors = new Map<string, string>();
+
+  return {
+    get done() { return done; },
+
+    async runOnce(db, accountIds, opts = {}) {
+      if (done) return { accounts: 0, redelivered: 0, failed: 0, done: true };
+
+      let redelivered = 0;
+      let failed = 0;
+      let allExhausted = true;
+
+      for (const accountId of accountIds) {
+        // ONE ACCOUNT'S FAILURE MUST NOT SKIP THE REST, and must not close the gate either.
+        try {
+          const r = await awayReplyFlagRedeliverPass(db, {
+            accountId,
+            afterId: cursors.get(accountId) ?? null,
+            ...(opts.log === undefined ? {} : { log: opts.log }),
+            ...(opts.batch === undefined ? {} : { batch: opts.batch }),
+            ...(opts.maxPages === undefined ? {} : { maxPages: opts.maxPages }),
+          });
+          redelivered += r.redelivered;
+          if (r.exhausted) {
+            cursors.delete(accountId);
+          } else {
+            // Keep the resume point. `cursor` is null only when nothing was walked at all, in
+            // which case starting over is the only option available.
+            if (r.cursor !== null) cursors.set(accountId, r.cursor);
+            allExhausted = false;
+          }
+        } catch (err) {
+          failed += 1;
+          allExhausted = false;
+          opts.onError?.(accountId, err);
+        }
+      }
+
+      // THE GATE CLOSES HERE AND NOWHERE ELSE — after the loop, and only on a clean full sweep.
+      if (allExhausted) done = true;
+      return { accounts: accountIds.length, redelivered, failed, done };
+    },
+  };
 }

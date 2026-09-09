@@ -94,7 +94,7 @@ import { workflowDrainPass, workflowTimeScanPass, unconfiguredDrafter } from "./
 import { bubbleUpPass } from "./bubble-up-cron.js";
 import { threadJoinHealPass, type ThreadJoinHealCursor } from "./thread-join-heal.js";
 import { inboundQuietPass } from "./inbound-quiet.js";
-import { awayReplyFlagRedeliverPass } from "./away-reply-flag-redeliver.js";
+import { makeAwayReplySweep } from "./away-reply-flag-redeliver.js";
 import { ruleRetroPass } from "./rule-retro.js";
 import { ohboxTidyPass } from "./ohbox-tidy.js";
 import { screenerAutoApplyPass } from "./screener-auto.js";
@@ -175,18 +175,23 @@ export const THREAD_JOIN_HEAL_EVERY_MS = 6 * 60 * 60 * 1000;
 export const INBOUND_QUIET_EVERY_MS = 6 * 60 * 60 * 1000;
 
 /**
- * THE AWAY-REPLY FLAG RE-DELIVERY RUNS ONCE PER WORKER PROCESS — not on an interval.
+ * HOW SOON THE AWAY-REPLY SWEEP RETRIES WHILE IT IS STILL OWED — fifteen minutes.
  *
- * The pass has no durable marker, deliberately (`away-reply-flag-redeliver.ts` records the two
- * shapes that were tried and why both were rejected, one of them for being silently wrong). So the
- * gate is the process: one sweep of every served account on the first cycle after start, and then
- * never again until the next restart. Repairing a mailbox costs tens of change rows at most, so a
- * repeat per deploy is a bounded and visible cost — where a hardcoded cutoff would be an unbounded
- * and invisible one.
+ * The sweep runs ONCE PER WORKER PROCESS and its gate closes only on an attempt in which every
+ * account walked to exhaustion (`away-reply-flag-redeliver.ts#makeAwayReplySweep`). This interval
+ * governs the case where it did NOT: an account that threw, or one whose walk hit the safety
+ * bound. Without it such an attempt would repeat on every cycle, which for a persistently failing
+ * account is a hot loop; with it the retry is periodic and resumes from that account's cursor.
  *
- * It is a REPAIR, not a feature: once a release carrying `autoReplyByUs` has reached every client,
- * this and the pass it calls can be deleted outright.
+ * It starts DUE, so the first attempt is on the first cycle after start — which, in the train's
+ * deploy order (API, then worker, then web — see `deploy-0150-apiworker.sh`), is the first cycle
+ * after an API that already knows the flag.
+ *
+ * The pass is a REPAIR, not a feature: once a release carrying `autoReplyByUs` has reached every
+ * client, this and the pass it calls can be deleted outright. That is also why there is no daily
+ * belt — the pass's own header carries the cost argument.
  */
+export const AWAY_REPLY_REDELIVER_RETRY_MS = 15 * 60 * 1000;
 
 /**
  * ENFORCED SYNC — how often the worker scans for mailboxes the API has stamped `sync_requested_at`.
@@ -871,10 +876,13 @@ export async function startWorkerWithLock(
      */
     let lastInboundQuietAt = 0;
     /**
-     * FALSE until the one sweep has run, so the flag reaches warm mirrors on the first cycle after
-     * the deploy and the walk is never repeated inside one process. See the constant's docblock.
+     * The per-process sweep. It owns the gate AND every account's resume point, so an attempt that
+     * could not finish is continued rather than restarted — see its own docblock for why that used
+     * to be two locals here and why review was right to call that untestable.
      */
-    let awayReplyRedeliverDone = false;
+    const awayReplySweep = makeAwayReplySweep();
+    /** Starts DUE. Only paces the RETRY; the gate is the sweep's. */
+    let lastAwayReplySweepAt = 0;
     /**
      * Where each account's LAST gated heal run stopped, kept only while it stopped on its
      * BUDGET. An account holding more duplicate-name groups than one run's cap would otherwise
@@ -5112,25 +5120,34 @@ export async function startWorkerWithLock(
       // account's failure must not skip the rest, and this one must never abort a cycle: it
       // writes no state of its own, so the next gated run simply re-reads reality. It moves
       // nothing and touches no message row; a change_log row is a re-read instruction.
-      if (!awayReplyRedeliverDone) {
-        // Set BEFORE the loop, not after: a per-account failure is caught below and must not make
-        // the whole fleet's sweep repeat on the next cycle. A mailbox missed here is repaired on
-        // the next worker start, which is the same guarantee every other account already has.
-        awayReplyRedeliverDone = true;
-        for (const accountId of passAccounts) {
-          if (stopped) return;
-          try {
-            await asDatabaseFault("cycle.awayReplyFlagRedeliverPass",
-              () => awayReplyFlagRedeliverPass(db as unknown as Tx, { accountId, log }));
-          } catch (err) {
-            noteIfSharedDatabaseFault(err);
-            log.error("away_reply_flag_redeliver_failed", {
-              accountId, err,
-              reason: "no change row for this account committed partially — each page is one " +
-                "transaction — and the candidate predicate is the rows' own state, so the next " +
-                "gated run re-reads reality and resumes; no message was moved or altered",
-            });
-          }
+      if (!awayReplySweep.done
+          && Date.now() - lastAwayReplySweepAt >= AWAY_REPLY_REDELIVER_RETRY_MS) {
+        lastAwayReplySweepAt = Date.now();
+        // The GATE IS THE SWEEP'S, closed after its own loop and only on a clean full pass. It
+        // used to be a boolean set here, before the accounts were walked, which retired the whole
+        // fleet's sweep on one account's failure. Its per-account try/catch keeps that shape — one
+        // account's failure must not skip the rest — and reports through `onError`.
+        const r = await asDatabaseFault("cycle.awayReplySweep",
+          () => awayReplySweep.runOnce(db as unknown as Tx, passAccounts, {
+            log,
+            onError: (accountId, err) => {
+              noteIfSharedDatabaseFault(err);
+              log.error("away_reply_flag_redeliver_failed", {
+                accountId, err,
+                reason: "no change row for this account committed partially — each page is one " +
+                  "transaction — the account keeps its cursor, the sweep stays owed, and the " +
+                  "next attempt resumes there; no message was moved or altered",
+              });
+            },
+          }));
+        if (r.redelivered > 0 || r.failed > 0) {
+          // `capped` carries "the sweep is still owed", NOT a field named `done`:
+          // `ALLOWED_FIELDS` drops an unregistered key silently, so `done` would vanish from the
+          // line. Inverted rather than renamed, because `capped` already means "the walk did not
+          // reach the end" everywhere else in this cycle.
+          log.info("away_reply_sweep", {
+            accounts: r.accounts, marked: r.redelivered, failed: r.failed, capped: !r.done,
+          });
         }
       }
 
