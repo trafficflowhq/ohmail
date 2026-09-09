@@ -951,7 +951,7 @@ export async function enterHostDoor(
  *
  * THE SIGN-OUT COMES FIRST, and it is not optional: a redeem while a session is still held is
  * refused `409 already_signed_in`. It is also safe — signing out FREEZES the mirror, the cursor
- * and the owner record rather than discarding them, which is what makes "the copy of your mail
+ * and the recorded owner rather than discarding them, which is what makes "the copy of your mail
  * here is kept" a true sentence rather than a hopeful one.
  *
  * A host that was REINSTALLED is a different account behind the same address, and the engine
