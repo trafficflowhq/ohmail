@@ -794,7 +794,11 @@ export function InlineReply({
       <RichEditor
         key={message.id}
         className="reply-editor"
-        ariaLabel={t("editorAria")}
+        /* AND ITS SCREEN-READER TWIN, on the same branch. A sighted reader saw "Write your
+           message…" on a forward while a screen reader still heard "Reply body" for the same
+           field — half-applied by construction, so both halves move together. The Reply Run's
+           overlay keeps `reply.editorAria`: that surface is only ever a reply. */
+        ariaLabel={mode === "forward" ? t("forwardEditorAria") : t("editorAria")}
         /* THE PLACEHOLDER FOLLOWS THE MODE, like `forwardHead` and the forwarding note above.
            One key served both, so a forward — which has no reply in it — invited the author to
            "Write your reply…". The forward's sentence is the compose editor's own, because it is
