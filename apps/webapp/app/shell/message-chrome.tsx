@@ -50,25 +50,42 @@ export interface MessageChrome {
    */
   ownAddresses: readonly string[];
   /**
-   * THE FOLDERS FOUNDATION FLAG, as the shell knows it (`consent.foldersEnabled`) — the gate on
-   * the reader's Delete verb (FOLDERS-SPEC.md §16.3/§16.7: the verb ships behind "Use folders";
-   * flag-off is the pre-verb reader, byte-identical to before the verb existed).
+   * THE FOLDERS FOUNDATION FLAG, as the shell knows it (`consent.foldersEnabled`).
    *
-   * It rides the chrome for the reason everything here does: `MessagePane` is mounted from six
-   * surfaces and holds no consent hook of its own. OPTIONAL, and absent means OFF — a
-   * provider-less mount (the desktop shell, a bare test) renders no destructive verb, which is
-   * the honest degradation and exactly the flag-off ceremony. Both halves of the verb — the
-   * menu entry and the confirm strip — gate on it independently, so a stale open confirm cannot
-   * dispatch after the flag goes off (the mobile reader holds the same pair).
+   * IT IS NO LONGER THE DELETE GATE, and no code in this file's consumers reads it today. It
+   * used to gate both halves of the reader's Delete verb — the menu entry and the confirm strip
+   * — and that was wrong: delete files the message to the mail server's own \Trash, a system
+   * folder every account already has and not one the user made, so the USER-folders foundation
+   * was never a fact about whether the verb can run. The engine's `message_delete` never read
+   * it, and the same verb over a SELECTION never read it either, so a folders-off account could
+   * delete a picked pile and not the row under its cursor. `mirrorHolds` below is now the whole
+   * gate, on both halves.
+   *
+   * Kept on the chrome, rather than deleted, because it is the chrome's declared copy of a
+   * foundation fact the shell already supplies (`folders-rail.test.tsx` pins that supply as part
+   * of the rail's flag-off parity) and the next surface that needs the flag in the reader should
+   * find it here rather than growing a second consent hook. A reader added later must not read
+   * it as a delete gate: it is not one.
    */
   foldersEnabled?: boolean;
   /**
-   * DOES THE MIRROR HOLD THIS MESSAGE — the Delete verb's second gate. The reader can show
+   * DOES THE MIRROR HOLD THIS MESSAGE — the Delete verb's ONLY gate now. The reader can show
    * rows the mirror deliberately does not hold (an off-mirror archive hit opened from Search),
    * and `message_delete` is an engine mutation over a local row: offered there it would be a
    * control that always fails (the engine rejects a mutation with no local effect before the
-   * wire). ABSENT means "assume held" — every mount that offers the verb wires it; the demo
-   * and provider-less mounts never reach it because `foldersEnabled` is already off there.
+   * wire).
+   *
+   * ── ABSENT AND `false` ARE DIFFERENT ANSWERS, AND ABSENT NOW DECIDES ─────────────────────
+   *
+   * ABSENT means "this shell has no mirror probe at all" (the desktop shell, a bare mount) and
+   * ADMITS — `!== false`, the same reading `forwardAdmitted` has always used. `false` means
+   * "this shell answered no for this row" and refuses. The distinction used to be unreachable
+   * for delete, and this docblock said so: the demo and provider-less mounts "never reach it
+   * because `foldersEnabled` is already off there". That sentence was the collapse of two
+   * states into one, and with the folders term gone the absent case is now the state that
+   * decides a destructive verb on every shell that supplies no probe. A shell that CANNOT
+   * answer is not a shell whose mail may not be deleted — the mutation path behind it still
+   * polices the row; a shell that answers `false` gets no verb.
    */
   mirrorHolds?: (messageId: string) => boolean;
   /**

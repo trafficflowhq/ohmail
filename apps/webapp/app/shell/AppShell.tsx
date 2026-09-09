@@ -4346,13 +4346,30 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * nowhere else, so they are resolved here and passed down rather than re-derived in three view
    * files — which is how the `?` sheet comes to advertise a delete the bar refuses to draw.
    *
-   * `canDeleteMessage` is the delete strip's OWN render gates, verbatim from the `d` binding
-   * below: the folders consent, and the mirror actually holding the row. `canReplyAllTo` is
-   * `replyAllRecipients` against the account's addresses — the same call the bar's button and
-   * the `⇧R` binding both make, and the one `sendReply` resolves again at send time.
+   * `canDeleteMessage` is the delete strip's OWN render gate, verbatim from the `d` binding
+   * below: the mirror actually holding the row. `canReplyAllTo` is `replyAllRecipients`
+   * against the account's addresses — the same call the bar's button and the `⇧R` binding
+   * both make, and the one `sendReply` resolves again at send time.
+   *
+   * ── WHY "USE FOLDERS" IS NOT A TERM HERE ANY MORE ─────────────────────────────────────
+   *
+   * It used to be the first term, and that was wrong twice over. Delete is a MOVE to the mail
+   * server's OWN \Trash — a system folder every account already has, discovered at connect
+   * beside \Junk — and never to a folder the user made, so the user-FOLDERS foundation flag
+   * was never a fact about whether this verb can run: the server's `message_delete` has never
+   * read it. And the same verb over a SELECTION never read it either (`OhboxView`'s bulk
+   * delete opens on `picked.size > 0` and nothing else), so one account could file a pile to
+   * Trash by picking it and could not file the row under the cursor — measured live on a
+   * folders-off account before this change: the selection press produced "Moved to Trash."
+   * and a `DELETE /messages/:id`, the cursor press produced nothing at all, no toast, no
+   * sentence and no request. Two admissions for one verb is what made that possible, so this
+   * is now the one admission both doors ask, and it asks only what it can act on.
+   *
+   * The flag is still supplied on the chrome and still read where it IS a fact: the folders
+   * rail group, the folder views, and Move-to-folder.
    */
   const canDeleteMessage = useStableCallback((m: EngineMessage): boolean =>
-    consent.foldersEnabled === true && reader.get<EngineMessage>("message", m.id) != null);
+    reader.get<EngineMessage>("message", m.id) != null);
   const canReplyAllTo = useStableCallback((m: EngineMessage): boolean => replyAllRecipients(m, ownAddresses) !== null);
 
   /**
@@ -6008,16 +6025,20 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
       /* DELETE — the prototype's two-press ceremony: the first `d` ASKS (the same confirm
          strip the ⋯ menu opens, focus landing on Cancel), the second CONFIRMS by clicking
          the strip's own danger button — the ONE dispatch site of `"delete"` stays that
-         button, so the flag-off race cannot ghost-delete (flag gone ⇒ strip gone ⇒ nothing
-         to click). The gates are the strip's own render gates (folders on, mirror holds the
-         row), so the sheet never advertises a delete the bar would refuse to draw. */
+         button, so a gate closing under the ask cannot ghost-delete (gate gone ⇒ strip gone
+         ⇒ nothing to click). The gate is the strip's own render gate (the mirror holds the
+         row), so the sheet never advertises a delete the bar would refuse to draw.
+
+         THIS `disabled` IS WHAT THE `?` SHEET PRINTS, so it is half the defect and not a
+         mirror of it: with "Use folders" off the sheet drew this row greyed and the strip
+         could not be opened at all, while the same verb over a selection worked. It reads
+         the mirror alone now, exactly like `canDeleteMessage` above and the strip itself. */
       chord: "d",
       group: "message",
       label:
         barPanel?.panel === "delete" ? t("shortcuts.deleteConfirm") : t("shortcuts.deleteAsk"),
       disabled:
         focused == null
-        || consent.foldersEnabled !== true
         || reader.get<EngineMessage>("message", focused.id) == null,
       /* A HELD KEY IS ONE PRESS. Key auto-repeat would otherwise walk the whole ceremony on
          its own — the first repeat opens the ask, a later repeat confirms it — turning a
@@ -6044,14 +6065,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
        does not need a strip in front of it. `d` keeps its ask because a keycap on a bar button
        that deletes on a single press is a different promise; both now land in the same window.
 
-       The gates are `d`'s own, deliberately: the sheet must not advertise on one row a delete
-       the row beside it would refuse to draw. */
+       The gate is `d`'s own, deliberately: the sheet must not advertise on one row a delete
+       the row beside it would refuse to draw. It is the mirror holding the row and nothing
+       else — see `canDeleteMessage` for why "Use folders" stopped being a term. */
     ...deleteKeyBindings({
       focused,
       label: t("shortcuts.deleteKey"),
       canDelete:
-        consent.foldersEnabled === true
-        && focused != null
+        focused != null
         && reader.get<EngineMessage>("message", focused.id) != null,
       run: (m) => onMessageAction("delete", m),
     }),

@@ -109,7 +109,8 @@ export type MessageAction =
    * DELETE — the one destructive verb, and it is a MOVE: the engine's `message_delete` files
    * the message to the provider's own \Trash folder and NEVER expunges (FOLDERS-SPEC.md §16.3;
    * the product rule lives at `packages/core/src/adapters/imap-types.ts`, the third
-   * user-commanded write). Gated on the folders foundation flag (`chrome.foldersEnabled`) and
+   * user-commanded write). Gated on the mirror holding the row (`chrome.mirrorHolds`) — and NOT
+   * on the folders foundation flag, which files nothing and never did — and
    * dispatched ONLY from the confirm strip the ⋯ menu opens — there is no un-delete on the
    * wire, so the ceremony is a confirm, never an undo the product could not honour. The mobile
    * reader ships the identical ceremony, and a parity test on its side pins the two surfaces'
@@ -328,22 +329,42 @@ function ActionBar({
   /** The runtime density measurement — which groups ACTUALLY fit; see `bar-density.ts`. */
   const density = useBarDensity();
   /**
-   * MAY THE DELETE CONFIRM BE ON SCREEN AT ALL — the flag, and the mirror actually holding the row.
+   * MAY THE DELETE CONFIRM BE ON SCREEN AT ALL — the mirror actually holding the row.
    *
    * Hoisted out of the render conditional below because the effect beside it has to ask the SAME
    * question, and two spellings of "may this strip be drawn" is exactly how the strip and the state
    * that says it is open come to disagree. One derivation, read from both places.
    *
-   * `foldersEnabled` ABSENT is a different state from `false` and both read false here, which is
-   * the right answer for each rather than a collapse that happens to work: absent is a shell with
-   * no folders verb at all (the desktop, a bare mount), and there the delete panel is unreachable
-   * — the only door is the menu item this same predicate gates, and such a shell provides no
-   * `setBarPanel` for the `d` key to write through either. So the effect below has nothing to
-   * withdraw there, and if it ever did, withdrawing is still the correct answer, because a strip
-   * that may not be drawn is not a question anybody can see.
+   * ── "USE FOLDERS" WAS THE FIRST TERM AND IS GONE ──────────────────────────────────────────
+   *
+   * Delete files the message to the mail server's own \Trash, a system folder every account
+   * already has — not to a folder the user made — so the user-folders foundation flag was never
+   * a fact about whether this strip may be drawn, and the engine's `message_delete` has never
+   * read it. Meanwhile the SAME verb over a selection never read it either, so a folders-off
+   * account could delete a picked pile and not the row under its cursor. One verb, one
+   * admission; see `AppShell`'s `canDeleteMessage` for the measurement.
+   *
+   * WHAT REPLACED IT AS THE OTHER STATE. `mirrorHolds` ABSENT is a shell that supplies no mirror
+   * probe at all (the desktop, a bare mount), and `!== false` ADMITS there — deliberately, and
+   * the same way `forwardAdmitted` below has always read it. That is the one shape this file
+   * must not get wrong: "this shell has no such thing" is not "this shell answered no". A shell
+   * that cannot answer is not a shell whose mail may not be deleted; it is a shell whose delete
+   * the path behind it will police. A shell that answers `false` for a row — a Search hit the
+   * mirror deliberately does not hold — still gets no strip, because `message_delete` is a
+   * mutation over a local row and offering it there is a control that always fails.
+   *
+   * ── AND WHAT THE EFFECT BELOW CAN STILL WITHDRAW ──────────────────────────────────────────
+   *
+   * The mirror, which is now the only operand. A flag flip used to be the one way to watch that
+   * effect from a mounted shell, because dropping the row from the mirror also moves the cursor
+   * and the shell clears the bar's panel on a cursor move — so the shell-level test would go
+   * green with the effect deleted. With the flag no longer a gate, the effect's own guard lives
+   * where the two operands ARE independent: `action-bar.test.ts` flips `chrome.mirrorHolds` in
+   * place under an open strip and asserts `onPanel(null)` fired, not merely that the strip is
+   * undrawn. `delete-confirm-ghost.test.tsx` keeps the flag sequence as the INVERTED case — the
+   * strip must now survive it.
    */
-  const deleteConfirmAdmitted =
-    chrome.foldersEnabled === true && chrome.mirrorHolds?.(message.id) !== false;
+  const deleteConfirmAdmitted = chrome.mirrorHolds?.(message.id) !== false;
 
   /** The delete confirm's focus target (Cancel — the safe answer) and its described note. */
   const deleteCancelRef = useRef<HTMLButtonElement>(null);
