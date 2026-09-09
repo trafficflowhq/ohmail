@@ -371,9 +371,8 @@ time. Both now use the mailbox's own setting.
 
 **The screen could name the wrong computer.** When two computers had each left an extra record
 behind with an unusable date, the name shown was chosen by whichever unusable date happened to be
-later -- which could be the computer that had just stood down rather than the one organizing. The
-name is now chosen the same way the decision chooses, so the screen and the button agree about
-which machine they mean.
+later -- which could be the computer that had just stood down rather than the one organizing. A date
+nobody can believe no longer decides that name.
 
 **And a mailbox told to wait no time at all now waits no time at all.** A record dated slightly in
 the future was still counted as current under a zero wait. That setting is unusual, and it now
