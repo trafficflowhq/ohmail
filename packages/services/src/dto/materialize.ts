@@ -350,9 +350,20 @@ export async function materializeMessages(
    * receipt reader must carry the same answer the living view does, or a `delete` echo would
    * disagree with the row the client holds about a field the `update` before it did not change).
    *
-   * `outcome in ('sent','unverified')` AND `sent_at is not null` — the two halves are stated in
-   * `MessageDTO.awayRepliedAt`, and the short form is that the outcome set is "the claim is kept
-   * and no second reply will be offered" while the null test is what keeps the DTO's type honest.
+   * WHICH ROWS COUNT: `outcome in ('sent','unverified')` — the set meaning "the claim is kept and
+   * no second reply will ever be offered", stated in full on `MessageDTO.awayRepliedAt`. That is
+   * the LOAD-BEARING term, and the guard for it is a `throttled` row carrying a `sent_at`: the
+   * schema permits one (the CHECK constrains the outcome alone), so the state is reachable by a
+   * hand repair or a backfill, and it is the only shape in which dropping this term changes an
+   * answer.
+   *
+   * `isNotNull(sent_at)` is a NARROWING, not a second guard, and saying so is the point: `iso()`
+   * answers `null` for a null instant and the projection spreads that straight through, so an
+   * in-set row with no instant produces exactly the same DTO whether the database filtered it or
+   * this map did. Removing the term therefore changes the ROWS CROSSING THE WIRE and no answer —
+   * measured, not assumed — which is why it is documented as narrowing rather than pinned by a
+   * test that could not fail.
+   *
    * The ledger's `(account_id, message_id)` UNIQUE is why no `distinct` or `max` is needed; the
    * `account_id` predicate is on the query rather than trusted from the id list, exactly as the
    * five above have it.
