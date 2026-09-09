@@ -13,12 +13,12 @@ const ledger = (tx: Tx): LedgerTx => tx as unknown as LedgerTx;
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  WHAT AN ORGANIZER DOES WITH A REQUEST THAT IS NOT A SCREENER DECISION (mail 0093)
+ *  WHAT AN ORGANIZER DOES WITH A REQUEST THAT IS NOT A SCREENER DECISION (mail 0094)
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
  * `screener-apply.ts` is the model and the sibling: one transactional core, reached from BOTH the
  * organizer's own HTTP door and the request drain, so the two cannot drift into two answers about
- * one action. This module is the same shape for the kinds that arrive with mail 0093.
+ * one action. This module is the same shape for the kinds that arrive with mail 0094.
  *
  * It lives in `@trafficflow/db` for `screener-apply.ts`'s reason, unchanged: the worker may not
  * import `@trafficflow/services` at runtime (a CJS `sanitize-html` re-entering an ESM
@@ -255,7 +255,7 @@ export async function applyMessageMove(
  *  `profile.update` — the per-mailbox configuration a reader may ask the organizer to change
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
- * ── WHY THIS KIND EXISTS AT ALL, which is the sharpest reason in mail 0093 ─────────────────
+ * ── WHY THIS KIND EXISTS AT ALL, which is the sharpest reason in mail 0094 ─────────────────
  *
  * Before it, a reader editing an away responder, a signature, a dormancy window or a screening
  * posture got `200`. The write landed — in the READER's own row, which the organizer's pass never

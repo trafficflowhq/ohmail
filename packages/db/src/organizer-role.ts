@@ -34,7 +34,7 @@ import type { Tx } from "./change-log.js";
  * ── FOUR MEMBERS, ONE PER FAMILY OF THING A READER CAN ASK FOR ────────────────────────────
  *
  * Separate members rather than one "modern build" flag, because they arrive in different releases
- * and a reader has to be able to ask about the one it needs. An organizer shipped before mail 0093
+ * and a reader has to be able to ask about the one it needs. An organizer shipped before mail 0094
  * advertises `requests` alone: it drains Screener decisions and has no applier for a move, a rule
  * or a profile edit. A reader that read a single flag off such a claim would queue a move nobody
  * is ever going to take, and the person would watch a message sit in a pending state for ever.
@@ -610,11 +610,11 @@ export async function assertAccountOrganizes(tx: Tx, accountId: string): Promise
  * this kind" (the rule that only the organizer moves mail), and both read the same to a person:
  * do not queue a decision nobody will ever take.
  *
- * ── THE CAPABILITY IS A REQUIRED ARGUMENT, AND THAT IS THE POINT (mail 0093) ───────────────
+ * ── THE CAPABILITY IS A REQUIRED ARGUMENT, AND THAT IS THE POINT (mail 0094) ───────────────
  *
  * It used to be the constant {@link CAPABILITY_REQUESTS}, hard-coded here, because there was one
  * kind of request. There are now three families — moves, rules and profile edits — and they are
- * NOT interchangeable: an organizer shipped before mail 0093 advertises `requests` and has no
+ * NOT interchangeable: an organizer shipped before mail 0094 advertises `requests` and has no
  * applier for any of them.
  *
  * A DEFAULT would have been the quiet failure. A new caller that forgot the argument would ask

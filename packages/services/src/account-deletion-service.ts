@@ -416,7 +416,7 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     // that removes it. The catalog sweep enumerates every table with an `account_id` column, so
     // this was red there until it landed.
     await drop("organizer_requests", tx.delete(organizerRequests).where(eq(organizerRequests.accountId, accountId)));
-    // The other half of that channel (mail 0093): what the ORGANIZER published, cached here by an
+    // The other half of that channel (mail 0094): what the ORGANIZER published, cached here by an
     // install that only READS this mailbox. `doc` is the whole profile document, so it holds the
     // screener list's CORRESPONDENT ADDRESSES, the person's own rule text and the away-responder
     // body they wrote — a superset of the classes the three rows above it are deleted for, in one

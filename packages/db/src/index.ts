@@ -136,7 +136,7 @@ export {
   ORGANIZER_ROLES, ORGANIZER_KINDS, ORGANIZER_STATES, ORGANIZED_BY_NAME_MAX,
   isOrganizerRole, isOrganizerKind, isOrganizerState,
   // Mail 0088/0089, 0.14.1 — the fifth holder column and whether a reader's decision may become a
-  // request at all. Mail 0093 adds the three capabilities beside `requests`: an organizer names
+  // request at all. Mail 0094 adds the three capabilities beside `requests`: an organizer names
   // each family of request it has an applier for, so a reader is refused at its own door rather
   // than queueing a record the holder will never take.
   CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_RULES, CAPABILITY_PROFILE,
@@ -145,7 +145,7 @@ export {
   type OrganizedBy, type OrganizerRoleRow, type RequestEligibility, type RequestRefusalReason,
 } from "./organizer-role.js";
 
-/* Mail 0093 — the appliers for the request kinds that are not a Screener decision. Same shape and
+/* Mail 0094 — the appliers for the request kinds that are not a Screener decision. Same shape and
    same reason as `screener-apply.js` beside it: ONE transactional core, reached from the
    organizer's own door and from the request drain, so the two cannot drift into two answers about
    one action. Reaches `schema-mail.js` and `change-log.js` alone. */

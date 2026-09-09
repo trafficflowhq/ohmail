@@ -2186,7 +2186,7 @@ export const organizerRequests = pgTable("organizer_requests", {
 
 /**
  * WHAT THE ORGANIZER SAYS THE CONFIGURATION IS — a reader's copy of the profile document (mail
- * 0093).
+ * 0094).
  *
  * The organizer publishes a versioned document into `ohmail/_meta` (`organizer-profile.ts`). This
  * is the last one a READER managed to read: one row per mailbox, replaced whole, never merged.

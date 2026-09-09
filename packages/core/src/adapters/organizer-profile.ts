@@ -73,7 +73,7 @@ import {
  *       "throttle": "per_day" | …      // absent in a document written before 0087
  *     },
  *     "tagNames": ["<tag name>", …],   // the names of this mailbox's tags
- *     "signature": "<string or null>"  // absent in a document written before mail 0093
+ *     "signature": "<string or null>"  // absent in a document written before mail 0094
  *   }
  *
  * ── NATURAL KEYS ONLY, AND THAT IS A RULE, NOT A STYLE ─────────────────────────────────────
@@ -228,7 +228,7 @@ export interface OrganizerProfilePayload {
   awayResponder: ProfileAwayResponder | null;
   tagNames: string[];
   /**
-   * THE MAILBOX'S SIGNATURE (mail 0093) — `mailboxes.signature`, the text appended to outgoing
+   * THE MAILBOX'S SIGNATURE (mail 0094) — `mailboxes.signature`, the text appended to outgoing
    * mail from this address.
    *
    * It travels for the same reason the away-responder body does: it is per-mailbox configuration
@@ -1416,7 +1416,7 @@ export type ProfileReadResult =
   | {
     state: "found"; doc: OrganizerProfileDoc; installId: string | null; ref: unknown;
     /**
-     * THE GENERATION `ref` WAS READ UNDER (mail 0093's mirror writer needs it).
+     * THE GENERATION `ref` WAS READ UNDER (mail 0094's mirror writer needs it).
      *
      * `ref` alone is a uid, and storing one without its generation is the defect this pair exists
      * to prevent — a renumbered folder makes the memo a stale fact the code then trusts. A caller

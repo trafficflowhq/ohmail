@@ -31,7 +31,7 @@ import type { OrganizerProfilePayload } from "./organizer-profile.js";
 export async function serializeOrganizerProfile(
   db: Tx, accountId: string,
   /**
-   * THE MAILBOX, and it is why this function stopped being account-scoped (mail 0093).
+   * THE MAILBOX, and it is why this function stopped being account-scoped (mail 0094).
    *
    * Everything else here belongs to the ACCOUNT — contacts, rules, notify rules, the responder,
    * the tags — and `signature` does not: it is `mailboxes.signature`, the text appended to mail

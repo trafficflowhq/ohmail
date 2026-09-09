@@ -666,7 +666,7 @@ export class ProfileImportService {
         changes.push({ accountId: ctx.accountId, entityType: "tag", entityId: row!.id, op: "create", meta: null });
       }
 
-      /* ── signature — the one PER-MAILBOX field in the document (mail 0093) ──────────────
+      /* ── signature — the one PER-MAILBOX field in the document (mail 0094) ──────────────
        *
        * Applied for the reason every section above is: this is a restore of the configuration the
        * organizer published, and a section the importer skips is a setting the person loses

@@ -4593,7 +4593,7 @@ export function verifyRequestSignature(key: string, f: RequestSignatureFields, s
  * WHAT AN ORGANIZER DRAINS. Closed by `organizer_requests_kind_closed` in Postgres — the same SIX
  * members, and the two lists must move together in that order: the widening migration ships ahead
  * of the code that writes the new member, so a row an older build wrote still satisfies the CHECK
- * and an older build keeps working against a migrated database (mail 0093's own marker).
+ * and an older build keeps working against a migrated database (mail 0094's own marker).
  *
  * See {@link isRequestKind} for what a kind this build does not recognise gets: left standing, not
  * refused and not expunged — it is a record for a FUTURE build, written by a newer install on the
@@ -5023,7 +5023,7 @@ export const REQUEST_REFUSAL_REASONS = [
   /** The account has been erased; there is nothing left to apply it to. */
   "account_erased",
   /**
-   * mail 0093. The record was valid, verified and understood, and the message it names is not in
+   * mail 0094. The record was valid, verified and understood, and the message it names is not in
    * THIS organizer's store — never synced here, or since deleted. Not an error and not a fault of
    * the record: two installs of one mailbox legitimately hold different subsets of it. It is a
    * refusal to the READER because the alternative is a record that quietly disappears, leaving
@@ -5031,13 +5031,13 @@ export const REQUEST_REFUSAL_REASONS = [
    */
   "no_such_message",
   /**
-   * mail 0093. The destination was `trash` and this mailbox has no Trash folder discovered. ohmail
+   * mail 0094. The destination was `trash` and this mailbox has no Trash folder discovered. ohmail
    * never expunges, so there is nowhere to put it and no default that would not be a lie about
    * where the mail went — the same refusal the organizer's own delete door gives.
    */
   "no_trash_folder",
   /**
-   * mail 0093. An `update` or `delete` named a rule this organizer's store does not hold —
+   * mail 0094. An `update` or `delete` named a rule this organizer's store does not hold —
    * deleted here since, or never travelled. Not a fault of the record: named back so the person
    * is told, on `no_such_message`'s reasoning exactly.
    */

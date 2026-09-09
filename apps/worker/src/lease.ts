@@ -110,7 +110,7 @@ export const ORGANIZER_CAPABILITIES: readonly string[] = [
   CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_PROFILE, CAPABILITY_RULES,
 ];
 
-/* ── WHY `moves` JOINS THE SET HERE AND NOT EARLIER (mail 0093) ─────────────────────────────
+/* ── WHY `moves` JOINS THE SET HERE AND NOT EARLIER (mail 0094) ─────────────────────────────
  *
  * A capability means "this build has an applier for that kind of request". `message.move` got its
  * applier and its place in the drain's dispatch table first; the advertisement lands after, and
@@ -120,7 +120,7 @@ export const ORGANIZER_CAPABILITIES: readonly string[] = [
  * a build that did not exist yet.
  *
  * `profile` joined the same way one slice later, and `rules` the slice after that — each in the
- * same commit as its own applier, never before. The set is COMPLETE for the kinds mail 0093
+ * same commit as its own applier, never before. The set is COMPLETE for the kinds mail 0094
  * admits: every member of `REQUEST_KINDS` now has an entry in the drain's dispatch table, so the
  * standing path is reached only by a kind from a FUTURE build rather than by one this build is
  * merely behind on. `request-drain.test.ts` keeps a case for that, using a kind no build has.

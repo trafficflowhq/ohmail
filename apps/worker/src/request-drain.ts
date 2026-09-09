@@ -22,7 +22,7 @@ import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  THE DISPATCH TABLE — one entry per kind this build can actually carry out (mail 0093)
+ *  THE DISPATCH TABLE — one entry per kind this build can actually carry out (mail 0094)
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
  * ── WHY THE ENTRY RETURNS A CLOSURE RATHER THAN A VALIDATED VALUE ─────────────────────────
@@ -81,7 +81,7 @@ class ApplierRefusedError extends Error {
  * A `Record` over `MoveRefusal` rather than a cast or a passthrough: the applier's outcomes and
  * the wire's refusal words are two closed sets that happen to agree today, and a new applier
  * outcome without a decision about what the reader is told would otherwise compile. Both members
- * are `REQUEST_REFUSAL_REASONS` members since mail 0093, and the database's own CHECK is what
+ * are `REQUEST_REFUSAL_REASONS` members since mail 0094, and the database's own CHECK is what
  * holds that true — `request-refusal-closed.pg.test.ts` reads the vocabulary from this code, so a
  * word added here and not to the constraint is red on a real server rather than a row rejected at
  * the moment the drain tries to record a refusal.
@@ -151,7 +151,7 @@ const KIND_HANDLERS: Readonly<Record<string, KindHandler | undefined>> = {
   },
 
   /**
-   * mail 0093. The kind that existed to close a SUCCESS THAT CHANGED NOTHING: before it, a reader
+   * mail 0094. The kind that existed to close a SUCCESS THAT CHANGED NOTHING: before it, a reader
    * editing an away responder, a signature, a dormancy window or a screening posture got `200`,
    * the write landed in the reader's own row, and the organizer's pass never read it.
    *
@@ -1078,7 +1078,7 @@ export async function applyMetaRequests(
       });
       continue;
     }
-    /* ── (3c) WHICH APPLIER RUNS — one table, keyed by kind (mail 0093) ─────────────────────
+    /* ── (3c) WHICH APPLIER RUNS — one table, keyed by kind (mail 0094) ─────────────────────
      *
      * This was `if (e.kind !== "screener.decide")` while there was one applier. The table is the
      * same statement for N of them, and it keeps the property that mattered about the `if`: a kind

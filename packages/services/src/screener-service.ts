@@ -30,7 +30,7 @@ import {
 } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 /* `capabilityForKind` — the ONE map from a request kind to the capability its holder must
-   advertise (mail 0093). Imported rather than spelled as a constant here so that this door and
+   advertise (mail 0094). Imported rather than spelled as a constant here so that this door and
    the record it writes cannot disagree about what `screener.decide` requires. */
 import { capabilityForKind } from "@trafficflow/core/adapters/organizer-lease";
 import type { ServiceContext } from "./context.js";
@@ -1196,7 +1196,7 @@ export class ScreenerReadService {
   ): Promise<ScreenDecisionResult | ScreenRequestResult> {
     const v = await this.validateScreenerDecision(ctx, id, b);
 
-    /* THE CAPABILITY THIS DOOR NEEDS, NAMED (mail 0093). A Screener decision is `screener.decide`,
+    /* THE CAPABILITY THIS DOOR NEEDS, NAMED (mail 0094). A Screener decision is `screener.decide`,
        whose capability is `requests` — the spelling every organizer in the field already
        advertises, so nothing about this door's answer moves. It is passed through
        `capabilityForKind` rather than written as the constant so that the door and the record it
