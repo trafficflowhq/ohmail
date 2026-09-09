@@ -372,8 +372,9 @@ pressing it opens the sentence beside it, and a screen reader hears the sentence
 description. While a stop is asked for, the chip reads "Stopping" and its sentence says whether the
 server has confirmed yet.
 
-The verb under a mailbox this computer organizes is "Stop organizing — hand the mailbox back", with
-its own (i) saying what follows: from its next pass this computer only reads the mailbox — it moves
+The verb under a mailbox this computer organizes is "Hand the mailbox back — the mail stays where
+it is.", and the browser's Settings → Mailboxes pane now uses the same words for the same act. It
+has its own (i) saying what follows: from its next pass this computer only reads the mailbox — it moves
 nothing, screens nothing and applies none of your rules — and nothing takes the mailbox over by
 itself; another install has to press "Organize here", or you add the mailbox to ohmail Cloud.
 Pressing the verb asks the same question it always did, with the same confirmation.

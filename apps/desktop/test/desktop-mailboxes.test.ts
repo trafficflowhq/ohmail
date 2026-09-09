@@ -1449,7 +1449,7 @@ describe("a standing stop request is on the row, and the pane's notes end when t
       .toContain(mailboxCopy.stopOrganizingPending!);
     expect(said, "the ordinary organized description stands beside a pending stop")
       .not.toContain(mailboxCopy.stateOrganizingHere!);
-    expect(buttonSaying(el, "Stop organizing"),
+    expect(buttonSaying(el, mailboxCopy.stopOrganizingHandBack!),
       "the pane offers to write the very ask that is already standing").toBeNull();
   });
 
@@ -1461,7 +1461,7 @@ describe("a standing stop request is on the row, and the pane's notes end when t
       .toContain(mailboxCopy.stateOrganizingHere!);
     expect(said, "the pending sentence leaked onto a row with nothing pending")
       .not.toContain(mailboxCopy.stopOrganizingPending!);
-    expect(buttonSaying(el, "Stop organizing"),
+    expect(buttonSaying(el, mailboxCopy.stopOrganizingHandBack!),
       "the ordinary organizer lost its stop control").not.toBeNull();
   });
 
@@ -1473,8 +1473,8 @@ describe("a standing stop request is on the row, and the pane's notes end when t
     const el = await render("local");
 
     // The press, through the pane's own two-step ceremony.
-    await act(async () => { buttonSaying(el, "Stop organizing")!.click(); });
-    await act(async () => { buttonExactly(el, "Stop organizing")!.click(); });
+    await act(async () => { buttonSaying(el, mailboxCopy.stopOrganizingHandBack!)!.click(); });
+    await act(async () => { buttonExactly(el, mailboxCopy.stopOrganizingConfirm!)!.click(); });
     expect(el.textContent ?? "", "the press left no note while the row has not yet answered")
       .toContain(mailboxCopy.stopOrganizingQueued!);
 
@@ -1996,7 +1996,7 @@ describe("the pane tells the truth about the outage, the holder and the standing
       .not.toContain(mailboxCopy.stateOrganizingHere!);
     /* THE HALF THAT WAS RIGHT. The stop CONTROL stays withheld while the flag is absent — the
        route would refuse it — so this is a row that states its situation and offers nothing. */
-    expect(buttonSaying(el, "Stop organizing"),
+    expect(buttonSaying(el, mailboxCopy.stopOrganizingHandBack!),
       "a control was offered on a row the route refuses").toBeNull();
   });
 
@@ -2032,7 +2032,7 @@ describe("the pane tells the truth about the outage, the holder and the standing
     const el = await render("cloud");
     expect(el.textContent ?? "", "the hosted row said nothing about a stop that is standing")
       .toContain(mailboxCopy.stopOrganizingPending!);
-    expect(buttonSaying(el, "Stop organizing"),
+    expect(buttonSaying(el, mailboxCopy.stopOrganizingHandBack!),
       "the hosted door grew a release control it cannot report the outcome of").toBeNull();
   });
 
@@ -2079,7 +2079,7 @@ describe("the pane tells the truth about the outage, the holder and the standing
       .not.toContain(mailboxCopy.stopOrganizingPending!);
     expect(said, "the row claimed this computer organizes a mailbox the wire calls a reader")
       .not.toContain(mailboxCopy.stateOrganizingHere!);
-    expect(buttonSaying(el, "Stop organizing"),
+    expect(buttonSaying(el, mailboxCopy.stopOrganizingHandBack!),
       "a reader row grew a control over somebody else's organizing").toBeNull();
     expect(el.querySelector(".mbx-org"),
       "the hosted reader row grew an organizer banner off a stamp").toBeNull();
@@ -2131,8 +2131,8 @@ describe("the pane tells the truth about the outage, the holder and the standing
     bridgeReply = () => new Response(JSON.stringify({ outcome: "requested" }), {
       status: 202, headers: { "content-type": "application/json" },
     });
-    await act(async () => { buttonSaying(el, "Stop organizing")!.click(); });
-    await act(async () => { buttonExactly(el, "Stop organizing")!.click(); });
+    await act(async () => { buttonSaying(el, mailboxCopy.stopOrganizingHandBack!)!.click(); });
+    await act(async () => { buttonExactly(el, mailboxCopy.stopOrganizingConfirm!)!.click(); });
 
     // The release lands: reader again, release stamped, nothing holds the mailbox.
     FACTS = [READER];

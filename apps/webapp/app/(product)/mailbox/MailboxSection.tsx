@@ -2204,7 +2204,7 @@ export function MailboxSection() {
                         className="mbx-btn"
                         onClick={() => setReleaseFor(m.id)}
                       >
-                        {stranded ? t("releaseClaim") : t("stopOrganizing")}
+                        {stranded ? t("releaseClaim") : t("stopOrganizingHandBack")}
                       </Button>
                     )}
                   />
