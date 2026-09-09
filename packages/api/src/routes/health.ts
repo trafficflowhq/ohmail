@@ -1836,8 +1836,16 @@ export const MAIL_EXPECTED_MARKERS =
  * missing table fails) and the CHECK `outbound_send_fingerprints_hex`. Two markers and not one,
  * because they answer different questions — the column is what the send path 42P01s on when it is
  * absent, and the CHECK is what the operator console's isolation sweep reads when it classifies
- * that column as refused-by-constraint rather than as free text. **It is the newest entry, so it is
- * also the tag below.**
+ * that column as refused-by-constraint rather than as free text.
+ *
+ * `0094_request_kinds_moves_profile` creates a TABLE and WIDENS a CHECK, and gets ONE marker:
+ * `mailbox_profile_mirror.doc`, the settings document an install that only READS a mailbox
+ * caches from the mailbox itself. The column proves the table, for the reason the entry above
+ * gives. The widened `organizer_requests.kind` CHECK gets no marker of its own: a CHECK that
+ * gained a member cannot be detected by reading a column name, and its absence surfaces as a
+ * refused INSERT at the write site rather than as a silent read. The list entry's own comment
+ * carries the argument for why a table whose absence degrades QUIETLY earns a marker at all.
+ * **It is the newest entry, so it is also the tag below.**
  *
  * That last sentence is the one this docblock keeps getting wrong, and it is now attached to the
  * marker that is actually newest rather than left on an older one. It stood on `0081` and then on
