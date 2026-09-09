@@ -87,7 +87,7 @@ export {
   setLocale, setMailboxFoldersEnabled, setMailboxSignature, setThemeFace,
   setOnboardingCompleted,
   mailboxSignatures, MAILBOX_SIGNATURE_MAX_CHARS,
-  isMachineSent, isRobotAddress, parseAddressList,
+  hasMachineSentHeaders, isMachineSent, isRobotAddress, parseAddressList,
   type SeedCandidate, type SeedConfirmResult, type SeedExclusionReason, type SeedReview,
 } from "./consent-seed.js";
 // The folders foundation's inventory reads (FOLDERS-SPEC.md §4): which of the mailbox's own

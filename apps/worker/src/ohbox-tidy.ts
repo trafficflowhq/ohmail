@@ -1,6 +1,6 @@
 import { and, asc, eq, gt, isNotNull, isNull, or, sql } from "drizzle-orm";
 import {
-  accountSettings, approvals, auditLog, drafts, folderState, mailboxes,
+  accountSettings, approvals, auditLog, autoReplyByUsWhere, drafts, folderState, mailboxes,
   messageBodies, messageStates, messages, recordChange, type Tx,
 } from "@trafficflow/db";
 import {
@@ -736,8 +736,21 @@ async function selectCandidates(
        where a.message_id = ${messages.id} and a.status <> 'pending'
     )`,
   ];
-  // 4 — the user replied from their own mail client. Guarded on a non-empty list (`in ()` is a
-  // syntax error) and a non-NULL thread.
+  /* -- 4 — THE USER replied from their own mail client. A MACHINE'S REPLY IS NOT THAT ---------
+   *
+   * Guarded on a non-empty list (`in ()` is a syntax error) and a non-NULL thread.
+   *
+   * The `and not autoReplyByUsWhere(...)` is the whole of the fix: this clause asks "did they
+   * already deal with this", and the away responder answering on their behalf is not them
+   * dealing with it. Without it, every message the responder replied to became permanently
+   * untouchable by this pass — bulk mail pinned in the Ohbox by the fact that we ourselves had
+   * answered it, which is the shape this was reported as: Reads mail arriving in the Ohbox.
+   *
+   * It NARROWS the exclusion, so it can only ever admit more candidates, never move a message
+   * this pass would previously have left alone. A thread carrying the person's OWN reply still
+   * excludes the message, byte for byte as before — `auto-reply-not-engagement.pg.test.ts` pins both
+   * halves, and the positive half is the one that matters: a real reply must still win.
+   */
   if (opts.ownAddresses.length > 0) {
     filters.push(sql`not exists (
       select 1 from ${messages} sent
@@ -745,6 +758,12 @@ async function selectCandidates(
          and sent.thread_id = ${messages.threadId}
          and ${messages.threadId} is not null
          and lower(sent.from_address) in ${sql`(${sql.join(opts.ownAddresses.map((a) => sql`${a}`), sql`, `)})`}
+         and not ${autoReplyByUsWhere({
+           accountId: sql`sent.account_id`,
+           id: sql`sent.id`,
+           fromAddress: sql`sent.from_address`,
+           messageIdHeader: sql`sent.message_id_header`,
+         })}
     )`);
   }
   if (opts.afterId) filters.push(gt(messages.id, sql`${opts.afterId}::uuid`));

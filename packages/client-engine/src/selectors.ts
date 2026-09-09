@@ -717,8 +717,26 @@ export function ohboxView(reader: EntityReader): OhboxView {
   // construction, so the groups below carry no sorts of their own any more.
   const all = messagesByDateDesc(reader);
   const inbox = messagesIn(reader, FOLDER_OF_VIEW.ohbox);
-  // the account's own sent mail, folder-agnostic (see `isOwnSent`), newest first.
-  const sent = all.filter(isOwnSent);
+  /**
+   * THE ACCOUNT'S OWN SENT MAIL, folder-agnostic (see {@link isOwnSent}), newest first — MINUS
+   * the replies the away responder sent on the person's behalf.
+   *
+   * The union exists because WRITING a message is finishing with it, so a message the reader
+   * sent belongs in the same block as one they read ({@link readTimeOf} spells that out). An
+   * automatic reply is the case where that reasoning does not hold: nobody finished with
+   * anything, and the row still arrived here carrying the send date — which, because `readTimeOf`
+   * falls back to that date, put it at the TOP of the pile.
+   *
+   * The reported shape: the responder answers a Reads or Receipts message, its reply is an
+   * own-sent row threaded to that message, and one Ohbox row appears per answered message wearing
+   * the bulk message's subject as "Re: …". They accumulate for as long as the responder is on,
+   * and because the send date stands in for a reading time they accumulate at the top.
+   *
+   * `!== true` and never `=== false`: the field is absent on a mirror or a server older than it,
+   * and absent has to mean "the person's" — see `EngineMessage.autoReplyByUs`. Nothing is hidden
+   * by this filter; the replies stay in the Sent folder view, which is where sent mail lives.
+   */
+  const sent = all.filter((m) => isOwnSent(m) && m.autoReplyByUs !== true);
 
   /**
    * THE PIN IS STATE-DRIVEN AND FOLDER-AGNOSTIC, and the whole mirror is scanned for it —

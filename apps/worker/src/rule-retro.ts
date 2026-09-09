@@ -1,6 +1,6 @@
 import { and, asc, eq, gt, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import {
-  approvals, drafts, folderState, mailboxes, messageBodies, messageStates, messages,
+  approvals, autoReplyByUsWhere, drafts, folderState, mailboxes, messageBodies, messageStates, messages,
   recordChange, rules as rulesTbl, type Tx,
 } from "@trafficflow/db";
 import {
@@ -848,9 +848,19 @@ async function selectCandidates(
        where a.message_id = ${messages.id} and a.status <> 'pending'
     )`,
   ];
-  // 5 — the user replied from their own mail client. Guarded on a non-empty address list because
-  // `in ()` is a syntax error, and skipped for a NULL `thread_id` because an unthreaded message
-  // has no conversation to search.
+  /* -- 5 — THE USER replied from their own mail client. A MACHINE'S REPLY IS NOT THAT ---------
+   *
+   * Guarded on a non-empty address list because `in ()` is a syntax error, and skipped for a NULL
+   * `thread_id` because an unthreaded message has no conversation to search.
+   *
+   * `and not autoReplyByUsWhere(...)` for `ohbox-tidy.ts`'s reason, stated there: the five
+   * exclusions above are the ways A PERSON has acted on a message, and an automatic reply is the
+   * one thing in this table that looks like their action and is not. A rule somebody explicitly
+   * pressed retro on would otherwise skip exactly the mail the responder had answered while they
+   * were away — the mail most likely to need filing.
+   *
+   * NARROWING only: a thread with a reply the person actually wrote is excluded as before.
+   */
   if (opts.ownAddresses.length > 0) {
     filters.push(sql`not exists (
       select 1 from ${messages} sent
@@ -858,6 +868,12 @@ async function selectCandidates(
          and sent.thread_id = ${messages.threadId}
          and ${messages.threadId} is not null
          and lower(sent.from_address) in ${sql`(${sql.join(opts.ownAddresses.map((a) => sql`${a}`), sql`, `)})`}
+         and not ${autoReplyByUsWhere({
+           accountId: sql`sent.account_id`,
+           id: sql`sent.id`,
+           fromAddress: sql`sent.from_address`,
+           messageIdHeader: sql`sent.message_id_header`,
+         })}
     )`);
   }
   if (opts.afterId) filters.push(gt(messages.id, sql`${opts.afterId}::uuid`));

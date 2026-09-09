@@ -138,13 +138,19 @@ export function isRobotAddress(address: string): boolean {
 const OUT_OF_OFFICE = /^\s*(re:\s*)?(out of (the )?office|automatic(al)? reply|auto(matic)?[- ]?reply|abwesenheit|absence du bureau|autoreply|ferienabwesenheit)/i;
 
 /**
- * Was this message generated rather than typed?
+ * DID A MACHINE WRITE THIS — the three HEADER arms, and the half two subsystems share.
  *
  * Harvesting recipients out of the user's own out-of-office replies would read a machine's
  * address book as the user's. `Auto-Submitted: no` is RFC 3834's way of saying a human wrote
  * it, so presence alone is the wrong test.
+ *
+ * Split out of {@link isMachineSent} so the Ohbox rule can share the headers WITHOUT the subject
+ * arm — see that function for the measured reason those two callers cannot share the whole
+ * question. `packages/db/src/auto-reply-by-us.ts#machineSentHeadersWhere` is these same three arms
+ * in SQL, and `auto-reply-by-us-parity.test.ts` asserts the two agree row by
+ * row: neither is the definition, the pair is.
  */
-export function isMachineSent(headers: Readonly<Record<string, unknown>>, subject: string): boolean {
+export function hasMachineSentHeaders(headers: Readonly<Record<string, unknown>>): boolean {
   const values = (name: string): string[] => {
     if (!Object.prototype.hasOwnProperty.call(headers, name)) return [];
     const v = headers[name];
@@ -152,8 +158,27 @@ export function isMachineSent(headers: Readonly<Record<string, unknown>>, subjec
   };
   if (values("auto-submitted").some((v) => !/^no$/i.test(v.trim()))) return true;
   if (values("precedence").some((v) => /bulk|auto_?reply|junk|list/i.test(v))) return true;
-  if (values("x-auto-response-suppress").length > 0) return true;
-  return OUT_OF_OFFICE.test(subject);
+  return values("x-auto-response-suppress").length > 0;
+}
+
+/**
+ * THE SEED'S QUESTION, WHICH IS THE HEADERS PLUS THE SUBJECT — unchanged, and the split above is
+ * why the split exists.
+ *
+ * The subject arm is deliberately NOT part of {@link hasMachineSentHeaders}, and therefore not
+ * part of `autoReplyByUsWhere`, because the two callers pay opposite prices for a false positive.
+ * HERE, a message wrongly called machine-sent costs one un-harvested contact — the seed simply
+ * does not learn an address, and the user can still write to them. In the Ohbox, a message
+ * wrongly called an auto-reply DISAPPEARS from the pile the person reads.
+ *
+ * That is not a hypothetical asymmetry. `Re: Out of office` is an ordinary thing for a person to
+ * type, and {@link OUT_OF_OFFICE} matches it — with no `Auto-Submitted` header anywhere in sight,
+ * so nothing else about such a message says "machine". Reusing this whole function for the Ohbox
+ * rule would hide mail the person wrote from their own view, with every test green.
+ * `dto-auto-reply-flag.test.ts` carries that case by name.
+ */
+export function isMachineSent(headers: Readonly<Record<string, unknown>>, subject: string): boolean {
+  return hasMachineSentHeaders(headers) || OUT_OF_OFFICE.test(subject);
 }
 
 /* ── header address parsing ───────────────────────────────────────────────────────────── */

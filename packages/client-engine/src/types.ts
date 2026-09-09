@@ -297,6 +297,21 @@ export interface EngineMessage extends EngineMessageExtras {
   labels: string[];
   remoteContent: "blocked" | "loaded" | "none";
   updatedAt: ISODateTime;
+  /**
+   * TRUE ⇒ THE AWAY RESPONDER SENT THIS, not the person — server-computed, see `MessageDTO`.
+   *
+   * OPTIONAL for {@link lastReadAt}'s reason and it is the same reason twice: the mirror is
+   * persisted on the device, so a row written by a build that predates this field is `undefined`
+   * here, and a row fed by a SERVER that predates it is `undefined` too. Both mean "not known".
+   *
+   * "Not known" must resolve to "treat it as the person's mail", because that is the behaviour
+   * every mirror had before this field existed — so every consumer tests `!== true` and NEVER
+   * `=== false`. Reading it the other way round would empty the Sent half of "Earlier" on any
+   * mirror or server older than this field, which is a far larger wrong than the one it fixes.
+   *
+   * Rows the fixtures world mints leave it absent: a demo mailbox has no away responder.
+   */
+  autoReplyByUs?: boolean;
 }
 
 /**

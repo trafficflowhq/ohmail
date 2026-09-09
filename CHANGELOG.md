@@ -27,6 +27,19 @@ the one organizing the mailbox.
 
 Use folders itself is unchanged, and still decides the Folders list, the folder views and
 Move-to-folder.
+### The away responder's replies stay out of the Ohbox
+
+The away responder answers mail that arrives while you are away. Its replies were then filed into
+your Ohbox alongside the mail you had read — one row for every message it had answered, carrying
+that message's subject as a reply. With the responder on for a few days, that could mean an Ohbox
+filling up with answers to newsletters and receipts.
+
+An automatic reply is not you dealing with something, and the product now treats it that way. Those
+replies no longer appear in the Ohbox; they stay in your mail server's Sent folder, where the mail
+you send lives. Mail the responder answered also stops counting as mail you have already handled,
+so your rules and the tidying pass can file it as they would anything else.
+
+Fixed on ohmail Cloud on <date>; in the desktop app with this release.
 
 ### Still to come
 

@@ -38,6 +38,7 @@ export * from "./schema-mail.js";
 // The one-time Quarantine→Junk sweep's candidate predicate — one clause the API's preview and
 // the worker's pass both count by. A pure predicate over the mail schema, nothing more.
 export { junkSweepCandidateWhere, JUNK_SWEEP_SOURCE_PILE } from "./junk-sweep.js";
+export { autoReplyByUsWhere } from "./auto-reply-by-us.js";
 
 // The ONE spelling of the read-state intent — see the module header for why it lives here
 // (both the services and the worker write it, and the worker may not import services at

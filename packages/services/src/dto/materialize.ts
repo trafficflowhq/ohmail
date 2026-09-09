@@ -1,8 +1,8 @@
-import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { foldersEnabled, userFolderById, type UserFolderRow } from "../folders.js";
 import type { EmailAddress } from "@trafficflow/core/mail";
 import {
-  accountSettings, mailboxes,
+  accountSettings, autoReplyByUsWhere, mailboxes,
   messages, folderState, messageStates, threads, routingDecisions, approvals, rules, drafts,
   tags, messageTags,
   type EntityType,
@@ -142,6 +142,16 @@ export function messageRowToDTO(
   fs: typeof folderState.$inferSelect | undefined,
   st: typeof messageStates.$inferSelect | undefined,
   labels: readonly string[] | undefined,
+  /**
+   * TRUE ⇒ the away responder sent this, decided by `autoReplyByUsWhere` in the batch below.
+   *
+   * A FIFTH PARAMETER rather than a field derived here, because the fact is not on the row: it
+   * needs the `away_replies` ledger and the message's stored headers, and this function is pure
+   * so that the snapshot and the delta cannot project a message differently. Omitted (the
+   * direct-projection tests, and any caller that has not asked) ⇒ the key is ABSENT from the DTO,
+   * which the wire contract reads as "not known" — see `MessageDTO.autoReplyByUs`.
+   */
+  autoReplyByUs?: boolean,
 ): MessageDTO {
   const loc = (m.nativeLocator as { folder?: string } | null) ?? null;
   const folder = (fs?.desiredFolder ?? loc?.folder ?? "INBOX") as Folder;
@@ -215,22 +225,34 @@ export function messageRowToDTO(
     labels: labels ? [...labels] : [],
     remoteContent: "none",
     updatedAt: m.updatedAt.toISOString(),
+    // Spread-in rather than a plain `autoReplyByUs:` so an un-asked caller yields a DTO with the
+    // key ABSENT, not present-and-undefined. The two are the same in TypeScript and different
+    // over JSON, and "this server does not know" must look exactly like "this server predates
+    // the field" — which is what makes the client's `!== true` test correct for both.
+    ...(autoReplyByUs === undefined ? {} : { autoReplyByUs }),
   };
 }
 
 /**
- * Materialize MANY messages in FOUR queries, whatever the count.
+ * Materialize MANY messages in FIVE queries, whatever the count.
  *
  * The shape that matters is not "faster" but "constant": a page of 500 costs the same number of
  * round-trips as a page of 1, so the sync endpoint's latency stops scaling with the mailbox. A
  * missing id is simply absent from the map, which is the same signal the single-id path gives by
  * returning null, so `SyncService` still emits its tombstone unchanged.
  *
- * THREE became FOUR, and the count is in this sentence because it is the property under
- * test — `materialize-batch.test.ts` counts round-trips, so a future N+1 fails here rather than
- * being discovered on a production bootstrap. The tag lookup is one `inArray` over
- * `message_tags` keyed by the SAME surviving ids as the other two side tables, which is why it
- * costs one query and not one per message.
+ * THREE became FOUR and then FIVE, and the count is in this sentence because CONSTANCY is the
+ * property under test. The guard is `search-materialize.test.ts`'s "the SELECT count is the same
+ * for one hit and for six", which spies on `db.select` and reds the moment a per-row loop comes
+ * back. It is named here by its REAL name: this sentence used to cite `materialize-batch.test.ts`,
+ * and `git log --all --diff-filter=A` shows that file was never added on any branch — the pointer
+ * was decorative for its whole life, so the count it claimed to protect was protected by nothing.
+ *
+ * The tag lookup is one `inArray` over `message_tags` keyed by the SAME surviving ids as the
+ * other two side tables, which is why it costs one query and not one per message. The FIFTH is
+ * the auto-reply flag: one set query over the surviving ids applying `autoReplyByUsWhere`
+ * (`packages/db`) — the same fragment `ohbox-tidy` and `rule-retro` apply — so the ledger join
+ * and the header belt are stated once and asked once per PAGE, never once per row.
  *
  * `accountId` is on the `messages` predicate, so an id belonging to another account is filtered
  * before it can be assembled — the batch cannot widen what a caller may see. The three side
@@ -282,6 +304,27 @@ export async function materializeMessages(
   const stRows = await db.select().from(messageStates).where(inArray(messageStates.messageId, owned));
   const mtRows = await db.select().from(messageTags)
     .where(and(inArray(messageTags.messageId, owned), eq(messageTags.accountId, accountId)));
+  /**
+   * THE AUTO-REPLY FLAG — one query per page, keyed on the ids that survived the account filter.
+   *
+   * On BOTH paths, deliberately: `owned` already reflects `opts.deleted`, so the receipt reader
+   * (`deleted: "include"`) carries the flag too. A projection that answered the question on the
+   * living view and not on the receipt would let `MessageService.delete`'s echo disagree with the
+   * row the client already holds, and the mirror's apply contract has no repair for a field that
+   * changes value on a `delete` it did not change on the `update` before it.
+   */
+  const arRows = await db.select({ id: messages.id }).from(messages)
+    .where(and(
+      inArray(messages.id, owned),
+      eq(messages.accountId, accountId),
+      autoReplyByUsWhere({
+        accountId: sql`${messages.accountId}`,
+        id: sql`${messages.id}`,
+        fromAddress: sql`${messages.fromAddress}`,
+        messageIdHeader: sql`${messages.messageIdHeader}`,
+      }),
+    ));
+  const autoReplyIds = new Set(arRows.map((r) => r.id));
 
   const fsBy = new Map(fsRows.map((r) => [r.messageId, r]));
   const stBy = new Map(stRows.map((r) => [r.messageId, r]));
@@ -292,7 +335,9 @@ export async function materializeMessages(
     else tagsBy.set(r.messageId, [r.tagId]);
   }
   for (const m of rows) {
-    out.set(m.id, messageRowToDTO(m, fsBy.get(m.id), stBy.get(m.id), tagsBy.get(m.id)));
+    out.set(m.id, messageRowToDTO(
+      m, fsBy.get(m.id), stBy.get(m.id), tagsBy.get(m.id), autoReplyIds.has(m.id),
+    ));
   }
   return out;
 }

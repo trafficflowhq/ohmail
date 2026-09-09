@@ -132,6 +132,30 @@ export interface MessageDTO {
   labels: string[];
   remoteContent: "blocked" | "loaded" | "none";
   updatedAt: ISODateTime;
+  /**
+   * TRUE ⇒ THIS ROW IS A REPLY THE AWAY RESPONDER SENT, NOT ONE THE PERSON WROTE.
+   *
+   * Server-computed, because the client cannot compute it: raw `headers` cross the wire in
+   * NEITHER body mode (see `MessageBodyDTO` below), and the `away_replies` ledger is not mirrored
+   * at all. `packages/db/src/auto-reply-by-us.ts` is the one definition; the batch
+   * (`materialize.ts`) evaluates it once per page.
+   *
+   * ── WHAT IT IS FOR, AND WHAT IT IS NOT ────────────────────────────────────────────────────
+   *
+   * `ohboxView` unions the account's own sent mail into "Earlier", which is right for mail the
+   * person wrote and wrong for a reply a machine sent on their behalf: every automatic answer to
+   * a Reads or Receipts message became a row in the Ohbox wearing that message's subject as
+   * "Re: …". This field is how the client tells the two apart. The rows are not hidden — they
+   * remain in the Sent folder view, where sent mail lives.
+   *
+   * It is NOT "was this message automated". An inbound out-of-office from a stranger carries the
+   * same RFC 3834 marker and is `false` here, because the predicate asks whether WE sent it.
+   *
+   * OPTIONAL, and additive: `undefined` from a server older than this field means "not known",
+   * which every consumer must read as "treat it as the person's" — the behaviour before the
+   * field existed. That is why the client's test is `!== true` and never `=== false`.
+   */
+  autoReplyByUs?: boolean;
 }
 
 /**
