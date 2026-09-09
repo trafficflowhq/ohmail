@@ -67,6 +67,8 @@ interface Fresh {
   base: string;
   /** What `POST /cloud/probe` answers once there IS an engine to ask. */
   probe: { status: number; body: string };
+  /** Make the shell refuse the undo, which is the one state the person has to be told about. */
+  logoutFails: boolean;
 }
 
 /**
@@ -80,6 +82,7 @@ function fresh(probe?: { status: number; body: string }): Fresh {
   const it: Fresh = {
     asked: [],
     base: "",
+    logoutFails: false,
     probe: probe ?? {
       status: 200,
       body: JSON.stringify({ ok: true, base: OPERATOR_BASE, target: `${OPERATOR_BASE}/hello`, flavor: "selfhost" }),
@@ -98,6 +101,15 @@ function fresh(probe?: { status: number; body: string }): Fresh {
         const config = payload!.config as { mode?: string; cloudUrl?: string };
         it.base = config.cloudUrl ?? "";
         return { state: "starting", mode: config.mode ?? "cloud" };
+      }
+      if (command === "engine_logout") {
+        /* THE SHELL'S OWN UNDO: `config.json` is removed and the state goes back to
+           `not_configured` (`engine.rs`, the sign-out). Modelled here because the fresh arm
+           depends on it — an install left configured for an address that did not answer comes
+           back as a chosen door with no chooser. */
+        if (it.logoutFails) throw new Error("the settings file could not be removed");
+        it.base = "";
+        return { state: "not_configured", mode: null, missing: ["config.json"] };
       }
       if (command === "engine_request") {
         /* THE SHELL'S REFUSAL, and it is a rejected promise rather than a status: `Engine::request`
@@ -161,6 +173,38 @@ describe("the middle door on a fresh install", () => {
     ).toContain("/cloud/probe");
     // And the sentence is not about this app's own configuration.
     expect(step.problem).not.toContain("has not been configured");
+
+    /* AND THE INSTALL IS PUT BACK. `gateFor` routes on the settings, so an install left pointed
+       at an address that did not answer comes back after a quit as a chosen door with no session
+       — the mail client and a sign-in surface, and no chooser to correct the typo in. */
+    expect(it.asked.map((a) => a.command)).toContain("engine_logout");
+    expect(it.base).toBe("");
+  });
+
+  /**
+   * AND WHEN THE UNDO ITSELF FAILS, the person is told — because then the server's sentence alone
+   * is incomplete: this install IS configured for that address.
+   */
+  it("says so when it cannot put the install back", async () => {
+    const it = fresh({
+      status: 502,
+      body: JSON.stringify({
+        error: {
+          code: "cloud_probe_failed",
+          message: `Nothing is answering at ${OPERATOR_BASE}/hello.`,
+          details: { kind: "refused", target: `${OPERATOR_BASE}/hello` },
+        },
+      }),
+    });
+    it.logoutFails = true;
+
+    const step = await configureSelfHostDoor(OPERATOR_ORIGIN, ADDRESS);
+
+    expect(step.problem).toContain("Nothing is answering at");
+    expect(step.problem).toContain("This computer is now set up for that address");
+    expect(step.problem).toContain("Open this door again");
+    // The claim is true: the settings still name that base.
+    expect(it.base).toBe(OPERATOR_BASE);
   });
 
   /** A malformed address is still refused with no engine touched at all. */

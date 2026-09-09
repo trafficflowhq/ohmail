@@ -42,7 +42,7 @@
  * browser and no new shell capability, and says nothing about a handoff at all.
  */
 
-import { engineConfigure, bridgeFetch, type EngineStatus } from "./bridge-fetch.js";
+import { engineConfigure, engineLogout, bridgeFetch, type EngineStatus } from "./bridge-fetch.js";
 import {
   probeTlsRefusal,
   sentence,
@@ -255,12 +255,31 @@ export async function configureSelfHostDoor(typedOrigin: string, address: string
     const step = await configureFor(base, address);
     if (step.problem !== null) return step;
     const unreachable = await probeConfiguredServer();
-    /* THE SERVER'S OWN SENTENCE, and the status is dropped with it: the address step has not been
-       passed, so the card stays on the address field with the engine's words above it. The install
-       is left pointed at an address that did not answer, which on an install with no door is
-       nothing lost — the next attempt reconfigures it — and it is why this arm exists only there. */
     if (unreachable !== null) {
-      return { status: null, problem: unreachable.sentence, suggestion: unreachable.suggestion };
+      /**
+       * ── AND THEN PUT IT BACK, SO THIS ARM'S REFUSAL COSTS NOTHING EITHER ──────────────────
+       *
+       * The card stays on the address field with the server's own words above it, which is enough
+       * for somebody who keeps typing. It is not enough for somebody who quits: `gateFor` routes
+       * on the SETTINGS, so an install left configured for an address that did not answer comes
+       * back as a chosen door with no session — the mail client and a sign-in surface — and the
+       * chooser it needs is no longer offered. A typo would have cost the person the only screen
+       * that could have fixed it.
+       *
+       * `engine_logout` is the undo and it is exact: it removes `config.json` and returns the
+       * shell to `not_configured`, which is precisely the state this arm found. The mirror and
+       * this install's key are left alone, and on this path there is no sealed session to remove
+       * — nothing has been signed in to yet.
+       *
+       * IF THE UNDO FAILS the person is told, because then the sentence above is incomplete: the
+       * install IS configured for that address and the way back is to open this door again.
+       */
+      const stranded = await forgetDoor();
+      return {
+        status: null,
+        problem: stranded === null ? unreachable.sentence : `${unreachable.sentence} ${stranded}`,
+        suggestion: unreachable.suggestion,
+      };
     }
     return step;
   }
@@ -273,6 +292,25 @@ export async function configureSelfHostDoor(typedOrigin: string, address: string
   }
 
   return configureFor(base, address);
+}
+
+/**
+ * FORGET THE DOOR THIS FUNCTION JUST CHOSE — null when it is forgotten, a sentence when it is not.
+ *
+ * The undo half of the fresh-install order, and the reason it is `engine_logout` rather than a
+ * second configure: there is no configuration meaning "no door", so the only way back to the state
+ * this arm found is the command that removes the settings file. See the call site.
+ */
+async function forgetDoor(): Promise<string | null> {
+  try {
+    await engineLogout();
+    return null;
+  } catch (err) {
+    return (
+      "This computer is now set up for that address and could not be put back " +
+      `(${sentence(err)}). Open this door again to give a different one.`
+    );
+  }
 }
 
 /**

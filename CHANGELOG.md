@@ -663,7 +663,8 @@ was the main way into this door, on exactly the installs most likely to use it.
 The order now depends on what there is to lose. An install with no mailbox connected has no copy of
 your mail and no saved sign-in, so nothing a mistyped address could cost: it points itself at the
 address first and then asks that server whether it is there, and reports the server's own answer if
-it is not. An install that already has a mailbox keeps asking first and is not touched until the
+it is not — and then puts itself back the way it was, so a wrong address still leaves you on the
+screen that offers the four doors rather than on a mail client with nothing behind it. An install that already has a mailbox keeps asking first and is not touched until the
 server has answered — a wrong address there would discard the copy it holds, which is why that
 order exists.
 
