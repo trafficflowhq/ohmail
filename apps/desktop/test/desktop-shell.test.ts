@@ -96,14 +96,15 @@ describe("tauri.conf.json", () => {
     // ambiguous about which artifact they describe. A version is how a
     // downloader names what they have.
     //
-    // THIS LINE IS AN ELEVENTH STATING PLACE, and the release checklist below
-    // counts ten. Found the expensive way at the 0.13.0 bump: the files were
-    // edited, the census went red here, and the number a release moves is one
-    // more than the checklist says — apps/mobile/app.json joined the set later,
-    // which is why the two numbers differ. It is kept as a literal rather than
-    // read from the file it is asserting — an assertion that reads its own
-    // subject asserts nothing — so it MUST be bumped by hand with the rest.
-    // Every release.
+    // THIS LINE IS A TWELFTH STATING PLACE, and the count moves whenever a
+    // stating place joins: it read ELEVENTH until apps/mobile/README.md's About
+    // row joined the census below, and TENTH before apps/mobile/app.json joined.
+    // Found the expensive way at the 0.13.0 bump: the files were edited, the
+    // census went red here, and the number a release moves is one more than a
+    // checklist nobody has re-counted. It is kept as a literal rather than read
+    // from the file it is asserting — an assertion that reads its own subject
+    // asserts nothing — so it MUST be bumped by hand with the rest. Every
+    // release.
     expect(conf.version).toBe("0.16.2");
     expect(conf.identifier).toBe("io.ohmail.desktop");
   });
@@ -148,11 +149,12 @@ describe("tauri.conf.json", () => {
    * THE PLACES A STRANGER READS THE VERSION, WHICH THE CENSUS ABOVE DOES NOT OPEN.
    *
    * The test above covers the five MACHINE-READABLE statements — the ones a build reads. It does
-   * not open the four places a PERSON reads, and those are the ones a download lands on: the two
+   * not open the five places a PERSON reads, and those are the ones a download lands on: the two
    * sentences in this app's README that spell the number out, the download badge at the top of the
-   * public README, and the changelog's own heading and link references. A release that bumps the
-   * five and leaves any of the four behind ships an installer whose filename disagrees with the
-   * page offering it, and the suite that exists to stop exactly that reports green.
+   * public README, the changelog's own heading and link references, and the About row in
+   * apps/mobile/README.md. A release that bumps the five and leaves any of these behind ships an
+   * installer whose filename disagrees with the page offering it, and the suite that exists to stop
+   * exactly that reports green.
    *
    * This was found by review during the 0.12.2 release: the comment above claims the census
    * prevents a partial bump, and for four of nine stating places it did not. The claim is the thing
@@ -202,6 +204,43 @@ describe("tauri.conf.json", () => {
       .toContain(`[${v}]: https://github.com/trafficflowhq/ohmail/releases/tag/v${v}`);
     expect(changelog, "the Unreleased comparison does not start at this release")
       .toContain(`[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v${v}...HEAD`);
+
+    /* THE PHONE'S OWN STATING PLACE, which nothing moved and nothing read.
+     *
+     * apps/mobile/README.md's route table spells out what the Settings About block renders —
+     * `Version <expo.version> (<build number>)`, the string `copy.buildVersionWithCode` builds. It
+     * is not in the version census the bump script walks, so it stayed on the previous release
+     * while every other site moved, and the 0.15.0 bump only caught it because a person read the
+     * file. A stating place whose correctness is luck is the shape this census exists to remove.
+     *
+     * The number it must agree with is the one THE ARTIFACT CARRIES — apps/mobile/app.json, which
+     * `Constants.expoConfig` reads at runtime — and not this app's version. The two platforms are
+     * deliberately allowed to differ in the PATCH component (0.14.2 shipped no phone payload, so
+     * expo.version stayed at 0.14.1 while the desktop moved), and an assertion of equality with
+     * `conf.version` would refuse that legitimate release. What is not allowed is a different
+     * FEATURE release, which is the same rule the "at or behind the workspace" test below states
+     * for the desktop — so major.minor is compared and the patch is not.
+     *
+     * The build number is asserted across all three places it is written, because Android's
+     * `versionCode` is an integer, iOS's `buildNumber` a string, and the README states one figure:
+     * a pair that has drifted makes the README true of one platform and false of the other. */
+    const mobileReadme = read("../mobile/README.md");
+    const mobile = JSON.parse(read("../mobile/app.json")) as {
+      expo: { version: string; ios: { buildNumber: string }; android: { versionCode: number } };
+    };
+    const about = /`Version (\d+\.\d+\.\d+) \((\d+)\)`/.exec(mobileReadme);
+    expect(about, "apps/mobile/README.md no longer states `Version x.y.z (n)` for the About block")
+      .toBeTruthy();
+    const [, mobileVersion, mobileBuild] = about!;
+    expect(mobileVersion, `apps/mobile/README.md states ${mobileVersion}, which the artifact does not carry`)
+      .toBe(mobile.expo.version);
+    expect(mobileBuild, "the README's build number is not app.json's android.versionCode")
+      .toBe(String(mobile.expo.android.versionCode));
+    expect(mobile.expo.ios.buildNumber, "ios.buildNumber and android.versionCode disagree, so the README is true of one platform only")
+      .toBe(String(mobile.expo.android.versionCode));
+    const feature = (n: string) => n.split(".").slice(0, 2).join(".");
+    expect(feature(mobileVersion), "the phone and the desktop are on different feature releases")
+      .toBe(feature(v));
   });
 
   /**
