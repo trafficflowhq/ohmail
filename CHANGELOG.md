@@ -13,25 +13,6 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
-### The mailbox row says when it cannot check, instead of "Up to date"
-
-0.14.2 taught this row the difference between an answer and a bad answer. There was a fourth case
-underneath: the question never ARRIVING. Settings → Mailboxes asks the mail engine on your own
-computer, every fifteen seconds, which of your mailboxes it can currently reach; when that question
-could not be put to the engine at all, the pane treated it exactly as it treats an engine too old
-to be asked — silence, keep the state you had — and the row went on saying "Up to date".
-
-On Windows that was reproducible through a nine-minute outage. The engine had noticed the dropped
-connection, was retrying it, and had recorded how long it had been down; the row said the mailbox
-was fine. Its "Last checked" stamp, which comes from a different read, was right the whole time —
-the two halves of one row disagreed for nine minutes.
-
-The two silences are told apart now. A question that could not be delivered says so — "Can't check
-the mail server right now" — and so does a mailbox this computer organizes that the engine's answer
-does not mention at all, because the engine answers that question from every mailbox it holds. An
-engine too old to be asked keeps the row exactly as it was: that silence is ordinary, it happens
-while an update lands, and it says nothing about anybody's mail server.
-
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
@@ -406,6 +387,25 @@ anybody, however long it has been asleep.
 The screen that tells you who is organizing a mailbox reads the same rule as the button beside it.
 It no longer names a live organizer for a record the app had already stopped defending, and no
 longer offers to stop a computer that has already stopped.
+
+### The mailbox row says when it cannot check, instead of "Up to date"
+
+0.14.2 taught this row the difference between an answer and a bad answer. There was a fourth case
+underneath: the question never ARRIVING. Settings → Mailboxes asks the mail engine on your own
+computer, every fifteen seconds, which of your mailboxes it can currently reach; when that question
+could not be put to the engine at all, the pane treated it exactly as it treats an engine too old
+to be asked — silence, keep the state you had — and the row went on saying "Up to date".
+
+On Windows that was reproducible through a nine-minute outage. The engine had noticed the dropped
+connection, was retrying it, and had recorded how long it had been down; the row said the mailbox
+was fine. Its "Last checked" stamp, which comes from a different read, was right the whole time —
+the two halves of one row disagreed for nine minutes.
+
+The two silences are told apart now. A question that could not be delivered says so — "Can't check
+the mail server right now" — and so does a mailbox this computer organizes that the engine's answer
+does not mention at all, because the engine answers that question from every mailbox it holds. An
+engine too old to be asked keeps the row exactly as it was: that silence is ordinary, it happens
+while an update lands, and it says nothing about anybody's mail server.
 
 ### Re-filing mail on a mailbox another install organizes
 
