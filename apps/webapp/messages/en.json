@@ -1146,7 +1146,7 @@
     "faceApplyAll": "Apply on all devices",
     "faceFailed": "Couldn't save that — try again.",
     "imageQuality": "Picture quality",
-    "imageQualityHint": "JPEG and PNG attachments are compressed in this browser before they're sent, which drops the camera data in them — including location. Lower quality means smaller files. A picture that wouldn't get smaller is sent as it was, and Original never re-encodes.",
+    "imageQualityHint": "JPEG and PNG attachments are compressed on this device before they're sent, which drops the camera data in them — including location. Lower quality means smaller files. A picture that wouldn't get smaller is sent as it was, and Original never re-encodes.",
     "imageQualityAria": "Picture quality",
     "imageQualityLevel": {
       "low": "Low",
@@ -3194,7 +3194,7 @@
     "localLead": "This computer connects to your mail server directly. Your password is stored on this {machine}, encrypted under a key held in the keychain, and is never sent to us.",
     "localAddress": "Mailbox address",
     "localPassword": "Mailbox password",
-    "localPasswordHint": "For most providers this is an app password rather than the password you sign in with — the note above your provider says which.",
+    "localPasswordHint": "For most providers this is an app password rather than the password you sign in with — the note under your provider says which.",
     "localImapHost": "Incoming server (IMAP)",
     "localImapPort": "IMAP port",
     "localSmtpHost": "Outgoing server (SMTP)",

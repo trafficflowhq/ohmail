@@ -1146,7 +1146,7 @@
     "faceApplyAll": "Auf allen Geräten anwenden",
     "faceFailed": "Das ließ sich nicht speichern — versuch es nochmal.",
     "imageQuality": "Bildqualität",
-    "imageQualityHint": "JPEG- und PNG-Anhänge werden in diesem Browser vor dem Senden komprimiert; dabei entfallen die Kameradaten samt Standort. Niedrigere Qualität bedeutet kleinere Dateien. Ein Bild, das dadurch nicht kleiner würde, wird unverändert gesendet, und „Original“ wird nie neu codiert.",
+    "imageQualityHint": "JPEG- und PNG-Anhänge werden auf diesem Gerät vor dem Senden komprimiert; dabei entfallen die Kameradaten samt Standort. Niedrigere Qualität bedeutet kleinere Dateien. Ein Bild, das dadurch nicht kleiner würde, wird unverändert gesendet, und „Original“ wird nie neu codiert.",
     "imageQualityAria": "Bildqualität",
     "imageQualityLevel": {
       "low": "Niedrig",
@@ -3194,7 +3194,7 @@
     "localLead": "Dieser Computer verbindet sich direkt mit deinem Mailserver. Dein Passwort liegt auf diesem {machine}, verschlüsselt mit einem Schlüssel aus dem Schlüsselbund, und geht nie an uns.",
     "localAddress": "Postfachadresse",
     "localPassword": "Postfachpasswort",
-    "localPasswordHint": "Bei den meisten Anbietern ist das ein App-Passwort und nicht das Passwort, mit dem du dich anmeldest — der Hinweis über deinem Anbieter sagt, welches.",
+    "localPasswordHint": "Bei den meisten Anbietern ist das ein App-Passwort und nicht das Passwort, mit dem du dich anmeldest — der Hinweis unter deinem Anbieter sagt, welches.",
     "localImapHost": "Posteingangsserver (IMAP)",
     "localImapPort": "IMAP-Port",
     "localSmtpHost": "Postausgangsserver (SMTP)",

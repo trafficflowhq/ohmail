@@ -103,7 +103,7 @@ const EN = {
   localPassword: "Mailbox password",
   localPasswordHint:
     "For most providers this is an app password rather than the password you sign in with — the "
-    + "note above your provider says which.",
+    + "note under your provider says which.",
   localImapHost: "Incoming server (IMAP)",
   localImapPort: "IMAP port",
   localSmtpHost: "Outgoing server (SMTP)",
