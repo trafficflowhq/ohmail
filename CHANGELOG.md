@@ -27,6 +27,7 @@ the one organizing the mailbox.
 
 Use folders itself is unchanged, and still decides the Folders list, the folder views and
 Move-to-folder.
+
 ### The away responder's replies stay out of the Ohbox
 
 The away responder answers mail that arrives while you are away. Its replies were then filed into
