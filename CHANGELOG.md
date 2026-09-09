@@ -576,6 +576,21 @@ the same two words, for the other fact, on the pile right next to the two above 
 
 Nothing about how either count is worked out changes.
 
+### The action pill stays centred when it folds
+
+The row of verbs under a message — Reply, the forwarding and deferring groups, the read switch and
+More — is a floating capsule as wide as the verbs it is standing. It sat against the left edge of
+the message's text, so each time the row was too narrow for a group and folded it behind More the
+capsule lost that room from its right-hand end only and its middle moved left. In the widest
+reading column that is 121px of travel, and it happened on the way into and out of every fold: the
+pill stood in a different place depending on how much room it had.
+
+The capsule is centred in the message's measure now, so a fold takes room off both ends and its
+middle does not move. Which verbs stand in the row is unchanged — that is decided by measuring the
+row, and the measurement has never read the capsule. The same rule covers the capsule carrying a
+selection's verbs at the foot of a list and the one at the foot of a card in Reads and Receipts.
+While a reply editor is open the row stands down to a plain full-width row of verbs, as before.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

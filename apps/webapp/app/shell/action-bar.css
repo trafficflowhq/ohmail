@@ -38,59 +38,102 @@
  * rule to keep, whatever decides the width.
  */
 
-/* ── THE BAR IS A FLOATING PILL AS WIDE AS THE VERBS IT IS STANDING ────────────────────
+/* ── THE BAR IS A FLOATING PILL AS WIDE AS ITS VERBS AND CENTRED IN THE MEASURE ─────
  *
- * TWO REPORTS, ONE RULE, AND THE FIRST FIX ANSWERED THE WRONG HALF OF THE FIRST ONE.
+ * THREE REPORTS, ONE RULE. Two of them are about the pill's WIDTH and are settled first; the
+ * third is about its ANCHOR, and it is why this block was rewritten.
  *
- * The pill was `width: fit-content; margin-inline: auto` — as wide as the verbs it happened to
- * stand, CENTRED in the message's measure. Reported from real use: *"the action pill should use
- * its available width"*. It became `width: 100%`, with `.abar-read-g { margin-left: auto }`
- * holding the read switch and More at the far end.
+ * ── WIDTH: THE HUG, WHICH DOES NOT MOVE ────────────────────────────────────
  *
- * That answered the centring and made the other half worse. The room a folded group gives up is
- * not spread thin any more, it is ONE hollow between the last verb standing and the read switch,
- * and it is large: measured across the sweep at up to 232px, and reported from real use as a pill
- * that is wide and empty with its middle verbs gone.
+ * The pill was `width: fit-content`. Reported from real use: *"the action pill should use its
+ * available width"*. It became `width: 100%`, with `.abar-read-g { margin-left: auto }` holding
+ * the read switch and More at the far end — and that made the other half of the same report
+ * worse. The room a folded group gives up was no longer spread thin, it was ONE hollow between
+ * the last verb standing and the read switch: measured across the sweep at up to 232px, and
+ * reported from real use as a pill that is wide and empty with its middle verbs gone.
  *
  * The mistake was reading "use the available width" as a question about the pill's BOX. It is a
  * question about the ADMISSION — how many verbs get seated — and the admission has never read the
  * pill: `bar-density.ts` measures `.msg-actions`, which is full width whatever the capsule does,
- * minus the pill's own padding. So the fold is untouched by this rule and by the one it replaces;
- * the same verbs stand at the same widths either way. What changes is only whether the capsule is
- * drawn around room it is not using.
+ * minus the pill's own padding. So `fit-content` came back and it stays. Every rule in this block
+ * leaves the fold exactly as it was; the same verbs stand at the same widths either way.
  *
- * `fit-content` and NOT the old `margin-inline: auto` with it: left, so the pill's edge is the
- * message body's edge (`.msg-body` and `.msg-actions` share `--msg-measure` and both start at the
- * left of the measure), and so the primary verb sits where the text it answers begins. Dropping the
- * centring is the half of the first report that stands, and it is kept.
+ * ── ANCHOR: WHAT THIS BLOCK GOT WRONG, MEASURED ─────────────────────────────
  *
- * `margin-left: auto` on the read group STAYS, and is not dead: the reply-editor stand-down
- * (`.msg:has(.reply) .msg-actions > .abar`, `width: 100%`) and every mount that keeps the bare
- * `.abar`'s own `width: 100%` — the Screener's strip, and the wrapped Resurface/Move panel below
- * — are full-width rows where it still does the separating. The selection strip that used to be
- * named beside them (`.pick-bar > .abar`, `flex: 1 1 100%`) is retired: a selection's verbs wear
- * this pill now and hug like it.
+ * Reported from real use: *"the pill ui element is not always centered … when collapsing the pill
+ * ui with the reply actions etc moves to the left"*. Both halves of that sentence are one fact,
+ * and the fact was this block's own rule working as written.
+ *
+ * Measured before the fix, over 120 readings — the message pill and the selection pill, at
+ * 360/390/640/1024/1440, on both faces, in both locales, floating and at rest:
+ *
+ *   left slack     0.00px in EVERY reading                    (the pill is anchored at the left)
+ *   right slack    up to 241.9px                              (the room the fold gave up)
+ *   centre offset  −(right slack) / 2, to within 0.000px      (so up to 121.0px)
+ *
+ * The offset is the right slack halved in every single cell, exactly — so the shift is not a
+ * side effect of the fold, of the read group's `margin-left: auto`, or of the sticky rule. It IS
+ * the anchor. 116 of the 120 readings sat more than a pixel off centre; the four that did not are
+ * the cells where the pill happens to fill its row and has no room to be off-centre at all.
+ *
+ * SUPERSEDED, and recorded rather than deleted because it is a reasonable thing to want and
+ * somebody will want it again: *"`fit-content` and NOT the old `margin-inline: auto` with it:
+ * left, so the pill's edge is the message body's edge … and so the primary verb sits where the
+ * text it answers begins. Dropping the centring is the half of the first report that stands, and
+ * it is kept."* That was a reading of a WIDTH report, and the anchor had never been decided on its
+ * own terms: what was decided for this pill is that it FLOATS, not where it sits. It buys a tidy
+ * left edge and costs the pill's centre up to 121px of travel every time a group folds. The
+ * report above decides it: CENTRED.
+ *
+ * ── THE RULE ──────────────────────────────────────────────────────
+ *
+ * `margin-inline: auto` beside `width: fit-content`. The hug is untouched; only the anchor moves,
+ * from the measure's left edge to its centre. A fold then takes room off both ends equally and the
+ * capsule's centre does not travel. Nothing animates it: a transition on `margin` would slide
+ * every verb sideways on every fold, which is a worse reading of the same event — ruled instant.
+ *
+ * THE MOUNTS IT REACHES, AND THE TWO IT CANNOT. `.msg-actions > .abar` is one selector over three
+ * mounts — the message's pill, the selection's pill in the list column's foot, and the reading
+ * card's (`.sc-actions`) — and all three centre, which is the one rule that was asked for. The two
+ * full-width states are out of reach BY THEIR OWN DECLARATIONS rather than by a selector carved
+ * around them, which is why no branch is added here:
+ *
+ *   the reply-editor stand-down   `.msg:has(.reply) .msg-actions > .abar` and its `.conv` twin
+ *                                 (`packages/ui/…/message.css`) already declare `margin: 0`, at
+ *                                 four classes against this rule's two.
+ *   the wrapped panel             `.msg-actions > .abar:has(> .abar-panel)` below is `width: 100%`,
+ *                                 where an auto inline margin has no free space to take and
+ *                                 resolves to 0. Same for the Screener's strip and Resurface/Move.
+ *
+ * The reading card's WIDTH is not this file's to decide — that is a separate decision, still open
+ * — but its anchor is this rule's, and centred is where that decision was already headed.
+ *
+ * `margin-left: auto` on the read group STAYS, and is not dead: the stand-down and the wrapped
+ * panel are full-width rows where it still does the separating.
  *
  * `.msg-actions` stays the container named `abar` and the pill stays `container-type: normal`:
- * nothing queries the pill itself. (It used to add "and the selection bar's own rungs bind to
- * `.abar` in THAT surface (`.pick-bar`, below)" — there are no such rungs any more; the selection
- * wears this pill and folds by measurement like every other mount of it.) `.abar` keeps
- * `position: relative`, so `.mmenu` anchors to the pill's right edge — which with a pill that
- * hugs is the More button's own right edge, the end of the row, where the button that opens it
- * stands.
+ * nothing queries the pill itself. `.abar` keeps `position: relative`, so `.mmenu` anchors to the
+ * pill's right edge — which with a pill that hugs is the More button's own right edge, the end of
+ * the row, where the button that opens it stands. Centring moves that edge inward together with
+ * the pill and the button; it does not part the menu from the control that opens it.
  *
  * Held by `scripts/fit-render.mjs`, at every width in the sweep, in both locales and on both
- * faces: no empty run between two visible controls is wider than the row's own gap, and the
- * pill's border box is its row's content plus its padding. TWO subjects now, not one — "the pill
- * hugs its verbs" over the message's mount, and the selection's pill at the foot of the list
- * (`markSelectionPill`), which the sweep could not look at while those verbs lived in a strip of
- * their own. */
+ * faces: no empty run between two visible controls is wider than the row's own gap; the pill's
+ * border box is its row's content plus its padding; and the pill's centre is its row's centre to
+ * within 1px. THREE subjects over two mounts — "the pill hugs its verbs", "the selection pill
+ * fits the foot", and "the pill is centred", which is asked of both mounts and refuses if the
+ * sweep never met a pill with room to be off-centre: in such a cell the offset is 0 whatever the
+ * anchor is, so a sweep of only those would pass with the pill back at the left. */
 .msg-actions {
   container: abar / inline-size;
 }
 .msg-actions > .abar {
   container-type: normal;
   width: fit-content;
+  /* THE ANCHOR. See "ANCHOR" in the header: the pill's centre is the measure's centre, so a fold
+     takes room off both ends and the capsule does not travel. `fit-content` above still decides
+     the WIDTH; this decides only where the box the hug produced is put. */
+  margin-inline: auto;
   /* AND `min-width: 0` IS NOT DECORATION — `fit-content` alone reverses this rule's own promise in
      the one column too narrow for the compact floor.
 
