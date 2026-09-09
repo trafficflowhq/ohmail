@@ -2393,7 +2393,7 @@ export function OhboxView({
       <ListPane
         title={t("title")}
         scrollerRef={listScrollerRef}
-        /* "0 new" IS A CLAIM ABOUT THE MAILBOX, not a description of the
+        /* "0 unread" IS A CLAIM ABOUT THE MAILBOX, not a description of the
            list — and its predecessor ("0 unread of 0 messages") was on screen, beside
            "Nothing in your Ohbox.", over an account that
            was not empty, for as long as the first drain took. While the mirror has not
@@ -2402,11 +2402,22 @@ export function OhboxView({
            wrong count is a lie. Any NON-zero total is a real observation whatever the drain is
            doing, so only the empty case is withheld.
 
-           THE FORM IS THE READS HEADER'S — "{count} new", one compact line with the action
-           right-aligned beside it: the long "unread of N messages" tail made the header wrap
-           to three lines. The fuller noun sentence — an earlier report asked the two header
-           counts to name their nouns — lives on in the rail tooltip (`rail.ohboxTitle`),
-           which still says "N unread of M messages". */
+           THE FORM IS SHORT, AND THE NOUN IS THE POINT — "{count} unread", one compact line
+           with the action right-aligned beside it. This said "{count} new" for two releases,
+           and the reason recorded here was that the form matched the Reads header. It no
+           longer does: Reads and Receipts count the WATERLINE and now say so in full ("12 new
+           since you were here" — `stream.newSince`), while THIS number is `unreadIds.length`,
+           the mailbox's own `\Seen`. One word for two facts on two adjacent piles is the
+           confusion that change was made to end, so the noun is here rather than only in the
+           rail tooltip (`rail.ohboxTitle`, "N unread of M messages").
+
+           WHAT WRAPPED THE HEADER TO THREE LINES WAS THE TAIL, NOT THE NOUN: the old form was
+           "unread of N messages", and it is the "of N messages" that cost the room. "12 unread"
+           is three characters longer than "12 new" and `.vhead .meta` yields before the action
+           does (`packages/ui/src/composites/list-pane.css`), so the claim is measured rather
+           than argued — `scripts/fit-render.mjs` reads this header at 360 and 390 on both faces
+           in both languages for self-overflow AND for the title, the count and the action
+           standing on ONE line. */
         meta={
           !settled && all.length === 0
             ? undefined

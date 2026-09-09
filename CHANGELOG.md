@@ -570,7 +570,11 @@ line stands over nothing unread. An unread figure keeps its own word — "3 unre
 numbers can appear on one screen without either being mistaken for the other. German reads
 "12 neue seit deinem letzten Besuch".
 
-Nothing about how the count is worked out changes.
+The Ohbox header counts unread mail and now says which word that is as well. It read "12 new" —
+the same two words, for the other fact, on the pile right next to the two above — and reads
+"12 unread". Its hover tooltip, which also gives the total, is unchanged.
+
+Nothing about how either count is worked out changes.
 
 ### Still to come
 

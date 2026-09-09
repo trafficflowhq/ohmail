@@ -459,7 +459,7 @@
   },
   "ohbox": {
     "title": "Ohbox",
-    "meta": "{count, number} new",
+    "meta": "{count, number} unread",
     "newForYou": "New",
     "previouslySeen": "Earlier",
     "resurfacedGroup": "Resurfaced",
