@@ -719,6 +719,20 @@ untouched — the line is about the message that was answered, never about the c
 
 On the web from the day this landed; in the desktop app with this release.
 
+### Deleted mail can be seen and restored
+
+Press ⌘K (Ctrl+K) and choose Trash, or press `g` then `t`. Trash appears in the sidebar while you
+are in it and is gone when you leave. Restore puts a message back where it was, with Undo — and it
+names the place it went, worked out on the server, because the folder a message came from can be
+deleted while the message sits in Trash. Shift+Backspace restores the open message.
+
+ohmail still never erases mail. Backspace and Delete are listed in Trash and do nothing there,
+with the reason on the row: to remove a message for good, use your own mail client.
+
+The list holds mail you deleted in ohmail. Mail trashed in other apps stays in your mail server's
+Trash, and your mail server decides how long Trash keeps it — the screen says so under the last
+row.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
