@@ -13,6 +13,13 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Still to come
+
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
+
+## [0.15.0] — 2026-09-09
+
 ### The phone chooser says what a phone can be
 
 The chooser offers three answers — ohmail Cloud, a server you run, or your own computer — and left
@@ -454,11 +461,6 @@ that failed carried nothing identifying which action it was.
 
 Nothing else about a response changes, and the hosted services send the same value they
 sent before.
-
-### Still to come
-
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
 
 ## [0.14.2] — 2026-09-08
 
@@ -5237,7 +5239,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.14.2...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.15.0
 [0.14.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.14.2
 [0.14.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.14.1
 [0.14.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.14.0
