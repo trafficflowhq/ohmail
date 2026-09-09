@@ -43,6 +43,7 @@ export const pushRoutes: Route[] = [
      */
     method: "GET",
     pattern: "/push/vapid-key",
+    relay: true,
     cost: "read",
     handler: (_req, deps) => {
       // Normalised so that an operator's empty-string environment variable and an unset one are
@@ -57,6 +58,7 @@ export const pushRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/push/subscriptions",
+    relay: true,
     cost: "work",
     options: { idempotent: true },
     handler: async (req, deps) => {
@@ -70,6 +72,7 @@ export const pushRoutes: Route[] = [
   {
     method: "DELETE",
     pattern: "/push/subscriptions/:id",
+    relay: true,
     cost: "work",
     handler: async (req, deps, params) => {
       await push(deps).unsubscribe(serviceContext(deps, req), params.id!);

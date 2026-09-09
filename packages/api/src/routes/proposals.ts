@@ -26,6 +26,7 @@ export const proposalsRoutes: Route[] = [
     // ones. Static `/workflows/proposals` out-specifies `/workflows/:id`.
     method: "GET",
     pattern: "/workflows/proposals",
+    relay: true,
     cost: "read",
     handler: async (req, deps) => {
       const items = await proposals(deps).list(serviceContext(deps, req));
@@ -36,6 +37,7 @@ export const proposalsRoutes: Route[] = [
     // 4b — dismiss an AI proposal (mark 'dismissed'; cross-account/unknown → 404).
     method: "POST",
     pattern: "/workflows/proposals/:id/dismiss",
+    relay: true,
     cost: "work",
     handler: async (req, deps, params) => {
       await proposals(deps).dismiss(serviceContext(deps, req), params.id!);

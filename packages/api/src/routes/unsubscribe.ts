@@ -36,6 +36,7 @@ export const unsubscribeRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/messages/:id/unsubscribe",
+    relay: true,
     cost: "connection",
     handler: async (req, deps, params) => {
       const result = await unsubscribes(deps).unsubscribe(serviceContext(deps, req), params.id!);

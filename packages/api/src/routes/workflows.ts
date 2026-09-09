@@ -21,6 +21,7 @@ export const workflowsRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/workflows",
+    relay: true,
     cost: "read",
     handler: async (req, deps) => {
       const items = await workflows(deps).list(serviceContext(deps, req));
@@ -30,6 +31,7 @@ export const workflowsRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/workflows",
+    relay: true,
     cost: "work",
     handler: async (req, deps) => {
       const body = await readBody<CreateWorkflowBody>(req);
@@ -40,6 +42,7 @@ export const workflowsRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/workflows/:id",
+    relay: true,
     cost: "read",
     handler: async (req, deps, params) => {
       const dto = await workflows(deps).get(serviceContext(deps, req), params.id!);
@@ -49,6 +52,7 @@ export const workflowsRoutes: Route[] = [
   {
     method: "PATCH",
     pattern: "/workflows/:id",
+    relay: true,
     cost: "work",
     handler: async (req, deps, params) => {
       const patch = await readBody<PatchWorkflowBody>(req);
@@ -59,6 +63,7 @@ export const workflowsRoutes: Route[] = [
   {
     method: "DELETE",
     pattern: "/workflows/:id",
+    relay: true,
     cost: "work",
     handler: async (req, deps, params) => {
       await workflows(deps).softDelete(serviceContext(deps, req), params.id!);
@@ -70,6 +75,7 @@ export const workflowsRoutes: Route[] = [
     // same tx as the `workflow_runs` insert, so `deps.idempotency` is threaded in.
     method: "POST",
     pattern: "/workflows/:id/run",
+    relay: true,
     cost: "work",
     options: { idempotent: true },
     handler: async (req, deps, params) => {
@@ -93,6 +99,7 @@ export const workflowsRoutes: Route[] = [
     // each guarded on current state, then marks the run `undone`. Cross-account → 404.
     method: "POST",
     pattern: "/workflow-runs/:id/undo",
+    relay: true,
     cost: "work",
     handler: async (req, deps, params) => {
       const dto = await workflows(deps).undoRun(serviceContext(deps, req), params.id!);
@@ -102,6 +109,7 @@ export const workflowsRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/workflow-runs",
+    relay: true,
     cost: "read",
     handler: async (req, deps) => {
       const url = new URL(req.url);

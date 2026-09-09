@@ -33,6 +33,7 @@ export const coreRoutes: Route[] = [
     //    response deliberately declines to confirm.
     method: "POST",
     pattern: "/auth/register",
+    relay: false,  /* resolves a credential from the request body */
     cost: "ceremony",
     options: { public: true, credentialSubject: true },
     handler: async (req, deps) => {
@@ -79,6 +80,7 @@ export const coreRoutes: Route[] = [
     // must not skip a second factor somebody deliberately added.
     method: "POST",
     pattern: "/auth/verify-email",
+    relay: false,  /* resolves a credential from the request body */
     cost: "ceremony",
     options: { public: true, credentialSubject: true },
     handler: async (req, deps) => {
@@ -102,6 +104,7 @@ export const coreRoutes: Route[] = [
     // is an oracle even for an authenticated caller.
     method: "POST",
     pattern: "/auth/verify-email/resend",
+    relay: true,
     // `ceremony`, and it is the clearest case for why that class exists: this route
     // SENDS MAIL through the transactional mail provider, so it spends, and it must nevertheless
     // be reachable by an
@@ -121,6 +124,7 @@ export const coreRoutes: Route[] = [
     // registered-but-unenrolled user can resume onboarding (the re-entry path).
     method: "POST",
     pattern: "/auth/login",
+    relay: false,  /* resolves a credential from the request body */
     cost: "ceremony",
     options: { public: true, credentialSubject: true },
     handler: async (req, deps) => {
@@ -134,6 +138,7 @@ export const coreRoutes: Route[] = [
     // mid-enrollment (`scope: "enrollment"`).
     method: "GET",
     pattern: "/auth/session",
+    relay: true,
     cost: "ceremony",
     options: { enrollmentOk: true },
     handler: async (req, deps) => {
@@ -176,6 +181,7 @@ export const coreRoutes: Route[] = [
     // one failure this parameter exists to prevent.
     method: "POST",
     pattern: "/auth/desktop-link",
+    relay: false,  /* mints the hosted hand-off code */
     cost: "ceremony",
     options: { stepUp: true },
     handler: async (req, deps) => {
@@ -208,6 +214,7 @@ export const coreRoutes: Route[] = [
     // to whoever is asking.
     method: "POST",
     pattern: "/auth/desktop-claim",
+    relay: false,  /* carries the hosted hand-off code */
     cost: "ceremony",
     options: { public: true, credentialSubject: true },
     handler: async (req, deps) => {

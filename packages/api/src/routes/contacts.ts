@@ -28,6 +28,7 @@ export const contactsRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/contacts",
+    relay: true,
     cost: "read",
     handler: async (req, deps) => {
       const page = await contacts(deps).list(serviceContext(deps, req), qp(req));
@@ -37,6 +38,7 @@ export const contactsRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/contacts/:id",
+    relay: true,
     cost: "read",
     handler: async (req, deps, params) => {
       const dto = await contacts(deps).get(serviceContext(deps, req), params.id!);
@@ -46,6 +48,7 @@ export const contactsRoutes: Route[] = [
   {
     method: "PATCH",
     pattern: "/contacts/:id",
+    relay: true,
     cost: "work",
     handler: async (req, deps, params) => {
       const body = await readBody<PatchContactBody>(req);
@@ -56,6 +59,7 @@ export const contactsRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/contacts/:id/notes",
+    relay: true,
     cost: "read",
     handler: async (req, deps, params) => {
       const page = await contacts(deps).listContactNotes(serviceContext(deps, req), params.id!, qp(req));
@@ -65,6 +69,7 @@ export const contactsRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/contacts/:id/notes",
+    relay: true,
     cost: "work",
     handler: async (req, deps, params) => {
       const body = await readBody<NoteBody>(req);
@@ -75,6 +80,7 @@ export const contactsRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/threads/:id/notes",
+    relay: true,
     cost: "read",
     handler: async (req, deps, params) => {
       const page = await contacts(deps).listThreadNotes(serviceContext(deps, req), params.id!, qp(req));
@@ -84,6 +90,7 @@ export const contactsRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/threads/:id/notes",
+    relay: true,
     cost: "work",
     handler: async (req, deps, params) => {
       const body = await readBody<NoteBody>(req);
@@ -94,6 +101,7 @@ export const contactsRoutes: Route[] = [
   {
     method: "PATCH",
     pattern: "/notes/:id",
+    relay: true,
     cost: "work",
     handler: async (req, deps, params) => {
       const body = await readBody<NoteBody>(req);
@@ -104,6 +112,7 @@ export const contactsRoutes: Route[] = [
   {
     method: "DELETE",
     pattern: "/notes/:id",
+    relay: true,
     cost: "work",
     handler: async (req, deps, params) => {
       await contacts(deps).deleteNote(serviceContext(deps, req), params.id!);

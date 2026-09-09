@@ -101,6 +101,7 @@ export const syncRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/sync",
+    relay: true,
     cost: "read",
     handler: async (req, deps) => {
       const url = new URL(req.url);
@@ -143,6 +144,7 @@ export const syncRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/sync/snapshot",
+    relay: true,
     cost: "read",
     handler: async (req, deps) => {
       const url = new URL(req.url);
@@ -184,6 +186,7 @@ export const syncRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/sync/pull",
+    relay: true,
     cost: "work",
     handler: async (req, deps) => {
       const result = await mailbox(deps).requestPull(serviceContext(deps, req));

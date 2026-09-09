@@ -23,6 +23,7 @@ export const tagsRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/tags",
+    relay: true,
     cost: "read",
     handler: async (req, deps) => {
       const items = await tags(deps).list(serviceContext(deps, req));
@@ -32,6 +33,7 @@ export const tagsRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/tags",
+    relay: true,
     cost: "work",
     handler: async (req, deps) => {
       const body = await readBody<TagBody>(req);
@@ -42,6 +44,7 @@ export const tagsRoutes: Route[] = [
   {
     method: "PATCH",
     pattern: "/tags/:id",
+    relay: true,
     cost: "work",
     handler: async (req, deps, params) => {
       const body = await readBody<TagBody>(req);
@@ -52,6 +55,7 @@ export const tagsRoutes: Route[] = [
   {
     method: "DELETE",
     pattern: "/tags/:id",
+    relay: true,
     cost: "work",
     handler: async (req, deps, params) => {
       const { seq } = await tags(deps).remove(serviceContext(deps, req), params.id!);
@@ -64,6 +68,7 @@ export const tagsRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/messages/:id/tags",
+    relay: true,
     cost: "work",
     handler: async (req, deps, params) => {
       const body = await readBody<{ tagId: string; assigned: boolean; name?: string }>(req);

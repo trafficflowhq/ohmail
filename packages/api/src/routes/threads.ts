@@ -14,6 +14,7 @@ export const threadRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/threads/merge",
+    relay: true,
     cost: "work",
     handler: async (req, deps) => {
       const body = await readBody<ThreadMergeBody>(req);
@@ -24,6 +25,7 @@ export const threadRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/threads/:id",
+    relay: true,
     cost: "read",
     handler: async (req, deps, params) => {
       const dto = await thread(deps).get(serviceContext(deps, req), params.id!);
@@ -33,6 +35,7 @@ export const threadRoutes: Route[] = [
   {
     method: "PATCH",
     pattern: "/threads/:id",
+    relay: true,
     cost: "work",
     handler: async (req, deps, params) => {
       const body = await readBody<ThreadPatchBody>(req);
@@ -43,6 +46,7 @@ export const threadRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/threads/:id/rename",
+    relay: true,
     cost: "work",
     handler: async (req, deps, params) => {
       const body = await readBody<ThreadRenameBody>(req);

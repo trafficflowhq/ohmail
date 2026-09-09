@@ -13,6 +13,7 @@ export const awayRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/away-responder",
+    relay: true,
     cost: "read",
     handler: async (req, deps) => {
       const dto = await away(deps).get(serviceContext(deps, req));
@@ -22,6 +23,7 @@ export const awayRoutes: Route[] = [
   {
     method: "PUT",
     pattern: "/away-responder",
+    relay: true,
     cost: "work",
     handler: async (req, deps) => {
       const body = await readBody<AwayResponderBody>(req);

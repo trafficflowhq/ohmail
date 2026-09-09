@@ -47,6 +47,7 @@ export const sessionLifecycleRoutes: Route[] = [
     // enrollmentOk: abandoning a half-finished enrollment must always be possible.
     method: "POST",
     pattern: "/auth/logout",
+    relay: true,
     cost: "ceremony",
     options: { enrollmentOk: true },
     handler: async (req, deps) => {
@@ -67,6 +68,7 @@ export const sessionLifecycleRoutes: Route[] = [
     // not to point at it — so on such a host the body token is the only accepted input.
     method: "POST",
     pattern: "/auth/refresh",
+    relay: false,  /* resolves a credential from the request body */
     cost: "ceremony",
     options: { public: true, credentialSubject: true },
     handler: async (req, deps) => {

@@ -62,6 +62,7 @@ export const waitlistRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/waitlist",
+    relay: false,  /* the hosted marketing surface */
     cost: "unauthenticated",
     options: { public: true },
     handler: async (req, deps) => {

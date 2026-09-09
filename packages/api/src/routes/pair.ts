@@ -100,6 +100,7 @@ const pairCeremonyRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/pair",
+    relay: true,
     cost: "ceremony",
     options: { stepUp: true },
     handler: async (req, deps) => {
@@ -131,6 +132,7 @@ const pairCeremonyRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/pair",
+    relay: true,
     cost: "read",
     handler: async (req, deps) =>
       json({ items: await listPairingTokens(serviceContext(deps, req)) }, 200),
@@ -138,6 +140,7 @@ const pairCeremonyRoutes: Route[] = [
   {
     method: "DELETE",
     pattern: "/pair/:id",
+    relay: true,
     cost: "ceremony",
     options: { stepUp: true },
     handler: async (req, deps, params) => {
@@ -166,6 +169,7 @@ export const pairRedeemRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/pair/redeem",
+    relay: false,  /* resolves a credential from the request body */
     cost: "unauthenticated",
     // NOT `anonymous` ANY MORE, and the flag it lost is the one that made a rule unenforceable.
     //

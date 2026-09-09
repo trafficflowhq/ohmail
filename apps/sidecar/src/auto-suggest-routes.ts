@@ -93,6 +93,7 @@ export function localAutoSuggestRoutes(deps: {
     {
       method: "GET",
       pattern: "/local/auto-suggest",
+      relay: false,  /* served by this engine; never forwarded */
       cost: "read",
       handler: async () => jsonResponse(await readState(db, accountId, ai), { status: 200 }),
     },
@@ -108,6 +109,7 @@ export function localAutoSuggestRoutes(deps: {
        */
       method: "PUT",
       pattern: "/local/auto-suggest",
+      relay: false,  /* served by this engine; never forwarded */
       cost: "work",
       handler: async (req) => {
         let body: { on?: unknown };

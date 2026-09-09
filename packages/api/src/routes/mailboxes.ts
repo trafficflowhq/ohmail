@@ -159,6 +159,7 @@ export const mailboxRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/mailboxes",
+    relay: true,
     cost: "read",
     handler: async (req, deps) => {
       /**
@@ -187,6 +188,7 @@ export const mailboxRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/mailboxes/:id",
+    relay: true,
     cost: "read",
     handler: async (req, deps, params) => {
       const dto = await mailbox(deps).get(serviceContext(deps, req), params.id!);
@@ -214,6 +216,7 @@ export const mailboxRoutes: Route[] = [
      */
     method: "GET",
     pattern: "/mailboxes/:id/profile",
+    relay: true,
     cost: "read",
     handler: async (req, deps, params) => {
       const view = await readMailboxProfile(serviceContext(deps, req), params.id!);
@@ -223,6 +226,7 @@ export const mailboxRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/mailboxes/:id/resync",
+    relay: true,
     // `work`. It carried NO options at all until the cost classes existed, which made it the
     // cheapest way to make the worker re-walk an entire mailbox: one POST, and every folder is
     // re-listed against the real IMAP server. Nothing about the verb or the path said so.
@@ -235,6 +239,7 @@ export const mailboxRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/mailboxes/:id/inbound-quiet/dismiss",
+    relay: true,
     // `work` — one timestamp on the caller's own mailbox row (mail 0078): no socket, no spend,
     // no step-up (dismissing a notice about your own mailbox is not a credential act, and a
     // second factor here would teach people the notice is dangerous — it is the opposite).
@@ -248,6 +253,7 @@ export const mailboxRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/mailboxes/:id/organizer-notice/dismiss",
+    relay: true,
     // `work`, and no step-up — the `inbound-quiet/dismiss` precedent one route up, with its
     // argument unchanged: one timestamp on the caller's own mailbox row (mail 0088), no socket, no
     // spend, and dismissing a notice about your own mailbox is not a credential act. A second
@@ -269,6 +275,7 @@ export const mailboxRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/mailboxes/:id/release",
+    relay: true,
     /* `work`, NOT `connection` — and the contrast with `/organize` two routes down is the whole
      * classification argument rather than a technicality.
      *
@@ -299,6 +306,7 @@ export const mailboxRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/mailboxes/:id/organizer",
+    relay: true,
     // `connection`, NOT `read`. `read` is defined as reading rows already stored for the caller's
     // own account and writing nothing; this opens an IMAP socket to the user's provider and reads
     // a folder on it. Classing it `read` would also put it inside the set an UNVERIFIED account
@@ -323,6 +331,7 @@ export const mailboxRoutes: Route[] = [
     // one caller (`MailboxSection.tsx`) is updated in the same commit; there is no compatibility
     // window to keep because the old name has never been public API.
     pattern: "/mailboxes/:id/organize",
+    relay: true,
     // `connection`, NOT `work` — CHANGED with the rename, and it is a real change rather than
     // tidiness. The ceremony may now carry a password, and a password is PROVED against the
     // customer's provider before anything is written (`QAR-TAKEOVER-NEEDS-A-READABLE-CREDENTIAL`:
@@ -354,6 +363,7 @@ export const mailboxRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/mailboxes/:id/profile-import",
+    relay: true,
     // `connection`, on the organizer peek's argument verbatim: the interesting branch opens an
     // IMAP socket to the user's provider, and `read` would put a mail-server dial inside the
     // set an unproven address may reach. The COMMON branch never dials — the service answers
@@ -373,6 +383,7 @@ export const mailboxRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/mailboxes/:id/profile-import",
+    relay: true,
     // `connection` — it re-reads the document from the mailbox before applying, so the dial is
     // part of what this handler causes (alongside the store writes `work` alone would name).
     // NOT step-up gated, deliberately: it writes the same rows the rules/tags/contacts surfaces
@@ -390,6 +401,7 @@ export const mailboxRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/mailboxes/:id/profile-import/decline",
+    relay: true,
     // `work`: one marker row, no dial — declining must stay possible when the mailbox itself
     // is unreachable, because "keep what I have" is exactly the answer someone gives a prompt
     // they cannot re-verify.
@@ -427,6 +439,7 @@ export const mailboxRoutes: Route[] = [
      * body carries a mailbox password.
      */
     pattern: "/mailboxes/probe",
+    relay: true,
     cost: "connection",
     options: { stepUp: true },
     handler: async (req, deps) => {
@@ -443,6 +456,7 @@ export const mailboxRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/mailboxes",
+    relay: true,
     // `work`, and it is the most expensive member of that class rather than an exception
     // to it. The API stores an encrypted credential and returns; what the credential BUYS is a
     // persistent IMAP connection and a full sync of somebody's mailbox, which is why this was
@@ -474,6 +488,7 @@ export const mailboxRoutes: Route[] = [
   {
     method: "PATCH",
     pattern: "/mailboxes/:id",
+    relay: true,
     cost: "work",
     options: { stepUp: true },
     handler: async (req, deps, params) => {
@@ -495,6 +510,7 @@ export const mailboxRoutes: Route[] = [
   {
     method: "DELETE",
     pattern: "/mailboxes/:id",
+    relay: true,
     cost: "work",
     options: { stepUp: true },
     handler: async (req, deps, params) => {

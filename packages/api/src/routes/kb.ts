@@ -14,6 +14,7 @@ export const kbRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/kb",
+    relay: true,
     cost: "read",
     handler: async (req, deps) => {
       const url = new URL(req.url);
@@ -27,6 +28,7 @@ export const kbRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/kb",
+    relay: true,
     cost: "work",
     handler: async (req, deps) => {
       const body = await readBody<KbEntryBody>(req);
@@ -37,6 +39,7 @@ export const kbRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/kb/:id",
+    relay: true,
     cost: "read",
     handler: async (req, deps, params) => {
       const dto = await kb(deps).get(serviceContext(deps, req), params.id!);
@@ -46,6 +49,7 @@ export const kbRoutes: Route[] = [
   {
     method: "PUT",
     pattern: "/kb/:id",
+    relay: true,
     cost: "work",
     handler: async (req, deps, params) => {
       const body = await readBody<KbEntryBody>(req);
@@ -56,6 +60,7 @@ export const kbRoutes: Route[] = [
   {
     method: "DELETE",
     pattern: "/kb/:id",
+    relay: true,
     cost: "work",
     handler: async (req, deps, params) => {
       await kb(deps).remove(serviceContext(deps, req), params.id!);

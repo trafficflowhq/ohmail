@@ -13,6 +13,7 @@ export const notifyRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/notify-rules",
+    relay: true,
     cost: "read",
     handler: async (req, deps) => {
       const url = new URL(req.url);
@@ -26,6 +27,7 @@ export const notifyRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/notify-rules",
+    relay: true,
     cost: "work",
     handler: async (req, deps) => {
       const body = await readBody<CreateNotifyRuleBody>(req);
@@ -36,6 +38,7 @@ export const notifyRoutes: Route[] = [
   {
     method: "DELETE",
     pattern: "/notify-rules/:id",
+    relay: true,
     cost: "work",
     handler: async (req, deps, params) => {
       await notify(deps).remove(serviceContext(deps, req), params.id!);

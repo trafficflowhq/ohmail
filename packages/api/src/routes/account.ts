@@ -73,6 +73,7 @@ export const accountRoutes: Route[] = [
   {
     method: "DELETE",
     pattern: "/account",
+    relay: true,
     // `ceremony`, deliberately NOT `work`, and this is the classification most likely to
     // be "corrected" by somebody reading only the verb. Erasure is an Art. 17 RIGHT and may not
     // be withheld because an address is unproven — the person who mistyped their own address at

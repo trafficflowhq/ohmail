@@ -370,6 +370,7 @@ export const mailboxOAuthRoutes: Route[] = [
      */
     method: "GET",
     pattern: "/mailboxes/oauth/microsoft/availability",
+    relay: true,
     cost: "read",
     handler: async (_req, deps) => {
       const cfg = await resolveConfig(deps);
@@ -388,6 +389,7 @@ export const mailboxOAuthRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/mailboxes/oauth/microsoft/start",
+    relay: true,
     /**
      * `work`, and the same class as `POST /mailboxes` for the same reason: what this begins is a
      * ceremony that ends in a stored credential and a full sync of somebody's mailbox. It therefore
@@ -481,6 +483,7 @@ export const mailboxOAuthRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/mailboxes/oauth/microsoft/callback",
+    relay: true,
     /**
      * `unauthenticated`, and `public` — the census requires the pair and both are TRUE of this
      * handler rather than convenient for it. It resolves no session (it cannot: the Strict cookie is
@@ -521,6 +524,7 @@ export const mailboxOAuthRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/mailboxes/oauth/microsoft/complete",
+    relay: true,
     /**
      * `work`, and it is the member of that class that most obviously earns it: it stores a
      * credential and what the credential buys is a persistent IMAP connection and a full sync. Same

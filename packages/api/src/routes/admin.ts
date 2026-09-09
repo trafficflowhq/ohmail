@@ -549,6 +549,7 @@ export const adminRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/admin/overview",
+    relay: false,  /* the hosted console's own surface */
     cost: COST,
     options: OPTIONS,
     handler: adminRoute("overview", (_req, ctx) => overview(ctx)),
@@ -556,6 +557,7 @@ export const adminRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/admin/accounts",
+    relay: false,  /* the hosted console's own surface */
     cost: COST,
     options: OPTIONS,
     handler: adminRoute("accounts", (req, ctx) =>
@@ -564,6 +566,7 @@ export const adminRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/admin/accounts/:id",
+    relay: false,  /* the hosted console's own surface */
     cost: COST,
     options: OPTIONS,
     // `null` for an unknown id, not 404: the seam's `account(id)` is typed
@@ -575,6 +578,7 @@ export const adminRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/admin/funnel",
+    relay: false,  /* the hosted console's own surface */
     cost: COST,
     options: OPTIONS,
     handler: adminRoute("funnel", (_req, ctx) => adminFunnel(ctx.db, ctx.now())),
@@ -582,6 +586,7 @@ export const adminRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/admin/worker",
+    relay: false,  /* the hosted console's own surface */
     cost: COST,
     options: OPTIONS,
     handler: adminRoute("worker", (_req, ctx) => adminWorker(ctx.db, ctx.now())),
@@ -589,6 +594,7 @@ export const adminRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/admin/actions",
+    relay: false,  /* the hosted console's own surface */
     cost: COST,
     options: OPTIONS,
     handler: adminRoute("actions", (_req, ctx) => adminActions(ctx.db, ctx.now())),

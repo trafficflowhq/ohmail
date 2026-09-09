@@ -64,6 +64,7 @@ export const searchRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/search",
+    relay: true,
     cost: "read",
     handler: async (req, deps) => {
       const url = new URL(req.url);

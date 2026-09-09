@@ -35,6 +35,7 @@ export const attachmentRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/messages/:id/attachments",
+    relay: true,
     cost: "read",
     handler: async (req, deps, params) => {
       const items = await attachments(deps).listForMessage(serviceContext(deps, req), params.id!);
@@ -44,6 +45,7 @@ export const attachmentRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/attachments/:id/meta",
+    relay: true,
     cost: "read",
     handler: async (req, deps, params) => {
       const dto = await attachments(deps).getMeta(serviceContext(deps, req), params.id!);
@@ -53,6 +55,7 @@ export const attachmentRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/attachments/:id",
+    relay: true,
     // `connection`: it opens IMAP against the user's own server and streams the bytes
     // back. All three byte routes in this file are `raw`, and `raw` used to mean OUTSIDE the
     // verification gate entirely (RAW_PIPELINE omitted it), so the three costliest reads in
@@ -104,6 +107,7 @@ export const attachmentRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/messages/:id/attachments/download-all",
+    relay: true,
     cost: "connection",
     options: { raw: true },   // returns a zip assembled synchronously from IMAP
     handler: async (req, deps, params) => {
@@ -133,6 +137,7 @@ export const attachmentRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/files",
+    relay: true,
     cost: "read",
     handler: async (req, deps) => {
       const url = new URL(req.url);
@@ -149,6 +154,7 @@ export const attachmentRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/files/download-all",
+    relay: true,
     cost: "connection",
     options: { raw: true },   // returns a zip of the filtered/selected set
     handler: async (req, deps) => {

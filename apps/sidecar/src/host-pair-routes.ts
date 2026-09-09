@@ -78,6 +78,7 @@ export const hostPairRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/pair",
+    relay: false,  /* served by this engine; never forwarded */
     cost: "ceremony",
     options: { stepUp: false },
     handler: async (req, deps) => {
@@ -103,6 +104,7 @@ export const hostPairRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/pair",
+    relay: false,  /* served by this engine; never forwarded */
     cost: "read",
     handler: async (req, deps) =>
       jsonResponse({ items: await listPairingTokens(serviceContext(deps, req)) }, { status: 200 }),
@@ -110,6 +112,7 @@ export const hostPairRoutes: Route[] = [
   {
     method: "DELETE",
     pattern: "/pair/:id",
+    relay: false,  /* served by this engine; never forwarded */
     cost: "ceremony",
     options: { stepUp: false },
     handler: async (req, deps, params) => {
@@ -122,6 +125,7 @@ export const hostPairRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/devices",
+    relay: false,  /* served by this engine; never forwarded */
     cost: "read",
     handler: async (req, deps) =>
       jsonResponse(await lifecycle(deps).listDevices(serviceContext(deps, req)), { status: 200 }),
@@ -132,6 +136,7 @@ export const hostPairRoutes: Route[] = [
     // both gates on every other door.
     method: "DELETE",
     pattern: "/devices/:id",
+    relay: false,  /* served by this engine; never forwarded */
     cost: "ceremony",
     options: { stepUp: false },
     handler: async (req, deps, params) => {

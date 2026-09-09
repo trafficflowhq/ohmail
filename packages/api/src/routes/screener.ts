@@ -38,6 +38,7 @@ export const screenerRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/screener",
+    relay: true,
     cost: "read",
     handler: async (req, deps) => {
       const url = new URL(req.url);
@@ -80,6 +81,7 @@ export const screenerRoutes: Route[] = [
      */
     method: "POST",
     pattern: "/screener/suggest",
+    relay: true,
     cost: "work",
     options: { idempotent: true },
     handler: async (req, deps) => {
@@ -116,6 +118,7 @@ export const screenerRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/screener/junk",
+    relay: true,
     cost: "connection",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
@@ -129,6 +132,7 @@ export const screenerRoutes: Route[] = [
     // its own session cache; this route re-reads the folder every time it is asked.
     method: "GET",
     pattern: "/screener/junk/body",
+    relay: true,
     cost: "connection",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
@@ -150,6 +154,7 @@ export const screenerRoutes: Route[] = [
     // filter over the loaded window came up empty, so the first paint never waits on this.
     method: "GET",
     pattern: "/screener/junk/search",
+    relay: true,
     cost: "connection",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
@@ -163,6 +168,7 @@ export const screenerRoutes: Route[] = [
     // `connection`, because nothing here dials.
     method: "GET",
     pattern: "/screener/junk/sweep",
+    relay: true,
     cost: "read",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
@@ -176,6 +182,7 @@ export const screenerRoutes: Route[] = [
     // itself (junk-window.ts' header draws the line).
     method: "POST",
     pattern: "/screener/junk/sweep",
+    relay: true,
     cost: "work",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
@@ -191,6 +198,7 @@ export const screenerRoutes: Route[] = [
     // header for why both halves, and why rules-first). Same route, never a parallel one.
     method: "POST",
     pattern: "/screener/junk/rescue",
+    relay: true,
     cost: "connection",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
@@ -217,6 +225,7 @@ export const screenerRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/screener/:id",
+    relay: true,
     cost: "work",
     options: { idempotent: true },
     handler: async (req, deps, params) => {

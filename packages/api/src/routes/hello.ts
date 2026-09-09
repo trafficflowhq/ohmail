@@ -72,6 +72,7 @@ export const helloRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/hello",
+    relay: true,
     cost: "unauthenticated",
     options: { public: true, raw: true, anonymous: true },
     handler: async (_req, deps) => {

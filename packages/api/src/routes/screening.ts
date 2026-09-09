@@ -27,6 +27,7 @@ export const screeningRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/account/screening",
+    relay: true,
     cost: "read",
     handler: async (req, deps) => {
       const pref = await getScreeningPreference(serviceContext(deps, req));
@@ -44,6 +45,7 @@ export const screeningRoutes: Route[] = [
      */
     method: "PATCH",
     pattern: "/account/screening",
+    relay: true,
     cost: "work",
     handler: async (req, deps) => {
       const body = await readBody<{ ohboxPolicy?: unknown; ohboxBar?: unknown; screenerAutoApply?: unknown }>(req);

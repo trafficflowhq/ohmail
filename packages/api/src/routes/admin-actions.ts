@@ -225,6 +225,8 @@ async function resync(
 const OPTIONS = { public: true, anonymous: true, raw: true } as const;
 const COST = "unauthenticated" as const;
 
+/* `relay: false` throughout: the hosted console's own surface, never forwarded by a Cloud-mode
+ * install's relay. Declared per route because the field has no default. */
 export const adminActionRoutes: Route[] = [
-  { method: "POST", pattern: "/admin/mailboxes/resync", cost: COST, options: OPTIONS, handler: staffMailboxWriteRoute("resync", resync) },
+  { method: "POST", pattern: "/admin/mailboxes/resync", relay: false, cost: COST, options: OPTIONS, handler: staffMailboxWriteRoute("resync", resync) },
 ];

@@ -19,6 +19,7 @@ export const recoveryRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/auth/2fa/recovery-codes",
+    relay: true,
     cost: "ceremony",
     options: { stepUp: true, enrollmentOk: true },
     handler: async (req, deps) => json(await auth(deps).generateRecoveryCodes(serviceContext(deps, req)), 200),
@@ -28,6 +29,7 @@ export const recoveryRoutes: Route[] = [
     // `remainingCodes` survives the token-stripping (webSession keeps extra fields).
     method: "POST",
     pattern: "/auth/2fa/recovery-codes/verify",
+    relay: false,  /* resolves a credential from the request body */
     cost: "ceremony",
     options: { public: true, credentialSubject: true },
     handler: async (req, deps) => {

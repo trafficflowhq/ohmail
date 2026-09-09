@@ -194,6 +194,7 @@ export const mailboxDeviceOAuthRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/mailboxes/oauth/microsoft/device/start",
+    relay: true,
     /**
      * `work`, the same class as `POST /mailboxes` and as the redirect ceremony's `start`, and for
      * the same reason: what this begins ends in a stored credential and a full sync of somebody's
@@ -284,6 +285,7 @@ export const mailboxDeviceOAuthRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/mailboxes/oauth/microsoft/device/poll",
+    relay: true,
     /**
      * `work`, like `start`, and it is not merely inherited: this is the route that stores a
      * credential and starts a full sync, so an exempt class here would be the way around the gate

@@ -273,7 +273,9 @@ async function saveConfig(
 const OPTIONS = { public: true, anonymous: true, raw: true } as const;
 const COST = "unauthenticated" as const;
 
+/* `relay: false` throughout: the hosted console's own surface, never forwarded by a Cloud-mode
+ * install's relay. Declared per route because the field has no default. */
 export const adminOAuthRoutes: Route[] = [
-  { method: "POST", pattern: "/admin/oauth/microsoft", cost: COST, options: OPTIONS, handler: staffConfigRoute("microsoft", readConfig) },
-  { method: "POST", pattern: "/admin/oauth/microsoft/save", cost: COST, options: OPTIONS, handler: staffConfigRoute("microsoft/save", saveConfig) },
+  { method: "POST", pattern: "/admin/oauth/microsoft", relay: false, cost: COST, options: OPTIONS, handler: staffConfigRoute("microsoft", readConfig) },
+  { method: "POST", pattern: "/admin/oauth/microsoft/save", relay: false, cost: COST, options: OPTIONS, handler: staffConfigRoute("microsoft/save", saveConfig) },
 ];

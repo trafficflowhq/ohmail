@@ -13,6 +13,7 @@ export const deviceRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/devices",
+    relay: true,
     cost: "read",
     handler: async (req, deps) =>
       json(await sessionLifecycle(deps).listDevices(serviceContext(deps, req)), 200),
@@ -20,6 +21,7 @@ export const deviceRoutes: Route[] = [
   {
     method: "DELETE",
     pattern: "/devices/:id",
+    relay: true,
     // `ceremony` for the reason `DELETE /account` is: revoking a credential is part of the
     // identity lifecycle, it costs nothing, and it can only reduce risk. A verification gate in
     // front of a revocation would keep a compromised session alive.
@@ -33,6 +35,7 @@ export const deviceRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/auth/audit",
+    relay: true,
     cost: "read",
     handler: async (req, deps) => {
       const p = new URL(req.url).searchParams;
@@ -65,6 +68,7 @@ export const webSessionRevokeRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/devices/revoke-web-sessions",
+    relay: true,
     cost: "ceremony",
     options: { stepUp: true },
     handler: async (req, deps) =>

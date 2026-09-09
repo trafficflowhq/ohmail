@@ -39,6 +39,7 @@ export const oauthRoutes: Route[] = [
     // the resulting anonymous caller and 403 only for a real session with a stale factor.
     method: "GET",
     pattern: "/oauth/authorize",
+    relay: false,  /* the OAuth server surface */
     cost: "ceremony",
     options: { public: true, raw: true, stepUp: true },
     handler: async (req, deps) => {
@@ -67,6 +68,7 @@ export const oauthRoutes: Route[] = [
     // Native token exchange: tokens are returned in the BODY (Keychain), no cookies.
     method: "POST",
     pattern: "/oauth/token",
+    relay: false,  /* resolves a credential from the request body */
     cost: "ceremony",
     options: { public: true, credentialSubject: true },
     handler: async (req, deps) => {

@@ -76,12 +76,14 @@ export function localLanRoutes(fingerprint: () => string | null): Route[] {
     {
       method: "GET",
       pattern: "/local/lan/candidates",
+      relay: false,  /* served by this engine; never forwarded */
       cost: "read",
       handler: async () => jsonResponse({ items: lanCandidates() }, { status: 200 }),
     },
     {
       method: "GET",
       pattern: "/local/lan/pin",
+      relay: false,  /* served by this engine; never forwarded */
       cost: "read",
       // `null` is the honest answer in three different states — same-network access was never
       // turned on, it was refused at config, or its key could not be established — and the

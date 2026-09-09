@@ -95,6 +95,7 @@ export const attachmentStagingRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/attachments/staging",
+    relay: true,
     cost: "work",
     handler: async (req, deps) => {
       const makeStaging = deps.services?.attachmentStaging;

@@ -1,3 +1,4 @@
+import { RELAY_ALLOWLIST, relayVerdict } from "@trafficflow/api/relay-allowlist";
 import type { CloudAuth } from "./cloud-auth.js";
 import type { CloudMirror } from "./cloud-mirror.js";
 import type { Diagnostic } from "./log.js";
@@ -38,6 +39,9 @@ import type { Diagnostic } from "./log.js";
  * offline and answers the same 503.
  */
 
+/** The relay carries this many routes. Read at construction so an empty projection cannot pass. */
+const ALLOWLIST_MIN = 100;
+
 /** The error `code` a forwarded route answers with while the hosted account is unreachable. */
 export const OFFLINE_READ_ONLY = "offline_read_only";
 
@@ -52,107 +56,23 @@ export interface WriteThroughProxyConfig {
   echoDeadlineMs?: number;
   /**
    * TRUE when this install's server is NOT the one the browser hand-off page belongs to — i.e. a
-   * server the person runs themselves. See {@link HANDOFF_CLAIM_PATHS}.
+   * server the person runs themselves. Chooses the wording of a refusal, never whether to refuse.
    */
   handoffForeign?: boolean;
 }
 
 /**
- * THE HOSTED SIGN-IN CEREMONY'S OWN ENDPOINTS, WHICH THIS PROXY MUST NOT RELAY TO A FOREIGN SERVER.
+ * WHAT MAY BE FORWARDED — an allowlist, and a non-member is a 404.
  *
- * This is a CATCH-ALL relay: everything the mirror cannot answer locally is forwarded to the
- * configured base with the bearer. That is right for mail, and wrong for exactly these two, because
- * the credential they carry is minted by the HOSTED service and is spendable there.
+ * The refusal used to be a denylist of two paths, and each of three fixes closed one spelling
+ * while review found the next: a malformed escape, a trailing slash, an `/api` prefix, a folded
+ * case, a missing method comparison. The list of relayable routes lives in the API's own route
+ * table (`Route.relay`) and reaches here as `RELAY_ALLOWLIST`; `mayRelay` canonicalizes the path
+ * with the server's routine and matches with the server's resolver, so a spelling that reaches a
+ * hosted route reaches the same verdict here.
  *
- * The engine guards `/cloud/signin` and `/cloud/signin/challenge` — its own sign-in surface — and
- * review found those guards bypassable straight through here: `POST /auth/desktop-claim` with a
- * hosted hand-off code is neither of those paths, falls through the engine's route table, and is
- * relayed verbatim to whatever server the door names. The operator receives a live code (and the
- * verifier, if the caller has one) before their server has even answered.
- *
- * The lesson is the one the previous two rounds taught, arriving a third time: a guard placed at
- * the ROUTE somebody is expected to use is not a guard on the PROPERTY. This one sits at the relay,
- * so every caller of {@link WriteThroughProxy.forward} is covered rather than the one call site
- * that was known about.
- *
- * DELIBERATELY NOT ALL OF `/auth/*`. Step-up, the audit log, e-mail verification and sign-out are
- * ordinary Settings traffic that a self-hosted account must be able to perform against its OWN
- * server — refusing those would break the door rather than protect it. These two are the whole of
- * the hand-off surface, and nothing else in the API's `/auth` table carries a credential minted
- * elsewhere.
- *
- * ── ONE VECTOR THIS DOES NOT CLOSE, NAMED RATHER THAN LEFT TO BE FOUND ────────────────────────
- *
- * `fetch` follows redirects, and re-sends the body on a 307/308. So a server could answer some
- * OTHER, unrefused path with a redirect to the claim route and receive the body that way. Review
- * raised it and it is real.
- *
- * It is accepted on ONE reason, and that reason is sufficient by itself: a redirect grants the
- * operator's server nothing it does not already have. To answer with a redirect it must first have
- * RECEIVED the request — body included — so by the time it could steer the retry it is holding the
- * credential the retry would carry. There is nothing left to protect at that point.
- *
- * An earlier version of this note gave a second reason: that closing it meant `redirect: "manual"`
- * on a relay which also reads attachment bytes through a redirect to presigned storage, so blocking
- * would break attachments. That OVERSTATED the cost and review said so — manual redirects could be
- * limited to body-bearing methods and leave the GET byte reads alone. The first reason is why this
- * is accepted; the second was a bad argument for a right answer, and is removed rather than left
- * standing.
+ * `handoffForeign` no longer decides whether to refuse — only which sentence the refusal carries.
  */
-export const HANDOFF_CLAIM_PATHS = ["/auth/desktop-claim", "/auth/desktop-link"] as const;
-
-/**
- * A request path reduced to what this refusal may compare — the spellings that reach the SAME
- * hosted route must not reach different answers here.
- *
- * A bare `includes(url.pathname)` was the first version and it is one character from useless: the
- * hosted API answers `/auth/desktop-claim/` and `/auth/desktop-claim` the same way, so a trailing
- * slash would have walked straight past the guard and been relayed. Case is folded for the same
- * reason and costs nothing. Repeated slashes collapse.
- *
- * PERCENT-ENCODING IS DECODED, and the first version of this said it deliberately was not. That
- * reasoning covered only `%2F` — where leaving it encoded is right, because the hosted router reads
- * it as one literal segment — and ignored every OTHER escape: `/auth/desktop%2Dclaim` is
- * `/auth/desktop-claim` to anything that decodes, and this guard did not. Review named it.
- *
- * Decoding is also the safe DIRECTION, which is what settles it. An escape that the hosted router
- * would not have decoded now matches this refusal, so the worst case is refusing a request that
- * would have 404'd — nothing lost. Not decoding meant relaying a live credential. A malformed
- * escape throws in `decodeURIComponent`, and that too is refused rather than passed: an
- * undecodable path is not a path this relay can reason about.
- *
- * Traversal needs no handling: the URL standard resolves `..` before `pathname` is read, so
- * `/x/../auth/desktop-claim` arrives already normalised — asserted rather than assumed, because it
- * is a claim about the platform.
- *
- * ── AND ONE LEADING `/api` IS STRIPPED, BECAUSE THE SERVER STRIPS IT ─────────────────────────
- *
- * This is the slice's own central measurement turned back on it. `apiBaseFor` composes
- * `<origin>/api` precisely BECAUSE the API canonicalizes one leading `/api` off itself — that is
- * why one base works against both deployments. The same fact makes `/api/auth/desktop-claim` reach
- * the claim handler, and the guard was comparing the path as sent rather than as the server would
- * read it, so that spelling was relayed. Reachable with an origin-only base, which the shell
- * accepts because it validates the shape and does not require the suffix. Review reproduced it end
- * to end: the upstream canonical pathname came out as `/auth/desktop-claim`.
- *
- * Exactly ONE prefix is stripped, matching what the server does — `/api/api/auth/...` is not a
- * route there and must not become one here.
- */
-export function normalizeRefusalPath(pathname: string): string {
-  let decoded = pathname;
-  try {
-    decoded = decodeURIComponent(pathname);
-  } catch {
-    /* Undecodable. Fall through with the raw value; a path this cannot read is a path it refuses
-       rather than reasons about — see above. */
-  }
-  const collapsed = decoded.replace(/\/{2,}/g, "/").toLowerCase();
-  const trimmed = collapsed.length > 1 ? collapsed.replace(/\/+$/, "") : collapsed;
-  /* ONE leading `/api`, the way the API canonicalizes it off itself — see the header. */
-  return trimmed === "/api" ? "/" : trimmed.replace(/^\/api(?=\/)/, "");
-}
-
-const REFUSED_PATHS = new Set<string>(HANDOFF_CLAIM_PATHS.map(normalizeRefusalPath));
 
 export interface WriteThroughProxy {
   /** Relay one request to Cloud (or 503 while offline), echo-awaiting a 2xx mutation. */
@@ -190,6 +110,11 @@ function parseSeq(raw: string | null): bigint | null {
 
 export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThroughProxy {
   const echoDeadlineMs = cfg.echoDeadlineMs ?? DEFAULT_ECHO_DEADLINE_MS;
+  /* A build whose allowlist arrived empty would refuse every write and read as an offline
+     install. Fail at construction, where it is one line to diagnose. */
+  if (RELAY_ALLOWLIST.length < ALLOWLIST_MIN) {
+    throw new Error(`the relay allowlist holds ${RELAY_ALLOWLIST.length} routes; this build is incomplete`);
+  }
 
   const forward = async (req: Request): Promise<Response> => {
     // PRIMARY OFFLINE GATE. Refused BEFORE the forward, so an offline write reaches neither Cloud
@@ -200,21 +125,29 @@ export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThro
     const path = `${url.pathname}${url.search}`;
     const method = req.method.toUpperCase();
 
-    /* THE HAND-OFF CEREMONY IS NEVER RELAYED TO A SERVER THE PERSON RUNS. See
-       {@link HANDOFF_CLAIM_PATHS} — the credential these carry is the HOSTED service's, and this
-       relay would hand it to whoever runs the configured one. Matched on the PATHNAME, so a query
-       string cannot slip past it. */
-    if (cfg.handoffForeign === true && REFUSED_PATHS.has(normalizeRefusalPath(url.pathname))) {
+    /* THE ALLOWLIST. Matched on the pathname, so a query string cannot slip past it. Refused
+       BEFORE the body is read, so a refused request reaches neither the network nor a buffer. */
+    const verdict = relayVerdict(method, url.pathname);
+    if (verdict !== "forward") {
+      /* Logged, because a route added without a relay verdict would otherwise be a silent 404
+         wearing the clothes of a server that does not have the route. */
+      cfg.log?.("cloud_relay_refused", {
+        method,
+        path: url.pathname,
+        reason: "this route is not in the relay allowlist",
+      });
+      const handoff = verdict === "handoff" && cfg.handoffForeign === true;
       return new Response(
         JSON.stringify({
           error: {
-            code: "handoff_not_available",
-            message:
-              "Signing in through a browser only works with the hosted ohmail service. On your " +
-              "own server, sign in with your password and authenticator code.",
+            code: handoff ? "handoff_not_available" : "not_found",
+            message: handoff
+              ? "Signing in through a browser only works with the hosted ohmail service. On your " +
+                "own server, sign in with your password and authenticator code."
+              : "this install does not forward that request",
           },
         }),
-        { status: 409, headers: { "content-type": "application/json" } },
+        { status: handoff ? 409 : 404, headers: { "content-type": "application/json" } },
       );
     }
 

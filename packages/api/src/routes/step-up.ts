@@ -38,6 +38,7 @@ export const stepUpRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/auth/step-up/totp",
+    relay: true,
     cost: "ceremony",
     handler: async (req, deps) => {
       const body = await readBody<{ code: string }>(req);
@@ -47,6 +48,7 @@ export const stepUpRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/auth/step-up/webauthn/options",
+    relay: true,
     cost: "ceremony",
     handler: async (req, deps) =>
       json(await auth(deps).stepUpWebauthnOptions(serviceContext(deps, req)), 200),
@@ -54,6 +56,7 @@ export const stepUpRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/auth/step-up/webauthn/verify",
+    relay: true,
     cost: "ceremony",
     handler: async (req, deps) => {
       const body = await readBody<{ credential: unknown }>(req);

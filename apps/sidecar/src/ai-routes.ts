@@ -57,6 +57,7 @@ export function localAiRoutes(ai: LocalAi): Route[] {
     {
       method: "GET",
       pattern: "/local/ai",
+      relay: false,  /* served by this engine; never forwarded */
       cost: "read",
       handler: async () => jsonResponse(ai.status(), { status: 200 }),
     },
@@ -74,12 +75,14 @@ export function localAiRoutes(ai: LocalAi): Route[] {
        */
       method: "PUT",
       pattern: "/local/ai",
+      relay: false,  /* served by this engine; never forwarded */
       cost: "work",
       handler: async (req) => jsonResponse(await ai.save(await readSettingsBody(req)), { status: 200 }),
     },
     {
       method: "DELETE",
       pattern: "/local/ai",
+      relay: false,  /* served by this engine; never forwarded */
       cost: "work",
       handler: async () => jsonResponse(await ai.clear(), { status: 200 }),
     },
@@ -90,6 +93,7 @@ export function localAiRoutes(ai: LocalAi): Route[] {
        */
       method: "POST",
       pattern: "/local/ai/verify",
+      relay: false,  /* served by this engine; never forwarded */
       cost: "connection",
       handler: async () => jsonResponse(await ai.verify(), { status: 200 }),
     },

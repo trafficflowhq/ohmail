@@ -12,6 +12,7 @@ export const snippetsRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/snippets",
+    relay: true,
     cost: "read",
     handler: async (req, deps) => {
       const url = new URL(req.url);
@@ -25,6 +26,7 @@ export const snippetsRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/snippets",
+    relay: true,
     cost: "work",
     handler: async (req, deps) => {
       const body = await readBody<SnippetBody>(req);
@@ -35,6 +37,7 @@ export const snippetsRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/snippets/:id",
+    relay: true,
     cost: "read",
     handler: async (req, deps, params) => {
       const dto = await snippets(deps).get(serviceContext(deps, req), params.id!);
@@ -44,6 +47,7 @@ export const snippetsRoutes: Route[] = [
   {
     method: "PUT",
     pattern: "/snippets/:id",
+    relay: true,
     cost: "work",
     handler: async (req, deps, params) => {
       const body = await readBody<SnippetBody>(req);
@@ -54,6 +58,7 @@ export const snippetsRoutes: Route[] = [
   {
     method: "DELETE",
     pattern: "/snippets/:id",
+    relay: true,
     cost: "work",
     handler: async (req, deps, params) => {
       await snippets(deps).remove(serviceContext(deps, req), params.id!);

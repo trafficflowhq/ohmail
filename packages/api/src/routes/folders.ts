@@ -27,6 +27,7 @@ export const foldersRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/folders",
+    relay: true,
     cost: "work",
     options: { idempotent: true },
     handler: async (req, deps) => {
@@ -40,6 +41,7 @@ export const foldersRoutes: Route[] = [
   {
     method: "PATCH",
     pattern: "/folders/:id",
+    relay: true,
     cost: "work",
     options: { idempotent: true },
     handler: async (req, deps, params) => {
@@ -53,6 +55,7 @@ export const foldersRoutes: Route[] = [
   {
     method: "DELETE",
     pattern: "/folders/:id",
+    relay: true,
     cost: "work",
     options: { idempotent: true },
     handler: async (req, deps, params) => {
@@ -67,6 +70,7 @@ export const foldersRoutes: Route[] = [
     // never-created row with it, so the answer may be `{ dismissed: true }` with no folder).
     method: "DELETE",
     pattern: "/folders/:id/op",
+    relay: true,
     cost: "work",
     options: { idempotent: true },
     handler: async (req, deps, params) => {
@@ -82,6 +86,7 @@ export const foldersRoutes: Route[] = [
     // what the delete moves.
     method: "GET",
     pattern: "/folders/:id/summary",
+    relay: true,
     cost: "read",
     handler: async (req, deps, params) => {
       const summary = await folderOps(deps).summary(serviceContext(deps, req), params.id!);

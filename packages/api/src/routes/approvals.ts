@@ -18,6 +18,7 @@ export const approvalRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/approvals",
+    relay: true,
     cost: "read",
     handler: async (req, deps) => {
       const url = new URL(req.url);
@@ -36,6 +37,7 @@ export const approvalRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/approvals/:id",
+    relay: true,
     cost: "work",
     options: { idempotent: true },
     handler: async (req, deps, params) => {

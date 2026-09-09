@@ -23,6 +23,7 @@ export const totpRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/auth/2fa/totp/enroll",
+    relay: true,
     cost: "ceremony",
     options: { enrollmentOk: true },
     handler: async (req, deps) => json(await auth(deps).totpEnroll(serviceContext(deps, req)), 200),
@@ -30,6 +31,7 @@ export const totpRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/auth/2fa/totp/activate",
+    relay: true,
     cost: "ceremony",
     options: { enrollmentOk: true },
     handler: async (req, deps) => {
@@ -42,6 +44,7 @@ export const totpRoutes: Route[] = [
     // Public step-two: verifies the code and establishes the web session.
     method: "POST",
     pattern: "/auth/2fa/totp/verify",
+    relay: false,  /* resolves a credential from the request body */
     cost: "ceremony",
     options: { public: true, credentialSubject: true },
     handler: async (req, deps) => {
@@ -55,6 +58,7 @@ export const totpRoutes: Route[] = [
   {
     method: "DELETE",
     pattern: "/auth/2fa/totp",
+    relay: true,
     cost: "ceremony",
     options: { stepUp: true },
     handler: async (req, deps) => {

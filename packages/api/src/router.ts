@@ -1,6 +1,8 @@
 import type { ApiDeps } from "./deps.js";
+import { matchSpec, type RouteParams } from "./match-path.js";
 
-export type RouteParams = Record<string, string>;
+/* Re-exported so every existing consumer of this module keeps its import. */
+export { matchSpec, type RouteParams };
 
 export type Handler = (req: Request, deps: ApiDeps, params: RouteParams) => Promise<Response>;
 
@@ -206,6 +208,37 @@ export interface Route {
    * `withSpendGate` refuses it for an unverified account.
    */
   cost: CostClass;
+  /**
+   * REQUIRED, and it is a fact about a DIFFERENT program: may a Cloud-mode desktop install's
+   * write-through relay forward this route to the server its door names?
+   *
+   * ── WHY THE ROUTE TABLE ANSWERS THIS, AND WHY IT IS NOT OPTIONAL ─────────────────────────
+   *
+   * `apps/sidecar/src/cloud-proxy.ts` serves reads out of a local mirror and forwards everything
+   * else to the configured base with a bearer. When the door names a server the person runs
+   * THEMSELVES, "everything else" is a request leaving with a credential in its body — and the
+   * refusal was a DENYLIST of two paths, which is the shape three consecutive fixes were each a
+   * symptom of. Each fix closed one spelling and review found the next: a malformed percent
+   * escape, a trailing slash, a `/api` prefix, a folded case, a missing method comparison.
+   *
+   * An allowlist makes those unreachable by construction rather than by enumeration, and the
+   * allowlist has to be derived from THIS table, because this is the only place that knows what
+   * a route is. `relay-allowlist.ts` is the import-free projection the sidecar reads (it cannot
+   * import handlers — that would drag the IMAP adapter into an engine whose census exists to
+   * keep it out), and `relay-allowlist-census.test.ts` holds the two in agreement.
+   *
+   * NO DEFAULT, for the same reason `cost` has none. A default in either direction is wrong: a
+   * silent `true` re-opens the leak on the next route somebody adds, and a silent `false` breaks
+   * a shipped client's feature without a word. A new route DECLARES, and the census fails a
+   * runtime table whose member has not.
+   *
+   * `false` is the answer for a route that resolves a credential out of the REQUEST BODY
+   * (`credentialSubject`), for the browser hand-off ceremony, and for the planes a self-host
+   * relay has no business reaching at all — the hosted console, the alert intake, billing, the
+   * waitlist and the OAuth server surface. The census asserts the first of those by DERIVATION
+   * rather than by list, so a route that becomes a credential subject cannot stay relayable.
+   */
+  relay: boolean;
   handler: Handler;
   options?: RouteOptions;
 }
@@ -219,79 +252,13 @@ export type MatchResult =
   | { matched: true; route: Route; params: RouteParams }
   | { matched: false; methodNotAllowed: boolean };
 
-const segsOf = (p: string): string[] => p.split("/").filter((s) => s.length > 0);
-
-/**
- * Percent-decode a path segment WITHOUT throwing.
- *
- * `decodeURIComponent` raises `URIError` on a malformed escape (`/messages/%ZZ/move`), and this
- * runs inside route matching — above `withErrorEnvelope` in `createApp` — so that throw used to
- * escape the pipeline entirely and surface as the host's generic 500 with a logged stack, for
- * what is plainly a 400. Hosts that can reject malformed encoding earlier do
- * (the hosted API host's `normalizePathname` answers 400); this is the floor for every other
- * host: an undecodable segment is matched VERBATIM, which simply finds no route for a
- * nonsense id and answers the 404 it deserves.
- */
-function safeDecodeSegment(v: string): string {
-  try {
-    return decodeURIComponent(v);
-  } catch {
-    return v;
-  }
-}
-
-/**
- * Try one pattern against the path segments. Returns extracted params + a
- * per-segment specificity vector (1 = static literal, 0 = `:param`) or null if
- * the pattern does not match. The specificity vector is compared lexicographically
- * so STATIC segments win over params at the earliest differing position:
- * `/threads/merge` [1,1] beats `/threads/:id` [1,0].
- */
-function tryMatch(patternSegs: string[], pathSegs: string[]): { params: RouteParams; spec: number[] } | null {
-  if (patternSegs.length !== pathSegs.length) return null;
-  const params: RouteParams = {};
-  const spec: number[] = [];
-  for (let i = 0; i < patternSegs.length; i++) {
-    const ps = patternSegs[i]!;
-    const val = pathSegs[i]!;
-    if (ps.startsWith(":")) {
-      params[ps.slice(1)] = safeDecodeSegment(val);
-      spec.push(0);
-    } else if (ps === val) {
-      spec.push(1);
-    } else {
-      return null;
-    }
-  }
-  return { params, spec };
-}
-
-/** Lexicographic compare: > 0 iff `a` is strictly more specific than `b`. */
-function cmpSpec(a: number[], b: number[]): number {
-  for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) return a[i]! - b[i]!;
-  }
-  return 0;
-}
-
 /**
  * Resolve `method` + `pathname` to the single most-specific route of that method.
  * Static-before-param; 404 vs 405 distinguished via `methodNotAllowed`.
  */
 export function matchRoute(routes: Route[], method: string, pathname: string): MatchResult {
-  const pathSegs = segsOf(pathname);
-  const wanted = method.toUpperCase();
-  let pathMatched = false;
-  let best: { route: Route; params: RouteParams; spec: number[] } | null = null;
-
-  for (const route of routes) {
-    const m = tryMatch(segsOf(route.pattern), pathSegs);
-    if (!m) continue;
-    pathMatched = true;
-    if (route.method.toUpperCase() !== wanted) continue;
-    if (!best || cmpSpec(m.spec, best.spec) > 0) best = { route, params: m.params, spec: m.spec };
-  }
-
-  if (best) return { matched: true, route: best.route, params: best.params };
-  return { matched: false, methodNotAllowed: pathMatched };
+  const m = matchSpec(routes, method, pathname);
+  return m.matched
+    ? { matched: true, route: m.spec, params: m.params }
+    : { matched: false, methodNotAllowed: m.methodNotAllowed };
 }

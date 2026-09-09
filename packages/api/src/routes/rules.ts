@@ -31,6 +31,7 @@ export const rulesRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/rules",
+    relay: true,
     cost: "read",
     handler: async (req, deps) => {
       const items = await rules(deps).list(serviceContext(deps, req));
@@ -40,6 +41,7 @@ export const rulesRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/rules",
+    relay: true,
     cost: "work",
     // A retried creation must replay the first rule, never mint a second: `rules` has no
     // unique constraint, so two identical rules are legal and only the key can tell a
@@ -67,6 +69,7 @@ export const rulesRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/rules/:id",
+    relay: true,
     cost: "read",
     handler: async (req, deps, params) => {
       const dto = await rules(deps).get(serviceContext(deps, req), params.id!);
@@ -76,6 +79,7 @@ export const rulesRoutes: Route[] = [
   {
     method: "PATCH",
     pattern: "/rules/:id",
+    relay: true,
     cost: "work",
     // A retried edit used to emit a SECOND `rule` change at a DIFFERENT seq, waking
     // every synced client for a delta that changes nothing. The response is JSON, so this
@@ -99,6 +103,7 @@ export const rulesRoutes: Route[] = [
   {
     method: "DELETE",
     pattern: "/rules/:id",
+    relay: true,
     cost: "work",
 
     // ── DO NOT ADD `options: { idempotent: true }` HERE ──────────────────────────────────

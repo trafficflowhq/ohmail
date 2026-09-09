@@ -24,6 +24,7 @@ export const messageRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/messages",
+    relay: true,
     cost: "read",
     handler: async (req, deps) => {
       const url = new URL(req.url);
@@ -68,6 +69,7 @@ export const messageRoutes: Route[] = [
     // `:id` route here only for readability; `matchRoute` picks the most specific regardless.
     method: "GET",
     pattern: "/messages/bodies",
+    relay: true,
     cost: "read",
     handler: async (req, deps) => {
       const url = new URL(req.url);
@@ -88,6 +90,7 @@ export const messageRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/messages/:id",
+    relay: true,
     cost: "read",
     handler: async (req, deps, params) => {
       const dto = await message(deps).get(serviceContext(deps, req), params.id!);
@@ -97,6 +100,7 @@ export const messageRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/messages/:id/body",
+    relay: true,
     cost: "read",
     handler: async (req, deps, params) => {
       const dto = await message(deps).getBody(serviceContext(deps, req), params.id!);
@@ -119,6 +123,7 @@ export const messageRoutes: Route[] = [
     // is the same end state.
     method: "PATCH",
     pattern: "/messages",
+    relay: true,
     cost: "work",
     options: { idempotent: true },
     handler: async (req, deps) => {
@@ -130,6 +135,7 @@ export const messageRoutes: Route[] = [
   {
     method: "PATCH",
     pattern: "/messages/:id",
+    relay: true,
     cost: "work",
     handler: async (req, deps, params) => {
       const body = await readBody<MessagePatchBody>(req);
@@ -157,6 +163,7 @@ export const messageRoutes: Route[] = [
     // action needs the client to say "this is one intent" before we spend on it.
     method: "POST",
     pattern: "/messages/:id/draft",
+    relay: true,
     // `paid`: this is the model-inference call, metered against the credit ledger. It carried
     // no cost class at all until this table gained one, which made an unverified account one
     // POST away from token spend.
@@ -190,6 +197,7 @@ export const messageRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/messages/:id/move",
+    relay: true,
     cost: "work",
     options: { idempotent: true },
     handler: async (req, deps, params) => {
@@ -250,6 +258,7 @@ export const messageRoutes: Route[] = [
     // mirror. 422 `no_trash_folder` when the mailbox has none — the service carries the rule.
     method: "DELETE",
     pattern: "/messages/:id",
+    relay: true,
     cost: "work",
     options: { idempotent: true },
     handler: async (req, deps, params) => {

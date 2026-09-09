@@ -2296,6 +2296,7 @@ export const healthRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/health",
+    relay: true,
     cost: "unauthenticated",
     options: { public: true, raw: true, anonymous: true },
     handler: async (_req, deps) => {

@@ -195,6 +195,7 @@ export const draftsRoutes: Route[] = [
     // sets the same values twice and a DELETE of the deleted answers 404, both convergent.
     method: "POST",
     pattern: "/drafts",
+    relay: true,
     cost: "work",
     options: { idempotent: true },
     handler: async (req, deps) => {
@@ -217,6 +218,7 @@ export const draftsRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/drafts/:id",
+    relay: true,
     cost: "read",
     handler: async (req, deps, params) => {
       const dto = await drafts(deps).get(serviceContext(deps, req), params.id!);
@@ -226,6 +228,7 @@ export const draftsRoutes: Route[] = [
   {
     method: "PUT",
     pattern: "/drafts/:id",
+    relay: true,
     cost: "work",
     handler: async (req, deps, params) => {
       const patch = await readBody<PatchDraftBody>(req);
@@ -236,6 +239,7 @@ export const draftsRoutes: Route[] = [
   {
     method: "DELETE",
     pattern: "/drafts/:id",
+    relay: true,
     cost: "work",
     handler: async (req, deps, params) => {
       const { seq } = await drafts(deps).remove(serviceContext(deps, req), params.id!);
@@ -262,6 +266,7 @@ export const draftsRoutes: Route[] = [
      */
     method: "POST",
     pattern: "/drafts/:id/resolve",
+    relay: true,
     cost: "work",
     handler: async (req, deps, params) => {
       const body = await readBody<{ outcome?: unknown }>(req);
@@ -280,6 +285,7 @@ export const draftsRoutes: Route[] = [
     // like the other draft mutations, because that is what it is.
     method: "POST",
     pattern: "/drafts/:id/schedule",
+    relay: true,
     cost: "work",
     handler: async (req, deps, params) => {
       const body = await readBody<{ sendAt?: unknown }>(req);
@@ -295,6 +301,7 @@ export const draftsRoutes: Route[] = [
     // cancel of an already-plain draft is idempotent success (the asked-for state).
     method: "DELETE",
     pattern: "/drafts/:id/schedule",
+    relay: true,
     cost: "work",
     handler: async (req, deps, params) => {
       const { draft, seq } = await schedules(deps).cancel(serviceContext(deps, req), params.id!);
@@ -311,6 +318,7 @@ export const draftsRoutes: Route[] = [
     // double-send. `makeSendAdapter` reads BOTH imap+smtp creds.
     method: "POST",
     pattern: "/drafts/:id/send",
+    relay: true,
     // `connection` rather than `paid`: it opens SMTP (and IMAP, to verify by Sent) on the
     // user's own server and debits nothing metered. Sending mail from an address nobody has
     // proven belongs to the sender is also a deliverability-reputation liability, not only a

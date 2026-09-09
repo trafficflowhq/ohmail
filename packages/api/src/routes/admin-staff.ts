@@ -699,10 +699,12 @@ async function signOut(
 const OPTIONS = { public: true, anonymous: true, raw: true } as const;
 const COST = "unauthenticated" as const;
 
+/* `relay: false` throughout: the hosted console's own surface, never forwarded by a Cloud-mode
+ * install's relay. Declared per route because the field has no default. */
 export const adminStaffRoutes: Route[] = [
-  { method: "POST", pattern: "/admin/staff/session", cost: COST, options: OPTIONS, handler: staffRoute("session", signIn) },
-  { method: "POST", pattern: "/admin/staff/totp/begin", cost: COST, options: OPTIONS, handler: staffRoute("totp/begin", totpBegin) },
-  { method: "POST", pattern: "/admin/staff/totp/confirm", cost: COST, options: OPTIONS, handler: staffRoute("totp/confirm", totpConfirm) },
-  { method: "POST", pattern: "/admin/staff/whoami", cost: COST, options: OPTIONS, handler: staffRoute("whoami", whoami) },
-  { method: "POST", pattern: "/admin/staff/sign-out", cost: COST, options: OPTIONS, handler: staffRoute("sign-out", signOut) },
+  { method: "POST", pattern: "/admin/staff/session", relay: false, cost: COST, options: OPTIONS, handler: staffRoute("session", signIn) },
+  { method: "POST", pattern: "/admin/staff/totp/begin", relay: false, cost: COST, options: OPTIONS, handler: staffRoute("totp/begin", totpBegin) },
+  { method: "POST", pattern: "/admin/staff/totp/confirm", relay: false, cost: COST, options: OPTIONS, handler: staffRoute("totp/confirm", totpConfirm) },
+  { method: "POST", pattern: "/admin/staff/whoami", relay: false, cost: COST, options: OPTIONS, handler: staffRoute("whoami", whoami) },
+  { method: "POST", pattern: "/admin/staff/sign-out", relay: false, cost: COST, options: OPTIONS, handler: staffRoute("sign-out", signOut) },
 ];

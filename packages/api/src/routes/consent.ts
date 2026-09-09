@@ -671,6 +671,7 @@ export const consentRoutes: Route[] = [
      */
     method: "GET",
     pattern: "/consent",
+    relay: true,
     cost: "read",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
@@ -832,6 +833,7 @@ export const consentRoutes: Route[] = [
      */
     method: "PATCH",
     pattern: "/consent/settings",
+    relay: true,
     cost: "work",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
@@ -852,6 +854,7 @@ export const consentRoutes: Route[] = [
      */
     method: "GET",
     pattern: "/consent/seed",
+    relay: true,
     cost: "read",
     handler: async (req, deps) => {
       const review = await buildSeedReview(serviceContext(deps, req));
@@ -879,6 +882,7 @@ export const consentRoutes: Route[] = [
      */
     method: "POST",
     pattern: "/consent/seed",
+    relay: true,
     cost: "work",
     handler: async (req, deps) => {
       const body = await readBody<SeedConfirmBody>(req);
@@ -897,6 +901,7 @@ export const consentRoutes: Route[] = [
      */
     method: "GET",
     pattern: "/consent/reset",
+    relay: true,
     cost: "read",
     handler: async (req, deps) => {
       const unmoved = await unmovedReport(serviceContext(deps, req));
@@ -929,6 +934,7 @@ export const consentRoutes: Route[] = [
      */
     method: "POST",
     pattern: "/consent/reset",
+    relay: true,
     cost: "work",
     options: { stepUp: true },
     handler: async (req, deps) => {

@@ -23,6 +23,7 @@ export const triageRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/messages/:id/triage",
+    relay: true,
     cost: "work",
     options: { idempotent: true },
     handler: async (req, deps, params) => {
@@ -37,6 +38,7 @@ export const triageRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/triage",
+    relay: true,
     cost: "read",
     handler: async (req, deps) => {
       const url = new URL(req.url);
@@ -51,6 +53,7 @@ export const triageRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/views/focus-reply",
+    relay: true,
     cost: "read",
     handler: async (req, deps) => {
       const view = await triage(deps).focusReply(serviceContext(deps, req));
@@ -60,6 +63,7 @@ export const triageRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/views/power-through",
+    relay: true,
     cost: "read",
     handler: async (req, deps) => {
       const url = new URL(req.url);

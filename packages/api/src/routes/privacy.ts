@@ -134,6 +134,7 @@ export const privacyRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/img",
+    relay: true,
     /**
      * `connection`: it opens a socket to a host the SENDER named and fetches on the
      * reader's behalf. `router.ts`'s `CostClass` already names this route as the third
@@ -205,6 +206,7 @@ export const privacyRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/messages/:id/load-remote",
+    relay: true,
     cost: "work",
     handler: async (req, deps, params) => {
       await privacy(deps).loadRemote(serviceContext(deps, req), params.id!);
@@ -214,6 +216,7 @@ export const privacyRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/messages/:id/tracker-events",
+    relay: true,
     cost: "read",
     handler: async (req, deps, params) => {
       const url = new URL(req.url);
@@ -228,6 +231,7 @@ export const privacyRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/tracker-events",
+    relay: true,
     cost: "read",
     handler: async (req, deps) => {
       const url = new URL(req.url);

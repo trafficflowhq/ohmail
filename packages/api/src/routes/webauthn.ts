@@ -21,6 +21,7 @@ export const webauthnRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/auth/2fa/webauthn/register/options",
+    relay: true,
     cost: "ceremony",
     options: { enrollmentOk: true },
     handler: async (req, deps) => json(await auth(deps).webauthnRegisterOptions(serviceContext(deps, req)), 200),
@@ -28,6 +29,7 @@ export const webauthnRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/auth/2fa/webauthn/register/verify",
+    relay: true,
     cost: "ceremony",
     options: { enrollmentOk: true },
     handler: async (req, deps) => {
@@ -41,6 +43,7 @@ export const webauthnRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/auth/2fa/webauthn/assert/options",
+    relay: true,
     cost: "ceremony",
     options: { public: true },
     handler: async (req, deps) => {
@@ -52,6 +55,7 @@ export const webauthnRoutes: Route[] = [
     // Public step-two: verifies the assertion and establishes the web session.
     method: "POST",
     pattern: "/auth/2fa/webauthn/assert/verify",
+    relay: false,  /* resolves a credential from the request body */
     cost: "ceremony",
     options: { public: true, credentialSubject: true },
     handler: async (req, deps) => {

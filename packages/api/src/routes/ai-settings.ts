@@ -32,6 +32,7 @@ export const aiSettingsRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/account/ai",
+    relay: true,
     cost: "read",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
@@ -47,6 +48,7 @@ export const aiSettingsRoutes: Route[] = [
   {
     method: "PATCH",
     pattern: "/account/ai",
+    relay: true,
     cost: "work",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);

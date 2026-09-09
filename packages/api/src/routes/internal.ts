@@ -661,6 +661,7 @@ export const internalRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/internal/alerts",
+    relay: false,  /* the hosted service's shared-secret intake */
     // `unauthenticated`: the caller is a scheduler holding a shared secret, not an
     // account, and `anonymous` means no session is ever resolved for `withSpendGate` to judge.
     cost: "unauthenticated",
@@ -713,6 +714,7 @@ export const internalRoutes: Route[] = [
      */
     method: "GET",
     pattern: ALERT_CRON_PATH,
+    relay: false,  /* the hosted service's shared-secret intake */
     cost: "unauthenticated",
     options: { public: true, anonymous: true, raw: true },
     handler: async (req, deps) => {
@@ -738,6 +740,7 @@ export const internalRoutes: Route[] = [
      */
     method: "GET",
     pattern: "/internal/alerts",
+    relay: false,  /* the hosted service's shared-secret intake */
     cost: "unauthenticated",
     options: { public: true, anonymous: true, raw: true },
     handler: async (req, deps) => {
@@ -783,6 +786,7 @@ export const internalRoutes: Route[] = [
      */
     method: "GET",
     pattern: SESSIONS_REAP_CRON_PATH,
+    relay: false,  /* the hosted service's shared-secret intake */
     cost: "unauthenticated",
     options: { public: true, anonymous: true, raw: true },
     handler: async (req, deps) => {
@@ -837,6 +841,7 @@ export const internalRoutes: Route[] = [
      */
     method: "GET",
     pattern: SMTP_SIZE_CRON_PATH,
+    relay: false,  /* the hosted service's shared-secret intake */
     cost: "unauthenticated",
     options: { public: true, anonymous: true, raw: true },
     handler: async (req, deps) => {
@@ -915,6 +920,7 @@ export const internalRoutes: Route[] = [
      */
     method: "GET",
     pattern: SCHEDULED_SEND_CRON_PATH,
+    relay: false,  /* the hosted service's shared-secret intake */
     cost: "unauthenticated",
     options: { public: true, anonymous: true, raw: true },
     handler: async (req, deps) => {
@@ -984,6 +990,7 @@ export const internalRoutes: Route[] = [
      */
     method: "GET",
     pattern: SEND_RECONCILE_CRON_PATH,
+    relay: false,  /* the hosted service's shared-secret intake */
     cost: "unauthenticated",
     options: { public: true, anonymous: true, raw: true },
     handler: async (req, deps) => {
@@ -1045,6 +1052,7 @@ export const internalRoutes: Route[] = [
      */
     method: "GET",
     pattern: AWAY_RESPONDER_CRON_PATH,
+    relay: false,  /* the hosted service's shared-secret intake */
     cost: "unauthenticated",
     options: { public: true, anonymous: true, raw: true },
     handler: async (req, deps) => {
@@ -1098,6 +1106,7 @@ export const internalRoutes: Route[] = [
      */
     method: "GET",
     pattern: PLATFORM_SIGNALS_CRON_PATH,
+    relay: false,  /* the hosted service's shared-secret intake */
     cost: "unauthenticated",
     options: { public: true, anonymous: true, raw: true },
     handler: async (req, deps) => platformSignalPass(req, deps),

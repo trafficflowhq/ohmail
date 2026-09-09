@@ -115,6 +115,7 @@ export const eventsRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/events",
+    relay: true,
     // `connection`: on a per-invocation-second platform an open stream is a LIVE FUNCTION
     // for its whole lifetime, with a poll loop querying `change_log` behind it, and the client
     // reconnects forever. The `enabled`/`maxPerAccount`/`maxPerInstance` controls below are
