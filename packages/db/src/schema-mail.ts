@@ -1092,6 +1092,34 @@ export const folderState = pgTable("folder_state", {
    * unreachable mail host is not this message's refusal.
    */
   lastErrorClass: text("last_error_class"),
+  /**
+   * WHERE A DELETED MESSAGE CAME FROM — the origin a restore puts it back to (mail 0099).
+   *
+   * Written by the DELETE verb alone, in the same upsert that sets `desired_folder` to the
+   * mailbox's Trash path: the value is `observed_folder` as it stood at the press, which is the
+   * folder the message was actually in. NULL when that already equalled the Trash path (there is
+   * nothing to remember) and NULL on every row this column predates.
+   *
+   * CLEARED BY EVERY NON-TRASH DESIRED WRITE, and that is the load-bearing half: a message filed
+   * out of Trash and later deleted from somewhere else must not inherit the origin of its
+   * previous life. `MessageService.upsertDesired` takes the value as an argument for exactly that
+   * reason — a caller cannot forget to clear it, because it cannot write `desired_folder` without
+   * saying what this column becomes.
+   *
+   * ── A PATH, NEVER TRUSTED AS ONE ──────────────────────────────────────────────────────────
+   *
+   * It is a folder path and the folder may be gone by the time somebody restores: mail sits in
+   * Trash while its origin folder is deleted. `MessageService.restore` therefore resolves it —
+   * INBOX, one of the six, or a LIVE `mailbox_folders` path of that mailbox — and falls back to
+   * INBOX otherwise. No CHECK and no foreign key: a CHECK cannot know which folders exist, and an
+   * FK to `mailbox_folders` would erase this row's origin at the moment the fallback is needed.
+   *
+   * NOT a `change_log` read, which is the obvious alternative and is wrong: the log has a
+   * retention horizon (`change-log.ts`), so a restore would work for a week and then silently
+   * stop. A column has no horizon. The `delete` change row gains `meta: {from, to}` in the same
+   * slice for history's sake, and nothing reads it.
+   */
+  trashedFrom: text("trashed_from"),
 }, (t) => ({ uqMessage: unique().on(t.messageId) }));
 
 /**

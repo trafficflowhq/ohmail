@@ -195,6 +195,43 @@ export interface MessageDTO {
 }
 
 /**
+ * ONE ROW OF THE TRASH LIST — a message plus the two things only Trash needs to say about it.
+ *
+ * `MessageDTO` unchanged, with two additions rather than a second projection: the list renders
+ * the same row component every folder view renders, and a separate shape would fork the
+ * projection every other surface shares (the reading pane opens these rows through the ordinary
+ * body route, so a row that was not a `MessageDTO` would need a conversion at the one seam where
+ * a conversion is a bug).
+ *
+ * NOTE WHAT `folder` STILL SAYS on these rows: the mailbox's Trash path, because that is where
+ * the message is. It is deliberately not rewritten to the origin — the mirror's rule is that
+ * `folder` is where the server has the message, and a row that lied about it would move wrongly
+ * if anything ever filed it.
+ */
+export interface TrashRowDTO extends MessageDTO {
+  /**
+   * WHEN IT WAS DELETED — `folder_state.updated_at`, which is the instant the delete wrote the
+   * desired folder. This list is ordered by it, so it is also the row's keyset position.
+   *
+   * Not `messages.updated_at`: that moves whenever anything about the message changes (a read
+   * stamp arriving from another client, a tag), so it would reorder Trash for reasons that have
+   * nothing to do with deleting. Not `deleted_at` either — a message tombstoned by the expunge
+   * reaper carries one and never rode to Trash, and it is not in this list.
+   */
+  trashedAt: ISODateTime;
+  /**
+   * WHERE RESTORE WOULD PUT IT — already RESOLVED, never the raw stored origin.
+   *
+   * `folder_state.trashed_from` when that still names INBOX, one of the six, or a folder this
+   * mailbox still has; `"INBOX"` otherwise (no origin recorded, or the origin folder is gone).
+   * Resolved on the server so the row and the button cannot disagree: the client renders this
+   * string as the destination gloss AND the toast says it, and a client that resolved it itself
+   * would need the folder inventory to do so — which a windowed mirror may not hold.
+   */
+  restoreTo: string;
+}
+
+/**
  * A tag — the account's own label, keyed by message through `message_tags`.
  *
  * It is NEVER an IMAP folder: ohmail organizes in place with a fixed folder set and a tag is a

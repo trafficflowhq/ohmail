@@ -694,6 +694,13 @@
       "when": 1791600800011,
       "tag": "0098_signature_html",
       "breakpoints": true
+    },
+    {
+      "idx": 97,
+      "version": "7",
+      "when": 1791601000011,
+      "tag": "0099_folder_state_trashed_from",
+      "breakpoints": true
     }
   ]
 }

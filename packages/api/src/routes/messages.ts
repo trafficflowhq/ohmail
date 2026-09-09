@@ -206,6 +206,43 @@ export const messageRoutes: Route[] = [
     },
   },
   {
+    /* §5.2 POST /messages/:id/restore — PUT A DELETED MESSAGE BACK WHERE IT WAS (mail 0099).
+     *
+     * The other end of `DELETE /messages/:id`. It writes DESIRED state and nothing else — the
+     * origin `folder_state.trashed_from` recorded at the delete, resolved against the mailbox's
+     * live folders and falling back to INBOX — so the mail server performs the physical move on
+     * the organizer's next turn. It does NOT clear the tombstone: the mirror says the message is
+     * back when the SERVER has it back, which is the whole of `MessageService.restore`'s header.
+     *
+     * `cost: "work"`, the class every desired-state write here carries: it writes rows for the
+     * caller's own account and queues an IMAP move for the organizer. It opens no socket and
+     * calls no metered third party, so it is not `paid`.
+     *
+     * NOT `options: { idempotent: true }`, and that is a decision rather than an omission. The
+     * two neighbours carry it because a replayed `move`/`delete` would re-emit delta rows for a
+     * change the client already has. This verb is idempotent in the state itself: the second
+     * request finds the message no longer in Trash and answers 409 `not_in_trash`, which is a
+     * true sentence about a completed restore and cannot move mail twice. An idempotency row
+     * would replay the FIRST response's 200 instead, which is the less honest of the two — it
+     * would tell a client that pressed twice that it had just restored something.
+     *
+     * The response is `{ restoreTo, pending }` rather than the message DTO: the DTO would still
+     * carry the Trash folder and a `deleted_at`, i.e. it would describe the state the caller is
+     * leaving. `restoreTo` is what the surface says in its toast, and `pending` is the honest
+     * middle the filing strip already renders. `X-Sync-Seq` is echoed from the recorded change
+     * exactly as the other mutations do.
+     */
+    method: "POST",
+    pattern: "/messages/:id/restore",
+    cost: "work",
+    handler: async (req, deps, params) => {
+      const { restoreTo, pending, seq } = await message(deps).restore(
+        serviceContext(deps, req), params.id!,
+      );
+      return jsonResponse({ restoreTo, pending }, { status: 200, seq });
+    },
+  },
+  {
     // §5.2 DELETE — the message rides to the provider's native \Trash (worker-drained desired
     // state, NEVER an expunge) and the emitted `delete` change tombstones it in every client's
     // mirror. 422 `no_trash_folder` when the mailbox has none — the service carries the rule.

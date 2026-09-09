@@ -1,0 +1,43 @@
+-- WHERE A DELETED MESSAGE CAME FROM — so it can be put back there.
+--
+-- ══ THE ORIGIN WAS WRITTEN NOWHERE DURABLE ═════════════════════════════════════════════════
+--
+-- Deleting in ohmail is a move to the provider's native Trash plus a tombstone on the message
+-- row: `folder_state.desired_folder` becomes the mailbox's Trash path and `messages.deleted_at`
+-- is stamped. Nothing in that pair records the folder the message was in when the key was
+-- pressed. `observed_folder` holds it — but only until the organizer performs the physical move
+-- and flips `observed` to the destination, which is seconds later. After that the row says
+-- "this message is in Trash" and the mailbox has no memory of where it had been.
+--
+-- The move verb beside it does record its origin (`change_log` `move` rows carry
+-- `meta: {from, to}`); the delete verb records `meta: null`. So a restore had nowhere to read a
+-- target from, and "put it back where it was" could not be written at all.
+--
+-- ══ A COLUMN, NOT A CHANGE-LOG READ ════════════════════════════════════════════════════════
+--
+-- The change log is the obvious place to look for a past folder and it is the wrong one: it has
+-- a retention horizon (`change-log.ts` prunes it), so a message deleted before the horizon would
+-- have no origin while a message deleted after it would. A restore that works for a week and
+-- then silently stops is worse than one that never offered itself. A column has no horizon.
+--
+-- The `change_log` `delete` row gains `meta: {from, to}` in the same slice anyway, because it
+-- costs nothing and it makes the two verbs' history read the same way — but nothing READS it.
+--
+-- ══ NULLABLE, AND WHAT NULL MEANS ══════════════════════════════════════════════════════════
+--
+-- NULL is "this row records no origin", and it is reached three ways: the row was written by any
+-- verb other than a delete (every non-Trash desired write CLEARS this column, so a message filed
+-- out of Trash and deleted again cannot inherit a stale origin from its previous life); the
+-- delete found the message already in the Trash path, so there is nothing to remember; or the row
+-- predates this column. All three restore to INBOX, which is the honest fallback — it is where
+-- mail arrives, and the alternative is refusing to restore mail somebody can see.
+--
+-- The value is a folder PATH and is never trusted as one: a path that names a folder the server
+-- no longer has is resolved to INBOX at restore time, because a folder can be deleted while its
+-- mail sits in Trash. That check lives in the service, not in a constraint here — a CHECK cannot
+-- know which folders exist, and a foreign key to `mailbox_folders` would delete this row's origin
+-- the moment somebody deleted the folder, which is exactly the case that needs the fallback.
+--
+-- Idempotent (`IF NOT EXISTS`), because a desktop engine replays this journal at every launch.
+
+ALTER TABLE "folder_state" ADD COLUMN IF NOT EXISTS "trashed_from" text;
