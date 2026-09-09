@@ -189,7 +189,21 @@ export async function realPgAvailable(url: string = PG_TEST_URL): Promise<boolea
   }
   if (!up) return false;
 
-  const drift = await journalDrift(url);
+  /* AN UNREADABLE PREMISE IS NOT A GREEN, so the catch does not answer `true`.
+   *
+   * {@link journalDrift} answers the question or fails; it never invents an answer. If the
+   * journal tables cannot be read — a permission the test role has lost, a column renamed out
+   * from under the query — then whether this database's schema is this tree's is UNKNOWN, which
+   * is neither drift nor its absence. Admitting there would admit exactly the run this exists to
+   * refuse, and the failures would land on whatever the tests were about. So an unreadable
+   * journal is refused too, in a sentence that says which of the two it is. */
+  let drift: string | null;
+  try {
+    drift = await journalDrift(url);
+  } catch (e) {
+    drift = `its migration journals could not be read at all (${e instanceof Error ? e.message : String(e)}), `
+      + "so whether its schema is this tree's is unknown — neither drift nor its absence.";
+  }
   if (drift === null) return true;
   const sentence =
     `the database at ${new URL(url).host}${new URL(url).pathname} is not this tree's schema — `
