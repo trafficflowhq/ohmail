@@ -13,6 +13,21 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Backspace, Delete and `d` no longer need "Use folders"
+
+Backspace, Delete and `d` move a message to Trash whether or not Use folders is on. On the web
+from the day this landed; in the desktop app with this release.
+
+Trash is your mail server's own Trash folder — a folder every account already has, not one you
+made — so the switch that turns on user folders was never a fact about whether a message can be
+moved there. The same delete over a selection has never asked for it: you could pick a pile of
+messages and file it to Trash, and then not file the one message under the cursor. Both now ask
+the same question, which is whether the app is holding that message and whether this install is
+the one organizing the mailbox.
+
+Use folders itself is unchanged, and still decides the Folders list, the folder views and
+Move-to-folder.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
