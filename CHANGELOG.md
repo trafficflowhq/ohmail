@@ -537,6 +537,25 @@ standing with nothing behind it, and there is no way to tell that from an archiv
 slow. After fifteen seconds the pane says the archive did not answer, and offers the same retry it
 already offered when the archive refuses. An answer that arrives late still replaces it.
 
+### A key pressed on a list with nothing selected selects the first message and says so
+
+A list you have just opened has nothing selected, and every key that acts on a message needs
+something to act on. So Backspace on a fresh Ohbox did nothing at all — no message moved, no
+sentence appeared, and nothing on screen said why. The same was true of Reply, Park, Resurface,
+Tag, Screening, Move, the read marks and Enter: eighteen keys, on every list, and the only place
+their state showed was the `?` shortcut list, where they stood greyed out.
+
+The first press of any of those keys now selects the first message in the list and says which key
+you pressed: "First message selected. Press again: Move it to Trash". It does nothing else. The
+second press does the thing. On a list with no messages in it, nothing happens.
+
+A list still never selects anything on its own. That is deliberate: a Backspace that files the top
+message because a list happened to be open is the mistake this is meant to make impossible, and
+the same rule is why arriving at your Ohbox no longer opens the newest message for you.
+
+In the `?` shortcut list, a greyed key that is only waiting for a selection now says so:
+"Select a message first — ↑/↓ or click a row". English and German.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
