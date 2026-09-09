@@ -1132,6 +1132,20 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // The derived text half needs no marker of its own: `mailboxes.signature` predates the split
   // and is probed by nothing here for the same reason nothing else pre-split is.
   ["mailboxes", "signature_html"],
+  // mail 0099_folder_state_trashed_from — ONE column, because the migration adds one.
+  // **It is the newest entry, so it is also the tag below.** The 0098 paragraph above carried that
+  // sentence until this migration landed behind it; `MAIL_SCHEMA_MARKER_JOURNAL_TAG` is
+  // single-valued, so the sentence moves with the tag rather than standing in two places — the
+  // docblock's own rule, and leaving both would have shipped a false claim with every gate green.
+  //
+  // `folder_state.trashed_from` is the folder a delete moved a message OUT of — the only durable
+  // record of where a deleted message came from, and therefore the only thing a restore has to
+  // aim at. It is probed because the API SELECTS IT BY NAME on two doors: the Trash list reads it
+  // per row to resolve each row's destination, and the restore reads it to decide where the
+  // message goes. An API ahead of the migration raises Postgres 42703 on both — so a database
+  // certified healthy without it serves an account whose Trash screen cannot load and whose
+  // Restore button cannot work, which is the whole of the feature.
+  ["folder_state", "trashed_from"],
 ] as const;
 
 /* THE CLOUD HALF OF THE MARKER CENSUS MOVED TO `./health-cloud.js`.
@@ -1921,7 +1935,11 @@ export const MAIL_EXPECTED_MARKERS =
  * construction (dropped and re-added under the same name), which that marker's entry records.
  *
  * `0098_signature_html` is probed as `mailboxes.signature_html` — the signature's markup half, one
- * additive nullable field. **It is the newest entry, so it is also the tag below.**
+ * additive nullable field.
+ *
+ * `0099_folder_state_trashed_from` is probed as `folder_state.trashed_from` — where a delete moved
+ * a message out of, one additive nullable field, and the operand of both Trash doors. **It is the
+ * newest entry, so it is also the tag below.**
  *
  * That last sentence is the one this docblock keeps getting wrong, and it is now attached to the
  * marker that is actually newest rather than left on an older one. It stood on `0081` and then on
@@ -1940,7 +1958,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0098_signature_html";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0099_folder_state_trashed_from";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */
