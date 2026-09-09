@@ -7,7 +7,7 @@
   "markAll": {
     "label": "Alles als gelesen markieren",
     "aria": "Alle {count} ungelesenen Nachrichten als gelesen markieren",
-    "ariaFresh": "Alle {count} neuen Nachrichten als gelesen markieren",
+    "ariaFresh": "Alle {count} Nachrichten, die seit deinem letzten Besuch neu sind, als gelesen markieren",
     "done": "{count, plural, one {1 Nachricht} other {# Nachrichten}} als gelesen markiert",
     "undo": "Rückgängig"
   },
@@ -450,7 +450,7 @@
     "mailboxes": "Postfächer",
     "ariaMain": "Hauptnavigation",
     "ohboxTitle": "{unread, number} ungelesen von {total, plural, one {1 Nachricht} other {# Nachrichten}}",
-    "readsTitle": "{count} neu",
+    "readsTitle": "{count, plural, =0 {Nichts Neues} one {# neue} other {# neue}} seit deinem letzten Besuch",
     "screenerTitle": "{count} wartend",
     "openNav": "Navigation öffnen",
     "closeNav": "Navigation schließen",
@@ -577,7 +577,6 @@
   },
   "reads": {
     "title": "Reads",
-    "meta": "{count} neu",
     "waterline": "Bis hierher gesehen",
     "waterlineMeta": "letzter Besuch · {stamp}",
     "tail": "Vorbeiscrollen markiert einen Beitrag als gesehen.",
@@ -591,9 +590,11 @@
   },
   "receipts": {
     "title": "Belege",
-    "meta": "{count} neu",
     "tail": "Ältere Belege findest du über die Suche.",
     "streamAria": "Lesestrom"
+  },
+  "stream": {
+    "newSince": "{count, plural, =0 {Nichts Neues} one {# neue} other {# neue}} seit deinem letzten Besuch"
   },
   "screener": {
     "title": "Screener",

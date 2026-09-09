@@ -154,6 +154,17 @@ export function ReadsView({
   onMarkAllRead?: (ids: string[]) => void;
 }) {
   const t = useTranslations("reads");
+  /**
+   * THE HEADER'S OWN SENTENCE — one key, `stream.newSince`, shared with Receipts and with the
+   * rail's tooltip (`rail.readsTitle`, pinned to the same words). The count is the WATERLINE, so
+   * the sentence names it: "12 new since you were here", never a bare "12 new", which is also how
+   * this app writes an unread count. One word for two facts, with nothing on screen to tell them
+   * apart: a reader who has read nothing saw "0 new" over a stream full of unread mail, because
+   * the line sits at the top of the pile until a leave commits it, and the unread figure standing
+   * beside this one counts something else. The unread figure keeps its own word — "unread",
+   * `markAll.aria` — and `test/waterline-word.test.tsx` holds the two apart in both catalogues.
+   */
+  const ts = useTranslations("stream");
   const tb = useTranslations("body");
   const locale = useLocale();
   const streamRef = useRef<StreamHandle>(null);
@@ -357,8 +368,8 @@ export function ReadsView({
    * the rows stood. The unread ids ride the shell's chunked `mark_seen` (real `\Seen`, to
    * the user's own IMAP via the worker); the line commits to the TOP through the SAME
    * writer the leave-commit uses (`onLeaveSeen` → `commitFeedSeen`, which skips a commit
-   * that would change nothing). Afterwards: rows quiet, "0 new", and the button's absence
-   * is a statement about the mail.
+   * that would change nothing). Afterwards: rows quiet, "Nothing new since you were here",
+   * and the button's absence is a statement about the mail.
    */
   const markAllRead = () => {
     const ids = all.filter((m) => m.unread).map((m) => m.id);
@@ -686,7 +697,7 @@ export function ReadsView({
     <section className="view split view-reads">
       <ListPane
         title={t("title")}
-        meta={t("meta", { count: newCount })}
+        meta={ts("newSince", { count: newCount })}
         action={
           onMarkAllRead ? (
             <MarkAllRead
@@ -746,7 +757,7 @@ export function ReadsView({
       >
         <div className="stream-top">
           <h1>{t("title")}</h1>
-          <span className="meta num">{t("meta", { count: newCount })}</span>
+          <span className="meta num">{ts("newSince", { count: newCount })}</span>
         </div>
         <div className="stream-hints">
           <ShortcutHint />

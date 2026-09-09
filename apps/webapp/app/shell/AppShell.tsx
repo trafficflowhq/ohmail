@@ -3174,7 +3174,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * piles themselves no longer show would keep demanding attention for mail that is simply old.
    * And never the bare `fresh.length` this used to be — the line is per-device, so that number
    * differed by thirteen between this app and the desktop over a pile the mail server said was
-   * entirely read. `rail.readsTitle` ("{count} new") has said exactly this all along.
+   * entirely read. `rail.readsTitle` says it in full — "12 new since you were here", the same
+   * sentence the pile header carries (`stream.newSince`), because a bare "new" beside a number
+   * is the word this app also uses for unread and the two are not the same fact.
    * `receiptsUnread` above survives for Mark-all-read only (Reads computes its own inside the
    * view) — that control is about `\Seen` on the user's other clients, not about this pile's
    * newness.

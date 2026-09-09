@@ -237,6 +237,14 @@ const BASE_MESSAGE_NAMESPACES = [
   // fails to render (`AppShell`, via the unscoped `t("viewError.title|body|action")`), so it
   // is the second kind of read the header note warns about and is caught the same way.
   "markAll", "message", "viewError",
+  // `stream` is the ONE sentence the two reading streams put over their count — "12 new since
+  // you were here" (`ReadsView`, `ReceiptsView`, both header slots), the words the rail's
+  // tooltip says too. It is its own namespace rather than a key in `reads` because Receipts
+  // reads it as well, and a second copy of one sentence is how the two piles came to disagree
+  // before. Genuinely reachable in the binary: the fixtures engine partitions a pile and the
+  // header renders on first paint, so without this the desktop shows `stream.newSince` over
+  // both streams.
+  "stream",
   "shortcuts", "sync", "tag", "triage",
   // `update` is the app's own update, in both places it is said: Settings → About → Updates
   // (`src/DesktopUpdate.tsx`) and the shell's quiet strip (`app/shell/UpdateNotice.tsx`).

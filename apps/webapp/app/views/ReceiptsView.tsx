@@ -132,6 +132,8 @@ export function ReceiptsView({
 }) {
   const t = useTranslations("receipts");
   const tr = useTranslations("reads");
+  /** One key for both streams, and the reasoning is in `ReadsView` beside its own read. */
+  const ts = useTranslations("stream");
   const tb = useTranslations("body");
   const locale = useLocale();
   const streamRef = useRef<StreamHandle>(null);
@@ -467,8 +469,9 @@ export function ReceiptsView({
     <section className="view split view-receipts">
       <ListPane
         title={t("title")}
-        /* "New since last visit", still unread on the server — the badge, never the position. */
-        meta={t("meta", { count: shownNew })}
+        /* The waterline count, and the sentence says so — still unread on the server, the
+           badge and never the position. One key with Reads (`stream.newSince`). */
+        meta={ts("newSince", { count: shownNew })}
         action={
           onMarkAllRead ? (
             <MarkAllRead
@@ -514,7 +517,7 @@ export function ReceiptsView({
       >
         <div className="stream-top">
           <h1>{t("title")}</h1>
-          <span className="meta num">{t("meta", { count: shownNew })}</span>
+          <span className="meta num">{ts("newSince", { count: shownNew })}</span>
         </div>
         <div className="stream-hints">
           <ShortcutHint />

@@ -7,7 +7,7 @@
   "markAll": {
     "label": "Mark all read",
     "aria": "Mark all {count} unread messages read",
-    "ariaFresh": "Mark all {count} new messages read",
+    "ariaFresh": "Mark all {count} messages new since you were here as read",
     "done": "Marked {count, plural, one {1 message} other {# messages}} read",
     "undo": "Undo"
   },
@@ -450,7 +450,7 @@
     "mailboxes": "Mailboxes",
     "ariaMain": "Main",
     "ohboxTitle": "{unread, number} unread of {total, plural, one {1 message} other {# messages}}",
-    "readsTitle": "{count} new",
+    "readsTitle": "{count, plural, =0 {Nothing new} one {# new} other {# new}} since you were here",
     "screenerTitle": "{count} waiting",
     "openNav": "Open navigation",
     "closeNav": "Close navigation",
@@ -577,7 +577,6 @@
   },
   "reads": {
     "title": "Reads",
-    "meta": "{count} new",
     "waterline": "Seen up to here",
     "waterlineMeta": "last visit · {stamp}",
     "tail": "Scrolling past an item marks it seen.",
@@ -591,9 +590,11 @@
   },
   "receipts": {
     "title": "Receipts",
-    "meta": "{count} new",
     "tail": "Older receipts live in Search.",
     "streamAria": "Reading stream"
+  },
+  "stream": {
+    "newSince": "{count, plural, =0 {Nothing new} one {# new} other {# new}} since you were here"
   },
   "screener": {
     "title": "Screener",

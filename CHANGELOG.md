@@ -556,6 +556,22 @@ the same rule is why arriving at your Ohbox no longer opens the newest message f
 In the `?` shortcut list, a greyed key that is only waiting for a selection now says so:
 "Select a message first — ↑/↓ or click a row". English and German.
 
+### The reading streams say what their count counts
+
+The number over Reads and Receipts, and the one on the rail beside them, counts the mail that
+arrived since you last left that stream. It read "12 new" — which is also how this app writes an
+unread count, so the same two words stood for two different facts. Someone who had read nothing
+saw "0 new" over a stream full of unread mail, because the line sits at the top until you leave
+it; someone who had read everything there saw a number still asking for attention.
+
+The count keeps its meaning and the sentence now names it: "12 new since you were here", in the
+pile header, in the rail's tooltip, and in the label the mark-all-read control carries when the
+line stands over nothing unread. An unread figure keeps its own word — "3 unread" — so the two
+numbers can appear on one screen without either being mistaken for the other. German reads
+"12 neue seit deinem letzten Besuch".
+
+Nothing about how the count is worked out changes.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
