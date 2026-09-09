@@ -70,6 +70,18 @@ services:
       # cannot express any other Caddy directive. See the Caddyfile for what the default costs
       # on a name ACME can never issue for.
       OHMAIL_TLS_DIRECTIVE: ${OHMAIL_TLS_INTERNAL:+tls internal}
+      # WHO THIS PROXY BELIEVES ABOUT THE CALLER, and it is read only by the external-TLS door.
+      #
+      # `X-Forwarded-For` and `X-Forwarded-Proto` are headers any client can write, so behind a
+      # terminator they are the only way to know who called and over what, and in front of one
+      # they are whatever somebody typed. Caddy is the only thing in this stack that decides
+      # which of those two situations it is in; no application code here reads
+      # `X-Forwarded-Proto` at all, and the session cookies carry `Secure` as a literal.
+      #
+      # The default is loopback — a terminator on this same box. Strict is the safe direction:
+      # trusting too narrowly costs the caller's address in an audit line, trusting too widely
+      # means believing a stranger.
+      OHMAIL_TLS_TERMINATOR: ${OHMAIL_TLS_TERMINATOR:-127.0.0.1}
       # The staging bucket's name, because the Caddyfile's browser-upload route matches the
       # path `/<bucket>/*` — path-style object addressing puts the bucket in the URL. Must
       # stay the same value the api and organizer read, which the shared default guarantees.
@@ -96,7 +108,20 @@ services:
       - "${OHMAIL_BIND:-127.0.0.1}:80:80"
       - "${OHMAIL_BIND:-127.0.0.1}:443:443"
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # ── WHICH FRONT DOOR THIS STACK HAS, chosen by ONE variable ─────────────────────────
+      #
+      # Unset (the default): `Caddyfile` — this proxy owns TLS, the site address is
+      # OHMAIL_ORIGIN, and Caddy obtains or issues the certificate.
+      # OHMAIL_EXTERNAL_TLS=1: `Caddyfile.external-tls` — plain HTTP on 80 behind a terminator
+      # that owns the certificate (Tailscale, an existing reverse proxy, a load balancer), with
+      # no certificate of its own and no ACME order.
+      #
+      # The SOURCE PATH is composed rather than the config being switched inside Caddy, because
+      # `.env` must be able to express this decision and nothing else about Caddy. Both doors
+      # then `import /etc/caddy/routes.caddy`, so the route table exists once — mounted here for
+      # either of them.
+      - ./Caddyfile${OHMAIL_EXTERNAL_TLS:+.external-tls}:/etc/caddy/Caddyfile:ro
+      - ./routes.caddy:/etc/caddy/routes.caddy:ro
       - caddy_data:/data
       - caddy_config:/config
 

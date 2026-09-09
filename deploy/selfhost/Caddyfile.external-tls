@@ -1,0 +1,51 @@
+# THE SELF-HOST STACK BEHIND A TLS TERMINATOR IT DOES NOT OWN.
+#
+# Mounted at /etc/caddy/Caddyfile INSTEAD of the sibling Caddyfile when OHMAIL_EXTERNAL_TLS is
+# set in .env — docker-compose.yml composes the mount's source path from that one variable, so
+# the choice of door is a boolean and not a Caddy configuration surface.
+#
+# WHAT THIS EXISTS FOR. Three real deployments could not run this stack at all:
+#
+#  · a Tailscale user with a publicly trusted certificate for their `ts.net` name, from
+#    `tailscale cert` or `tailscale serve`;
+#  · anyone who already runs a reverse proxy in front of everything on the box;
+#  · anyone behind a corporate load balancer that terminates TLS for them.
+#
+# The sibling Caddyfile cannot serve any of them, and not by oversight: its site address IS
+# OHMAIL_ORIGIN, so telling it to serve plain HTTP would have meant telling the application a
+# different origin from the one people type. Splitting the LISTEN address from the ANNOUNCED
+# origin is the whole of this file. OHMAIL_ORIGIN keeps naming the https address the terminator
+# presents — the cookie host, the passkey identity and every link the app writes come from it —
+# and this door listens for plain HTTP on port 80 behind the thing that terminates it.
+#
+# THIS DOOR HAS NO CERTIFICATE AND ASKS FOR NONE. `http://:80` is an explicit HTTP site address,
+# so Caddy provisions nothing, orders nothing from any public authority, and does not install the
+# HTTP-to-HTTPS redirect it adds for an https site — a redirect here would bounce the terminator
+# straight back at itself. Port 443 has nothing behind it on this door; with OHMAIL_BIND at its
+# loopback default that stray publish is not reachable from anywhere, which is the configuration
+# a same-box terminator wants anyway.
+#
+# ── X-Forwarded-* IS HONOURED FROM ONE ADDRESS, AND THE DEFAULT IS LOOPBACK ─────────────────
+#
+# `X-Forwarded-For` and `X-Forwarded-Proto` are headers any client can write. Behind a
+# terminator they are the only way to learn who the caller was and over what — and in front of
+# one, believing them means believing whatever a caller typed. Caddy decides that with
+# `trusted_proxies`, and it is the only thing in this stack that decides it at all: no
+# application code here reads `X-Forwarded-Proto` for anything, and the session cookies carry
+# `Secure` as a literal on every mint rather than deriving it from a header. The boot check
+# asserts that, so this door cannot become the reason a cookie stops being Secure.
+#
+# The default is `127.0.0.1` — a terminator on this same box, which is the common case and the
+# safe one. Set OHMAIL_TLS_TERMINATOR when yours is elsewhere. Getting it wrong in the strict
+# direction costs the caller's address in the audit log; getting it wrong in the loose direction
+# is believing a stranger's header, so the default is the strict one.
+{
+	servers {
+		trusted_proxies static {$OHMAIL_TLS_TERMINATOR:127.0.0.1}
+	}
+}
+
+http://:80 {
+	# The same route table the TLS-owning door serves — see routes.caddy.
+	import /etc/caddy/routes.caddy
+}

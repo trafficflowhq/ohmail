@@ -37,12 +37,16 @@
 	# posture appeared only in `.env.example`, so a reader who followed README -> VPS.md was told
 	# a public domain was required and never learned this switch existed.
 	#
-	# NOTE ON EXTERNAL CERTIFICATES. There is deliberately no third arm here: an operator cannot
-	# point this at a certificate FILE. That is what stops a `tailscale cert` (a real, publicly
-	# trusted certificate for a `ts.net` name) from being usable, and it is why the private-network
-	# recipe installs this CA on each device instead. `tailscale serve` in front does not route
-	# around it either — `OHMAIL_ORIGIN` is BOTH this site's address and the origin the application
-	# announces, so the proxy cannot be told to serve plain HTTP behind an external terminator.
+	# NOTE ON EXTERNAL CERTIFICATES. This door still cannot be pointed at a certificate FILE, and
+	# deliberately so — an operator's `.env` may express the switch above and no other Caddy
+	# configuration. What changed is that it is no longer the end of the story: a stack behind a
+	# terminator that owns the certificate — `tailscale serve`, an existing reverse proxy, a
+	# corporate load balancer — sets OHMAIL_EXTERNAL_TLS in `.env` and gets the SIBLING door,
+	# `Caddyfile.external-tls`, which serves the same routes as plain HTTP and asks no authority
+	# for anything. That works because OHMAIL_ORIGIN stops being this site's address there while
+	# remaining the origin the application announces; the two were one value, and that is what
+	# used to make the whole class impossible. This paragraph said so as a standing limitation
+	# for several releases and is corrected rather than deleted.
 	#
 	# The placeholder expands to the whole directive or to nothing, and it can be exactly one
 	# of those two: docker-compose.yml maps a plain boolean to the literal text with
@@ -50,46 +54,8 @@
 	# operator's `.env` — only the switch is.
 	{$OHMAIL_TLS_DIRECTIVE:}
 
-	# The API's whole path surface, matched EXACTLY as the API mounts it. NO path
-	# stripping anywhere: the API canonicalizes one leading `/api` off itself, so `/api/sync`
-	# through this proxy and `/sync` from a native client hash identically for idempotency —
-	# a strip here would double-strip `/api/api/…` shapes and desynchronize retries.
-	#
-	#   /api/*         the browser client's calls (NEXT_PUBLIC_API_BASE=/api)
-	#   /auth/*        sign-in ceremonies, and the refresh cookie's own Path (/auth/refresh)
-	#   /events        the SSE stream (long-lived; Caddy streams it unbuffered by default)
-	#   /health        liveness + schema + key identity, for operators and health checks
-	#   /hello         the capability handshake (flavor, needsSetup, features)
-	#   /pair, /pair/* the pairing-token ceremony (first-run setup, invites, device pairing)
-	#   /internal/*    the shared-secret alert intake (404 until TF_ALERT_SECRET arms it) —
-	#                  an operator's monitor calls it at the documented path, so the proxy
-	#                  must carry it even though nothing in the product's own UI ever does
-	@api path /api /api/* /auth /auth/* /events /health /hello /pair /pair/* /internal /internal/*
-	handle @api {
-		reverse_proxy api:8080
-	}
-
-	# THE STAGING BUCKET'S BROWSER DOOR. Attachment uploads are presigned against THIS origin
-	# (`S3_PUBLIC_ENDPOINT`, defaulted to it), because the bundled MinIO has no browser-reachable
-	# address and the app's CSP allows same-origin requests only. Two properties here are
-	# load-bearing, one visible and one not:
-	#   · the path is `/<bucket>/*` — path-style object addressing, the bucket name spelled in
-	#     the URL, so the matcher must track S3_BUCKET (docker-compose.yml passes it in);
-	#   · the Host header is PRESERVED — Caddy's reverse_proxy default, relied on rather than
-	#     configured — because SigV4 signs the Host: the grant was signed for THIS origin's host,
-	#     and MinIO recomputes the signature over the Host it receives. Rewrite the Host upstream
-	#     and every upload 403s.
-	# SECURITY: this exposes the bucket's path surface, and that is safe ONLY because the bucket
-	# is PRIVATE — an unsigned request 403s, and the only grants ever minted are single-object
-	# PUTs that expire within the hour. Never attach an anonymous policy to the bucket; the boot
-	# smoke probes an unsigned GET and PUT and fails the push that breaks this.
-	@staging path /{$S3_BUCKET:ohmail-staging}/*
-	handle @staging {
-		reverse_proxy minio:9000
-	}
-
-	# Everything else is the web application: the landing, the sign-in pages, the client.
-	handle {
-		reverse_proxy web:3000
-	}
+	# The routes themselves — see routes.caddy. Imported rather than spelled here because
+	# Caddyfile.external-tls serves the same paths behind a terminator that owns the certificate,
+	# and two copies of a route table are two route tables.
+	import /etc/caddy/routes.caddy
 }

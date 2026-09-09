@@ -464,29 +464,52 @@ self-host mode, and the phone all reach the same origin.
 **Phone pairing works unchanged** — the pairing token and its QR are minted
 by your own server, and the phone scans them while on the tailnet.
 
+**Behind a terminator you already run.** If something in front of this stack
+already terminates TLS — `tailscale serve`, a reverse proxy you run for
+everything on the box, a load balancer — set `OHMAIL_EXTERNAL_TLS=1` in
+`.env`. The proxy then serves plain HTTP on port 80, holds no certificate and
+orders none, while `OHMAIL_ORIGIN` goes on naming the https address your
+terminator presents. Point the terminator at port 80 on `OHMAIL_BIND`
+(`127.0.0.1:80` with the default, which is what a same-box terminator wants),
+and set `OHMAIL_TLS_TERMINATOR` if it is on another host —
+`X-Forwarded-For` and `X-Forwarded-Proto` are honoured from that address and
+from nowhere else. This is what the two paragraphs below used to say was
+impossible; they are kept, corrected, because the reasoning in them is still
+the reason the switch is shaped this way.
+
 **On `tailscale cert`.** Tailscale can issue a *publicly trusted* certificate
 for your `ts.net` name (`tailscale cert ohmail.<tailnet>.ts.net`), which
-would remove the CA-installation step entirely. **The stack cannot use it
-today**, and the reason is worth knowing because it also points at the fix.
+removes the CA-installation step entirely.
 
-The proxy takes its certificate from its own CA or from ACME, and there is no
-supported way to hand it a certificate file — so a certificate `tailscale
-cert` writes to disk has nowhere to go. Putting `tailscale serve` in front
-does not help either: the same `OHMAIL_ORIGIN` value is both the address the
-proxy serves on and the origin the application announces, so the proxy cannot
-be told to serve plain HTTP behind something else.
+The proxy still takes its own certificate from its own CA or from ACME, and
+there is deliberately no way to hand it a certificate file — `.env` may
+express the switches this guide names and no other Caddy configuration. So a
+certificate `tailscale cert` writes to disk has nowhere to go *inside* the
+proxy. What it does have is `tailscale serve` in front, and that is the path
+`OHMAIL_EXTERNAL_TLS=1` opens: Tailscale holds the publicly trusted
+certificate for the `ts.net` name and forwards plain HTTP to
+`127.0.0.1:80`, the stack asks no authority for anything, and
+`OHMAIL_ORIGIN` names the https `ts.net` address the whole time. Until that
+switch existed those two were one value and this was impossible, which is
+what the previous version of this section reported.
 
-What *is* interesting is that the proxy already knows how to ask Tailscale
-directly — it is the behaviour described above, where a `ts.net` name sends it
-to `/var/run/tailscale/tailscaled.sock` looking for the certificate. It fails
-only because that socket is on the host and not in the container. Mounting the
-host's `tailscaled` socket into the proxy is therefore the obvious way to get
-a publicly trusted certificate with no CA to install, and it needs one line in
-`docker-compose.yml`. **It is not documented as a supported path here because
-nobody has run it against a real tailnet** — if you try it, say how it went.
+**Not verified against a real tailnet.** `OHMAIL_EXTERNAL_TLS` was checked
+here the way everything else in this guide was — the rendered configuration
+for both doors, and the boot check against a stack running behind a
+terminator — but `tailscale cert`, `tailscale serve` and a second device on a
+tailnet need a Tailscale account, and there is none in this project. If you
+run it, say how it went.
 
-Until then, `OHMAIL_TLS_INTERNAL=1` plus the CA install is the supported
-private-network path, and it is the one described above.
+There is a second route worth knowing about and it is unchanged: the proxy
+already knows how to ask Tailscale directly — the behaviour described above,
+where a `ts.net` name sends it to `/var/run/tailscale/tailscaled.sock`
+looking for the certificate. It fails only because that socket is on the host
+and not in the container, so mounting it in needs one line in
+`docker-compose.yml`. Nobody has run that against a real tailnet either, and
+it is not a supported path here.
+
+`OHMAIL_TLS_INTERNAL=1` plus the CA install remains the supported
+private-network path with nothing in front, and it is the one described above.
 
 ### What was verified, and what was not
 

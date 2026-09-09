@@ -260,6 +260,32 @@ answering — and the certificate renewal stops too, because a public authority 
 80 from the internet to validate the name. The operator guide and `.env.example` both say so
 beside the value.
 
+### A self-hosted install can sit behind a TLS terminator it does not own
+
+Three real setups could not run the self-host stack at all: a Tailscale user with a publicly
+trusted certificate for their `ts.net` name, anyone already running a reverse proxy in front of
+everything on the box, and anyone behind a corporate load balancer. One value was both the address
+the proxy served on and the origin the application announced, so the proxy could not be told to
+serve plain HTTP behind something else without lying to the app about its own origin.
+
+`OHMAIL_EXTERNAL_TLS=1` in `.env` separates the two. The proxy then serves plain HTTP on port 80,
+holds no certificate of its own and orders none from any authority, while `OHMAIL_ORIGIN` goes on
+naming the https address the terminator presents — the cookie host, the passkey identity and every
+link the app writes still come from it. Point the terminator at port 80 on `OHMAIL_BIND`, which
+with the loopback default means the stack is reachable through the terminator and nowhere else.
+
+`X-Forwarded-For` and `X-Forwarded-Proto` are headers any caller can write, so they are honoured
+from `OHMAIL_TLS_TERMINATOR` and from nowhere else. It defaults to `127.0.0.1` — a terminator on
+the same machine — because trusting too narrowly costs an address in an audit line and trusting too
+widely means believing a stranger. Session cookies are unaffected either way: `Secure` is written
+on every cookie the server mints and is derived from no header, on any door.
+
+The stack's route table now lives in one file both front doors read, so the paths cannot drift
+apart between them. The self-host guide's note that `tailscale cert` and `tailscale serve` could
+not be used is corrected rather than deleted, since the reasoning in it is why the switch is shaped
+this way. Nobody has run it against a real tailnet — that needs a Tailscale account, and the guide
+says so.
+
 ### Two self-hosted stacks on one machine no longer adopt each other
 
 The compose project name was the fixed string `ohmail`. Compose identifies an install by that
