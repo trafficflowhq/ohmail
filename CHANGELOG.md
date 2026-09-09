@@ -237,6 +237,9 @@ notification and developer senders nobody meant to be writing to.
 There is a second setting now: which piles get a reply. It defaults to your Ohbox alone, with Reads
 available if you want it. Receipts, the Screener and Spam are never answered.
 
+The choice travels like the rest of your settings: change it on a machine that only reads the
+mailbox and it reaches the one organizing it, which is the machine that sends the replies.
+
 **This narrows what a responder already switched on will do.** From this release it stops answering
 mail that files itself to Reads or Receipts. That is deliberate: a reply already sent to somebody
 you did not mean cannot be recalled, so the setting nobody chose is the one that reaches fewest
