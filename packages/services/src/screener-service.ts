@@ -25,7 +25,8 @@ import {
 import type { AiCreditGate } from "@trafficflow/db";
 import type { AdapterPort, ClassifierPort, Destination, NativeLocator, OhboxPolicy } from "@trafficflow/core/mail";
 import {
-  applyReconcileAction, askScreeningQuestion, CLASSIFY_DESTINATIONS, effectForDestination,
+  applyReconcileAction, askScreeningQuestion, CLASSIFY_DESTINATIONS, createLogger,
+  effectForDestination,
   rationaleHoldsAtGate, resolveOhboxPolicy,
 } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
@@ -40,6 +41,12 @@ import { getScreeningPreference } from "./screening-preference.js";
 import { LearningService } from "./learning-service.js";
 import { clampLimit, decodeKeysetCursor, encodeListCursor } from "./pagination.js";
 import type { Folder, Page, ScreenerItem } from "./dto/types.js";
+
+/**
+ * Where a best-effort filing doorbell reports a throw. Module scope and not injected: it is a
+ * single warn line on a path whose failure costs one rotation, and nothing reads it back.
+ */
+const doorbellLog = createLogger({ service: "filing" });
 
 /** Where unknown first-contact senders are held (core routing, `source:"screener"`). */
 export const SCREENER_FOLDER: Destination = "ohmail/Screener";
@@ -1347,8 +1354,18 @@ export class ScreenerReadService {
     if (rerouted.length > 0) {
       try {
         await ringFilingDoorbell(ctx.db as unknown as Tx, target.mailboxId, ctx.now());
-      } catch {
-        /* Deliberately silent — see above. */
+      } catch (err) {
+        /* Swallowed for the caller, never for the log — `MessageService.ringFiledMailbox` carries
+           the argument in full. The verdict has committed; a throw here costs one rotation and
+           must still be visible, or a doorbell that threw and one that was never rung read the
+           same from outside. */
+        doorbellLog.warn("filing_doorbell_failed", {
+          accountId: ctx.accountId,
+          mailboxId: target.mailboxId,
+          err,
+          reason: "the Screener's verdict COMMITTED; only the ask-the-organizer-sooner stamp "
+            + "failed, so the reroute lands on the next rotation instead of within seconds",
+        });
       }
     }
 

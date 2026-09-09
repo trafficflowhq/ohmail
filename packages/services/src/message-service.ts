@@ -6,7 +6,7 @@ import {
   upsertDesiredSeen, ringFilingDoorbell, type LedgerTx, type OrganizedBy, type Tx,
 } from "@trafficflow/db";
 import type { Destination, NativeLocator } from "@trafficflow/core/mail";
-import { httpsUnsubscribeUri, unsubscribeHeaderState } from "@trafficflow/core/mail";
+import { createLogger, httpsUnsubscribeUri, unsubscribeHeaderState } from "@trafficflow/core/mail";
 import type { Db, ServiceContext } from "./context.js";
 import { foldersEnabled, userFolderById } from "./folders.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
@@ -20,6 +20,12 @@ import {
   moveDestinationWord, routeMailboxWrite, writeReaderRequest, type PendingRequest,
 } from "./reader-request.js";
 import type { Folder, MessageBodyBatchItem, MessageBodyDTO, MessageDTO, Page, WithheldMarker } from "./dto/types.js";
+
+/**
+ * Where a best-effort filing doorbell reports a throw. Module scope and not injected: it is a
+ * single warn line on a path whose failure costs one rotation, and nothing reads it back.
+ */
+const doorbellLog = createLogger({ service: "filing" });
 
 /**
  * The stored row's withheld marker as the wire carries it — the CLOSED set, projected verbatim
@@ -1297,9 +1303,21 @@ export class MessageService {
   private async ringFiledMailbox(ctx: ServiceContext, mailboxId: string): Promise<void> {
     try {
       await ringFilingDoorbell(ctx.db as unknown as Tx, mailboxId, ctx.now());
-    } catch {
-      /* Deliberately silent — see the header. The decision has committed and the poll is the
-         floor beneath this either way. */
+    } catch (err) {
+      /* SWALLOWED FOR THE CALLER, NEVER FOR THE LOG. The decision has committed and the poll is
+         the floor beneath this either way — so the throw must not reach the person who filed the
+         message. What it must not do is vanish: a bare `catch {}` here makes a doorbell that
+         THREW and a doorbell that was never rung read identically from outside, which is the
+         shape that turns a slow rotation into an unfalsifiable report. One warn line, and the
+         `err` field rather than a hand-extracted class: this logger derives `errorClass` and the
+         cause at the emit site and refuses the driver's own message by design. */
+      doorbellLog.warn("filing_doorbell_failed", {
+        accountId: ctx.accountId,
+        mailboxId,
+        err,
+        reason: "the filing itself COMMITTED; only the ask-the-organizer-sooner stamp failed, so "
+          + "the move lands on the next rotation instead of within seconds",
+      });
     }
   }
 
