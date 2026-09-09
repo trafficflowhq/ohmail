@@ -1063,6 +1063,26 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // refused INSERT at the write site rather than as a silent read, which is the failure mode
   // that reports itself.
   ["mailbox_profile_mirror", "doc"],
+  // mail 0095_outbound_send_resolution — the resolution columns on the send ledger.
+  //
+  // The migration adds TWO columns (`outbound_sends.resolved_by`, `.resolved_at`) and makes
+  // `draft_id` nullable `ON DELETE SET NULL`. `resolved_by` is the probe, and one column is the
+  // whole probe here for `organized_by_capabilities`' reason and one of its own.
+  //
+  // It is read whole, on the send door itself. `SendService`'s replay branch selects the
+  // reservation with a bare `select()` under `FOR UPDATE` — every same-key retry — so an API
+  // ahead of this migration raises Postgres 42703 on the replay gate that exists to stop a
+  // second copy of a message being delivered. `DraftsService.resolve` writes both columns in one
+  // UPDATE, so the resolve verb 42703s there too, which is the surface a person presses.
+  //
+  // `resolved_at` gets no marker of its own, and the FOREIGN KEY change CANNOT get one: the
+  // constraint is dropped and re-added under the SAME name
+  // (`outbound_sends_draft_id_drafts_id_fk`), so `pg_constraint` reads identically before and
+  // after and a name probe cannot tell the two apart. So this marker answers "this database is
+  // from before 0095", not "every statement of 0095 ran" — which is the question `/health` is
+  // asked, because the hazard it exists to catch is an API ahead of its database. Named here
+  // rather than waved off, since the FK is the half that turns a discard into a 23503.
+  ["outbound_sends", "resolved_by"],
 ] as const;
 
 /* THE CLOUD HALF OF THE MARKER CENSUS MOVED TO `./health-cloud.js`.
@@ -1845,6 +1865,11 @@ export const MAIL_EXPECTED_MARKERS =
  * gained a member cannot be detected by reading a column name, and its absence surfaces as a
  * refused INSERT at the write site rather than as a silent read. The list entry's own comment
  * carries the argument for why a table whose absence degrades QUIETLY earns a marker at all.
+ *
+ * `0095_outbound_send_resolution` is probed as `outbound_sends.resolved_by` — one of the two
+ * columns it adds, because the send door selects the reservation row WHOLE on its replay branch
+ * and the resolve verb writes both columns in one UPDATE. Its FK change is unprobeable by
+ * construction (dropped and re-added under the same name), which that marker's entry records.
  * **It is the newest entry, so it is also the tag below.**
  *
  * That last sentence is the one this docblock keeps getting wrong, and it is now attached to the
@@ -1864,7 +1889,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0094_request_kinds_moves_profile";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0095_outbound_send_resolution";
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */
