@@ -24,10 +24,13 @@ import { silentLogger, type Logger } from "@trafficflow/core/mail";
  * own-sent row once and record that it happened in the mirror's own meta. It was rejected on three
  * counts, in order of weight:
  *
- *   1. WHEN IT ARRIVES. The deploy order is worker → API → web. A server-side re-delivery repairs
- *      the mailbox on the FIRST worker cycle, before the API or the web ships anything; a client
- *      repair cannot run until the new engine reaches the device, which for the desktop is a
- *      release away.
+ *   1. WHEN IT ARRIVES. The deploy order is API → worker → web, and the WORKER IS SECOND: it starts
+ *      against an API that already knows the flag, so the first sweep's change rows are
+ *      re-materialized with it set. The web is LAST, which is what settles this — a client repair
+ *      cannot begin until the new engine reaches the device, so it waits for the deploy that comes
+ *      after this one, and on the desktop for a whole release. The order is the script's, read
+ *      from it rather than assumed — see the sweep's own docblock below, which names the script
+ *      and the health checks that stand between the two halves.
  *   2. WHO IT REPAIRS. This is server-only code, so every client — the web now, the desktop and
  *      the phone whenever they next sync — is repaired by the same rows with no client change and
  *      no capability negotiation. A client one-shot has to be written, shipped and gated once per
