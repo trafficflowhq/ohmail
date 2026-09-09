@@ -1354,10 +1354,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, sendSurfaceMaxTota
    * a ref with a constant identity — it used to be rebuilt on every poll, which would have made
    * every handler below it rebuild 120 times an hour. That note is at the provider.
    */
-  const fileAndRefresh = useCallback(<T,>(dispatch: Promise<T>): Promise<T> => {
+  const fileAndRefresh = useStableCallback(<T,>(dispatch: Promise<T>): Promise<T> => {
     dispatch.then(refreshFacts, refreshFacts);
     return dispatch;
-  }, [refreshFacts]);
+  });
   /**
    * THE MIRROR AS IT IS. Where each message physically sits on the server.
    *
