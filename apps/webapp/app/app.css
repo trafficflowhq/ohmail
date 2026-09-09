@@ -3314,6 +3314,18 @@ input.set-tag-input {
   padding: 12px 14px;
   margin: 0 0 16px;
 }
+/* A REFUSAL AND THE HOST IT NAMED, AS ONE BLOCK. The offer belongs to the sentence above it, so
+   the gap between them is smaller than the gap to the form below — otherwise it reads as a stray
+   control in the middle of the fields. The sentence keeps its own margin when it stands alone. */
+.join-error-note {
+  margin: 0 0 16px;
+}
+.join-error-note .join-error {
+  margin: 0;
+}
+.join-error-note .join-error-use {
+  margin-top: 8px;
+}
 .join-actions {
   display: flex;
   align-items: center;

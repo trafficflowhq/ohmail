@@ -682,6 +682,24 @@ was switched on. The address you type is now dialled by a connection made for it
 computer this install is actually paired with still goes over that computer's own verified
 connection.
 
+### The host a certificate names is offered as a press
+
+When a mail server's certificate is for a different name than the one you typed, ohmail stops
+before sending your password and says which name the certificate covers — and, when it can work
+out the host that would have answered, names that too. Until now you had to read it off the
+sentence and type it back into the field two lines below. There is a control beside the sentence
+now: "Use <host> as the IMAP server", or SMTP when the outgoing server is the one that did not
+match. Pressing it fills that field and does nothing else — the next attempt dials that host and
+checks its certificate against it exactly as any address you type is checked. It appears only where
+there is a field to fill: behind a named provider the host is ohmail's own and there is nothing to
+correct.
+
+The door for a server you run was discarding the same answer entirely. It showed the server's
+general sentence and dropped the detail beside it, while the standalone door — shown the same
+answer by the same engine — sharpened it. Both doors read one answer through one reader and draw it
+with one component now, so a refusal cannot read two ways depending on which door you came in
+through.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

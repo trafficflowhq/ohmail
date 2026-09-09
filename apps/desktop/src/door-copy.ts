@@ -132,6 +132,18 @@ const EN = {
   serverReached: (server: string, address: string) => `Reached ${server}. Signing in as ${address}.`,
   serverChecking: "Checking your server…",
   serverContinue: "Continue",
+  /* ── THE HOST A REFUSAL NAMED, AS A PRESS ─────────────────────────────────────────────────
+     Shared by both doors through `DoorProblem`, and it names the host rather than saying "use
+     this": a control whose accessible name is a verb and a pronoun tells a screen-reader listener
+     nothing about which server is being offered. The wording follows the field it fills
+     ("Incoming server (IMAP)").
+
+     ONE KEY PER TRANSPORT rather than one key and a protocol argument. The protocol name would
+     then be a literal in the component that chose it, which is exactly what the copy census
+     refuses — and it caught this: `"IMAP"` and `"SMTP"` in `DoorProblem.tsx`. Two keys also let
+     German put the word where its grammar wants it. */
+  useSuggestedImapHost: (host: string) => `Use ${host} as the IMAP server`,
+  useSuggestedSmtpHost: (host: string) => `Use ${host} as the SMTP server`,
 
   /* ── DOOR THREE: a hosted ohmail account ─────────────────────────────────────────────────── */
   cloudTitle: "Sign in to ohmail Cloud",

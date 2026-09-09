@@ -57,6 +57,7 @@ import {
   type HostLinkRefusal,
   type HostLinkStep,
   type HostRefusal,
+  type HostSuggestion,
   type LocalDoorFields,
 } from "./doors.js";
 import {
@@ -66,6 +67,7 @@ import {
   signInToSelfHost,
 } from "./self-host.js";
 import { DOOR_COPY, machineWord } from "./door-copy.js";
+import { DoorProblem } from "./DoorProblem.js";
 import { offLinkCode, onLinkCode, openWeb } from "./native.js";
 
 /**
@@ -203,6 +205,16 @@ export function DoorChooser({
    */
   const [mismatch, setMismatch] = useState(false);
 
+  /**
+   * A HOST THE LAST REFUSAL NAMED, remembered so the card can offer it as a press.
+   *
+   * `mismatch`'s shape and for its reason: it is a REMEMBERED refusal rather than an inference, so
+   * the offer cannot outlive the answer that justified it. Cleared wherever `problem` is — every
+   * attempt, every Back — because a host offered beside a different refusal would fill a field
+   * with an answer to a question nobody asked.
+   */
+  const [suggestion, setSuggestion] = useState<HostSuggestion | null>(null);
+
   /* One attempt at a time, and the result travels up whole. A door attempt restarts the engine
      and can take tens of seconds on a first run, so a second press while the first is in flight
      would reconfigure underneath it — the shell would stop an engine that was still starting. */
@@ -210,9 +222,11 @@ export function DoorChooser({
     if (busy) return;
     setBusy(true);
     setProblem(null);
+    setSuggestion(null);
     try {
       const result = await run();
       setProblem(result.problem);
+      setSuggestion(result.suggestion ?? null);
       if (result.switchAccount) setMustSwitch(true);
       if (!result.problem) onEntered(result);
     } finally {
@@ -235,6 +249,7 @@ export function DoorChooser({
     if (busy) return;
     setBusy(true);
     setProblem(null);
+    setSuggestion(null);
     try {
       /* `configured` is false once a switch has been demanded, and that is not a detail. Leaving it
          true would mint a commitment inside an engine still pointed at the OTHER account, and the
@@ -273,8 +288,14 @@ export function DoorChooser({
           <ServerDoor
             busy={busy}
             problem={problem}
+            suggestion={suggestion}
             reached={reachedServer}
-            onBack={() => { setProblem(null); setReachedServer(null); setStep("doors"); }}
+            onBack={() => {
+              setProblem(null);
+              setSuggestion(null);
+              setReachedServer(null);
+              setStep("doors");
+            }}
             onCancel={onCancel}
             /* THE ADDRESS STEP. Not routed through `attempt`, because it does not end in a
                `DoorResult` and must not call `onEntered`: proving a server is reachable is not
@@ -302,6 +323,7 @@ export function DoorChooser({
               const pasted = hostLinkProblem(typedOrigin);
               if (pasted.link !== null && pasted.link.pin !== null) {
                 setProblem(null);
+                setSuggestion(null);
                 setProvedLink(null);
                 setMismatch(false);
                 setStep("host");
@@ -309,10 +331,12 @@ export function DoorChooser({
               }
               setBusy(true);
               setProblem(null);
+              setSuggestion(null);
               void configureSelfHostDoor(typedOrigin, address)
                 .then((step) => {
                   if (step.problem !== null) {
                     setProblem(step.problem);
+                    setSuggestion(step.suggestion ?? null);
                     return;
                   }
                   /* The NORMALIZED base, never the raw typing. It is what the engine was actually
@@ -430,7 +454,8 @@ export function DoorChooser({
           <LocalDoor
             busy={busy}
             problem={problem}
-            onBack={() => { setProblem(null); setStep("doors"); }}
+            suggestion={suggestion}
+            onBack={() => { setProblem(null); setSuggestion(null); setStep("doors"); }}
             onCancel={onCancel}
             onSubmit={(fields) =>
               attempt(async () =>
@@ -633,12 +658,15 @@ function TakeoverCard({
 function LocalDoor({
   busy,
   problem,
+  suggestion,
   onBack,
   onCancel,
   onSubmit,
 }: {
   busy: boolean;
   problem: string | null;
+  /** The host the last refusal named, or null. Offered as a press when there is a field for it. */
+  suggestion: HostSuggestion | null;
   onBack: () => void;
   onCancel?: () => void;
   onSubmit: (fields: LocalDoorFields) => void;
@@ -666,7 +694,20 @@ function LocalDoor({
       <h1>{DOOR_COPY.localTitle}</h1>
       <p>{DOOR_COPY.localLead(machineWord())}</p>
 
-      {problem ? <p className="join-error">{problem}</p> : null}
+      {/* ── THE REFUSAL, AND THE HOST IT NAMED ────────────────────────────────────────────────
+          `onUse` is passed ONLY while the host fields are on screen. Behind a named provider the
+          host is this app's own fact and there is no field to fill, so the sentence names the
+          host (as it did before this control existed) and no control presses into nothing. */}
+      <DoorProblem
+        problem={problem}
+        suggestion={suggestion}
+        {...(manual
+          ? {
+              onUse: (offer: HostSuggestion) =>
+                set(offer.transport === "smtp" ? "smtpHost" : "imapHost", offer.host),
+            }
+          : {})}
+      />
 
       <ProviderPicker
         value={fields.providerId || null}
@@ -796,6 +837,7 @@ function LocalDoor({
 function ServerDoor({
   busy,
   problem,
+  suggestion,
   reached,
   onBack,
   onCancel,
@@ -804,6 +846,16 @@ function ServerDoor({
 }: {
   busy: boolean;
   problem: string | null;
+  /**
+   * The host the last refusal named, or null.
+   *
+   * Rendered through the same component the standalone door uses and with NO `onUse`: this card
+   * asks for one server address rather than a pair of transports, so there is no field a
+   * transport-scoped host belongs in. It is passed anyway because the two doors read one refusal
+   * through one reader, and a screen that dropped the value here is how the two would drift apart
+   * again the next time the engine learns to name something.
+   */
+  suggestion: HostSuggestion | null;
   /** The server the address step proved, or null while it has not been proved yet. */
   reached: string | null;
   onBack: () => void;
@@ -831,7 +883,7 @@ function ServerDoor({
           : DOOR_COPY.serverSignInLead(machineWord())}
       </p>
 
-      {problem ? <p className="join-error">{problem}</p> : null}
+      <DoorProblem problem={problem} suggestion={suggestion} />
 
       <label className="join-label" htmlFor="server-origin">{DOOR_COPY.serverOrigin}</label>
       {/* `type="text"` WITH `inputMode="url"`, and the pair is deliberate — this was `type="url"`

@@ -43,7 +43,17 @@
  */
 
 import { engineConfigure, bridgeFetch, type EngineStatus } from "./bridge-fetch.js";
-import { sentence, settle, signInToCloud, stalled, standingEngine, type DoorResult } from "./doors.js";
+import {
+  probeTlsRefusal,
+  sentence,
+  settle,
+  signInToCloud,
+  stalled,
+  standingEngine,
+  type DoorRefusal,
+  type DoorResult,
+  type HostSuggestion,
+} from "./doors.js";
 import {
   apiBaseFor,
   normalizeOrigin,
@@ -106,7 +116,7 @@ export function selfHostProblem(typed: string): string | null {
  * boundary actually is: the ORIGIN may come from the window, the PATH never does, and
  * `normalizeOrigin` decides what an origin may be.
  */
-export async function probeConfiguredServer(candidateOrigin?: string): Promise<string | null> {
+export async function probeConfiguredServer(candidateOrigin?: string): Promise<DoorRefusal | null> {
   let res: Response;
   try {
     res = await bridgeFetch("/cloud/probe", {
@@ -115,26 +125,46 @@ export async function probeConfiguredServer(candidateOrigin?: string): Promise<s
       body: JSON.stringify(candidateOrigin === undefined ? {} : { origin: candidateOrigin }),
     });
   } catch (err) {
-    return sentence(err);
+    return { sentence: sentence(err), suggestion: null };
   }
   if (res.ok) return null;
   /* The engine's own sentence, whole. It is the process that dialled, so it is the only thing here
      that knows what happened; a category invented at this layer would be a worse description of a
      fact this window never observed. A body that is not the expected shape falls back to the status
-     line rather than throwing inside the handler that was explaining the first failure. */
+     line rather than throwing inside the handler that was explaining the first failure.
+
+     ── AND THE DETAILS BESIDE IT ARE READ, WITH THE OTHER DOOR'S OWN READER ──────────────────
+     This returned `error.message` and nothing else, so a refusal whose `details` named the host
+     that WOULD have worked arrived here holding the answer and threw it away — while the
+     standalone door, shown the same body by the same engine, sharpened it. Two readings of one
+     answer is how two screens over one product start describing a refusal in two ways, so there
+     is one reader now and `probeTlsRefusal` is it. It declines every shape it does not fully
+     recognise, which is every refusal this route sends today; that is the point — the two doors
+     agree on the shapes they do not rewrite as well as on the ones they do. */
   try {
-    const parsed = (await res.json()) as { error?: { message?: string } };
-    if (parsed.error?.message) return parsed.error.message;
+    const parsed = (await res.json()) as { error?: { message?: string; details?: unknown } };
+    const sharper = probeTlsRefusal(parsed.error?.details);
+    if (sharper) return sharper;
+    if (parsed.error?.message) return { sentence: parsed.error.message, suggestion: null };
   } catch {
     /* not JSON */
   }
-  return `The mail engine could not check that address (${res.status}).`;
+  return {
+    sentence: `The mail engine could not check that address (${res.status}).`,
+    suggestion: null,
+  };
 }
 
 /** What {@link configureSelfHostDoor} ended as: the settled engine, or the sentence to show. */
 export interface SelfHostStep {
   status: EngineStatus | null;
   problem: string | null;
+  /**
+   * A HOST THE PROBE NAMED — `DoorResult.suggestion`'s field, spelled the same way for the same
+   * reason: the card renders both doors' refusals through one component, and a second name for the
+   * same fact is how the two screens come to offer it differently.
+   */
+  suggestion?: HostSuggestion | null;
 }
 
 /**
@@ -229,14 +259,18 @@ export async function configureSelfHostDoor(typedOrigin: string, address: string
        passed, so the card stays on the address field with the engine's words above it. The install
        is left pointed at an address that did not answer, which on an install with no door is
        nothing lost — the next attempt reconfigures it — and it is why this arm exists only there. */
-    if (unreachable !== null) return { status: null, problem: unreachable };
+    if (unreachable !== null) {
+      return { status: null, problem: unreachable.sentence, suggestion: unreachable.suggestion };
+    }
     return step;
   }
 
   /* PROVE, THEN COMMIT — the local door's ordering, for the same class of reason: the step that
      cannot be undone goes after the step that can fail. */
   const unreachable = await probeConfiguredServer(typedOrigin);
-  if (unreachable !== null) return { status: null, problem: unreachable };
+  if (unreachable !== null) {
+    return { status: null, problem: unreachable.sentence, suggestion: unreachable.suggestion };
+  }
 
   return configureFor(base, address);
 }

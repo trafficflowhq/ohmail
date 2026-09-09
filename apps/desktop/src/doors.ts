@@ -1194,6 +1194,15 @@ export interface DoorResult {
   /** Null on success. A sentence for the field the person is looking at, never a code. */
   problem: string | null;
   /**
+   * A HOST THE PROBE NAMED AS THE ONE THAT WOULD HAVE WORKED, and the field it belongs in.
+   *
+   * Structured beside {@link problem} rather than only inside it, because the sentence is for
+   * reading and this is for PRESSING: the door offers it as a control and fills the field. Null
+   * whenever the refusal named no host, which is every refusal that is not a certificate hostname
+   * mismatch with a resolvable answer — see {@link probeTlsRefusal}.
+   */
+  suggestion?: HostSuggestion | null;
+  /**
    * The sign-in was refused because THIS INSTALL IS MIRRORING A DIFFERENT ACCOUNT.
    *
    * Not an error variant so much as an instruction about what the next attempt has to be. The
@@ -1356,7 +1365,7 @@ async function sealLocalPassword(
    * sealed before this key existed carries, so the two must not be spelled the same.
    */
   smtpHost: string,
-): Promise<string | null> {
+): Promise<DoorRefusal | null> {
   try {
     /* -- `/local/…`, AND THAT IS NOT A STYLE CHOICE -----------------------------------------
      *
@@ -1399,7 +1408,7 @@ async function sealLocalPassword(
     });
     return res.ok ? null : await refusal(res);
   } catch (err) {
-    return sentence(err);
+    return { sentence: sentence(err), suggestion: null };
   }
 }
 
@@ -1599,7 +1608,9 @@ export async function enterLocalDoor(
     /* SEAL, THEN COMMIT. Nothing about this install has changed yet, so a refusal here returns
        with the mailbox still on the configuration that was working. */
     const refused = await sealLocalPassword(standing.mailboxId, imap, f.password, smtp, smtpHost);
-    if (refused !== null) return { status: standing, problem: refused };
+    if (refused !== null) {
+      return { status: standing, problem: refused.sentence, suggestion: refused.suggestion };
+    }
 
     /**
      * ── THE ONE WINDOW THIS ORDER OPENS, NAMED RATHER THAN LEFT TO BE FOUND ─────────────────
@@ -1710,7 +1721,9 @@ export async function enterLocalDoor(
   /* THE PASSWORD, AND THE ONLY PLACE IT IS WRITTEN DOWN IS THE ENGINE'S OWN STORE. See
      {@link sealLocalPassword} for what the body carries and why it carries all of it. */
   const refused = await sealLocalPassword(settled.mailboxId, imap, f.password, smtp, smtpHost);
-  if (refused !== null) return { status: settled, problem: refused };
+  if (refused !== null) {
+    return { status: settled, problem: refused.sentence, suggestion: refused.suggestion };
+  }
 
   /**
    * ── AND NOW REPLACE THE ENGINE, BECAUSE THE ONE THAT IS RUNNING CANNOT USE THAT PASSWORD ────
@@ -1901,7 +1914,7 @@ export async function beginBrowserSignIn(
       headers: { "content-type": "application/json" },
       body: "{}",
     });
-    if (!res.ok) return { challenge: null, status: settled, problem: await refusal(res) };
+    if (!res.ok) return { challenge: null, status: settled, problem: (await refusal(res)).sentence };
     const body = (await res.json()) as { challenge?: unknown };
     const challenge = typeof body.challenge === "string" ? body.challenge : "";
     /* A missing or empty commitment is a REFUSAL rather than "open the page anyway". The page
@@ -2031,8 +2044,9 @@ export function stalled(status: EngineStatus): string {
  * from a route that does not exist is not JSON, and `await res.json()` on one throws inside the
  * handler that was trying to explain the first failure.
  */
-async function refusal(res: Response): Promise<string> {
-  return (await refused(res)).problem;
+async function refusal(res: Response): Promise<DoorRefusal> {
+  const { problem, suggestion } = await refused(res);
+  return { sentence: problem, suggestion };
 }
 
 /**
@@ -2042,7 +2056,9 @@ async function refusal(res: Response): Promise<string> {
  * the next attempt has to take a different path, and a reader that only ever saw the message would
  * have to match on English to find that out.
  */
-async function refused(res: Response): Promise<{ problem: string; code: string | null }> {
+async function refused(
+  res: Response,
+): Promise<{ problem: string; code: string | null; suggestion: HostSuggestion | null }> {
   let body = "";
   try {
     body = await res.text();
@@ -2054,16 +2070,18 @@ async function refused(res: Response): Promise<{ problem: string; code: string |
       error?: { message?: string; code?: string; details?: unknown };
     };
     const code = parsed.error?.code ?? null;
-    /* The probe can say more than its own sentence does — see {@link probeTlsSentence}. */
-    const sharper = probeTlsSentence(parsed.error?.details);
-    const message = sharper ?? parsed.error?.message ?? parsed.error?.code;
-    if (message) return { problem: message, code };
+    /* The probe can say more than its own sentence does — see {@link probeTlsRefusal}, which is
+       also what the self-hosted door reads, so the two cannot diverge. */
+    const sharper = probeTlsRefusal(parsed.error?.details);
+    const message = sharper?.sentence ?? parsed.error?.message ?? parsed.error?.code;
+    if (message) return { problem: message, code, suggestion: sharper?.suggestion ?? null };
   } catch {
     /* not JSON */
   }
   return {
     problem: res.statusText ? `${res.status} ${res.statusText}` : `The request was refused (${res.status}).`,
     code: null,
+    suggestion: null,
   };
 }
 
@@ -2098,6 +2116,35 @@ async function refused(res: Response): Promise<{ problem: string; code: string |
  * back to the service's own sentence rather than to a worse one.
  */
 export function probeTlsSentence(details: unknown): string | null {
+  return probeTlsRefusal(details)?.sentence ?? null;
+}
+
+/** A host the probe named, and which of the two transports it is the host for. */
+export interface HostSuggestion {
+  host: string;
+  transport: "imap" | "smtp";
+}
+
+/** A refusal as both halves: the sentence to read, and the host to press. */
+export interface DoorRefusal {
+  sentence: string;
+  suggestion: HostSuggestion | null;
+}
+
+/**
+ * THE ONE READING OF `error.details`, and it is one because two doors are shown the same answer.
+ *
+ * The standalone door and the self-hosted door are two screens over one product, and the same
+ * engine hands both of them the same `error.details`. Reading it in two places is how they came to
+ * describe one refusal in two ways — this door sharpened the sentence and the self-hosted one
+ * returned `error.message`, discarding the detail it was holding. `desktop-door-tls-census.test.tsx`
+ * drives both and asserts they say the same thing about every shape.
+ *
+ * The suggestion is returned STRUCTURED as well as inside the sentence, because a host somebody has
+ * to retype is not the same as one they can press: the hosted web app has offered the correction as
+ * a control since the detail existed, and this is that half.
+ */
+export function probeTlsRefusal(details: unknown): DoorRefusal | null {
   if (typeof details !== "object" || details === null) return null;
   const d = details as { reason?: unknown; transport?: unknown; tls?: unknown };
   if (d.reason !== "tls") return null;
@@ -2110,15 +2157,22 @@ export function probeTlsSentence(details: unknown): string | null {
   const expectedHost = str(tls.expectedHost);
   if (!certHost || !expectedHost) return null;
 
-  const protocol = d.transport === "smtp" ? "SMTP" : "IMAP";
+  /* THE TRANSPORT DECIDES WHICH FIELD, so it is read once here and travels with the host. An
+     outgoing mismatch that filled the incoming field would put the right server in the wrong box,
+     which is worse than making somebody type it. */
+  const transport = d.transport === "smtp" ? "smtp" : "imap";
+  const protocol = transport === "smtp" ? "SMTP" : "IMAP";
   const opening =
     `That server's certificate is for ${certHost}, not ${expectedHost}, ` +
     "so we stopped before sending the password.";
 
   const suggestedHost = str(tls.suggestedHost);
   return suggestedHost
-    ? `${opening} It answers to ${suggestedHost} — use that as the ${protocol} host.`
-    : `${opening} Check the ${protocol} host with your provider.`;
+    ? {
+        sentence: `${opening} It answers to ${suggestedHost} — use that as the ${protocol} host.`,
+        suggestion: { host: suggestedHost, transport },
+      }
+    : { sentence: `${opening} Check the ${protocol} host with your provider.`, suggestion: null };
 }
 
 /** Whatever was thrown, as something a person can read. Shared with `self-host.ts`; see {@link stalled}. */

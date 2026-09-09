@@ -3212,6 +3212,8 @@
     "serverReached": "{server} erreicht. Anmeldung als {address}.",
     "serverChecking": "Dein Server wird geprüft…",
     "serverContinue": "Weiter",
+    "useSuggestedImapHost": "{host} als IMAP-Server verwenden",
+    "useSuggestedSmtpHost": "{host} als SMTP-Server verwenden",
     "cloudTitle": "Bei ohmail Cloud anmelden",
     "cloudLeadSignIn": "Die Kopie deiner Post auf diesem {machine} liegt, wo du sie gelassen hast. Die Anmeldung läuft in der Mail-Engine auf diesem Rechner — Passwort und Code gehen direkt dorthin und werden sonst nirgends aufbewahrt.",
     "cloudLead": "Dein Konto wird auf unseren Servern organisiert, und diese App hält eine Kopie. Die Anmeldung läuft in der Mail-Engine auf diesem Rechner — Passwort und Code gehen direkt dorthin und werden sonst nirgends aufbewahrt.",
