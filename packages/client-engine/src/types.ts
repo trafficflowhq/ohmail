@@ -312,6 +312,23 @@ export interface EngineMessage extends EngineMessageExtras {
    * Rows the fixtures world mints leave it absent: a demo mailbox has no away responder.
    */
   autoReplyByUs?: boolean;
+  /**
+   * WHEN THE AWAY RESPONDER ANSWERED **THIS** MESSAGE — an instant, or `null` if it never did.
+   *
+   * The other half of {@link autoReplyByUs} and a different row: that flag is on the REPLY (the
+   * Sent copy), this stamp is on the ORIGINAL the reply answers. Server-computed — the
+   * `away_replies` ledger is not mirrored, so nothing here can derive it — and read by the
+   * message header, which says so in one quiet line rather than a badge.
+   *
+   * OPTIONAL for {@link lastReadAt}'s reason, twice over: a mirror row written by a build that
+   * predates the field is `undefined`, and a row fed by a SERVER that predates it is `undefined`
+   * too. Both mean "not known", and "not known" renders NOTHING — the same as `null`, which is
+   * the behaviour every mirror had before the field existed. There is deliberately no third
+   * state: a mark nobody can substantiate is worse than no mark.
+   *
+   * Rows the fixtures world mints leave it absent: a demo mailbox has no away responder.
+   */
+  awayRepliedAt?: ISODateTime | null;
 }
 
 /**

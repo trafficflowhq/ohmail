@@ -156,6 +156,42 @@ export interface MessageDTO {
    * field existed. That is why the client's test is `!== true` and never `=== false`.
    */
   autoReplyByUs?: boolean;
+  /**
+   * WHEN THE AWAY RESPONDER ANSWERED **THIS** MESSAGE — an instant, or `null` if it never did.
+   *
+   * The mirror image of {@link autoReplyByUs}, and deliberately a DIFFERENT row: that flag marks
+   * the REPLY (the Sent copy the responder produced), this stamp marks the ORIGINAL the reply
+   * answers. A reader looking at the mail somebody sent them wants to know that a machine has
+   * already answered on their behalf, and when — the reply itself sits in Sent, where a reader
+   * has no reason to be looking.
+   *
+   * Server-computed for {@link autoReplyByUs}'s reason and then one more: the `away_replies`
+   * ledger is not mirrored at all, so no client can join to it. `materialize.ts` reads it once
+   * per PAGE, keyed on `(account_id, message_id)` — the ledger's own UNIQUE, so at most one row
+   * per message and no aggregation.
+   *
+   * ── WHICH LEDGER ROWS COUNT, AND WHY `sent_at` AND NOT `decided_at` ───────────────────────
+   *
+   * `outcome in ('sent', 'unverified')` AND a non-null `sent_at`. The outcome set is "the claim
+   * is kept and no second reply will ever be offered" — `sent` is an accepted delivery, and
+   * `unverified` is an SMTP throw the responder deliberately does NOT retry, so from the
+   * correspondent's side it may well have arrived. `throttled`, `suppressed` and `pending` are
+   * decisions NOT to answer (or not yet), and a mark for one of them would be a false statement
+   * on screen.
+   *
+   * `sent_at` is the only instant this may honestly print: `decided_at` is when the responder
+   * looked at the message, which for a backfilled candidate can be days before anything was
+   * sent. And `away-responder-pass.ts#finalize` writes `sent_at` ONLY on `sent`, in as many
+   * words — *"an `unverified` row has no send instant it can honestly claim"* — so today the two
+   * terms coincide on `sent` and an `unverified` row yields `null`, i.e. NO MARK. The
+   * `unverified` member is not decorative for that: it is what makes the field correct the day
+   * that finalizer learns to stamp an ambiguous send, and the truth table asserts it over such a
+   * row rather than leaving it a term nobody has watched matter.
+   *
+   * OPTIONAL and additive for {@link autoReplyByUs}'s reason: absent from a server older than
+   * the field, and every consumer must read absent exactly like `null` — no mark.
+   */
+  awayRepliedAt?: ISODateTime | null;
 }
 
 /**

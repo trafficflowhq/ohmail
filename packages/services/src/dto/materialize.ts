@@ -1,8 +1,8 @@
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { foldersEnabled, userFolderById, type UserFolderRow } from "../folders.js";
 import type { EmailAddress } from "@trafficflow/core/mail";
 import {
-  accountSettings, autoReplyByUsWhere, mailboxes,
+  accountSettings, autoReplyByUsWhere, awayReplies, mailboxes,
   messages, folderState, messageStates, threads, routingDecisions, approvals, rules, drafts,
   tags, messageTags,
   type EntityType,
@@ -152,6 +152,16 @@ export function messageRowToDTO(
    * which the wire contract reads as "not known" — see `MessageDTO.autoReplyByUs`.
    */
   autoReplyByUs?: boolean,
+  /**
+   * WHEN THE AWAY RESPONDER ANSWERED THIS MESSAGE, or `null` — the ORIGINAL's stamp, decided by
+   * the `away_replies` read in the batch below.
+   *
+   * A SIXTH PARAMETER for the fifth's reason and not a field derived here: the fact lives in a
+   * ledger this row has no column for. Omitted (the direct-projection tests, and any caller
+   * that has not asked) ⇒ the key is ABSENT from the DTO, which the wire contract reads as "not
+   * known" and every consumer must render exactly like `null` — see `MessageDTO.awayRepliedAt`.
+   */
+  awayRepliedAt?: string | null,
 ): MessageDTO {
   const loc = (m.nativeLocator as { folder?: string } | null) ?? null;
   const folder = (fs?.desiredFolder ?? loc?.folder ?? "INBOX") as Folder;
@@ -230,19 +240,23 @@ export function messageRowToDTO(
     // over JSON, and "this server does not know" must look exactly like "this server predates
     // the field" — which is what makes the client's `!== true` test correct for both.
     ...(autoReplyByUs === undefined ? {} : { autoReplyByUs }),
+    // Spread-in for `autoReplyByUs`'s reason, and the same distinction: absent is "this server
+    // does not know", `null` is "it was asked and the responder never answered this message".
+    // Both render nothing, which is what makes absent safe for a client older than the field.
+    ...(awayRepliedAt === undefined ? {} : { awayRepliedAt }),
   };
 }
 
 /**
- * Materialize MANY messages in FIVE queries, whatever the count.
+ * Materialize MANY messages in SIX queries, whatever the count.
  *
  * The shape that matters is not "faster" but "constant": a page of 500 costs the same number of
  * round-trips as a page of 1, so the sync endpoint's latency stops scaling with the mailbox. A
  * missing id is simply absent from the map, which is the same signal the single-id path gives by
  * returning null, so `SyncService` still emits its tombstone unchanged.
  *
- * THREE became FOUR and then FIVE, and the count is in this sentence because CONSTANCY is the
- * property under test. The guard is `search-materialize.test.ts`'s "the SELECT count is the same
+ * THREE became FOUR, then FIVE, then SIX, and the count is in this sentence because CONSTANCY is
+ * the property under test. The guard is `search-materialize.test.ts`'s "the SELECT count is the same
  * for one hit and for six", which spies on `db.select` and reds the moment a per-row loop comes
  * back. It is named here by its REAL name: this sentence used to cite `materialize-batch.test.ts`,
  * and `git log --all --diff-filter=A` shows that file was never added on any branch — the pointer
@@ -252,7 +266,11 @@ export function messageRowToDTO(
  * other two side tables, which is why it costs one query and not one per message. The FIFTH is
  * the auto-reply flag: one set query over the surviving ids applying `autoReplyByUsWhere`
  * (`packages/db`) — the same fragment `ohbox-tidy` and `rule-retro` apply — so the ledger join
- * and the header belt are stated once and asked once per PAGE, never once per row.
+ * and the header belt are stated once and asked once per PAGE, never once per row. The SIXTH is
+ * the away responder's answer STAMP for the same page — one `inArray` over `away_replies`, whose
+ * `(account_id, message_id)` UNIQUE means at most one row per message and therefore no grouping.
+ * Both of the last two are constant in the page size, which is the whole property: a per-row
+ * `exists` for either would be the shape this function exists to have ended.
  *
  * `accountId` is on the `messages` predicate, so an id belonging to another account is filtered
  * before it can be assembled — the batch cannot widen what a caller may see. The three side
@@ -325,6 +343,30 @@ export async function materializeMessages(
       }),
     ));
   const autoReplyIds = new Set(arRows.map((r) => r.id));
+  /**
+   * THE AWAY RESPONDER'S ANSWER STAMP — one query per page, on the ORIGINAL, not on the reply.
+   *
+   * Keyed on `owned` for the fifth query's reason (the account filter has already run, and the
+   * receipt reader must carry the same answer the living view does, or a `delete` echo would
+   * disagree with the row the client holds about a field the `update` before it did not change).
+   *
+   * `outcome in ('sent','unverified')` AND `sent_at is not null` — the two halves are stated in
+   * `MessageDTO.awayRepliedAt`, and the short form is that the outcome set is "the claim is kept
+   * and no second reply will be offered" while the null test is what keeps the DTO's type honest.
+   * The ledger's `(account_id, message_id)` UNIQUE is why no `distinct` or `max` is needed; the
+   * `account_id` predicate is on the query rather than trusted from the id list, exactly as the
+   * five above have it.
+   */
+  const wrRows = await db.select({
+    messageId: awayReplies.messageId, sentAt: awayReplies.sentAt,
+  }).from(awayReplies)
+    .where(and(
+      inArray(awayReplies.messageId, owned),
+      eq(awayReplies.accountId, accountId),
+      inArray(awayReplies.outcome, ["sent", "unverified"]),
+      isNotNull(awayReplies.sentAt),
+    ));
+  const awayRepliedBy = new Map(wrRows.map((r) => [r.messageId, iso(r.sentAt)]));
 
   const fsBy = new Map(fsRows.map((r) => [r.messageId, r]));
   const stBy = new Map(stRows.map((r) => [r.messageId, r]));
@@ -337,6 +379,9 @@ export async function materializeMessages(
   for (const m of rows) {
     out.set(m.id, messageRowToDTO(
       m, fsBy.get(m.id), stBy.get(m.id), tagsBy.get(m.id), autoReplyIds.has(m.id),
+      // `?? null` and never `undefined`: the batch ASKED, so "no ledger row" is a known answer
+      // and says so on the wire. Absent is reserved for a caller that did not ask.
+      awayRepliedBy.get(m.id) ?? null,
     ));
   }
   return out;
