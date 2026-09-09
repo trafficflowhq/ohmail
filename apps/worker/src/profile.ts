@@ -1365,7 +1365,10 @@ export type MirrorOutcome =
   /** The folder holds no document — a stale cached copy is DISCARDED rather than left standing. */
   | { state: "discarded"; reason: "no_document" }
   /** Nothing was touched, and the reason distinguishes "could not look" from "nothing there". */
-  | { state: "kept"; reason: "unreadable" | "newer" | "no_read_io" | "read_failed" }
+  | {
+    state: "kept";
+    reason: "unreadable" | "newer" | "no_read_io" | "read_failed" | "within_cadence";
+  }
   | { state: "skipped"; reason: "no_generation" | "no_uid" };
 
 export interface MirrorDeps {
@@ -1379,10 +1382,39 @@ export interface MirrorDeps {
 }
 
 /**
- * READ THE ORGANIZER'S DOCUMENT ONCE AND CACHE IT. Never throws — a profile IO failure is a
- * mailbox fault for the logs, exactly as this module's write-behind treats one, and a reader whose
- * cache is one poll stale is in a far better state than one that replaced a real document with an
- * invented absence.
+ * READ THE ORGANIZER'S DOCUMENT ONCE AND CACHE IT — once per CADENCE, which is what makes that
+ * sentence true. Never throws: a profile IO failure is a mailbox fault for the logs, exactly as
+ * this module's write-behind treats one, and a reader whose cache is one poll stale is in a far
+ * better state than one that replaced a real document with an invented absence.
+ *
+ * ── THE STALENESS BOUND, STATED BECAUSE IT IS THE PRICE ────────────────────────────────────
+ *
+ * A reader's view of the organizer's profile is at most ONE CADENCE PLUS ONE POLL behind:
+ * {@link DEFAULT_PROFILE_FLUSH_INTERVAL_MS} (five minutes) before the copy is due, and up to the
+ * reader arm's 60 s `pollIntervalMs` before the next pass comes to fetch it. Six minutes, not
+ * five, and the extra minute is stated rather than rounded away — "within five minutes" is a
+ * claim a 5 m 59 s observation falsifies, and the public note therefore says "every few minutes".
+ *
+ * A reader cannot act on what it shows: the document is rendered, never applied, so nothing here
+ * can be pressed into a wrong decision by being a few minutes old.
+ *
+ * THAT BOUND IS WHAT KEEPS A SHIPPED FIX. "the profile module outlives the role now, and a reader
+ * was still paying for it" (2026-09-02) removed exactly this cost from the import path: an attached
+ * reader was fetching the whole profile source out of the customer's `ohmail/_meta` every 30 s for
+ * the life of the attachment instead of settling into the five-minute cadence, and nothing counted
+ * those reads. Mail 0094 gives a reader a REASON to read the document — it renders the organizer's
+ * settings instead of its own dead rows — and that reason does not buy back the per-cycle cost. The
+ * reader arm calls this once per poll (60 s); the row's own `read_at` is what turns those polls into
+ * one read per cadence. `FakeMetaFolder.profileReads` still counts full document reads and a
+ * reader's steady state is still one per cadence rather than one per cycle.
+ *
+ * WHY `read_at` AND NOT THE `(uidvalidity, uid)` PAIR, which would be the sharper test: the pair
+ * can only be compared against a CURRENT listing, and the cheap uid search that would supply one
+ * lives inside `listProfileMessages` — the full-source read itself, under its own mailbox lock — so
+ * asking costs the fetch it would save. The lease peek the same cycle already performs obtains the
+ * pair and discards it (`LeasePeek` carries neither a generation nor a ref). Exposing either would
+ * widen a published `@trafficflow/core` contract or take a second mailbox lock per cycle, to buy
+ * freshness inside a five-minute window that nobody can act on.
  *
  * ── THE FOUR ANSWERS ARE NOT INTERCHANGEABLE, WHICH IS THE WHOLE CARE HERE ─────────────────
  *
@@ -1403,7 +1435,59 @@ export interface MirrorDeps {
  *                   a reader that cannot understand a document does not overwrite or reinterpret
  *                   it.
  */
+/* ── THE CADENCE'S SECOND SOURCE, WITHOUT WHICH THE BOUND IS VACUOUS WHERE IT MATTERS MOST ──
+ *
+ * The row's `read_at` bounds a mailbox whose organizer HAS published a document. The commoner
+ * steady state is the other one — a reader attached to a mailbox whose organizer has published
+ * nothing — and there the read answers `none`, `none` DELETES rather than writing (a row of nulls
+ * would be indistinguishable from a document that says nothing: this module's own rule, stated at
+ * the discard), so no `read_at` is ever stamped and a row-only cadence reads every poll for ever.
+ * Measured on the lease fixture before this line existed: nine cycles, nine reads.
+ *
+ * So the last ATTEMPT is remembered in process, keyed by account and mailbox. In process rather
+ * than in the table because the fact is about OUR POLLING and not about the mailbox, and a restart
+ * paying one extra read is the right price for not inventing a row shape that lies. One small
+ * entry per mailbox this process has read for; the key is joined with `JSON.stringify` rather than
+ * a separator, because a control byte in a key is a defect this repository has already paid for.
+ */
+const lastMirrorAttemptAt = new Map<string, number>();
+
+/** Tests only: forget the in-process cadence, so a case can drive the same mailbox twice. */
+export function forgetMirrorCadence(): void { lastMirrorAttemptAt.clear(); }
+
 export async function syncProfileMirror(deps: MirrorDeps): Promise<MirrorOutcome> {
+  /* ── THE CADENCE GATE. One SELECT of the row this function itself wrote, and no IO at all. ──
+   *
+   * `read_at` is stamped by the upsert below, so the row carries the age of the copy it holds. A
+   * copy younger than the cadence is served as it stands and the document is NOT read.
+   *
+   * A stamp in the FUTURE is not "very fresh". Clock skew, or a pass that stamped ahead, would
+   * otherwise pin the row for as long as the skew lasted — the shape that stranded rows on a
+   * shared table before. A negative age therefore falls through and reads. */
+  const memoKey = JSON.stringify([deps.accountId, deps.mailboxId]);
+  const [cached] = await deps.db.select({ readAt: mailboxProfileMirror.readAt })
+    .from(mailboxProfileMirror)
+    .where(and(
+      eq(mailboxProfileMirror.mailboxId, deps.mailboxId),
+      eq(mailboxProfileMirror.accountId, deps.accountId),
+    ))
+    .limit(1);
+  /* The most recent EVIDENCE of a read, from either source. The durable stamp wins when it is the
+   * newer of the two, so a restart cannot make a fresh cached copy look unread. */
+  const stamps: number[] = [];
+  const attempted = lastMirrorAttemptAt.get(memoKey);
+  if (attempted !== undefined) stamps.push(attempted);
+  if (cached !== undefined && cached.readAt !== null) stamps.push(new Date(cached.readAt).getTime());
+  if (stamps.length > 0) {
+    const ageMs = deps.now.getTime() - Math.max(...stamps);
+    if (ageMs >= 0 && ageMs < DEFAULT_PROFILE_FLUSH_INTERVAL_MS) {
+      return { state: "kept", reason: "within_cadence" };
+    }
+  }
+  /* Stamped BEFORE the read, so a read that throws still costs one cadence rather than being
+   * retried every poll — the `read_failed` arm keeps the cached copy for the same reason. */
+  lastMirrorAttemptAt.set(memoKey, deps.now.getTime());
+
   let read: ProfileReadResult;
   try {
     read = await readOrganizerProfile(deps.io);

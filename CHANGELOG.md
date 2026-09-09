@@ -104,8 +104,9 @@ The install that organizes a mailbox publishes its settings into the mailbox its
 only reads that mailbox now keeps a copy of that as it goes, so its settings screens can show what
 is actually being applied rather than its own inert copies.
 
-It is read once per sync pass and costs nothing extra to look at afterwards. If the machine holding
-the mailbox has published nothing yet, that is said plainly rather than shown as empty settings.
+It refreshes every few minutes rather than on every sync pass, and costs nothing extra to look at
+afterwards. If the machine holding the mailbox has published nothing yet, that is said plainly
+rather than shown as empty settings.
 
 A cached copy is remembered together with which generation of the folder it was read from — mail
 servers renumber messages when a folder is deleted and recreated, and a remembered position from
