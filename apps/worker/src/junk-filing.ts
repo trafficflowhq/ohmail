@@ -225,6 +225,67 @@ async function settle(
 }
 
 /**
+ * ═══ A MESSAGE WHOSE LANDED MOVE DID NOT GO TO TRASH IS NOT DELETED ═══════════════════════════
+ *
+ * The invariant, in one sentence so it is greppable, and ONE place that enforces it: a move this
+ * pass just watched land in a watched folder that is NOT the mailbox's Trash path is positive
+ * evidence that the message is present and undeleted, so a standing tombstone is the mirror
+ * describing a mailbox that does not exist.
+ *
+ * ── THE DEFECT THIS CLOSES, MEASURED ────────────────────────────────────────────────────────
+ *
+ * Restoring a message out of Trash writes desired = the origin and deliberately clears nothing:
+ * the mirror is meant to say "back" when the SERVER has it back. That was the design and it did
+ * not work, because the clear was reachable from exactly two places and this path reached
+ * neither. `pipeline.ts`'s reconcile runner clears the tombstone in its `adopt_external` arm
+ * only; its own `move` arm repoints the locator and writes state without clearing. And the
+ * ARRIVAL path's clear — which does run on every arrival shape — is never reached, because after
+ * the locator is repointed the message is known at exactly the folder the next enumeration finds
+ * it in, so there is no arrival to clear on.
+ *
+ * Driven end to end against a real mail server: the physical move back to INBOX landed,
+ * `folder_state` converged, and `deleted_at` was byte-identical after the moving cycle and after
+ * two further cycles. The row stayed `entity: null` in every client's mirror while the message
+ * sat in the inbox on the server — a restore invisible to the person who pressed it, for ever.
+ *
+ * ── WHY HERE, AND NOT IN `pipeline.ts` ──────────────────────────────────────────────────────
+ *
+ * This is the shared completion writer: `fileChunk`, `fileOne` and the explicitly-invoked sweep
+ * all reach the database through it, and it is already handed the mailbox's own special folders,
+ * so "is this destination the Trash path" is answerable here without a read and without a second
+ * copy of the question. `parksLocator` above is that question, already written down — a landed
+ * move that does NOT park is exactly a landed move that did not go to Trash — so the negative
+ * control is structural rather than a predicate somebody has to keep in step: a delete takes the
+ * park branch and never reaches this function.
+ *
+ * ── THE CHANGE ROW ──────────────────────────────────────────────────────────────────────────
+ *
+ * `op: "update"`, which is the vocabulary `pipeline.ts` already uses for its own resurrection
+ * delta, so there is one word for one fact rather than two. The client apply contract treats
+ * `create` and `update` as the same idempotent upsert (rule 4/5), so an `update` carrying the
+ * re-materialized DTO replaces a mirror's `entity: null` and the row lives again — which is what
+ * makes this the half the restore was missing rather than a bookkeeping tidy-up.
+ *
+ * Emitted ONLY when the clear actually changed a row. `clearDeletedOnAdopt` is conditional on
+ * `deleted_at IS NOT NULL`, so for every ordinary move — the overwhelming majority — this is one
+ * cheap UPDATE that matches nothing and no delta at all. A change row per landed move would put
+ * a no-op in every client's drain for ever.
+ *
+ * Both writes ride the caller's transaction group, so a cleared tombstone without its delta —
+ * a row that is live on the server and still absent from every mirror — is not a state this can
+ * leave behind.
+ */
+async function unDeleteOnLandedMove(
+  r: WorkerRepo, accountId: string, messageId: string,
+): Promise<void> {
+  const resurrected = (await r.clearDeletedOnAdopt?.(messageId)) === true;
+  if (!resurrected) return;
+  await r.recordChange({
+    accountId, entityType: "message", entityId: messageId, op: "update", meta: null,
+  });
+}
+
+/**
  * The completion write for one landed move — the ONE place the database learns a message
  * reached its destination, shared by `fileChunk`, `fileOne` and the explicitly-invoked sweep.
  *
@@ -253,6 +314,12 @@ export async function completeFiling(
   await r.updateLocator(p.messageId, newLoc);
   if (!parksLocator(p, physical, special)) {
     await settle(r, accountId, p, physical, { observedFolder: p.desiredFolder, lastSetBy: "us" });
+    /* THE MOVE DID NOT GO TO TRASH, SO THE MESSAGE IS NOT DELETED — see
+       {@link unDeleteOnLandedMove} for the invariant, the measured defect it closes and why the
+       negative control is structural. Called AFTER `settle` and regardless of what it returned:
+       what is being recorded is PHYSICAL — the server has this message in a watched folder that
+       is not Trash — and that is true whether or not this pass's own intent won the row. */
+    await unDeleteOnLandedMove(r, accountId, p.messageId);
     return false;
   }
   // ══════════════════════════════════════════════════════════════════════════════════════════
