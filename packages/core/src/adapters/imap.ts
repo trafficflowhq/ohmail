@@ -1463,17 +1463,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   }
 
   /**
-   * IMAP NOOP — see {@link MailboxAdapter.noop}. RAW, and not through {@link bounded}.
-   *
-   * Every other command here goes through `bounded`, which composes the read deadline
-   * ({@link IMAP_READ_DEADLINE_MS}, 180 s) with the pass budget and retires the connection on a
-   * breach. A heartbeat cannot: it exists to answer "is this link still there?" on a window an
-   * order of magnitude shorter than that, and its caller supplies it. Sending this through
-   * `bounded` would make the fast detector as slow as the slow one, which is the whole defect it
-   * was added to close.
-   *
-   * `assertUsable` still applies: a connection this class has already retired refuses rather
-   * than sending a command into a destroyed socket.
+   * IMAP NOOP — see {@link MailboxAdapter.noop}. Raw, NOT through {@link bounded}: the caller
+   * supplies a window an order of magnitude shorter than the read deadline, which is the point
+   * of a heartbeat. A retired connection still refuses.
    */
   async noop(): Promise<void> {
     this.assertUsable();

@@ -527,17 +527,8 @@ describe("the desktop mailbox pane on the hosted door", () => {
     expect(pressed()).toEqual([{ url: "/mailboxes/mbx-1/resync", method: "POST" }]);
     // The strip at the foot of the rail reads the same route on a slower clock; the pane pushes it.
     expect(refreshed).toBe(1);
-    /* ── AND THE ROW IS PRESSABLE AGAIN ────────────────────────────────────────────────────
-     *
-     * This asserted the opposite — "cannot be pressed again while it is pending" — and the
-     * pending it named never ended: 202 is the only answer this route gives, the mark was
-     * cleared in the `catch` alone, so the button stayed greyed out reading "Sync queued" until
-     * somebody navigated away and back. Measured on two surfaces; on one it read disabled for
-     * nine minutes, across the reconnect and the served cycle after it.
-     *
-     * The press is the engine's the moment it is accepted, and the row's own state line is what
-     * says what the mailbox is doing. Rationing the server is not this button's job either: the
-     * engine honours a forced dial at most once per backoff base step. */
+    /* And the row is pressable again. This asserted the opposite; the pending it named never
+       ended, because 202 is the only answer the route gives. */
     expect(
       buttonSaying(el, "Sync queued"),
       "the control is still holding a mark for a press the engine already has",
@@ -548,14 +539,12 @@ describe("the desktop mailbox pane on the hosted door", () => {
   });
 
   it("a SECOND press after an accepted one is delivered", async () => {
-    /* The arm the assertion above is only half of: pressable is not the same as PRESSED. A mark
-       that outlives the answer makes the control one-press-per-visit, and a click on a disabled
-       button emits nothing at all — so the count of what reached the pipe is the whole reading. */
+    /* Pressable is not the same as PRESSED: a click on a disabled button emits nothing, so the
+       count of what reached the pipe is the reading. */
     const el = await render("cloud");
     await act(async () => { buttonSaying(el, "Sync now")!.click(); });
-    /* NAMED rather than asserted through a `!`: a mark that outlives the answer relabels this
-       control "Sync queued", so the second press would die on a null with a TypeError and the
-       reader would be sent looking for a broken fixture instead of a control that is gone. */
+    /* Named rather than asserted through a `!`: a control that is gone would otherwise fail as a
+       TypeError and read as a broken fixture. */
     const again = buttonSaying(el, "Sync now");
     expect(again, "the control is no longer offering Sync now after an accepted press").not.toBeNull();
     await act(async () => { again!.click(); });
@@ -570,21 +559,11 @@ describe("the desktop mailbox pane on the hosted door", () => {
   });
 
   it("a mailbox the engine is ALREADY syncing still offers Sync now", async () => {
-    /**
-     * "Syncing" is a STATE, not a lock. The button was measured greyed out for minutes at a
-     * stretch on a row whose install was mid-cycle, which is the affordance gone exactly when
-     * somebody wants it — and the pane must not be the place that decides a person may not ask.
-     *
-     * A row with no completed first import is the honest fixture for it: the state line says the
-     * engine is catching up, and the control beside it stays live. Nothing in this pane reads a
-     * sync state to disable the press, and this case is what keeps it that way.
-     */
+    /* "Syncing" is a state, not a lock: nothing in this pane reads a sync state to disable the
+       press, and this case is what keeps it that way. */
     FACTS = [{ ...MAILBOX, initialImportCompletedAt: null }];
-    /* THE HOSTED DOOR, deliberately: on the standalone one this pane also polls its own engine
-       for connection liveness, the bridge double answers that poll with a body it cannot read,
-       and the row's unreachable arm — which correctly outranks every progress state — is then
-       what the line says. The subject here is the CONTROL beside the line, so the fixture picks
-       the door where the line is the progress state and nothing else. */
+    /* The hosted door: on the standalone one the bridge double's unreadable answer to the reach
+       poll puts the row's unreachable arm above every progress state. */
     const el = await render("cloud");
     expect(el.textContent ?? "", "the fixture does not put the row mid-sync").toContain("Still catching up");
     expect(

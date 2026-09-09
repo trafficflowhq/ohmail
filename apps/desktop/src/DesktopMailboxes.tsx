@@ -932,12 +932,8 @@ export function DesktopMailboxes(
     const id = setInterval(read, 15_000);
     return () => { live = false; clearInterval(id); };
   }, [door]);
-  /**
-   * Mailboxes whose resync this pane has queued — a press the engine has not been given yet.
-   *
-   * It is exactly that and nothing wider: the engine's own poll cycle never writes here, so a
-   * sync nobody asked for cannot grey the button out. See {@link resync} for both ends of it.
-   */
+  /** Mailboxes whose resync this pane has queued — a press the engine has not been given yet.
+   *  The engine's own poll cycle never writes here. See {@link resync}. */
   const [queued, setQueued] = useState<ReadonlySet<string>>(() => new Set());
   /** Mailboxes whose quiet-notice dismissal is in flight, so the button debounces (mail 0078). */
   const [dismissing, setDismissing] = useState<ReadonlySet<string>>(() => new Set());
@@ -1025,25 +1021,13 @@ export function DesktopMailboxes(
    * socket, and it is served on BOTH doors — by the local engine's own route table on the
    * standalone one, by the write-through proxy on the hosted one.
    *
-   * ── THE MARK MEANS "THE ENGINE HAS NOT BEEN GIVEN THIS PRESS YET", AND NOTHING LONGER ────
+   * BOTH answers end the queued mark: a refusal, because a row left disabled after one is a
+   * control nobody can retry, and an acceptance — at that point the press is the engine's and the
+   * row's own state line says what the mailbox is doing. "Syncing" is a state, not a lock, and
+   * nothing but a press writes this set.
    *
-   * It used to be cleared in the `catch` alone, so the ONE answer this route actually gives —
-   * 202, accepted — left the id in the set for the life of the visit: the button stayed greyed
-   * out with "Sync queued" on it until somebody navigated away and back, and the control this
-   * release exists to make useful could be pressed once per visit to Settings. Measured on two
-   * surfaces; on one of them it read disabled for nine minutes across a reconnect and the served
-   * cycle after it.
-   *
-   * So both answers end the mark: a refusal, because a row that stays disabled after one is a
-   * control somebody cannot retry, and an ACCEPTANCE, because at that point the press is the
-   * engine's and the row's own state line is what says what the mailbox is doing. "Syncing" is a
-   * state, not a lock — and the engine's own cycle never touches this set, which is why a pass
-   * nobody asked for cannot take the button away.
-   *
-   * PRESSING IT AGAIN IS SAFE, and that is not this pane's doing: the engine honours a forced
-   * dial at most once per backoff base step (`forcedNotBefore`), so rapid presses buy one dial
-   * and not a knock. A button disabled to ration the server would be rationing it in the wrong
-   * process.
+   * Pressing again is safe: the engine honours a forced dial at most once per backoff base step
+   * (`forcedNotBefore`), so rationing it here would be rationing it in the wrong process.
    */
   const resync = (id: string): void => {
     setProblem(null);
@@ -1057,9 +1041,7 @@ export function DesktopMailboxes(
         // The strip at the foot of the rail reads the same route on its own slower clock; without
         // this the row and the strip disagree about one mailbox for up to thirty seconds.
         refresh();
-        /* THE PRESS HAS BEEN HANDED OVER — see the header. The 202 is the whole answer this route
-           gives, so this is where the queued mark ends; leaving it set is what made the control
-           one-press-per-visit. */
+        /* 202 is the whole answer this route gives, so the mark ends here. */
         setQueued((q) => {
           const next = new Set(q);
           next.delete(id);

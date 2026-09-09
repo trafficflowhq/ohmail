@@ -31,46 +31,22 @@ See [Status](README.md#status--read-this-first).
 - Saving away settings from a device that does not organize the mailbox says the change is
   waiting for the machine that does, instead of “Saved.” over the values it put back.
 
-### A connection that goes quiet is noticed in seconds, not minutes
+### A connection that stops answering is noticed in seconds
 
-When the link to your mail server dies, ohmail opens a new one. Not every death is announced: a
-network can drop a connection without telling either end, and then the socket still looks open,
-every command sent over it waits for an answer that never comes, and nothing arrives to say so.
-Until now the app waited for that connection's own timeout — around two minutes — before anything
-knew, and while nothing knew there was nothing for a reconnect to act on. Pressing Sync now during
-that window was accepted and opened nothing.
+A network can drop the link to your mail server without telling either end: the connection looks
+open and every command sent over it waits for an answer that never comes. ohmail used to wait out
+that connection's own timeout — around two minutes — before opening a new one.
 
-ohmail now asks the connection to prove itself. Between passes it sends the smallest command the
-mail protocol has, and a connection that has not answered within thirty seconds is treated as
-gone: the app ends it, opens a fresh one, and re-reads which install is organizing the mailbox
-before it moves a message. Pressing Sync now asks the same question, so a press during a silent
-outage has something to act on.
-
-Settings → Mailboxes reads the same fact, so a mailbox in this state says the server cannot be
-reached and for how long, rather than saying it is up to date.
+It now sends a keep-alive between passes and treats a connection that has not answered within
+thirty seconds as gone: it opens a fresh one and re-reads which install is organizing the mailbox
+before moving any mail. Pressing Sync now does the same check. Settings → Mailboxes says the
+server cannot be reached, and for how long, while this is going on.
 
 ### Sync now can be pressed again
 
-Settings → Mailboxes greyed the button out on a press and left it that way. The answer to a press
-is "queued" — nothing is synced yet — and the pane treated that answer as though the press were
-still in flight, so the control could be used once per visit to the screen and then read "Sync
-queued" until you navigated away and came back. It stayed that way across an outage, a reconnect,
-and the pass after it.
-
-The button is now unavailable only for as long as a press you made has not been answered. A pass
-the app started on its own never takes it away: a mailbox that is syncing says so on its own row,
-which is a state and not a lock on the control beside it. Pressing repeatedly is safe — the engine
-already limits how often it will dial a server that is not answering, which is where that limit
-belongs.
-
-### The engine records what it told Settings about your connections
-
-Settings → Mailboxes asks the engine on your machine which mail servers it can reach right now. On
-one platform that question stopped arriving at the engine, while other requests over the same
-channel kept working — and nothing in the engine's log said either way, because a question that
-never arrived and an answer that was refused left the same silence. The engine now records that it
-answered, with how many mailboxes it holds and how many have a live connection: a change, or once a
-minute at rest. Nothing about which provider a mailbox is on, or its address, is written down.
+The button is disabled only until a press you made has been answered. It used to stay greyed out
+reading "Sync queued" for the rest of your visit to the screen, and a sync the app started on its
+own could take it away too. A mailbox that is syncing says so on its own row.
 
 ### Still to come
 

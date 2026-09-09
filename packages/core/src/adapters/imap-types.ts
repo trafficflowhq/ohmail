@@ -1150,38 +1150,22 @@ export interface MailboxAdapter {
   connect(): Promise<void>;
   close(): Promise<void>;
   /**
-   * ASK THIS CONNECTION TO PROVE IT IS STILL ANSWERING — an IMAP NOOP, and nothing else.
+   * An IMAP NOOP: ask this connection whether it is still answering. A half-open link — socket
+   * up, every command hanging, no `close` and no `error` — is invisible to
+   * {@link ImapAdapterOpts.onConnectionError}, and the other detectors are clocks in minutes.
    *
-   * NOOP is the whole command set of a heartbeat: it changes nothing on the server, needs no
-   * mailbox selected, and whether it comes back is the one fact a half-open link cannot fake. A
-   * link that has gone half-open — the socket still there, every command hanging, no `close` and
-   * no `error` — is invisible to {@link ImapAdapterOpts.onConnectionError} by construction, and
-   * the only other detectors are clocks measured in minutes: the socket's inactivity timer
-   * ({@link NetTimeouts.socketMs}, 120 s in the persistent-process set) and
-   * {@link IMAP_READ_DEADLINE_MS} at 180 s. A caller that wants to know sooner has to ask.
+   * Deliberately unbounded: the CALLER owns the window, because a heartbeat's whole purpose is a
+   * deadline shorter than the one every other command here is held to. Abandoning the call
+   * leaves the command outstanding, so pair it with {@link forceClose}.
    *
-   * DELIBERATELY UNBOUNDED HERE — THE CALLER OWNS THE WINDOW. The whole point of a heartbeat is
-   * a deadline SHORTER than the read deadline every other command in this interface is held to,
-   * so an implementation that raced it against that deadline would hand the detector the very
-   * clock it exists to get ahead of. It follows that a caller must bound the call itself, and
-   * that abandoning it leaves the command outstanding: pair it with {@link forceClose}, which is
-   * the only thing that ends one.
-   *
-   * OPTIONAL on the interface, on {@link MailboxAdapter.scanSentRecipients}' rule: an adapter
-   * that does not implement it cannot be asked, and the caller must read that as "this
-   * connection cannot be probed" and never as a connection that failed to answer — absent and
-   * silent are different facts and only one of them is news.
+   * Optional: an adapter without it cannot be probed, which is not the same fact as a connection
+   * that failed to answer.
    */
   noop?(): Promise<void>;
   /**
-   * END THIS CONNECTION NOW, WITHOUT A LOGOUT — the teardown that works on a wedged link.
-   *
-   * IMAP commands are serialized, so the polite {@link close} queues its LOGOUT behind whatever
-   * command is currently hung: a caller escaping a hang and then awaiting `close` waits out
-   * exactly the hang it was escaping. Destroying the socket is also the only thing that ENDS an
-   * abandoned command. OPTIONAL for the same reason as {@link noop}, and declared here because
-   * the heartbeat's caller has to be able to reach it: detecting a wedged link and then tearing
-   * it down politely would spend the detection on a second wait of the same length.
+   * End this connection now, without a LOGOUT. IMAP commands are serialized, so {@link close}
+   * queues its LOGOUT behind a hung command and waits out the hang it was escaping; destroying
+   * the socket is also the only thing that ends that command. Optional, like {@link noop}.
    */
   forceClose?(): void;
   capabilities(): Promise<ImapCapabilities>;
