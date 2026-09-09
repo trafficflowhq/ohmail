@@ -13,6 +13,21 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Still to come
+
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
+
+## [0.16.2] — 2026-09-11
+
+### A phone that organizes its own mailbox keeps it
+
+A phone can be the install that organizes a mailbox. Every install writes a record into the mailbox
+saying it holds it, and a phone could write the word for itself that no install could read back —
+so a phone read its own record as another organizer's, handed the mailbox back, and did it again
+every pass. It keeps it now. A computer or ohmail Cloud still takes a mailbox over from a phone when
+you ask, and the row that says so names a phone instead of "another organizer".
+
 ### Your piles travel again between your computers
 
 A computer that reads a mailbox another of your computers organizes gets its settings — your rules,
@@ -26,6 +41,38 @@ again, however long the mailbox has been in use.
 The pass that clears automated mail out of the Ohbox could file a message you had just moved back
 into it, if your move and the pass landed at the same moment. It now checks a second time, right
 before it files anything, whether you have moved the message — so your placement wins.
+### The Screener asks only about senders still worth a decision
+
+The Screener holds mail from people you have never agreed to hear from. How far back it asks about
+is measured from a fixed point — the window in Settings. The count in the sidebar respected that
+window; the list itself did not, so it read the folder instead of the question, and on a mailbox
+with years of history those are different by an order of magnitude. The queue offered senders whose
+newest mail was years old, beside a much smaller count.
+
+The list now asks the same question the count does, through the same code. Nothing moves on your
+mail server and nothing is deleted: the mail stays in the folder it is in, and those senders are in
+History, where old mail from people you never answered has always been. Set the window to all time
+and every one of them is back in the list.
+
+Deciding still works for a sender the queue no longer shows — reach them from History or from
+search, press a pile, and all of their held mail follows.
+
+### Connecting a mailbox sets the point the Screener counts from
+
+Connecting a mailbox without choosing a history window left the Screener with no cutoff, so every
+message from a sender you had not decided about waited for a decision whatever its date. A mailbox
+with years of mail arrived with years of it waiting. Agreeing to let ohmail organize a mailbox is
+now itself that point, so only mail that arrives afterwards is a question. Choosing a window still
+works the same way, and coming back to setup cannot move the point.
+
+Mail already waiting in the Screener is not moved by this. If yours holds old mail from before
+this release, it stays where it is until you decide on it.
+
+### A waiting sender says why no suggestion is coming
+
+When ohmail cannot ask for a suggestion — the AI budget is spent, or AI is switched off for the
+account — the senders it did not get to said "No suggestion yet", which reads as a promise. They
+say the reason instead.
 
 ### The app reports how much memory it is holding
 
@@ -33,10 +80,10 @@ The desktop app's engine now writes its own memory use to its log every five min
 database it keeps your mail in is a separate number on that line rather than part of one total. If
 the app ever feels heavy after a long day, the log says which half grew.
 
-Two things changed behind that. The mail window no longer keeps a copy of its view of the mailbox
-alive after the view has moved on — one such copy was left, and on a large mailbox it was not
-small. And the app's store is a fixed cost measured at about 200 MB whatever the size of your
-mailbox, so it is now written down as one.
+Two things changed behind that. One copy of the mail window's view of the mailbox was being left
+alive after the view had moved on, and on a large mailbox it was not small; it is released now.
+And the app's store is a fixed cost measured at about 200 MB whatever the size of your mailbox, so
+it is now written down as one.
 
 ### A long mail-server command is not cut off by the connection check
 
@@ -46,7 +93,7 @@ pressing Sync now during a big fetch leaves the fetch running. And a link that d
 check has already passed is picked up by the next check, instead of waiting out the connection's
 own timeout.
 
-### The organizer lease is checked at every write
+### A mailbox that changes hands mid-pass stops the old computer within seconds
 
 Exactly one install organizes a mailbox at a time, and which one is recorded in the mailbox itself.
 That record was read at the start of a sync pass and then trusted for the whole of it, so moving a
@@ -102,7 +149,7 @@ limit already said: your other installs are never shown as stopped, and no organ
 made from half a folder. A request that runs out of time says so and closes its connection at
 once, instead of queueing a polite goodbye behind whatever is stuck.
 
-### A sender cannot write their way into your threads or your address book
+### A sender cannot write their way into your threads, or to the top of your suggestions
 
 The headers on an incoming message are written by whoever sent it, and three places treated them as
 facts. A message reusing the Message-ID of one you already have could take its place in a
@@ -133,6 +180,14 @@ you do.
 - Away replies go only to the piles you chose, and never to a site's own notification mailbox —
   `wordpress@`, `root@` and the rest of a server's mail. Addresses that merely start with one of
   those names are people, and still get a reply.
+- A bounce for an away reply no longer lands in your Ohbox. It files to Receipts, and the responder
+  stops writing to that address. Bounces for mail you sent yourself still reach you.
+- An away setting you saved on another computer is reported as applied only when what came back is
+  what you asked for. A change made somewhere else is named as that instead, with the values the
+  setting now holds.
+- Which piles your away replies answer travels between your computers, with the rest of your away
+  settings. A computer taking the mailbox over fell back to the Ohbox and lost your choice; one
+  running an older ohmail leaves your choice alone instead of resetting it.
 
 ### Sync now says what it did
 
@@ -244,61 +299,56 @@ arriving in the background waits behind it less.
 
 ### A self-hosted install listens only where you told it to
 
-The self-host stack's front door published ports 80 and 443 with no address, which binds every
-interface the machine has. On a rented server that includes its public IP, so an install reached
-only over a tailnet or a home LAN — on a name no public DNS resolves — was still answering the
-internet on 443. The hostname was never the boundary; the open socket is.
+The front door published ports 80 and 443 with no address, which binds every interface the machine
+has — a rented server's public IP included. `OHMAIL_BIND` in `.env` now decides, and defaults to
+`127.0.0.1`.
 
-`OHMAIL_BIND` in `.env` is now the one place that is decided, and it defaults to `127.0.0.1`:
-nothing outside the machine can connect until an operator says otherwise. `0.0.0.0` is the
-explicit choice for a public domain and means reachable from every interface of that box;
-a private install names its tailnet or LAN address instead.
+**If your install serves a public domain, set `OHMAIL_BIND=0.0.0.0` when you take the new compose
+file.** Without it the stack comes back up on loopback, your domain stops answering, and
+certificate renewal stops with it.
 
-**If you run a self-hosted install on a public domain, set `OHMAIL_BIND=0.0.0.0` when you take
-the new compose file.** Without it the stack comes back up on loopback and your domain stops
-answering — and the certificate renewal stops too, because a public authority has to reach port
-80 from the internet to validate the name. The operator guide and `.env.example` both say so
-beside the value.
+### A desktop signed in to your own server forwards only the requests it should
+
+A desktop install in cloud mode serves reads from its local copy of your mail and forwards
+everything else to the server its door names. It refused two paths and forwarded the rest, so
+several spellings of the browser sign-in hand-off reached that server with a live sign-in code.
+
+It now forwards only the routes the server's own route table marks as forwardable, and answers 404
+to everything else. Signing in through a browser still tells you, on your own server, to use your
+password and authenticator code instead.
+
+### A release writes every self-host image's version tag before any latest tag moves
+
+A release wrote each self-host image's version tag and its `latest` tag together, one image at a
+time, so a `docker compose pull` during a release could fetch a new server beside an old organizer.
+Every version tag is now written first and checked, and `latest` moves only after that.
+
+Three registry tags still cannot move at once. Pin `OHMAIL_IMAGE_TAG` to a version if you would
+rather choose when you take a release.
+
+### The self-host boot check can pass a healthy stack again
+
+The boot check sent no `Idempotency-Key` at the attachment-staging step, which the API requires, so
+it failed a stack that was working. Fixed. The mail server its mailbox and sync steps use is set by
+`SMOKE_MAIL_HOST`, `SMOKE_MAIL_PORT`, `SMOKE_MAIL_DOMAIN` and `SMOKE_MAIL_PASS`, and its compose
+defaults are the stack in its own directory.
 
 ### A self-hosted install can sit behind a TLS terminator it does not own
 
-Three real setups could not run the self-host stack at all: a Tailscale user with a publicly
-trusted certificate for their `ts.net` name, anyone already running a reverse proxy in front of
-everything on the box, and anyone behind a corporate load balancer. One value was both the address
-the proxy served on and the origin the application announced, so the proxy could not be told to
-serve plain HTTP behind something else without lying to the app about its own origin.
+Set `OHMAIL_EXTERNAL_TLS=1` in `.env` and the proxy serves plain HTTP on port 80 and holds no
+certificate, while `OHMAIL_ORIGIN` keeps naming the https address your terminator presents. Point
+the terminator at port 80 on `OHMAIL_BIND`. This makes `tailscale serve`, an existing reverse proxy
+and a load balancer workable; the self-host guide's note that they were not is corrected.
 
-`OHMAIL_EXTERNAL_TLS=1` in `.env` separates the two. The proxy then serves plain HTTP on port 80,
-holds no certificate of its own and orders none from any authority, while `OHMAIL_ORIGIN` goes on
-naming the https address the terminator presents — the cookie host, the passkey identity and every
-link the app writes still come from it. Point the terminator at port 80 on `OHMAIL_BIND`, which
-with the loopback default means the stack is reachable through the terminator and nowhere else.
-
-`X-Forwarded-For` and `X-Forwarded-Proto` are headers any caller can write, so they are honoured
-from `OHMAIL_TLS_TERMINATOR` and from nowhere else. It defaults to `127.0.0.1` — a terminator on
-the same machine — because trusting too narrowly costs an address in an audit line and trusting too
-widely means believing a stranger. Session cookies are unaffected either way: `Secure` is written
-on every cookie the server mints and is derived from no header, on any door.
-
-The stack's route table now lives in one file both front doors read, so the paths cannot drift
-apart between them. The self-host guide's note that `tailscale cert` and `tailscale serve` could
-not be used is corrected rather than deleted, since the reasoning in it is why the switch is shaped
-this way. Nobody has run it against a real tailnet — that needs a Tailscale account, and the guide
-says so.
+`X-Forwarded-For` and `X-Forwarded-Proto` are honoured from `OHMAIL_TLS_TERMINATOR` and nowhere
+else, defaulting to `127.0.0.1`. Session cookies are unaffected on either door.
 
 ### Two self-hosted stacks on one machine no longer adopt each other
 
-The compose project name was the fixed string `ohmail`. Compose identifies an install by that
-name and names every container, volume and network after it, so a second stack on the same
-machine was the same project: `docker compose up` in the second directory adopted the first
-install's containers and volumes and mutated them, with nothing reported anywhere. `OHMAIL_PROJECT`
-now names each stack, defaulting to the name every existing install already has — so a single
-stack is untouched, and two of them share nothing.
-
-### Still to come
-
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
+The compose project name was fixed, so a second stack in a second directory was the same project
+and its first start took over the first install's containers and volumes. `OHMAIL_PROJECT` now
+names each stack, defaulting to the name existing installs already have. Changing it on a running
+install orphans that install's volumes, so choose it before first boot.
 
 ## [0.16.1] — 2026-09-10
 
@@ -5765,7 +5815,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.16.1...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.16.2...HEAD
+[0.16.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.16.2
 [0.16.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.16.1
 [0.16.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.16.0
 [0.15.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.15.0
