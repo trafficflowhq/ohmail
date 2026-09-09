@@ -135,7 +135,7 @@ export const ohbox: MessageFixture[] = [
        counter-proposal and the verification code read as this morning's already-handled mail
        at the top of Earlier. */
     unread: false,
-    /* A NAMELESS text/calendar part — the wire shape Google and Outlook actually send — so the
+    /* A NAMELESS text/calendar part — the wire shape the big calendar servers actually send — so the
        demo shows the invite exactly as a live mailbox would: an event card, downloadable as
        invite.ics. The content is served by the fixtures adapter with zero network. */
     attachment: {
@@ -144,7 +144,7 @@ export const ohbox: MessageFixture[] = [
       contentType: "text/calendar; charset=utf-8; method=REQUEST",
       content: [
         "BEGIN:VCALENDAR",
-        "PRODID:-//Google Inc//Google Calendar 70.9054//EN",
+        "PRODID:-//ohmail demo//EN",
         "VERSION:2.0",
         "METHOD:REQUEST",
         "BEGIN:VEVENT",
@@ -172,8 +172,8 @@ export const ohbox: MessageFixture[] = [
     time: "08:35",
     /* read — see techcheck's note: the demo keeps three unread rows */
     unread: false,
-    /* An Outlook counter-proposal: METHOD:COUNTER with the original time in X-MS-OLDSTART/END
-       and a WINDOWS zone name — the Exchange dialect, VTIMEZONE trap lines included. */
+    /* A counter-proposal in the Exchange dialect: METHOD:COUNTER with the original time in
+       X-MS-OLDSTART/END and a Windows zone name, VTIMEZONE trap lines included. */
     attachment: {
       filename: "",
       size: "1 KB",
@@ -181,7 +181,7 @@ export const ohbox: MessageFixture[] = [
       content: [
         "BEGIN:VCALENDAR",
         "METHOD:COUNTER",
-        "PRODID:Microsoft Exchange Server 2010",
+        "PRODID:-//ohmail demo//EN",
         "VERSION:2.0",
         "BEGIN:VTIMEZONE",
         "TZID:W. Europe Standard Time",

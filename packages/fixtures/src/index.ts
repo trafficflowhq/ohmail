@@ -2,6 +2,7 @@ export * from "./types.js";
 export { SLOP } from "./slop.js";
 export {
   bannedTerms,
+  corpusOnlyBannedTerms,
   fictionalNames,
   NAMESPACE_EXEMPTION,
   type FictionalName,

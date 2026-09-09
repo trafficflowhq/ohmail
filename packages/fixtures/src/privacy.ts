@@ -299,6 +299,39 @@ export const bannedTerms: string[] = [
 ];
 
 /**
+ * ══ BANNED IN THE DEMO WORLD, LEGAL IN PRODUCT CODE ══════════════════════════════════════
+ *
+ * The SCOPE note above already draws this line in prose — "Product code outside the fixtures names
+ * real vendors on purpose … That is nominative use, not a leak, and both would be nonsense
+ * anonymised" — and until now the line existed only in prose, so the corpus had no way to ban a
+ * term that product code must be free to write. This is that half, machine-readable.
+ *
+ * WHY IT IS A SECOND LIST AND NOT TWO MORE ENTRIES ABOVE. `bannedTerms` has three consumers and
+ * only one of them is the demo world. The other two run it over PRODUCT code — the phone app's
+ * own sources, and the IMAP folder paths the client creates — where naming the service a feature
+ * talks to is the whole point of the sentence. Measured: adding a mail vendor's name to the shared
+ * list turns the phone app's scan red in eight of its files, the push transport and its copy among
+ * them, each one naming the vendor because the feature IS that vendor's. Widening the shared list
+ * would therefore have had to be paid for with eight exemption entries, and an exemption list that
+ * grows is how a guard stops meaning anything. The demo world has no such claim: nothing in it is
+ * about a real calendar server, and a calendar part that says so is a real brand in the corpus.
+ *
+ * WHAT PUT IT HERE. Two `PRODID` values — `-//Google Inc//Google Calendar 70.9054//EN` and
+ * `Microsoft Exchange Server 2010` — sat inside the two calendar invitations' `text/calendar`
+ * bodies. Nothing on screen shows a PRODID, which is exactly why they survived every review of
+ * what the demo DISPLAYS, and `bannedTerms` held neither term, so the guard was green for the
+ * whole time they were there. Both now read `-//ohmail demo//EN`. The dialect trap lines each
+ * fixture exists for — the nameless part, `METHOD:COUNTER`, `X-MS-OLDSTART`, the Windows zone
+ * name — are untouched: they are wire facts, not brands.
+ *
+ * `outlook` is on the shared list already and stays there.
+ */
+export const corpusOnlyBannedTerms: string[] = [
+  "google",
+  "microsoft",
+];
+
+/**
  * The one documented contradiction of `bannedTerms`, kept honest on purpose.
  *
  * The IMAP folder namespace used to be the contradiction: the product created
