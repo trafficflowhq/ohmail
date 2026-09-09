@@ -591,6 +591,39 @@ row, and the measurement has never read the capsule. The same rule covers the ca
 selection's verbs at the foot of a list and the one at the foot of a card in Reads and Receipts.
 While a reply editor is open the row stands down to a plain full-width row of verbs, as before.
 
+### Screen readers reach what the settings pane shows
+
+A settings banner — the standing fact at the top of a pane, "Organizing" or "Organized by ohmail
+Cloud", with the sentence under it saying since when and from where — read out as its label alone.
+The sentence beside it was on screen and not in what a screen reader could reach. It is now the
+banner's description: the label names the block, the sentence describes it, and the words on screen
+are the same words, unmoved and unchanged.
+
+The same was true of every settings row's value — the "English" beside Language, and the sentence
+saying whether a mailbox's mail server can be reached, which is the one thing on that row a person
+most needs. A value is now a node a screen reader reads. It is deliberately not announced when it
+changes: several of these sentences carry a "last answered … ago" clause that ticks on its own, and
+a reader should not be told the same thing again every minute. This is the browser's panes; the
+desktop's Mailboxes pane already had both.
+
+### Small controls are easier to press on a phone-sized window
+
+Four controls drew smaller than a thumb's target and did not gain the invisible strip the rest of
+the app's small controls use: the open-reader glyph in a message's from-line, which appears on every
+message; the folder row's twisty; the folder row's ⋯; and the line of a compact (i) note. On a
+window narrower than 640px each now takes a press over the full 44px band, and none of them changed
+size, moved, or takes a press meant for the control beside it. On a wider window nothing changes at
+all. The (i) note takes the band while it is closed — the press that opens it — and keeps its own
+line once open, so the explanation underneath stays reachable to the pixel.
+
+### The message body announces itself as a text box
+
+The compose body and the inline reply editor are typed into, and to a screen reader they were named
+blocks rather than editors: nothing said they take text, and nothing said the Return key inserts a
+line rather than sending. Both now report themselves as multi-line text boxes, keeping the names
+they already had — "Message body" and "Reply body". Nothing about typing, sending or formatting
+changes.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

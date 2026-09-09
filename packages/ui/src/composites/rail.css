@@ -253,4 +253,21 @@ button.ftw:hover{color:var(--ink)}
   .ritem{min-height:44px}
   .compose-cta{min-height:44px}
   .fdismiss{min-height:44px}
+  /* THE TWISTY IS THE ONE CONTROL HERE THAT GETS THE ROW RATHER THAN A STRIP, and it is the
+     case the strip rule names as its own exception. `.ftw` is 14px WIDE — the deficiency is
+     horizontal, and a horizontal strip would overlap `.ritem`, which begins 0px to its right
+     and is itself a control. Vertically it already stretches (`align-self:stretch`), so what
+     it needs is for the ROW to be 44: it then presses 14×44 and no strip exists to overlap
+     anything.
+
+     The row's floor is declared HERE rather than left to `.ritem`'s. The height was already
+     44 by way of the flex line's cross size, which is a property of a sibling — so this is the
+     same number written where the twisty's own guard can read it, and it moves no pixel. */
+  .frow{min-height:44px}
+  /* The folder row's ⋯ keeps its 2px/7px box and takes the strip. It is the last item on a
+     row that is 44 tall by the rule above, so its 44px strip is exactly the row's height —
+     it reaches past neither end — and `.ritem`, the only control beside it, ends where
+     `.fmore` begins. */
+  .fmore{position:relative}
+  .fmore::before{content:"";position:absolute;left:0;right:0;top:50%;height:44px;translate:0 -50%;z-index:1}
 }

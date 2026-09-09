@@ -28,3 +28,40 @@
 /* The toggle's accessible name, for the reader that gets no glyph. */
 .infonote-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
   clip:rect(0 0 0 0);white-space:nowrap;border:0}
+
+/* ── THE 44px TOUCH TARGET ON PHONES ────────────────────────────────────────────────────────
+   44px is the thumb's number and the one both platforms publish. It is the size of the PRESSABLE
+   AREA, not of every control: a drawn 44 is right for a button, a list row and an icon button,
+   and wrong for a selector — a segmented control drawn 44 with a 13px label stops reading as
+   chrome and reads as a stack of buttons above the rows, which inverts the hierarchy on a screen
+   whose point is the list.
+
+   So the split is hit versus drawn, by control class. Where 44 IS the control's own phone size it
+   is drawn. Where it is not, the control keeps its drawn size and gains an invisible vertical
+   strip: `::before`, absolutely positioned, 44px tall, centred on the control. Vertical only —
+   neighbours in a row sit 0–6px apart horizontally, so a horizontal strip would overlap the
+   control beside it. `::before` and not `::after`, because `.btn[data-run]::after` is the send
+   band.
+
+   A strip may never overlap another control's box or strip. Where the gap was too short the
+   ROW-GAP grows; column gaps, widths and padding are untouched, so nothing wraps differently and
+   no measured width moves.
+
+   Only under 640px: a pointer does not need this, and the desktop's density is a design the wider
+   layout was drawn around.
+
+   ── AND HERE, ONLY WHILE THE NOTE IS CLOSED ─────────────────────────────────────────────────
+
+   The summary is one line of ~17px, so its strip reaches ~13px past it at each end. Below it
+   sits `.infonote-more` at `margin-top:5px` — the note's OWN explanation, which several callers
+   fill with prose that carries links. An always-on strip would lie over the first 8px of that
+   paragraph and take presses meant for it, and the alternative the strip rule offers — grow the
+   gap — would be a visible change on every phone with a note open.
+
+   Closed, that paragraph has no box at all, and closed is the state the big target is FOR: the
+   press that opens the note. Open, the summary keeps its own drawn box to close by, and the
+   explanation underneath stays reachable to the pixel. */
+@media (max-width: 640px){
+  .infonote:not([open]) > .infonote-sum{position:relative}
+  .infonote:not([open]) > .infonote-sum::before{content:"";position:absolute;left:0;right:0;top:50%;height:44px;translate:0 -50%;z-index:1}
+}

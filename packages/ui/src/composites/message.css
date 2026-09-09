@@ -349,4 +349,17 @@
 @media (max-width: 640px){
   .attach{min-height:44px}
   .msg-history-toggle{min-height:44px}
+  /* The per-message open-reader affordance draws 26×26 — the smallest control in the app and
+     the only one of its size that appears on EVERY message. It keeps the 26 and takes the
+     strip.
+
+     THE ONE NEIGHBOUR THAT HAD TO BE MEASURED IS BELOW IT, not beside it. `.msg-from` is
+     `align-items:center` and its tallest item is `.msg-sender` — a 26px avatar plus 3px of
+     padding top and bottom, so the line is 32 and the 26px glyph sits centred in it. A 44px
+     strip centred on that glyph therefore reaches 6px past the line at each end, and the next
+     control down the panel is `.subj-rule` inside `.msg-subject`, whose `margin:8px 0 0` puts
+     its box 8px below: the strip stops 2px clear of it. Nothing else in the from-line's `.t`
+     cluster is above or below the glyph — they are siblings on the same line. */
+  .msg-open{position:relative}
+  .msg-open::before{content:"";position:absolute;left:0;right:0;top:50%;height:44px;translate:0 -50%;z-index:1}
 }

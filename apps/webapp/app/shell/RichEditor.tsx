@@ -304,6 +304,25 @@ export function RichEditor({
     immediatelyRender: false,
     editorProps: {
       attributes: {
+        /**
+         * ── THE BODY IS A MULTI-LINE TEXT BOX, AND IT HAS TO SAY SO ──────────────────────────
+         *
+         * ProseMirror's surface is a `contenteditable` `<div>`. `contenteditable` is not part of
+         * any implicit role mapping, so the element arrived in the accessibility tree as a plain
+         * group carrying a name: a reader landing on it was told what it is called and not that
+         * it can be typed into, and nothing said the return key inserts a line rather than
+         * submitting. Both facts are attributes, and neither was present.
+         *
+         * `role="textbox"` with `aria-multiline="true"` is the pair the platforms read — UIA
+         * reports an Edit control with the multiline pattern, AT-SPI an editable text object —
+         * and it is what makes the body findable by role at all rather than only by its text.
+         * The name is `ariaLabel`, which every caller has always been required to pass.
+         *
+         * Declared BEFORE `aria-label` for no reason but reading order; nothing here depends on
+         * the order and the spread below cannot reach these two.
+         */
+        role: "textbox",
+        "aria-multiline": "true",
         "aria-label": ariaLabel,
         ...(id ? { id } : {}),
         ...(placeholder ? { "data-placeholder": placeholder } : {}),
