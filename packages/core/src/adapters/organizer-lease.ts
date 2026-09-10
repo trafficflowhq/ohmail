@@ -31,8 +31,9 @@ export {
  * happens only under a PERMIT that names (install, mailbox, uidvalidity, claim nonce, issued-at)
  * and is younger than `DEFAULT_PERMIT_TTL_MS`. A permit is re-validated by a `_meta` peek at least
  * every `PERMIT_WRITES_PER_RECHECK` writes AND every TTL; a stand-down invalidates every permit at
- * once and none may be revived. The local clock is never the sole authority for believability: the
- * server's own time, read from the newest claim's `INTERNALDATE`, bounds the skew. The permit and
+ * once and none may be revived. The local clock is never the sole authority: an install's own skew
+ * is its claim's heartbeat measured against that record's IMAP `INTERNALDATE` — the server's own
+ * stamp for the same instant — and past the tolerance it writes no claim at all. The permit and
  * its one predicate live in `apps/worker/src/lease.ts`; this is the only statement of the rule.
  *
  * ── IT IS A LEASE, NOT A MUTEX, AND THAT IS NOT A HEDGE ───────────────────────────────────
