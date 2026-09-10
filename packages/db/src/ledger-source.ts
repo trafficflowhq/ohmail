@@ -107,13 +107,18 @@ export const DRAFT_RETRY_WINDOW_MS = 24 * 60 * 60 * 1000;
  * other's terms. It is the entitlements program's own table (`docs/PORT-CONTRACT.md`, its
  * `src/port.ts`), duplicated here rather than imported because the two programs may not link —
  * `test/spend-actions-contract.test.ts` pins the two against each other.
+ *
+ * NOTHING HERE READS `exclusive`. The claim is taken by the program that answers the spend, so
+ * this column is transcribed data: it exists so the terms can be read on this side and so the pin
+ * can refuse a drift. Two sites claim — the Screener, and the proposer, whose key is one whole
+ * pass (`<accountId>:<UTC hour>`).
  */
 export const SPEND_ACTIONS = {
   classify_ingest: { reason: "debit_classify", namespace: "classify", exclusive: false, setupPool: false },
   screener: { reason: "debit_classify", namespace: "classify", exclusive: true, setupPool: true },
   draft: { reason: "debit_draft", namespace: "draft", exclusive: false, setupPool: false,
     retryWindowMs: DRAFT_RETRY_WINDOW_MS },
-  propose: { reason: "debit_propose", namespace: "propose", exclusive: false, setupPool: false },
+  propose: { reason: "debit_propose", namespace: "propose", exclusive: true, setupPool: false },
   workflow: { reason: "debit_workflow", namespace: "workflow_run", exclusive: false, setupPool: false },
 } as const satisfies Record<string, {
   reason: WeightedDebitReason; namespace: string; exclusive: boolean; setupPool: boolean;
