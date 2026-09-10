@@ -498,6 +498,8 @@ async function alertPass(
       sinks: cfg.sinks ?? [],
       shards: cfg.shards,
       thresholds: cfg.thresholds,
+      ...(cfg.parkedAccounts ? { parkedAccounts: cfg.parkedAccounts } : {}),
+      ...(cfg.accountsAtCap ? { accountsAtCap: cfg.accountsAtCap } : {}),
       repeatMs: cfg.repeatMs,
       source: "api",
       environment: cfg.environment ?? "production",

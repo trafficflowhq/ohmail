@@ -21,7 +21,7 @@
 --   -- 2. §12b — anything in schema `admin` other than this script's own two views
 --   SELECT n.nspname, c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
 --    WHERE n.nspname = 'admin'
---      AND NOT (c.relkind = 'v' AND c.relname IN ('audit_log', 'credit_ledger'));
+--      AND NOT (c.relkind = 'v' AND c.relname = 'audit_log');
 --
 --   -- 3. §13 — a SECURITY DEFINER routine anybody can execute (EXECUTE to PUBLIC is the
 --   --    Postgres DEFAULT, so "nobody granted it" is not an answer)
@@ -59,24 +59,18 @@
 --    re-running it UNDOES a hand-widened grant somebody added in production "for support" — which a
 --    migration, applied once and recorded as applied, structurally cannot do.
 --
--- The repo had already ruled this once (`harden-billing-roles.sql`); the two reasons above are
--- specific to this script.
+-- ## THIS SCRIPT CANNOT BREAK THE RUNNING DEPLOYMENT, AND DEPENDS ON NO OTHER SCRIPT
 --
--- ## THIS SCRIPT CANNOT BREAK THE RUNNING DEPLOYMENT, AND IS NOT COUPLED TO
--- ## `harden-billing-roles.sql`
---
--- Nothing here depends on `harden-billing-roles.sql` having run. A deployment where
--- `ohmail_migrator` and `ohmail_runtime` do not exist — one that connects as the role that owns
--- the schema — is fully supported by this script. The ownership flip is a separate step with its
--- own review, never a precondition of provisioning the staff role.
+-- A deployment where `ohmail_migrator` and `ohmail_runtime` do not exist — one that connects as
+-- the role that owns the schema — is fully supported by this script. The ownership flip is a
+-- separate step with its own review, never a precondition of provisioning the staff role.
 --
 -- Every statement below either touches `ohmail_admin` alone or reads the catalog. Precisely
 -- stated, because the pre-flight pass changed two of these and the old sentence ("purely
 -- additive") is no longer true:
 --
 --  · It GRANTS and REVOKES only to and from `ohmail_admin`.
---  · It creates schema `admin` and TWO views in it (`audit_log` §3, `credit_ledger` §9b).
---    Nothing else reads any of them.
+--  · It creates schema `admin` and ONE view in it (`audit_log`, §3). Nothing else reads it.
 --  · It takes back OWNERSHIP of any relation `ohmail_admin` owns (§1d). A relation the API or
 --    the worker created is owned by the migrator, never by this role, so the loop is empty on
 --    a healthy database and cannot reach one of theirs.
@@ -149,22 +143,14 @@
 --   SELECT * FROM message_bodies WHERE false;
 --   SELECT * FROM threads WHERE false;
 --   SELECT secret_enc FROM mailbox_credentials WHERE false;
---   SELECT payload FROM billing_events WHERE false;
---   SELECT meta    FROM public.credit_ledger WHERE false;
---   SELECT source  FROM public.credit_ledger WHERE false;   -- QUALIFY IT: unqualified,
---                                    -- `credit_ledger` is the VIEW, which HAS a `source`.
 --   SELECT * FROM public.audit_log WHERE false;
 --   UPDATE accounts SET name = name WHERE false;
 --
 -- and every one of these must ANSWER:
 --
 --   SELECT count(*) FROM accounts;
---   SELECT account_id, suspended_at FROM account_suspensions WHERE false;  -- (two columns)
 --   SELECT * FROM admin.audit_log LIMIT 1;
 --   SELECT * FROM audit_log LIMIT 1;   -- resolves to admin.audit_log through search_path
---   SELECT source FROM credit_ledger LIMIT 1;   -- the VIEW, and the value is redacted to a
---                                    -- NAMESPACE TOKEN: `classify:`, never `classify:<uuid>:`
---                                    -- and never `classify:<uuid>:<32 hex>`
 --
 -- ## …and the script PROVES the rest of it before it commits
 --
@@ -456,7 +442,7 @@ GRANT SELECT ON admin.audit_log TO ohmail_admin;
 -- a second code path, and it means a widened projection fails HERE (42501 on a column the view
 -- does not have) rather than quietly reading the bag.
 --
--- The same sentence is true of `credit_ledger` (§9b), and §12b is what keeps the
+-- §12b is what keeps the
 -- shadowing list to exactly these two: the schema the role searches FIRST is the schema in
 -- which an unreviewed `admin.messages` would silently outrank `public.messages`.
 ALTER ROLE ohmail_admin SET search_path = admin, public;
@@ -506,27 +492,15 @@ REVOKE ALL ON public.messages FROM ohmail_admin;
 
 -- ── 5. Identity and plan — accounts, users. ───────────────────────────────────────────────
 --
--- Legitimately staff-visible: the privacy rule's second clause is "Subscription, usage and billing data
--- IS legitimately visible to staff for user management". `users` holds no credential — password
--- hashes are in `credentials`, TOTP in `totp_secrets`, both un-granted below by omission.
+-- Legitimately staff-visible: the privacy rule's second clause is that account data IS visible
+-- to staff for user management. `users` holds no credential — password hashes are in
+-- `credentials`, TOTP in `totp_secrets`, both un-granted below by omission.
 REVOKE ALL ON public.accounts FROM ohmail_admin;
 GRANT SELECT (id, name, ai_enabled, created_at) ON public.accounts TO ohmail_admin;
 
 REVOKE ALL ON public.users FROM ohmail_admin;
 GRANT SELECT (id, account_id, email, display_name, email_verified_at, created_at)
   ON public.users TO ohmail_admin;
-
--- ── 5b. `account_suspensions` — presence-is-state suspension (cloud journal 0008). ────────
---
--- The console shows WHO is suspended and SINCE WHEN, which is a legitimate user-management fact
--- (the privacy rule's second clause). TWO columns only: `account_id` and `suspended_at`.
---
--- NOT `suspended_by` (a `staff_users` id — no console screen renders it) and NOT `note` (free
--- text the operator typed). The WRITE that records both runs on the runtime connection, never
--- this blind role — a write grant here would make §13's `effective ⇒ direct` census abort. Add
--- either column in the diff that adds a projection for it, mirroring `STAFF_SELECT_GRANTS`.
-REVOKE ALL ON public.account_suspensions FROM ohmail_admin;
-GRANT SELECT (account_id, suspended_at) ON public.account_suspensions TO ohmail_admin;
 
 -- ── 6. Mailboxes — including `error_detail`, which is staff-visible BY DESIGN. ────────────
 --
@@ -646,293 +620,14 @@ REVOKE ALL ON public.flag_state   FROM ohmail_admin;
 -- a producer put there. It stays un-granted for the same reason as every other jsonb bag.)
 REVOKE ALL ON public.change_log FROM ohmail_admin;
 
--- ── 9. Money — the tables minus their two jsonb bags. ─────────────────────────────────────
+-- ── 9. `account_storage` (mail 0062) — the stored-body byte counter. ──────────────────────
 --
--- `billing_events.payload` is the raw Stripe event: a customer's name, address and line-item
--- descriptions. The operator queue needs `stripe_event_id` (what you paste into the dashboard)
--- and `error` (why it failed).
---
--- `credit_ledger.meta` is the column a cleanup pass had to scrub after `pipeline.ts` wrote the
--- raw RFC822 Message-ID into it. The console's `staffMeta` gate projected it safely; this makes the
--- projection unnecessary, which is the whole point of the slice — a gate nobody can forget
--- beats a gate somebody has to remember.
---
--- **`credit_ledger.source` IS NOT GRANTED EITHER, and the sentence that used to stand here —
--- "`source` is safe BY CONSTRUCTION (every foreign input is sha256'd into it)" — WAS FALSE**
--- (a security-review finding). Hashing is not redaction when the input is guessable. `source` is
--- `classify:<mailbox>:<sha256(mid:<Message-ID>)[0:32]>` for a classification and
--- `draft:<message>:<sha256(<Idempotency-Key>)[0:32]>` for a draft, and both inputs are
--- attacker- or client-chosen: a sender picks a low-entropy `Message-ID` for mail it sends to
--- the account, and a natural client uses the SUBJECT as its `Idempotency-Key`. Hash the
--- candidate, compare, and staff has confirmed that this account received that exact mail.
--- Truncating to 128 bits stops collisions; it adds no entropy to a guessable input and does
--- not prevent an offline dictionary.
---
--- The fix is the grant, not a re-keying. `credit_ledger` is APPEND-ONLY and the cleanup pass deliberately
--- destroyed the plaintexts, so existing rows can never be re-hashed under a key — an HMAC
--- going forward would leave the entire historical oracle readable and be fix-SHAPED rather
--- than a fix. Removing the column from the grant closes history at once.
---
--- The money is still fully readable, and so is the ledger's dedup IDENTITY in the form staff
--- actually needs it: `admin.credit_ledger` below projects the six money columns verbatim and
--- `source` REDACTED. Same shadow-view mechanism as `admin.audit_log` in §3, same reason.
-REVOKE ALL ON public.billing_customers FROM ohmail_admin;
-GRANT SELECT (account_id, stripe_customer_id, email, created_at, updated_at)
-  ON public.billing_customers TO ohmail_admin;
-
-REVOKE ALL ON public.billing_subscriptions FROM ohmail_admin;
-GRANT SELECT (
-  id, account_id, stripe_subscription_id, stripe_price_id, plan, status,
-  mailbox_limit, monthly_credits, storage_bytes_limit, current_period_start, current_period_end,
-  cancel_at_period_end, grace_until, stripe_event_ts,
-  -- cloud 0022 — cadence and add-on quantities: subscription data by the isolation rule's own
-  -- words (staff see billing; the admin MRR and the at-cap alert compose these).
-  billing_interval, addon_storage_units, addon_mailboxes,
-  created_at, updated_at
-) ON public.billing_subscriptions TO ohmail_admin;
-
--- `account_storage` (mail 0062) — the stored-body byte counter behind the managed storage cap.
--- Usage data in the invariant's own words (staff may see billing and usage, never content): an
--- id, a byte count and a timestamp, nothing derived from what any message says. The alerts
--- driver on this role reads it for the `storage_at_cap` rule, which is why the grant exists at
--- all rather than the table staying un-granted like `messages`.
+-- Usage data in the isolation rule's own words: an id, a byte count and a timestamp, nothing
+-- derived from what any message says. The alerts driver on this role reads it for the
+-- `storage_at_cap` rule, which is why the grant exists at all rather than the table staying
+-- un-granted like `messages`.
 REVOKE ALL ON public.account_storage FROM ohmail_admin;
 GRANT SELECT (account_id, bytes, updated_at) ON public.account_storage TO ohmail_admin;
-
-REVOKE ALL ON public.credit_balances FROM ohmail_admin;
-GRANT SELECT (account_id, balance, updated_at) ON public.credit_balances TO ohmail_admin;
-
-REVOKE ALL ON public.credit_ledger FROM ohmail_admin;
-GRANT SELECT (id, account_id, delta, balance_after, reason, created_at)
-  ON public.credit_ledger TO ohmail_admin;
-
--- ── 9b. `admin.credit_ledger` — the money, and a REDACTED `source`. ───────────────────────
---
--- Same construction as `admin.audit_log` in §3: a `security_barrier` view owned by whoever
--- runs this script, so it reads its base table with the OWNER's privileges while
--- `ohmail_admin` holds nothing on `public.credit_ledger.source`. `search_path = admin, public`
--- then makes drizzle's unqualified `from "credit_ledger"` in `loadLedger` resolve to THIS for
--- the staff role and to the table for PGlite — one query, no second code path, and the DTO
--- unchanged.
---
--- ## The redaction is DENY-BY-DEFAULT, and that is the whole design
---
--- `source` is a namespaced dedup identity (`packages/db/src/ledger-source.ts`, `ledgerSources`).
--- FIVE namespaces are safe to show verbatim, and each is safe for a reason you can check by
--- reading it — not because anyone audited the values:
---
---   invoice:<stripe_invoice_id>          a Stripe id
---   expiry:<prior_stripe_invoice_id>     a Stripe id
---   propose:<account_uuid>:<yyyy-mm-ddThh>   our uuid and a clock
---   workflow_run:<run_uuid>:<step_index>     our uuid and an integer
---   admin:<adjustment_uuid>              our uuid
---
--- EVERYTHING ELSE keeps its NAMESPACE TOKEN and loses every segment after it. That is
--- `classify:` and `draft:` today, and it is also namespace nine, whenever somebody adds one,
--- without anybody having to remember this file exists.
---
--- ## "lose the final `:`-segment" WAS NOT ENOUGH, and the joinable-keys finding is the bill
---
--- The first version of this view truncated only the LAST `:`-segment, on the reasoning that the
--- digest is always last. It is — but the digest was not the only thing worth taking:
---
---   draft:<message UUID>:<digest>       became   draft:<message UUID>:
---   classify:<mailbox UUID>:<digest>    became   classify:<mailbox UUID>:
---
---   > The redaction also turns `draft:<message UUID>:<digest>` into `draft:<message UUID>:`;
---   > staff can extract that surviving UUID and join it directly to `messages.id`, exactly
---   > attributing the draft/charge event to an internal message and mailbox.
---
--- So the rule is now stated on what SURVIVES rather than on what is removed: **the only thing
--- that survives the truncating branch is a namespace token, and a namespace token is a literal
--- from `ledgerSources` — never a value, never an identifier.** A `refund:`-wrapped source keeps
--- one segment more, because its first segment IS the wrapper and dropping the inner namespace
--- would render every refund identically.
---
--- A source with NO `:` at all renders as the empty string. That branch is unreachable from
--- today's `ledgerSources` — every builder emits a namespace — which is exactly why it must be
--- written down: the fallback for "this does not look like anything we recognise" has to be
--- nothing, not the whole value.
---
--- The `~<n>` retry ordinal `resolveAttempt` glues onto the digest goes with the digest.
---
--- ## The one identifier that still survives verbatim, and why it is allowed to
---
--- `propose:<account uuid>:<yyyy-mm-ddThh>` is on the passthrough list and that uuid is
--- `accounts.id`. It survives because it is the SAME account the row's own granted `account_id`
--- column names — a no-op disclosure, not a new one — and because the hour is the operator-
--- useful half of a propose charge. The other four passthrough namespaces carry a Stripe id
--- (`invoice:`, `expiry:`), a `workflow_runs` uuid (un-granted, joins to nothing this role can
--- read) or an adjustment uuid (likewise).
---
--- ## THE REFUND WRAPPER IS WHY THIS IS NOT WRITTEN AS A DENY-LIST
---
--- `ledgerSources.refund(originalSource)` is `refund:<the whole original source>`, so a
--- refunded classification is `refund:classify:<mailbox>:<digest>` — the digest, intact, one
--- prefix deeper. A view written the obvious way ("redact `classify:%` and `draft:%`") passes
--- that row through verbatim and REOPENS THE ORACLE COMPLETELY while looking finished. The
--- security review missed it and so did the first draft of the fix. Stating the rule as "these five, plus
--- the same five under a `refund:` wrapper, are verbatim; everything else is truncated" makes
--- the refund forms fall to the ELSE by construction rather than by a line somebody added.
---
--- `refund:` is the ONLY wrapping namespace in `ledgerSources` — `expiry:` and `refund:` are
--- the only builders that take another identity as their argument, and `expiry:` takes a bare
--- Stripe invoice id rather than a source. `classify:screener:<message_uuid>` is a nested
--- SUB-namespace rather than a wrapper; it falls to the ELSE and renders `classify:`, losing the
--- `screener` token along with the uuid. That is the accepted cost of a rule stated on what
--- survives: a per-namespace list of "which leading tokens are safe to keep" is a second
--- allowlist to forget to extend, and the `reason` column already distinguishes the charge.
---
--- What the console loses: the digest, the `~<n>` retry ordinal, and every uuid
--- the source was scoped to. What it keeps: the reason, the amount, the running balance, the
--- timestamp, the namespace, and (for the five verbatim namespaces) the Stripe id or run id an
--- operator pastes into a dashboard. Every question a support conversation about MONEY can ask
--- is still answerable; "which message was this charge for" is not, and that is the point.
---
--- DROP + CREATE, not CREATE OR REPLACE: the latter refuses to change a view's column list.
-DROP VIEW IF EXISTS admin.credit_ledger;
-CREATE VIEW admin.credit_ledger WITH (security_barrier) AS
-  SELECT id, account_id, delta, balance_after, reason,
-         CASE
-           WHEN source LIKE 'invoice:%'      OR source LIKE 'refund:invoice:%'
-             OR source LIKE 'expiry:%'       OR source LIKE 'refund:expiry:%'
-             OR source LIKE 'propose:%'      OR source LIKE 'refund:propose:%'
-             OR source LIKE 'workflow_run:%' OR source LIKE 'refund:workflow_run:%'
-             OR source LIKE 'admin:%'        OR source LIKE 'refund:admin:%'
-           THEN source
-           -- A `refund:` WRAPPER keeps its own token and the wrapped namespace's token:
-           -- `refund:` is 7 characters, and `strpos` over the remainder finds the inner
-           -- namespace's colon. `refund:draft:<uuid>:<digest>` → `refund:draft:`.
-           WHEN source LIKE 'refund:%' AND strpos(substring(source FROM 8), ':') > 0
-             THEN left(source, 7 + strpos(substring(source FROM 8), ':'))
-           -- EVERYTHING ELSE keeps its namespace token and nothing after it:
-           -- `draft:<uuid>:<digest>` → `draft:`, `classify:screener:<uuid>` → `classify:`.
-           WHEN strpos(source, ':') > 0 THEN left(source, strpos(source, ':'))
-           -- No namespace at all. Not reachable from `ledgerSources` today; written down
-           -- because the default for an unrecognised shape must be nothing, not the value.
-           ELSE ''
-         END AS source,
-         created_at
-    FROM public.credit_ledger;
-GRANT SELECT ON admin.credit_ledger TO ohmail_admin;
-
-REVOKE ALL ON public.billing_events FROM ohmail_admin;
-GRANT SELECT (stripe_event_id, type, account_id, event_ts, received_at, error, status)
-  ON public.billing_events TO ohmail_admin;
-
--- `billing_reconciliation_runs` (cloud 0023) — the run ledger of the scheduled mirror-vs-Stripe
--- reconciliation. Billing/ops data in the invariant's own words: counts, a mode word, a closed
--- code→count map (`flagged` holds ReconcileCode strings only — the write site's exported
--- vocabulary) and a class:code-scrubbed `error`. The alerts driver on this role reads it for
--- the two reconciliation rules, which is why the grant exists at all. `divergences` (Stripe
--- subscription ids + account ids) is deliberately NOT granted: the alert needs counts, the
--- operator detail lives on the runtime-role surfaces.
--- `invoices_listed` / `invoices_upserted` (cloud 0029) are the invoice reconcile's population
--- and its write count, on the same terms as the four counters beside them: integers about a
--- pass, read by the console's reconciliation strip.
-REVOKE ALL ON public.billing_reconciliation_runs FROM ohmail_admin;
-GRANT SELECT (id, ran_at, mode, stripe_subscriptions, mirror_rows, emitted, apply_failed,
-  flagged, pages, truncated, error, invoices_listed, invoices_upserted)
-  ON public.billing_reconciliation_runs TO ohmail_admin;
-
--- ── 9b-bis. The INVOICE MIRROR (cloud 0029) — GRANTED WHOLE, and that is the argument. ────
---
--- Every other billing table in this section is granted MINUS something: `billing_events` minus
--- `payload` (a customer's name and postal address), `credit_ledger` minus `source` and `meta`.
--- This table has no such column and its whole design is that it never will — an id, an account,
--- a closed status word, a currency, two integers of cents, a plan, a period, three timestamps.
--- No line items, no description, no customer name, no jsonb bag.
---
--- That is not a coincidence, it is WHY the table exists. The console needs the invoice amount;
--- the amount lives inside `billing_events.payload`; granting that column to reach an integer
--- would hand a console that must never see a postal address exactly that. Promoting the integer
--- to a named column is what lets the payload stay un-granted for ever.
---
--- A column added here that carries a description, a memo or a line item falls OUTSIDE this
--- ruling: it must not be appended to this grant, and the whole grant would have to be re-argued.
-REVOKE ALL ON public.billing_invoices FROM ohmail_admin;
-GRANT SELECT (stripe_invoice_id, account_id, stripe_subscription_id, stripe_customer_id,
-  billing_reason, status, currency, amount_paid_cents, amount_refunded_cents, plan,
-  billing_interval, period_start, period_end, paid_at, stripe_event_ts, source,
-  created_at, updated_at)
-  ON public.billing_invoices TO ohmail_admin;
-
--- ── 9b-ter. COST OUT (cloud 0029) — our own bills. NO ACCOUNT APPEARS ON EITHER TABLE. ────
---
--- Neither has an `account_id`, and neither can. `platform_costs` is what a vendor charges this
--- deployment; `ai_usage_daily` is aggregated at the model client inside `packages/core`, which
--- is desktop payload and knows nothing about accounts. Per-account AI cost is APPORTIONED from
--- the credit ledger and labelled as apportioned on the board — attributing a model call to an
--- account inside the AI package was refused.
---
--- `platform_costs.note` is the ONLY free-text column granted anywhere in this script, and it is
--- a staff operator's note about a payment to our own hosting provider, typed by the person whose
--- `staff_users` id sits in `entered_by`. No account is reachable from the row, so there is
--- nothing account-derived it could carry. `entered_by` is granted as the bare uuid and this role
--- holds NO grant on `staff_users`, so it resolves to a name nowhere on this surface — the
--- narrowest thing that still answers "was this figure measured, or typed by a person".
-REVOKE ALL ON public.platform_costs FROM ohmail_admin;
-GRANT SELECT (provider, metric, period_start, period_end, value, unit, cost_cents, currency,
-  source, fetched_at, entered_by, note)
-  ON public.platform_costs TO ohmail_admin;
-
-REVOKE ALL ON public.ai_usage_daily FROM ohmail_admin;
-GRANT SELECT (day, host, model, calls, ok_calls, input_tokens, output_tokens,
-  cache_read_tokens, cache_write_tokens, cost_micro_usd, updated_at)
-  ON public.ai_usage_daily TO ohmail_admin;
-
--- ── 9c-bis. The credit ROLL-UP (cloud 0028) — the console's read path for spend. ──────────
---
--- Three tables and the reason they exist: the Billing board ran three UNCAPPED aggregates over
--- `credit_ledger` on every read, and the account page rendered fifty raw rows. The ledger is
--- append-only and never pruned, so those reads stop being affordable while the trail keeps
--- growing — the answer is to move the READS here, never to shorten the trail.
---
--- Every column is grantable by the isolation rule's own words. An account id, a DAY, a closed
--- pool word ('ledger' | 'setup'), a closed reason vocabulary, a signed integer and a count:
--- billing and usage data, nothing derived from what any message says. That is precisely the
--- property `credit_ledger.source` fails — it is a digest of a Message-ID, a confirmation oracle —
--- which is why that column stays un-granted while these tables are granted whole.
---
--- Granted rather than left out because the console's spend panels ARE these tables now: without
--- the grant the account page and the Billing board both 42501 → 503, which is risk 1 in the
--- ruling ("grants widened in code but the harden script not re-run in production").
-REVOKE ALL ON public.credit_usage_daily FROM ohmail_admin;
-GRANT SELECT (day, account_id, pool, reason, credits, rows, computed_at)
-  ON public.credit_usage_daily TO ohmail_admin;
-
-REVOKE ALL ON public.credit_usage_totals FROM ohmail_admin;
-GRANT SELECT (account_id, pool, reason, credits, rows, computed_at)
-  ON public.credit_usage_totals TO ohmail_admin;
-
--- The run ledger, on `billing_reconciliation_runs`'s exact terms: counts, a class:code-scrubbed
--- error, and the `ran_at` a freshness stamp and a staleness rule both read. `divergent_accounts`
--- is a COUNT and the accounts themselves are never stored — the same decision
--- `billing_reconciliation_runs.divergences` records for its own operator detail.
---
--- `setup_sweep_backlog` and `duration_ms` (cloud 0031) are on the same terms as the counts above:
--- integers about a maintenance PASS, never about anybody's mail. They are listed HERE as well as
--- in the TypeScript allowlist because these two places are granted independently — the allowlist
--- describes what a reader may select, this script is what the database actually permits, and a
--- column present in one and absent in the other is `permission denied` on the staff connection
--- the first time the console asks for it, with the migration reporting success.
-REVOKE ALL ON public.credit_rollup_runs FROM ohmail_admin;
-GRANT SELECT (id, ran_at, days_recomputed, rows_written, divergent_accounts,
-  pruned_setup_spends, setup_sweep_backlog, duration_ms, error)
-  ON public.credit_rollup_runs TO ohmail_admin;
-
--- ── 9c-ter. The SETUP POOL (cloud 0021, re-keyed by 0028). ────────────────────────────────
---
--- The account page states the screening pool an account holds and when it expires — a support
--- question about an entitlement, squarely inside "staff see billing and usage data".
---
--- `mailbox_id` is NOT granted, and neither is `id`. On an account-kind row `mailbox_id` names
--- which mailbox's connection triggered the grant, and the console has no question that needs it;
--- it is a join key to the mailbox roster and nothing more. Narrower is free here, so narrower it
--- is: this table's whole content on a staff surface is a size, a remainder and two dates.
-REVOKE ALL ON public.setup_grants FROM ohmail_admin;
-GRANT SELECT (account_id, kind, granted, remaining, expires_at, created_at)
-  ON public.setup_grants TO ohmail_admin;
 
 -- ── 9d. Funnel top — invite/waitlist DATES ONLY, never an address. ────────────────────────
 --
@@ -1080,14 +775,12 @@ GRANT UPDATE (driver, ran_at, firing, delivered, failed_sinks, sink_failure_stre
 -- store, polled per project per five-minute window.
 --
 -- SELECT ONLY. The poller runs on the API host's RUNTIME connection, not this role: it writes a
--- table the blind role only reads, exactly as `platform_costs` next door does. What this grant
--- buys is the console rendering "5xx: 12 of 900 requests" and the alert rule reading its own
--- population.
+-- table the blind role only reads. What this grant buys is the console rendering
+-- "5xx: 12 of 900 requests" and the alert rule reading its own population.
 --
--- `platform_costs`'s isolation argument applies verbatim: this is what a VENDOR did, not what a
--- customer did. No path, no query string, no address, no request id — the adapter drops all four
--- before a row is formed — and no `account_id`, which an HTTP log store could not attribute
--- anyway.
+-- And the isolation argument is that this is what a VENDOR did, not what a customer did. No path,
+-- no query string, no address, no request id — the adapter drops all four before a row is formed
+-- — and no `account_id`, which an HTTP log store could not attribute anyway.
 REVOKE ALL ON public.platform_signals FROM ohmail_admin;
 GRANT SELECT (provider, project, window_start, requests, errors_5xx, truncated, fetched_at, sample_cause)
   ON public.platform_signals TO ohmail_admin;
@@ -1113,13 +806,6 @@ GRANT SELECT (provider, project, window_start, requests, errors_5xx, truncated, 
 --                       grants only their DATE columns for the funnel counts, never `email` or
 --                       `code_hash`
 --   workflows, workflow_runs, workflow_proposals   `steps`/`trigger` quote mail
---   setup_grant_spends  the setup pool's DRAW record, and `source` on it is
---                       `classify:screener:<message uuid>` — the same confirmation oracle that
---                       keeps `credit_ledger.source` un-granted, one table over. The pool's
---                       account-level facts (size, remainder, expiry) are granted on
---                       `setup_grants` in §9c-ter, which is every question the console asks; the
---                       per-draw rows are read by the roll-up on the RUNTIME connection, never
---                       by the console
 --   public.audit_log    reachable ONLY through admin.audit_log, above
 --   credentials, webauthn_credentials, webauthn_challenges, totp_secrets,
 --   recovery_codes, refresh_tokens, login_tokens, oauth_auth_codes,
@@ -1186,10 +872,10 @@ BEGIN
   END IF;
 END $$;
 
--- ── 12b. SCHEMA `admin` HOLDS THIS FILE'S TWO VIEWS AND NOTHING ELSE. ─────────────────────
+-- ── 12b. SCHEMA `admin` HOLDS THIS FILE'S ONE VIEW AND NOTHING ELSE. ──────────────────────
 --
--- `admin` is this script's own schema. It creates it, it puts exactly two views in it
--- (`audit_log` §3, `credit_ledger` §9b), and it points the role's `search_path` at it.
+-- `admin` is this script's own schema. It creates it, it puts exactly one view in it
+-- (`audit_log`, §3), and it points the role's `search_path` at it.
 -- Anything else in there is an object nobody reviewed sitting in the one namespace the staff
 -- role searches FIRST.
 --
@@ -1226,7 +912,7 @@ BEGIN
     JOIN pg_namespace n ON n.oid = c.relnamespace
    WHERE n.nspname = 'admin'
      AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
-     AND NOT (c.relkind = 'v' AND c.relname IN ('audit_log', 'credit_ledger'));
+     AND NOT (c.relkind = 'v' AND c.relname = 'audit_log');
   IF found IS NOT NULL THEN
     RAISE EXCEPTION
       'schema admin holds relations this script did not create: %. It is the schema the staff role searches FIRST, and a view there reads its base tables with the VIEW OWNER''s privileges — which is a content path around every column grant in this file. Drop them or move them out of admin, then re-run.',

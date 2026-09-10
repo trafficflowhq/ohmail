@@ -128,11 +128,6 @@ export function isSpendAction(value: unknown): value is SpendAction {
 }
 
 /**
- * The most an `attemptKey` may be. The ledger caps a whole source at 200
- * characters, so a longer key would raise from inside the caller's transaction instead of being
- * refused where it was built.
- */
-/**
  * HOW LONG AN EXCLUSIVE WORK CLAIM LIVES — 150 s, and the number is a CEILING the organizer's
  * model timeout has to fit under.
  *
@@ -143,6 +138,11 @@ export function isSpendAction(value: unknown): value is SpendAction {
  */
 export const AI_CLAIM_TTL_MS = 150_000;
 
+/**
+ * The most an `attemptKey` may be. The ledger caps a whole source at 200
+ * characters, so a longer key would raise from inside the caller's transaction instead of being
+ * refused where it was built.
+ */
 export const ATTEMPT_KEY_MAX = 160;
 
 const ATTEMPT_KEY_SHAPE = /^[A-Za-z0-9:_.~@+-]+$/;

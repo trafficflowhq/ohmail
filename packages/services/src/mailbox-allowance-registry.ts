@@ -5,12 +5,11 @@ import type { MailboxAllowancePolicy } from "./mailbox-service.js";
  * WHERE THE PAID MAILBOX GATE IS REGISTERED, and why it is registered rather than imported.
  *
  * `MailboxService` needs a default allowance policy, and the right default for a hosted
- * deployment is `assertMayAddMailbox` — the plan-limit gate that reads the subscription and the
- * credit balance inside the caller's transaction. Importing it from `mailbox-service.ts` is the
- * obvious way to say that, and it is the reason the Cloud billing and credit modules and the
- * whole Cloud schema were in the desktop engine's shipped bundle: `mailbox-service.ts` is
- * mounted by the LOCAL API too, and an import edge is not conditional on whether the branch that
- * uses it ever runs.
+ * deployment is `assertMayAddMailbox` — the limit gate that counts the account's mailboxes under
+ * a row lock inside the caller's transaction. Importing it from `mailbox-service.ts` is the
+ * obvious way to say that, and it is the reason the whole Cloud schema was once in the desktop
+ * engine's shipped bundle: `mailbox-service.ts` is mounted by the LOCAL API too, and an import
+ * edge is not conditional on whether the branch that uses it ever runs.
  *
  * So the default is set by whoever loads the FULL `@trafficflow/services` barrel — which only a
  * hosted process does. `@trafficflow/services/mail`, the entry point the engine is bundled from,

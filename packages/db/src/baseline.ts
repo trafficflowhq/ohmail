@@ -65,6 +65,15 @@ export const LEGACY_CUTOFF_WHEN = 1786006486206;
  * Every `when` in the pre-split journal, in order. Committed as data because it is EVIDENCE:
  * this is the fingerprint of a database that took the single-journal path, and the pre-split
  * journal's own metadata file is retained alongside it for the same reason.
+ *
+ * TWENTY-FOUR ENTRIES, AND THE LEGACY FOLDER NOW HOLDS TWENTY-THREE FILES. The difference is
+ * `1785574486206` — the metering tables' own migration, whose FILE left with them. A database
+ * that took the single-journal path applied it, so its row is in `drizzle.__drizzle_migrations`
+ * and this list must keep naming it: adoption's question is "did this database live through
+ * that era", and history does not change when a file is deleted. What DID change is that
+ * nothing can replay the era from the folder any more — the pg fixture seeds the missing row
+ * explicitly and says so, which is the only honest way to simulate a database this tree can no
+ * longer build.
  */
 export const LEGACY_JOURNAL_WHENS: readonly number[] = [
   1785184187039, 1785185425588, 1785189005449, 1785190651291, 1785192935050, 1785194204180,

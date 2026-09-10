@@ -1,7 +1,9 @@
 import type {
   AdminDb, AuthService, ProposalsService, WaitlistService, PlatformSignalPort,
 } from "@trafficflow/services";
-import type { AlertSink, AlertThresholds, MsOAuthBootstrap } from "@trafficflow/db/cloud";
+import type {
+  AlertSink, AlertThresholds, EvaluateOptions, MsOAuthBootstrap,
+} from "@trafficflow/db/cloud";
 import type { FetchLike, MicrosoftDeviceClient } from "@trafficflow/core";
 
 /**
@@ -243,5 +245,13 @@ export interface AlertsConfig {
   shards?: readonly number[];
   /** Overrides for the arch doc's thresholds. Tests use tiny values; production uses none. */
   thresholds?: Partial<AlertThresholds>;
+  /**
+   * THE TWO POPULATIONS THE RULES CANNOT READ FROM THIS DATABASE — who is parked, and who is at
+   * their storage cap. Both are limits whoever operates the service sets, so both arrive as
+   * readers the host composes; ABSENT means nobody is parked and nobody is at a cap, which is
+   * the truth on a deployment that meters nothing and the fail-open direction on one that does.
+   */
+  parkedAccounts?: EvaluateOptions["parkedAccounts"];
+  accountsAtCap?: EvaluateOptions["accountsAtCap"];
   repeatMs?: number;
 }

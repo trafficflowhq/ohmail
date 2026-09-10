@@ -12,10 +12,9 @@ import {
 } from "@trafficflow/db";
 import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
-/* The DEFAULT policy is registered rather than imported. `mailbox-allowance.ts` reads the
- * subscription and the credit balance, so a static import of it from here puts billing and the
- * ledger into the desktop engine bundle — this module is mounted by the local API. The full
- * `@trafficflow/services` barrel, which only a hosted process imports, registers the paid gate
+/* The DEFAULT policy is registered rather than imported, so the paid gate is not an import edge
+ * out of a module the desktop engine bundles — this one is mounted by the local API too. The
+ * full `@trafficflow/services` barrel, which only a hosted process imports, registers the gate
  * on load; `@trafficflow/services/mail` does not, and a local host passes its own policy. */
 import { defaultMailboxAllowance } from "./mailbox-allowance-registry.js";
 import type { KeyProvider } from "./auth/crypto.js";
@@ -713,15 +712,14 @@ const probeMissing = (): ServiceError => new ServiceError(
 
 /**
  * THE ALLOWANCE GATE, AS A POLICY — because "how many mailboxes may this account have" is a
- * question about a PRICE, and one of the two tiers has no prices in it.
+ * question for whoever operates the service, and one of the two tiers has nobody operating it.
  *
- * The default reads the subscription table under a `FOR UPDATE` lock. That is exactly right for
- * the hosted service and it is unrunnable on a desktop install, which migrates the mail journal
- * alone and has no billing tables at all — nor should it: they belong to a service its owner has
- * no account with. Before this seam the local engine 500ed on every mailbox write with a
- * `relation … does not exist` error naming that missing table, and the only reason it had ever
- * worked was that the engine used to migrate the Cloud journal too. The green was produced by
- * the defect.
+ * The default counts the account's mailboxes under a `FOR UPDATE` lock and refuses past the
+ * limit a verdict named. That is exactly right for a hosted deployment and it is the wrong
+ * question on a desktop install, which has no such verdict and no program to ask — before this
+ * seam the local engine 500ed on every mailbox write, and the only reason it had ever worked was
+ * that the engine used to migrate the hosted journal too. The green was produced by the
+ * defect.
  *
  * ── WHY A POLICY AND NOT A FLAG ───────────────────────────────────────────────────────────
  *
@@ -764,11 +762,11 @@ export interface MailboxServiceDeps {
   /**
    * Who may add a mailbox. **Absent means the PAID GATE, and that direction is the whole point.**
    *
-   * A deployment that forgets to inject gets charged-plan behaviour — it refuses past the plan's
-   * count and refuses without a subscription. The failure mode of the opposite default is an
-   * account on the free tier of a paid product, silently, with no error anywhere and revenue
-   * quietly not collected; the failure mode of this one is a desktop build that refuses to add a
-   * mailbox, which is loud, immediate, and caught by the engine's own end-to-end tests.
+   * A deployment that forgets to inject gets METERED behaviour — it refuses past the limit and
+   * refuses an account with no verdict at all. The failure mode of the opposite default is an
+   * account with no limit on a service that meters, silently, with no error anywhere; the
+   * failure mode of this one is a desktop build that refuses to add a mailbox, which is loud,
+   * immediate, and caught by the engine's own end-to-end tests.
    *
    * There is deliberately **no permissive policy exported from this package.** The only one that
    * exists is `UNMETERED_MAILBOX_ALLOWANCE` in `apps/sidecar`, which the hosted API does not and
@@ -789,16 +787,8 @@ export interface MailboxServiceDeps {
    */
   accessOf?: (accountId: string) => Promise<AccessVerdict>;
   /**
-   * Runs INSIDE the create transaction, after the allowance gate and the insert — the hosted
-   * composition's hook for per-mailbox onboarding state (today: the one-time screening-only
-   * setup grant, `@trafficflow/db/cloud#grantSetupCredits`). Absent on the local tiers, which
-   * meter nothing and grant nothing — the same asymmetry as `allowance`, in the same direction:
-   * forgetting it costs a hosted customer a bonus, never money.
-   */
-  onCreated?: (tx: LedgerTx, accountId: string, mailboxId: string, now: Date) => Promise<unknown>;
-  /**
    * WHEN THE ORGANIZER'S LAST PASS FINISHED, for {@link MailboxDTO.filing}'s `lastCycleAt` —
-   * hosted only, and injected for the reason {@link onCreated} is.
+   * hosted only, and injected for the reason {@link allowance} is.
    *
    * The fact is in `worker_heartbeats.last_cycle_at`, which is a CLOUD table. This module may not
    * import one: `packages/services` is in the desktop engine's import closure (the API imports
@@ -1152,8 +1142,8 @@ export class MailboxService {
    * transport — `meta` carries only the NON-secret conn params. Returns a
    * credential-free DTO (201).
    *
-   * **The plan gate and the insert are ONE transaction, in this order.**
-   * `assertMayAddMailbox` takes `SELECT … FOR UPDATE` on the account's subscription row
+   * **The limit gate and the insert are ONE transaction, in this order.**
+   * `assertMayAddMailbox` takes `SELECT … FOR UPDATE` on the account's own row
    * before it counts, so two concurrent creates at limit−1 admit exactly one — the loser
    * blocks on that lock and then counts a world containing the winner's row. A check made
    * outside the transaction, or after the INSERT, would let both through; see
@@ -1178,11 +1168,11 @@ export class MailboxService {
    * dial. That is the deadlock this repository already fixed once ("the console deadlocked
    * itself — parallel reads on a max:1 pool").
    *
-   * THE COST, STATED: an account at its plan limit, or one submitting an address it already has,
+   * THE COST, STATED: an account at its limit, or one submitting an address it already has,
    * pays one dial before the gate refuses it. Moving the probe after the gate is not free — the
    * gate is `assertMayAddMailbox`, which requires a transaction (`NotInTransactionError`), so a
    * pre-flight check would mean opening a transaction, taking `SELECT … FOR UPDATE` on the
-   * subscription row, closing it, dialling, and then taking the same lock again. Two lock
+   * account row, closing it, dialling, and then taking the same lock again. Two lock
    * acquisitions to save a dial the connection budget already bounds is the worse trade.
    *
    * ONLY WHEN A SECRET IS ABOUT TO BE STORED. An `oauth` create carries no password and has
@@ -1473,7 +1463,6 @@ export class MailboxService {
       // Per-mailbox onboarding state, in the SAME transaction as the row: a create that fails
       // any later statement grants nothing, and a grant that fails aborts the create — the two
       // are one fact or neither is.
-      if (this.deps.onCreated) await this.deps.onCreated(tx as LedgerTx, ctx.accountId, row!.id, ctx.now());
       return row!;
     }).catch((err: unknown) => {
       if (isActiveAddressConflict(err)) throw addressTaken();
@@ -1661,7 +1650,6 @@ export class MailboxService {
       await this.upsertCredOn(tx, ctx, kp, created!.id, "imap", o.refreshToken, meta);
       // Same hook, same transaction, as `create` — an OAuth connect of a NEW address is a
       // create in every sense that matters here (a reconnect returned above and grants nothing).
-      if (this.deps.onCreated) await this.deps.onCreated(tx as LedgerTx, ctx.accountId, created!.id, ctx.now());
       return { created: true, row: created as MailboxRow };
     }).catch((err: unknown) => {
       if (isActiveAddressConflict(err)) throw addressTaken();
@@ -2386,9 +2374,9 @@ export class MailboxService {
    *
    * Exactly one active organizer per mailbox, ever. Ceasing to organize is always automatic;
    * BECOMING an organizer always requires an explicit human action — and that second half binds
-   * the hosted service exactly as it binds a desktop install. There is no billing event, no
-   * re-subscription and no deploy that may quietly make this side the organizer again of a mailbox
-   * somebody deliberately moved to their own machine. This method is that human action, and it is
+   * the hosted service exactly as it binds a desktop install. There is no event and no deploy
+   * that may quietly make this side the organizer again of a mailbox somebody deliberately moved
+   * to their own machine. This method is that human action, and it is
    * the mirror of the `organize here` command a local install already has.
    *
    * ── IT AUTHORIZES AN ASK. IT DOES NOT WIN ANYTHING ─────────────────────────────────────────

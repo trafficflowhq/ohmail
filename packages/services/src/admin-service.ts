@@ -75,31 +75,23 @@ import type {
  *    the encrypted credential, its key version and its connection meta are not merely
  *    unprojected, they are unreadable. Nothing here touches `sessions`, `totp_secrets`,
  *    `recovery_codes`, `login_tokens` or `invites`, none of which the role holds a grant on.
- *  · **No Stripe payload.** `billing_events.payload` is the one column on that table that can
- *    carry a customer's name, address or line-item description. The operator queue needs
- *    `stripe_event_id` (what you paste into the dashboard) and `error` (why it failed), and
- *    `listFailedBillingEvents` in `packages/db` already projects exactly those.
- *  · **NO OPEN JSONB BAG AT ALL, and the un-granting is what changed here.** `credit_ledger.meta`,
- *    `audit_log.payload` and `audit_log.inverse` are columns whose CONTENTS no field name
- *    bounds. An earlier gate rendered them through a default-deny projection (`staffMeta`)
- *    after finding
- *    that `pipeline.ts` was writing the raw RFC822 Message-ID into a classify charge's meta.
- *    The grant now denies all three, so the projection is gone and so is the gate: the bags
- *    cannot be read, by this module or by the endpoint somebody adds next. `LedgerEntry.meta`
- *    and `AuditEntry.payload` are therefore always empty. That is a real, accepted loss of
- *    operator detail (the renewal invoice id was the useful one) and the way back is the only
- *    one that is safe: **the producer promotes the value to a NAMED COLUMN**, which is then
- *    granted by name. The bag is never granted.
+ *  · **NO OPEN JSONB BAG AT ALL, and the un-granting is what changed here.** `audit_log.payload`
+ *    and `audit_log.inverse` are columns whose CONTENTS no field name bounds. An earlier gate
+ *    rendered them through a default-deny projection (`staffMeta`) after finding a producer
+ *    writing a raw RFC822 Message-ID into one. The grant now denies both, so the projection is
+ *    gone and so is the gate: the bags cannot be read, by this module or by the endpoint
+ *    somebody adds next. `AuditEntry.payload` is therefore always empty. That is a real,
+ *    accepted loss of operator detail, and the way back is the only one that is safe: **the
+ *    producer promotes the value to a NAMED COLUMN**, which is then granted by name. The bag is
+ *    never granted.
  *  · **No mail-derived DIGEST either, and this one was a live false claim for a while — a
- *    review caught it.** `credit_ledger.source` is `classify:<mailbox>:<sha256(mid:<Message-ID>)>`
- *    and `draft:<message>:<sha256(<Idempotency-Key>)>`, and this module's own comment called
- *    that "safe by construction". It is not: both inputs are guessable — a sender chooses the
+ *    review caught it.** A retired table's `source` column read
+ *    `classify:<mailbox>:<sha256(mid:<Message-ID>)>`, and this module's own comment called that
+ *    "safe by construction". It is not: both inputs are guessable — a sender chooses the
  *    `Message-ID` of mail it sends to the account, a natural client uses the SUBJECT as its
- *    idempotency token — so a staff reader who can see the digest can confirm candidates
- *    offline. The column is now un-granted, and `loadLedger` reads `admin.credit_ledger`,
- *    which truncates the digest away. History closed with the grant: the ledger is append-only
- *    and the plaintexts were destroyed when the digests were introduced, so no re-keying was
- *    possible even in principle.
+ *    idempotency token — so a staff reader who could see the digest could confirm candidates
+ *    offline. The lesson outlived the column: a hash of a foreign input is not a redaction, and
+ *    nothing on a staff surface may carry one.
  *  · **Only `admin.*` audit rows, and the filter is in the DATABASE now.** `audit_log` is
  *    shared with the PRODUCT's own domain audit — `move`, `adopt_external`, `hey_migrate`,
  *    `workflow_step` — and a `workflow_step` row's `payload.effect` is whatever the tool
@@ -111,11 +103,10 @@ import type {
  *    projection fails on the role rather than quietly reading the bag.
  *
  * ── AND IT READS. IT DOES NOT WRITE. ──────────────────────────────────────────────────────
- * There is no INSERT, UPDATE or DELETE in this file. The staff writes (suspend, resume, resync,
- * retry, credit adjustment) are deliberately not built here: they need `users.role`, step-up,
- * an actor identity and an `audit_log` row each, and `adjustCredits` moves money through the
- * credit ledger. `adminActions()` reports the unbuilt ones as unavailable so the console can
- * say so out loud instead of offering a button that does nothing.
+ * There is no INSERT, UPDATE or DELETE in this file. The staff writes need `users.role`,
+ * step-up, an actor identity and an `audit_log` row each; `adminActions()` reports the unbuilt
+ * ones as unavailable so the console can say so out loud instead of offering a button that does
+ * nothing.
  *
  * ── SCALE, STATED HONESTLY ────────────────────────────────────────────────────────────────
  * The roster is assembled by scanning `accounts` and five grouped aggregates, then filtered,
@@ -126,17 +117,6 @@ import type {
  * number on screen is never a guess; the paging is honest, just not cheap. When the roster
  * outgrows this, the fix is a view or a summary table — not a `LIMIT` here, which would make
  * `matched` a lie.
- *
- * THE LEDGER HALF OF THAT PARAGRAPH IS NO LONGER TRUE, and this is what replaced it. Three
- * UNCAPPED aggregates over `credit_ledger` ran on every Billing load, and the account page read
- * the newest fifty raw rows. `credit_ledger` is append-only and never pruned — for four separate
- * reasons the roll-up's own header sets out — so those reads grew with the deployment's whole
- * history. They now read `credit_usage_daily` (hourly) and `credit_usage_totals` (nightly),
- * written by a worker-side pass, and every panel backed by them carries
- * `{ computedAt, expectedEverySeconds }` — its OWN producer's clock and its OWN cadence, because
- * the two are on different ones and a single stamp would have to be wrong about one of them.
- * `credit_ledger` is still read directly for the STATEMENT rows — the non-debit reasons, over a
- * partial index built for exactly that predicate — and for nothing else.
  *
  * A LIST BEING CAPPED IS NOT A LICENCE TO COUNT OVER IT. `WorkerSnapshot.rosterCounts` exists
  * because the console's fault verdict counted mailboxes by filtering a 200-row roster, so a
@@ -219,7 +199,7 @@ function fold(value: string): string {
    THE STAFF META GATE — BUILT, THEN REMOVED, AND WHY THE REMOVAL IS THE STRONGER STATE
    ════════════════════════════════════════════════════════════════════════════════════════
 
-   The gate rendered `credit_ledger.meta`, `audit_log.payload` and `audit_log.inverse` to staff
+   The gate rendered `audit_log.payload` and `audit_log.inverse` to staff
    through `staffMeta`: default-deny by KEY (an allowlist naming each live producer) and then
    by VALUE SHAPE (a character class that no address, Message-ID or free text survives). It
    existed because the previous projection was a channel rather than a projection —
@@ -227,39 +207,22 @@ function fold(value: string): string {
    Message-ID as `meta.dedupKey`, which put a sender, and sometimes a recipient, on the
    console's ledger table. Staff must see neither.
 
-   All three columns are now UN-GRANTED to `ohmail_admin` (`scripts/harden-staff-role.sql`),
+   Both columns are now UN-GRANTED to `ohmail_admin` (`scripts/harden-staff-role.sql`),
    so there is nothing left to project and the gate has been deleted rather than left standing
    as decoration. A gate nobody can forget beats a gate somebody has to remember, and a
    two-stage allowlist that no query can reach is worse than nothing: it reads like a live
    defence in review.
 
-   What that costs, stated rather than buried: `LedgerEntry.meta` and `AuditEntry.payload` are
-   now always `{}`, and the most useful thing they carried — the renewal's `in_…` invoice id on
-   the Billing page — is gone with them. The way back is the only
-   one that is safe by construction: **the PRODUCER promotes the value to a named column**, and
-   that column is added to the grant by name. The bag is never granted.
+   What that costs, stated rather than buried: `AuditEntry.payload` is now always `{}`, and the
+   operator detail it carried is gone with it. The way back is the only one that is safe by
+   construction: **the PRODUCER promotes the value to a named column**, and that column is added
+   to the grant by name. The bag is never granted.
 
    The response-level guard stays and still bites: `admin-content-isolation.test.ts` taints
-   every column of the schema and asserts none of it reaches these six responses. It is now
+   every column of the schema and asserts none of it reaches these responses. It is now
    proving a property the database also enforces, which is the right number of independent
    mechanisms for the product's first stated priority: staff never see an account's mail. */
 
-interface SubscriptionRow {
-  accountId: string;
-  plan: string;
-  status: string;
-  mailboxLimit: number;
-  monthlyCredits: number;
-  /** cloud 0022 — the plan price's cadence and the add-on quantities the mirror carries. */
-  billingInterval: string;
-  addonStorageUnits: number;
-  addonMailboxes: number;
-  currentPeriodStart: Date | string | null;
-  currentPeriodEnd: Date | string | null;
-  cancelAtPeriodEnd: boolean;
-  graceUntil: Date | string | null;
-  createdAt: Date | string;
-}
 
 /**
  * How much this account needs a human, as one number.
@@ -510,7 +473,7 @@ export async function adminAccounts(db: AdminDb, now: Date, query: AccountQuery 
      row wearing an aggregate's name.
 
    That view is not created here, and the reason is mechanical rather than a judgement
-   about the design. `admin.audit_log` and `admin.credit_ledger` are readable by ONE query that
+   about the design. `admin.audit_log` is readable by ONE query that
    also serves the PGlite harness, because each is a column-subset of a `public` relation of the
    same name and `search_path = admin, public` picks the right one per role. An AGGREGATE has no
    `public` counterpart, so serving it needs either a migration creating `public.reconcile_backlog`
@@ -638,19 +601,6 @@ async function accountNames(db: AdminDb, ids: string[]): Promise<Map<string, str
  */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-interface RollupState {
-  /** Newest completed run of EITHER arm — what the hourly daily rows are as fresh as. */
-  computedAt: string | null;
-  /** When `credit_usage_totals` was last written. NIGHTLY, and a different clock entirely. */
-  totalsComputedAt: string | null;
-  /** `findCreditDivergence`'s count from the newest run that measured it; `-1` ⇒ never. */
-  divergentAccounts: number;
-  /**
-   * Eligible days the setup-spend fold has not reached, from the newest run that folded.
-   * `0` ⇒ drained; `> 0` ⇒ a drain in progress; `-1` ⇒ no pass has ever folded.
-   */
-  setupSweepBacklog: number;
-}
 
 /**
  * `admin.*` audit rows only. Today there is no writer for that namespace, so the answer is
@@ -761,43 +711,6 @@ export async function adminAccountDetail(db: AdminDb, now: Date, id: string): Pr
   };
 }
 
-/* ════════════════════════════════════════════════════════════════════════════════════════
-   Billing
-   ════════════════════════════════════════════════════════════════════════════════════════ */
-
-/**
- * THE TWO QUANTITIES, KEPT APART.
- *
- * A review of the console put it plainly: *"you are mixing Credits outstanding and
- * actual billing / revenue data."* It was right, and the mixing was structural rather than
- * cosmetic — this function used to answer `totals: { accounts, creditsOutstanding, mrrCents }`,
- * one object holding an account count, a number of CREDITS and a number of CENTS, which the
- * console rendered as three peers in one definition list.
- *
- * A credit is a LIABILITY: service already owed, whether it was paid for or handed out. Money
- * is money. They are different sides of the business, they are denominated in different units,
- * and neither converts to the other at any rate this database knows. So the snapshot now
- * carries {@link BillingRevenue} (cents, and nothing but) and {@link CreditLiability} (credits,
- * and nothing but), and the console has a panel for each.
- *
- * ── WHAT THE BLIND ROLE CAN AND CANNOT ESTABLISH ──────────────────────────────────────────
- * `billing_events.payload` is still un-granted and still off limits — the raw Stripe event
- * carries the customer's name and postal address, and nothing here reads it. What CHANGED
- * (cloud 0029) is that a settled-revenue figure no longer requires it: `billing_invoices`
- * promotes the one integer the board needs onto a table with no name, no address and no line
- * item, granted to the staff role whole (`staff-grants.ts`). `revenue.cash` is read from it —
- * see {@link CashRevenue} and `loadCashRevenue` below. Every other query here reads columns
- * `ohmail_admin` already held before this slice:
- *   · `credit_ledger(account_id, delta, reason)` — via `admin.credit_ledger`, the redacting view
- *   · `credit_balances(account_id, balance)`
- *   · `billing_events(type, status)`
- *   · `billing_subscriptions(plan, status)`
- *
- * ── SEQUENTIAL, NOT PARALLEL ──────────────────────────────────────────────────────────────
- * The blind pool is `max: 1` and deadlocks when a second read opens while one holds the
- * connection. Every await below is deliberately serial; do not `Promise.all` them.
- */
-
 /**
  * THE SIGNUP FUNNEL, as counts.
  *
@@ -805,9 +718,9 @@ export async function adminAccountDetail(db: AdminDb, now: Date, id: string): Pr
  * granted for the funnel (`staff-grants.ts`: `invites` created/consumed/revoked, `waitlist`
  * created/invited — no address); the four stages read columns the role already held.
  *
- * The stages are monotonic subsets of the accounts set — signed up ⊇ verified ⊇ connected ⊇
- * subscribed — computed as `count(distinct account_id)` so an account with two verified users or
- * three mailboxes still counts once, and a drop-off between two stages is a true conversion.
+ * The stages are monotonic subsets of the accounts set — signed up ⊇ verified ⊇ connected —
+ * computed as `count(distinct account_id)` so an account with two verified users or three
+ * mailboxes still counts once, and a drop-off between two stages is a true conversion.
  *
  * Sequential reads on the `max: 1` blind pool, like every other admin read group here.
  */
@@ -1249,10 +1162,9 @@ export const ADMIN_WRITES_UNAVAILABLE =
   "gap), so wiring it would be a control that reports success it cannot achieve.";
 
 export const ADMIN_ACTIONS_PRECONDITION =
-  "Suspension, unsuspension and mailbox release are LIVE: each requires a staff session (past the " +
-  "TOTP wall), not the console gate alone, and writes one audit_log row naming the operator. The " +
-  "stuck-send retry is designed and not wired — its target subsystem does not exist yet — and " +
-  "says so on its card.";
+  "Mailbox release is LIVE: it requires a staff session (past the TOTP wall), not the console " +
+  "gate alone, and writes one audit_log row naming the operator. The stuck-send retry is " +
+  "designed and not wired — its target subsystem does not exist yet — and says so on its card.";
 
 export async function adminActions(db: AdminDb, now: Date): Promise<ActionCatalog> {
   const accountRows = await db.select({ id: accounts.id, name: accounts.name }).from(accounts).limit(ADMIN_OPTIONS_LIMIT);

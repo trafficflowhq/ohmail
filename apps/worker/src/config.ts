@@ -7,10 +7,8 @@ import {
   type KekEnvIdentity, type Logger, type AnthropicCallReport,
 } from "@trafficflow/core";
 import { transactionPoolerReason, sessionUrlRejection } from "@trafficflow/db";
-import {
-  DEFAULT_ALERT_THRESHOLDS, msOAuthEnv, WORKER_POOL_MAX, assertWeightedScheduleActive,
-  type PostJson,
-} from "@trafficflow/db/cloud";
+import { DEFAULT_ALERT_THRESHOLDS, msOAuthEnv, WORKER_POOL_MAX, type PostJson } from "@trafficflow/db/cloud";
+import { assertWeightedScheduleActive } from "@trafficflow/db";
 import type { MailboxAdapter, ImapConfig } from "@trafficflow/core/adapters/imap";
 import { buildIdentityOf, buildVersionOf, type BuildIdentitySource } from "./build-version.js";
 import type { MailboxSelection } from "./mailboxes.js";
@@ -251,8 +249,13 @@ export interface WorkerConfig {
    * it the same way: `ENTITLEMENTS_URL` + `BILLING_PLANE_SECRET`, present or absent as a WHOLE.
    * `null` is a NAMED state, not an unfinished composition — the spend call sites are handed
    * `UNMETERED` and charge nothing, which is a self-hosted or standalone install's truth.
+   *
+   * OPTIONAL, and ABSENT MEANS THE SAME AS `null` — deliberately, and it is the one place this
+   * interface collapses two states on purpose. `loadConfig` always writes one of the two, so a
+   * config that came from an environment says which it is; a config assembled in code is a test
+   * seam rather than a deployment, and there is no third thing "unfinished" could mean here.
    */
-  entitlements: { url: string; secret: string } | null;
+  entitlements?: { url: string; secret: string } | null;
   // ── accountId + mailboxId + imap are BOOTSTRAP-ONLY. The worker syncs
   // ALL enabled mailboxes of ALL accounts in its shard, reading credentials from
   // `mailbox_credentials`.

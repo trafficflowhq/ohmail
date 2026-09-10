@@ -23,7 +23,7 @@
  *
  * **PLAN BEFORE MAILBOX, and this one IS a rule this file has to get right.** It shipped the
  * other way round, and the two steps were a closed loop that nobody could get out of:
- * `POST /mailboxes` runs the allowance gate, which answers 402 `no_subscription` for an account with
+ * `POST /mailboxes` runs the allowance gate, which answers 402 `payment_required` for an account with
  * no `billing_subscriptions` row, while the plan step — the only place `billing.checkout` is
  * ever called — was reachable only AFTER a mailbox existed. Subscribing required a mailbox
  * and a mailbox required subscribing. Every invited user would have hit it on their first
@@ -462,8 +462,8 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
         setNeedsInvite(true);
         setStep("invite");
         setError(t("inviteRequiredAfterAll"));
-      } else if (code === "no_subscription") {
-        // The allowance gate refused because there is no plan. With the corrected step order this is only
+      } else if (code === "payment_required") {
+        // The allowance gate refused for payment. With the corrected step order this is only
         // reachable when Checkout's webhook has not landed, or when a subscription lapsed
         // mid-onboarding — either way the remedy is the plan step, not an inline error.
         setStep("plan");

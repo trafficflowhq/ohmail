@@ -193,7 +193,7 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
   // `public.folder_state`, `public.flag_state` and `public.change_log`: deliberately ABSENT. See
   // the block above `public.accounts`, and `scripts/harden-staff-role.sql` §7 and §8.
   // `account_storage` (mail 0062) — the stored-body byte counter. Usage data by the isolation
-  // rule's own words (staff see billing and usage, never content): an id, a byte count, a
+  // rule's own words (staff see usage, never content): an id, a byte count, a
   // timestamp — nothing derived from what any message says. Granted because the alert pass
   // runs on this role and its `storage_at_cap` rule counts this table.
   "public.account_storage": ["account_id", "bytes", "updated_at"],

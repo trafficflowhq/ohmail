@@ -48,9 +48,9 @@ export const apiConfigured = (): boolean => typeof API_BASE === "string" && API_
  * A refusal from the API, with the SERVER's own message.
  *
  * `code` is the stable machine name (`invite_used`, `mailbox_limit_reached`,
- * `subscription_inactive`, `step_up_required`, …). `message` is the sentence the service
+ * `payment_required`, `step_up_required`, …). `message` is the sentence the service
  * wrote for a human. `details` is whatever the service attached — for the mailbox gate that
- * is `{mailboxLimit, mailboxCount, plan, entitlementReason}`, which is what lets the UI say
+ * is `{mailboxLimit, mailboxCount, accessReason}`, which is what lets the UI say
  * "2 of 2 connected on Solo".
  */
 export class ApiError extends Error {

@@ -26,15 +26,6 @@ import {
    * have — the worker's deliberately small runtime dependency set, and `test/deps.test.ts` is
    * what keeps that true. */
   makeSupabaseStagingStorage, makeS3StagingStorage, sweepExpiredStagingFor,
-  /* The abandoned-claim sweep — the janitor half of the exclusive AI-attempt claim. Cloud, for
-   * the same reason the staging sweep is:
-   * `ai_attempt_claims` exists only where there is a ledger to coordinate. */
-  /* The credit roll-up: day-grained aggregates for the admin console's spend panels, plus the
-   * retention sweep over the setup pool's draw record. Cloud, on the staging sweep's argument —
-   * there are no credits to aggregate where there is no ledger. It reads `credit_ledger` and
-   * NEVER writes to it; the table is append-only by trigger and its newest row is coupled to
-   * `credit_balances` at COMMIT, so the aggregates exist precisely so the reads can be cheap
-   * WITHOUT the trail being shortened. */
   type AlertSink,
   type AlertSinkHealth,
   type AttachmentStagingStorage,
@@ -519,8 +510,8 @@ interface Quarantine {
  * The roster is LIVE, not a startup snapshot: a `TF_ROSTER_INTERVAL_MS` pass re-reads the
  * shard's enabled mailboxes and reconciles the runtime map — accounts that registered after
  * boot are connected without a restart, and mailboxes that were disabled or deleted are
- * unwatched and CLOSED instead of being kept on an IDLE connection forever (the
- * billing-downgrade and credential-deletion paths both produce exactly that).
+ * unwatched and CLOSED instead of being kept on an IDLE connection forever (a parked account
+ * and the credential-deletion path both produce exactly that).
  *
  * Failure isolation is per mailbox: a bad mailbox is marked status='error', DETACHED, and
  * retried with exponential backoff, never aborting the others — and never stalling another
@@ -812,18 +803,6 @@ export async function startWorkerWithLock(
     let dutyAccounts: string[] = [];
     // Time-gate for the global maintenance pass; starts "due" so a fresh leader sweeps once.
     let lastMaintenanceAt = 0;
-    /**
-     * When this leader last ran the WIDE credit roll-up (three days, totals, divergence, the
-     * setup-spend sweep). `null` until it has, so a leader that takes over during the nightly
-     * hour runs it once rather than skipping the night — the same first-cycle argument every
-     * time-gate above makes, and here it is the difference between a nightly pass and a pass
-     * that any deploy at 03:0x silently cancels.
-     *
-     * In memory rather than on `credit_rollup_runs`: a duplicate wide pass costs one extra
-     * recompute of three days over an append-only source, which is free and correct, while a
-     * missed one leaves the totals a day behind. The cheap failure is the right default.
-     */
-    let lastNightlyRollupAt: Date | null = null;
     /**
      * The staging bucket's client, built ONCE per run rather than per pass — it is a closure over
      * three strings and a `fetch`, so rebuilding it hourly would be pure waste. `null` when this
@@ -1325,9 +1304,9 @@ export async function startWorkerWithLock(
     // ── AND THE STORAGE CAP, PER ACCOUNT, ON THE SAME DISCIPLINE ──────────────────────────────
     //
     // The hosted worker is THE metered composition: `SyncDeps.storageCap` is required, the local
-    // engines type `UNMETERED_STORAGE_CAP`, and this resolver is the one place a subscription row
+    // engines type `UNMETERED_STORAGE_CAP`, and this resolver is the one place a verdict's limit
     // becomes the number ingest reserves against. Resolved at attach for the runtime's base deps
-    // and refreshed in the per-cycle spread below, so a plan change moves the cap within a cycle.
+    // and refreshed in the per-cycle spread below, so a limit change moves the cap within a cycle.
     const storageCapFor = makeStorageCapResolver(entitlements, log);
     const SCREENING_TTL_MS = 30_000;
     type ScreeningDeps = Pick<SyncDeps, "ohboxPolicy" | "ohboxBar" | "screeningCutoff">;
@@ -1834,7 +1813,7 @@ export async function startWorkerWithLock(
         now: new Date(),
         hasRequestKey,
         // The no-seize-back rule. The stamp is what tells "the user just added this
-        // mailbox to Cloud" apart from "the subscription lapsed and came back", which are
+        // mailbox to Cloud" apart from "the account was parked and came back", which are
         // otherwise identical to the gate.
         //
         // THE INSTANT AND NOT A FLAG (0.14.1). It is the row's own `takeover_authorized_at`,
@@ -2060,10 +2039,10 @@ export async function startWorkerWithLock(
     /**
      * RELEASE the claim on a mailbox this process is no longer entitled to organize.
      *
-     * The roster half of the entitlement gate has existed since billing landed — `entitlementsFor` drops a
-     * lapsed account's mailboxes out of `loadEnabledMailboxes`, `reconcileRoster` detaches them.
+     * The roster half of the entitlement gate is the parked-accounts reader — it drops a parked
+     * account's mailboxes out of `loadEnabledMailboxes`, and `reconcileRoster` detaches them.
      * That is not enough on its own. A dropped row leaves a FRESH claim in `ohmail/_meta`, and a
-     * fresh Cloud claim stands a desktop install down: the user cancels, clicks "Organize from
+     * fresh Cloud claim stands a desktop install down: the account is parked, the user clicks "Organize from
      * this Mac", and the button appears to do nothing for the whole staleness window because
      * their own machine keeps reading our claim and standing itself down again. Ten minutes of a
      * product that looks broken, at the exact moment somebody has just chosen to leave.
@@ -3166,7 +3145,7 @@ export async function startWorkerWithLock(
 
       const desired = new Map(served.map((m) => [m.mailboxId, m]));
 
-      // Detach anything no longer in the duty: soft-disabled (the billing-downgrade path), deleted,
+      // Detach anything no longer in the duty: soft-disabled, deleted,
       // or pushed out of the cap. Leaving it attached keeps an IDLE connection open — and keeps
       // syncing a mailbox whose credentials may already have been deleted.
       for (const rt of [...runtimes.values()]) {
@@ -4679,7 +4658,7 @@ export async function startWorkerWithLock(
           // ── AND THEN DISTRUST THE SNAPSHOT, BY IDENTITY AND NOT BY PRESENCE ─────────────
           //
           // `pending` was planned at the top of this cycle and a roster pass may since have
-          // detached this mailbox — disabled, deleted, billing lapsed, evicted by the cap. The
+          // detached this mailbox — disabled, deleted, parked, evicted by the cap. The
           // single queue used to make that impossible; the yield above is what trades it away,
           // so it becomes a line of code and gets a test. (The first-syncer rule admits new runtimes to
           // `pending` but never revalidates the ones already in it — that is this guard's job.)
@@ -4864,7 +4843,7 @@ export async function startWorkerWithLock(
       //
       // DELIBERATE SCOPE, unchanged and now stated for BOTH passes (write it down, do not
       // rediscover it): the list derives from ENABLED MAILBOXES. An account whose every mailbox
-      // is `status='disabled'` — precisely what the billing-downgrade path produces —
+      // is `status='disabled'` — which is what a disconnect leaves behind —
       // appears in no shard's list, so it gets no workflow drain, no time scan AND NO BUBBLE-UP
       // FLIP; any already-`pending` workflow_runs and any due `bubbled_up` message_states it
       // has sit untouched until the account is re-enabled. That is the intended semantics for
@@ -5693,7 +5672,7 @@ export async function startWorkerWithLock(
     /**
      * One alert pass, from the WORKER side.
      *
-     * It covers the three DB-visible rules (failed billing events, stuck sends, sync lag) and
+     * It covers the DB-visible rules (stuck sends, sync lag and their neighbours) and
      * deliberately does NOT include itself: `shards: []` skips the leader-liveness rule,
      * because a process reporting that it is alive is not evidence of anything. That rule is
      * the API host's job (`GET /internal/alerts`), which is a different process on a
@@ -5982,7 +5961,7 @@ export async function startWorkerWithLock(
     alertTimer = setInterval(() => { void alertPass(); }, alertIntervalMs);
     /**
      * THE API-CRON SCHEDULE — this worker as the clock for the API host's internal passes
-     * (billing reconcile hourly, session reap and the SMTP SIZE back-fill daily). The whole
+     * (the session reap and the SMTP SIZE back-fill, daily). The whole
      * argument — why the worker and not the platform cron those routes were written for, why
      * the cadence restarts with leadership, and every overlap arm — is the header of
      * `api-cron.ts`; what is decided HERE is only WHO schedules:

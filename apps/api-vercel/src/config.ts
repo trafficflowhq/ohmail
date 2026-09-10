@@ -218,19 +218,12 @@ export interface HostConfig {
    */
   buildError: string | null;
   /**
-   * The PRIVATE BILLING PLANE, or `null` on a deployment with no billing at all.
+   * WHERE THIS HOST ASKS ABOUT AN ACCOUNT'S STANDING, or `null` when it asks nobody — in which
+   * case every account is unmetered and unbounded, which is a DECLARATION and not a gap.
    *
-   * Two variables, all-or-nothing on one asymmetry: "none" is a legitimate pre-launch
-   * state (`/billing/*` answers 503 `billing_unconfigured`), "some" is a deployment someone
-   * tried to configure and got wrong — a URL with no secret is a client every plane call 401s,
-   * and a secret with no URL is nothing at all. This is the ONLY billing composition since the
-   * billing extraction: the in-process Stripe block is deleted, and {@link assertNoStaleStripeEnv} is
-   * what makes a leftover `STRIPE_*` variable a refused deploy rather than silent decoration.
-   */
-  /**
-   * Where this host asks about an account's standing, or `null` when it asks nobody and answers
-   * from its own tables instead. ALL-OR-NOTHING like {@link HostConfig.billingPlane}, and for the
-   * same reason: a URL with no secret is a client every call 401s.
+   * Asymmetric on purpose: a URL with no secret is a client every call 401s, so it throws at
+   * cold start; a secret with no URL is simply an unmetered host, because that variable is the
+   * program's own bearer and an environment may hold it for another reason.
    */
   entitlements: EntitlementsHostConfig | null;
   /** Alerting, or `null` when `TF_ALERT_SECRET` is unset (`/internal/alerts` 404s). */
@@ -265,9 +258,9 @@ export interface HostConfig {
    * created the row it defers to).
    *
    * ALWAYS PRESENT and possibly all-empty, unlike {@link HostConfig.admin} and
-   * {@link HostConfig.billingPlane}, which are `null` when unarmed. The difference is that those two
-   * decide whether a SURFACE EXISTS (a 404 for a console nobody armed, a 503 for a billing
-   * deployment that is pre-launch), and this decides nothing: the authority is the
+   * {@link HostConfig.entitlements}, which are `null` when unarmed. The difference is that those
+   * two decide what a SURFACE ANSWERS (a 404 for a console nobody armed, unbounded limits for a
+   * host that meters nothing), and this decides nothing: the authority is the
    * `oauth_provider_config` row, and env is only what a deployment with no row falls back to. A
    * `null` here would make "no env" and "no host support" the same value, and the onboarding route's
    * refusal already distinguishes the three real states through `ResolvedOAuthConfig.source`.
@@ -312,11 +305,9 @@ export interface HostConfig {
    * WHERE THIS DEPLOYMENT'S APP LIVES — the absolute origin the OAuth bounce redirects a browser to.
    *
    * `TF_APP_URL`, through {@link assertAppUrl}, which already validates exactly this: a bare
-   * first-party `https` origin with no path, query, fragment or embedded credentials, *"because it is
-   * a REDIRECT TARGET, so it is validated like one"*. That sentence was written for Stripe's return
-   * URL — which lives on the PLANE now, validated there by the same rule — and this is the same
-   * job: the consent bounce is the other high-trust moment where an arbitrary string would be an
-   * open redirect.
+   * first-party `https` origin with no path, query, fragment or embedded credentials, *"because it
+   * is a REDIRECT TARGET, so it is validated like one"*. The consent bounce is a high-trust
+   * moment where an arbitrary string would be an open redirect.
    *
    * `null` ⇒ the route falls back to `defaultOrigin(authConfig)`, the first `TF_AUTH_ORIGINS` entry.
    * That fallback is SAFE rather than merely convenient: `assertOriginConfig` validates it at boot
@@ -381,8 +372,9 @@ export interface HostConfig {
    * it always did, and everything under the old 3 MB request-body ceiling keeps working. What is
    * lost is exactly what staging bought — a send bigger than the serverless body limit.
    *
-   * ALL-OR-NOTHING, like {@link HostConfig.billingPlane}: a URL with no service key is a deployment
-   * that would mint grants nothing can sign, so the three variables are read as one block.
+   * ALL-OR-NOTHING, like {@link HostConfig.entitlements}: a URL with no service key is a
+   * deployment that would mint grants nothing can sign, so the three variables are read as one
+   * block.
    */
   attachmentStaging: AttachmentStagingHostConfig | null;
   /** `production` / `preview` / `development` — the first word of every alert. */
@@ -793,10 +785,9 @@ export function poisonedKeyProvider(reason: string): KeyProvider {
 }
 
 /**
- * The default app origin — the product's ONE origin. It was `https://app.ohmail.app`,
- * which is now a 308 to this. Since the billing extraction the Checkout/Portal return URLs are
- * built on the PLANE from its own `APP_URL`; here this backs `TF_APP_URL` for the OAuth
- * bounce ({@link HostConfig.appOrigin}) and the mail links ({@link loadMailConfig}).
+ * The default app origin — the product's ONE origin. It was `https://app.ohmail.app`, which is
+ * now a 308 to this. It backs `TF_APP_URL` for the OAuth bounce
+ * ({@link HostConfig.appOrigin}) and the mail links ({@link loadMailConfig}).
  */
 export const DEFAULT_APP_URL = "https://ohmail.app";
 
@@ -830,8 +821,6 @@ export const APP_URL_ALLOWED_DOMAINS = ["ohmail.app"] as const;
  * It becomes the absolute origin the OAuth consent bounce sends a browser to and the base of
  * every transactional-mail link. Accepting an arbitrary string there is an open redirect on a
  * high-trust moment, and a typo'd or hostile value cannot be detected later: the redirect looks
- * exactly like the correct one. (The Stripe Checkout/Portal return URLs this validation was
- * first written for are the PLANE's `APP_URL` now, validated there by the same rule.)
  *
  * Refused, each for its own reason: a non-`https` scheme (`javascript:`/`data:` are redirect
  * payloads); embedded credentials (`https://a:b@host`, which browsers render deceptively); a
@@ -869,22 +858,16 @@ export function assertAppUrl(raw: string): string {
 }
 
 /**
- * **THIS HOST HOLDS NO STRIPE CREDENTIAL, AND A LEFTOVER ONE IS A REFUSED DEPLOY.**
+ * **THIS HOST HOLDS NO PAYMENT CREDENTIAL, AND A LEFTOVER ONE IS A REFUSED DEPLOY.**
  *
- * The billing extraction's whole point is that Stripe keys are off this host entirely: the
- * private plane holds them, and this host reaches it through `BILLING_PLANE_URL` +
- * `BILLING_PLANE_SECRET`. After that cutover, a `STRIPE_*` variable in this environment is not
- * configuration — it is either a live secret that should have been removed (a credential parked
- * on a host that no longer needs it) or the first half of someone re-arming the deleted
- * in-process composition. Neither may be silent: this is the successor of the old rule that
- * refused a deployment arming both billing compositions at once, restated for a world where one
- * of the two no longer exists. The legitimate rollback direction is the mirror image — re-add
- * `STRIPE_*` AND redeploy the pre-extraction build, which carries the code these variables
- * belong to.
+ * There is no payments code on this server. A `STRIPE_*` variable in this environment is
+ * therefore not configuration — it is either a live secret that should have been removed (a
+ * credential parked on a host that cannot read it) or the first half of somebody re-arming
+ * something that is not here. Neither may be silent.
  *
- * Matched by PREFIX, not by a fixed list, so `STRIPE_PORTAL_CONFIGURATION_ID` — the optional
- * seventh — and any future spelling are caught too. The message names VARIABLES and never a
- * value (the rule with no exceptions): it surfaces in `/health`'s `detail`, which is public.
+ * Matched by PREFIX, not by a fixed list, so any spelling is caught. The message names
+ * VARIABLES and never a value (the rule with no exceptions): it surfaces in `/health`'s
+ * `detail`, which is public.
  */
 export function assertNoStaleStripeEnv(env: NodeJS.ProcessEnv): void {
   const stale = Object.keys(env)
@@ -892,10 +875,9 @@ export function assertNoStaleStripeEnv(env: NodeJS.ProcessEnv): void {
     .sort();
   if (stale.length > 0) {
     throw new Error(
-      `Stripe variables are set on this host, which holds no Stripe code since the billing ` +
-        `extraction: ${stale.join(", ")}. Billing is configured through BILLING_PLANE_URL + ` +
-        "BILLING_PLANE_SECRET; remove the STRIPE_* variables (they belong on the plane), or " +
-        "roll back by redeploying the pre-extraction build that reads them",
+      `Stripe variables are set on this host, which holds no payments code: ` +
+        `${stale.join(", ")}. Remove them — they belong to whoever operates the service, not ` +
+        "to this server",
     );
   }
 }
@@ -911,8 +893,8 @@ export interface EntitlementsHostConfig {
 /**
  * The entitlements block: `ENTITLEMENTS_URL` plus the program's OWN secret.
  *
- * One program, one credential — the entitlements endpoints and the Stripe machinery are the same
- * service, and its contract names `BILLING_PLANE_SECRET` as the bearer. A second variable holding
+ * One program, one credential — its wire contract names `BILLING_PLANE_SECRET` as the bearer,
+ * and the variable keeps that name because the program does. A second variable holding
  * the same value is a second thing to rotate and a second way for the two to disagree.
  */
 const ENTITLEMENTS_VARS = ["ENTITLEMENTS_URL", "BILLING_PLANE_SECRET"] as const;
@@ -933,7 +915,7 @@ export function loadEntitlementsConfig(env: NodeJS.ProcessEnv): EntitlementsHost
   if ((env.BILLING_PLANE_SECRET ?? "").trim() === "") {
     throw new Error(
       "ENTITLEMENTS_URL is set without BILLING_PLANE_SECRET, which is never a valid deployment: "
-        + "the entitlements endpoints are the billing plane's own, and its bearer is that secret.",
+        + "the entitlements endpoints belong to that program, and its bearer is that secret.",
     );
   }
   const secret = env.BILLING_PLANE_SECRET!.trim();
@@ -1030,8 +1012,8 @@ export function publicSignupCap(env: NodeJS.ProcessEnv): number | null {
  *
  * A broken KEK is captured (poisoned provider + `kekError`) rather than thrown, so the
  * host stays diagnosable. Everything else — a missing database URL, an rpID/origin pair
- * `assertOriginConfig` refuses, a nonsense poll interval, a HALF-configured billing plane, a
- * leftover `STRIPE_*` variable — throws,
+ * `assertOriginConfig` refuses, a nonsense poll interval, a HALF-configured entitlements
+ * block, a leftover `STRIPE_*` variable — throws,
  * because none of it can be reported meaningfully and all of it is a deploy-time mistake.
  */
 export function loadHostConfig(env: NodeJS.ProcessEnv): HostConfig {
@@ -1086,10 +1068,8 @@ export function loadHostConfig(env: NodeJS.ProcessEnv): HostConfig {
   const admin = loadAdminConfig(env);
   const staff = loadStaffDbConfig(env);
 
-  // The plane is the ONLY billing composition, and a leftover STRIPE_* variable is a
-  // cold-start throw rather than decoration (see assertNoStaleStripeEnv). This succeeds the old
-  // both-compositions-armed refusal: the in-process block no longer exists to be double-armed, so
-  // what is left to refuse is a live Stripe credential parked on a host that no longer reads it.
+  // A leftover STRIPE_* variable is a cold-start throw rather than decoration: there is no
+  // payments code here to read it (see assertNoStaleStripeEnv).
   assertNoStaleStripeEnv(env);
   const entitlements = loadEntitlementsConfig(env);
   return {
@@ -1210,7 +1190,8 @@ export function loadAnthropicKey(env: NodeJS.ProcessEnv): string | null {
  * ── AND IT REFUSES BY RETURNING null, NOT BY THROWING ────────────────────────────────────
  *
  * Every other loader in this file throws, because every other one guards something whose
- * misconfiguration must stop the host (a poisoned KEK, a half-configured billing plane). This one
+ * misconfiguration must stop the host (a poisoned KEK, a half-configured entitlements block).
+ * This one
  * must not: a throw here reaches `loadHostState`, which turns it into `ok: false`, which
  * answers **503 to every request on the deployment**. Letting the ALERTING configuration
  * darken the product would be an observability feature causing the outage it exists to

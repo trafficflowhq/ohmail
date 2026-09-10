@@ -6,20 +6,12 @@ import {
   API_MAX_DURATION_MS, makePooledDb,
   makeEntitlementsClient,
 } from "@trafficflow/db/cloud";
-import {
-  adminDbFor, attestStaffDbFault, resetAdminDbs, webhookAlertSink,
-  telegramAlertSink,
-  assertWeightedScheduleActive,
-  acquireImapSlot, releaseImapSlot,
-  resolveOAuthProviderConfig, rotateMailboxOAuthSecret, MICROSOFT_PROVIDER,
-  // The staging BUCKET client. It sits beside the `attachment_staging` rows rather than with the
+import { adminDbFor, attestStaffDbFault, resetAdminDbs, webhookAlertSink, telegramAlertSink, acquireImapSlot, releaseImapSlot, resolveOAuthProviderConfig, rotateMailboxOAuthSecret, MICROSOFT_PROVIDER, // The staging BUCKET client. It sits beside the `attachment_staging` rows rather than with the
   // send path, because the retention sweep's caller is the worker, which may not depend on
   // `@trafficflow/services`. This host is the one place that needs both halves.
-  makeSupabaseStagingStorage,
-  // The organizer's last completed pass, for the filing strip (mail 0097).
-  organizerCycleReader,
-  type AdminDb, type AlertSink,
-} from "@trafficflow/db/cloud";
+  makeSupabaseStagingStorage, // The organizer's last completed pass, for the filing strip (mail 0097).
+  organizerCycleReader, type AdminDb, type AlertSink } from "@trafficflow/db/cloud";
+import { assertWeightedScheduleActive } from "@trafficflow/db";
 import {
   resolveCloudInstallId,
   createLogger, makeAnthropicClient, makeHaikuClassifier, makeSonnetDrafter,
@@ -274,10 +266,6 @@ function buildServices(cfg: HostConfig): ApiServices {
   // Envelope-encrypts mailbox credentials with the SAME provider the worker decrypts them
   // with — the KEK ring identity on `/health` is what proves those agree (risk 2).
   //
-  // `onCreated` is the setup grant: every hosted mailbox connect writes its one-time,
-  // screening-only, 90-day credit pool in the SAME transaction as the row (cloud 0021,
-  // `setup-grant.ts`). Hosted-only by construction — the local tiers construct this service
-  // without the hook, exactly as they pass their own `allowance`.
   lazily(bag, "mailbox", () => makeMailboxService({
     keyProvider,
     /* THE ACCESS VERDICT the allowance gate decides the LIMIT from, read before the create
@@ -305,7 +293,7 @@ function buildServices(cfg: HostConfig): ApiServices {
     /* WHEN THE ORGANIZER'S LAST PASS FINISHED, for the filing strip's "the last pass finished N
        seconds ago" clause (mail 0097) — the fact that separates a mailbox waiting its turn in the
        rotation from one waiting on nothing. Injected rather than imported by the builder for the
-       reason `onCreated` is: `worker_heartbeats` is a Cloud table and that module is inside the
+       reason `allowance` is: `worker_heartbeats` is a Cloud table and that module is inside the
        desktop engine's import closure. Passed BY REFERENCE, so the wiring is greppable. */
     lastOrganizerCycleAt: organizerCycleReader,
   }));

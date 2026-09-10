@@ -197,18 +197,17 @@ export {
 export {
   pruneSendFingerprints, SEND_FINGERPRINT_RETENTION_MS,
 } from "./send-fingerprints.js";
-// Billing + the credit ledger, observability and the AI spend gate USED to
-// be re-exported here. They are runtime surface — no `node:fs`, no migrator — so `/admin` was
-// never the right home for them, and the worker (which may import core + db only) still reaches
-// them without `@trafficflow/services`. They now live on `@trafficflow/db/cloud`, which the
-// worker imports directly: the reason they moved is not layering but SHIPPING — see the header
-// of `cloud.ts`.
+// Observability and the hosted adapters USED to be re-exported here. They are runtime surface
+// — no `node:fs`, no migrator — so `/admin` was never the right home for them, and the worker
+// (which may import core + db only) still reaches them without `@trafficflow/services`. They
+// live on `@trafficflow/db/cloud`, which the worker imports directly: the reason they moved is
+// not layering but SHIPPING — see the header of `cloud.ts`.
 
 /**
  * The stored-body byte accounting over `account_storage` (mail 0062) — the counter every body
  * writer moves in its own transaction, and the reserve `DrizzleRepo.insertMessageBody` gates
- * the managed storage cap on. Mail schema only; the cap READ (`storageCapOf`) and the at-cap
- * roster are billing reads and live on `@trafficflow/db/cloud`.
+ * the managed storage cap on. Mail schema only; the LIMIT itself comes from the entitlements
+ * port, and the at-cap roster is a composed reader the host supplies.
  */
 export {
   bodyBytesOf, storageUsageOf, reserveBodyBytes, releaseBodyBytes, applyBodyBytesDelta,
@@ -250,17 +249,20 @@ export {
   // else. `assertAttemptKey` is what refuses a key that is already a source.
   SPEND_ACTIONS, DRAFT_RETRY_WINDOW_MS, ATTEMPT_KEY_MAX, sourceFor, assertAttemptKey, isSpendAction,
   classifyAttemptKey, screenerAttemptKey, draftAttemptKey, workflowAttemptKey,
+  // The exclusive claim's TTL. The claim is the entitlements program's; this is the CEILING the
+  // organizer's classifier timeout has to fit under, and that timeout is open code.
+  AI_CLAIM_TTL_MS,
   type IdempotencyKey, type WeightedDebitReason,
 } from "./ledger-source.js";
 
 /**
  * THE AI SPEND GATE'S PORT — the question, never the answer.
  *
- * The gate itself needs a subscription, a credit ledger and the tables behind both, and lives on
- * `@trafficflow/db/cloud` with them. But the code that CALLS it is shared: the ingest pipeline,
- * the Screener and the drafting path are the same modules in a hosted deployment that meters AI
- * and in a local install that has no subscription and nobody to ask. Those modules must be able to
- * say "I may be handed a gate" without depending on the half that answers.
+ * The gate itself is whoever operates the service, reached over HTTP. But the code that CALLS
+ * it is shared: the ingest pipeline, the Screener and the drafting path are the same modules in
+ * a hosted deployment that meters AI and in a local install that has nobody to ask. Those
+ * modules must be able to say "I may be handed a gate" without depending on the half that
+ * answers.
  *
  * Nothing here constructs a gate and nothing here has a default. A deployment that supplies none
  * supplies none, and every caller already treats that as "skip the AI" rather than "proceed
@@ -269,6 +271,10 @@ export {
  */
 export type {
   AiCreditGate, AiSpendOutcome, AiRefusalReason, EntitlementReason,
+} from "./ai-gate-port.js";
+/** The refusal vocabulary as VALUES, for the code that validates a word off the wire. */
+export {
+  AI_REFUSAL_REASONS, ENTITLEMENT_REASONS, isAiRefusalReason,
 } from "./ai-gate-port.js";
 
 /** One definition of the `mailboxes.error_code` taxonomy, for the worker and the API. */

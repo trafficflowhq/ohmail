@@ -30,19 +30,17 @@ import type { Tx } from "./change-log.js";
  *
  * ## The failure this file exists to prevent
  *
- * A Stripe webhook fails on every retry until Stripe gives up after ~3 days. The customer has
- * paid. The credits never landed. Every test is green. Nobody finds out. `billing_events`
- * carries a `status='failed'` row for that entire window — the evidence was always there and
- * nothing ever looked at it.
+ * An `outbound_sends` row stays `pending` for three days. The user believes they sent it.
+ * Every test is green. Nobody finds out — the evidence was always in the table and nothing
+ * ever looked at it.
  *
- * The same shape covers the other three: an `outbound_sends` row that stays `pending` is a
- * mail the user believes they sent; a mailbox whose `last_sync_at` is an hour old is a
- * customer whose mail silently stopped arriving; and no leader heartbeat means the machine
- * that would fix all three is not running.
+ * The same shape covers the rest: a mailbox whose `last_sync_at` is an hour old is a customer
+ * whose mail silently stopped arriving, and no leader heartbeat means the machine that would
+ * fix both is not running.
  *
  * ## Why it lives in `packages/db`
  *
- * Same reason as `credits.ts` and `ai-gate.ts`: the WORKER is one of the two
+ * The WORKER is one of the two
  * drivers, and the worker may import `@trafficflow/core` and `@trafficflow/db` and nothing
  * else — the worker's dependency test pins it, and a `packages/services` home would
  * typecheck, pass vitest through the alias, and then throw `MODULE_NOT_FOUND` in the Docker
@@ -94,17 +92,16 @@ export type AlertKind =
   | "sends_stuck"
   /**
    * A mailbox THE ROSTER IS ON DUTY FOR whose newest sync is older than the threshold.
-   * "On duty" is `status <> 'disabled'` AND an entitlement that says sync is on — the worker's
+   * "On duty" is `status <> 'disabled'` AND not PARKED by the host's own reader — the worker's
    * definition, not a second one; see rule 4 for what calling it "enabled" used to cost.
    */
   | "sync_lag"
   /**
-   * An on-duty account whose counted stored-body bytes have reached its subscription's cap:
-   * its mail keeps organizing on IMAP and NEW bodies are being withheld from the
-   * hosted store. A scan rule and not an ingest-transition emission, deliberately — at-cap is
-   * also ENTERED with no ingest event at all (a plan downgrade shrinks the cap; the 0062
-   * backfill mints day-one at-cap accounts), and the two-driver design already survives the
-   * worker being down.
+   * An on-duty account whose counted stored-body bytes have reached its cap: its mail keeps
+   * organizing on IMAP and NEW bodies are being withheld from the hosted store. A scan rule and
+   * not an ingest-transition emission, deliberately — at-cap is also ENTERED with no ingest
+   * event at all (a shrinking limit reaches it; the 0062 backfill mints day-one at-cap
+   * accounts), and the two-driver design already survives the worker being down.
    */
   | "storage_at_cap"
   /**
@@ -280,12 +277,6 @@ export interface AlertThresholds {
    */
   syncLagCriticalMs: number;
   /**
-   * No completed apply-mode reconciliation run within this ⇒ the reconciler is dark. Six
-   * hours against an hourly cron: five missed runs before a page, so one platform hiccup is
-   * not a 3am mail, while a genuinely dead cron pages the same day it died.
-   */
-  reconcileStaleMs: number;
-  /**
    * A native device whose last horizon-reaching `/sync` is older than this, while its account
    * has newer changes, is a dead mirror. Three days: a laptop closed over a weekend is not a
    * page, a desktop that died on a Monday pages before the week is out — measured against the
@@ -352,13 +343,6 @@ export interface AlertThresholds {
    */
   aiCircuitOpenMs: number;
   /**
-   * No completed credit roll-up inside this ⇒ the roll-up is dark. Twenty-six hours against a
-   * nightly pass plus an hourly one: the nightly is the run that matters (it computes totals,
-   * divergence and the prune), and 26 h is one nightly cadence plus two hours of slack, so a
-   * pass delayed by a deploy is not a page while a pass that stopped is one within the day.
-   */
-  creditRollupStaleMs: number;
-  /**
    * How long one alert driver may go without recording a pass before the OTHER driver reports
    * it dark. Thirty minutes: the worker's cadence is one minute and the API driver's is its
    * scheduler's, so thirty minutes is many missed passes for either arm and no plausible
@@ -394,7 +378,6 @@ export const DEFAULT_ALERT_THRESHOLDS: AlertThresholds = {
   syncLagMs: 15 * 60 * 1000,
   syncLagSustainMs: 15 * 60 * 1000,
   syncLagCriticalMs: 2 * 60 * 60 * 1000,
-  reconcileStaleMs: 6 * 60 * 60 * 1000,
   deviceSyncStaleMs: 3 * 24 * 60 * 60 * 1000,
   reuseRevokedWindowMs: 24 * 60 * 60 * 1000,
   workerDegradedMs: 10 * 60 * 1000,
@@ -404,7 +387,6 @@ export const DEFAULT_ALERT_THRESHOLDS: AlertThresholds = {
   imapRefusalWindowMs: 15 * 60 * 1000,
   imapRefusalThreshold: 5,
   aiCircuitOpenMs: 10 * 60 * 1000,
-  creditRollupStaleMs: 26 * 60 * 60 * 1000,
   alertDriverDarkMs: 30 * 60 * 1000,
   reuseWideAccounts: 3,
   storageCapWideAccounts: 5,
@@ -486,7 +468,7 @@ export interface Alert {
    */
   affectedAccounts?: number | null;
   /**
-   * The INTERNAL CONSOLE PATH an operator should open to act on this — `/worker`, `/billing`,
+   * The INTERNAL CONSOLE PATH an operator should open to act on this — `/worker`,
    * `/accounts/<uuid>`. Rendered as a link; never fetched server-side. A literal with, at most,
    * an id interpolated into it: nothing here is derived from what any message says.
    */
@@ -554,7 +536,7 @@ export interface EvaluateOptions {
    * WHICH ACCOUNTS ARE LEGITIMATELY PARKED — composed by the host, absent on a deployment that
    * meters nothing.
    *
-   * Rules 4 and 5 exclude an account whose entitlement says sync is off, so a paused customer
+   * Rules 4 and 5 exclude an account this deployment is not syncing, so a parked customer
    * does not page anybody. That answer lives outside this database now, and ABSENT means "no
    * account is parked": every lagging mailbox is reported, which is what an operator running
    * their own server wants and is the fail-open direction — a missing reader can only add
@@ -944,11 +926,10 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
   //
   // This rule used to call every `status <> 'disabled'` row enabled, on the stated grounds
   // that it was "the SAME predicate the worker's roster uses". It was half of it.
-  // `loadEnabledMailboxes` applies that predicate AND THEN drops every account whose
-  // entitlement says sync is off (`parkedAccounts`). So a paused or unpaid
-  // subscription leaves `connected` rows the roster deliberately PARKS: nothing syncs them, by
-  // design, their stamps age past fifteen minutes within the hour, and this rule then paged a
-  // human forever about a billing state working exactly as intended — which is the noisy-alert
+  // `loadEnabledMailboxes` applies that predicate AND THEN drops every account the host's
+  // reader says is PARKED. A parked account leaves `connected` rows the roster deliberately
+  // does not sync: their stamps age past fifteen minutes within the hour, and this rule then
+  // paged a human forever about a state working exactly as intended — which is the noisy-alert
   // failure the whole file exists to avoid, in the one rule an operator most needs to trust.
   //
   // The duty set is read from ONE reader, `EvaluateOptions.parkedAccounts`, so
@@ -956,8 +937,8 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
   // the pager cannot answer differently. (The worker still holds its own copy of that query;
   // see the function's header.)
   //
-  // Everything else about the rule is unchanged and still deliberate. A DISABLED mailbox (the
-  // billing-downgrade path) is out of scope. A QUARANTINED one (`status='error'`) is in the
+  // Everything else about the rule is unchanged and still deliberate. A DISABLED mailbox is
+  // out of scope. A QUARANTINED one (`status='error'`) is in the
   // roster and is therefore in scope: its owner is not receiving mail, which is the point.
   // `last_sync_at IS NULL` is not an alert on its own — a mailbox enrolled thirty seconds ago
   // has never synced and is not a fault — so it falls back to `created_at` and a never-synced
@@ -1034,8 +1015,8 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
   const parkedSuffix = parkedCount > 0
     // The exclusion is STATED, not silent. An operator who knows five mailboxes are stale
     // and reads "3" must be able to see where the other two went without reading this file.
-    ? ` (${parkedCount} further stale mailbox(es) are parked by their subscription's ` +
-      `entitlement and are deliberately not synced — not counted.)`
+    ? ` (${parkedCount} further stale mailbox(es) belong to accounts this deployment has ` +
+      `PARKED and is deliberately not syncing — not counted.)`
     : "";
   const minDate = (ds: Array<Date | null>): Date | null =>
     ds.reduce<Date | null>((min, d) => (d && (!min || d < min) ? d : min), null);

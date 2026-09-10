@@ -10,8 +10,8 @@ import { ServiceError } from "./errors.js";
  *
  * ## The problem this exists to make impossible
  *
- * The 5/10/50 mailbox tiers were, until this module, enforced by nothing at all: no count, no
- * quota, no gate. And the obvious fix — "read the count in the handler, refuse if it is at the
+ * A mailbox limit was, until this module, enforced by nothing at all: no count, no quota, no
+ * gate. And the obvious fix — "read the count in the handler, refuse if it is at the
  * limit" — is wrong in a way that only shows up in production. Two `POST /mailboxes` arriving
  * together at limit−1 both read `count = limit − 1`, both conclude there is room, and both
  * insert. Under READ COMMITTED neither transaction can see the other's uncommitted row, so
@@ -25,58 +25,49 @@ import { ServiceError } from "./errors.js";
  * gets a clean typed refusal rather than an over-provisioned account. The pg twin fires the race
  * across two independent pools, and removing the `FOR UPDATE` makes it fail.
  *
- * ## Why locking the ACCOUNT row, and not the mailboxes or the subscription
+ * ## Why locking the ACCOUNT row, and not the mailboxes
  *
  * There is no row to lock on the thing being counted — the contended resource is the COUNT, and
  * a row that does not exist yet cannot be locked. `SELECT … FOR UPDATE` over the existing
  * mailboxes would lock N rows and still miss the concurrent INSERT (Postgres row locks do not
  * lock gaps).
  *
- * The lock used to be the account's `billing_subscriptions` row, which defined the limit. The
- * limit now comes from the entitlements port, so that row is no longer the natural mutex — and it
- * carried a standing trap the account row does not: `FOR UPDATE` matching ZERO rows takes no lock
- * at all, so an account with no subscription row serialized nothing. It was harmless only because
- * such an account was refused anyway. `accounts` is per-account, always present, and cannot be
- * absent for the caller — the session resolved through it.
+ * The lock used to be a row that defined the limit, and the limit now comes from the
+ * entitlements port — so that row is no longer the natural mutex, and it carried a standing trap
+ * the account row does not: `FOR UPDATE` matching ZERO rows takes no lock at all, so an account
+ * with no such row serialized nothing. It was harmless only because such an account was refused
+ * anyway. `accounts` is per-account, always present, and cannot be absent for the caller — the
+ * session resolved through it.
  *
- * ## The `canceled` seam — and the disagreement that made it a SHARED read
+ * ## THE LIMIT IS NOT THIS SERVER'S TO KEEP, and the count is
  *
- * `liveSubscriptionOf` deliberately excludes `canceled` — the partial unique index must let
- * resubscribe history accumulate — so wiring it straight into `entitlementsFor` makes a
- * cancelled account look like it never subscribed. The DECISION is the same either way (both
- * are refused), but the REASON the user is shown is not, and "no subscription" is simply false
- * for someone who cancelled last week. So when there is no live row the read falls back to the
- * account's NEWEST row of any status (`order by stripe_event_ts desc, created_at desc limit 1`,
- * also `FOR UPDATE`) and passes THAT snapshot, yielding the
- * entitlement table's documented `canceled` row: plan retained, creation refused. It runs ONLY
- * on the already-refusing path, so the paying hot path is still one indexed lookup, and it can
- * never shadow a live row with a stale cancellation because it is not consulted while one exists.
+ * Two facts, two owners, and the split is the whole design. How many mailboxes an account may
+ * have is a fact about whoever operates the service; how many it HAS is a fact about this
+ * database, and it is the one a race can get wrong. So the limit arrives as a snapshot read
+ * before the transaction opened (a network hop must never happen under a row lock) and the count
+ * is read under the lock. The limit may therefore be microseconds staler than the count, which
+ * is the right way round: a limit that changed in that window is re-read on the next request.
  *
- * ## The internal/dev account gets an ORDINARY subscription row, not a bypass
- *
- * "No subscription ⇒ limit 0" locks out our own account the moment this lands. The decision
- * on how that is handled is honoured here: the operator hand-seeds ONE
- * ordinary `billing_subscriptions` row (`plan='pro'`, `status='active'`,
- * `stripe_subscription_id='internal:<account_uuid>'`, far-future `current_period_end`) against
- * the production database. There is deliberately **no environment variable** that switches
- * enforcement off — an env bypass is a policy hole in the exact code whose purpose is
- * structure-over-policy, and it is invisible to every test.
+ * An install with no entitlements program is UNMETERED — `mailboxes: null`, unbounded — and that
+ * is a DECLARATION rather than the absence of one: {@link assertMayAddMailbox} refuses a `null`
+ * verdict, because "nobody wired a reader" and "this host meters nothing" must not be the same
+ * state.
  */
 
 /**
- * Why a create was refused. Three distinct answers, because the UI must be able to say
- * something TRUE and each one has a different remedy:
+ * Why a create was refused. Four answers, because the UI must be able to say something TRUE and
+ * each has a different remedy — and every one of them is REACHABLE, which the previous set was
+ * not once the reason came from the port:
  *
- *  · `no_subscription` — there is no live subscription row (or Checkout was never completed).
- *    Remedy: choose a plan.
- *  · `not_permitted`   — a subscription exists and retains its mailboxes, but its state forbids
- *    ADDING one (`unpaid`, `canceled`, `past_due` past grace, `paused`, admin-suspended). This
- *    is the distinction `canAddMailbox` exists to carry: retention and creation are
- *    different rights. Remedy: fix the billing state.
- *  · `at_limit`        — fully entitled, and every slot the plan sold is occupied.
- *    Remedy: upgrade, or disconnect a mailbox.
+ *  · `payment_required` — the port refused for payment. Remedy: whoever operates the service.
+ *  · `suspended`        — the port refused because the account is suspended. Remedy: ask us.
+ *  · `not_permitted`    — the port ADMITS the account and still forbids another mailbox. This is
+ *    the distinction `canAddMailbox` exists to carry: retention and creation are different
+ *    rights, and an account can hold what it has without being allowed one more.
+ *  · `at_limit`         — permitted, and every slot the limit allows is occupied. Remedy:
+ *    raise the limit, or disconnect a mailbox.
  */
-export type MailboxRefusal = "no_subscription" | "not_permitted" | "at_limit";
+export type MailboxRefusal = "payment_required" | "suspended" | "not_permitted" | "at_limit";
 
 /** Everything the decision was made from — carried into the error so the UI need not re-query. */
 export interface MailboxAllowance {
@@ -86,15 +77,14 @@ export interface MailboxAllowance {
    *
    * It is a field of its own rather than `entitlements.mailboxLimit` because the limit and the
    * REASON now come from different places: the limit from whoever operates the service, the reason
-   * still from the local subscription state until that moves too. Two readings of "the limit" is
-   * how a refusal ends up quoting a number the gate did not use.
+   * how a refusal ends up quoting a number the gate did not use: the limit and the REASON come
+   * from the same verdict, and reading either one twice is what gets them out of step.
    */
   mailboxLimit: number | null;
   /**
    * MAY this account connect another at all, FROM THE PORT — a separate question from the count,
    * and not derivable from it: an account may retain the mailboxes it has and be forbidden
-   * another. The local `entitlements.reason` still chooses the SENTENCE, which is the one half of
-   * this decision the port deliberately does not carry.
+   * another. Collapsing the two is how a refusal ends up offering a plan the customer holds.
    */
   canAddMailbox: boolean;
   /**
@@ -111,32 +101,33 @@ export interface MailboxAllowance {
   enabledCount: number;
 }
 
-/** Refusal → the wire code and status. 402 for billing remedies, 409 for state; this is the split. */
+/** Refusal → the wire code and status. 402 where the remedy is elsewhere, 409 where it is here. */
 const HTTP: Record<MailboxRefusal, { code: string; status: number }> = {
-  // 402: the remedy is billing — pick a plan, or settle/resume the subscription.
-  no_subscription: { code: "no_subscription", status: 402 },
-  not_permitted: { code: "subscription_inactive", status: 402 },
-  // 409: nothing is wrong with the subscription; the request conflicts with account state.
+  // 402: the remedy is not on this server — it is with whoever operates the service.
+  payment_required: { code: "payment_required", status: 402 },
+  suspended: { code: "account_suspended", status: 402 },
+  not_permitted: { code: "mailbox_not_permitted", status: 402 },
+  // 409: nothing is wrong with the account; the request conflicts with what it already holds.
   at_limit: { code: "mailbox_limit_reached", status: 409 },
 };
 
 /**
  * Factual microcopy — no slogans, and never a lie about what was kept.
  *
- * Three sentences where there were eight: the eight came from the local subscription table's
- * per-state reason, and the port answers two words. Every sentence still says what happens to
- * what is already connected, which is the half a refusal must not omit.
+ * Three sentences where there were eight: the eight came from a per-state reason this server
+ * kept, and the port answers two words. Every sentence still says what happens to what is
+ * already connected, which is the half a refusal must not omit.
  */
 function messageFor(refusal: MailboxRefusal, a: MailboxAllowance): string {
   if (refusal === "at_limit") {
     return `This account may have ${a.mailboxLimit} mailbox${a.mailboxLimit === 1 ? "" : "es"} and ` +
       `${a.enabledCount} are connected. Raise the limit or disconnect a mailbox to add another.`;
   }
-  if (a.accessRefusal === "suspended") {
+  if (refusal === "suspended") {
     return "This account is suspended. No mailbox can be connected while it is; " +
       "nothing already connected is deleted.";
   }
-  if (a.accessRefusal === "payment_required") {
+  if (refusal === "payment_required") {
     return "This account is not currently entitled to connect a mailbox. " +
       "The mailboxes already connected are kept, and nothing is deleted.";
   }
@@ -171,18 +162,19 @@ export class MailboxAllowanceError extends ServiceError {
  * proceed, otherwise the reason it may not.
  *
  * Pure and total on purpose — it is the half of this gate that is table-testable without a
- * database. `suspended` is fed by {@link readMailboxAllowance} from `account_suspensions`
- * (cloud 0008); this pure function is still where the DECISION for a suspended account is pinned by
- * the unit table, independent of how the flag is read.
+ * database. `suspended` is one of the port's two words; this pure function is where the
+ * DECISION for a refused account is pinned by the unit table, independent of how the verdict
+ * was read.
  *
- * Order matters: `canAddMailbox` is consulted BEFORE the count. An `unpaid` account under the
- * limit must be refused for the reason that is true — its billing state — not told it is full,
- * and an account whose plan is 0 mailboxes must read `no_subscription` rather than `at_limit`.
+ * Order matters: `canAddMailbox` is consulted BEFORE the count. An account the port refuses
+ * while it is under the limit must be refused for the reason that is TRUE — its standing — not
+ * told it is full, and an account whose limit is 0 must read the port's word rather than
+ * `at_limit`.
  */
 export function decideMailboxAllowance(a: MailboxAllowance): MailboxRefusal | null {
-  if (!a.canAddMailbox) {
-    return a.accessRefusal === "payment_required" ? "no_subscription" : "not_permitted";
-  }
+  // The port's own word where it gave one; `not_permitted` where it ADMITTED the account and
+  // still said no. All three are reachable, which is what makes each one worth a sentence.
+  if (!a.canAddMailbox) return a.accessRefusal ?? "not_permitted";
   // `null` is UNBOUNDED, not zero: an unmetered install has no count to exceed.
   if (a.mailboxLimit !== null && a.enabledCount >= a.mailboxLimit) return "at_limit";
   return null;
@@ -223,8 +215,7 @@ export interface MailboxAllowanceInput {
  *
  * MUST be called with the ambient transaction handle: a lock taken on a top-level db handle is
  * released at the end of its own statement and serializes nothing. The `LedgerTx` type refuses a
- * `PgDatabase` at compile time and the runtime guard catches the `as any` and the JS caller —
- * the same two layers the credit primitives sit under.
+ * `PgDatabase` at compile time and the runtime guard catches the `as any` and the JS caller.
  */
 export async function readMailboxAllowance(
   tx: LedgerTx,
@@ -265,7 +256,7 @@ export async function readMailboxAllowance(
  * {@link MailboxAllowanceError} on refusal. Returns the allowance on success so a caller can
  * log or echo it.
  *
- * Throwing (rather than returning an outcome) is deliberate here, unlike the credit primitives:
+ * Throwing (rather than returning an outcome) is deliberate here, unlike the spend port:
  * the caller's transaction has done nothing yet at this point, so the rollback the throw causes
  * is free, and a refusal that must be remembered to be checked is a refusal that will one day
  * not be.

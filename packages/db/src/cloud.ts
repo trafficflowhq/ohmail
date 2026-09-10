@@ -259,28 +259,15 @@ export {
   resyncMailbox, type MailboxResyncWrite, type MailboxResyncOutcome,
 } from "./mailbox-resync.js";
 
-/**
- * THE SPEND VOCABULARY — the terms table, the one source composer, and the attempt-key builders.
+/* THE SPEND VOCABULARY IS NOT RE-EXPORTED HERE, and the absence is load-bearing.
  *
- * Defined on a leaf the engine compiles, presented here beside the port's answer: a call site
- * names an action and a bare attempt key, and `sourceFor` is the only thing that turns the pair
- * into a ledger source. Every implementation of the port composes through it, which is what keeps
- * two answers from meaning different things by one key.
- */
-export {
-  SPEND_ACTIONS, DRAFT_RETRY_WINDOW_MS, ATTEMPT_KEY_MAX, AI_CLAIM_TTL_MS, ledgerSources,
-  sourceFor, assertAttemptKey, isSpendAction, clientIdempotencyKey,
-  classifyAttemptKey, screenerAttemptKey, draftAttemptKey, workflowAttemptKey,
-  classifyLedgerSource, screenerLedgerSource,
-  AI_ACTION_WEIGHTS, WEIGHTED_DEBIT_REASONS, aiActionCost, assertWeightedScheduleActive,
-  type SpendAction, type IdempotencyKey, type WeightedDebitReason,
-} from "./ledger-source.js";
-
-/** The AI gate's refusal vocabulary — the words a spend verdict carries. */
-export {
-  AI_REFUSAL_REASONS, ENTITLEMENT_REASONS, isAiRefusalReason,
-  type AiRefusalReason, type AiSpendOutcome, type EntitlementReason,
-} from "./ai-gate-port.js";
+ * `ledger-source.ts` and `ai-gate-port.ts` are leaves the DESKTOP ENGINE compiles, and the
+ * engine census derives its refusal list from this file's own `from "./x.js"` specifiers — so a
+ * line here naming either leaf makes it a hosted module and refuses the artifact. Measured: one
+ * such line refused the build, naming the leaf's own compiled output as a private input.
+ *
+ * The ROOT barrel carries the whole vocabulary (`index.ts`, beside its own argument for why),
+ * and hosted code imports it from there like every other caller. */
 
 /**
  * THE ANSWER to the entitlements port (`@trafficflow/db#EntitlementsPort`): the HTTP client of an
