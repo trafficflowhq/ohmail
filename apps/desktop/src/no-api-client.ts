@@ -683,11 +683,14 @@ export const consent: {
 
 export interface AwayResponderWire {
     enabled: boolean;
-    subject: string | null;
     body: string | null;
     startsAt: string | null;
+    /** The instant the responder stops; the pane resolves a picked day to the end of it. */
     endsAt: string | null;
     audience: "screened_in" | "everyone";
+    throttle: "always" | "per_message" | "per_day" | "per_week";
+    /** Folder names. `ohmail/Screener` is storable only beside `audience: "everyone"`. */
+    piles: ("INBOX" | "ohmail/Reads" | "ohmail/Receipts" | "ohmail/Screener")[];
     updatedAt: string | null;
 }
 
@@ -898,6 +901,28 @@ export const webauthnAvailable: () => boolean = absent;
 export const createPasskey: (options: PublicKeyCredentialCreationOptionsJSON) => Promise<unknown> = absent;
 
 export const assertPasskey: (options: PublicKeyCredentialRequestOptionsJSON) => Promise<unknown> = absent;
+
+/**
+ * THE ACCESS REFUSAL'S SURFACE — two protocol constants, the facts type, and a subscription.
+ *
+ * The constants carry their real VALUES: they are what the server answers, not a way to reach it,
+ * and a consumer comparing against a refusing stand-in would silently never match. The
+ * subscription ANSWERS rather than refuses, on this file's own rule for `apiConfigured`: the
+ * shell subscribes in an effect at mount, so a refusal here is a crash on first render. Nothing
+ * in this build can raise one — there is no Cloud client to meet a 402 — so the sink is never
+ * called and the unsubscribe is a no-op.
+ */
+export const ACCESS_REFUSED_STATUS = 402;
+export const ACCESS_REFUSED_CODE = "subscription_required";
+
+export interface AccessRefusedFacts {
+    reason: "payment_required" | "suspended";
+    manageUrl?: string;
+}
+
+export function onAccessRefused(_sink: (facts: AccessRefusedFacts) => void): () => void {
+    return () => {};
+}
 
 export const messageOf: (err: unknown) => string = absent;
 

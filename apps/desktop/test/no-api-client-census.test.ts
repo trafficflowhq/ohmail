@@ -1,4 +1,6 @@
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 /**
@@ -62,5 +64,77 @@ describe("the desktop's refusing api-client stub", () => {
     const real = exportsOf("../../webapp/app/api-client.ts");
     const stub = exportsOf("../src/no-api-client.ts");
     expect([...stub].filter((n) => !real.has(n)).sort()).toEqual([]);
+  });
+
+  /**
+   * ═══ AND THE MEMBERS, NOT ONLY THE NAMES ══════════════════════════════════════════════════
+   *
+   * A name census is blind to the way this file actually rots: `AwayResponderWire` kept a
+   * `subject` the real wire dropped and never gained `throttle` or `piles`, so the stub's type
+   * described a responder two releases old while every name matched. Nothing noticed, because
+   * the shipped desktop reads the wire's fields through the shared control's own types and the
+   * bundler needs only the NAMES to resolve.
+   *
+   * So the interfaces both files export are compared MEMBER BY MEMBER, and the four that differ
+   * today are pinned BY NAME with what they are missing. A ratchet, like every count in this
+   * repository: an entry may leave this list, and a fifth interface joining it is red.
+   */
+  const KNOWN_MEMBER_DRIFT: Readonly<Record<string, readonly string[]>> = {
+    /* The desktop stub predates these members; each was added to the real wire by a later lane
+       and none is read by the shared shell on this tier. They are listed so the away wire's
+       parity — the one this case was written for — is a checked claim rather than a hope. */
+    MailboxDTO: ["organizedByThisInstall", "releaseRequestedAt", "takeoverAuthorizedAt"],
+    SubscriptionStatus: ["addons", "setupCredits", "storageUsedBytes"],
+    ConsentStateWire: [
+      "folderMailboxesOff", "foldersEnabledAt", "loadTrackingPixelsAt", "onboardingCompletedAt",
+      "screeningScope", "signatures", "signaturesHtml", "themeFace",
+    ],
+    ScreenerWirePage: ["pendingDecisions"],
+  };
+
+  /** Every exported interface's member names, per file, read with the compiler's own parser. */
+  function interfaceMembers(rel: string): Map<string, string[]> {
+    const file = fileURLToPath(new URL(rel, import.meta.url));
+    const sf = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
+    const out = new Map<string, string[]>();
+    for (const st of sf.statements) {
+      if (!ts.isInterfaceDeclaration(st)) continue;
+      if (!st.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)) continue;
+      out.set(st.name.text, st.members
+        .map((m) => (m.name && ts.isIdentifier(m.name) ? m.name.text : m.name?.getText(sf) ?? "?"))
+        .sort());
+    }
+    return out;
+  }
+
+  it("mirrors the MEMBERS of every interface it shares, but for the four pinned drifts", () => {
+    const real = interfaceMembers("../../webapp/app/api-client.ts");
+    const stub = interfaceMembers("../src/no-api-client.ts");
+    // ANTI-VACUITY: a parse that found nothing would agree about everything.
+    expect(real.size).toBeGreaterThan(20);
+    expect(real.get("AwayResponderWire")).toBeDefined();
+
+    const drift: string[] = [];
+    for (const [name, members] of real) {
+      const mine = stub.get(name);
+      if (mine === undefined) continue;      // the NAME census above owns an absent interface
+      const missing = members.filter((m) => !mine.includes(m));
+      const pinned = KNOWN_MEMBER_DRIFT[name] ?? [];
+      const unpinned = missing.filter((m) => !pinned.includes(m));
+      const healed = pinned.filter((m) => mine.includes(m));
+      if (unpinned.length > 0) drift.push(`${name} is missing ${unpinned.join(", ")}`);
+      if (healed.length > 0) drift.push(`${name} no longer drifts on ${healed.join(", ")} — drop it from the pin`);
+    }
+    expect(drift, "the stub's type surface drifted from the real client's").toEqual([]);
+  });
+
+  /** The away wire by name, because it is the one this case exists for. */
+  it("carries the away wire's own members exactly", () => {
+    const real = interfaceMembers("../../webapp/app/api-client.ts");
+    const stub = interfaceMembers("../src/no-api-client.ts");
+    expect(stub.get("AwayResponderWire")).toEqual(real.get("AwayResponderWire"));
+    expect(real.get("AwayResponderWire")).toContain("piles");
+    expect(real.get("AwayResponderWire")).toContain("endsAt");
+    expect(real.get("AwayResponderWire")).not.toContain("subject");
   });
 });
