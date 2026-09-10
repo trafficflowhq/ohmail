@@ -39,14 +39,22 @@
  * fall through to `other` — `screened_in` and `per_day`, the two defaults — so a value this
  * component has not been taught still produces a true sentence rather than an empty one.
  *
+ * ── THE SCOPE IS A LIST, NOT A THIRD SELECT ──────────────────────────────────────────────
+ *
+ * It was a `select` over four derived words while `piles` had two members. With four members
+ * there are sixteen subsets, and enumerating them is sixteen sentences to keep true. So the
+ * clause names the piles: one key per pile word, joined by `Intl.ListFormat` in the reader's
+ * locale. A responder answering NO pile still gets its own sentence — every wording that fits
+ * this one is false for it.
+ *
  * The claim it makes is a claim about the SERVER's behaviour: the pass's throttle, not this
  * component's. If the throttle's meaning changes, this sentence is edited in the same change.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { Banner } from "@ohmail/ui";
-import { awayScopeKey, type AwayScope } from "@trafficflow/core/away-scope";
+import { AWAY_PILE_VIEW, awayEffectivePiles, type AwayPile } from "@trafficflow/core/away-scope";
 import { apiConfigured, away as awayApi, type AwayResponderWire } from "../api-client";
 import type { AwayTransport } from "./AwayResponderRow";
 import { go } from "./routing";
@@ -77,19 +85,31 @@ export const AWAY_NOTICE_COPY = {
    */
   notice:
     "Away responder is on — {audience, select, everyone {everyone who writes} other {people you've let in}} "
-    + "{scope, select, reads {whose mail lands in Reads} ohbox_reads {whose mail lands in Ohbox or Reads} "
-    + "other {whose mail lands in Ohbox}} "
+    + "whose mail lands {piles} "
     + "{audience, select, everyone {gets} other {get}} "
     + "{throttle, select, always {a reply to every message} per_message {one reply, until you change the text} "
     + "per_week {a reply at most once a week} other {a reply at most once a day}}.",
   /**
-   * THE ONE SCOPE THE SENTENCE ABOVE CANNOT CARRY — a responder that is ON with no pile selected.
+   * THE PILE NAMES AS THE SENTENCE NEEDS THEM, one key each.
    *
-   * `awayScopeKey` answers `none` for an empty `piles`, which the column's containment CHECK
-   * allows and which is what unticking every box means. Given a `none` arm inside the sentence,
-   * every wording that fits the grammar is false: "…whose mail lands in Ohbox get a reply" claims
-   * replies are going out, and an empty arm claims it even more quietly by leaving the clause out.
-   * A responder answering nobody is a different fact and gets a different sentence.
+   * THE PREPOSITION IS INSIDE EACH PHRASE, and that is what makes both languages grammatical:
+   * German declines the noun after it ("in der Ohbox", "in Belegen", "im Screener"), so a bare
+   * noun list would be wrong — and it also keeps the English value off the German glossary guard,
+   * which requires a message that IS a view name to carry that view's one German word. The
+   * phrases are joined by `Intl.ListFormat` in the reader's own locale, so a fifth answerable
+   * pile needs one word and no new sentence.
+   */
+  noticePileOhbox: "in Ohbox",
+  noticePileReads: "in Reads",
+  noticePileReceipts: "in Receipts",
+  noticePileScreener: "in the Screener",
+  /**
+   * THE ONE SCOPE THE SENTENCE ABOVE CANNOT CARRY — a responder that is ON with no pile answered.
+   *
+   * The column's containment CHECK allows an empty `piles`, and that is what unticking every box
+   * means. Given an empty list inside the sentence, every wording that fits its grammar is false:
+   * "…whose mail lands in get a reply" claims replies are going out with nothing named. A
+   * responder answering nobody is a different fact and gets a different sentence.
    */
   noticeNone: "Away responder is on, but no pile is set to get a reply — nothing is sent.",
   noticeSettings: "Away settings",
@@ -103,14 +123,12 @@ export interface AwayNoticeState {
   /** How often each of them gets one — the other half. */
   throttle: Throttle;
   /**
-   * WHICH PILES ARE ANSWERED, as the one word the sentence is chosen by.
-   *
-   * Derived through `awayScopeKey` (`@trafficflow/core/away-scope`) rather than kept as the array,
-   * so the notice and the engine cannot disagree about what a stored `piles` MEANS. Resting
-   * `"ohbox"`, which pairs with `on: false` — the notice is absent until the server has said
+   * WHICH PILES ARE ANSWERED — the EFFECTIVE list (`awayEffectivePiles`), not the stored array, so
+   * the notice and the rule cannot disagree about what a stored `piles` means beside an audience.
+   * Resting empty, which pairs with `on: false`: the notice is absent until the server has said
    * otherwise, so the resting value is never on screen.
    */
-  scope: AwayScope;
+  piles: readonly AwayPile[];
   /**
    * THE SETTINGS ROW'S ECHO. `AwayResponderRow` calls this with what the SERVER answered —
    * its mount load and every save echo, never what a click asked for — so the row and this
@@ -133,12 +151,12 @@ export interface AwayNoticeState {
  */
 export function useAwayNotice(active: boolean, transport?: AwayTransport): AwayNoticeState {
   const [state, setState] = useState<{
-    on: boolean; audience: Audience; throttle: Throttle; scope: AwayScope;
+    on: boolean; audience: Audience; throttle: Throttle; piles: readonly AwayPile[];
   }>({
     on: false,
     audience: "screened_in",
     throttle: "per_day",
-    scope: "ohbox",
+    piles: [],
   });
 
   /* Through a ref so the effect below keeps its `[active]` deps — ONE read per shell mount is the
@@ -180,9 +198,9 @@ export function useAwayNotice(active: boolean, transport?: AwayTransport): AwayN
             /* `?? []` and not `?? ["INBOX"]`. A server one release older answers no `piles` at
                all, and inventing the Ohbox there would put a scope sentence on screen that the
                server never stated — the same "no path from 'I do not know' to 'replies are going
-               out'" rule this file's header sets for the notice as a whole. An empty array reads
-               as `none`, whose sentence claims nothing is being sent. */
-            scope: awayScopeKey(loaded.piles ?? []),
+               out'" rule this file's header sets for the notice as a whole. An empty list gets
+               the sentence that claims nothing is being sent. */
+            piles: awayEffectivePiles(loaded.piles ?? [], loaded.audience) as readonly AwayPile[],
           });
         }
       } catch {
@@ -202,12 +220,12 @@ export function useAwayNotice(active: boolean, transport?: AwayTransport): AwayN
       on: next.enabled,
       audience: next.audience,
       throttle: next.throttle,
-      scope: awayScopeKey(next.piles ?? []),
+      piles: awayEffectivePiles(next.piles ?? [], next.audience) as readonly AwayPile[],
     });
   }, []);
 
   return {
-    on: state.on, audience: state.audience, throttle: state.throttle, scope: state.scope, update,
+    on: state.on, audience: state.audience, throttle: state.throttle, piles: state.piles, update,
   };
 }
 
@@ -251,10 +269,27 @@ function openAwaySettings(): void {
  *
  * `ohx-away` is a hook for tests and the fit harness; nothing styles it.
  */
+/** The pile word for each answered folder, as the sentence's own clause needs it. */
+const NOTICE_PILE_LABEL = {
+  ohbox: "noticePileOhbox", reads: "noticePileReads",
+  receipts: "noticePileReceipts", screener: "noticePileScreener",
+} as const satisfies Record<(typeof AWAY_PILE_VIEW)[AwayPile], string>;
+
 export function AwayNotice(
-  { audience, throttle, scope }: { audience: Audience; throttle: Throttle; scope: AwayScope },
+  { audience, throttle, piles }: {
+    audience: Audience; throttle: Throttle; piles: readonly AwayPile[];
+  },
 ) {
   const t = useTranslations("away");
+  const locale = useLocale();
+  /**
+   * "in Ohbox", "in Ohbox or in Reads", "in der Ohbox, in Belegen oder im Screener" — a
+   * DISJUNCTION, because one message lands in exactly one pile, and joined by the platform rather
+   * than by a comma this file owns: the separator and the final conjunction differ by language,
+   * and `Intl.ListFormat` is where the runtime already knows them.
+   */
+  const named = new Intl.ListFormat(locale, { style: "long", type: "disjunction" })
+    .format(piles.map((p) => t(NOTICE_PILE_LABEL[AWAY_PILE_VIEW[p]])));
   return (
     <Banner
       className="ohx-away"
@@ -267,7 +302,7 @@ export function AwayNotice(
       {/* A RESPONDER ANSWERING NOBODY GETS ITS OWN SENTENCE, never an arm of the one below.
           Every wording that fits that sentence's grammar is false for an empty scope — see
           `AWAY_NOTICE_COPY.noticeNone`. */}
-      {scope === "none" ? t("noticeNone") : t("notice", { audience, throttle, scope })}
+      {piles.length === 0 ? t("noticeNone") : t("notice", { audience, throttle, piles: named })}
     </Banner>
   );
 }

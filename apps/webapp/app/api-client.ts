@@ -2501,6 +2501,14 @@ export interface AwayResponderWire {
    */
   body: string | null;
   startsAt: string | null;
+  /**
+   * WHEN THE RESPONDER STOPS — the instant the settings pane's date field resolves to (end of the
+   * chosen day where the reader is), or `null` for open-ended.
+   *
+   * Past it the responder answers nobody, and the away pass then switches the row off and clears
+   * this field, so `enabled` and this date cannot disagree for longer than one pass cycle. The
+   * server refuses an instant already past while `enabled` is true.
+   */
   endsAt: string | null;
   /** Who gets an automatic reply. `screened_in` restricts it to senders past the Screener. */
   audience: "screened_in" | "everyone";
@@ -2518,14 +2526,17 @@ export interface AwayResponderWire {
    * in once whose later mail files to Reads is still "somebody I've let in", which is how eight
    * automatic replies reached shop and notification senders.
    *
-   * FOLDERS, not pile words — the Ohbox pile's folder is `INBOX`. `awayScopeKey` and
-   * `AWAY_PILE_VIEW` (`@trafficflow/core/away-scope`) translate for display, and the settings
+   * FOLDERS, not pile words — the Ohbox pile's folder is `INBOX`. `AWAY_PILE_VIEW` and
+   * `awayEffectivePiles` (`@trafficflow/core/away-scope`) translate for display, and the settings
    * control imports the offered set from there so it cannot offer a pile the server refuses.
    *
    * PUT IS A FULL REPLACE, so this field is not optional for a caller: omitting it resets the
    * scope to the Ohbox. An EMPTY array is "answer nobody" and is stored as asked.
+   *
+   * `ohmail/Screener` is only storable beside `audience: "everyone"` — the server answers 400 for
+   * the other pair, and the control disables that box.
    */
-  piles: ("INBOX" | "ohmail/Reads")[];
+  piles: ("INBOX" | "ohmail/Reads" | "ohmail/Receipts" | "ohmail/Screener")[];
   updatedAt: string | null;
 }
 

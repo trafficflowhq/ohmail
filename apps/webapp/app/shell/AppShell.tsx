@@ -7507,9 +7507,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                           audience={awayNotice.audience}
                           throttle={awayNotice.throttle}
                           /* The pile scope, so the line states WHICH mail is answered and not
-                             only who. Derived by the engine's own `awayScopeKey` inside
-                             `useAwayNotice`, never re-derived here. */
-                          scope={awayNotice.scope}
+                             only who. Projected through the engine's own `awayEffectivePiles`
+                             inside `useAwayNotice`, never re-derived here. */
+                          piles={awayNotice.piles}
                         />
                       );
                     return away ?? undefined;

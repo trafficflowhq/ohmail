@@ -337,6 +337,25 @@ export function dayNine(day: string): string {
 }
 
 /**
+ * A picked calendar day at the END of that day WHERE THE READER IS — the away responder's chosen
+ * last day, as the instant its `endsAt` stores.
+ *
+ * 23:59:59 rather than the next midnight: the responder's window is inclusive at both ends
+ * (`ends_at >= now`), so this is the last instant a reply may go out on the day somebody named.
+ * Paired with {@link dayValue}, which reads the same instant back as the same calendar day.
+ */
+export function dayEnd(day: string): string {
+  const zone = activeFormatZone();
+  const picked = /^(\d{4})-(\d{2})-(\d{2})/.exec(day);
+  const f = picked
+    ? { year: Number(picked[1]), month: Number(picked[2]), day: Number(picked[3]) }
+    : zonedFields(new Date(day), zone);
+  return zonedInstant(
+    { year: f.year, month: f.month, day: f.day, hour: 23, minute: 59, second: 59 }, zone,
+  ).toISOString();
+}
+
+/**
  * The "YYYY-MM-DD" a date input wants, from an ISO instant — used to floor the picker at tomorrow.
  *
  * The READER's calendar day, not the instant's UTC one, and the difference is not cosmetic: 09:00

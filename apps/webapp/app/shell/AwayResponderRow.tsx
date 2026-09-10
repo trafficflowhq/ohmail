@@ -70,11 +70,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Button, Gloss, SegmentedControl, SettingsActions, SettingsField, SettingsRow, Switch, TextField } from "@ohmail/ui";
+import { Button, DatePicker, Gloss, SegmentedControl, SettingsActions, SettingsField, SettingsRow, Switch, TextField } from "@ohmail/ui";
 import {
-  AWAY_ANSWERABLE_PILES, AWAY_PILE_VIEW, AWAY_PILES_DEFAULT, type AwayPile,
+  AWAY_ANSWERABLE_PILES, AWAY_PILE_VIEW, AWAY_PILES_DEFAULT, AWAY_SCREENER_FOLDER,
+  awayEffectivePiles, type AwayPile,
 } from "@trafficflow/core/away-scope";
 import { away as awayApi, type AwayResponderSaveWire, type AwayResponderWire } from "../api-client";
+import { dayEnd, dayStamp, dayValue, tomorrowNine } from "./format";
+import { activeFormatLocale } from "./locale";
 
 /**
  * THE ENGLISH SENTENCES, KEPT — as the shape of the `away` namespace and nothing more.
@@ -109,18 +112,27 @@ export const AWAY_COPY = {
   pilesLabel: "Which mail gets a reply",
   pileOhbox: "Ohbox",
   pileReads: "Reads",
+  pileReceipts: "Receipts",
+  pileScreener: "Screener",
   pileOhboxNote: "Always answered.",
+  /** Why the Screener box cannot be ticked — the audience above decides that population. */
+  pileScreenerNote: "Only with “Everyone who writes”, above.",
   /**
-   * The three that are never offered — and the Screener is deliberately NOT called "never
-   * answered", because it is not. "Everyone who writes" answers the strangers waiting there;
-   * that is the whole of what the wider audience means. Saying otherwise here would make one of
-   * the two settings on this pane describe the other one wrongly.
+   * What is never answered, and what the Screener follows. Spam is the only pile with no box; the
+   * Screener has one, and it is the audience above that decides whether it can be used.
    */
-  pilesNote:
-    "Receipts and Spam are never answered. The Screener is decided by who gets a reply, above.",
+  pilesNote: "Spam is never answered. The Screener follows who gets a reply, above.",
   never:
-    "Never sent to mailing lists, no-reply addresses, security mail, receipts, spam, senders "
+    "Never sent to mailing lists, no-reply addresses, security mail, spam, senders "
     + "you've screened out, your own addresses, or an address that bounced.",
+  /** The end date, and the two sentences the pane says about it. */
+  untilLabel: "Turn off automatically on",
+  untilNone: "No end date",
+  untilPick: "Pick a date",
+  untilClear: "Remove the end date",
+  untilOn: "On until {date}.",
+  untilPast: "The end date passed on {date}. Nothing is sent.",
+  untilExpired: "Pick a date in the future, or turn the responder off.",
   localNote: "Replies are sent while ohmail is open on this computer.",
   hostNote: "Replies are sent while ohmail is open on {host}.",
   save: "Save",
@@ -179,7 +191,9 @@ type Piles = AwayResponderWire["piles"];
  * words, so a pile the engine starts offering under a NEW word fails to compile here rather than
  * rendering with no label — and a new folder under an existing word renders with no edit at all.
  */
-const PILE_LABEL = { ohbox: "pileOhbox", reads: "pileReads" } as const satisfies Record<(typeof AWAY_PILE_VIEW)[AwayPile], string>;
+const PILE_LABEL = {
+  ohbox: "pileOhbox", reads: "pileReads", receipts: "pileReceipts", screener: "pileScreener",
+} as const satisfies Record<(typeof AWAY_PILE_VIEW)[AwayPile], string>;
 
 /**
  * The four rates, LOOSEST FIRST, which is the order the sentence they form reads in: every message,
@@ -243,6 +257,11 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
   host?: string | null;
 } = {}) {
   const t = useTranslations("away");
+  /* THE PICKER'S OWN CHROME — "Previous month", "Next month", "today". One set of words for every
+     date picker in the product; a copy of the three in this namespace would be three strings to
+     keep in agreement with the resurface chooser's. */
+  const tOhbox = useTranslations("ohbox");
+  const tScreener = useTranslations("screener");
   /**
    * `null` until the server has answered. The controls are not drawn before then, for the reason
    * `RemoteImagesRow` gives about its own switch and more sharply: drawing the resting OFF state to
@@ -255,7 +274,7 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
    * `asked` IS NOT `saved`, and it is the one distinction this row's answer has to carry: on an
    * account another install organizes, the write did not happen here and a request is waiting.
    */
-  const [state, setState] = useState<"idle" | "saved" | "asked" | "failed">("idle");
+  const [state, setState] = useState<"idle" | "saved" | "asked" | "failed" | "expired">("idle");
   /**
    * THE READ CAME BACK REFUSED — and this is a state rather than silence BECAUSE THE CONTROL HAS
    * ITS OWN PANE NOW.
@@ -268,6 +287,9 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
    * somebody whose responder is ON is a lie about mail going out.
    */
   const [unreachable, setUnreachable] = useState(false);
+  /** The end-date picker: open, and the control it hangs from — the resurface chooser's idiom. */
+  const [dateOpen, setDateOpen] = useState(false);
+  const dateRef = useRef<HTMLSpanElement | null>(null);
 
   /** The echo through a ref, so the load effect below keeps its once-per-mount `[]` deps. */
   const changed = useRef(onChanged);
@@ -334,11 +356,27 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
     setDraft((d) => (d ? { ...d, ...patch } : d));
   };
 
+  /**
+   * THE CHOSEN DATE, AND WHETHER IT HAS ALREADY GONE.
+   *
+   * `endsAt` is an instant (the end of the chosen day where the reader is), so the comparison is
+   * against a clock read at render. The pane refuses the save this state would make, and the
+   * server refuses it too — see {@link AWAY_COPY.untilExpired}.
+   */
+  const endsAt = draft.endsAt;
+  const expired = endsAt !== null && new Date(endsAt).getTime() < Date.now();
+
+  /** What the responder ACTUALLY answers — the projection the banner reads. See the group below. */
+  const effective = awayEffectivePiles(draft.piles, draft.audience);
+
   const save = (): void => {
     if (pending || !draft) return;
     // The worker refuses to compose, so an enabled responder with nothing written in it would be
     // stored and then do nothing at all. Refused here too, where somebody can see why.
     if (draft.enabled && !complete) { setState("failed"); return; }
+    /* AND AN END DATE THAT HAS ALREADY PASSED, while the responder is on: the server answers 400
+       for it, and a bare "That did not save." would not say which field. */
+    if (draft.enabled && expired) { setState("expired"); return; }
     setPending(true);
     setState("idle");
     void (async () => {
@@ -409,7 +447,12 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
             options={AUDIENCE_IDS.map((id) => ({ id, label: t(id === "everyone" ? "everyone" : "screenedIn") }))}
             value={draft.audience}
             ariaLabel={t("audienceLabel")}
-            onChange={(audience) => edit({ audience })}
+            /* NARROWING THE AUDIENCE DROPS THE SCREENER PILE, because the pair is refused at the
+               write door and inert in the rule — `awayEffectivePiles` is the same projection the
+               banner reads, so the draft, the save and the sentence agree. */
+            onChange={(audience) => edit({
+              audience, piles: [...awayEffectivePiles(draft.piles, audience)] as Piles,
+            })}
           />
         }
       />
@@ -446,9 +489,15 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
         </span>
         <div className="set-choice">
           {AWAY_ANSWERABLE_PILES.map((pile) => {
-            const on = draft.piles.includes(pile);
+            /* TICKED IS THE EFFECTIVE SCOPE, not the stored array. A stored `ohmail/Screener`
+               beside `screened_in` answers nobody (the audience is asked first), so drawing it
+               ticked would state a reply going out where none is. */
+            const on = effective.includes(pile);
             const word = AWAY_PILE_VIEW[pile];
             const fixed = word === "ohbox" && on;
+            /* THE SCREENER FOLLOWS THE AUDIENCE — the one coupling between the two settings, and
+               the reason its row carries a note instead of just going grey. */
+            const audienceLocked = pile === AWAY_SCREENER_FOLDER && draft.audience !== "everyone";
             return (
               <label key={pile}>
                 <input
@@ -456,21 +505,82 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
                   name="away-piles"
                   value={pile}
                   checked={on}
-                  disabled={pending || fixed}
+                  disabled={pending || fixed || audienceLocked}
                   onChange={(e) => edit({
                     /* Filtered over the ENGINE's set, in its order: a toggle can only ever add or
                        remove a member the engine offers, and never reorders or invents one. */
-                    piles: AWAY_ANSWERABLE_PILES.filter((p) => (p === pile ? e.target.checked : draft.piles.includes(p))),
+                    piles: AWAY_ANSWERABLE_PILES
+                      .filter((p) => (p === pile ? e.target.checked : effective.includes(p))),
                   })}
                 />
                 <b>{t(PILE_LABEL[word])}</b>
                 {fixed ? <span>{t("pileOhboxNote")}</span> : null}
+                {audienceLocked ? <span>{t("pileScreenerNote")}</span> : null}
               </label>
             );
           })}
         </div>
       </div>
       <p className="set-note-inline" id="away-piles-note">{t("pilesNote")}</p>
+      {/* THE END DATE. `endsAt` has always been in this row's draft and in the wire — the pass
+          stops answering past it — and until now there was no control for it, so the only way to
+          set one was the API. The product's own `DatePicker` rather than a native date input, for
+          the reason that primitive exists: the operating system drew its calendar wherever it
+          liked. Floored at TOMORROW, so no date already gone can be chosen here; the picker is
+          the only writer, and a date that has since passed is reported below rather than hidden.
+
+          The day is resolved at the END of itself where the reader is (`dayEnd`), and read back
+          as the same day (`dayValue`), so the two directions cannot name different dates. */}
+      <SettingsField htmlFor="away-until" label={t("untilLabel")}>
+        <span className="set-inline-pair">
+          {/* THE ANCHOR IS THE SPAN, not the button: `Button` is not a `forwardRef` component and
+              making it one would change a primitive every pane in the product draws. The span
+              wraps the trigger alone, so its box IS the trigger's box, which is what the picker
+              measures its placement from. */}
+          <span ref={dateRef}>
+            <Button
+              id="away-until"
+              disabled={pending}
+              aria-haspopup="dialog"
+              aria-expanded={dateOpen}
+              onClick={() => setDateOpen((open) => !open)}
+            >
+              {endsAt === null ? t("untilNone") : dayStamp(endsAt)}
+            </Button>
+          </span>
+          {endsAt === null ? null : (
+            <Button variant="ghost" disabled={pending} onClick={() => edit({ endsAt: null })}>
+              {t("untilClear")}
+            </Button>
+          )}
+        </span>
+        {dateOpen ? (
+          <DatePicker
+            locale={activeFormatLocale()}
+            today={dayValue(new Date().toISOString())}
+            min={dayValue(tomorrowNine(new Date()))}
+            value={endsAt === null ? null : dayValue(endsAt)}
+            anchor={dateRef.current}
+            labels={{
+              dialog: t("untilPick"),
+              prevMonth: tOhbox("datePrevMonth"),
+              nextMonth: tOhbox("dateNextMonth"),
+              today: tScreener("today"),
+            }}
+            onPick={(day) => { setDateOpen(false); edit({ endsAt: dayEnd(day) }); }}
+            onClose={() => setDateOpen(false)}
+          />
+        ) : null}
+      </SettingsField>
+      {/* WHAT THE DATE MEANS RIGHT NOW, and only while it means something. A responder that is off
+          already says so in the row's own description, and one with no date has nothing to add. */}
+      {draft.enabled && endsAt !== null ? (
+        <p className="set-note-inline">
+          {expired
+            ? t("untilPast", { date: dayStamp(endsAt) })
+            : t("untilOn", { date: dayStamp(endsAt) })}
+        </p>
+      ) : null}
       {/* THE RATE. `SegmentedControl` because the four members are one ordered range and somebody
           choosing between them is choosing a POSITION on it — a select would hide three of the four
           behind a press and lose that. Same widget as the audience row above, so the two settings
@@ -519,6 +629,9 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
         ) : null}
         {state === "failed" ? (
           <span className="set-note-inline" role="alert">{complete ? t("failed") : t("incomplete")}</span>
+        ) : null}
+        {state === "expired" ? (
+          <span className="set-note-inline" role="alert">{t("untilExpired")}</span>
         ) : null}
       </SettingsActions>
     </>

@@ -276,9 +276,9 @@ export async function runAwayResponderPass(
   /* NONE MEANS NONE, decided before a single row is read. See the field's own note. */
   if (deps.mailboxIds !== undefined && deps.mailboxIds.length === 0) return result;
 
-  /* Before the probe, in this order: a responder whose end date has passed is switched OFF (so the
-     probe cannot consider it and the heal below cannot stamp it), then a responder enabled by an
-     older API build is given the enablement instant the probe requires. */
+  /* Both before the probe. The ORDER between these two is not load-bearing and was measured not to
+     be: the sweep's WHERE does not read `enabled_at` and it clears the column anyway, so a heal
+     that ran first leaves the same row. Expiry is first because it saves the heal that write. */
   result.expired = await expireEndedResponders(db, now(), deps.mailboxIds, log);
   await healMissingEnabledAt(db, now());
   const live = await liveResponders(db, now(), deps.mailboxIds);
