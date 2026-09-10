@@ -1478,8 +1478,27 @@ export type FunctionDefinitionMarker = readonly [proname: string, bodySubstring:
  * that list this constant is where the split has to happen — loudly, rather than by a filter that
  * silently drops it.
  */
+/**
+ * The MAIL constraints probed by DEFINITION — see {@link CheckDefinitionMarker} for the shape and
+ * the blind spot it closes. The first mail migration of the REPLACEMENT kind is what created this
+ * list; until 0101 every entry of that kind named a Cloud table.
+ *
+ * `away_responders_piles_closed` was created by mail 0096 over `{INBOX, ohmail/Reads}` and is
+ * REPLACED by 0101 over four members. The name is identical on both databases, so
+ * {@link SCHEMA_CHECK_MARKERS} cannot tell them apart: a host still on 0096 would be certified
+ * `schemaOk: true` while the constraint refuses every scope the settings pane now offers — a save
+ * the person is told succeeded, rejected by the database from inside the write's transaction.
+ *
+ * The needle is the VOCABULARY 0101 adds and 0096 cannot contain, for the reason
+ * {@link CheckDefinitionMarker} gives about `pg_get_constraintdef`'s normalized form.
+ */
+export const MAIL_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker> = [
+  ["away_responders_piles_closed", "ohmail/Screener"],
+];
+
 export const MAIL_EXPECTED_MARKERS =
-  MAIL_SCHEMA_MARKERS.length + SCHEMA_INDEX_MARKERS.length + SCHEMA_CHECK_MARKERS.length;
+  MAIL_SCHEMA_MARKERS.length + SCHEMA_INDEX_MARKERS.length + SCHEMA_CHECK_MARKERS.length +
+  MAIL_CHECK_DEFINITION_MARKERS.length;
 
 /**
  * The newest entry of the MAIL journal, which {@link MAIL_SCHEMA_MARKERS} is reconciled to.
@@ -1967,7 +1986,8 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0099_folder_state_trashed_from";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0101_away_piles_wider";
+
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
  * migration, and this module ships in the desktop engine. */
@@ -2003,10 +2023,12 @@ export async function probeDatabase(
    */
   columnMarkers: ReadonlyArray<SchemaMarker> = MAIL_SCHEMA_MARKERS,
   /**
-   * Constraints whose DEFINITION is probed — see {@link CheckDefinitionMarker}. Defaults to none,
-   * because every entry so far names a Cloud table and this module ships in the desktop engine.
+   * Constraints whose DEFINITION is probed — see {@link CheckDefinitionMarker}. Defaults to
+   * {@link MAIL_CHECK_DEFINITION_MARKERS}, which is the mail tier's own set: it used to default to
+   * none, on the ground that every entry named a Cloud table, and mail 0101 ended that. A caller
+   * passing its own list REPLACES this one, so a hosted caller passes the union of both tiers.
    */
-  checkDefinitionMarkers: ReadonlyArray<CheckDefinitionMarker> = [],
+  checkDefinitionMarkers: ReadonlyArray<CheckDefinitionMarker> = MAIL_CHECK_DEFINITION_MARKERS,
   /**
    * INDEX markers beyond {@link SCHEMA_INDEX_MARKERS} — the same `pg_indexes` probe, extended
    * the way `checkDefinitionMarkers` extends the constraint probes and for the same reason:

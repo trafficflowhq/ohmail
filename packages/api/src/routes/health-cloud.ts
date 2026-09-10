@@ -1,5 +1,6 @@
 import {
   MAIL_SCHEMA_MARKERS, SCHEMA_INDEX_MARKERS, SCHEMA_CHECK_MARKERS,
+  MAIL_CHECK_DEFINITION_MARKERS,
   MAIL_SCHEMA_MARKER_JOURNAL_TAG, type SchemaMarker, type CheckDefinitionMarker,
   type FunctionDefinitionMarker,
 } from "./health.js";
@@ -242,13 +243,20 @@ export const SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   ...CLOUD_SCHEMA_MARKERS,
 ] as const;
 
+/* Both tiers' definition probes, in one list, because `probeDatabase`'s parameter REPLACES its
+ * default: a hosted caller passing the cloud list alone would silently stop probing mail 0101. */
+export const CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker> = [
+  ...MAIL_CHECK_DEFINITION_MARKERS,
+  ...CLOUD_CHECK_DEFINITION_MARKERS,
+];
+
 /**
  * Columns + indexes (both halves) + checks + check DEFINITIONS + function BODIES. What a hosted
  * `/health` measures against.
  */
 export const EXPECTED_MARKERS =
   SCHEMA_MARKERS.length + SCHEMA_INDEX_MARKERS.length + CLOUD_INDEX_MARKERS.length +
-  SCHEMA_CHECK_MARKERS.length + CLOUD_CHECK_DEFINITION_MARKERS.length +
+  SCHEMA_CHECK_MARKERS.length + CHECK_DEFINITION_MARKERS.length +
   CLOUD_FUNCTION_MARKERS.length;
 
 /** Alias that names the role rather than the shape, for the composition root. */
@@ -319,7 +327,7 @@ export const SCHEMA_MARKER_JOURNAL_TAG =
  * desktop engine's bundle, and no caller has to remember to pass them. See `health-census.ts`. */
 registerSchemaCensus({
   markers: SCHEMA_MARKERS,
-  checkDefinitions: CLOUD_CHECK_DEFINITION_MARKERS,
+  checkDefinitions: CHECK_DEFINITION_MARKERS,
   indexMarkers: CLOUD_INDEX_MARKERS,
   functionDefinitions: CLOUD_FUNCTION_MARKERS,
   expected: EXPECTED_MARKERS,

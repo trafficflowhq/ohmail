@@ -14,7 +14,7 @@ import { healthFault, probeDatabase } from "./health.js";
 // is a hosted surface and the local route table does not mount it.
 import {
   EXPECTED_MARKERS, SCHEMA_MARKER_JOURNAL_TAG, CLOUD_TIER_MARKERS,
-  CLOUD_CHECK_DEFINITION_MARKERS, CLOUD_INDEX_MARKERS, CLOUD_FUNCTION_MARKERS,
+  CHECK_DEFINITION_MARKERS, CLOUD_INDEX_MARKERS, CLOUD_FUNCTION_MARKERS,
 } from "./health-cloud.js";
 import type { ApiDeps } from "../deps.js";
 import type { Handler, Route, RouteParams } from "../router.js";
@@ -191,7 +191,7 @@ async function apiHealthFor(req: Request, deps: ApiDeps): Promise<ApiHealth> {
   // invisible to every probe that reads only names, cloud 0013's index name cannot live in
   // `health.ts`, and cloud 0014 is a replaced function BODY that only the fifth class can see.
   const probe = await probeDatabase(
-    deps.db, CLOUD_TIER_MARKERS, CLOUD_CHECK_DEFINITION_MARKERS, CLOUD_INDEX_MARKERS,
+    deps.db, CLOUD_TIER_MARKERS, CHECK_DEFINITION_MARKERS, CLOUD_INDEX_MARKERS,
     CLOUD_FUNCTION_MARKERS,
   );
   const base = {
