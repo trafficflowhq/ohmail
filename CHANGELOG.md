@@ -19,6 +19,8 @@ See [Status](README.md#status--read-this-first).
   longer leaves it out of both your mail and Trash.
 - Restoring says “Restoring to Ohbox…” until your mail server has actually moved the message,
   instead of reporting it as already back.
+- Restoring a message you deleted on a device that is not the one organizing the mailbox puts it
+  back in the folder it came from, rather than in your Ohbox.
 
 ### Still to come
 

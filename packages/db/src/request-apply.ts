@@ -215,6 +215,9 @@ export async function applyMessageMove(
      canonical path. A word absent from the map cannot reach here — `validateMovePayload` refused
      it — so this is a resolution rather than a second validation. */
   let to = MOVE_DESTINATIONS.get(payload.destination) ?? null;
+  /* `trash` is the ONE word the map answers with null (see it), and the payload was validated
+     against that map, so this is the destination-is-Trash question already answered. */
+  const toTrash = to === null;
   if (to === null) {
     const [mb] = await tx.select({ trashFolder: mailboxes.trashFolder }).from(mailboxes)
       .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, accountId))).limit(1);
@@ -233,14 +236,23 @@ export async function applyMessageMove(
   const loc = (msg.nativeLocator as { folder?: string } | null) ?? null;
   const from = fs?.observedFolder ?? loc?.folder ?? "INBOX";
 
+  /* WHERE IT CAME FROM, SO A RESTORE PUTS IT BACK THERE — `MessageService.upsertDesired`'s rule,
+     applied here because this is the same write through another door: a move to the mailbox's
+     Trash path records the origin, every other destination CLEARS it, and `observed === to`
+     records nothing (Trash as an origin would restore a message to where it already is).
+     Both halves were missing: a message deleted through a reader install restored to INBOX while
+     the folder it came from still existed, and a forwarded move left a previous delete's origin
+     for the next delete to inherit. Written on the conflict too, where the row already exists. */
+  const trashedFrom = toTrash && from !== to ? from : null;
+
   // DESIRED ONLY, observed preserved on conflict. See the header.
   await tx.insert(folderState).values({
     messageId: msg.id, desiredFolder: to, observedFolder: from,
-    lastSetBy: "us", reconcileStatus: "pending", conflict: false,
+    lastSetBy: "us", reconcileStatus: "pending", conflict: false, trashedFrom,
   }).onConflictDoUpdate({
     target: folderState.messageId,
     // `observedFolder` deliberately omitted → preserved. The worker owns it.
-    set: { desiredFolder: to, lastSetBy: "us", reconcileStatus: "pending", conflict: false, updatedAt: now },
+    set: { desiredFolder: to, lastSetBy: "us", reconcileStatus: "pending", conflict: false, updatedAt: now, trashedFrom },
   });
 
   const lastSeq = await recordChange(ledger(tx), {
