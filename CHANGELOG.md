@@ -13,6 +13,13 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Still to come
+
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
+
+## [0.16.1] — 2026-09-10
+
 ### The message actions use the width they have
 
 On a wide window the actions under a message stopped at Reply, Reply all, Forward and Mark unread
@@ -113,11 +120,6 @@ log, so nothing is removed without you deciding to.
 - A failure the mail server reported as plain text was written to the app's log with the mailbox
   address still in it. The address is replaced before the line is written, and the message itself
   is kept — it is often the only account of what the server refused.
-
-### Still to come
-
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
 
 ## [0.16.0] — 2026-09-10
 
@@ -5475,7 +5477,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.16.1...HEAD
+[0.16.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.16.1
 [0.16.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.16.0
 [0.15.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.15.0
 [0.14.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.14.2
