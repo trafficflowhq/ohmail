@@ -48,6 +48,24 @@ The button is disabled only until a press you made has been answered. It used to
 reading "Sync queued" for the rest of your visit to the screen, and a sync the app started on its
 own could take it away too. A mailbox that is syncing says so on its own row.
 
+### Filing is steadier when two decisions land at once
+
+Filing a message takes a round trip to your mail server, and until now a decision made while that
+round trip was in flight could be replaced by the older one — so a message you had just re-filed
+went back to where you had changed your mind away from. The newer decision now wins, and the app
+records where the server actually put the message.
+
+Three fixes on the same path. A reference to a message is trusted only under a folder generation
+your server actually named, so a folder your provider deletes and recreates can no longer make a
+move, a flag or a read land on a different message. A folder that changed generation while a large
+sync was still running no longer repeats that sync forever. And a bulk delete on the server no
+longer holds up new mail while the app catches up with it.
+
+Mail that a second machine on the same account filed into one of the ohmail folders is also
+repaired once, on first run of this release: it was recorded as if you had filed it by hand, which
+is why it sat where it landed even when the sender already had a rule pointing elsewhere. Mail you
+moved yourself is left exactly where you put it.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
