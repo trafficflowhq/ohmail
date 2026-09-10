@@ -275,13 +275,6 @@ export * from "./mail/index.js";
 // that imports `nodemailer`. `mail-entry-census.test.ts` pins both directions — the `/mail`
 // module graph carries no nodemailer, and nothing but this barrel imports the file.
 export { SmtpMailer, type SmtpMailerConfig } from "./mail/smtp-mailer.js";
-// Billing, post-extraction: `entitlements/` is the open half — all state, all
-// transactions, the `EntitlementEvent` v1 wire contract and the `BillingPlanePort` the private
-// Stripe plane is reached through (plus its HTTP client). The Stripe machinery itself lives in
-// the private billing plane; this repository holds NO `stripe` dependency and
-// no Stripe import, and a db-level test pins that. API-side by
-// construction, because the worker may import core + db only.
-export * from "./entitlements/index.js";
 // Registration + onboarding: the landing waitlist and the consumable, expiring,
 // email-bound invite that replaced the static bootstrap codes.
 // `AuthService.register` consumes an invite inside its own transaction; `WaitlistService`
@@ -316,19 +309,11 @@ export {
 // a body, a credential or a Stripe payload. See the header of `admin-service.ts`.
 export * from "./admin-dto.js";
 export {
-  // The COST BOARD's read (cloud 0029). Every AI figure it puts on an account is APPORTIONED and
-  // labelled as such at the type level — nothing in this system knows which account a model call
-  // belonged to, and attributing one inside the AI package was refused.
-  adminCosts, COST_RANK_LIMIT, COST_ACCOUNT_SCAN_CAP, FAMILY_OF_REASON,
-} from "./admin-costs.js";
-export {
-  adminAccounts, adminAccountDetail, adminAccountLedgerDay,
-  adminBilling, adminFunnel, adminWorker, adminWorkerInstances,
+  adminAccounts, adminAccountDetail,
+  adminFunnel, adminWorker, adminWorkerInstances,
   adminAlerts, adminAlertDrivers, adminPlatformSignals, adminActions, adminAttentionRank,
   ADMIN_LIST_LIMIT, ADMIN_DEFAULT_PAGE_SIZE, ADMIN_MAX_PAGE_SIZE, ADMIN_OPTIONS_LIMIT,
-  ADMIN_ROSTER_LIMIT, ADMIN_SUBSCRIPTION_ORDER,
-  ADMIN_LEDGER_DAY_LIMIT, ADMIN_USAGE_DAYS,
-  ADMIN_USAGE_EXPECTED_EVERY_SECONDS, ADMIN_TOTALS_EXPECTED_EVERY_SECONDS,
+  ADMIN_ROSTER_LIMIT,
   ADMIN_WRITES_UNAVAILABLE, ADMIN_ACTIONS_PRECONDITION,
   // The branded, content-blind handle every one of those reads takes. Exported so
   // `packages/api` can type `ApiDeps.adminDb` with it and make `deps.db` a compile error.
@@ -337,20 +322,6 @@ export {
 // The one per-IP slot limiter, shared by the waitlist and by registration.
 export { reserveIpSlot } from "./ip-throttle.js";
 
-export {
-  // WHAT THE VENDORS CHARGE (cloud 0029). The port has THREE outcomes and the third is the
-  // point: `unconfigured` writes NOTHING and the DTO answers `cents: null`. Three of the five
-  // providers have no billing API to ask at all and a fourth may have no key on a given
-  // deployment, so an adapter that answered 0 when it could not ask would be a margin somebody
-  // believes.
-  makePlatformCostPort, runPlatformCostPass, recordManualPlatformCost, costsForMonth,
-  writeMeasuredRows, ZeroForChargedLine, ManualCostShapeConflict, MAX_METRIC_CHARS,
-  TOTAL_METRIC, isTotalMetric,
-  API_COST_PROVIDERS, COST_STALE_AFTER_MS, MANUAL_COST_MIN_NOTE,
-  type CostProvider, type PlatformCostPort, type PlatformCostFetch, type PlatformCostRow,
-  type PlatformCostEnv, type PlatformCostPassReport, type PlatformCostPassOptions,
-  type ManualCostEntry, type ProviderCost,
-} from "./platform-costs.js";
 export {
   // WHAT THE PLATFORM SERVED (cloud 0030). The same three-outcome port as the cost one above,
   // and here the third outcome is what keeps a rule from firing on nothing: an unconfigured

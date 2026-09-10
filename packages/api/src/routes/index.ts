@@ -36,7 +36,6 @@ import { foldersRoutes } from "./folders.js";
 import { draftsRoutes } from "./drafts.js";
 import { workflowsRoutes } from "./workflows.js";
 import { proposalsRoutes } from "./proposals.js";
-import { billingRoutes } from "./billing.js";
 import { waitlistRoutes } from "./waitlist.js";
 import { accountRoutes } from "./account.js";
 import { aiSettingsRoutes } from "./ai-settings.js";
@@ -173,7 +172,6 @@ export const proposalsRoutesGroup: Route[] = proposalsRoutes;
  * `GET /billing/subscription` · `POST /billing/webhook` (public + raw). See `billing.ts` for
  * why each carries the options it does.
  */
-export const billingRoutesGroup: Route[] = billingRoutes;
 
 /**
  * Art. 17 erasure (1): `DELETE /account`, step-up gated. Blocking precondition for
@@ -268,7 +266,6 @@ export const apiRoutes: Route[] = [
   ...draftsRoutes,
   ...workflowsRoutes,
   ...proposalsRoutes,
-  ...billingRoutes,
   ...accountRoutes,
   ...aiSettingsRoutes,
   ...screeningRoutes,

@@ -56,14 +56,9 @@ import {
   type LedgerTx,
 } from "@trafficflow/db";
 import {
-  accountSuspensions,
-  aiAttemptClaims,
-  setupGrants,
-  setupGrantSpends,
   attachmentStaging,
   authEvents,
   authThrottle,
-  billingCustomers,
   credentials,
   loginTokens,
   mailboxOauthCeremonies,
@@ -458,25 +453,11 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     // may be never.
     await drop("mailbox_oauth_device_ceremonies",
       tx.delete(mailboxOauthDeviceCeremonies).where(eq(mailboxOauthDeviceCeremonies.accountId, accountId)));
-    // `source` is `classify:screener:<message_id>` — a message id of the account being erased.
-    // The FK is `ON DELETE cascade`, which would have taken these with `accounts`; `accounts`
-    // survives, so the cascade never fires and the claims outlive the mail they name.
-    await drop("ai_attempt_claims", tx.delete(aiAttemptClaims).where(eq(aiAttemptClaims.accountId, accountId)));
-    // The screening-only setup pools (cloud 0021): per-account state, not the money audit — the
-    // audit is `credit_ledger`, which a setup-funded suggestion never touches. `mailbox_id` and
-    // the spends' `source` (`classify:screener:<message_id>`) both name objects of the account
-    // being erased, the same argument as the claims row above. Spends first (FK to grants).
-    await drop("setup_grant_spends",
-      tx.delete(setupGrantSpends).where(eq(setupGrantSpends.accountId, accountId)));
-    await drop("setup_grants",
-      tx.delete(setupGrants).where(eq(setupGrants.accountId, accountId)));
-    // Presence IS the state, and there is nothing left to suspend: no users, no mailboxes, no
-    // session that could ever authenticate. What remains in the row is `note` — an operator's
-    // free text ABOUT THIS PERSON — so leaving it would retain the one field here that is
-    // unambiguously theirs. The suspend/resume history stays in `audit_log`'s posture, i.e. it
-    // goes with the account, exactly as the line above deletes it.
-    await drop("account_suspensions",
-      tx.delete(accountSuspensions).where(eq(accountSuspensions.accountId, accountId)));
+    // WHAT AN ENTITLEMENTS PROGRAM HOLDS IS ERASED BY THAT PROGRAM, not from here. The rows this
+    // erasure used to delete — attempt claims, the setup pools, the suspension note, the customer
+    // email — belong to whoever operates metering, and the request reaches them through the
+    // port's `releaseAccount`, which this service already calls. A deployment that meters nothing
+    // has none of those rows to erase.
     // NOT a delete — see the header. The row is the only key to bytes in the staging bucket, and
     // the sweep removes row and object together, keyed on `expires_at <= now()`. Bringing the
     // expiry forward hands both to the next maintenance pass; deleting the row would strand the
@@ -533,12 +514,6 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     // Not a soft delete: there is nothing personal left to protect. The row is the
     // billing subject the ledger points at, and a uuid is not personal data.
     await tx.update(accounts).set({ name: "" }).where(eq(accounts.id, accountId));
-    // The one personal field inside the billing tables. The Stripe customer id is
-    // the link the invoices need; the email is not.
-    await tx.update(billingCustomers)
-      .set({ email: sql`'deleted@invalid'`, updatedAt: ctx.now() })
-      .where(eq(billingCustomers.accountId, accountId));
-
     return { accountId, deleted, stagingTicketsExpired, usersErased: userRows.length };
   });
 }

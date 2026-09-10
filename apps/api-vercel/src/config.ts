@@ -10,7 +10,7 @@ import { DEFAULT_SSE, type SseConfig, type BuildIdentitySource } from "@trafficf
 // `transactionPoolerReason` is its mirror: the LISTEN URL must NOT be the transaction pooler.
 import { runtimeUrlReason, providerFamily, transactionPoolerReason } from "@trafficflow/db";
 import { msOAuthEnv, type MsOAuthBootstrap } from "@trafficflow/db/cloud";
-import { makeAuthConfig, type AuthConfig, type PlatformCostEnv } from "@trafficflow/services";
+import { makeAuthConfig, type AuthConfig } from "@trafficflow/services";
 
 /**
  * Deployment configuration for the serverless API host.
@@ -227,7 +227,6 @@ export interface HostConfig {
    * billing extraction: the in-process Stripe block is deleted, and {@link assertNoStaleStripeEnv} is
    * what makes a leftover `STRIPE_*` variable a refused deploy rather than silent decoration.
    */
-  billingPlane: BillingPlaneHostConfig | null;
   /**
    * Where this host asks about an account's standing, or `null` when it asks nobody and answers
    * from its own tables instead. ALL-OR-NOTHING like {@link HostConfig.billingPlane}, and for the
@@ -294,7 +293,6 @@ export interface HostConfig {
    * into `process.env` makes every test of it depend on the runner's ambient variables and makes
    * a host unable to state what it is configured with.
    */
-  platformCosts: PlatformCostEnv;
   /**
    * `CRON_SECRET` — the platform's own scheduler credential, held at the TOP LEVEL and not
    * inside {@link alerts}.
@@ -902,17 +900,6 @@ export function assertNoStaleStripeEnv(env: NodeJS.ProcessEnv): void {
   }
 }
 
-/**
- * What this host needs to reach the private billing plane. Present or absent as a
- * WHOLE — see {@link loadBillingPlaneConfig}.
- */
-export interface BillingPlaneHostConfig {
-  /** The plane's origin (`https://…`), normalized — no path, no query, no credentials. */
-  url: string;
-  /** `BILLING_PLANE_SECRET` — the bearer every `/v1/*` call presents. ≥ 24 chars. */
-  secret: string;
-}
-
 /** What this host needs to reach an entitlements program. Present or absent as a WHOLE. */
 export interface EntitlementsHostConfig {
   /** The program's origin (`https://…`), normalized — no path, no query, no credentials. */
@@ -969,60 +956,6 @@ export function loadEntitlementsConfig(env: NodeJS.ProcessEnv): EntitlementsHost
         "so a path would be silently doubled",
     );
   }
-  return { url: url.origin, secret };
-}
-
-/** The two variables that make up the plane block. Both present, or both absent. */
-const BILLING_PLANE_VARS = ["BILLING_PLANE_URL", "BILLING_PLANE_SECRET"] as const;
-
-/**
- * The plane block — **both, or none**, on the same asymmetry as the rest of billing: "none" is a deployment with no
- * billing (legitimate: a preview, a local run, a pre-launch host), "some" is a deployment
- * someone tried to configure and got wrong, and each half-state is quietly catastrophic — a URL
- * with no secret is a client whose every call 401s, which the webhook relay correctly maps to
- * 503 and Stripe retries into for three days while the host looks healthy.
- *
- * The URL is validated as the server-to-server target it is: `https` only (the bearer rides
- * every request), no embedded credentials, no query/fragment, and NO PATH — the client appends
- * `/v1/…`, so a path would be silently doubled on every call. Normalized to an origin.
- *
- * Every message names the VARIABLE and never the value (the rule with no exceptions).
- */
-export function loadBillingPlaneConfig(env: NodeJS.ProcessEnv): BillingPlaneHostConfig | null {
-  const present = BILLING_PLANE_VARS.filter((v) => (env[v] ?? "").trim() !== "");
-  if (present.length === 0) return null;
-  if (present.length < BILLING_PLANE_VARS.length) {
-    const missing = BILLING_PLANE_VARS.filter((v) => !present.includes(v));
-    throw new Error(
-      "The billing plane is PARTIALLY configured, which is never a valid deployment: set both " +
-        `of ${BILLING_PLANE_VARS.join(", ")} or neither. Missing: ${missing.join(", ")}`,
-    );
-  }
-
-  const secret = env.BILLING_PLANE_SECRET!.trim();
-  if (secret.length < 24) {
-    // There is no rate limit and no lockout behind the plane's compare, so the secret's LENGTH
-    // is the only thing between a guesser and a server that can mint Checkout sessions.
-    throw new Error("BILLING_PLANE_SECRET must be at least 24 characters");
-  }
-
-  const raw = env.BILLING_PLANE_URL!.trim();
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    throw new Error("BILLING_PLANE_URL must be an absolute https URL");
-  }
-  if (url.protocol !== "https:") throw new Error("BILLING_PLANE_URL must use https — the bearer rides every request");
-  if (url.username || url.password) throw new Error("BILLING_PLANE_URL must not embed credentials");
-  if (url.search || url.hash) throw new Error("BILLING_PLANE_URL must not carry a query string or fragment");
-  if (url.pathname !== "/" && url.pathname !== "") {
-    throw new Error(
-      "BILLING_PLANE_URL must be a bare origin with no path — the client appends /v1/…, " +
-        "so a path would be silently doubled",
-    );
-  }
-
   return { url: url.origin, secret };
 }
 
@@ -1158,7 +1091,6 @@ export function loadHostConfig(env: NodeJS.ProcessEnv): HostConfig {
   // both-compositions-armed refusal: the in-process block no longer exists to be double-armed, so
   // what is left to refuse is a live Stripe credential parked on a host that no longer reads it.
   assertNoStaleStripeEnv(env);
-  const billingPlane = loadBillingPlaneConfig(env);
   const entitlements = loadEntitlementsConfig(env);
   return {
     databaseUrlPooled,
@@ -1174,7 +1106,6 @@ export function loadHostConfig(env: NodeJS.ProcessEnv): HostConfig {
     version,
     buildSource,
     buildError: buildIdentityError(env, version, buildSource),
-    billingPlane,
     entitlements,
     alerts,
     admin: admin.admin,
@@ -1187,7 +1118,6 @@ export function loadHostConfig(env: NodeJS.ProcessEnv): HostConfig {
     msOAuth: msOAuthEnv(env),
     // The vendor cost credentials, resolved ONCE here like every other block. Always an object,
     // possibly with every member absent — see the field's own note.
-    platformCosts: loadPlatformCostCredentials(env),
     cronSecret: ((): string | null => {
       const raw = env.CRON_SECRET?.trim();
       return raw && raw.length >= 24 ? raw : null;
@@ -1258,43 +1188,6 @@ export function loadAnthropicKey(env: NodeJS.ProcessEnv): string | null {
   const raw = (env.ANTHROPIC_API_KEY ?? "").trim();
   if (raw === "") return null;
   return assertAnthropicKey(raw);
-}
-
-/**
- * The vendor cost credentials, as the port reads them.
- *
- * ── IT NEVER REFUSES AND NEVER THROWS ────────────────────────────────────────────────────
- *
- * Unlike {@link loadAdminConfig} and {@link loadAlertsConfig}, there is nothing here to refuse.
- * A missing credential is not a misconfiguration — it is the state the cost board is designed to
- * render, and every adapter answers `unconfigured` for it without making a request. A partial
- * pair is not a misconfiguration either: the port requires `VERCEL_TOKEN` and `VERCEL_TEAM_ID`
- * TOGETHER and answers `unconfigured` when it has only one, because a token with no team asks
- * about whoever owns the token and returns a number belonging to somebody's personal account —
- * a wrong figure rather than a missing one, which is strictly the worse of the two. That rule
- * belongs to the port, where a self-hosted composition gets it too, so this function does not
- * restate it.
- *
- * `ANTHROPIC_ADMIN_API_KEY` is deliberately NOT {@link loadAnthropicKey}'s variable and is not
- * validated by `assertAnthropicKey`: it is an ADMIN-scoped organization key (`sk-ant-admin…`),
- * a different credential with a different blast radius from the inference key this product
- * spends on, and the two must never be substitutable for one another by accident.
- *
- * `SUPABASE_ACCESS_TOKEN` / `SUPABASE_PROJECT_REF` are NOT read here, and setting them changes
- * nothing: Supabase's Management API publishes no billing usage surface, so that provider is
- * manual-entry only. A variable a deployment can set that does nothing is worse than an absent
- * one — it reads as a feature somebody armed.
- */
-export function loadPlatformCostCredentials(env: NodeJS.ProcessEnv): PlatformCostEnv {
-  const value = (raw: string | undefined): string | undefined => {
-    const trimmed = raw?.trim();
-    return trimmed ? trimmed : undefined;
-  };
-  return {
-    VERCEL_TOKEN: value(env.VERCEL_TOKEN),
-    VERCEL_TEAM_ID: value(env.VERCEL_TEAM_ID),
-    ANTHROPIC_ADMIN_API_KEY: value(env.ANTHROPIC_ADMIN_API_KEY),
-  };
 }
 
 /**

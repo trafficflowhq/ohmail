@@ -1,14 +1,8 @@
 import { and, eq, ne, sql } from "drizzle-orm";
-import { accounts, mailboxes, type AccessVerdict, type LedgerTx } from "@trafficflow/db";
 import {
-  balanceOf,
-  effectiveSubscriptionOf,
-  entitlementsFor,
-  isSuspended,
-  NotInTransactionError,
-  type Entitlements,
-  type Plan,
-} from "@trafficflow/db/cloud";
+  accounts, mailboxes, NotInTransactionError,
+  type AccessRefusal, type AccessVerdict, type LedgerTx,
+} from "@trafficflow/db";
 import { ServiceError } from "./errors.js";
 
 /**
@@ -58,16 +52,6 @@ import { ServiceError } from "./errors.js";
  * on the already-refusing path, so the paying hot path is still one indexed lookup, and it can
  * never shadow a live row with a stale cancellation because it is not consulted while one exists.
  *
- * **That live-preferred read used to be private to this file, and that was the bug.**
- * `BillingService.subscriptionStatus` answered the same question a second way — always
- * newest-of-any-status — so a dead `incomplete_expired` row carrying a later `stripe_event_ts`
- * made `GET /billing/subscription` report `no_subscription` for an account this gate was
- * admitting. The shared read then moved down into `packages/db`, because three further
- * readers of the same question (the AI gate's two arms and the roster that gates SYNC) sit where
- * this package cannot reach them. `effectiveSubscriptionOf` is now imported, not defined here,
- * and `packages/db/src/billing.ts` is where the argument for preferring the live row is written
- * down.
- *
  * ## The internal/dev account gets an ORDINARY subscription row, not a bypass
  *
  * "No subscription ⇒ limit 0" locks out our own account the moment this lands. The decision
@@ -113,7 +97,11 @@ export interface MailboxAllowance {
    * this decision the port deliberately does not carry.
    */
   canAddMailbox: boolean;
-  entitlements: Entitlements;
+  /**
+   * WHY the port refused, or `null` when it did not. Two words, because the port carries two —
+   * whoever operates the service knows ten states and the app has two sentences to say.
+   */
+  accessRefusal: AccessRefusal | null;
   /**
    * Mailboxes that currently OCCUPY a slot: every row whose `status` is not `'disabled'`.
    * `mailboxes` has no `deleted_at` (the original sketch assumed one) — disconnect is a soft delete to
@@ -121,8 +109,6 @@ export interface MailboxAllowance {
    * occupies a slot: a mailbox that is failing to sync is still connected.
    */
   enabledCount: number;
-  /** The plan sold, for the message; `null` when there is no live subscription. */
-  plan: Plan | null;
 }
 
 /** Refusal → the wire code and status. 402 for billing remedies, 409 for state; this is the split. */
@@ -134,38 +120,28 @@ const HTTP: Record<MailboxRefusal, { code: string; status: number }> = {
   at_limit: { code: "mailbox_limit_reached", status: 409 },
 };
 
-/** Factual, per-state microcopy — no slogans, and never a lie about what was kept. */
+/**
+ * Factual microcopy — no slogans, and never a lie about what was kept.
+ *
+ * Three sentences where there were eight: the eight came from the local subscription table's
+ * per-state reason, and the port answers two words. Every sentence still says what happens to
+ * what is already connected, which is the half a refusal must not omit.
+ */
 function messageFor(refusal: MailboxRefusal, a: MailboxAllowance): string {
   if (refusal === "at_limit") {
-    return `This plan includes ${a.mailboxLimit} mailbox${a.mailboxLimit === 1 ? "" : "es"} and ` +
-      `${a.enabledCount} are connected. Upgrade the plan or disconnect a mailbox to add another.`;
+    return `This account may have ${a.mailboxLimit} mailbox${a.mailboxLimit === 1 ? "" : "es"} and ` +
+      `${a.enabledCount} are connected. Raise the limit or disconnect a mailbox to add another.`;
   }
-  switch (a.entitlements.reason) {
-    case "no_subscription":
-      return "This account has no active subscription, so no mailbox can be connected. " +
-        "Choosing a plan enables it; nothing already connected is ever deleted.";
-    case "suspended":
-      return "This account is suspended. No mailbox can be connected while it is.";
-    case "past_due":
-      return "Payment is past due, so no further mailbox can be connected. " +
-        "The mailboxes already connected keep syncing.";
-    case "unpaid":
-      return "This subscription is unpaid, so no further mailbox can be connected. " +
-        "The mailboxes already connected are kept.";
-    case "canceled":
-      return "This subscription is canceled, so no further mailbox can be connected. " +
-        "The mailboxes already connected are kept, and nothing is deleted.";
-    case "paused":
-      // Every sibling sentence tells the user what happens to what they ALREADY connected,
-      // and this one used to be the exception — while being the only state in the whole
-      // table where `syncEnabled` is false. So the one refusal that silently omitted the
-      // consequence was the one refusal where the consequence was worst. Say it.
-      return "This subscription is paused, so no further mailbox can be connected and the " +
-        "mailboxes already connected are not syncing. Nothing is deleted; resuming the " +
-        "subscription starts them again.";
-    default:
-      return "This subscription does not permit connecting another mailbox.";
+  if (a.accessRefusal === "suspended") {
+    return "This account is suspended. No mailbox can be connected while it is; " +
+      "nothing already connected is deleted.";
   }
+  if (a.accessRefusal === "payment_required") {
+    return "This account is not currently entitled to connect a mailbox. " +
+      "The mailboxes already connected are kept, and nothing is deleted.";
+  }
+  return "This account may not connect another mailbox. " +
+    "The mailboxes already connected are kept, and nothing is deleted.";
 }
 
 /**
@@ -182,10 +158,9 @@ export class MailboxAllowanceError extends ServiceError {
     const { code, status } = HTTP[refusal];
     super(code, status, messageFor(refusal, allowance), {
       reason: refusal,
-      entitlementReason: allowance.entitlements.reason,
+      accessReason: allowance.accessRefusal,
       mailboxLimit: allowance.mailboxLimit,
       mailboxCount: allowance.enabledCount,
-      plan: allowance.plan,
     });
     this.name = "MailboxAllowanceError";
   }
@@ -206,33 +181,13 @@ export class MailboxAllowanceError extends ServiceError {
  */
 export function decideMailboxAllowance(a: MailboxAllowance): MailboxRefusal | null {
   if (!a.canAddMailbox) {
-    return a.entitlements.reason === "no_subscription" ? "no_subscription" : "not_permitted";
+    return a.accessRefusal === "payment_required" ? "no_subscription" : "not_permitted";
   }
   // `null` is UNBOUNDED, not zero: an unmetered install has no count to exceed.
   if (a.mailboxLimit !== null && a.enabledCount >= a.mailboxLimit) return "at_limit";
   return null;
 }
 
-/**
- * **THE ONE READ OF "WHAT IS THIS ACCOUNT'S SUBSCRIPTION STATE"**, re-exported from
- * `packages/db` so this file's callers keep their import path.
- *
- * It USED TO BE DEFINED HERE, together with a private locked copy of `newestSubscriptionOf`, and
- * the reason it moved is the second half of the gap. Three more readers of the same
- * question — `packages/db/src/ai-gate.ts` (`spendState` and `aiRefusalReason`),
- * `packages/db/src/billing.ts` (`accountsWithSyncDisabled`, feeding both the worker's roster and
- * the `sync_lag` alert) and `apps/worker/src/mailboxes.ts`'s copy of that — live where a
- * `packages/services` home can never reach them: `packages/db` cannot import this package, and
- * `apps/worker` may import core + db only. All three took newest-of-any-status, so on the row
- * sequence that surfaced the original disagreement they refused AI and STOPPED SYNC for a
- * paying account.
- *
- * So the definition, its argument and its warnings are now in `packages/db/src/billing.ts`
- * beside `liveSubscriptionOf` and `newestSubscriptionOf` — read them there. The private
- * duplicate went with it: db's `newestSubscriptionOf` gained the opt-in `forUpdate` that was the
- * only reason a second copy of that query existed here.
- */
-export { effectiveSubscriptionOf };
 
 /** What {@link readMailboxAllowance} needs beyond the transaction it runs in. */
 export interface MailboxAllowanceInput {
@@ -286,11 +241,6 @@ export async function readMailboxAllowance(
   // this row — the session was resolved through it — so the lock is never silently absent.
   await tx.select({ id: accounts.id }).from(accounts).where(eq(accounts.id, accountId)).for("update");
 
-  // The subscription snapshot, read under that lock, for the REASON a refusal is explained with.
-  // It prefers the live row and falls back to the newest row of any status — the `canceled` seam,
-  // unchanged. The LIMIT no longer comes from here; see `MailboxAllowance.mailboxLimit`.
-  const sub = await effectiveSubscriptionOf(tx, accountId);
-
   // (2) The count, read under that lock.
   const [row] = await tx
     .select({ n: sql<number>`count(*)::int` })
@@ -301,27 +251,12 @@ export async function readMailboxAllowance(
       opts.excludeMailboxId ? ne(mailboxes.id, opts.excludeMailboxId) : undefined,
     ));
 
-  // `balanceOf` does not affect `canAddMailbox` today (only `aiEnabled` reads it), but
-  // `entitlementsFor` is ONE function with ONE truth: feeding it a fabricated balance would
-  // make this call site's `reason` diverge from the status route's for the same account.
-  const balance = await balanceOf(tx, accountId);
-
-  // A suspended account may add no mailbox (cloud 0008). Read under the same lock as the
-  // rest of the allowance so a concurrent suspend cannot interleave between this and the decision.
-  const suspended = await isSuspended(tx, accountId);
-
   return {
-    // The port decides both, and a refused account may add none at all.
+    // The port decides all three, and a refused account may add none at all.
     mailboxLimit: input.access.ok ? input.access.limits.mailboxes : 0,
     canAddMailbox: input.access.ok ? input.access.limits.canAddMailbox : false,
-    entitlements: entitlementsFor({
-      sub,
-      balance,
-      suspended,
-      now,
-    }),
+    accessRefusal: input.access.ok ? null : input.access.reason,
     enabledCount: row?.n ?? 0,
-    plan: sub?.plan ?? null,
   };
 }
 

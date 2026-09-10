@@ -183,6 +183,10 @@ export {
 export {
   allocateSeq, allocateSeqRange, recordChange, recordChanges, minRetainedSeq, seqBounds,
   CHANGE_LOG_CHANNEL, changeWakePayload, parseChangeWake,
+  // The guard that refuses a bare `PgDatabase` where a transaction handle is required. It lives
+  // beside `LedgerTx` because that is the type it enforces at runtime; it used to reach callers
+  // through the hosted barrel, which put a mail-side guard behind a hosted import.
+  NotInTransactionError, assertLedgerTx,
   type Tx, type LedgerTx, type EntityType, type ChangeOp, type ChangeInput, type SeqBounds,
 } from "./change-log.js";
 export {

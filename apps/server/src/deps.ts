@@ -1,6 +1,6 @@
 import { users, providerFamily, UNMETERED, UNMETERED_ACCESS, type Tx } from "@trafficflow/db";
 import {
-  acquireImapSlot, releaseImapSlot, webhookAlertSink, makeAiUsageRecorder,
+  acquireImapSlot, releaseImapSlot, webhookAlertSink,
   resolveOAuthProviderConfig, rotateMailboxOAuthSecret, MICROSOFT_PROVIDER,
   makeSupabaseStagingStorage, makeS3StagingStorage,
   // The organizer's last completed pass, for the filing strip (mail 0097).
@@ -11,7 +11,7 @@ import {
   resolveCloudInstallId,
   makeAnthropicClient, makeHaikuClassifier, makeSonnetDrafter,
   MicrosoftTokenProvider, UNMETERED_STORAGE_CAP,
-  type FetchLike, type Logger, type UpdateSecretPort,
+  type AnthropicCallReport, type FetchLike, type Logger, type UpdateSecretPort,
 } from "@trafficflow/core";
 import { mailboxProviderAuthservIds } from "@trafficflow/core/adapters/drizzle-repo";
 import { makePushEndpointGuard } from "@trafficflow/core/net";
@@ -206,24 +206,13 @@ export function buildServerServices(cfg: ServerConfig, db: Db): ApiServices {
   // instance serving every request is the long-running host's shape (the managed bag constructs
   // per cold instance for the same reason).
   const stagingStorage = cfg.storage ? stagingStorageFor(cfg.storage) : null;
-  /**
-   * THE COST RECORDER — the third of the three hosts that can make a metered model call, and the
-   * one whose figures nobody bills anybody for.
-   *
-   * It records anyway, and the reason is worth stating: `host` is in the cost table's primary
-   * key precisely so that "which arm stopped recording" is answerable, and an arm that is
-   * DELIBERATELY absent from the table is indistinguishable from one that broke. An operator
-   * running this box on their own key can also be the person asking what their own AI costs.
-   *
-   * BUFFERED (30 s), not per call: this is a long-lived process, so a write per classification
-   * would be a write per message for ever, and the buffer is safe here in a way it is not on the
-   * serverless host — nothing freezes this one between a call and its flush.
+    /**
+   * THE AI CALL LOG. One line per classification, carrying the provider's request id and the
+   * arithmetic — the operator's own record of what their own key is spent on. There is no cost
+   * TABLE on this box: usage accounting belongs to whoever meters, and nothing here does.
    */
-  const aiUsage = makeAiUsageRecorder(db as unknown as Tx, "server");
-  /** BOTH: the log line carries the provider's request id, the recorder carries the arithmetic. */
-  const onUsage = (r: Parameters<typeof aiUsage.record>[0] & { latencyMs: number }): void | Promise<void> => {
+  const onUsage = (r: AnthropicCallReport): void => {
     console.log(JSON.stringify({ event: "ai_call", ...r }));
-    return aiUsage.record(r);
   };
   const bag: Record<string, unknown> = {
     sync: syncService,

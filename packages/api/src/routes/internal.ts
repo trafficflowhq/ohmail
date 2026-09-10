@@ -1,5 +1,5 @@
 import {
-  billingReconciliationRuns, isSuspended, runAlertPass, listOpenAlerts, newDeliveryStreak,
+  runAlertPass, listOpenAlerts, newDeliveryStreak,
   sinkHealthOf,
   type AlertSink,
 } from "@trafficflow/db/cloud";
@@ -8,9 +8,7 @@ import { silentLogger, type Logger } from "@trafficflow/core";
 import type { Tx } from "@trafficflow/db";
 import {
   runAwayResponderPass,
-  reapStaleWebSessions, reconcileBillingMirror, recordReconcileFailure,
-  reconcileBillingInvoices, recordInvoiceReconcileFailure, INVOICE_RECONCILE_MODE,
-  runPlatformCostPass, runPlatformSignalPass,
+  reapStaleWebSessions, runPlatformSignalPass,
   runScheduledSendPass, runSendReconcilePass, SEND_RECONCILE_NET_TIMEOUTS,
   TransientDialRefusal, type AdminDb,
 } from "@trafficflow/services";
@@ -184,52 +182,6 @@ export const SESSIONS_REAP_CRON_PATH = "/internal/sessions/reap";
  * egress works — only the clock moved.
  */
 export const SMTP_SIZE_CRON_PATH = "/internal/mailboxes/smtp-size";
-
-/**
- * The PATH the billing reconciliation is scheduled at — the ARMED pass, exported for the
- * reason its three siblings are: the scheduler names it as a literal string and a test asserts
- * the two agree. Driven HOURLY by the worker's `api-cron.ts` (the reason is on
- * {@link SESSIONS_REAP_CRON_PATH}); `billing_reconciliation_stale` (6 h) is the net under that
- * clock. The read-only twin (`GET /internal/billing/reconcile`, dry-run) is the runbook's safe
- * curl — it compares and reports but applies nothing, exactly as `GET /internal/alerts` reads
- * without paging.
- */
-export const BILLING_RECONCILE_CRON_PATH = "/internal/billing/reconcile/run";
-
-/**
- * The PATH the INVOICE reconciliation is scheduled at — a SEPARATE route from the subscription
- * reconciler above rather than a second job folded into it, and the separation is a budget and a
- * cadence rather than a preference.
- *
- * · **Budget.** That invocation already spends up to forty seconds walking Stripe's subscription
- *   list and re-driving apply transactions against its own sixty-second platform ceiling. Adding
- *   a two-thousand-invoice walk to it would spend the subscription heal's remaining time on this
- *   one's listing, and the pass that heals a lost cancellation is the one with an entitlement
- *   riding on it.
- * · **Cadence.** The subscription mirror is LIVE STATE and is reconciled hourly. An invoice is a
- *   RECORD: once paid it does not change, so a lost one is equally lost an hour later and equally
- *   healed a day later. Hourly would spend twenty-four times the rate limit to notice the same
- *   thing at the same time.
- *
- * Driven every 24 h by the worker's `api-cron.ts` (the reason is on
- * {@link SESSIONS_REAP_CRON_PATH}), and a census text-matches this literal against that table.
- */
-export const BILLING_INVOICE_RECONCILE_CRON_PATH = "/internal/billing/invoices/reconcile/run";
-
-/**
- * The PATH the PLATFORM COST pass is scheduled at — what the vendors charge, asked for once every
- * six hours.
- *
- * Six hours rather than daily, and the reason is the CURRENT month: every one of these providers
- * reports usage-to-date, so the open month's figure moves all day and a once-a-day read makes
- * the board's projection up to 24 hours behind on the number an operator is watching precisely
- * because it is moving. Six hours is four reads a day for two cheap reads, and it is what
- * `COST_STALE_AFTER_MS` (24 h) is written against — four cadences of slack, so one missed pass on
- * a deploy does not read as a provider that stopped answering.
- *
- * Driven by the worker's `api-cron.ts`, and a census text-matches this literal against that table.
- */
-export const PLATFORM_COSTS_CRON_PATH = "/internal/platform-costs/run";
 
 /**
  * The PATH the PLATFORM SIGNAL poll is scheduled at — what the hosting platform actually SERVED,
@@ -633,242 +585,6 @@ async function alertPass(
 }
 
 /**
- * One reconciliation pass, shared by the dry-run read and the armed cron — one implementation,
- * two clocks, exactly as `alertPass` is shared, and for the same drift reason.
- *
- * Never throws (`raw` routes have no error envelope). A pass that could not run records a
- * FAILED run row (class:code only) so the staleness rule sees a reconciler that is failing,
- * not a gap, and answers 503 to its scheduler.
- */
-async function reconcilePass(
-  req: Request, deps: ApiDeps, mode: "dry-run" | "apply", route: string,
-): Promise<Response> {
-  const log = (deps.logger ?? silentLogger).child({ route });
-  const cfg = deps.alerts;
-  // The sibling rules verbatim: no armed internal surface ⇒ 404, wrong secret ⇒ 401.
-  if (!cfg || cfg.secret.trim().length === 0) {
-    return json(404, { error: { code: "not_found" } });
-  }
-  const cron = cfg.cronSecret?.trim();
-  const authorized = presentsSecret(req, cfg.secret)
-    || (cron !== undefined && cron.length > 0 && presentsSecret(req, cron));
-  if (!authorized) {
-    log.warn("billing_reconcile_unauthorized", {});
-    return json(401, { error: { code: "unauthorized" } });
-  }
-  const plane = deps.services?.billingPlane;
-  const svc = deps.services?.entitlements;
-  if (!plane || !svc) {
-    // A deployment without billing has nothing to reconcile, and a cron with nothing to do did
-    // not fail — a genuinely billing-free host answers 200 and writes nothing, forever.
-    //
-    // But a host whose RUN LEDGER HAS HISTORY is not that host: billing ran here before, and
-    // "unconfigured" now is a mis-flip (an env change that dropped the plane block, a restored
-    // environment). The stale rule alone cannot see the difference between "never armed" and
-    // "disarmed yesterday" until its threshold passes — and on the armed CRON path a mis-flip
-    // must become durable immediately, so a FAILED run row is recorded (failed rows never
-    // reset the staleness clock, and the divergence trail shows the reason by name). The
-    // dry-run path stays read-only: a person's curl must not write.
-    if (mode === "apply") {
-      try {
-        const ranBefore = await (deps.db as unknown as Tx)
-          .select({ n: sql`count(*)::int` })
-          .from(billingReconciliationRuns).limit(1);
-        const n = Number((ranBefore[0] as { n?: unknown } | undefined)?.n ?? 0);
-        if (n > 0) {
-          await recordReconcileFailure(deps.db, mode, "billing_unconfigured", deps.now());
-          log.error("billing_reconcile_unconfigured_with_history", {
-            reason: "the reconciliation ran on this deployment before, and billing is now unconfigured",
-          });
-        }
-      } catch { /* the 200-skip is still the honest cron answer; the stale rule remains the net */ }
-    }
-    return json(200, { skipped: "billing_unconfigured" });
-  }
-  try {
-    const report = await reconcileBillingMirror(deps.db, {
-      mode,
-      plane,
-      applyEvent: (db, event) => svc.applyEvent(db, event),
-      now: deps.now,
-    });
-    if (report.emitted > 0 || Object.keys(report.flagged).length > 0) {
-      log.warn("billing_reconcile_divergence", {
-        mode, emitted: report.emitted, applyFailed: report.applyFailed,
-        flagged: Object.entries(report.flagged).map(([c, n]) => `${c}:${n}`).join(","),
-        pages: report.pages, truncated: report.truncated,
-      });
-    }
-    return json(200, {
-      now: deps.now().toISOString(),
-      mode: report.mode,
-      stripeSubscriptions: report.stripeSubscriptions,
-      mirrorRows: report.mirrorRows,
-      emitted: report.emitted,
-      applyFailed: report.applyFailed,
-      flagged: report.flagged,
-      divergences: report.divergences,
-      pages: report.pages,
-      truncated: report.truncated,
-    });
-  } catch (err) {
-    // The pass itself could not run. Record the failure (best effort — the 503 is the
-    // load-bearing part) with class:code only, never message text.
-    log.error("billing_reconcile_failed", { err });
-    try {
-      await recordReconcileFailure(deps.db, mode, scrubError(err), deps.now());
-    } catch { /* the 503 already says it; a second failure must not mask the first */ }
-    return json(503, { error: { code: "reconcile_failed" } });
-  }
-}
-
-/**
- * One INVOICE reconciliation pass. The subscription pass's shape above, borrowed property for
- * property — no armed internal surface ⇒ 404, wrong secret ⇒ 401, billing unconfigured ⇒ a 200
- * skip, a pass that could not run ⇒ a recorded failed row and a 503 — and one departure.
- *
- * THE DEPARTURE: there is no dry-run twin. The subscription pass has one because its armed mode
- * re-drives `applyEvent`, which grants credits, so an operator needs a way to see what it WOULD
- * do before it does it. This pass grants nothing and can move no money by construction: it
- * upserts a mirror row from an observation, through a fenced statement, and its worst possible
- * outcome is a row that says what Stripe says. A read-only twin would be a second route
- * answering a question the armed one already answers safely.
- *
- * It runs on `deps.db`, the RUNTIME connection, for the sibling passes' reason: it writes
- * `billing_invoices` and `billing_reconciliation_runs`, and the content-blind staff handle holds
- * SELECT on both and must not gain more.
- */
-async function invoiceReconcilePass(req: Request, deps: ApiDeps): Promise<Response> {
-  const route = BILLING_INVOICE_RECONCILE_CRON_PATH;
-  const log = (deps.logger ?? silentLogger).child({ route });
-  const cfg = deps.alerts;
-  if (!cfg || cfg.secret.trim().length === 0) {
-    return json(404, { error: { code: "not_found" } });
-  }
-  const cron = cfg.cronSecret?.trim();
-  const authorized = presentsSecret(req, cfg.secret)
-    || (cron !== undefined && cron.length > 0 && presentsSecret(req, cron));
-  if (!authorized) {
-    log.warn("billing_invoice_reconcile_unauthorized", {});
-    return json(401, { error: { code: "unauthorized" } });
-  }
-  const plane = deps.services?.billingPlane;
-  if (!plane) {
-    // A deployment without billing has no invoices to reconcile, and a cron with nothing to do
-    // did not fail. Deliberately WITHOUT the subscription pass's "unconfigured with history"
-    // arm: that one exists because a mis-flip must become durable immediately for the mirror
-    // that carries live entitlements. An invoice mirror that stops being written loses a number,
-    // not a customer's access, and the honest tripwire for it is the same staleness read the
-    // panel already makes — a skipped pass writes no row, so the stamp ages and says so.
-    return json(200, { skipped: "billing_unconfigured" });
-  }
-  // `?since=all` asks for the whole history — the BACKFILL, and the one thing an operator has to
-  // be able to run by hand: the default window is 35 days, so the invoices that predate this
-  // table's first deploy are reachable no other way. Any other value (including its absence) is
-  // the default window; there is deliberately no numeric parameter, because a hand-typed window
-  // is a way to record a pass that examined less than it appears to have.
-  const full = new URL(req.url).searchParams.get("since") === "all";
-  try {
-    const report = await reconcileBillingInvoices(deps.db, {
-      plane,
-      now: deps.now,
-      ...(full ? { windowDays: null } : {}),
-    });
-    if (report.invoicesUpserted > 0 || Object.keys(report.flagged).length > 0) {
-      log.warn("billing_invoice_reconcile_divergence", {
-        listed: report.invoicesListed, upserted: report.invoicesUpserted,
-        flagged: Object.entries(report.flagged).map(([c, n]) => `${c}:${n}`).join(","),
-        pages: report.pages, truncated: report.truncated,
-      });
-    }
-    return json(200, {
-      now: deps.now().toISOString(),
-      mode: INVOICE_RECONCILE_MODE,
-      invoicesListed: report.invoicesListed,
-      invoicesUpserted: report.invoicesUpserted,
-      flagged: report.flagged,
-      divergences: report.divergences,
-      pages: report.pages,
-      truncated: report.truncated,
-    });
-  } catch (err) {
-    // The pass itself could not run. Record it (best effort — the 503 is the load-bearing part)
-    // with class:code only, never message text.
-    log.error("billing_invoice_reconcile_failed", { err });
-    try {
-      await recordInvoiceReconcileFailure(deps.db, scrubError(err), deps.now());
-    } catch { /* the 503 already says it; a second failure must not mask the first */ }
-    return json(503, { error: { code: "invoice_reconcile_failed" } });
-  }
-}
-
-/**
- * One PLATFORM COST pass. The reconcilers' shape above, property for property — 404 on an unarmed
- * surface, either shared secret in constant time — and one departure worth naming.
- *
- * THE DEPARTURE: there is no "unconfigured" skip. The other passes answer `200 {skipped}` when
- * billing is not wired, because a deployment without billing has nothing to reconcile. This one
- * RUNS on a deployment with no provider keys at all, deliberately, and records `unconfigured` per
- * provider — which is the whole design. An absent key is a STATE the board has to be able to
- * render ("not configured"), and it is a different state from "nobody asked", which is what a
- * skipped pass would leave behind.
- *
- * It runs on `deps.db`, the runtime connection: it writes `platform_costs`, and the blind staff
- * handle holds SELECT on that table and must not gain more.
- */
-async function platformCostPass(req: Request, deps: ApiDeps): Promise<Response> {
-  const log = (deps.logger ?? silentLogger).child({ route: PLATFORM_COSTS_CRON_PATH });
-  // ── THIS ROUTE'S GATE IS ITS OWN, NOT THE ALERTING BLOCK'S ──────────────────────────────
-  //
-  // It used to read `deps.alerts` and 404 when that was absent — before looking at the cost port
-  // at all. `TF_ALERT_SECRET` is optional, so a deployment with perfectly good vendor
-  // credentials and no alerting answered 404 to every scheduled invocation: no vendor was ever
-  // asked, nothing was ever written, and the board went on rendering a fully configured provider
-  // as "not configured". An unrelated optional feature decided whether costs existed, and the
-  // comment above this function claimed the opposite — that the pass runs on a deployment with
-  // no provider keys at all, deliberately. That is now true.
-  //
-  // Either credential opens it: the platform's own `CRON_SECRET`, held at the host's top level,
-  // or the alerting secret when that block IS configured (the scheduler already holds it, and
-  // removing it would have broken every existing deployment). 404 only when the host has
-  // NEITHER, which is the honest "this deployment cannot authenticate a scheduled call".
-  const alertSecret = deps.alerts?.secret.trim() ?? "";
-  const cron = (deps.cronSecret ?? deps.alerts?.cronSecret ?? "").trim();
-  if (alertSecret.length === 0 && cron.length === 0) {
-    return json(404, { error: { code: "not_found" } });
-  }
-  const authorized = (alertSecret.length > 0 && presentsSecret(req, alertSecret))
-    || (cron.length > 0 && presentsSecret(req, cron));
-  if (!authorized) {
-    log.warn("platform_costs_unauthorized", {});
-    return json(401, { error: { code: "unauthorized" } });
-  }
-  const port = deps.services?.platformCosts;
-  if (!port) {
-    // A host that composed no port at all — the desktop engine's shape, and any deployment that
-    // does not want to ask. Distinct from a port that answers `unconfigured`: that one asked and
-    // found no key. Recorded as a skip, which writes nothing and is what it is.
-    return json(200, { skipped: "cost_port_unconfigured" });
-  }
-  try {
-    const report = await runPlatformCostPass(deps.db, { port, now: deps.now });
-    // Logged at INFO on every pass rather than only on a change: this is the one surface where
-    // "nothing was written" is the expected answer for weeks, and a log line that appears only on
-    // success would make the healthy state look like a dead clock.
-    log.info("platform_cost_pass", {
-      outcomes: report.providers
-        .map((p) => `${p.provider}:${p.outcome}${p.code ? `(${p.code})` : ""}`).join(","),
-    });
-    return json(200, { now: deps.now().toISOString(), providers: report.providers });
-  } catch (err) {
-    // `raw` means no error envelope above this handler; it must never throw. The pass absorbs
-    // per-provider faults itself, so this catches only a database refusal.
-    log.error("platform_cost_pass_failed", { err });
-    return json(503, { error: { code: "platform_cost_pass_failed" } });
-  }
-}
-
-/**
  * One PLATFORM SIGNAL poll. `platformCostPass`'s shape above, property for property — 404 on an
  * unarmed surface, either shared secret in constant time, and the same deliberate absence of an
  * "unconfigured" skip.
@@ -1217,16 +933,12 @@ export const internalRoutes: Route[] = [
           openSendAdapter: deps.services?.sendAdapter
             ?? ((mailboxId: string) => makeSendAdapter(deps, mailboxId)),
           ...(deps.services?.storageCapOf ? { resolveStorageCap: deps.services.storageCapOf } : {}),
-          // THE SUSPENSION GATE, injected here because the fact is the cloud half's
-          // (`account_suspensions`) and the pass ships in the desktop engine bundle, which may
-          // not name a cloud table. A suspended account's automation must not keep firing —
-          // the worker's roster makes the same ruling — so its due appointments stay
-          // `'scheduled'`, undialled, until the suspension lifts. The read runs on the HANDED
-          // handle (the claim transaction's own), never `deps.db`: on this host's pooled
-          // connection the captured form queued behind the transaction holding it and every
-          // poke timed out — the deadlock rule on `ScheduledSendPassDeps.accountEligible`.
-          accountEligible: async (accountId, handle) =>
-            !(await isSuspended(handle as unknown as Tx, accountId)),
+          /* NO ELIGIBILITY GATE HERE, and the absence is a known window rather than a decision.
+           * The fact this read (`account_suspensions`) no longer lives in this database, and the
+           * entitlements port may not be dialled inside a claim transaction — a network hop there
+           * queues behind the transaction holding the connection and every poke times out. The
+           * pass defaults to ELIGIBLE, so a parked account's automation keeps firing until the
+           * port read is composed ABOVE the claim. */
           log,
           now: deps.now,
         });
@@ -1289,13 +1001,12 @@ export const internalRoutes: Route[] = [
         const result = await runSendReconcilePass(deps.db, {
           openSendAdapter: deps.services?.sendAdapter
             ?? ((mailboxId: string) => admittedSendAdapter(deps, mailboxId)),
-          // THE SUSPENSION GATE, injected here for `runScheduledSendPass`'s reason (the fact is
-          // the cloud half's and the pass ships in the desktop engine bundle) and read on the
-          // HANDED handle for its deadlock reason. It gates the DIAL rather than the claim here
-          // — see `SendReconcilePassDeps.accountEligible` for why excluding the rows would
-          // starve every account behind a parked one.
-          accountEligible: async (accountId, handle) =>
-            !(await isSuspended(handle as unknown as Tx, accountId)),
+          /* NO ELIGIBILITY GATE HERE, and the absence is a known window rather than a decision.
+           * The fact this read (`account_suspensions`) no longer lives in this database, and the
+           * entitlements port may not be dialled inside a claim transaction — a network hop there
+           * queues behind the transaction holding the connection and every poke times out. The
+           * pass defaults to ELIGIBLE, so a parked account's automation keeps firing until the
+           * port read is composed ABOVE the claim. */
           log,
           now: deps.now,
         });
@@ -1358,12 +1069,9 @@ export const internalRoutes: Route[] = [
           // examined and nothing is recorded as decided, which is what lets the replies go out
           // promptly once the suspension lifts.
           //
-          // Unlike the scheduled sender's, this call is NOT inside a claim transaction (the
-          // reservation here is per-reply and opens later), so the deadlock rule that forces the
-          // handed handle does not bite. The signature matches the sibling's anyway so that one
-          // injector serves both.
-          accountEligible: async (accountId, handle) =>
-            !(await isSuspended(handle as unknown as Tx, accountId)),
+          // NO ELIGIBILITY GATE HERE — see the scheduled sender's note above. The pass defaults
+          // to ELIGIBLE, so a parked account's away replies keep going out until the port read
+          // is composed for these three passes.
           log,
           now: deps.now,
         });
@@ -1376,54 +1084,6 @@ export const internalRoutes: Route[] = [
         return json(503, { error: { code: "away_responder_pass_failed" } });
       }
     },
-  },
-  {
-    method: "GET",
-    pattern: "/internal/billing/reconcile",
-    cost: "unauthenticated",
-    options: { public: true, anonymous: true, raw: true },
-    handler: async (req, deps) => reconcilePass(req, deps, "dry-run", "/internal/billing/reconcile"),
-  },
-  {
-    method: "GET",
-    pattern: BILLING_RECONCILE_CRON_PATH,
-    cost: "unauthenticated",
-    options: { public: true, anonymous: true, raw: true },
-    handler: async (req, deps) => reconcilePass(req, deps, "apply", BILLING_RECONCILE_CRON_PATH),
-  },
-  {
-    /**
-     * `GET /internal/billing/invoices/reconcile/run` — the INVOICE mirror's daily heal.
-     *
-     * The subscription reconciler's shape verbatim, each borrowed property load-bearing for the
-     * reasons stated there: GET because a cron issues GET and only GET; either shared secret in
-     * constant time; 404 on a deployment that armed no internal surface — which does mean lost
-     * invoices are NOT healed there, and that is the honest state of a host nobody armed a clock
-     * on.
-     *
-     * `?since=all` runs the pass over the whole invoice history instead of the 35-day window.
-     * See `invoiceReconcilePass`.
-     */
-    method: "GET",
-    pattern: BILLING_INVOICE_RECONCILE_CRON_PATH,
-    cost: "unauthenticated",
-    options: { public: true, anonymous: true, raw: true },
-    handler: async (req, deps) => invoiceReconcilePass(req, deps),
-  },
-  {
-    /**
-     * `GET /internal/platform-costs/run` — what the vendors charge, every six hours.
-     *
-     * The reconcilers' shape verbatim, each borrowed property load-bearing for the reasons stated
-     * there: GET because a cron issues GET and only GET; either shared secret in constant time;
-     * 404 on a deployment that armed no internal surface — which does mean costs are NOT measured
-     * there, and that is the honest state of a host nobody armed a clock on.
-     */
-    method: "GET",
-    pattern: PLATFORM_COSTS_CRON_PATH,
-    cost: "unauthenticated",
-    options: { public: true, anonymous: true, raw: true },
-    handler: async (req, deps) => platformCostPass(req, deps),
   },
   {
     /**

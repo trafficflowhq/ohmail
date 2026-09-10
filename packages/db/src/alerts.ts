@@ -1,13 +1,10 @@
 import { and, eq, gt, isNotNull, isNull, lt, lte, ne, or, sql, type SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import {
-  alertPassRuns, alertState, authEvents, billingEvents, billingReconciliationRuns,
-  creditRollupRuns, devices, mailboxes, outboundSends, platformSignals, sessions, workerHeartbeats,
+  alertPassRuns, alertState, authEvents,
+  devices, mailboxes, outboundSends, platformSignals, sessions, workerHeartbeats,
 } from "./schema.js";
-import { accountsWithSyncDisabled } from "./billing.js";
-import { accountsAtStorageCap } from "./storage-cloud.js";
 import { imapRefusalsInWindow } from "./imap-admission.js";
-import { aiUsageUnrecorded } from "./ai-usage.js";
 import type { Tx } from "./change-log.js";
 
 /**
@@ -93,8 +90,6 @@ import type { Tx } from "./change-log.js";
 export type AlertKind =
   /** No leader heartbeat for a shard within the threshold: nothing is syncing. */
   | "worker_down"
-  /** `billing_events` rows sitting in `status='failed'`: money in, credits not granted. */
-  | "billing_events_failed"
   /** `outbound_sends` still `pending` past the threshold: a send died mid-flight. */
   | "sends_stuck"
   /**
@@ -112,19 +107,6 @@ export type AlertKind =
    * worker being down.
    */
   | "storage_at_cap"
-  /**
-   * The latest billing-reconciliation pass found the mirror diverged from Stripe — events were
-   * re-emitted (a webhook was lost: healed, but the loss itself is the news) or rows were
-   * flagged unreconcilable. The named test rows (`test_row`) are excluded: production holds
-   * one by design and paging about design is how a pager gets filtered.
-   */
-  | "billing_reconciliation_divergence"
-  /**
-   * No COMPLETED apply-mode reconciliation pass inside the threshold, on a deployment where
-   * one has ever run. The reconciler exists to remove a silence; the rule exists so the
-   * reconciler cannot itself go silent. Failed runs (error non-null) do not reset the clock.
-   */
-  | "billing_reconciliation_stale"
   /**
    * A paired NATIVE device (kind ≠ 'web') that used to reach the sync horizon has gone quiet
    * past the threshold while its account kept changing. Read from `devices.last_synced_at`
@@ -199,12 +181,6 @@ export type AlertKind =
    */
   | "ai_provider_down"
   /**
-   * No completed credit roll-up inside the threshold. The console's whole spend read is served
-   * from the aggregates that pass writes, so a dark roll-up does not fail — it serves figures
-   * that quietly stop moving, which is worse.
-   */
-  | "credit_rollup_stale"
-  /**
    * ONE OF THE TWO ALERT DRIVERS HAS STOPPED RUNNING, reported by the OTHER one. The pair exists
    * because a driver cannot report its own death; this rule is what makes the pair mean
    * something, and without it both arms could stop and the only evidence would be an absence of
@@ -216,15 +192,19 @@ export type AlertKind =
    * stops being one broken client and starts being a population. Escalated from the per-account
    * `session_reuse_revoked` signal, which stays firing underneath.
    */
-  | "credential_replay_wide"
-  /**
-   * A metered model call was PAID FOR (a `credit_ledger` debit) and `ai_usage_daily` has no row
-   * for a host that reason localizes to — `aiUsageUnrecorded` in `ai-usage.ts`. Always a SIGNAL:
-   * the money still moved and the mail still routed, so nothing is down. What is dark is one
-   * column of the cost board — an `onUsage` a composition root forgot to wire, the exact
-   * production state that module's own header describes.
-   */
-  | "ai_usage_unrecorded";
+  | "credential_replay_wide";
+
+/**
+ * One at-cap account, as rule 5 reads it: counted bytes at or over the account's cap.
+ *
+ * The SHAPE is the alert's, so it lives beside the rule; the ANSWER is the host's, because the
+ * cap is a limit whoever operates the service sets.
+ */
+export interface AtCapAccount {
+  accountId: string;
+  bytes: number;
+  storageBytesLimit: number;
+}
 
 export type AlertSeverity = "critical" | "warning";
 
@@ -570,6 +550,23 @@ export interface EvaluateOptions {
    * scheduler that is running perfectly.
    */
   driver?: AlertDriver;
+  /**
+   * WHICH ACCOUNTS ARE LEGITIMATELY PARKED — composed by the host, absent on a deployment that
+   * meters nothing.
+   *
+   * Rules 4 and 5 exclude an account whose entitlement says sync is off, so a paused customer
+   * does not page anybody. That answer lives outside this database now, and ABSENT means "no
+   * account is parked": every lagging mailbox is reported, which is what an operator running
+   * their own server wants and is the fail-open direction — a missing reader can only add
+   * pages, never hide one.
+   */
+  parkedAccounts?: (accountIds: readonly string[], now: Date) => Promise<Set<string>>;
+  /**
+   * WHO IS AT THEIR STORAGE CAP — composed by the host, for `parkedAccounts`' reason: the cap
+   * is a limit the operator sets, not a fact this database holds. Absent ⇒ nobody is at a cap,
+   * which is the truth on an unmetered install.
+   */
+  accountsAtCap?: () => Promise<readonly AtCapAccount[]>;
 }
 
 /**
@@ -759,6 +756,11 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
   const behind = await schemaBehindAlert(db, opts);
   if (behind) return [behind];
 
+  /** Rules 4 and 5's parked set, from the host's reader or empty. One place, so the two rules
+   *  cannot disagree about what "on duty" means. */
+  const parkedOf = async (ids: readonly string[]): Promise<Set<string>> =>
+    ids.length === 0 || !opts.parkedAccounts ? new Set() : opts.parkedAccounts(ids, now);
+
   // ── 1. no leader heartbeat > threshold ────────────────────────────────────────────────
   //
   // Reads the heartbeat ROW, not `pg_locks`: an advisory lock is session-scoped, so a dead
@@ -890,44 +892,6 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
     });
   }
 
-  // ── 2. billing_events stuck in 'failed' ───────────────────────────────────────────────
-  //
-  // THE one from the Stripe review. A `failed` row is claimable — the next retry will try
-  // again — but Stripe stops retrying after ~3 days, and after that the row is a permanent
-  // record of money taken for credits that were never granted. There is no threshold: one
-  // failed row is already the alert.
-  const failedEvents = await db
-    .select({
-      count: sql<number>`count(*)::int`,
-      oldest: sql<Date | null>`min(${billingEvents.receivedAt})`,
-    })
-    .from(billingEvents)
-    .where(eq(billingEvents.status, "failed"));
-  const failedCount = Number(failedEvents[0]?.count ?? 0);
-  if (failedCount > 0) {
-    const oldest = failedEvents[0]?.oldest ? new Date(failedEvents[0].oldest as unknown as string) : null;
-    const oldestSeconds = secondsBetween(now, oldest);
-    alerts.push({
-      key: "billing_events_failed",
-      kind: "billing_events_failed",
-      severity: "critical",
-      title: `${failedCount} Stripe webhook event${failedCount === 1 ? "" : "s"} failed to apply`,
-      detail:
-        `${failedCount} row(s) in billing_events are status='failed'; the oldest arrived ` +
-        `${humanAge(oldestSeconds)} ago. A paid invoice whose apply failed grants no credits, ` +
-        `and Stripe stops retrying after ~3 days. Inspect the queue in the admin console.`,
-      count: failedCount,
-      oldestSeconds,
-      cls: "incident",
-      // The COUNT is of events, not accounts, and this rule does not read the account column —
-      // several failures routinely belong to one customer's retry storm, so reporting the event
-      // count as an account count would overstate the blast radius of exactly the incident an
-      // operator is trying to size.
-      affectedAccounts: null,
-      fixHref: "/billing",
-    });
-  }
-
   // ── 3. outbound_sends pending > threshold ─────────────────────────────────────────────
   //
   // `pending` is a RESERVATION, not a delivery: the row is written before SMTP is touched, so
@@ -981,13 +945,13 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
   // This rule used to call every `status <> 'disabled'` row enabled, on the stated grounds
   // that it was "the SAME predicate the worker's roster uses". It was half of it.
   // `loadEnabledMailboxes` applies that predicate AND THEN drops every account whose
-  // entitlement says `syncEnabled: false` (`accountsWithSyncDisabled`). So a paused or unpaid
+  // entitlement says sync is off (`parkedAccounts`). So a paused or unpaid
   // subscription leaves `connected` rows the roster deliberately PARKS: nothing syncs them, by
   // design, their stamps age past fifteen minutes within the hour, and this rule then paged a
   // human forever about a billing state working exactly as intended — which is the noisy-alert
   // failure the whole file exists to avoid, in the one rule an operator most needs to trust.
   //
-  // The duty set is now read from ONE function, `accountsWithSyncDisabled` in `billing.ts`, so
+  // The duty set is read from ONE reader, `EvaluateOptions.parkedAccounts`, so
   // "which mailboxes are supposed to be syncing" has a single definition that the roster and
   // the pager cannot answer differently. (The worker still holds its own copy of that query;
   // see the function's header.)
@@ -1040,7 +1004,7 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
     ))
     .groupBy(mailboxes.accountId);
 
-  const parked = await accountsWithSyncDisabled(db, laggingByAccount.map((r) => r.accountId), now);
+  const parked = await parkedOf(laggingByAccount.map((r) => r.accountId));
   const onDuty = laggingByAccount.filter((r) => !parked.has(r.accountId));
   const lagCount = onDuty.reduce((n, r) => n + Number(r.count), 0);
   const parkedCount = laggingByAccount
@@ -1186,9 +1150,8 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
 
   // ── 5. accounts at their storage cap ───────────────────────────────────────────────────
   //
-  // The population is `accountsAtStorageCap` — counted stored-body bytes ≥ the EFFECTIVE
-  // subscription row's cap, resolved with the same live-preferred ordering as every other
-  // entitlement read. Accounts the roster has PARKED are subtracted on rule 4's own argument:
+  // The population is the host's `accountsAtCap` reader — counted stored-body bytes at or over
+  // the account's cap. Accounts the roster has PARKED are subtracted on rule 4's own argument:
   // a parked account ingests nothing, so nothing is being withheld from it, and paging about
   // it would be the noisy-alert failure again. One grouped alert, not one per account —
   // bounded, content-free (a count and two byte figures), and the operator's remedy is the
@@ -1197,8 +1160,8 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
   // WARNING, not critical: the product is behaving as specified — mail still arrives, still
   // organizes on IMAP, the user has been told in Settings and on the message — but a human
   // should know who is bumping the ceiling before the support mail arrives.
-  const atCap = await accountsAtStorageCap(db);
-  const capParked = await accountsWithSyncDisabled(db, atCap.map((r) => r.accountId), now);
+  const atCap = opts.accountsAtCap ? await opts.accountsAtCap() : [];
+  const capParked = await parkedOf(atCap.map((r) => r.accountId));
   const atCapOnDuty = atCap.filter((r) => !capParked.has(r.accountId));
   if (atCapOnDuty.length > 0) {
     const worst = atCapOnDuty.reduce((m, r) => (r.bytes - r.storageBytesLimit > m.bytes - m.storageBytesLimit ? r : m));
@@ -1241,188 +1204,6 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
       // than inherit the signal's confirmation.
       signature: `${capWide ? "incident" : "signal"}|${atCapOnDuty.length}`,
     });
-  }
-
-  // ── 6. the billing mirror diverged from Stripe (reconciliation) ────────────────────────
-  //
-  // Reads the NEWEST completed `billing_reconciliation_runs` row, either mode: a dry run that
-  // saw divergence is the same fact about the mirror as an armed run that healed it. Two
-  // things matter to a human:
-  //  · `emitted > 0` — webhooks were LOST. The heal already ran (or is queued, on a dry run),
-  //    so the page is about the pipeline, not the data: something dropped a delivery, and the
-  //    next drop might be an invoice. WARNING while everything applied cleanly.
-  //  · flags (minus `test_row`) or failed applies — divergence the pass could NOT close:
-  //    an unattributable live subscription, a mirror row Stripe does not hold, an apply that
-  //    failed. CRITICAL: money state needs a person.
-  // The alert RESOLVES through the same read: the next converged pass writes emitted=0 with no
-  // flags, this rule stops firing, and `runAlertPass` closes the alert_state row.
-  //
-  // ── AND THE MODE FILTER IS NOT COSMETIC (cloud 0029) ──────────────────────────────────
-  //
-  // "Either mode" means either SUBSCRIPTION mode. Since 0029 the same run ledger also carries
-  // `mode = 'invoices'` rows from the invoice mirror's daily heal, and those must be invisible
-  // here for a reason this rule already knows in its other half: it reads the NEWEST row, so an
-  // invoice pass — which runs on its own clock and converges on its own schedule — would become
-  // the newest row and this rule would report ITS verdict about a different table as the
-  // subscription mirror's. A converged invoice pass would silently resolve a live subscription
-  // divergence, every night; a flagged invoice would page as a subscription problem.
-  //
-  // The invoice pass's own divergences are recorded and counted on its rows; a rule for them is
-  // the reliability lane's, and it must be written against `mode = 'invoices'` for the mirror
-  // image of this reason.
-  const lastRun = await db
-    .select({
-      ranAt: billingReconciliationRuns.ranAt,
-      mode: billingReconciliationRuns.mode,
-      emitted: billingReconciliationRuns.emitted,
-      applyFailed: billingReconciliationRuns.applyFailed,
-      flagged: billingReconciliationRuns.flagged,
-      truncated: billingReconciliationRuns.truncated,
-    })
-    .from(billingReconciliationRuns)
-    .where(sql`${billingReconciliationRuns.error} is null
-      and ${billingReconciliationRuns.mode} in ('dry-run','apply')`)
-    .orderBy(sql`${billingReconciliationRuns.ranAt} desc`)
-    .limit(1);
-  const run = lastRun[0];
-  // THE DURABLE HALF OF THE EVIDENCE: a heal that LANDED is a
-  // `billing_events` claim of the reconciliation's own type, and it survives a pass that died
-  // between applying and recording its run row — the exact sequence in which the run ledger
-  // alone would report a converged mirror and never page the lost webhook. Recent claims are
-  // therefore an independent trigger, windowed at 24 h so the operator has a day to see it and
-  // it self-resolves after.
-  const healWindow = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-  const recentHeals = await db
-    .select({ n: sql<number>`count(*)::int` })
-    .from(billingEvents)
-    // APPLIED only: a failed reconciliation apply writes the same type with status='failed',
-    // and it is already the failed-events rule's critical page — counting it here as a heal
-    // would say "applied" and "failed" about one row in two alerts.
-    .where(sql`${billingEvents.type} = 'reconciliation.subscription'
-      and ${billingEvents.status} = 'applied'
-      and ${billingEvents.receivedAt} > ${healWindow.toISOString()}::timestamptz`);
-  const healCount = Number(recentHeals[0]?.n ?? 0);
-  if (run || healCount > 0) {
-    const flagged = (run?.flagged ?? {}) as Record<string, number>;
-    // `test_row` (a standing test account) and `comp_row` (operator comps) are DESIGN, present on
-    // every pass by construction — excluded here so the pager never learns to be filtered.
-    // They stay visible in every run row and every dry-run read.
-    const flaggedReal = Object.entries(flagged)
-      .filter(([code]) => code !== "test_row" && code !== "comp_row");
-    const flaggedCount = flaggedReal.reduce((n, [, c]) => n + Number(c), 0);
-    const unhealed = flaggedCount + (run?.applyFailed ?? 0);
-    const emitted = run?.emitted ?? 0;
-    // `truncated` fires too: a bound that stops every pass at
-    // the same prefix leaves the tail permanently unread, and a clean prefix must not read as
-    // a clean population.
-    if (emitted > 0 || unhealed > 0 || healCount > 0 || run?.truncated === true) {
-      const ranSeconds = run ? secondsBetween(now, run.ranAt) : null;
-      const found = Math.max(emitted + flaggedCount, healCount);
-      alerts.push({
-        // THE TIER IS THE IDENTITY, sync_lag's rule exactly (and found by the same review):
-        // a same-key severity flip sits on the warning's `notified_at` until the repeat
-        // interval, so a money-state alert going critical inside that window stayed muted.
-        // The critical tier's own key opens a NEW row whose NULL stamp pages at once; the
-        // warning row resolves in the same pass (it leaves the firing set), so the console
-        // shows one row per state, never two for one condition.
-        //
-        // KEY MIGRATIONS HAVE A DEPLOY RULE, stated here because this line is where the next
-        // one gets written: the two alert drivers (the worker's timer, the API's cron) deploy
-        // independently, and while they run DIFFERENT revisions each pass resolves — deletes —
-        // the other's spelling of a firing condition, re-opening it with a NULL stamp: a page
-        // per pass until the revisions converge. So a key split ships to BOTH drivers in one
-        // deploy window (the runbook's one-milestone rule), ideally while the condition is not
-        // firing. The residual is bounded to that window and LOUD (duplicate pages), never a
-        // silence — the acceptable direction, but not one to schedule casually.
-        key: unhealed > 0
-          ? "billing_reconciliation_divergence:unhealed"
-          : "billing_reconciliation_divergence",
-        kind: "billing_reconciliation_divergence",
-        severity: unhealed > 0 ? "critical" : "warning",
-        // A truncation-only firing must not present itself as "0 divergences" — the incident
-        // is the UNREAD population, and the title says so.
-        title: found > 0
-          ? `Billing reconciliation: ${found} divergence(s) between Stripe and the mirror`
-          : "Billing reconciliation was truncated — part of the population went unread",
-        detail:
-          (run
-            ? `The latest reconciliation pass (${run.mode}, ${humanAge(ranSeconds)} ago) ` +
-              `${run.mode === "apply" ? "re-emitted" : "would re-emit"} ${emitted} subscription ` +
-              `event(s) the webhook pipeline lost` +
-              ((run.applyFailed ?? 0) > 0 ? `, of which ${run.applyFailed} FAILED to apply (see billing_events)` : "") +
-              (flaggedCount > 0
-                ? `, and flagged ${flaggedCount} row(s) it cannot reconcile: ` +
-                  flaggedReal.map(([code, c]) => `${code}×${c}`).join(", ")
-                : "") + "."
-            : "No completed reconciliation run is recorded, yet reconciliation events applied — " +
-              "a pass died between healing and recording.") +
-          (healCount > 0 ? ` ${healCount} reconciliation event(s) applied in the last 24 h.` : "") +
-          (run?.truncated === true
-            ? " The pass was TRUNCATED at its bound — part of the population went UNREAD and" +
-              " absence checks were skipped; raise the bound or shrink the population."
-            : "") +
-          " A lost webhook heals here, but the loss is the incident: check the relay and the plane.",
-        count: Math.max(found, 1),
-        oldestSeconds: ranSeconds,
-        // BOTH tiers are incidents, including the healed one. The healed tier says a webhook was
-        // LOST and the reconciler put it back — the data is fine and the PIPELINE is not, and the
-        // next thing it drops may be an invoice nobody notices for a month. That is money state
-        // and it wants a person, which is the line between the two classes.
-        cls: "incident",
-        // The pass records divergent ACCOUNTS nowhere by design (`billing_reconciliation_runs`
-        // stores counts and codes, never the rows), so this rule cannot answer the question
-        // without a read the isolation ruling refused. `null` says so.
-        affectedAccounts: null,
-        fixHref: "/billing",
-      });
-    }
-  }
-
-  // ── 7. the reconciler itself went dark ─────────────────────────────────────────────────
-  //
-  // Fires only on a deployment where an APPLY-mode pass has ever completed (a self-hosted
-  // deployment that never armed the cron stays silent — same contract as `worker_down`, which
-  // needs `shards` to say what to expect). Failed runs are excluded on purpose: a reconciler
-  // that fails every pass is exactly as dark as one that stopped, and a failure row that reset
-  // the clock would page NEVER, which is the quiet branch this whole slice exists to remove.
-  const lastApply = await db
-    .select({ ranAt: billingReconciliationRuns.ranAt })
-    .from(billingReconciliationRuns)
-    .where(sql`${billingReconciliationRuns.mode} = 'apply' and ${billingReconciliationRuns.error} is null`)
-    .orderBy(sql`${billingReconciliationRuns.ranAt} desc`)
-    .limit(1);
-  const anyApply = await db
-    .select({ n: sql<number>`count(*)::int` })
-    .from(billingReconciliationRuns)
-    .where(sql`${billingReconciliationRuns.mode} = 'apply'`);
-  const applyEver = Number(anyApply[0]?.n ?? 0) > 0;
-  if (applyEver) {
-    const freshest = lastApply[0]?.ranAt ?? null;
-    const staleSeconds = freshest ? secondsBetween(now, freshest) : null;
-    const dark = staleSeconds === null || staleSeconds * 1000 > t.reconcileStaleMs;
-    if (dark) {
-      alerts.push({
-        key: "billing_reconciliation_stale",
-        kind: "billing_reconciliation_stale",
-        severity: "warning",
-        title: "The billing reconciliation has stopped running",
-        detail:
-          (staleSeconds === null
-            ? "Apply-mode reconciliation runs exist but none ever completed. "
-            : `The last completed apply-mode reconciliation pass was ${humanAge(staleSeconds)} ago ` +
-              `(threshold ${humanAge(Math.round(t.reconcileStaleMs / 1000))}). `) +
-          "A lost Stripe webhook now stays unhealed until this is fixed — check the " +
-          "/internal/billing/reconcile cron and the billing plane.",
-        count: 1,
-        oldestSeconds: staleSeconds,
-        // An incident despite the `warning` severity, and the pair is the argument for why the
-        // two axes are separate: nothing is wrong RIGHT NOW (that is the severity), and the net
-        // under every money fault has been removed (that is the class).
-        cls: "incident",
-        affectedAccounts: null,
-        fixHref: "/billing",
-      });
-    }
   }
 
   // ── 8. a paired native device that stopped syncing ──────────────────────────────────────
@@ -1975,134 +1756,6 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
   } catch (err) {
     const code = (err as { code?: string })?.code ?? (err as { cause?: { code?: string } })?.cause?.code;
     if (code !== "42501") throw err;
-  }
-
-  // ── 14. the credit roll-up went dark ───────────────────────────────────────────────────
-  //
-  // `billing_reconciliation_stale`'s exact shape, one table over, and for the same reason: the
-  // console's whole spend read is served from the aggregates this pass writes, so a roll-up that
-  // stopped does not fail anything. It serves figures that quietly stop moving — an account page
-  // showing thirty daily bars that are all real and none of them from this week.
-  //
-  // Fires only where the pass is ARMED — a deployment that never runs it stays silent rather
-  // than paging about a feature it does not have. Failed runs (error non-null) do not reset the
-  // clock: a pass that fails every night is exactly as dark as one that stopped, and letting a
-  // failure row count would mean this never fires at all, which is the quiet branch the rule
-  // exists to remove. What arming means is the paragraph below the clock, and it is not the same
-  // question as "has one ever completed".
-  const [lastRollup] = await db
-    .select({ ranAt: creditRollupRuns.ranAt })
-    .from(creditRollupRuns)
-    // ── A COMPLETED RUN IS NOT ENOUGH: IT MUST BE ONE THAT DID THE NIGHTLY WORK ────────
-    //
-    // Two shapes write this table. An HOURLY pass recomputes the last couple of days, and a
-    // NIGHTLY one additionally runs the divergence check and prunes the setup-spend rows. Only
-    // the nightly one refreshes lifetime totals, and only it can find a ledger that has drifted.
-    //
-    // Taking the newest COMPLETED row of either shape made this rule structurally unable to
-    // report the failure that matters: the nightly pass could be missed or failing for a week
-    // while the hourly passes kept succeeding, so the clock always looked fresh and the alert
-    // never fired — while the totals, the divergence verdict and the prune all went stale. The
-    // rule existed to notice figures that quietly stop moving, and it was reading the one signal
-    // that keeps moving when they stop.
-    //
-    // `divergent_accounts` is the proof, and it is a natural one rather than a flag invented for
-    // this: it is NULL unless the pass actually ran the divergence check, which only the nightly
-    // shape does. A zero there is a real answer — no account diverged — and is not null.
-    .where(and(isNull(creditRollupRuns.error), isNotNull(creditRollupRuns.divergentAccounts)))
-    .orderBy(sql`${creditRollupRuns.ranAt} desc`)
-    .limit(1);
-
-  // ── ARMED IS NOT THE SAME QUESTION AS "HAS ONE EVER COMPLETED" ────────────────────────
-  //
-  // The filter above is the right CLOCK and the wrong ARMING TEST. A deployment whose nightly
-  // roll-up has failed every time it ran writes rows carrying an error and no divergence
-  // verdict, so the filter removes every one of them, the read above comes back empty, and the
-  // rule is silent for ever — in exactly the state it exists to report. The silence is meant for
-  // a deployment that never runs the pass at all, not for one that runs it nightly and never
-  // gets through it, which is the louder of the two failures.
-  //
-  // So arming reads the OLDEST recorded attempt of either shape, successful or not. If this
-  // table has been accumulating rows for longer than the staleness threshold and still holds no
-  // completed nightly run, the divergence verdict is as absent as it would be had the pass
-  // stopped, and the alert carries the age of that first attempt — a lower bound on how long the
-  // figures have gone unverified. A deployment installed an hour ago, whose first nightly window
-  // has not come round yet, is younger than the threshold and stays quiet.
-  const [firstAttempt] = await db
-    .select({ ranAt: creditRollupRuns.ranAt })
-    .from(creditRollupRuns)
-    .orderBy(sql`${creditRollupRuns.ranAt} asc`)
-    .limit(1);
-
-  const rollupSince = lastRollup?.ranAt ?? firstAttempt?.ranAt ?? null;
-  if (rollupSince) {
-    const staleSeconds = secondsBetween(now, rollupSince);
-    if ((staleSeconds ?? 0) * 1000 > t.creditRollupStaleMs) {
-      alerts.push({
-        key: "credit_rollup_stale",
-        kind: "credit_rollup_stale",
-        severity: "warning",
-        title: "The credit roll-up has stopped running",
-        detail:
-          (lastRollup
-            ? `The last completed credit roll-up was ${humanAge(staleSeconds)} ago (threshold `
-            : `No credit roll-up has ever completed the nightly work, and the oldest attempt on ` +
-              `record is ${humanAge(staleSeconds)} old (threshold `) +
-          `${humanAge(Math.round(t.creditRollupStaleMs / 1000))}). Nothing fails while this is ` +
-          `dark: the Billing board and every account's usage panel keep rendering the aggregates ` +
-          `from the last pass that ran, so the figures are real and simply stop moving. The ` +
-          `ledger itself is untouched and nothing is lost — check the worker's pass registry.`,
-        count: 1,
-        oldestSeconds: staleSeconds,
-        cls: "incident",
-        affectedAccounts: null,
-        fixHref: "/billing",
-      });
-    }
-  }
-
-  // ── 14b. a metered call was paid for and the cost table has no row for it ─────────────
-  //
-  // `aiUsageUnrecorded` (`ai-usage.ts`) is the detector written for the exact production state
-  // its own header describes: `loadAiPorts(env)` called with one argument, an `onUsage` silently
-  // defaulting, every credit debited and every cost row absent. The detector already existed and
-  // nothing consulted it; this rule is the part that was missing.
-  //
-  // ALWAYS A SIGNAL, never an incident: the model call happened, the customer was served, and the
-  // credit was debited correctly. What is dark is one column of the cost board, not the product —
-  // `worker_down` and `billing_events_failed` are what page for those.
-  //
-  // `now`, exactly as the detector's own test calls it (`{ day: new Date() }`): a live check,
-  // re-run every pass, that self-heals the moment ANY host records anything for the day — no
-  // separate staleness window of this rule's own invention, because the detector already reads a
-  // whole calendar day and a debit within the last few minutes racing the worker's write buffer
-  // reads as "unrecorded" for at most that buffer's own flush interval, which is seconds, not the
-  // hours this file's other staleness rules guard against.
-  const usage = await aiUsageUnrecorded(db, { day: now });
-  if (usage.unrecorded) {
-    alerts.push({
-      key: "ai_usage_unrecorded",
-      kind: "ai_usage_unrecorded",
-      severity: "warning",
-      title: `AI usage went unrecorded on ${usage.missingHosts.join(", ")}`,
-      detail:
-        // THE DAY IS NAMED, because this can now report a gap from a day that is no longer
-        // today: the check looks back past midnight so an unrepaired hole does not resolve
-        // itself at 00:00, and "debited today" would then send an operator to the wrong ledger
-        // day. The hosts listed are the ones missing on THAT day, together.
-        `A metered model call was debited on ${usage.day} and ` +
-        `${usage.missingHosts.join(", ")} wrote no ` +
-        `\`ai_usage_daily\` row for it. The credit was still spent and the mail still routed — ` +
-        `this is the cost board's AI column going blind for that host, not an outage. Check the ` +
-        `named host's \`onUsage\` wiring.`,
-      count: usage.missingHosts.length,
-      oldestSeconds: null,
-      cls: "signal",
-      // A host-scoped fact, not an account one — no account is more or less affected than any
-      // other by one host's recorder going dark.
-      affectedAccounts: null,
-      fixHref: "/costs",
-    });
   }
 
   // ── 15. THE OTHER alert driver has stopped running ─────────────────────────────────────
@@ -4206,45 +3859,6 @@ export async function clearHeartbeat(
 /* ════════════════════════════════════════════════════════════════════════════════════════
    The two operator queues the admin console renders
    ════════════════════════════════════════════════════════════════════════════════════════ */
-
-/**
- * A `billing_events` row that failed to apply.
- *
- * NOTE WHAT IS ABSENT: `payload`. The Stripe event body is the one field on this table that
- * could carry a customer's name, address or line-item description, and no operator queue
- * needs it — the identity (`stripeEventId`) is what you paste into the Stripe dashboard, and
- * `error` is what tells you why it failed. The projection is the privacy boundary, exactly as
- * the operator console's own DTO layer is for its screens.
- */
-export interface FailedBillingEventRow {
-  stripeEventId: string;
-  type: string;
-  accountId: string | null;
-  error: string | null;
-  eventTs: Date;
-  receivedAt: Date;
-}
-
-export async function listFailedBillingEvents(db: Tx, limit = 50): Promise<FailedBillingEventRow[]> {
-  const rows = await db
-    .select({
-      stripeEventId: billingEvents.stripeEventId,
-      type: billingEvents.type,
-      accountId: billingEvents.accountId,
-      error: billingEvents.error,
-      eventTs: billingEvents.eventTs,
-      receivedAt: billingEvents.receivedAt,
-    })
-    .from(billingEvents)
-    .where(eq(billingEvents.status, "failed"))
-    .orderBy(billingEvents.receivedAt)
-    .limit(limit);
-  return rows.map((r) => ({
-    ...r,
-    eventTs: new Date(r.eventTs as unknown as string),
-    receivedAt: new Date(r.receivedAt as unknown as string),
-  }));
-}
 
 /**
  * An `outbound_sends` row stuck in `pending`.

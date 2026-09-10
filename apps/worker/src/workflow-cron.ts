@@ -1,7 +1,9 @@
 import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
-import { workflowRuns, workflows as workflowsTbl, type Tx } from "@trafficflow/db";
-import { makeOwnedDb } from "@trafficflow/db/cloud";
-import { makeLocalEntitlements } from "@trafficflow/db/cloud";
+import {
+  workflowRuns, workflows as workflowsTbl, UNMETERED, isSpendMetered,
+  type SpendComposition, type Tx,
+} from "@trafficflow/db";
+import { makeOwnedDb, makeEntitlementsClient } from "@trafficflow/db/cloud";
 import type { SpendPort } from "@trafficflow/db";
 import { WorkflowExecutor, silentLogger, type DraftPort, type Logger, type WorkflowTrigger } from "@trafficflow/core";
 import { selectionOf, type WorkerConfig } from "./config.js";
@@ -351,7 +353,13 @@ export async function runWorkflowCron(
     const now = new Date();
     let drained = 0;
     // ONE port for this invocation — it answers on its own handle, per the local adapter.
-    const entitlements = makeLocalEntitlements({ db: db as unknown as Tx });
+    /* ONE ENTITLEMENTS PORT FOR THIS INVOCATION, or a named unmetered state — the composition
+     * `index.ts` makes, for its reason: `ENTITLEMENTS_URL` set ⇒ the HTTP client, unset ⇒ nothing
+     * meters and the spend call sites are handed nothing. */
+    const entitlements: SpendComposition = config.entitlements
+      ? makeEntitlementsClient({ baseUrl: config.entitlements.url, secret: config.entitlements.secret })
+      : UNMETERED;
+    const spend = isSpendMetered(entitlements) ? entitlements : undefined;
     for (const accountId of await loadServedAccounts(db, selectionOf(config))) {
       try {
         // Enqueue any due time-triggered runs FIRST, then drain them this same pass.
@@ -362,7 +370,7 @@ export async function runWorkflowCron(
             drafter: config.drafter ?? unconfiguredDrafter,
             // ONE port for the pass, not a gate per account: the account is an argument to the
             // spend, and the step's terms come from `SPEND_ACTIONS.workflow`.
-            credits: entitlements,
+            ...(spend ? { credits: spend } : {}),
             accountId,
           },
           now,

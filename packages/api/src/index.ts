@@ -33,7 +33,7 @@ export {
   screenerRoutesGroup, approvalRoutesGroup, triageRoutesGroup, searchRoutesGroup, privacyRoutesGroup,
   unsubscribeRoutesGroup,
   contactsRoutesGroup, snippetsRoutesGroup, notifyRoutesGroup, awayRoutesGroup, attachmentRoutesGroup,
-  kbRoutesGroup, draftsRoutesGroup, workflowsRoutesGroup, healthRoutesGroup, billingRoutesGroup,
+  kbRoutesGroup, draftsRoutesGroup, workflowsRoutesGroup, healthRoutesGroup,
   internalRoutesGroup, adminRoutesGroup,
 } from "./routes/index.js";
 
@@ -44,7 +44,7 @@ export { secretMatches, bearerOf, presentsSecret, secretRouteJson } from "./secr
 // The path the host deployment's cron schedule points at. Exported so the deployment config
 // and the router cannot disagree about it; a suite on the host side pins the agreement.
 export {
-  ALERT_CRON_PATH, SESSIONS_REAP_CRON_PATH, SMTP_SIZE_CRON_PATH, BILLING_RECONCILE_CRON_PATH,
+  ALERT_CRON_PATH, SESSIONS_REAP_CRON_PATH, SMTP_SIZE_CRON_PATH,
   SCHEDULED_SEND_CRON_PATH, SEND_RECONCILE_CRON_PATH,
 } from "./routes/internal.js";
 

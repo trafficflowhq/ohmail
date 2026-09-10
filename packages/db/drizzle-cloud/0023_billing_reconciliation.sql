@@ -3,7 +3,7 @@
 -- The failure this closes (owner decision 2026-08-22): a lost Stripe webhook leaves the
 -- entitlement mirror wrong FOREVER with every test green — the founding case is a no-card
 -- trial whose `customer.subscription.deleted` never landed, mirrored `trialing` with full
--- features for good. The reconciler (packages/services/src/entitlements/reconcile.ts) walks
+-- features for good. The reconciler walks
 -- the plane's `status:"all"` subscription list, compares each against `billing_subscriptions`,
 -- and re-emits the missed event through the SAME claim+apply path the webhook uses — never a
 -- second write path into the mirror.

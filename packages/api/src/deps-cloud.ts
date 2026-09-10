@@ -1,6 +1,5 @@
 import type {
-  AdminDb, AuthService, ProposalsService, BillingPlanePort, EntitlementsService, WaitlistService,
-  PlatformCostPort, PlatformSignalPort,
+  AdminDb, AuthService, ProposalsService, WaitlistService, PlatformSignalPort,
 } from "@trafficflow/services";
 import type { AlertSink, AlertThresholds, MsOAuthBootstrap } from "@trafficflow/db/cloud";
 import type { FetchLike, MicrosoftDeviceClient } from "@trafficflow/core";
@@ -9,10 +8,9 @@ import type { FetchLike, MicrosoftDeviceClient } from "@trafficflow/core";
  * THE HOSTED HALF OF THE DEPENDENCY SURFACE, declared where only a hosted build will see it.
  *
  * `deps.ts` describes what any host of this route table must supply. Most of it is the mail half
- * and is the same everywhere; a few members exist only where there are accounts to administer,
- * subscriptions to bill and a pager to answer. Those members name the identity ceremony, the
- * billing service, the funnel and the content-blind operator connection — modules a local install
- * neither has nor may have.
+ * and is the same everywhere; a few members exist only where there are accounts to administer
+ * and a pager to answer. Those members name the identity ceremony, the funnel and the
+ * content-blind operator connection — modules a local install neither has nor may have.
  *
  * They were declared in `deps.ts` itself, which meant the file every host compiles named all four
  * of them. A type-only reference emits nothing, and it is still a private module named in source
@@ -27,9 +25,9 @@ import type { FetchLike, MicrosoftDeviceClient } from "@trafficflow/core";
  * branch (a 404 for a surface nobody armed, a 503 for a pager that cannot reach its database).
  * That grammar is unchanged; only where the members are declared has moved.
  *
- * A local build never loads this module, so its `ApiDeps` genuinely has no operator connection
- * and no billing service — not "has one that is undefined". Code assuming otherwise fails to
- * compile rather than failing at request time.
+ * A local build never loads this module, so its `ApiDeps` genuinely has no operator connection —
+ * not "has one that is undefined". Code assuming otherwise fails to compile rather than failing
+ * at request time.
  */
 declare module "./deps.js" {
   interface ApiServices {
@@ -47,53 +45,18 @@ declare module "./deps.js" {
      * the question had been asked and answered "none".
      */
     proposals?: ProposalsService;
-    // The BILLING PLANE PORT: how this host reaches the Stripe machinery, which lives in a
-    // separate PRIVATE plane service — this member is the HTTP
-    // client of it (`entitlements/plane-client.ts`); no Stripe SDK exists in this repository.
-    // OPTIONAL, and its absence is a first-class state rather than a misconfiguration: a
-    // deployment with no billing environment is pre-launch, so `/billing/*` answers 503
-    // `billing_unconfigured` and every other route (and `/health`) is untouched.
-    // `apps/api-vercel` builds it lazily and ONLY when the whole plane block is present — a
-    // PARTIAL environment throws at cold start instead, because a host that accepts checkouts
-    // while its webhook is unconfigured takes money it can never turn into credits.
-    // Most tests omit it; the billing tests inject a fake, exactly as `StripePort` was faked
-    // before the extraction (the suite performs zero external requests — no test dials the plane).
-    billingPlane?: BillingPlanePort;
-    // The OPEN half of the same seam: the entitlements service (checkout preflight,
-    // status read, the webhook's claim+apply, erasure's cancel). Port-free by construction —
-    // it holds no network capability; routes compose it with `billingPlane` at the call site.
-    // Set together with `billingPlane` by every host that has a billing environment: the two
-    // members are one capability, and `apps/api-vercel` arms both from one config block.
-    entitlements?: EntitlementsService;
     // The funnel: `POST /waitlist` and the operator invite mint (the mint has
-    // no route; it is an operator action). OPTIONAL like `billing`, and for the same reason: a host that
+    // no route; it is an operator action). OPTIONAL, and for the same reason: a host that
     // does not serve the landing's signup answers 503 `waitlist_unconfigured` rather than
     // 500ing. It needs no configuration of its own — the MAILER inside it is what may be
     // absent, and `WaitlistService` handles that by recording the row and reporting
     // `mailed: false`, so `apps/api-vercel` builds one unconditionally.
     waitlist?: WaitlistService;
     /**
-     * WHAT THE VENDORS CHARGE — the read port behind `GET /internal/platform-costs/run`.
-     *
-     * OPTIONAL, and its absence is a first-class state on the same terms as `billingPlane`
-     * above: a host that composes no port at all (the desktop engine, a self-host box whose
-     * operator has no interest in our hosting bill) answers `200 {skipped}` and writes nothing.
-     *
-     * That is DIFFERENT from a port that answers `unconfigured`, and the console must be able to
-     * tell them apart: the second one asked and found no key, which is the thing the board
-     * renders as "not configured". The first was never asked.
-     *
-     * The hosted composition (`apps/api-vercel/src/deps.ts`) therefore fills this member
-     * UNCONDITIONALLY, credentials or not. It did not for the whole of this route's first life,
-     * which meant the pass answered `{ skipped }` on every invocation and the board could not
-     * have shown a figure however the environment was configured.
-     */
-    platformCosts?: PlatformCostPort;
-    /**
      * WHAT THE PLATFORM SERVED — the read port behind `GET /internal/platform-signals/run`.
      *
-     * OPTIONAL on `platformCosts`' exact terms one line up, and the three-way distinction it
-     * preserves is the whole reason this slot exists rather than the pass reading `process.env`:
+     * OPTIONAL, and the three-way distinction it preserves is the whole reason this slot exists
+     * rather than the pass reading `process.env`:
      *
      *  · **no port** — nobody wired the question. The desktop engine, a self-host box. `200
      *    {skipped}`, nothing written.

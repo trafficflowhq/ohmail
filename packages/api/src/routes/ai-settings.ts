@@ -10,8 +10,8 @@ import { readBody } from "./shared.js";
  *
  * The site promises "you can switch the AI off entirely without losing a single feature that
  * files your mail." These two endpoints are what makes that a property of the account rather
- * than of a checkbox: the flag lives on `accounts.ai_enabled` and is read by `spendState()` in
- * `packages/db/src/ai-gate.ts`, which every AI call site in the product passes through. So
+ * than of a checkbox: the flag lives on `accounts.ai_enabled` and is read by the ONE seam every
+ * AI call site in the product passes through before it spends anything. So
  * turning it off here means — for the very next message — no model call, no credit debit, and
  * routing by the deterministic rules alone.
  *

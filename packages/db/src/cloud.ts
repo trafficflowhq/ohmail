@@ -78,53 +78,8 @@ export {
   type ImapSlotInput,
 } from "./imap-admission.js";
 
-export {
-  debitCredits, grantCredits, expireCredits, renewCredits, refundCredits, balanceOf, ledgerSources,
-  grantTrialCredits, hasTrialGrant, lockAccountBalance,
-  clientIdempotencyKey, findCreditDivergence, latestInvoiceGrantSource,
-  MAX_CREDIT_AMOUNT, MAX_SOURCE_LENGTH,
-  NotInTransactionError, LedgerIdentityConflictError, LedgerReplayError,
-  RefundOriginMissingError, RefundExceedsDebitError,
-  type DebitReason, type GrantReason, type LedgerGrantReason,
-  type IdempotencyKey, type RenewalInput,
-  type DebitOutcome, type GrantOutcome, type ExpireOutcome, type CreditDivergence,
-} from "./credits.js";
 
-export {
-  PLAN_LIMITS, LIVE_SUBSCRIPTION_STATUSES, EXPORT_WINDOW_MS, TRIAL_GRANT_CREDITS,
-  TRIAL_STARTS_PER_IP, TRIAL_START_WINDOW_MS,
-  // The two purchasable add-ons (ratified 2026-08-21) and what one storage unit adds.
-  ADDON_CARD, ADDON_STORAGE_UNIT_BYTES, MAX_ADDON_QUANTITY, type AddonKind,
-  // The storage cap, as the number a customer is SHOWN. Bytes stay the enforcement unit
-  // everywhere; this pair only renders a count. See `billing.ts` for the measurement it comes
-  // from and why it rounds against us.
-  BYTES_PER_STORED_EMAIL_ESTIMATE, estimatedStoredEmails,
-  entitlementsFor, liveSubscriptionOf, newestSubscriptionOf, effectiveSubscriptionOf,
-  accountsWithSyncDisabled,
-  claimBillingEvent, recordBillingEventFailure, recordBillingEventNoop,
-  type Plan, type SubscriptionStatus, type SubscriptionSnapshot, type LiveSubscription,
-  type EntitlementsInput, type EntitlementReason, type Entitlements, type BillingEventClaim,
-} from "./billing.js";
 
-/**
- * Account suspension (cloud migration 0008). The reader seam the entitlement gates share and the
- * transactional suspend/resume writes the admin console performs. Hosted-only: the write runs on
- * the runtime connection and touches `account_suspensions` (cloud) plus `audit_log`.
- */
-export {
-  suspendedAccountIds, isSuspended, suspendAccount, resumeAccount,
-  // Cloud migration 0012 — the SYSTEM suspend the billing webhook writes on a revenue reversal
-  // (refund / lost dispute). Same table, same idempotency, no staff actor and no inner
-  // transaction — the webhook's apply transaction owns durability.
-  suspendAccountForRevenueReversal,
-  // Mail 0039 — the SECOND admin write. Grouped with the suspension pair because it is the same
-  // shape and the same trust boundary (runtime connection, staff-attributed, one transaction,
-  // audit row or nothing), not because it touches the same tables: this one clears a mailbox's
-  // durable retry backoff so the sync leader re-dials it.
-  resyncMailbox,
-  type SuspensionWrite, type SuspensionOutcome, type RevenueReversalSuspension,
-  type MailboxResyncWrite, type MailboxResyncOutcome,
-} from "./suspension.js";
 
 /**
  * Cloud 0009 — Exchange/M365 OAuth2 onboarding. Two stores, both hosted-only:
@@ -165,7 +120,7 @@ export {
 export {
   evaluateAlerts, runAlertPass, deliver, webhookAlertSink, nodePostJson, renderAlertText,
   writeHeartbeat, refreshHeartbeat, clearHeartbeat, humanAge,
-  listFailedBillingEvents, listStuckSends, listOpenAlerts, listOpenAlertStamps,
+  listStuckSends, listOpenAlerts, listOpenAlertStamps,
   selectOpenAlerts,
   newDeliveryStreak, newSinkStreak, redactEndpoint, classifyTransportError, sinkHealthOf,
   alertSignature, alertClass, incidentsOf, signalsOf,
@@ -179,7 +134,7 @@ export {
   DEFAULT_SINK_FAILURE_ESCALATION,
   type Alert, type AlertKind, type AlertSeverity, type AlertThresholds, type AlertSink,
   type AlertNotifyContext, type AlertPassOptions, type AlertPassResult, type EvaluateOptions,
-  type HeartbeatInput, type HeartbeatRefresh, type PostJson, type FailedBillingEventRow,
+  type HeartbeatInput, type HeartbeatRefresh, type PostJson, type AtCapAccount,
   type StuckSendRow, type AlertDeliveryResult, type DeliveryStreak, type SinkEscalation,
   type AlertSinkOutcome, type SinkOutcome, type DeliveryReport, type SinkStreak,
   type SinkDegradation, type AlertSinkHealth,
@@ -200,89 +155,16 @@ export {
   type TelegramAlertSinkConfig,
 } from "./alert-push.js";
 
-/**
- * The managed storage cap's CLOUD half: the per-account cap read the hosted worker
- * threads into ingest, and the at-cap roster the `storage_at_cap` alert rule counts. Here and
- * not on the root barrel because both read `billing_subscriptions`; the byte counter itself is
- * mail schema and exports from the root.
- */
-export {
-  storageCapOf, accountsAtStorageCap, type AtCapAccount,
-} from "./storage-cloud.js";
 
-export {
-  // The screening-only, expiring, once-per-ACCOUNT setup pool (cloud 0021, re-keyed by 0028) and
-  // the gate wrapper the two Screener arms install over their spend gates. See `setup-grant.ts`.
-  SETUP_GRANT_TTL_DAYS,
-  grantSetupCredits, setupPoolOf, withSetupPool,
-  // The mint's answer, so the hosted host can log the reason it refused without re-deriving it.
-  type SetupGrantOutcome, type SetupGrantSkipReason,
-} from "./setup-grant.js";
 
-export {
-  // WHAT THE TOKENS COST (cloud 0029) — the recorder behind `ai_usage_daily`, and the rule that
-  // catches a host which forgot to wire it. `onUsage` has a DEFAULT, so a composition root that
-  // simply omits the recorder produces a deployment where every credit is debited and the cost
-  // table stays empty — measured, not hypothetical: that was the worker's state.
-  makeAiUsageRecorder, aiUsageUnrecorded, AI_USAGE_BUFFER_MS,
-  type AiUsageHost, type AiUsageRecorder, type AiUsageReport,
-} from "./ai-usage.js";
 
-export {
-  // The invoice mirror's two fenced writes (cloud 0029). ONE statement shared by the webhook
-  // apply and the daily reconcile, because a fence written twice is a fence that will eventually
-  // be written differently. See `billing-invoices.ts` for why the upsert never touches a
-  // refund — Stripe's invoice object cannot express one, so a nightly heal would reset it.
-  upsertBillingInvoice, recordInvoiceReversal,
-  type BillingInvoiceStatus, type BillingInvoiceSource,
-  type BillingInvoiceWrite, type InvoiceReversalWrite,
-} from "./billing-invoices.js";
 
-export {
-  // The day-grained credit aggregates the admin console reads instead of scanning the ledger
-  // (cloud 0028), and the retention sweep for the setup pool's draw record. `credit_ledger`
-  // itself is never pruned — see the module header for the four mechanisms that depend on it.
-  runCreditRollupPass, isNightlyRollupSlot,
-  CREDIT_ROLLUP_HOURLY_DAYS, CREDIT_ROLLUP_NIGHTLY_DAYS, CREDIT_ROLLUP_NIGHTLY_HOUR_UTC,
-  SETUP_SPEND_RETENTION_DAYS,
-  // The cloud 0031 deploy gate, defined once and read by BOTH halves of it: the API's
-  // `/health` census and the worker's supervisor. The worker may not import the API route,
-  // so the values live beside the column they are about — see the constants' header.
-  CLOUD_LEDGER_JOURNAL_TAG, CLOUD_LEDGER_RUN_MARKER, CLOUD_LEDGER_SCHEMA_BEHIND,
-  CloudLedgerSchemaBehindError, isCloudLedgerSchemaBehind, cloudLedgerSchemaReady,
-  type CreditRollupOptions, type CreditRollupReport,
-} from "./credit-rollup.js";
 
-export {
-  makeAiCreditGate, aiRefusalReason, classifyLedgerSource, screenerLedgerSource,
-  // The WEIGHTED debit schedule (2026-08-21), which replaced a flat one-credit-per-action price.
-  // `assertWeightedScheduleActive` is the boot guard the managed-AI arm calls: it refuses to
-  // construct against a flat schedule. See `ledger-source.ts`.
-  AI_ACTION_WEIGHTS, WEIGHTED_DEBIT_REASONS, aiActionCost, assertWeightedScheduleActive,
-  type WeightedDebitReason,
-  // The spend TERMS and the one source composer — presented here beside the ledger writers.
-  SPEND_ACTIONS, DRAFT_RETRY_WINDOW_MS, ATTEMPT_KEY_MAX, sourceFor, assertAttemptKey,
-  isSpendAction, classifyAttemptKey, screenerAttemptKey, draftAttemptKey, workflowAttemptKey,
-  type SpendAction,
-  type AiCreditGate, type AiCreditGateOptions, type AiSpendOutcome, type AiRefusalReason,
-} from "./ai-gate.js";
 
 /* The account-level AI off switch (migration 0022) — its OWN module, because the switch is the
  * product on every deployment while the metering that consults it is one operator's concern. */
 export { aiEnabledFor, getAiAnswer, getAiEnabled, setAiEnabled } from "./ai-settings.js";
 
-/**
- * The EXCLUSIVE work claim behind {@link AiCreditGateOptions.exclusive}.
- *
- * The gate is the only production caller: nothing outside `packages/db/src` may take or release a
- * claim, exactly as nothing outside it may call `debitCredits` — a census suite holds both
- * names to that rule. What is exported here
- * is what the FIXTURES and the maintenance sweep need — a test has to be able to abandon a claim
- * the way a crashed process does, and the worker has to be able to delete the tail those leave.
- */
-export {
-  claimAiAttempt, releaseAiAttempt, pruneAiAttemptClaims, AI_CLAIM_TTL_MS,
-} from "./ai-claim.js";
 
 /**
  * The content-blind STAFF handle (staff can never read mail content). Runtime surface: `apps/api-vercel` builds
@@ -369,15 +251,45 @@ export {
 export { readLastOrganizerCycleAt, organizerCycleReader } from "./organizer-cycle.js";
 
 /**
- * THE TWO ANSWERS to the entitlements port (`@trafficflow/db#EntitlementsPort`): the LOCAL
- * adapter over this database's own tables, and the HTTP client of an entitlements program.
- *
- * On this entry point and not the root barrel because both reach the hosted half — one the
- * billing and ledger tables, the other the network — and the engine census refuses either in the
- * desktop artifact. The port TYPE is on the root barrel, which is what lets a local host name the
- * member it fills with `UNMETERED`.
+ * The operator's one mailbox write — clearing a quarantined mailbox's durable retry backoff so
+ * the sync leader re-dials it. Here rather than on the root barrel because it writes `audit_log`,
+ * a Cloud table.
  */
-export { makeLocalEntitlements, type LocalEntitlementsConfig } from "./entitlements-local.js";
+export {
+  resyncMailbox, type MailboxResyncWrite, type MailboxResyncOutcome,
+} from "./mailbox-resync.js";
+
+/**
+ * THE SPEND VOCABULARY — the terms table, the one source composer, and the attempt-key builders.
+ *
+ * Defined on a leaf the engine compiles, presented here beside the port's answer: a call site
+ * names an action and a bare attempt key, and `sourceFor` is the only thing that turns the pair
+ * into a ledger source. Every implementation of the port composes through it, which is what keeps
+ * two answers from meaning different things by one key.
+ */
+export {
+  SPEND_ACTIONS, DRAFT_RETRY_WINDOW_MS, ATTEMPT_KEY_MAX, ledgerSources,
+  sourceFor, assertAttemptKey, isSpendAction, clientIdempotencyKey,
+  classifyAttemptKey, screenerAttemptKey, draftAttemptKey, workflowAttemptKey,
+  classifyLedgerSource, screenerLedgerSource,
+  AI_ACTION_WEIGHTS, WEIGHTED_DEBIT_REASONS, aiActionCost, assertWeightedScheduleActive,
+  type SpendAction, type IdempotencyKey, type WeightedDebitReason,
+} from "./ledger-source.js";
+
+/** The AI gate's refusal vocabulary — the words a spend verdict carries. */
+export {
+  AI_REFUSAL_REASONS, ENTITLEMENT_REASONS, isAiRefusalReason,
+  type AiRefusalReason, type AiSpendOutcome, type EntitlementReason,
+} from "./ai-gate-port.js";
+
+/**
+ * THE ANSWER to the entitlements port (`@trafficflow/db#EntitlementsPort`): the HTTP client of an
+ * entitlements program.
+ *
+ * On this entry point and not the root barrel because it reaches the network, and the engine
+ * census refuses it in the desktop artifact. The port TYPE is on the root barrel, which is what
+ * lets a host with no such program name the member it fills with `UNMETERED`.
+ */
 export {
   makeEntitlementsClient, ENTITLEMENTS_CALL_TIMEOUT_MS, ACCESS_TTL_MS,
   type EntitlementsClientConfig, type EntitlementsFetch,

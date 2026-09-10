@@ -245,7 +245,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     module: `${W}/index.ts`, entry: "MAINTENANCE_EVERY_MS",
     triggers: ["cycle-tail"],
     cadence: "time-gated MAINTENANCE_EVERY_MS (~hourly), leader-only, global (not per account)",
-    budget: "pruneIdempotencyKeys + pruneSendFingerprints + pruneAiAttemptClaims (packages/db) + sweepExpiredStagingFor pages until drained",
+    budget: "pruneIdempotencyKeys + pruneSendFingerprints (packages/db) + sweepExpiredStagingFor pages until drained",
     owns: "expired idempotency keys, spent send-content claims, abandoned AI claims and expired staged-attachment bytes actually go away (the send-content sweep is hygiene: the duplicate window is compared against the request clock in the send path, never enforced by this)",
     fence: "leader lock (the worker is the single elected writer); each sweep failure is logged, never a cycle abort",
   },
@@ -278,21 +278,6 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     budget: "the alert table's own dedupe/cooldown windows",
     owns: "operator alerts (stale reconciliation, sync-blocked mailboxes, …) fire once per condition, to mail/push sinks",
     fence: "leader lock",
-  },
-  {
-    name: "credit_rollup",
-    module: `${DB}/credit-rollup.ts`, entry: "runCreditRollupPass",
-    triggers: ["cycle-tail"],
-    cadence: "in the hourly maintenance slot: today + yesterday every hour; at 03:00 UTC once, "
-      + "the last three days plus totals, the divergence count and the setup-spend sweep",
-    budget: "one indexed range scan of credit_ledger per day recomputed (credit_ledger_created_at_idx); "
-      + "the nightly arm adds one full ledger/balance comparison and one bounded delete",
-    owns: "the admin console reads day-grained credit aggregates instead of scanning the money trail, "
-      + "and setup_grant_spends past its retention horizon goes away",
-    fence: "leader lock (the hourly maintenance slot is leader-only and global, not per account); "
-      + "never throws — a failed pass records its own scrubbed row and the tail carries on. "
-      + "It writes NO DDL and no delete against credit_ledger: that table is append-only by trigger "
-      + "and its newest row is coupled to credit_balances at COMMIT",
   },
   {
     name: "api_cron",
@@ -404,24 +389,6 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     cadence: "operator-run",
     budget: "SUBJECT_HEAL_BATCH per run",
     owns: "threads whose subject snapshot predates the subject rules are re-derived",
-    fence: "DB-only",
-  },
-  {
-    name: "trial_credit_backfill",
-    module: `${W}/trial-credit-backfill.ts`, entry: "runTrialCreditBackfill",
-    triggers: ["cli"], cli: ["run-trial-credit-backfill.ts"],
-    cadence: "operator-run, once",
-    budget: "one pass over trial accounts missing their grant",
-    owns: "trial accounts created before the credit grant existed receive it exactly once",
-    fence: "DB-only; the grant's own uniqueness is the idempotency",
-  },
-  {
-    name: "trial_grant_dedup",
-    module: `${W}/trial-grant-dedup.ts`, entry: "runTrialGrantDedup",
-    triggers: ["cli"], cli: ["run-trial-grant-dedup.ts"],
-    cadence: "operator-run, once",
-    budget: "one pass over duplicated grants",
-    owns: "accounts double-granted by the pre-dedup backfill keep exactly one grant",
     fence: "DB-only",
   },
   {

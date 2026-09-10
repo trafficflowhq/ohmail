@@ -1,6 +1,5 @@
-import { type Tx } from "@trafficflow/db";
-import { makeOwnedDb } from "@trafficflow/db/cloud";
-import { makeLocalEntitlements } from "@trafficflow/db/cloud";
+import { UNMETERED, isSpendMetered, type SpendComposition, type Tx } from "@trafficflow/db";
+import { makeOwnedDb, makeEntitlementsClient } from "@trafficflow/db/cloud";
 import type { SpendPort } from "@trafficflow/db";
 import { generateProposals, silentLogger, unconfiguredProposer, type Logger, type WorkflowPort } from "@trafficflow/core";
 import { selectionOf, type WorkerConfig } from "./config.js";
@@ -141,7 +140,13 @@ export async function runProposalCron(
     const metered = config.proposer != null;
     // Composed once, beside the handle it answers from. See the local adapter for why the port
     // holds its own handle rather than taking a caller's transaction.
-    const entitlements = makeLocalEntitlements({ db: db as unknown as Tx });
+    /* ONE ENTITLEMENTS PORT FOR THIS INVOCATION, or a named unmetered state — the composition
+     * `index.ts` makes, for its reason: `ENTITLEMENTS_URL` set ⇒ the HTTP client, unset ⇒ nothing
+     * meters and the spend call sites are handed nothing. */
+    const entitlements: SpendComposition = config.entitlements
+      ? makeEntitlementsClient({ baseUrl: config.entitlements.url, secret: config.entitlements.secret })
+      : UNMETERED;
+    const spend = isSpendMetered(entitlements) ? entitlements : undefined;
     let generated = 0;
     for (const accountId of await loadServedAccounts(db, selectionOf(config))) {
       try {
@@ -149,7 +154,7 @@ export async function runProposalCron(
           accountId, port,
           // ONE port for the invocation; the account is an argument to the spend and the terms
           // come from `SPEND_ACTIONS.propose`.
-          ...(metered ? { credits: entitlements } : {}),
+          ...(metered && spend ? { credits: spend } : {}),
         }, now);
         generated += res.generated;
       } catch (err) {

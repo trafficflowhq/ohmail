@@ -1,6 +1,6 @@
 import { setNoticeSink, noticeSinkFor, type Tx } from "@trafficflow/db";
 import { setupProdDatabase } from "@trafficflow/db/admin";
-import { makeOwnedDb, makeChangeWakeHub, isSuspended } from "@trafficflow/db/cloud";
+import { makeOwnedDb, makeChangeWakeHub } from "@trafficflow/db/cloud";
 import { createLogger, UNMETERED_STORAGE_CAP } from "@trafficflow/core";
 import { makeSendAdapter } from "@trafficflow/api";
 import {
@@ -117,9 +117,8 @@ async function main(): Promise<void> {
    * HTTP route stays mounted for an operator who prefers an external scheduler; overlap
    * between the two is safe by the claim's own `FOR UPDATE SKIP LOCKED`.
    *
-   * `accountEligible` is the suspension gate: a suspended account's automation must not keep
-   * firing (the worker's roster makes the same ruling), so its due rows stay `'scheduled'`,
-   * untouched, until the suspension lifts. The storage cap is this host's typed UNMETERED —
+   * There is no eligibility gate: this box meters nothing, so every account is eligible and
+   * every due appointment is kept. The storage cap is this host's typed UNMETERED —
    * the same declaration its send route makes for the sent-copy projection.
    */
   let sendClock: ReturnType<typeof setTimeout> | null = null;
@@ -147,9 +146,6 @@ async function main(): Promise<void> {
         // LIST trickles parks the awaited pass and stalls the whole send clock behind it.
         openSendAdapter: (mailboxId) =>
           makeSendAdapter(passDeps, mailboxId, { timeouts: SEND_RECONCILE_NET_TIMEOUTS }),
-        // On the HANDED handle — the deadlock rule on `ScheduledSendPassDeps.accountEligible`.
-        accountEligible: async (accountId, handle) =>
-          !(await isSuspended(handle as unknown as Tx, accountId)),
         log: logger,
       });
       if (r.claimed > 0) {
@@ -171,11 +167,6 @@ async function main(): Promise<void> {
           const r = await runScheduledSendPass(owned.db, {
             openSendAdapter: (mailboxId) => makeSendAdapter(passDeps, mailboxId),
             resolveStorageCap: async () => UNMETERED_STORAGE_CAP,
-            // On the HANDED handle (the claim transaction's own) — the deadlock rule on
-            // `ScheduledSendPassDeps.accountEligible`; a captured `owned.db` read would queue
-            // behind the transaction on a busy pool exactly as it did on the hosted host.
-            accountEligible: async (accountId, handle) =>
-              !(await isSuspended(handle as unknown as Tx, accountId)),
             log: logger,
           });
           if (r.claimed > 0) {
@@ -220,8 +211,6 @@ async function main(): Promise<void> {
           try {
             const a = await runAwayResponderPass(owned.db, {
               openSendAdapter: (mailboxId) => makeSendAdapter(buildDeps(new Request(cfg.origin), rt), mailboxId),
-              accountEligible: async (accountId, handle) =>
-                !(await isSuspended(handle as unknown as Tx, accountId)),
               log: logger,
             });
             if (a.examined > 0) {

@@ -3,14 +3,14 @@ import {
   type EntitlementsComposition, type SpendPort, type Tx,
 } from "@trafficflow/db";
 import {
-  API_MAX_DURATION_MS, makeAiUsageRecorder, makePooledDb,
-  makeEntitlementsClient, makeLocalEntitlements,
+  API_MAX_DURATION_MS, makePooledDb,
+  makeEntitlementsClient,
 } from "@trafficflow/db/cloud";
 import {
   adminDbFor, attestStaffDbFault, resetAdminDbs, webhookAlertSink,
   telegramAlertSink,
-  assertWeightedScheduleActive, grantSetupCredits,
-  acquireImapSlot, releaseImapSlot, balanceOf, storageCapOf,
+  assertWeightedScheduleActive,
+  acquireImapSlot, releaseImapSlot,
   resolveOAuthProviderConfig, rotateMailboxOAuthSecret, MICROSOFT_PROVIDER,
   // The staging BUCKET client. It sits beside the `attachment_staging` rows rather than with the
   // send path, because the retention sweep's caller is the worker, which may not depend on
@@ -18,13 +18,14 @@ import {
   makeSupabaseStagingStorage,
   // The organizer's last completed pass, for the filing strip (mail 0097).
   organizerCycleReader,
-  type AdminDb, type AlertSink, type SetupGrantOutcome,
+  type AdminDb, type AlertSink,
 } from "@trafficflow/db/cloud";
 import {
   resolveCloudInstallId,
   createLogger, makeAnthropicClient, makeHaikuClassifier, makeSonnetDrafter,
   MicrosoftTokenProvider, UNMETERED_STORAGE_CAP,
   type Logger, type FetchLike, type UpdateSecretPort,
+  type AnthropicCallReport,
 } from "@trafficflow/core";
 import { mailboxProviderAuthservIds } from "@trafficflow/core/adapters/drizzle-repo";
 import { makePushEndpointGuard } from "@trafficflow/core/net";
@@ -39,9 +40,7 @@ import {
   SEND_ATTACHMENT_MAX_TOTAL_BYTES,
   makeAttachmentStagingPort,
   workflowsService, proposalsService,
-  makeEntitlementsService, makeBillingPlaneClient,
   MailService, ResendMailer, mailAlertSink, dbRecipientLimiter, makeWaitlistService,
-  makePlatformCostPort,
   type ServiceContext,
   makePlatformSignalPort,
 } from "@trafficflow/services";
@@ -101,59 +100,6 @@ function wakeHubFor(cfg: HostConfig): ChangeWakeHub {
  * to the observability owner; this makes the gap actionable instead of invisible in the meantime.
  */
 /**
- * THE SETUP GRANT'S ONE LINE IN THE LOG — `setup_grant_minted` / `setup_grant_skipped`.
- *
- * The mint runs as the mailbox service's `onCreated` hook, inside the create transaction, and its
- * answer is nobody's control flow: the create succeeds either way. That made a mint and a refusal
- * indistinguishable on this host for the life of the feature — an account with no pool looked
- * exactly like an account whose pool was never attempted. `grantSetupCredits` is the only code
- * that knows WHICH of the four things happened, so it reports a reason and this wraps the
- * reference to write it down. Same `console.log(JSON.stringify(...))` shape as `ai_call` above,
- * for the same reason: Vercel's log drain indexes this stream, so a fixed shape behind a
- * grep-able token is what a drain rule can key on.
- *
- * ── TWO THINGS THIS DELIBERATELY DOES NOT DO ──────────────────────────────────────────────────
- *
- *  1. **It does not catch the GRANT.** A mint that throws must still abort the create — that is
- *     the shipped invariant `mailbox-service.ts` states at its hook ("a grant that fails aborts
- *     the create — the two are one fact or neither is"), and swallowing it here would quietly
- *     turn it into a create that succeeded with no pool and no error anywhere. Only the LOG is
- *     guarded, because the inverse is also true: a logging fault must never cost a customer
- *     their mailbox.
- *  2. **It does not claim the row survived.** The line is written INSIDE the transaction, so a
- *     commit that subsequently fails leaves a `setup_grant_minted` with no `setup_grants` row.
- *     The database is the authority on what an account holds; this stream is the authority on
- *     what was attempted and how it answered. Reconciling the two is what makes a missing pool
- *     diagnosable at all, which is the whole point — and it is why the log carries the account
- *     and mailbox ids and nothing else that could quote a credential.
- *
- * EXPORTED for its test only. It is not a second granter: the `SETUP_GRANT_CALLERS` census in
- * the database package's own tests still names this file as the one place the hosted
- * composition reaches the primitive, and `host-wiring.test.ts` asserts that `onCreated`
- * is handed THIS wrapper rather than the bare reference — a mint that stopped being logged
- * would otherwise be invisible, which is the condition this whole wrapper exists to end.
- */
-export const grantSetupCreditsLogged = async (
-  ...args: Parameters<typeof grantSetupCredits>
-): Promise<SetupGrantOutcome> => {
-  const [, accountId, mailboxId] = args;
-  const outcome = await grantSetupCredits(...args);
-  try {
-    console.log(JSON.stringify(outcome.minted
-      ? { event: "setup_grant_minted", accountId, mailboxId, amount: outcome.amount }
-      : { event: "setup_grant_skipped", accountId, mailboxId, reason: outcome.reason }));
-  } catch { /* see (1): a log line never becomes the reason a mailbox failed to connect */ }
-  return outcome;
-};
-
-const billingAlert = (alert: {
-  stage: string; code: string; stripeEventId: string | null;
-  eventType: string | null; accountId: string | null;
-}): void => {
-  console.error(JSON.stringify({ evt: "billing_alert", ...alert }));
-};
-
-/**
  * The service bag. Keyed on the config object so a test that loads a different environment
  * gets a different bag, while production — one config per cold instance — builds it once.
  */
@@ -207,18 +153,8 @@ function buildServices(cfg: HostConfig): ApiServices {
    * serverless process can be frozen the instant its response is written, so a floating write is
    * a write that may never land.
    */
-  const aiUsage = makeAiUsageRecorder(
-    makePooledDb(cfg.databaseUrlPooled) as unknown as Tx, "api",
-  );
-  /**
-   * BOTH, not either. The log line is the per-call forensic record — it carries Anthropic's
-   * `request-id`, the only handle their support can act on — and the recorder is the arithmetic.
-   * Dropping the log for the table would lose the id; dropping the table for the log would leave
-   * the margin computable only by a human with a log drain and an afternoon.
-   */
-  const onUsage = (r: Parameters<typeof aiUsage.record>[0] & { latencyMs: number }): void | Promise<void> => {
+  const onUsage = (r: AnthropicCallReport): void => {
     console.log(JSON.stringify({ event: "ai_call", ...r }));
-    return aiUsage.record(r);
   };
   // The stateless singletons: naming them is free, so they are plain properties.
   const bag: Record<string, unknown> = {
@@ -261,7 +197,8 @@ function buildServices(cfg: HostConfig): ApiServices {
     // at all (the roster keeps such accounts syncing; storage follows), and it maps to the
     // typed unmetered value rather than leaking a second spelling of it.
     storageCapOf: async (ctx: ServiceContext) => {
-      const cap = await storageCapOf(ctx.db as never, ctx.accountId, ctx.now());
+      const verdict = await accessOf(entitlementsComposition(), ctx.accountId);
+      const cap = verdict.ok ? verdict.limits.storageBytes : null;
       return cap === null ? UNMETERED_STORAGE_CAP : cap;
     },
     // ── AND THIS IS THE WAY ROUND IT ────────────────────────────────────────────────────
@@ -342,7 +279,7 @@ function buildServices(cfg: HostConfig): ApiServices {
   // `setup-grant.ts`). Hosted-only by construction — the local tiers construct this service
   // without the hook, exactly as they pass their own `allowance`.
   lazily(bag, "mailbox", () => makeMailboxService({
-    keyProvider, onCreated: grantSetupCreditsLogged,
+    keyProvider,
     /* THE ACCESS VERDICT the allowance gate decides the LIMIT from, read before the create
        transaction opens. It reads the bag's OWN port member, so the gate and everything else that
        asks about this account's standing cannot answer differently.
@@ -410,7 +347,7 @@ function buildServices(cfg: HostConfig): ApiServices {
   // and unlike a missing alert route that is not recoverable after the fact. Refusing to serve is
   // the cheaper failure. After the weighted schedule shipped it passes by construction; it exists
   // for the revert.
-  if (anthropicApiKey && cfg.billingPlane) assertWeightedScheduleActive();
+  if (anthropicApiKey && cfg.entitlements) assertWeightedScheduleActive();
   /**
    * THE SPEND HALF OF WHATEVER THIS HOST DECLARED, or nothing when it meters nothing.
    *
@@ -453,12 +390,6 @@ function buildServices(cfg: HostConfig): ApiServices {
     // The spend half of whatever this host declared, read off the bag so there is ONE port per
     // process — it caches its access verdicts, and a second instance would cache separately.
     ...(spendHalf() ? { credits: spendHalf()! } : {}),
-    // WHAT IS LEFT, so the summary after a run can answer "and how much have I got?" without
-    // the client keeping a shadow ledger. `balanceOf` is the O(1) `credit_balances` read and
-    // never a `SUM` over the ledger — see its own note. It is wired HERE, in the host that has
-    // a ledger, because `screener-service.ts` must compile in a deployment that has none: the
-    // service names the reader it may be handed and imports nothing from `@trafficflow/db/cloud`.
-    remaining: (db, accountId) => balanceOf(db, accountId),
     ...(anthropicApiKey ? {
       classifier: makeHaikuClassifier({
         client: makeAnthropicClient({
@@ -517,43 +448,21 @@ function buildServices(cfg: HostConfig): ApiServices {
     trustedAuthservIdsFor: mailboxProviderAuthservIds,
   }));
 
-  // Billing, and ONLY when the whole plane block is present. Absent ⇒ neither
-  // member is on the bag, so `/billing/*` answers 503 `billing_unconfigured` and nothing else
-  // on this host notices. TWO members from ONE block, armed together always: `billingPlane` is
-  // the HTTP client of the PRIVATE plane (`plane-client.ts` — since the billing extraction the
-  // only composition; the in-process Stripe arm is deleted and `config.ts` refuses a leftover
-  // `STRIPE_*` variable at cold start), `entitlements` the open service that holds every
-  // table and every transaction. Lazy like the other constructed services: a client a
-  // `GET /health` cold start has no reason to build.
-  if (cfg.billingPlane) {
-    const planeCfg = cfg.billingPlane;
-    lazily(bag, "billingPlane", () => makeBillingPlaneClient({
-      baseUrl: planeCfg.url,
-      secret: planeCfg.secret,
-    }));
-    lazily(bag, "entitlements", () => makeEntitlementsService({ alert: billingAlert }));
-  }
-
   /**
    * THE ENTITLEMENTS PORT — one of two answers, never absent on this host.
    *
-   * `ENTITLEMENTS_URL` set ⇒ the HTTP client of that program. Unset ⇒ the LOCAL adapter over this
-   * database's own tables, which is what this deployment has always answered from, so arming the
-   * port moves nothing. `makePooledDb` memoises by URL, so this is the same connection every
-   * request already holds rather than a second pool.
-   *
-   * `manageLink` and `releaseAccount` are deliberately NOT composed on the local adapter: both
-   * are network hops through `packages/services`, which this package may not reach, and while the
-   * in-tree billing service is armed it is the arm that answers them (`routes/account.ts` states
-   * the ordering). So the local adapter answers no manage URL, and `POST /account/manage-link`
-   * 404s — the honest answer for a surface this host does not operate yet.
+   * `ENTITLEMENTS_URL` set ⇒ the HTTP client of that program. Unset ⇒ `UNMETERED`: unbounded
+   * limits, and AI gated only by a configured provider key. Memoised, because the client caches
+   * its access verdicts and a second instance would cache separately.
    */
-  lazily(bag, "entitlementsPort", () => (cfg.entitlements
-    ? makeEntitlementsClient({
-      baseUrl: cfg.entitlements.url,
-      secret: cfg.entitlements.secret,
-    })
-    : makeLocalEntitlements({ db: makePooledDb(cfg.databaseUrlPooled) as unknown as Tx })));
+  let composed: EntitlementsComposition | null = null;
+  const entitlementsComposition = (): EntitlementsComposition => {
+    composed ??= cfg.entitlements
+      ? makeEntitlementsClient({ baseUrl: cfg.entitlements.url, secret: cfg.entitlements.secret })
+      : UNMETERED;
+    return composed;
+  };
+  lazily(bag, "entitlementsPort", () => entitlementsComposition());
 
   // WHAT THE PLATFORM SERVED — the 5xx poller's read port (cloud 0030).
   //
@@ -616,26 +525,6 @@ function buildServices(cfg: HostConfig): ApiServices {
   // `customerMailerFor` cannot throw (see its doc), so an unusable `MAIL_APP_URL` costs the
   // waitlist its confirmation mail and costs the deployment nothing else.
   lazily(bag, "waitlist", () => makeWaitlistService({ mail: customerMailerFor(cfg) ?? undefined }));
-
-  // ── WHAT THE VENDORS CHARGE. THIS HOST ANSWERED `skipped` UNTIL NOW ────────────────────
-  //
-  // `GET /internal/platform-costs/run` has been mounted, scheduled every six hours by the
-  // worker's clock, and unreachable since the pass landed: the route reads
-  // `deps.services.platformCosts`, no composition ever set it, and the route's own
-  // `{ skipped: "cost_port_unconfigured" }` arm answered every invocation. The board therefore
-  // read "not configured" for every provider whatever the environment held, and would have kept
-  // reading it after the keys were added — the pass was not failing, it was never being asked.
-  //
-  // UNCONDITIONAL, unlike `billingPlane` above, and the difference is the point. An absent
-  // billing environment means `/billing/*` has no surface to serve. An absent cost credential
-  // means something the board must be able to SAY: the port is composed, the pass asks, and each
-  // adapter answers `unconfigured` without making a request. The skip arm the route keeps is for
-  // a host that does not do costs at all — the desktop engine — and this host is never that.
-  //
-  // Lazy like the rest: a closure and a timeout policy a `GET /health` cold start need not pay
-  // for. The credentials come off `cfg`, resolved once by `loadPlatformCostCredentials`; nothing
-  // in the port or the route reads `process.env`.
-  lazily(bag, "platformCosts", () => makePlatformCostPort(cfg.platformCosts));
 
   return bag as unknown as ApiServices;
 }
@@ -818,11 +707,10 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
       // `/health` can see whether the connection guards still recognise this provider. They
       // silently did not for a day after a database-provider move.
       dbProvider: cfg.dbProvider,
-      // Which billing composition this host serves, on dbProvider's pattern. Reads the
-      // SAME config member `buildServices` arms from, so the marker cannot disagree with the
-      // wiring. Since the billing extraction the vocabulary is two-valued: "plane" or
-      // "unconfigured" ("in-process" left with the deleted Stripe arm).
-      billing: cfg.billingPlane ? "plane" : "unconfigured",
+      // Whether this host reaches an entitlements program at all, on dbProvider's pattern.
+      // Reads the SAME config member `buildServices` arms from, so the marker cannot disagree
+      // with the wiring.
+      entitlements: cfg.entitlements ? "configured" : "unmetered",
       // THE PAGER'S ARMS, published where an operator already looks. The worker announces its
       // arms in a startup line and warns when there is exactly one; this host has no startup
       // line, so until now its per-arm delivery health was reachable only through the

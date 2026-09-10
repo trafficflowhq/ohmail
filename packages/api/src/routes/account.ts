@@ -1,4 +1,5 @@
-import { deleteAccount, type ErasureBillingOutcome } from "@trafficflow/services";
+import { deleteAccount } from "@trafficflow/services";
+import type { ReleaseOutcome } from "@trafficflow/db";
 import { ServiceError } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
 import { clearSessionCookies } from "../cookies.js";
@@ -37,7 +38,7 @@ import type { Route } from "../router.js";
  *
  * ## THE ORDER: stop the money, THEN erase — never the other way round
  *
- * Erasure keeps the billing rows and touched nothing at Stripe, so before
+ * Erasure touched nothing at the payment processor, so before
  * `cancelForErasure` existed a customer who deleted their account kept being charged, and
  * had no session left to cancel with. That is not a retention obligation, it is a charge
  * nobody can stop.
@@ -82,42 +83,22 @@ export const accountRoutes: Route[] = [
     options: { stepUp: true },
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
-      let subscription: ErasureBillingOutcome = "none";
       /**
-       * STOP THE MONEY. Two arms, and the ORDER is deliberate: while this host still composes the
-       * in-tree billing service, that arm answers, because it is the one holding the subscription.
-       * The port arm is what a host answers with once the state has moved out — `releaseAccount`
-       * is bounded, never throws, and answers this response's own three words.
-       *
-       * Preferring the port while the local service is armed would report `none` for every erasure
-       * on a host whose port composes no `releaseAccount` — a customer deleted and still charged,
-       * which is the exact defect this ordering was written for.
+       * STOP THE MONEY — through the port, which is bounded, never throws, and answers this
+       * response's own three words one-to-one, so nothing translates between them.
        *
        * The try/catch stays for the reason it was written: the thing it guards is a RIGHT, and a
-       * bug in the money path may not become a 500 in front of an Art. 17 erasure.
+       * bug in the money path may not become a 500 in front of an Art. 17 erasure. An unmetered
+       * host answers `none`, which is the truth there.
        */
-      const plane = deps.services?.billingPlane;
-      const billing = deps.services?.entitlements;
-      const port = plane && billing ? null : entitlementsPort(deps);
+      let subscription: ReleaseOutcome = "none";
+      // `null` is a host that meters nothing, whose honest answer is `"none"` — there is no
+      // subscription to stop. It is not the same as a port that could not be reached, which
+      // answers `"cancel_failed"` below.
+      const port = entitlementsPort(deps);
       if (port) {
         try {
-          // ONE-TO-ONE: the port answers this response's own three words, so nothing translates
-          // between them and none of them can be reported as another.
           subscription = await port.releaseAccount(ctx.accountId);
-        } catch {
-          subscription = "cancel_failed";
-        }
-      }
-      if (plane && billing) {
-        // `cancelForErasure` is documented never to throw — and to answer inside a
-        // hard bound even against a HANGING plane (the cancel is a network hop inside an
-        // Art. 17 request now; see `ERASURE_CANCEL_TIMEOUT_MS`). The try/catch is here anyway,
-        // because the thing it guards is a RIGHT. A bug or an unexpected rejection inside the
-        // money path would otherwise become a 500 in front of `deleteAccount`, i.e. an Art. 17
-        // erasure refused by a payment integration, which is the one outcome this ordering
-        // exists to prevent. Belt and brace, and the brace is the cheap one.
-        try {
-          subscription = await billing.cancelForErasure(ctx, plane);
         } catch {
           subscription = "cancel_failed";
         }

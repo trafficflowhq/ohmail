@@ -1,4 +1,3 @@
-import { CLOUD_LEDGER_JOURNAL_TAG, CLOUD_LEDGER_RUN_MARKER } from "@trafficflow/db/cloud";
 import {
   MAIL_SCHEMA_MARKERS, SCHEMA_INDEX_MARKERS, SCHEMA_CHECK_MARKERS,
   MAIL_SCHEMA_MARKER_JOURNAL_TAG, type SchemaMarker, type CheckDefinitionMarker,
@@ -30,7 +29,6 @@ import { registerSchemaCensus } from "./health-census.js";
  * instead of serving requests that would 500 on a missing table.
  */
 export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
-  ["credit_ledger", "source"],      // cloud 0002_billing (legacy 0018)
   ["worker_heartbeats", "beat_at"], // cloud 0003_observability (legacy 0019)
   // cloud 0004_waitlist_invites (legacy 0020) — TWO markers, not one, because the migration
   // created two independent tables and the funnel breaks differently depending on which is
@@ -63,7 +61,6 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // the PK `account_id`: the rule the mail markers set is to pick the column a query touches, and
   // a database missing this migration fails here rather than at the first suspend, which would
   // 42P01 on a table that does not exist.
-  ["account_suspensions", "suspended_at"],
   // cloud 0009_mailbox_oauth — TWO markers, because the migration creates two INDEPENDENT tables and
   // a database missing either one fails differently, which is the rule 0004 and 0007 set.
   //
@@ -122,7 +119,6 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // error by contract, so a deployment missing this migration would not fail visibly. It
   // would degrade every Screener suggestion to `refusal: "fault"` and answer 503 while the ledger
   // stayed untouched. A 503 at the deploy gate is the same answer, given somewhere a human reads.
-  ["ai_attempt_claims", "expires_at"],
   // cloud 0017_oauth_code_twofa_provenance — the authorizing session's real `last_twofa_at`,
   // carried across the native PKCE hop. One added column, so the ordinary class
   // sees it, and there is no choice of probe to argue: the migration IS this column.
@@ -152,7 +148,6 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // (`storageCapOf`, per account per cycle) fails into its own logged fail-open and quietly
   // unmeters storage — the one consumer whose failure is silent, which is exactly what the
   // deploy-gate 503 exists to forestall. Deploy order: migration → API → worker.
-  ["billing_subscriptions", "storage_bytes_limit"],
   // cloud 0021_setup_grants — TWO markers for two independent tables, the rule 0007 set: without
   // `setup_grants` no mailbox connect can write its screening pool (the create transaction
   // 42703s — loud); without `setup_grant_spends` the pool EXISTS but every draw fails inside
@@ -160,21 +155,16 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // balance instead, which is exactly the quiet mispricing a deploy gate exists to refuse.
   // The columns are the ones the queries read: `expires_at` is the draw predicate's whole
   // point, `refunded_at` the exactly-once refund marker.
-  ["setup_grants", "expires_at"],
-  ["setup_grant_spends", "refunded_at"],
   // cloud 0022_subscription_addons — the add-on quantities and the billing cadence on the
   // mirror row. One marker per concern: `addon_storage_units` stands for the pair of addon
   // columns (one migration, one failure mode — the mirror upsert 42703s on either), and
   // `billing_interval` is the column whose absence is SILENT in the way this class exists
   // for: every query still runs, and an annual customer's cycle invoice simply grants one
   // month in twelve.
-  ["billing_subscriptions", "addon_storage_units"],
-  ["billing_subscriptions", "billing_interval"],
   // cloud 0023_billing_reconciliation — the reconciliation run ledger. `ran_at` is the column
   // BOTH alert rules key their newest-run reads on, so a database missing the table fails here
   // at the deploy gate rather than as an `alert_pass_failed` loop — the pager breaking is the
   // one failure mode this table must never have, since it exists to page.
-  ["billing_reconciliation_runs", "ran_at"],
   // cloud 0025_alert_renotify_signature — the renotify policy's condition signature on
   // `alert_state`. The migration IS this column, and its absence is LOUD in the worst place:
   // `runAlertPass`'s claim UPDATE names it, so a database missing the migration 42703s the
@@ -207,10 +197,6 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // The columns are the ones a QUERY actually reads, the rule `credit_ledger.source` and
   // `invites.code_hash` set: `computed_at` is what every freshness stamp selects, `ran_at` is
   // what the staleness read orders by, and `kind` is what the grant writes.
-  ["credit_usage_daily", "computed_at"],
-  ["credit_usage_totals", "computed_at"],
-  ["credit_rollup_runs", "ran_at"],
-  ["setup_grants", "kind"],
   // cloud 0029_billing_invoices_platform_costs_ai_usage — FOUR markers, on 0028's rule: four
   // independent changes, and a database can genuinely hold some without the others.
   //
@@ -229,10 +215,6 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // infrastructure panel reads "not configured", which is the same words an ABSENT KEY produces.
   // Without the two counters on `billing_reconciliation_runs` the invoice reconcile's own insert
   // fails, so the pass that heals lost invoices records nothing and goes stale silently.
-  ["billing_invoices", "stripe_event_ts"],
-  ["platform_costs", "fetched_at"],
-  ["ai_usage_daily", "cost_micro_usd"],
-  ["billing_reconciliation_runs", "invoices_listed"],
   // cloud 0030_heartbeat_signals_alert_runs — FIVE markers, on 0028's rule again: the migration
   // makes six independent changes and a database can hold some without the others, so each
   // marker below names one of them. `worker_heartbeats.ai_circuit_open_since` needs none of its
@@ -286,32 +268,6 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // the other, because the alert preflight must not import an API route to answer a question
   // about the database.
   ["platform_signals", "sample_cause"],
-  // cloud 0031_credit_rollup_sweep_backlog — ONE marker for two columns, and it names the SECOND
-  // one, which is the whole point. Both columns are added by the same migration and `duration_ms`
-  // lands after `setup_sweep_backlog`, so a database holding the second holds the first — the
-  // implication runs that way and only that way. The first draft marked `setup_sweep_backlog` and
-  // argued the same sentence backwards: a database that ran statement one and not statement two
-  // has the backlog column, passes a marker on it, and then fails every run-row insert, which is
-  // exactly the swallowed failure this marker exists to refuse.
-  //
-  // The loudness here is the SWALLOWED kind, which is why it needs a marker at all. The roll-up's
-  // run-row INSERT names both columns and its failure is caught by contract — a pass that did its
-  // work must not report as one that did nothing — so an API or worker deployed ahead of the
-  // migration 42703s inside that write and the only symptom is a run ledger that quietly stops
-  // gaining rows. The console then reads its freshness stamp off the newest row and reports the
-  // aggregates as stale, which is the one thing they are not.
-  //
-  // `loadRollupState` also SELECTs `setup_sweep_backlog` on the staff connection, so the Billing
-  // board's read 42703s outright without it. Deploy order: migration → API → worker → admin.
-  //
-  // THE PAIR IS NOT SPELLED HERE ANY MORE, and that is the fix rather than tidiness. This census
-  // refused an API deployed ahead of 0031 and the WORKER — the process that actually runs the
-  // pass and writes the run row — probed nothing at all, because the platform's own health check
-  // is memory-only and never reaches a database. So the deploy gate held on one of the two hosts
-  // it claims to hold on. The worker's supervisor now reads the same pair from the same place
-  // before it announces leadership; `@trafficflow/db/cloud` is where they meet, because the
-  // worker's dependency boundary forbids it importing an API route.
-  [CLOUD_LEDGER_RUN_MARKER.table, CLOUD_LEDGER_RUN_MARKER.column],
 ] as const;
 
 /**
@@ -339,8 +295,6 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
  * both, so `trial_grant` alone would be satisfied by a partially-updated constraint.
  */
 export const CLOUD_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker> = [
-  ["credit_ledger_sign_reason_check", "trial_grant"],
-  ["credit_ledger_source_reason_check", "trial:%"],
   // cloud 0012_billing_suspension — the migration's load-bearing change (`suspended_by` DROP
   // NOT NULL, so the billing webhook's revenue-reversal suspend can write with no staff actor)
   // is invisible to every name-presence probe: `information_schema.columns` reports the column
@@ -349,7 +303,6 @@ export const CLOUD_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker
   // name, so probing its definition is what distinguishes an 0011 database from an 0012 one.
   // A database missing it would take the first refund webhook to a 23502 inside the apply
   // transaction instead of a 503 at the deploy gate.
-  ["account_suspensions_provenance_check", "suspended_by"],
   // cloud 0029 — `billing_recon_runs_mode_check` is REPLACED, not added: the constraint keeps its
   // 0023 name and gains a third word (`invoices`). That is `0011_trial_credits`' shape exactly,
   // and it is invisible to every name probe — `SCHEMA_CHECK_MARKERS` sees the same constraint on
@@ -360,7 +313,6 @@ export const CLOUD_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker
   // the pass that heals lost invoices dies at its final statement — after doing all of its work,
   // so every invoice is written and the run ledger says the reconciler has stopped. The needle is
   // the word the migration ADDED, which no 0023 definition can contain.
-  ["billing_recon_runs_mode_check", "invoices"],
 ] as const;
 
 /**
@@ -380,24 +332,20 @@ export const CLOUD_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker
  * journal entry, is what vouches for the file having run.
  */
 export const CLOUD_INDEX_MARKERS: ReadonlyArray<string> = [
-  "credit_ledger_one_trial_grant_idx",   // cloud 0013_ledger_integrity
   // cloud 0028_credit_rollup_and_account_setup_grant — the partial unique index that makes "one
   // setup pool per account, EVER" a fact about the table. Its absence is SILENT in exactly the
   // way this marker class exists for: the granting helper's own any-row read still refuses a
   // second grant on the path it controls, every suite is green, and the only evidence is a second
   // pool landing on an account whose two first connections raced. That is the trial bounty's
   // `credit_ledger_one_trial_grant_idx` argument, verbatim, one table over.
-  "setup_grants_account_once_uq",
   // Same migration — the index without which the hourly roll-up sequentially scans the whole
   // money trail. A database missing it computes the RIGHT numbers and does it by reading every
   // ledger row that has ever existed, once an hour, for ever: no query is wrong and nothing
   // fails, which is precisely why a name probe is the only thing that can see it.
-  "credit_ledger_created_at_idx",
   // cloud 0023_billing_reconciliation — the newest-run read both reconciliation alert rules
   // make (`ORDER BY ran_at DESC LIMIT 1`, twice a pass, every alert pass). The table itself is
   // probed by column below; the index rides the same journal entry, and a database that took
   // the table by hand without it would page correctly and scan for it.
-  "billing_recon_runs_ran_at_idx",
   // cloud 0024_auth_events_reuse_index — the migration's WHOLE content, so this marker is what
   // vouches for the file having run (cloud 0013_ledger_integrity's rule exactly). Partial on
   // `event = 'refresh_reuse_revoked'`: the `session_reuse_revoked` alert rule scans it every
@@ -412,8 +360,6 @@ export const CLOUD_INDEX_MARKERS: ReadonlyArray<string> = [
   // computes the RIGHT figures by sequentially scanning every invoice this business has ever
   // issued, on every console load, for ever. Nothing is wrong and nothing fails, which is
   // precisely why only a name probe can see it.
-  "billing_invoices_paid_at_idx",
-  "billing_invoices_account_paid_idx",
 ] as const;
 
 /**
@@ -440,9 +386,7 @@ export const CLOUD_INDEX_MARKERS: ReadonlyArray<string> = [
  */
 export const CLOUD_FUNCTION_MARKERS: ReadonlyArray<FunctionDefinitionMarker> = [
   // cloud 0014_ledger_trial_source — the bounty's source must name its own account.
-  ["credit_ledger_check_trial_guard", "'trial:' || NEW.account_id::text"],
   // cloud 0013_ledger_integrity — a refund may not exceed the debit it reverses.
-  ["credit_ledger_check_refund_origin", "NEW.delta > -orig_delta"],
 ] as const;
 
 /**
@@ -581,7 +525,7 @@ export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;
  * The tag moves for its own reason: what this constant asserts is "the markers were reconciled
  * against the newest entry", and a stale tag beside an unchanged list is the state the assertion
  * exists to refuse — it cannot tell "nothing needed adding" from "nobody looked". */
-export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = CLOUD_LEDGER_JOURNAL_TAG;
+export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0032_retire_billing_tables";
 
 /** The journal entries {@link SCHEMA_MARKERS} was last reconciled against (asserted by a test). */
 export const SCHEMA_MARKER_JOURNAL_TAG =

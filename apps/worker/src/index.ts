@@ -4,10 +4,11 @@ import {
   pruneIdempotencyKeys, pruneSendFingerprints, noticeSinkFor, setNoticeSink, accountSettings, mailboxCredentials, mailboxes,
   messages, folderState, junkSweepCandidateWhere, closeStoodDownAppointments,
   RELEASED_ORGANIZER_SEND_SENTENCE, capabilitiesColumn, exportPendingMovesOnStandDown,
+  UNMETERED, isMetered, type EntitlementsComposition,
 } from "@trafficflow/db";
-import { makeOwnedDb, makeChangeWakeHub, type OwnedDb, type ChangeWakeFanout } from "@trafficflow/db/cloud";
 import {
-  makeLocalEntitlements,
+  makeEntitlementsClient, makeOwnedDb, makeChangeWakeHub, type OwnedDb, type ChangeWakeFanout } from "@trafficflow/db/cloud";
+import {
   runAlertPass,
   webhookAlertSink,
   resendAlertSink,
@@ -28,16 +29,12 @@ import {
   /* The abandoned-claim sweep — the janitor half of the exclusive AI-attempt claim. Cloud, for
    * the same reason the staging sweep is:
    * `ai_attempt_claims` exists only where there is a ledger to coordinate. */
-  pruneAiAttemptClaims,
   /* The credit roll-up: day-grained aggregates for the admin console's spend panels, plus the
    * retention sweep over the setup pool's draw record. Cloud, on the staging sweep's argument —
    * there are no credits to aggregate where there is no ledger. It reads `credit_ledger` and
    * NEVER writes to it; the table is append-only by trigger and its newest row is coupled to
    * `credit_balances` at COMMIT, so the aggregates exist precisely so the reads can be cheap
    * WITHOUT the trail being shortened. */
-  runCreditRollupPass, isNightlyRollupSlot,
-  CREDIT_ROLLUP_HOURLY_DAYS, CREDIT_ROLLUP_NIGHTLY_DAYS,
-  makeAiUsageRecorder,
   type AlertSink,
   type AlertSinkHealth,
   type AttachmentStagingStorage,
@@ -64,7 +61,6 @@ import {
   anyDegradedCause, type DegradedCauses, type UnservedBreakdown,
 } from "./health.js";
 import { acquireLeaderLock, leaderLockKeyFor, LockLostError, type LeaderLock } from "./leader-lock.js";
-import { reportRollupFailure } from "./schema-gate.js";
 import { startApiCron, type ApiCronHandle, type ApiCronTargetHealth } from "./api-cron.js";
 import { runSyncCycle, LeaderFencedError, type SyncDeps } from "./sync.js";
 import {
@@ -299,18 +295,7 @@ export interface WorkerHooks {
    * purely the signal for the supervisor to stop advertising leadership and go 503.
    */
   onLockLost?: (err: LockLostError) => void;
-  /**
-   * The database is older than this bundle: the credit roll-up cannot write its run row, so
-   * this worker would do its work and be unable to record that it did, on every pass, for as
-   * long as it is deployed. The API's `/health` census refuses a deployment in exactly this
-   * state; the worker's own health check is memory-only and cannot, so the pass's throw is the
-   * only place the condition can be observed from in-process.
-   *
-   * Unlike {@link onLockLost} the worker has NOT quiesced when this fires — it is the
-   * supervisor's to decide, and it treats it as the same fatal its boot gate raises.
-   */
-  onSchemaBehind?: (err: Error) => void;
-}
+  }
 
 /** A mailbox that connected successfully and is now part of the sync rotation. */
 interface MailboxRuntime {
@@ -1261,7 +1246,16 @@ export async function startWorkerWithLock(
     //
     // Composed UNCONDITIONALLY, before any live model is, for the reason the gates were: metering
     // must exist before the spend does, not after.
-    const entitlements = makeLocalEntitlements({ db: db as unknown as Tx });
+    /* ONE ENTITLEMENTS PORT FOR THE PROCESS, or a named unmetered state.
+     *
+     * `ENTITLEMENTS_URL` set ⇒ the HTTP client of that program; unset ⇒ `UNMETERED`, and the
+     * spend call sites are handed nothing and charge nothing. Composed UNCONDITIONALLY, before
+     * any live model is: metering must exist before the spend does, not after. */
+    const entitlements: EntitlementsComposition = config.entitlements
+      ? makeEntitlementsClient({ baseUrl: config.entitlements.url, secret: config.entitlements.secret })
+      : UNMETERED;
+    /** The spend half the call sites take — `undefined` where nothing meters. */
+    const spend = isMetered(entitlements) ? entitlements : undefined;
 
     // ── The LIVE classifier, behind a per-process circuit breaker ─────────────────────
     //
@@ -1289,10 +1283,6 @@ export async function startWorkerWithLock(
     //
     // Absent when managed AI is not armed, in which case there is no client to report through
     // either. The rules-only deployment records nothing and spends nothing, which agrees.
-    const aiUsageRecorder = config.aiUsage
-      ? makeAiUsageRecorder(db as unknown as Tx, "worker")
-      : null;
-    if (aiUsageRecorder) config.aiUsage!.attach((r) => { aiUsageRecorder.record(r); });
 
     // Absent classifier ⇒ no circuit and today's behaviour exactly (rules-only routing).
     const classifierCircuit: ClassifierCircuit | undefined = config.classifier
@@ -1300,12 +1290,12 @@ export async function startWorkerWithLock(
       : undefined;
     /** The classifier + gate pair for one mailbox's cycle. */
     function aiFor(mailboxId: string, accountId: string): Pick<SyncDeps, "classifier" | "credits"> {
-      if (!classifierCircuit) return { credits: entitlements };
+      if (!classifierCircuit) return { ...(spend ? { credits: spend } : {}) };
       return {
         classifier: classifierCircuit.port(),
         // The metered port is what teaches the circuit which ledger attempt it charged, so a
         // trip can refund the message it just abandoned. See `ai-circuit.ts`.
-        credits: classifierCircuit.meter(mailboxId, entitlements),
+        ...(spend ? { credits: classifierCircuit.meter(mailboxId, spend) } : {}),
       };
     }
 
@@ -1338,7 +1328,7 @@ export async function startWorkerWithLock(
     // engines type `UNMETERED_STORAGE_CAP`, and this resolver is the one place a subscription row
     // becomes the number ingest reserves against. Resolved at attach for the runtime's base deps
     // and refreshed in the per-cycle spread below, so a plan change moves the cap within a cycle.
-    const storageCapFor = makeStorageCapResolver(db as unknown as Tx, log);
+    const storageCapFor = makeStorageCapResolver(entitlements, log);
     const SCREENING_TTL_MS = 30_000;
     type ScreeningDeps = Pick<SyncDeps, "ohboxPolicy" | "ohboxBar" | "screeningCutoff">;
     const screeningCache = new Map<string, { at: number; value: ScreeningDeps }>();
@@ -2631,7 +2621,7 @@ export async function startWorkerWithLock(
           // actually run. `stopped` is deliberately NOT part of it: a graceful shutdown lets
           // in-flight writes complete, exactly as before.
           fence: makeSyncWriteFence(db, mb.mailboxId, fence, () => lockLost),
-          credits: entitlements,
+          ...(spend ? { credits: spend } : {}),
           // Whose `Authentication-Results` this mailbox may believe, resolved from the
           // SAME host string the adapter above dials. Empty for every provider the table does
           // not name, which routes exactly as before this field existed; for Gmail/Microsoft it
@@ -4972,7 +4962,7 @@ export async function startWorkerWithLock(
           // `sensitiveBackfillPass` gets, for the same reason.
           await workflowDrainPass(
             db as unknown as Tx,
-            { drafter: config.drafter ?? unconfiguredDrafter, credits: entitlements, accountId },
+            { drafter: config.drafter ?? unconfiguredDrafter, accountId, ...(spend ? { credits: spend } : {}) },
             nowTick,
           );
         } catch (err) {
@@ -5206,7 +5196,7 @@ export async function startWorkerWithLock(
         if (stopped) return;
         try {
           const { ran, evicted, freedBytes, capped } = await storageEvictPass(
-            db as unknown as Tx, { accountId, log }, new Date(),
+            db as unknown as Tx, { accountId, log, storageCap: storageCapFor }, new Date(),
           );
           if (ran && evicted > 0) {
             log.info("storage_evict_pass", { accountId, evicted, freedBytes, capped });
@@ -5285,7 +5275,7 @@ export async function startWorkerWithLock(
             {
               accountId, log,
               classifier: classifierCircuit?.port(),
-              credits: entitlements,
+              ...(spend ? { credits: spend } : {}),
               ...(screening.ohboxBar ? { ohboxBar: screening.ohboxBar } : {}),
             },
           );
@@ -5332,23 +5322,6 @@ export async function startWorkerWithLock(
           if (fps > 0) log.info("send_fingerprints_pruned", { pruned: fps });
         } catch (err) {
           log.error("send_fingerprint_prune_failed", { err });
-        }
-        // ── ABANDONED AI WORK CLAIMS ───────────────────────────────────────────────────
-        //
-        // A SIZE control and never a correctness one, which is the whole reason it can sit in an
-        // hourly slot: an expired claim is already claimable by the next caller, so nothing waits
-        // on this sweep and a failed one costs a little table and no exclusivity. What it removes
-        // is the tail no caller ever comes back for — a holder that died on a message nobody asks
-        // about again — since the normal end of a claim is its holder releasing it.
-        try {
-          const claims = await pruneAiAttemptClaims(db as unknown as Tx, new Date());
-          if (claims > 0) log.info("ai_claims_pruned", { pruned: claims });
-        } catch (err) {
-          log.error("ai_claim_prune_failed", {
-            err,
-            reason: "expired claims stay claimable regardless — the next caller takes one over " +
-              "rather than waiting for this sweep, so nothing is blocked by this failing",
-          });
         }
         // ── EXPIRED STAGED ATTACHMENT BYTES: THE OBJECT, THEN THE ROW ───────────────────
         //
@@ -5414,101 +5387,6 @@ export async function startWorkerWithLock(
             reason: "no staging bucket is configured on this worker; if the API stages, its " +
               "bucket is not being swept",
           });
-        }
-
-        // ── THE CREDIT ROLL-UP ─────────────────────────────────────────────────────────
-        //
-        // Day-grained aggregates so the admin console reads spend without scanning the
-        // ledger. Here rather than in a platform cron for the reason every sweep above is
-        // here: the worker is the single elected writer, so exactly one process runs it, and
-        // a failure is a logged warning rather than a cycle abort.
-        //
-        // TWO CADENCES, ONE CALL. Hourly recomputes today and yesterday — cheap, two indexed
-        // range scans — and keeps the console within an hour of the truth. Once a night the
-        // same function widens to three days and additionally rebuilds the lifetime totals,
-        // measures ledger-versus-balance divergence and sweeps the setup pool's expired draw
-        // records. The wide arm is nightly because its two extra steps are full passes, and
-        // hourly because a console reporting yesterday's spend during an incident is the
-        // failure the aggregates were built to remove.
-        //
-        // The pass NEVER throws and records its own run row, including on failure — so the
-        // only thing left to do here is say so out loud when it did not complete.
-        const nightly = isNightlyRollupSlot(new Date(), lastNightlyRollupAt);
-        try {
-          const rollup = await runCreditRollupPass(db as unknown as Tx, {
-            now: new Date(),
-            days: nightly ? CREDIT_ROLLUP_NIGHTLY_DAYS : CREDIT_ROLLUP_HOURLY_DAYS,
-            totals: nightly,
-            divergence: nightly,
-            prune: nightly,
-          });
-          // ONLY ON SUCCESS. Advancing the marker unconditionally burns the night's slot on a
-          // transient fault — a lock timeout in the prune, a statement timeout inside
-          // `findCreditDivergence` — and `isNightlyRollupSlot` then refuses for the rest of the
-          // hour and the whole next day, leaving the lifetime totals and the divergence count a
-          // further 24 h stale. Leaving it unset costs at most a second wide pass within the same
-          // hour, which is a recompute over an append-only source: free, and correct.
-          if (nightly && rollup.error === null) lastNightlyRollupAt = new Date();
-          if (rollup.error !== null) {
-            log.warn("credit_rollup_failed", {
-              nightly, err: rollup.error, days: rollup.daysRecomputed,
-              reason: "the aggregates keep the values the last complete pass wrote, and the " +
-                "console's freshness stamp ages accordingly — the money itself is untouched, " +
-                "since this pass only ever reads credit_ledger",
-            });
-          } else {
-            log.info("credit_rollup_ok", {
-              nightly,
-              days: rollup.daysRecomputed, rows: rollup.rowsWritten,
-              divergent: rollup.divergentAccounts, prunedSetupSpends: rollup.prunedSetupSpends,
-              setupSweepBacklog: rollup.setupSweepBacklog, durationMs: rollup.durationMs,
-            });
-            // ── THE DRAIN IS NOT SILENT ────────────────────────────────────────────────
-            //
-            // A warning although nothing threw, on `attachment_staging_backlog`'s exact
-            // reasoning: a clean-looking number over a set that is not shrinking is what let
-            // that bucket grow unnoticed. On the first nights after the fold ships this fires
-            // by design — a deployment with months of un-folded days drains 30 a night — so the
-            // line says which of the two it is rather than leaving an operator to guess.
-            if ((rollup.setupSweepBacklog ?? 0) > 0) {
-              log.warn("credit_sweep_backlog", {
-                backlogDays: rollup.setupSweepBacklog, swept: rollup.prunedSetupSpends,
-                reason: "the fold reached its per-pass day cap with eligible days still behind " +
-                  "it; the next nightly pass resumes from the oldest of them. Expected while a " +
-                  "deployment that predates the roll-up drains; sustained or RISING across " +
-                  "nights means the cap is below what this deployment produces and wants raising",
-              });
-            }
-            // A pair whose day already carries a folded aggregate. No writer in this codebase
-            // backdates `created_at`, so this is not reachable by ordinary use — which is why it
-            // is a warning and not a repair: the fold refuses rather than overwrite a closed
-            // number, and somebody should find out where the row came from.
-            if ((rollup.frozenSetupPairsSkipped ?? 0) > 0) {
-              log.warn("credit_sweep_frozen_pairs", {
-                pairs: rollup.frozenSetupPairsSkipped,
-                reason: "draw rows arrived for a (day, account) whose aggregate was already " +
-                  "folded and closed; they are left in place and NOT folded, because folding " +
-                  "again would write a partial number over a complete one",
-              });
-            }
-            // A non-zero divergence is the ledger and the balances disagreeing about somebody's
-            // money. It is not this pass's to fix and it must not be silent.
-            if ((rollup.divergentAccounts ?? 0) > 0) {
-              log.error("credit_divergence_detected", {
-                accounts: rollup.divergentAccounts,
-                reason: "credit_balances and credit_ledger disagree for at least one account — " +
-                  "findCreditDivergence names them on a privileged connection",
-              });
-            }
-          }
-        } catch (err) {
-          // ONE PREDICATE, in `schema-gate.ts`, so this site has no second opinion about which
-          // throws are deployment faults. The pass returns ordinary failures in its report and
-          // throws for exactly one cause — this host ahead of the cloud ledger's migration —
-          // which is escalated to the supervisor's fatal rather than logged, because a run
-          // ledger that cannot gain rows is not a stale cache. Everything else stays a logged
-          // error, so an unexpected throw cannot take the maintenance tail with it.
-          reportRollupFailure(err, log, hooks.onSchemaBehind);
         }
       }
 
@@ -6284,12 +6162,6 @@ export async function startWorkerWithLock(
           // belt to that suspenders, and it also stops a beat racing `owned.close()`.
           clearTimers();
           await drain();                   // let the in-flight cycle/roster pass finish
-          // THE COST BUFFER'S TAIL, while the pool is still open. The recorder flushes on its own
-          // 30-second window as calls arrive, so what is left here is at most one window — and
-          // dropping it would make the last minutes of every deploy silently unmeasured, which
-          // on a fleet that redeploys often is a systematic under-count rather than a rounding
-          // error. It never throws (a failed flush is counted in `dropped`, not raised).
-          if (aiUsageRecorder) await aiUsageRecorder.flush();
           try {
             for (const rt of [...runtimes.values()]) await detach(rt, "worker stopping");
             // Hand the shard back BEFORE the pool closes: a clean shutdown that left its last

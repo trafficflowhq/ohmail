@@ -105,10 +105,8 @@ export const STAFF_SCHEMAS = ["public", "admin"] as const;
  * `provision-staff-role.ts`, and the pg guard.
  *
  *  · `audit_log`     — `WHERE action LIKE 'admin.%'`, four named scalars, no jsonb bag.
- *  · `credit_ledger` — the money columns verbatim and a REDACTED `source`; see
- *                      {@link STAFF_SELECT_GRANTS} for what redaction means and why.
  */
-export const STAFF_ADMIN_VIEWS = ["audit_log", "credit_ledger"] as const;
+export const STAFF_ADMIN_VIEWS = ["audit_log"] as const;
 
 /**
  * Every column `ohmail_admin` may SELECT, keyed `schema.relation`.
@@ -148,12 +146,6 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
   // argument for why a bucketed replacement view cannot be built above a population of one
   // account and where the real replacement belongs.
   "public.accounts": ["id", "name", "ai_enabled", "created_at"],
-  // Presence-is-state suspension (cloud migration 0008). TWO columns only: WHO is suspended and
-  // SINCE WHEN, which is all the roster and the account page render. `suspended_by` (a staff id)
-  // and `note` are deliberately NOT granted — no console screen shows them, and the WRITE that
-  // records them runs on the runtime role, never this blind one. Widen this list in the same diff
-  // that adds a projection, never ahead of one.
-  "public.account_suspensions": ["account_id", "suspended_at"],
   "public.users": [
     "id", "account_id", "email", "display_name", "email_verified_at", "created_at",
   ],
@@ -200,136 +192,11 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
   "public.auth_events": ["id", "account_id", "user_id", "event", "at"],
   // `public.folder_state`, `public.flag_state` and `public.change_log`: deliberately ABSENT. See
   // the block above `public.accounts`, and `scripts/harden-staff-role.sql` §7 and §8.
-  "public.billing_customers": [
-    "account_id", "stripe_customer_id", "email", "created_at", "updated_at",
-  ],
-  "public.billing_subscriptions": [
-    "id", "account_id", "stripe_subscription_id", "stripe_price_id", "plan", "status",
-    "mailbox_limit", "monthly_credits", "storage_bytes_limit", "current_period_start",
-    "current_period_end", "cancel_at_period_end", "grace_until", "stripe_event_ts",
-    // cloud 0022 — cadence and add-on quantities: subscription data by the isolation rule's own
-    // words (staff see billing; the admin MRR and the at-cap alert now compose these).
-    "billing_interval", "addon_storage_units", "addon_mailboxes",
-    "created_at", "updated_at",
-  ],
   // `account_storage` (mail 0062) — the stored-body byte counter. Usage data by the isolation
   // rule's own words (staff see billing and usage, never content): an id, a byte count, a
   // timestamp — nothing derived from what any message says. Granted because the alert pass
   // runs on this role and its `storage_at_cap` rule counts this table.
   "public.account_storage": ["account_id", "bytes", "updated_at"],
-  "public.credit_balances": ["account_id", "balance", "updated_at"],
-  // Minus `meta` — a bag that once had to be cleaned up after `pipeline.ts` wrote a Message-ID
-  // into it — and minus `source`, which is the OTHER mail-derived column on this table.
-  //
-  // `source` is `classify:<mailbox>:<sha256(mid:<Message-ID>)[0:32]>` or
-  // `draft:<message>:<sha256(<Idempotency-Key>)[0:32]>`. A digest of a GUESSABLE input is not
-  // a redaction: hash a candidate Message-ID or a candidate subject and compare, and you have
-  // confirmed that this account received that exact mail. That is inside the isolation rule
-  // (staff may see billing and usage data, never anything derived from mail content), so the
-  // column is un-granted here and history closes with the grant — no rewrite, no migration.
-  "public.credit_ledger": [
-    "id", "account_id", "delta", "balance_after", "reason", "created_at",
-  ],
-  // Minus `payload` — the raw Stripe event, which carries a customer's name and address.
-  "public.billing_events": [
-    "stripe_event_id", "type", "account_id", "event_ts", "received_at", "error", "status",
-  ],
-  // The reconciliation run ledger (cloud 0023): counts, a mode word, a CLOSED code→count map
-  // and a class:code-scrubbed error — the two reconciliation alert rules read it on this role.
-  // Minus `divergences`, which carries Stripe subscription ids and account ids the alert does
-  // not need; the counts are complete without it.
-  // `invoices_listed` / `invoices_upserted` (cloud 0029) — the invoice reconcile's population and
-  // its write count, on the same terms as the four counters beside them. Integers about a pass,
-  // named by this list because the console's reconciliation strip reads them.
-  "public.billing_reconciliation_runs": [
-    "id", "ran_at", "mode", "stripe_subscriptions", "mirror_rows", "emitted", "apply_failed",
-    "flagged", "pages", "truncated", "error", "invoices_listed", "invoices_upserted",
-  ],
-  // ── THE INVOICE MIRROR (cloud 0029) — GRANTED WHOLE, and that is the argument ────────────
-  //
-  // Every other billing table on this list is granted MINUS something: `billing_events` minus
-  // `payload` (a customer's name and postal address), `credit_ledger` minus `source` and `meta`.
-  // This table has no such column, and its whole design is that it never will: an id, an
-  // account, a closed status word, a currency, two integers of cents, a plan, a period and three
-  // timestamps. There are no line items, no description, no customer name and no jsonb bag.
-  //
-  // That is not a coincidence — it is why the table exists. The console needs the invoice
-  // AMOUNT, the amount is inside `billing_events.payload`, and granting that column to reach an
-  // integer would hand a console that must never see a postal address exactly that. Promoting
-  // the integer to a named column is what lets the payload stay un-granted for ever.
-  //
-  // A column added here that carries a description, a memo or a line item is OUTSIDE this
-  // ruling and must not be added to this list — the whole grant would have to be re-argued.
-  "public.billing_invoices": [
-    "stripe_invoice_id", "account_id", "stripe_subscription_id", "stripe_customer_id",
-    "billing_reason", "status", "currency", "amount_paid_cents", "amount_refunded_cents",
-    "plan", "billing_interval", "period_start", "period_end", "paid_at", "stripe_event_ts",
-    "source", "created_at", "updated_at",
-  ],
-  // ── COST OUT (cloud 0029) — OUR OWN BILLS, and no account appears on either table ────────
-  //
-  // Neither has an `account_id`, and neither can: `platform_costs` is what a vendor charges this
-  // deployment, and `ai_usage_daily` is aggregated at the model client, inside `packages/core`,
-  // which is desktop payload and knows nothing about accounts. Per-account AI cost is
-  // APPORTIONED from the credit ledger and labelled as apportioned; attributing a model call to
-  // an account inside the AI package was refused.
-  //
-  // `platform_costs.note` is free text — the ONLY free-text column granted on this list — and it
-  // is a staff operator's note about a payment to our own hosting provider, typed by the person
-  // whose `staff_users` id sits in `entered_by`. It carries no account data because no account
-  // is reachable from the row. `entered_by` is granted as the bare uuid: the console renders
-  // "entered manually on <date>" and the blind role holds no grant on `staff_users` at all, so
-  // the id resolves to a name nowhere on this surface — which is the narrowest thing that still
-  // answers "was this figure measured or typed".
-  "public.platform_costs": [
-    "provider", "metric", "period_start", "period_end", "value", "unit", "cost_cents",
-    "currency", "source", "fetched_at", "entered_by", "note",
-  ],
-  "public.ai_usage_daily": [
-    "day", "host", "model", "calls", "ok_calls", "input_tokens", "output_tokens",
-    "cache_read_tokens", "cache_write_tokens", "cost_micro_usd", "updated_at",
-  ],
-  // ── THE CREDIT ROLL-UP (cloud 0028) — the console's read path for spend ─────────────────
-  //
-  // Usage data in the isolation rule's own words: an account id, a DAY, a closed pool word, a
-  // closed reason vocabulary, a signed integer and a count. Nothing here is derived from what any
-  // message says — which is exactly the property `credit_ledger.source` fails and why THAT column
-  // is un-granted while these are granted whole.
-  //
-  // These three tables are why the Billing board and the account page can stop scanning
-  // `credit_ledger` on every read. The ledger is not pruned to make that possible; the reads move
-  // here instead, and the money trail stays whole.
-  "public.credit_usage_daily": [
-    "day", "account_id", "pool", "reason", "credits", "rows", "computed_at",
-  ],
-  "public.credit_usage_totals": [
-    "account_id", "pool", "reason", "credits", "rows", "computed_at",
-  ],
-  // The run ledger, on `billing_reconciliation_runs`'s exact terms: counts, a scrubbed class:code
-  // error and the timestamps the freshness stamp and the staleness rule read. `divergent_accounts`
-  // is a COUNT — the accounts themselves are deliberately not stored, the same decision
-  // `billing_reconciliation_runs.divergences` records for its own detail.
-  // `setup_sweep_backlog` and `duration_ms` (cloud 0031) are on the same terms as the counts
-  // above them: integers about a PASS, never about anybody's mail. They are here because this
-  // list is COLUMN-LEVEL — a column the schema has and this list does not is not "unread", it is
-  // `permission denied` the first time `loadRollupState` names it on the staff connection, with
-  // the migration reporting success and the console panel going dark. The column and its grant
-  // are one edit.
-  "public.credit_rollup_runs": [
-    "id", "ran_at", "days_recomputed", "rows_written", "divergent_accounts",
-    "pruned_setup_spends", "setup_sweep_backlog", "duration_ms", "error",
-  ],
-  // ── THE SETUP POOL (cloud 0021, re-keyed by 0028) ───────────────────────────────────────
-  //
-  // The account page states what screening pool an account holds and when it expires, which is a
-  // support question about an entitlement and squarely inside "staff see billing and usage".
-  // `mailbox_id` is ABSENT: on an account-kind row it names which mailbox's connection triggered
-  // the grant, and the console has no question that needs it — a mailbox id joins to the mailbox
-  // roster, and this table's whole content here is a size, a remainder and a date. `id` is absent
-  // for the same reason: nothing joins to it on a staff surface.
-  "public.setup_grants": [
-    "account_id", "kind", "granted", "remaining", "expires_at", "created_at",
-  ],
   // ── FUNNEL TOP — invite/waitlist DATES ONLY, so the admin console can see the signup funnel
   //    on an invite-only beta (task: admin funnel). Both tables were fully un-granted before,
   //    and the ONLY reason they are named now is that their whole point — how many invites are
@@ -445,28 +312,6 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
   // The `security_barrier` view, and the ONLY route to `audit_log`. Four named scalars: no
   // `payload`, no `inverse`. The bags are never granted, in any shape.
   "admin.audit_log": ["id", "account_id", "action", "created_at"],
-  // The ONLY route to a ledger `source`, and the column is REDACTED in the view rather
-  // than projected. Six money columns verbatim; `source` keeps its NAMESPACE TOKEN and nothing
-  // else, because a namespace token is a literal from `ledgerSources` and everything after it
-  // is a value.
-  //
-  // The redaction is DENY-BY-DEFAULT: five namespaces (`invoice:`, `expiry:`, `propose:`,
-  // `workflow_run:`, `admin:`, each also accepted under a `refund:` wrapper) pass through
-  // verbatim because every one of them is a Stripe id, one of our own uuids or a timestamp;
-  // EVERYTHING ELSE is truncated. That is not fussiness about a hypothetical: today it is what
-  // catches `refund:classify:%` and `refund:draft:%`, which embed the original digest whole
-  // (`ledgerSources.refund`, `credits.ts:208`) and which a redaction written as
-  // "truncate `classify:%` and `draft:%`" would have passed through intact — a finished-looking
-  // view with the oracle completely re-opened. Tomorrow it is what catches namespace nine.
-  //
-  // **The truncation was widened from the last `:`-segment to everything after the namespace**
-  // after review. Dropping only the final segment left `draft:<message UUID>:` and
-  // `classify:<mailbox UUID>:` standing, and both of those uuids are database identifiers —
-  // `messages.id` and `mailboxes.id`. The rule is now stated on what SURVIVES rather than on
-  // what is removed, which is the only form of it that a new namespace cannot slip past.
-  "admin.credit_ledger": [
-    "id", "account_id", "delta", "balance_after", "reason", "source", "created_at",
-  ],
 };
 
 /**
@@ -512,7 +357,6 @@ export const STAFF_TABLE_GRANTS: Readonly<Record<string, readonly string[]>> = {
   // loudly at that step. That is the safe direction. A pass that fails while being replaced is
   // visible; a fence quietly deleted underneath a running deploy is not.
   "admin.audit_log": ["SELECT"],
-  "admin.credit_ledger": ["SELECT"],
 };
 
 /** Schema-level privileges. `USAGE` on the two application schemas. Never `CREATE`, anywhere. */

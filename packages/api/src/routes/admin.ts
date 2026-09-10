@@ -1,8 +1,8 @@
 import { silentLogger, type Logger } from "@trafficflow/core";
 import {
-  adminAccountDetail, adminAccountLedgerDay, adminAccounts, adminActions, adminAlerts,
+  adminAccountDetail, adminAccounts, adminActions, adminAlerts,
   adminAlertDrivers, adminPlatformSignals, adminWorker,
-  adminWorkerInstances, adminBilling, adminCosts, adminFunnel,
+  adminWorkerInstances, adminFunnel,
   type AccountQuery, type AdminDb, type ApiHealth, type OverviewSnapshot,
 } from "@trafficflow/services";
 import { DEFAULT_ALERT_THRESHOLDS, alertSchemaReadable } from "@trafficflow/db/cloud";
@@ -569,55 +569,6 @@ export const adminRoutes: Route[] = [
     // null rather than from an error path it would otherwise need twice.
     handler: adminRoute("accounts/:id", (_req, ctx, params) =>
       adminAccountDetail(ctx.db, ctx.now(), params.id ?? "")),
-  },
-  {
-    /**
-     * THE LEDGER DRILL-DOWN — one account, one day, the raw rows, ON PRESS.
-     *
-     * A route of its own rather than a widening of `/admin/accounts/:id`, because the whole point
-     * is WHEN it runs. The account page shows thirty days of aggregate; this answers "what were
-     * those twelve classifications" for one of those days, only when a reader asks. Folding it
-     * into the detail read would fetch every day's rows on every page load, which is precisely
-     * the read the aggregates were built to stop making.
-     *
-     * `null` for a malformed id or day — rendered as "no such account" by the console, exactly as
-     * `/admin/accounts/:id` is, rather than as an error path the console would need twice.
-     */
-    method: "GET",
-    pattern: "/admin/accounts/:id/ledger",
-    cost: COST,
-    options: OPTIONS,
-    handler: adminRoute("accounts/:id/ledger", (req, ctx, params) =>
-      adminAccountLedgerDay(
-        ctx.db, ctx.now(), params.id ?? "",
-        new URL(req.url).searchParams.get("day") ?? "",
-      )),
-  },
-  {
-    method: "GET",
-    pattern: "/admin/billing",
-    cost: COST,
-    options: OPTIONS,
-    handler: adminRoute("billing", (_req, ctx) => adminBilling(ctx.db, ctx.now())),
-  },
-  {
-    /**
-     * THE COST BOARD — what serving customers cost this month, and how much of it was measured.
-     *
-     * A read of its own rather than a widening of `/admin/billing`, and the split is the two
-     * sides of a margin: that one answers "what did we sell", this one "what did it cost us".
-     * Folding them together would also fold their FRESHNESS together — the billing figures are
-     * live reads and roll-up aggregates, and these are a six-hourly vendor poll and a day-grained
-     * usage table, so one stamp over both would have to be wrong about one of them.
-     *
-     * Every read it makes is bounded and day-grained: three aggregates over `ai_usage_daily` and
-     * `platform_costs`, and one capped per-account join. Nothing here touches `credit_ledger`.
-     */
-    method: "GET",
-    pattern: "/admin/costs",
-    cost: COST,
-    options: OPTIONS,
-    handler: adminRoute("costs", (_req, ctx) => adminCosts(ctx.db, ctx.now())),
   },
   {
     method: "GET",

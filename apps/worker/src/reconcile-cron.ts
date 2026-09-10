@@ -1,5 +1,10 @@
-import { makeOwnedDb, writeHeartbeat, clearHeartbeat } from "@trafficflow/db/cloud";
-import { closeStoodDownAppointments, type Tx } from "@trafficflow/db";
+import {
+  makeOwnedDb, writeHeartbeat, clearHeartbeat, makeEntitlementsClient,
+} from "@trafficflow/db/cloud";
+import {
+  closeStoodDownAppointments, UNMETERED,
+  type EntitlementsComposition, type Tx,
+} from "@trafficflow/db";
 import { providerAuthservIds, silentLogger, type Logger } from "@trafficflow/core";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
@@ -488,9 +493,16 @@ export async function runReconcileCron(
       // The same host string the adapter above dials names whose report may be believed.
       trustedAuthservIds: providerAuthservIds(config.imap.host),
       // METERED, like the loop this pass stands in for: the backstop ingests the same mail the
-      // worker would have, so it consults the same subscription-derived cap — read once here and
-      // held on these deps for the sweep's two cycles.
-      storageCap: await makeStorageCapResolver(db as unknown as Tx, log)(accountId),
+      // worker would have, so it asks the same port for the same cap — read once here and held
+      // on these deps for the sweep's two cycles.
+      storageCap: await makeStorageCapResolver(
+        config.entitlements
+          ? makeEntitlementsClient({
+            baseUrl: config.entitlements.url, secret: config.entitlements.secret,
+          })
+          : (UNMETERED satisfies EntitlementsComposition),
+        log,
+      )(accountId),
       // The leader fence, on this path too. Same builder, same shard-leadership definition, same
       // synchronous tripwire — see the block at the top of this file.
       fence: makeSyncWriteFence(db, mailboxId, fence, () => lockLost),

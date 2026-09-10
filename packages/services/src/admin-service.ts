@@ -1,22 +1,7 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { accounts, auditLog, mailboxCredentials, mailboxes, users, isMailboxSyncBlockReason } from "@trafficflow/db";
 import {
-  accountSuspensions,
   authEvents,
-  billingEvents,
-  // The invoice mirror (cloud 0029) — cash actually received, and its own reconciliation
-  // pass's run ledger. Granted to the staff role WHOLE (`staff-grants.ts`); see `CashRevenue`.
-  billingInvoices,
-  billingReconciliationRuns,
-  billingSubscriptions,
-  creditBalances,
-  creditLedger,
-  // The roll-up's three tables (cloud 0028). Every spend figure on this console is read from
-  // them; `credit_ledger` is still read for the STATEMENT rows and for nothing else.
-  creditUsageDaily,
-  creditUsageTotals,
-  creditRollupRuns,
-  setupGrants,
   invites,
   waitlist,
   workerHeartbeats,
@@ -28,21 +13,16 @@ import {
   platformSignalWindow,
   listOpenAlertStamps,
   SIGNAL_BUCKET_MS,
-  listFailedBillingEvents,
   listStuckSends,
   DEFAULT_ALERT_THRESHOLDS,
-  LIVE_SUBSCRIPTION_STATUSES,
-  PLAN_LIMITS, ADDON_CARD,
   type ContentBlind,
 } from "@trafficflow/db/cloud";
 import type { Db } from "./context.js";
 import type {
-  AccountDetail, AccountPage, AccountQuery, AccountSummary, AccountUsage, ActionCatalog, ActionSpec,
-  AdminAlertDriver, AdminLedgerReason, AdminPlan, AdminPlatformSignal, AdminSubscriptionStatus,
-  AlertSummary, AuditEntry,
-  BillingRevenue, BillingSnapshot, CashRevenue, CreditLiability, FunnelSnapshot, FunnelStage,
-  InvoiceReconciliationView, LedgerDay, LedgerEntry, MailboxHealth, SecurityEvent, SetupPoolView,
-  StaleSend, UsageDay, WorkerInstanceHealth, WorkerSnapshot,
+  AccountDetail, AccountPage, AccountQuery, AccountSummary, ActionCatalog, ActionSpec,
+  AdminAlertDriver, AdminPlatformSignal, AlertSummary, AuditEntry,
+  FunnelSnapshot, FunnelStage, MailboxHealth, SecurityEvent,
+  StaleSend, WorkerInstanceHealth, WorkerSnapshot,
 } from "./admin-dto.js";
 
 /**
@@ -204,76 +184,6 @@ export const ADMIN_ROSTER_LIMIT = 200;
  */
 const LAG_MATTERS_AFTER = 300;
 
-const DB_STATUSES = [
-  "trialing", "active", "past_due", "unpaid", "paused", "canceled", "incomplete",
-  "incomplete_expired",
-] as const;
-
-/**
- * The order the Billing page's distribution strip renders, and it includes the ZERO entries
- * on purpose: a strip that only shows non-empty buckets reflows every time one empties.
- */
-export const ADMIN_SUBSCRIPTION_ORDER: readonly AdminSubscriptionStatus[] = [
-  "active", "trialing", "past_due", "unpaid", "paused", "incomplete", "incomplete_expired",
-  "canceled", "none",
-];
-
-/**
- * The statuses that carry a CONTRACTED price, and the two buckets they fall into.
- *
- * This used to be one set — `{active, past_due}` — summed into a single `mrrCents` the console
- * labelled "MRR". That reported the list price of every subscription whose payment has FAILED
- * as monthly recurring income, which is the opposite of what a past-due row means. Stripe is
- * still retrying, so the money is not lost; it is also not received, and one number cannot say
- * both. Two buckets, two figures, and the console shows them apart.
- *
- * `trialing` bills nothing yet. `unpaid`, `paused`, `canceled` and the two `incomplete` states
- * bill nothing at all.
- */
-const CONTRACTED_STATUSES = new Set<AdminSubscriptionStatus>(["active"]);
-const AT_RISK_STATUSES = new Set<AdminSubscriptionStatus>(["past_due"]);
-
-/**
- * The plan card, in cents. **This is a LIST price, not a rate anything was charged at.**
- *
- * `billing_subscriptions` denormalises `mailbox_limit` and `monthly_credits` onto the row
- * precisely so a price change cannot retro-rewrite a live entitlement — but it carries no
- * price column, so the sold-at rate is not in this database at all. Every figure derived from
- * this map is therefore today's price applied to yesterday's subscription, and a grandfathered
- * or discounted account reads wrong by exactly the difference. The console labels it.
- */
-const PLAN_MRR_CENTS: Record<AdminPlan, number> = {
-  solo: PLAN_LIMITS.solo.priceUsd * 100,
-  plus: PLAN_LIMITS.plus.priceUsd * 100,
-  pro: PLAN_LIMITS.pro.priceUsd * 100,
-};
-
-/**
- * One row's MONTHLY-EQUIVALENT list price, in cents: the plan (an annual cadence pays ten
- * monthly months across twelve, so its MRR is 10/12 of the monthly card × 12ths — rounded per
- * row), plus the add-on line items the mirror carries (cloud 0022), which bill monthly at the
- * add-on card whatever the plan's cadence. Same LIST-price caveat as {@link PLAN_MRR_CENTS}.
- */
-function rowMrrCents(plan: AdminPlan, sub: SubscriptionRow | undefined): number {
-  const base = PLAN_MRR_CENTS[plan];
-  const cadence = sub?.billingInterval === "year"
-    ? Math.round((base * 10) / 12)
-    : base;
-  const addons =
-    int(sub?.addonStorageUnits ?? 0) * ADDON_CARD.storage.priceUsd * 100 +
-    int(sub?.addonMailboxes ?? 0) * ADDON_CARD.mailbox.priceUsd * 100;
-  return cadence + addons;
-}
-
-/** Ledger reasons whose debit means SERVICE WAS DELIVERED — tokens we paid for. */
-const CONSUMPTION_REASONS: readonly AdminLedgerReason[] = [
-  "debit_classify", "debit_draft", "debit_propose", "debit_workflow",
-];
-
-/* ════════════════════════════════════════════════════════════════════════════════════════
-   Small helpers
-   ════════════════════════════════════════════════════════════════════════════════════════ */
-
 /**
  * Drizzle types a `timestamptz` column as `Date`, and postgres-js honours that while PGlite
  * hands back an ISO STRING for the same column. Both drivers run this code (production and the
@@ -351,32 +261,6 @@ interface SubscriptionRow {
   createdAt: Date | string;
 }
 
-const asPlan = (value: string): AdminPlan | null =>
-  value === "solo" || value === "plus" || value === "pro" ? value : null;
-
-const asStatus = (value: string | undefined): AdminSubscriptionStatus =>
-  value !== undefined && (DB_STATUSES as readonly string[]).includes(value)
-    ? (value as AdminSubscriptionStatus)
-    : "none";
-
-/**
- * The account's NEWEST subscription row, whatever its status.
- *
- * Not the LIVE one: an account whose subscription was canceled last week has no live row, and
- * a console that answered "no subscription" for it would be describing a different customer.
- * `created_at` then `id` breaks the tie the same way the ledger's statement view does.
- */
-function newestByAccount(rows: SubscriptionRow[]): Map<string, SubscriptionRow> {
-  const out = new Map<string, SubscriptionRow>();
-  for (const row of rows) {
-    const held = out.get(row.accountId);
-    if (!held || asDate(row.createdAt) >= asDate(held.createdAt)) {
-      out.set(row.accountId, row);
-    }
-  }
-  return out;
-}
-
 /**
  * How much this account needs a human, as one number.
  *
@@ -388,8 +272,6 @@ function newestByAccount(rows: SubscriptionRow[]): Map<string, SubscriptionRow> 
  */
 export function adminAttentionRank(account: AccountSummary): number {
   let score = 0;
-  if (account.suspendedAt) score += 5;
-  if (account.subscription === "past_due") score += 40;
   if (account.mailboxesInError > 0) score += 200 + account.mailboxesInError * 10;
   // Range 165–200, and both bounds are arguments rather than taste — the console's copy of
   // this clause carries the full reasoning: above every plain error (a block is an upstream
@@ -460,23 +342,6 @@ async function loadRoster(db: AdminDb, now: Date): Promise<AccountSummary[]> {
     .groupBy(mailboxes.accountId);
   const mailboxByAccount = new Map(mailboxRows.map((r) => [r.accountId, r]));
 
-  const subs = newestByAccount(await selectSubscriptions(db));
-
-  const balanceRows = await db
-    .select({ accountId: creditBalances.accountId, balance: creditBalances.balance })
-    .from(creditBalances);
-  const balances = new Map(balanceRows.map((r) => [r.accountId, int(r.balance)]));
-
-  // Presence-is-state suspension (cloud 0008). The blind role holds SELECT on exactly
-  // `(account_id, suspended_at)` here; `suspended_by`/`note` are
-  // ungranted, so this projection cannot widen past what the console renders.
-  const suspensionRows = await db
-    .select({ accountId: accountSuspensions.accountId, suspendedAt: accountSuspensions.suspendedAt })
-    .from(accountSuspensions);
-  const suspendedAt = new Map(
-    suspensionRows.map((r) => [r.accountId, asDate(r.suspendedAt).toISOString()]),
-  );
-
   /* ── `lastActivityAt` USED TO BE READ HERE, AND IT WAS THE SHARPEST ORACLE ON THE SURFACE ──
 
      The query was `select account_id, max(created_at) from change_log group by account_id` —
@@ -517,24 +382,13 @@ async function loadRoster(db: AdminDb, now: Date): Promise<AccountSummary[]> {
 
   return accountRows.map((account) => {
     const mb = mailboxByAccount.get(account.id);
-    const sub = subs.get(account.id);
     return {
       id: account.id,
       name: account.name,
       ownerEmail: ownerEmail.get(account.id)?.email ?? "",
-      plan: sub ? asPlan(sub.plan) : null,
-      subscription: asStatus(sub?.status),
-      // Presence in `account_suspensions` IS the suspension (cloud 0008), and its
-      // `suspended_at` is what the roster and the `suspended` filter read. Null ⇒ not suspended.
-      suspendedAt: suspendedAt.get(account.id) ?? null,
       mailboxCount: int(mb?.total),
       mailboxesInError: int(mb?.inError),
       mailboxesBlocked: int(mb?.blocked),
-      // No subscription ⇒ entitled to ZERO mailboxes, not to a default.
-      // The EFFECTIVE limit — base plus purchased add-on units — the same composition
-      // `entitlementsFor` serves the product (cloud 0022).
-      mailboxLimit: sub ? int(sub.mailboxLimit) + int(sub.addonMailboxes ?? 0) : 0,
-      creditBalance: balances.get(account.id) ?? 0,
       syncLagSeconds: secondsSince(now, mb?.oldestSync ?? null),
       // ALWAYS NULL — see the block above `return` for why there is no safe version
       // of this field. The DTO keeps it so the console needs no change on the day a
@@ -543,26 +397,6 @@ async function loadRoster(db: AdminDb, now: Date): Promise<AccountSummary[]> {
       createdAt: asDate(account.createdAt).toISOString(),
     } satisfies AccountSummary;
   });
-}
-
-function selectSubscriptions(db: AdminDb): Promise<SubscriptionRow[]> {
-  return db
-    .select({
-      accountId: billingSubscriptions.accountId,
-      plan: billingSubscriptions.plan,
-      status: billingSubscriptions.status,
-      mailboxLimit: billingSubscriptions.mailboxLimit,
-      monthlyCredits: billingSubscriptions.monthlyCredits,
-      billingInterval: billingSubscriptions.billingInterval,
-      addonStorageUnits: billingSubscriptions.addonStorageUnits,
-      addonMailboxes: billingSubscriptions.addonMailboxes,
-      currentPeriodStart: billingSubscriptions.currentPeriodStart,
-      currentPeriodEnd: billingSubscriptions.currentPeriodEnd,
-      cancelAtPeriodEnd: billingSubscriptions.cancelAtPeriodEnd,
-      graceUntil: billingSubscriptions.graceUntil,
-      createdAt: billingSubscriptions.createdAt,
-    })
-    .from(billingSubscriptions) as unknown as Promise<SubscriptionRow[]>;
 }
 
 /**
@@ -580,9 +414,6 @@ export async function adminAccounts(db: AdminDb, now: Date, query: AccountQuery 
 
   const matched = roster.filter((account) => {
     if (filter === "attention" && adminAttentionRank(account) <= 0) return false;
-    if (filter === "suspended" && account.suspendedAt === null) return false;
-    if (filter === "past_due" && account.subscription !== "past_due") return false;
-    if (filter === "no_subscription" && account.subscription !== "none") return false;
     if (!search) return true;
     return fold(account.name).includes(search) || fold(account.ownerEmail).includes(search);
   });
@@ -798,24 +629,6 @@ async function accountNames(db: AdminDb, ids: string[]): Promise<Map<string, str
 }
 
 /**
- * THE STATEMENT REASONS — every ledger reason that is NOT a metered debit.
- *
- * Grants (invoice, trial, staff adjustment), the renewal expiry, a staff clawback and a refund.
- * Each is one economic decision an operator reads on its own, which is what makes them worth
- * rendering raw; the four `debit_*` reasons are meter readings and are counted in
- * `credit_usage_daily` instead.
- *
- * This list and `credit_ledger_events_idx`'s partial predicate are the same set, and they have to
- * stay the same set: a reason added here and not to the index costs a partial-index scan, and a
- * reason added to the index and not here is a row nobody sees. `admin-usage.pg.test.ts` compares
- * them against the migration's text.
- */
-const LEDGER_EVENT_REASONS = [
-  "invoice_grant", "trial_grant", "period_expiry",
-  "adjustment_credit", "adjustment_debit", "refund",
-] as const satisfies readonly AdminLedgerReason[];
-
-/**
  * THE UUID SHAPE, and it is a real one.
  *
  * This used to be `/^[0-9a-fA-F-]{36}$/`, which admits 36 hyphens and 36 hex digits with no
@@ -824,204 +637,6 @@ const LEDGER_EVENT_REASONS = [
  * than a 500; this is what makes that true.
  */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/** How many raw rows one day's drill-down may return. A day, not a lifetime. */
-export const ADMIN_LEDGER_DAY_LIMIT = 200;
-
-/** Days of usage the account page shows. A month, which is the billing period's own unit. */
-export const ADMIN_USAGE_DAYS = 30;
-
-/**
- * The roll-up's HOURLY cadence, restated in seconds for {@link PanelFreshness}.
- *
- * Copied as a number rather than imported from `@trafficflow/db/cloud`'s pass constants on
- * purpose: what a console panel needs is the cadence a reader should JUDGE the number against,
- * and the hourly arm is the one that keeps the daily rows current. The nightly arm widens the
- * window and adds the totals; it does not make an hourly figure any less late.
- */
-export const ADMIN_USAGE_EXPECTED_EVERY_SECONDS = 60 * 60;
-
-/**
- * The roll-up's NIGHTLY cadence, in seconds — what the Billing board's lifetime figures are on.
- *
- * A DIFFERENT number from the one above, and the difference is the point. `credit_usage_totals`
- * and the divergence count are written only by the wide nightly arm, so judging them against the
- * hourly cadence would report an incident every morning on a deployment doing exactly what it was
- * built to do — and a signal that cries wolf daily is a signal nobody reads.
- *
- * It is also why the two panels carry separate stamps rather than one: the account page's daily
- * bars really are refreshed hourly, and flattening both to one cadence would have to be wrong
- * about one of them.
- */
-export const ADMIN_TOTALS_EXPECTED_EVERY_SECONDS = 24 * 60 * 60;
-
-/**
- * The invoice reconciliation's own cadence — `reconcile-invoices.ts`'s daily pass, in seconds.
- * What {@link CashRevenue.reconciliation}'s freshness stamp is judged against.
- */
-export const ADMIN_INVOICE_RECON_EXPECTED_EVERY_SECONDS = 24 * 60 * 60;
-
-/**
- * The ledger — and the SECOND query in this module whose unqualified relation name
- * is doing work.
- *
- * drizzle emits `from "credit_ledger"`, and `ohmail_admin`'s `search_path` is `admin, public`:
- *
- *  · `admin.credit_ledger` — a `security_barrier` VIEW projecting the six money columns
- *    verbatim and `source` REDACTED — when the connection is the staff role;
- *  · `public.credit_ledger` — the table — under PGlite, where the harness has no roles.
- *
- * The role holds NO grant on `public.credit_ledger.source`, so this is not a projection that
- * could be relaxed: the raw column is unreadable on that connection whatever this file says.
- * The role-level test seeds one row per `ledgerSources` namespace from a known Message-ID and
- * asserts that its digest appears in NOTHING the staff role can select.
- */
-async function loadLedger(
-  db: AdminDb,
-  accountId: string | null,
-  opts?: { events?: boolean; day?: string; limit?: number },
-): Promise<LedgerEntry[]> {
-  const base = db
-    .select({
-      id: creditLedger.id,
-      accountId: creditLedger.accountId,
-      delta: creditLedger.delta,
-      balanceAfter: creditLedger.balanceAfter,
-      reason: creditLedger.reason,
-      source: creditLedger.source,
-      // `credit_ledger.meta` IS NOT SELECTED, and it is not selectable: `ohmail_admin` holds
-      // no grant on it, so naming it here would raise 42501 rather than leak. See the header.
-      createdAt: creditLedger.createdAt,
-    })
-    .from(creditLedger);
-  const filters = [
-    ...(accountId === null ? [] : [eq(creditLedger.accountId, accountId)]),
-    // THE STATEMENT PREDICATE — the complement of the four metered `debit_*` reasons, matching
-    // `credit_ledger_events_idx`'s partial predicate EXACTLY. If the two ever diverge the query
-    // still answers correctly and stops using the index, which is a silent performance loss;
-    // they are written as one list in the migration and one list here, and the pg test asserts
-    // the planner uses the index for this read.
-    ...(opts?.events === true ? [inArray(creditLedger.reason, LEDGER_EVENT_REASONS as unknown as string[])] : []),
-    // The drill-down's day window, half-open, on `created_at` — the same boundary the roll-up
-    // aggregates by, so a day expanded here holds exactly the rows the bar above it counted.
-    //
-    // The offset is written into the literal (`+00`) rather than left to a `date` cast, because a
-    // bare `'2026-09-03'::timestamptz` is midnight in the SESSION's time zone. On a database
-    // configured anywhere but UTC that silently shifts every day boundary by the offset, so a
-    // drill-down would show a day's rows the bar above it did not count — and nothing would fail.
-    ...(opts?.day === undefined ? [] : [
-      sql`${creditLedger.createdAt} >= (${opts.day} || ' 00:00:00+00')::timestamptz`,
-      sql`${creditLedger.createdAt} < (${opts.day} || ' 00:00:00+00')::timestamptz + interval '1 day'`,
-    ]),
-  ];
-  const rows = await (filters.length === 0 ? base : base.where(and(...filters)))
-    .orderBy(desc(creditLedger.id))
-    .limit(opts?.limit ?? ADMIN_LIST_LIMIT);
-  const names = await accountNames(db, rows.map((r) => r.accountId));
-  return rows.map((row) => ({
-    id: String(row.id),
-    accountId: row.accountId,
-    accountName: names.get(row.accountId) ?? "",
-    delta: int(row.delta),
-    balanceAfter: int(row.balanceAfter),
-    reason: row.reason as LedgerEntry["reason"],
-    // **REDACTED BY THE DATABASE, not by this projection — and the sentence that used to
-    // stand here ("SAFE BY CONSTRUCTION … every foreign input is sha256'd") WAS FALSE**,
-    // as a review pointed out. A sha-256 of a guessable input is a confirmation oracle, not a
-    // redaction:
-    // hash a candidate Message-ID or subject, compare, and you have learned that this account
-    // received that exact mail. On the staff connection this value comes from
-    // `admin.credit_ledger`, which keeps the NAMESPACE TOKEN and drops everything after it —
-    // including the `refund:classify:…` and `refund:draft:…` forms, which carry the original
-    // digest one prefix deeper. That truncation was widened from "the final `:`-segment" to
-    // "everything after the namespace", because `draft:<message uuid>:` was itself a join key
-    // back to `messages.id`. Under PGlite there is no view
-    // and no role, so this field is the raw source; the api-level tests assert the PROJECTION
-    // half and the role-level test asserts the ROLE half. Neither substitutes for the other.
-    source: row.source,
-    createdAt: asDate(row.createdAt).toISOString(),
-    // ALWAYS EMPTY, and the DTO keeps the field so the console's table needs no change on the
-    // day a named column replaces the bag. `credit_ledger.meta` is un-granted; the staff-meta
-    // gate that used to project it is gone with it — see the block above for what that costs
-    // and how a value comes back.
-    meta: {},
-  }));
-}
-
-/**
- * WHEN THE AGGREGATES WERE LAST COMPUTED — the newest `credit_rollup_runs` row's clock.
- *
- * The newest COMPLETED run, and the `error is null` in the predicate is the whole point: a pass
- * that failed still writes a row (so that "it stopped running" and "it is failing" are
- * distinguishable), and reading that row's `ran_at` as a freshness stamp would report the
- * aggregates as current at the exact moment the thing that produces them broke. That is
- * `billing_reconciliation_runs`' rule for its own staleness read, and it is here for the same
- * reason it is there.
- *
- * `divergentAccounts` comes off the newest run that MEASURED it — a different row from the
- * freshness one, because the hourly arm does not measure divergence and would otherwise reset the
- * figure to "unknown" fifty-nine minutes out of every sixty.
- */
-async function loadRollupState(db: AdminDb): Promise<RollupState> {
-  // ── THE DAILY STAMP — the newest COMPLETED run ─────────────────────────────────────────
-  //
-  // `error is null` is the load-bearing half. A pass that FAILED still writes a row, so that "it
-  // stopped running" and "it is failing" stay distinguishable; reading that row's `ran_at` as a
-  // freshness stamp would report the aggregates as current at the exact moment the thing that
-  // produces them broke. `billing_reconciliation_runs` follows the same rule for the same reason.
-  const [fresh] = await db
-    .select({ ranAt: creditRollupRuns.ranAt })
-    .from(creditRollupRuns)
-    .where(sql`${creditRollupRuns.error} is null`)
-    .orderBy(desc(creditRollupRuns.ranAt))
-    .limit(1);
-
-  // ── THE TOTALS STAMP — READ OFF THE TOTALS THEMSELVES, not off a run row ───────────────
-  //
-  // This is the distinction that matters, and reading it off `credit_rollup_runs` was wrong:
-  // `credit_usage_totals` is written ONLY by the nightly arm, and an HOURLY pass writes a
-  // perfectly successful run row without touching it. A stamp taken from the newest completed run
-  // would therefore say "computed four minutes ago" over totals a week old — which is precisely
-  // the failure the per-panel stamp was added to prevent, reintroduced by the stamp itself.
-  //
-  // `max(computed_at)` off the table cannot lie about it: the pass sets that column to its own
-  // clock on every row it writes, so the newest value IS the moment the totals were last
-  // produced, whatever the run ledger says. `null` — no rows — means they never have been.
-  const [totalsRow] = await db
-    .select({ at: sql<string | null>`max(${creditUsageTotals.computedAt})` })
-    .from(creditUsageTotals);
-  const totalsComputedAt = totalsRow?.at ? asDate(totalsRow.at).toISOString() : null;
-
-  const [measured] = await db
-    .select({ divergent: creditRollupRuns.divergentAccounts })
-    .from(creditRollupRuns)
-    .where(sql`${creditRollupRuns.error} is null and ${creditRollupRuns.divergentAccounts} is not null`)
-    .orderBy(desc(creditRollupRuns.ranAt))
-    .limit(1);
-
-  // ── THE SETUP SWEEP'S BACKLOG — off the newest run that actually SWEPT ─────────────────
-  //
-  // `is not null` for the same reason `divergentAccounts` needs it: only the nightly arm folds,
-  // so the hourly row carries NULL, and taking the newest completed run would report "drained"
-  // for the fifty-nine minutes of every hour when the answer is simply not in that row.
-  const [sweep] = await db
-    .select({ backlog: creditRollupRuns.setupSweepBacklog })
-    .from(creditRollupRuns)
-    .where(sql`${creditRollupRuns.error} is null and ${creditRollupRuns.setupSweepBacklog} is not null`)
-    .orderBy(desc(creditRollupRuns.ranAt))
-    .limit(1);
-
-  return {
-    computedAt: fresh ? asDate(fresh.ranAt).toISOString() : null,
-    totalsComputedAt,
-    // −1 and not 0: "no roll-up has ever measured this" must not render as "no divergence".
-    divergentAccounts: measured?.divergent == null ? -1 : int(measured.divergent),
-    // −1 on the same argument, and it is not decorative here: on a deployment younger than 120
-    // days NOTHING is eligible, so a working fold and a fold that has never run both leave 0
-    // behind. −1 says "no pass has folded yet", which is a different sentence from "drained".
-    setupSweepBacklog: sweep?.backlog == null ? -1 : int(sweep.backlog),
-  };
-}
 
 interface RollupState {
   /** Newest completed run of EITHER arm — what the hourly daily rows are as fresh as. */
@@ -1035,142 +650,6 @@ interface RollupState {
    * `0` ⇒ drained; `> 0` ⇒ a drain in progress; `-1` ⇒ no pass has ever folded.
    */
   setupSweepBacklog: number;
-}
-
-/**
- * ONE ACCOUNT'S CREDIT USAGE — thirty days of aggregate, plus the statement.
- *
- * This replaced a read of the newest fifty raw ledger rows, which was two things at once and bad
- * at both. On an account that has been screening, forty-nine of those fifty are `debit_classify`
- * and the rows an operator opened the page for — the invoice grant, the renewal expiry, the
- * adjustment somebody made last week — are off the bottom of the list. Splitting the read by what
- * each half is FOR fixes both: the meter readings become a shape you can look at, and the
- * decisions become a list short enough to read.
- *
- * Both halves are bounded reads on indexes built for them:
- * `credit_usage_daily_account_day_idx` and the partial `credit_ledger_events_idx`.
- */
-async function loadUsage(db: AdminDb, accountId: string, now: Date): Promise<AccountUsage> {
-  // Half-open from midnight UTC of the oldest day shown, so the boundary day is whole. Computed
-  // from the reader's `now` rather than from `current_date`, so the page and its own stamp agree
-  // about which day is "today".
-  const floor = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  floor.setUTCDate(floor.getUTCDate() - (ADMIN_USAGE_DAYS - 1));
-  const floorKey = floor.toISOString().slice(0, 10);
-
-  const dailyRows = await db
-    .select({
-      day: creditUsageDaily.day,
-      pool: creditUsageDaily.pool,
-      reason: creditUsageDaily.reason,
-      credits: creditUsageDaily.credits,
-      rows: creditUsageDaily.rows,
-    })
-    .from(creditUsageDaily)
-    .where(and(
-      eq(creditUsageDaily.accountId, accountId),
-      sql`${creditUsageDaily.day} >= ${floorKey}::date`,
-    ))
-    .orderBy(desc(creditUsageDaily.day));
-
-  const events = await loadLedger(db, accountId, { events: true });
-  const state = await loadRollupState(db);
-
-  return {
-    daily: dailyRows.map((r) => ({
-      // `date` comes back as a string on one driver and a Date on the other. Normalize to the
-      // key the drill-down takes, so the console can hand a bar's own day straight back.
-      day: typeof r.day === "string" ? r.day.slice(0, 10) : asDate(r.day).toISOString().slice(0, 10),
-      pool: r.pool as UsageDay["pool"],
-      reason: r.reason as AdminLedgerReason,
-      credits: int(r.credits),
-      rows: int(r.rows),
-    })),
-    events,
-    freshness: {
-      computedAt: state.computedAt,
-      expectedEverySeconds: ADMIN_USAGE_EXPECTED_EVERY_SECONDS,
-    },
-  };
-}
-
-/**
- * THE ACCOUNT'S SETUP POOL, as the console shows it.
- *
- * LIVE grants only — unexpired, with something left — which is the same predicate
- * `setupPoolOf` uses for the customer's own settings row. Staff and customer read one number, so
- * a support conversation cannot be two people looking at two different figures.
- *
- * `granted` and `remaining` are summed across those live grants because an account carrying
- * pre-0028 per-mailbox pools legitimately has several, and `expiresAt` is the FURTHEST horizon —
- * "usable until", the sentence a single row can honestly say about a set. `kind` reports
- * `'account'` when any live pool is one, because the presence of the new-style pool is the fact a
- * support answer turns on.
- *
- * `mailbox_id` is not read and is not readable: the blind role holds no grant on it.
- */
-async function loadSetupPool(
-  db: AdminDb, accountId: string, now: Date,
-): Promise<SetupPoolView | null> {
-  const rows = await db
-    .select({
-      kind: setupGrants.kind,
-      granted: setupGrants.granted,
-      remaining: setupGrants.remaining,
-      expiresAt: setupGrants.expiresAt,
-    })
-    .from(setupGrants)
-    .where(and(
-      eq(setupGrants.accountId, accountId),
-      sql`${setupGrants.expiresAt} > ${now.toISOString()}::timestamptz`,
-      sql`${setupGrants.remaining} > 0`,
-    ));
-  if (rows.length === 0) return null;
-  return {
-    kind: rows.some((r) => r.kind === "account") ? "account" : "mailbox",
-    granted: rows.reduce((n, r) => n + int(r.granted), 0),
-    remaining: rows.reduce((n, r) => n + int(r.remaining), 0),
-    expiresAt: new Date(Math.max(...rows.map((r) => asDate(r.expiresAt).getTime()))).toISOString(),
-  };
-}
-
-/**
- * THE DRILL-DOWN — one account, one day, the raw rows, ON PRESS.
- *
- * Separate from {@link loadUsage} because of when it runs, not because of what it reads: the
- * account page shows thirty days of aggregate and this answers "what were those twelve
- * classifications" for ONE of them, when somebody asks. Fetching every day's rows in case a
- * reader expands one is exactly the read the aggregates were built to stop making.
- *
- * Capped at {@link ADMIN_LEDGER_DAY_LIMIT}, and the cap is REPORTED rather than silently
- * applied — a truncated day rendered as a complete one is a list that lies by being short.
- */
-export async function adminAccountLedgerDay(
-  db: AdminDb, now: Date, accountId: string, day: string,
-): Promise<LedgerDay | null> {
-  // Both inputs come off the URL. A malformed id is a 404 rather than a Postgres
-  // `invalid input syntax for type uuid` 500, and a malformed day likewise — the day is
-  // concatenated into a timestamptz cast, so this shape check IS the parameter's validation.
-  if (!UUID_RE.test(accountId)) return null;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
-  // AND THE CALENDAR HAS TO AGREE, not just the shape. `2026-13-45` matches the pattern; built
-  // through `Date.UTC` it rolls forward into a different month, so the round-trip is what refuses
-  // it. Without this the value reaching the database is a well-shaped string naming no day, and
-  // Postgres decides what to do with it rather than this function.
-  const [y, m, d] = day.split("-").map(Number) as [number, number, number];
-  const parsed = new Date(Date.UTC(y, m - 1, d));
-  if (Number.isNaN(parsed.getTime())) return null;
-  if (parsed.toISOString().slice(0, 10) !== day) return null;
-
-  // One row over the cap, so "there were more" is measured rather than inferred from a full page.
-  const rows = await loadLedger(db, accountId, { day, limit: ADMIN_LEDGER_DAY_LIMIT + 1 });
-  return {
-    now: now.toISOString(),
-    accountId,
-    day,
-    entries: rows.slice(0, ADMIN_LEDGER_DAY_LIMIT),
-    capped: rows.length > ADMIN_LEDGER_DAY_LIMIT,
-  };
 }
 
 /**
@@ -1267,12 +746,9 @@ export async function adminAccountDetail(db: AdminDb, now: Date, id: string): Pr
   const account = roster.find((a) => a.id === id);
   if (!account) return null;
 
-  const sub = newestByAccount(await selectSubscriptions(db)).get(id) ?? null;
   // Sequential — the max:1 blind pool deadlocks on parallel reads when one opens a
   // transaction (see adminWorker above). Same rule for every admin read group.
   const mailboxList = await loadMailboxes(db, now, [id]);
-  const usage = await loadUsage(db, id, now);
-  const setupCredits = await loadSetupPool(db, id, now);
   const audit = await loadAudit(db, id);
   const securityEvents = await loadSecurityEvents(db, id);
 
@@ -1280,18 +756,6 @@ export async function adminAccountDetail(db: AdminDb, now: Date, id: string): Pr
     now: now.toISOString(),
     account,
     mailboxes: mailboxList,
-    entitlements: {
-      // The EFFECTIVE limit — base plus purchased add-on units — the same composition
-      // `entitlementsFor` serves the product (cloud 0022).
-      mailboxLimit: sub ? int(sub.mailboxLimit) + int(sub.addonMailboxes ?? 0) : 0,
-      monthlyCredits: sub ? int(sub.monthlyCredits) : 0,
-      periodStart: sub ? iso(sub.currentPeriodStart) : null,
-      periodEnd: sub ? iso(sub.currentPeriodEnd) : null,
-      cancelAtPeriodEnd: sub ? Boolean(sub.cancelAtPeriodEnd) : false,
-      graceUntil: sub ? iso(sub.graceUntil) : null,
-      setupCredits,
-    },
-    usage,
     audit,
     securityEvents,
   };
@@ -1335,384 +799,6 @@ export async function adminAccountDetail(db: AdminDb, now: Date, id: string): Pr
  */
 
 /**
- * CASH, FROM `billing_invoices` — ONE aggregate statement, and the month bounds are in its
- * `WHERE`, not only in its `FILTER`s.
- *
- * **That distinction is the whole reason this read is bounded, and the first version got it
- * wrong.** With `where status = 'paid'` alone and the month expressed only inside
- * `count(*) filter (…)`, the planner has to hand EVERY paid invoice this deployment has ever
- * written to the aggregate node — there is no index on `status`, so the figure's cost grows with
- * the age of the account book while three comments (this one included) claimed it was bounded by
- * `billing_invoices_paid_at_idx`. It is bounded now because `paid_at` is in the predicate the
- * index can serve. `paidToday` stays a `FILTER` and is still correct: today is inside this month
- * by construction, so it narrows the same rows rather than needing any of its own.
- *
- * `paid_at`, never `created_at`: a reconcile-healed row keeps the invoice's real payment month
- * even though the MIRROR row was written later, on whatever day the pass ran.
- *
- * ── AND IT GROUPS BY CURRENCY RATHER THAN SUMMING ACROSS ONE ─────────────────────────────
- * `sum(amount_paid_cents)` over a month holding both USD and EUR invoices is minor units added
- * to different minor units: a number denominated in nothing, which `money()` would then render
- * with a `$`. So the statement groups, the largest-settling currency is the one reported, and
- * {@link CashRevenue.otherCurrencies} counts the ones this figure therefore does NOT include —
- * the same qualifier `AdminCostSnapshot.unmeasuredProviders` is for, and for the same reason:
- * silently dropping money is the failure this board exists to refuse, and so is inventing a sum
- * that no currency actually holds. It is 0 on every deployment that sells in one currency, which
- * is every deployment today.
- */
-async function loadCashRevenue(db: AdminDb, now: Date): Promise<CashRevenue> {
-  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const monthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
-  const month = monthStart.toISOString().slice(0, 7);
-  const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
-
-  const rows = await db
-    .select({
-      currency: billingInvoices.currency,
-      paidInvoices: sql<number>`count(*)::int`,
-      paidCents: sql<string>`coalesce(sum(${billingInvoices.amountPaidCents}), 0)::bigint`,
-      refundedCents: sql<string>`coalesce(sum(${billingInvoices.amountRefundedCents}), 0)::bigint`,
-      paidToday: sql<number>`count(*) filter (where ${billingInvoices.paidAt} >= ${dayStart.toISOString()}::timestamptz and ${billingInvoices.paidAt} < ${dayEnd.toISOString()}::timestamptz)::int`,
-    })
-    .from(billingInvoices)
-    .where(and(
-      eq(billingInvoices.status, "paid"),
-      sql`${billingInvoices.paidAt} >= ${monthStart.toISOString()}::timestamptz`,
-      sql`${billingInvoices.paidAt} < ${monthEnd.toISOString()}::timestamptz`,
-    ))
-    .groupBy(billingInvoices.currency);
-
-  // The currency that SETTLED the most this month is the one reported. Ordered here rather than
-  // in SQL because the net (paid − refunded) is the comparison that matters and it is computed
-  // per row below anyway; the set is one row per currency, so this sorts at most a handful.
-  const byCurrency = rows
-    .map((r) => ({
-      currency: r.currency,
-      paidInvoices: int(r.paidInvoices),
-      netCents: int(r.paidCents) - int(r.refundedCents),
-      paidToday: int(r.paidToday),
-    }))
-    .sort((a, b) => b.netCents - a.netCents);
-  const lead = byCurrency[0] ?? null;
-
-  const reconciliation = await loadInvoiceReconciliation(db);
-
-  return {
-    month,
-    paidInvoices: lead?.paidInvoices ?? 0,
-    mtdCents: lead?.netCents ?? 0,
-    paidToday: lead?.paidToday ?? 0,
-    // "usd" when the month holds no paid invoice at all — a label for an empty figure, not a
-    // claim that anything settled in it.
-    currency: lead?.currency ?? "usd",
-    otherCurrencies: Math.max(0, byCurrency.length - 1),
-    reconciliation,
-  };
-}
-
-async function loadInvoiceReconciliation(db: AdminDb): Promise<InvoiceReconciliationView> {
-  const [run] = await db
-    .select({
-      ranAt: billingReconciliationRuns.ranAt,
-      flagged: billingReconciliationRuns.flagged,
-      // The HEALED count. `flagged` includes rows the pass fixed itself, so without this the
-      // console cannot tell a self-healed lost webhook from a divergence needing a person.
-      invoicesUpserted: billingReconciliationRuns.invoicesUpserted,
-      truncated: billingReconciliationRuns.truncated,
-    })
-    .from(billingReconciliationRuns)
-    .where(and(
-      sql`${billingReconciliationRuns.error} is null`,
-      eq(billingReconciliationRuns.mode, "invoices"),
-    ))
-    .orderBy(desc(billingReconciliationRuns.ranAt))
-    .limit(1);
-
-  const flagged = (run?.flagged ?? {}) as Record<string, number>;
-  const flaggedTotal = Object.values(flagged).reduce((sum, n) => sum + Number(n), 0);
-
-  return {
-    freshness: {
-      // `null` ⇒ the pass has never completed on this deployment — a distinct state from "ran
-      // and found nothing", and the console must be able to say which one it is holding.
-      computedAt: run ? asDate(run.ranAt).toISOString() : null,
-      expectedEverySeconds: ADMIN_INVOICE_RECON_EXPECTED_EVERY_SECONDS,
-    },
-    flagged,
-    flaggedTotal,
-    healed: int(run?.invoicesUpserted ?? 0),
-    truncated: run?.truncated ?? false,
-  };
-}
-
-export async function adminBilling(db: AdminDb, now: Date): Promise<BillingSnapshot> {
-  const accountRows = await db.select({ id: accounts.id, name: accounts.name }).from(accounts);
-  const subs = newestByAccount(await selectSubscriptions(db));
-
-  type Bucket = { accounts: number; contractedMrrCents: number };
-  const byStatus = new Map<AdminSubscriptionStatus, Bucket>();
-  for (const status of ADMIN_SUBSCRIPTION_ORDER) byStatus.set(status, { accounts: 0, contractedMrrCents: 0 });
-  for (const account of accountRows) {
-    const sub = subs.get(account.id);
-    const status = asStatus(sub?.status);
-    const bucket = byStatus.get(status) ?? { accounts: 0, contractedMrrCents: 0 };
-    bucket.accounts += 1;
-    const plan = sub ? asPlan(sub.plan) : null;
-    // Both buckets get the price; WHICH total it lands in is decided below, by status. A
-    // per-status figure that silently zeroed `past_due` would hide the at-risk book entirely.
-    if (plan && (CONTRACTED_STATUSES.has(status) || AT_RISK_STATUSES.has(status))) {
-      bucket.contractedMrrCents += rowMrrCents(plan, sub);
-    }
-    byStatus.set(status, bucket);
-  }
-  const subscriptionStates = ADMIN_SUBSCRIPTION_ORDER.map((status) => ({
-    status,
-    accounts: byStatus.get(status)?.accounts ?? 0,
-    contractedMrrCents: byStatus.get(status)?.contractedMrrCents ?? 0,
-  }));
-
-  // Read before `revenue` is built so the object literal can carry `cash` from construction
-  // rather than being patched afterward — sequential on the same `max: 1` connection either way.
-  const cash = await loadCashRevenue(db, now);
-
-  const revenue: BillingRevenue = {
-    contractedMrrCents: subscriptionStates
-      .filter((s) => CONTRACTED_STATUSES.has(s.status))
-      .reduce((sum, s) => sum + s.contractedMrrCents, 0),
-    atRiskMrrCents: subscriptionStates
-      .filter((s) => AT_RISK_STATUSES.has(s.status))
-      .reduce((sum, s) => sum + s.contractedMrrCents, 0),
-    // Filled in below from `billing_events`. COUNTS, never amounts — `billing_events.payload` is
-    // still un-granted, so a role that cannot read it cannot exclude a trial's $0 rows from this
-    // COUNT of applications. The settled figure now lives on `cash` instead, read from the
-    // invoice mirror — this field's name still carries the older limit on purpose, because it
-    // still is one: `appliedInvoiceEvents` counts applications, never payments.
-    appliedInvoiceEvents: 0,
-    failedPaymentEvents: 0,
-    cash,
-  };
-
-  const eventCounts = await db
-    .select({
-      type: billingEvents.type,
-      status: billingEvents.status,
-      count: sql<number>`count(*)::int`,
-    })
-    .from(billingEvents)
-    .groupBy(billingEvents.type, billingEvents.status);
-  for (const row of eventCounts) {
-    // `applied` only. A `failed` invoice.paid is money Stripe took and credits nobody granted —
-    // it belongs to the failed queue above, not to a tally of applications that worked.
-    if (row.type === "invoice.paid" && row.status === "applied") {
-      revenue.appliedInvoiceEvents += int(row.count);
-    }
-    // Any status: a payment failure is a fact about the customer's card, and whether OUR apply
-    // of that event succeeded says nothing about it.
-    if (row.type === "invoice.payment_failed") revenue.failedPaymentEvents += int(row.count);
-  }
-
-  /**
-   * THE LEDGER READS, ON ONE SNAPSHOT — and there are two of them now, not three.
-   *
-   * ── WHAT THIS USED TO BE, AND WHY IT COULD NOT STAY ───────────────────────────────────────
-   *
-   * Three UNCAPPED aggregates over `credit_ledger`, on every console load: the lifetime flows
-   * grouped by reason, the same ledger grouped by account, and a distinct scan for accounts that
-   * ever had an invoice. Each was correct. Together they were a full pass over a table that is
-   * append-only, never pruned, and grows with every metered action — so the cost of opening the
-   * Billing page grew with the age of the deployment and nothing about the page said so.
-   *
-   * They read `credit_usage_totals` now, which the roll-up aggregates from `credit_ledger` WHOLE,
-   * once a night, on the worker. Not from `credit_usage_daily`: that table holds only the days
-   * some pass recomputed — two or three — so totals summed from it would be the WINDOW's totals
-   * wearing the word "lifetime", and this function compares them against `outstanding`, a live
-   * sum over the account's whole history. The board would report a permanent drift of the
-   * deployment's entire lifetime on a database with nothing wrong with it.
-   *
-   * The cost is a whole-table `GROUP BY` — a real one, and a NIGHTLY one, beside the divergence
-   * pass that already walks the same table in the same run. What this change removed was that
-   * scan running on every console page load, which is a different thing entirely.
-   *
-   * ── THE SNAPSHOT ARGUMENT, RESTATED HONESTLY BECAUSE IT CHANGED ───────────────────────────
-   *
-   * The transaction used to make the reconciliation identity well-defined: balances and flows
-   * from ONE snapshot, so a credit movement committing between two statements could not appear as
-   * drift. That is no longer what is happening — the totals are an aggregate computed at some
-   * earlier moment, and no isolation level can put them in the same instant as a live balance
-   * read. Pretending otherwise by keeping the transaction and saying nothing would be the worse
-   * outcome: a comparison that LOOKS synchronised and is not.
-   *
-   * So the per-account divergence count moved to where it can still be one statement —
-   * `findCreditDivergence`, run by the roll-up — and it arrives here with a `computedAt` beside
-   * it. What is left in this transaction is the two reads the console still SUBTRACTS from each
-   * other, and they are consistent with each other exactly as before.
-   *
-   * Still SEQUENTIAL inside, for the reason the header gives: the blind pool is `max: 1`.
-   */
-  const snapshot = await db.transaction(async (tx) => {
-    const balanceRows = await tx
-      .select({ accountId: creditBalances.accountId, balance: creditBalances.balance })
-      .from(creditBalances);
-
-    /**
-     * The lifetime flows, from the roll-up's totals rather than from the ledger.
-     *
-     * `pool = 'ledger'` because these figures reconcile against `credit_balances`, and the setup
-     * pool has no balance row — it is separate money with its own remainder and its own expiry.
-     * Summing the two would put credits into a liability figure that `credit_balances` has never
-     * heard of, and the console's reconciliation would report drift on a healthy database.
-     */
-    const flowRows = await tx
-      .select({
-        reason: creditUsageTotals.reason,
-        total: sql<number>`coalesce(sum(${creditUsageTotals.credits}), 0)::int`,
-      })
-      .from(creditUsageTotals)
-      .where(eq(creditUsageTotals.pool, "ledger"))
-      .groupBy(creditUsageTotals.reason);
-
-    /**
-     * Accounts that have NEVER had an `invoice_grant` row. With no rollover — every renewal
-     * expires the whole balance and grants the new month — an account that never had an invoice
-     * can only be holding credits somebody gave it, so the balances of these accounts are
-     * EXACTLY the granted-never-sold liability rather than an apportionment.
-     *
-     * One row per (account, reason) in the totals table, so this is a bounded read of the
-     * accounts that HAVE been invoiced rather than a distinct scan of every ledger row.
-     */
-    const invoicedRows = await tx
-      .select({ accountId: creditUsageTotals.accountId })
-      .from(creditUsageTotals)
-      .where(and(
-        eq(creditUsageTotals.pool, "ledger"),
-        eq(creditUsageTotals.reason, "invoice_grant"),
-      ));
-
-    return { balanceRows, flowRows, invoicedRows };
-  }, { isolationLevel: "repeatable read", accessMode: "read only" });
-
-  // Outside the transaction deliberately: these are the roll-up's OWN stamps, and putting them
-  // in the snapshot would suggest they share its instant. They do not, which is the whole reason
-  // they travel as freshness rather than as figures.
-  const rollup = await loadRollupState(db);
-
-  const balances = new Map(snapshot.balanceRows.map((r) => [r.accountId, int(r.balance)]));
-  const flow = new Map<string, number>(snapshot.flowRows.map((r) => [r.reason, int(r.total)]));
-  const sumOf = (...reasons: readonly AdminLedgerReason[]): number =>
-    reasons.reduce((sum, reason) => sum + (flow.get(reason) ?? 0), 0);
-  const everInvoiced = new Set(snapshot.invoicedRows.map((r) => r.accountId));
-
-  /**
-   * The per-account divergence, as the roll-up measured it. See the DTO field: this is now
-   * BOTH arms of `findCreditDivergence` (sum-vs-balance and `balance_after`-vs-balance) rather
-   * than the one arm this function could express, and `-1` means no pass has ever measured it.
-   */
-  const divergentAccounts = rollup.divergentAccounts;
-
-  let outstanding = 0;
-  let outstandingNeverInvoiced = 0;
-  let accountsWithBalance = 0;
-  for (const [accountId, balance] of balances) {
-    outstanding += balance;
-    if (balance > 0) {
-      accountsWithBalance += 1;
-      if (!everInvoiced.has(accountId)) outstandingNeverInvoiced += balance;
-    }
-  }
-
-  /**
-   * THE ONE FIGURE WHOSE MEANING INVERTS WHEN THE AGGREGATE IS ABSENT, rather than merely
-   * shrinking — which is why it gets the `-1` treatment and its neighbours do not.
-   *
-   * `outstandingNeverInvoiced` is computed by INVERTING `everInvoiced`: a balance counts toward it
-   * when the account is NOT in the invoiced set. Every other lifetime figure is a sum, so an empty
-   * `credit_usage_totals` makes it zero — visibly, obviously nothing. This one goes the other way:
-   * an empty set means nobody has ever been invoiced, so the WHOLE liability is reported as
-   * granted-never-sold. Before the worker's first roll-up the board would therefore say every
-   * credit outstanding has no revenue behind it, in red, against the one invariant this figure
-   * exists to police — a maximally alarming number that measured nothing.
-   *
-   * `-1` on the same terms as `divergentAccounts`: a value the console's `?? 0` fallback cannot
-   * manufacture, so "not measured" and "none" stay distinguishable, and `grantedLiabilitySeverity`
-   * reads a negative share as `idle` rather than grading it.
-   */
-  //
-  // KEYED TO THE TOTALS AND NOT TO A RUN ROW, which is where the first draft of this guard was
-  // wrong in a way that defeated it entirely. `everInvoiced` comes from `credit_usage_totals`,
-  // written only by the NIGHTLY arm — so a guard reading "has any pass completed" is satisfied by
-  // the first HOURLY pass, which writes no totals at all. On a deployment that migrated at 10:00
-  // the 11:00 hourly run would flip the guard on over an empty invoiced set, and the board would
-  // paint the whole liability red as granted-never-sold until 03:00 the next morning: the exact
-  // alarm this guard exists to prevent, fired by the guard being satisfied.
-  const neverInvoicedMeasured = rollup.totalsComputedAt !== null;
-
-  const liability: CreditLiability = {
-    outstanding,
-    outstandingNeverInvoiced: neverInvoicedMeasured ? outstandingNeverInvoiced : -1,
-    accountsWithBalance,
-    // A MISSING `credit_balances` row is semantically a balance of zero (see the schema note on
-    // the table), so this counts accounts, not rows — an account that never had a ledger
-    // movement is at zero and belongs in this figure.
-    accountsAtZero: accountRows.length - accountsWithBalance,
-    soldLifetime: sumOf("invoice_grant"),
-    grantedLifetime: sumOf("adjustment_credit"),
-    // The trial bounty, on its own line rather than inside `grantedLifetime` — see the DTO. It is
-    // summed here for a harder reason than presentation: the console reconciles these flows
-    // against `credit_balances`, so a reason nothing sums makes a healthy database report drift.
-    trialGrantedLifetime: sumOf("trial_grant"),
-    refundedLifetime: sumOf("refund"),
-    // Debits carry a NEGATIVE delta (`credit_ledger_sign_reason_check` makes that a database
-    // fact), so the flows out are negated into positive magnitudes for display.
-    consumedLifetime: -sumOf(...CONSUMPTION_REASONS),
-    expiredLifetime: -sumOf("period_expiry"),
-    clawedBackLifetime: -sumOf("adjustment_debit"),
-    divergentAccounts,
-    setupSweepBacklog: rollup.setupSweepBacklog,
-  };
-
-  const failedRows = await listFailedBillingEvents(db, ADMIN_LIST_LIMIT);
-  const failedNames = await accountNames(db, failedRows.map((r) => r.accountId ?? ""));
-
-  return {
-    now: now.toISOString(),
-    accountCount: accountRows.length,
-    subscriptionStates,
-    revenue,
-    liability,
-    // THE STATEMENT, not the meter. Non-debit rows only — see `LEDGER_EVENT_REASONS` — because
-    // the metered debits that used to fill this list are counted in `credit_usage_daily` now,
-    // and what a reader wants from a deployment-wide ledger list is the decisions.
-    ledger: await loadLedger(db, null, { events: true }),
-    // THE TOTALS' OWN STAMP, ON THE TOTALS' OWN CADENCE. Not the newest completed run and not
-    // the hourly number: every figure this covers is written by the nightly arm alone, so a
-    // stamp taken from an hourly pass would read "fresh" over week-old lifetime sums.
-    freshness: {
-      computedAt: rollup.totalsComputedAt,
-      expectedEverySeconds: ADMIN_TOTALS_EXPECTED_EVERY_SECONDS,
-    },
-    adjustableAccounts: accountRows
-      .slice(0, ADMIN_OPTIONS_LIMIT)
-      .map((a) => ({ id: a.id, name: a.name, balance: balances.get(a.id) ?? 0 }))
-      .sort((a, b) => a.name.localeCompare(b.name)),
-    failedEvents: failedRows.map((row) => ({
-      stripeEventId: row.stripeEventId,
-      type: row.type,
-      accountId: row.accountId,
-      // Null accountId is itself a finding: the customer could not be resolved to an account.
-      accountName: row.accountId ? failedNames.get(row.accountId) ?? "" : "",
-      error: row.error,
-      receivedAt: row.receivedAt.toISOString(),
-      ageSeconds: secondsSince(now, row.receivedAt) ?? 0,
-    })),
-  };
-}
-
-/* ════════════════════════════════════════════════════════════════════════════════════════
-   Funnel
-   ════════════════════════════════════════════════════════════════════════════════════════ */
-
-/**
  * THE SIGNUP FUNNEL, as counts.
  *
  * Every figure is a COUNT and nothing here is joined to a person. The top reads the DATE columns
@@ -1749,15 +835,9 @@ export async function adminFunnel(db: AdminDb, now: Date): Promise<FunnelSnapsho
   const [connectedRow] = await db
     .select({ n: sql<number>`count(distinct ${mailboxes.accountId})::int` })
     .from(mailboxes);
-  const [subscribedRow] = await db
-    .select({ n: sql<number>`count(distinct ${billingSubscriptions.accountId})::int` })
-    .from(billingSubscriptions)
-    .where(inArray(billingSubscriptions.status, [...LIVE_SUBSCRIPTION_STATUSES]));
-
   const signup = int(signupRow?.n);
   const verified = int(verifiedRow?.n);
   const connected = int(connectedRow?.n);
-  const subscribed = int(subscribedRow?.n);
 
   // Conversion from the previous stage. `null` on the first; guarded against divide-by-zero —
   // a downstream count is a subset, so a zero upstream means a zero downstream, i.e. 0/0 ⇒ null.
@@ -1768,7 +848,6 @@ export async function adminFunnel(db: AdminDb, now: Date): Promise<FunnelSnapsho
     { key: "signup", label: "Signed up", count: signup, ofPrevious: null },
     { key: "verified", label: "Email verified", count: verified, ofPrevious: conv(verified, signup) },
     { key: "connected", label: "Mailbox connected", count: connected, ofPrevious: conv(connected, verified) },
-    { key: "subscribed", label: "Subscribed", count: subscribed, ofPrevious: conv(subscribed, connected) },
   ];
 
   const issued = int(inviteRow?.issued);
@@ -2185,14 +1264,6 @@ export async function adminActions(db: AdminDb, now: Date): Promise<ActionCatalo
     new Date(now.getTime() - DEFAULT_ALERT_THRESHOLDS.stuckSendMs),
     ADMIN_LIST_LIMIT,
   );
-  // The accounts currently suspended, for the resume action's target list. Same blind-role
-  // read as the roster; `suspended_by`/`note` stay ungranted.
-  const suspendedRows = await db
-    .select({ accountId: accountSuspensions.accountId })
-    .from(accountSuspensions)
-    .limit(ADMIN_OPTIONS_LIMIT);
-  const suspendedIds = new Set(suspendedRows.map((r) => r.accountId));
-
   const names = new Map(accountRows.map((a) => [a.id, a.name]));
   const owners = await ownerEmails(db, accountRows.map((a) => a.id));
 
@@ -2205,8 +1276,6 @@ export async function adminActions(db: AdminDb, now: Date): Promise<ActionCatalo
     const parts = [a.name, owner].filter((p) => p.length > 0);
     return { id: a.id, label: parts.length > 0 ? parts.join(" · ") : `${a.id} (no name or owner on record)` };
   });
-  // The resume action can only target an account that IS suspended — the same labels, filtered.
-  const suspendedOptions = accountOptions.filter((o) => suspendedIds.has(o.id));
   const withAccount = (head: string, accountId: string): string => {
     const name = names.get(accountId) ?? "";
     return name.length > 0 ? `${head} · ${name}` : head;
@@ -2217,51 +1286,6 @@ export async function adminActions(db: AdminDb, now: Date): Promise<ActionCatalo
   const sendOptions = stuck.map((s) => ({ id: s.id, label: withAccount(s.id, s.accountId) }));
 
   const actions: ActionSpec[] = [
-    {
-      id: "suspend_account",
-      title: "Suspend an account",
-      summary:
-        "Stops the worker from serving the account and drops its entitlements to zero. Nothing is deleted.",
-      effects: [
-        "Writes an account_suspensions row — entitlementsFor() honors it on the next read",
-        "The worker drops the account's mailboxes from the rotation on its next cycle",
-        "The customer keeps every folder already organized on their own server",
-      ],
-      target: { label: "Account", placeholder: "Pick an account", options: accountOptions },
-      requiresNote: true,
-      available: true,
-      unavailableReason: null,
-      auditPreview: {
-        action: "admin.account.suspend",
-        payload: { account_id: "…", note: "<required>", actor: "staff_<uuid>" },
-        inverse: { action: "admin.account.resume", account_id: "…" },
-      },
-    },
-    {
-      id: "resume_account",
-      title: "Unsuspend an account",
-      summary: "Clears the suspension and returns the account to the sync rotation.",
-      effects: [
-        "Deletes the account_suspensions row",
-        "Entitlements return to whatever the live subscription sold",
-        "The next worker cycle picks the mailboxes back up — no resync is needed",
-      ],
-      target: {
-        label: "Suspended account",
-        // Only suspended accounts can be resumed; the list IS the current suspensions. Empty with
-        // a plain placeholder when nobody is suspended beats a list that pretends otherwise.
-        placeholder: suspendedOptions.length ? "Pick a suspended account" : "No account is suspended right now",
-        options: suspendedOptions,
-      },
-      requiresNote: true,
-      available: true,
-      unavailableReason: null,
-      auditPreview: {
-        action: "admin.account.resume",
-        payload: { account_id: "…", note: "<required>", actor: "staff_<uuid>" },
-        inverse: { action: "admin.account.suspend", account_id: "…" },
-      },
-    },
     {
       id: "resync_mailbox",
       title: "Release a quarantined mailbox",

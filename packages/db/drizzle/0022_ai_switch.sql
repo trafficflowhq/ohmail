@@ -7,9 +7,9 @@
 --
 -- ══ WHERE IT IS ENFORCED, AND WHY THAT IS ONE PLACE ═══════════════════════════════════════
 --
--- `spendState()` in `packages/db/src/ai-gate.ts` reads it, before `newestSubscriptionOf` and
--- before any write. That is deliberate rather than convenient: `billing-boundaries.test.ts`
--- pins that EVERY AI spend in the product goes through that one seam (five call sites — the
+-- The spend seam reads it before any write, and before it asks anybody about standing. That is
+-- deliberate rather than convenient: a census pins that EVERY AI spend in the product goes
+-- through that one seam (five call sites — the
 -- pipeline's classify branch, the drafting route, the workflow executor's `draft_reply`, the
 -- proposal cron, the Screener's pre-suggestion), so a single read there is honoured by all of
 -- them with no per-call-site wiring to forget. A refusal happens BEFORE `debitCredits`, so an

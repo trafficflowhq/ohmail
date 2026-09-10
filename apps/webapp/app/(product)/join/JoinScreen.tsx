@@ -33,10 +33,10 @@
  * `onboarding-flow.test.ts` now walks THIS order and carries a case that fails if the two
  * are swapped back.
  *
- * `trialing` grants `canAddMailbox` (`packages/db/src/billing.ts`), so the 14-day trial
- * Checkout starts is enough to connect the first mailbox — no card, no charge, no wait. It also
- * carries a fixed grant of AI actions now (`TRIAL_GRANT_CREDITS`), which is why the note under
- * the plan cards renders a number the SERVER sent rather than one written into copy.
+ * WHETHER A MAILBOX MAY BE CONNECTED is a verdict this server asks for and does not keep, so
+ * the wizard renders what the SERVER answered rather than a rule written into copy. An install
+ * with nobody to ask is unmetered: the mailbox step is simply the first thing a signed-up
+ * person does.
  *
  * This component's job is otherwise to ASK for the right thing at the right moment and to
  * display what came back. It never re-derives a refusal (see `api-client.ts`).

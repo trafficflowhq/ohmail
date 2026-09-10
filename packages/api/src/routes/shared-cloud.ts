@@ -1,7 +1,7 @@
 import { ServiceError, generateToken } from "@trafficflow/services/mail";
 import type {
   AuthService, SessionEstablished, EnrollmentSessionEstablished,
-  BillingPlanePort, EntitlementsService, WaitlistService, ProposalsService,
+  WaitlistService, ProposalsService,
 } from "@trafficflow/services";
 import type { ApiDeps } from "../deps.js";
 import type {} from "../deps-cloud.js";
@@ -58,55 +58,9 @@ export function proposals(deps: ApiDeps): ProposalsService {
 }
 
 /**
- * The billing-plane port and the open entitlements service, or `null` on a deployment that
- * carries no billing configuration (the pair replaced the old in-process billing service).
- *
- * Only the raw webhook route uses these shapes: it has no error envelope above it, so it must
- * turn "unconfigured" into a status itself rather than throw. Every other billing route uses
- * {@link billingPlane} / {@link entitlements}.
- */
-export function billingPlaneOrNull(deps: ApiDeps): BillingPlanePort | null {
-  return deps.services?.billingPlane ?? null;
-}
-
-export function entitlementsOrNull(deps: ApiDeps): EntitlementsService | null {
-  return deps.services?.entitlements ?? null;
-}
-
-/**
- * The billing-plane port — **503, not 500, when the deployment has no billing config.**
- *
- * This is the poisoned-KEK philosophy applied to billing: a deployment that was never
- * pointed at a billing plane (`BILLING_PLANE_URL` + `BILLING_PLANE_SECRET` — no Stripe
- * credential exists on this host at all) is not broken, it is pre-launch,
- * and the host must stay up and diagnosable. 503 says "this capability is not available here"
- * and leaves `/health` — and every non-billing route — completely unaffected. A 500 would say
- * "we have a bug", which is both false and the wrong thing to page someone about.
- *
- * A PARTIALLY configured deployment never reaches this: `loadHostConfig` throws at cold start
- * (all-or-nothing — half a plane block, or a leftover `STRIPE_*` variable), because a host
- * that answers 503 on the webhook while cheerfully accepting checkouts would take payments it
- * can never turn into credits. The same all-or-nothing law covers the PAIR: a host that arms
- * one of `billingPlane`/`entitlements` without the other is misarmed, and the 503 grammar here
- * is what its routes answer.
- */
-export function billingPlane(deps: ApiDeps): BillingPlanePort {
-  const svc = deps.services?.billingPlane;
-  if (!svc) throw new ServiceError("billing_unconfigured", 503, "billing is not configured on this deployment");
-  return svc;
-}
-
-/** The open entitlements service — same 503 grammar as {@link billingPlane}. */
-export function entitlements(deps: ApiDeps): EntitlementsService {
-  const svc = deps.services?.entitlements;
-  if (!svc) throw new ServiceError("billing_unconfigured", 503, "billing is not configured on this deployment");
-  return svc;
-}
-
-/**
  * The WaitlistService — **503, not 500, when the deployment has none.**
  *
- * Same posture as {@link billing}: a host that was never given a waitlist is not broken,
+ * A host that was never given a waitlist is not broken,
  * it is a host that does not serve the funnel (a native-only surface, a test harness whose
  * subject is something else). The service itself needs no configuration — its MAILER is
  * the optional part, and `WaitlistService` handles that absence internally by recording

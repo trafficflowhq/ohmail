@@ -96,11 +96,13 @@ export function formatStorageBytes(bytes: number, locale: string): string {
 }
 
 /**
- * THE ESTIMATE THAT TURNS BYTES INTO AN EMAIL COUNT — the client-side copy of
- * `BYTES_PER_STORED_EMAIL_ESTIMATE` (`packages/db/src/billing.ts`, where the measurement and
- * the round-against-us argument live). Restated because the webapp cannot import
- * `@trafficflow/db`; `test/landing-pricing-matches-plan-card.test.ts` compares the two
- * literals, so they cannot drift silently.
+ * THE ESTIMATE THAT TURNS BYTES INTO AN EMAIL COUNT.
+ *
+ * A round number, and it rounds AGAINST us: an over-estimate of the average stored message
+ * makes the count it produces conservative, so a person is never told they have more room than
+ * they do. Restated here rather than imported because the webapp cannot import the server's
+ * packages; `test/landing-pricing-matches-plan-card.test.ts` compares the two literals, so they
+ * cannot drift silently.
  */
 export const BYTES_PER_STORED_EMAIL_ESTIMATE = 25_000;
 

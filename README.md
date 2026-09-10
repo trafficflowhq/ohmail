@@ -568,12 +568,13 @@ typed, held in your own configuration file.
 **What's in this repository.** Everything ohmail runs on: the desktop app,
 the mail engine, the web interface, the sync API, and the background
 organizer. The only code that is not here is the machinery for billing our
-hosted customers — a separate private service this server talks to over a
-documented API; `packages/services/src/entitlements/plane-client.ts` is
-the open client of that API. The billing integration is optional — absent,
-there is no payment machinery — and a self-host install runs unmetered,
-on the same allowance the desktop's engine already uses. "Run the server
-yourself" below is the supported way to do that.
+hosted customers — a separate service this server reaches over a documented
+API; `packages/db/src/entitlements-client.ts` is the open client of it, and
+`ENTITLEMENTS_URL` is the one setting that points at one.
+
+Self-hosting has no plans, no metering and no billing surface — every limit
+is off, and AI features run on the provider keys you configure. "Run the
+server yourself" below is the supported way to do that.
 
 ## Run the server yourself
 

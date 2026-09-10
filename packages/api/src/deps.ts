@@ -610,19 +610,15 @@ export interface HealthConfig {
    *  · `"plane"`        — this host reaches a billing service over HTTP;
    *  · `"unconfigured"` — no billing service is configured and `/billing/*` answers 503.
    *
-   * (`"in-process"` — the Stripe SDK running in this same process — left the vocabulary when
-   * that composition was deleted; billing code lives in its own service now.)
-   *
-   * It exists because the failure mode of a billing-environment change is CAMOUFLAGED: a host
-   * that lost its billing configuration degrades to `billing_unconfigured`, which is also the
-   * legitimate pre-launch answer, so nothing else distinguishes "not configured yet" from
-   * "misconfigured by the last deploy". Two spaced `/health` reads after any deploy catch it
-   * through this field. Published on the unhealthy branches too — a dark host is exactly when
-   * the marker is worth most.
+   * It exists because the failure mode of a configuration change here is CAMOUFLAGED: a host
+   * that lost its entitlements URL degrades to unmetered, which is also a legitimate
+   * deployment, so nothing else distinguishes "self-hosted" from "misconfigured by the last
+   * deploy". Two spaced `/health` reads after any deploy catch it through this field. Published
+   * on the unhealthy branches too — a dark host is exactly when the marker is worth most.
    *
    * Safe to publish for `dbProvider`'s reason: fixed strings only, no URL, no secret.
    */
-  billing?: "plane" | "unconfigured" | null;
+  entitlements?: "configured" | "unmetered" | null;
   /**
    * **EVERY CONFIGURED PAGER ARM ON THIS HOST, AND WHETHER IT IS ACTUALLY DELIVERING.**
    *

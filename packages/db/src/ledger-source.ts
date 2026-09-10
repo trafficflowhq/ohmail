@@ -128,7 +128,7 @@ export function isSpendAction(value: unknown): value is SpendAction {
 }
 
 /**
- * The most an `attemptKey` may be. {@link MAX_SOURCE_LENGTH} caps the whole source at 200
+ * The most an `attemptKey` may be. The ledger caps a whole source at 200
  * characters, so a longer key would raise from inside the caller's transaction instead of being
  * refused where it was built.
  */

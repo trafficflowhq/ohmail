@@ -717,7 +717,7 @@ GRANT SELECT (id, account_id, delta, balance_after, reason, created_at)
 --
 -- ## The redaction is DENY-BY-DEFAULT, and that is the whole design
 --
--- `source` is a namespaced dedup identity (`packages/db/src/credits.ts`, `ledgerSources`).
+-- `source` is a namespaced dedup identity (`packages/db/src/ledger-source.ts`, `ledgerSources`).
 -- FIVE namespaces are safe to show verbatim, and each is safe for a reason you can check by
 -- reading it — not because anyone audited the values:
 --

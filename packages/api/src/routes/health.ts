@@ -2221,17 +2221,17 @@ export const healthRoutes: Route[] = [
       // `kek` on every branch, including the unhealthy ones, because a host that cannot reach its
       // database is exactly when knowing which family it dialled is worth most.
       const dbProvider = injected?.dbProvider ?? null;
-      // The billing COMPOSITION marker, on dbProvider's exact pattern: a fixed string, injected
-      // by the host, never a fault. It is the tripwire for a billing-environment change, whose
-      // failure mode is camouflaged (a lost billing configuration reads as the legitimate
-      // `billing_unconfigured`). Emitted on every branch, like dbProvider and for its reason.
-      const billing = injected?.billing ?? null;
+      // THE ENTITLEMENTS COMPOSITION MARKER, on dbProvider's exact pattern: a fixed string,
+      // injected by the host, never a fault. It is the tripwire for a configuration change whose
+      // failure mode is camouflaged — a host that lost its entitlements URL reads as a
+      // legitimately unmetered one. Emitted on every branch, like dbProvider and for its reason.
+      const entitlements = injected?.entitlements ?? null;
 
       // THE PAGER'S ARMS — the worker's boot announcement, in the idiom a serverless host has.
       //
       // A memory read (`HealthConfig.alertSinks` says why it is a capability and not a value), so
       // it costs no round trip and is published on EVERY branch below, beside `dbProvider` and
-      // `billing`: a host that cannot reach its database is exactly when "does this deployment
+      // `entitlements`: a host that cannot reach its database is exactly when "does this deployment
       // still have a way to page anybody?" is worth the most.
       //
       // Two keys, from one call. `alertSinks` is the same key, the same shape and the same closed
@@ -2285,7 +2285,7 @@ export const healthRoutes: Route[] = [
           errorCode: probe.errorCode,
           kek,
           dbProvider,
-          billing,
+          entitlements,
           ...pager,
           ...staffFaults,
         });
@@ -2294,7 +2294,7 @@ export const healthRoutes: Route[] = [
         return healthResponse(503, {
           ok: false, version, buildSource, dbLatencyMs: probe.dbLatencyMs, error: "database_probe_empty", kek,
           dbProvider,
-          billing,
+          entitlements,
           ...pager,
           ...staffFaults,
         });
@@ -2318,7 +2318,7 @@ export const healthRoutes: Route[] = [
         cookieAuth: deps.allowCookieAuth !== false,
         kek,
         dbProvider,
-        billing,
+        entitlements,
         ...pager,
         ...staffFaults,
         ...(fault ?? {}),

@@ -3,8 +3,7 @@ import {
   EVICT_BATCH_BODIES, EVICT_HIGH_WATER_RATIO, EVICT_LOW_WATER_RATIO,
   type Tx,
 } from "@trafficflow/db";
-import { storageCapOf } from "@trafficflow/db/cloud";
-import type { Logger } from "@trafficflow/core";
+import { UNMETERED_STORAGE_CAP, type Logger, type StorageCap } from "@trafficflow/core/mail";
 
 /**
  * THE ROLLING-WINDOW TRIM — the background half of the at-cap behaviour ratified 2026-08-21.
@@ -31,8 +30,7 @@ import type { Logger } from "@trafficflow/core";
  *  · The probe is two indexed reads (cap, counter); for every account under the high-water mark
  *    the pass is those reads and nothing else.
  *
- * `capBytes === null` (no subscription row) is the roster's own fail-open, inherited: such an
- * account stores unmetered and is never trimmed.
+ * An UNBOUNDED cap (an unmetered install) is never trimmed: there is no ceiling to keep under.
  */
 export const EVICT_ROUNDS_PER_CYCLE = 4;
 
@@ -47,11 +45,14 @@ export interface StorageEvictResult {
 
 export async function storageEvictPass(
   db: Tx,
-  opts: { accountId: string; log?: Logger },
+  opts: { accountId: string; log?: Logger; storageCap: (accountId: string) => Promise<StorageCap> },
   now: Date,
 ): Promise<StorageEvictResult> {
   const { accountId } = opts;
-  const cap = await db.transaction(async (tx) => storageCapOf(tx as Tx, accountId, now));
+  // Resolved OUTSIDE any transaction: the answer may be a network hop to whoever operates
+  // metering, and one taken inside a transaction holds its connection across that hop.
+  const resolved = await opts.storageCap(accountId);
+  const cap = resolved === UNMETERED_STORAGE_CAP ? null : resolved;
   if (cap === null || cap <= 0) return { ran: false, evicted: 0, freedBytes: 0, capped: false };
 
   const used = await storageUsageOf(db, accountId);

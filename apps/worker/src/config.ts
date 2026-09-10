@@ -244,6 +244,15 @@ export const DEFAULT_ALERT_INTERVAL_MS = 60_000;
 
 export interface WorkerConfig {
   databaseUrl: string;          // session-mode / direct URL (NOT the transaction pooler)
+  /**
+   * WHERE THIS HOST ASKS ABOUT MONEY, or `null` on a deployment that meters nothing.
+   *
+   * The organizer charges AI actions, so it needs the same answer the API host does and reaches
+   * it the same way: `ENTITLEMENTS_URL` + `BILLING_PLANE_SECRET`, present or absent as a WHOLE.
+   * `null` is a NAMED state, not an unfinished composition — the spend call sites are handed
+   * `UNMETERED` and charge nothing, which is a self-hosted or standalone install's truth.
+   */
+  entitlements: { url: string; secret: string } | null;
   // ── accountId + mailboxId + imap are BOOTSTRAP-ONLY. The worker syncs
   // ALL enabled mailboxes of ALL accounts in its shard, reading credentials from
   // `mailbox_credentials`.
@@ -863,6 +872,35 @@ function apiCronFrom(env: NodeJS.ProcessEnv): { baseUrl: string; secret: string 
   return { baseUrl: parsed.origin, secret };
 }
 
+/**
+ * The entitlements block — the same two variables and the same all-or-nothing rule the API host
+ * validates, because a half-configured host would charge nobody while looking configured.
+ *
+ * Bare https origin, no path (the client appends `/v1/…`), no credentials, no query.
+ */
+function loadEntitlements(env: NodeJS.ProcessEnv): { url: string; secret: string } | null {
+  const raw = (env.ENTITLEMENTS_URL ?? "").trim();
+  if (raw === "") return null;
+  const secret = (env.BILLING_PLANE_SECRET ?? "").trim();
+  if (secret === "") {
+    throw new WorkerConfigError("BILLING_PLANE_SECRET",
+      "ENTITLEMENTS_URL is set without BILLING_PLANE_SECRET — the entitlements endpoints are the "
+      + "entitlements program's own and its bearer is that secret");
+  }
+  let url: URL;
+  try { url = new URL(raw); } catch {
+    throw new WorkerConfigError("ENTITLEMENTS_URL", "ENTITLEMENTS_URL must be an absolute https URL");
+  }
+  if (url.protocol !== "https:") {
+    throw new WorkerConfigError("ENTITLEMENTS_URL", "ENTITLEMENTS_URL must use https — the bearer rides every request");
+  }
+  if (url.username || url.password || url.search || url.hash || url.pathname !== "/") {
+    throw new WorkerConfigError("ENTITLEMENTS_URL",
+      "ENTITLEMENTS_URL must be a bare origin with no path, query, fragment or credentials");
+  }
+  return { url: url.origin, secret };
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
   /* ONE DEFINITION, IMPORTED. This was a fourth copy of the same three-way fallback, and copies
      of it had already drifted: two repair commands read `TF_ENVIRONMENT`, a variable spelled
@@ -894,6 +932,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
   }
   return {
     databaseUrl: url,
+    entitlements: loadEntitlements(env),
     // BOOTSTRAP-ONLY. It pairs with TF_MAILBOX_ID for the one-shot env-creds seed and
     // scopes the single-mailbox reconcile backstop; it can NOT shrink the worker's roster.
     accountId: env.TF_ACCOUNT_ID,

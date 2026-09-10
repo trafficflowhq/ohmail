@@ -7,7 +7,7 @@ import { silentLogger, type Logger } from "@trafficflow/core";
  * ── WHY THE WORKER AND NOT VERCEL CRON, WHICH IS THE OBVIOUS THING ──────────────────────────
  *
  * Three of the API's internal routes exist to be run on a clock: the billing reconciliation
- * (`/internal/billing/reconcile/run`, hourly), the web-session reaper (`/internal/sessions/reap`,
+ * the web-session reaper (`/internal/sessions/reap`,
  * daily) and the SMTP `SIZE` back-fill (`/internal/mailboxes/smtp-size`, daily — it MUST run on
  * the API host, whose SMTP egress works; the sync host's is port-blocked, measured in
  * `./smtp-size.ts`). All three were scheduled as Vercel Cron entries in the API deployment's
@@ -65,9 +65,8 @@ import { silentLogger, type Logger } from "@trafficflow/core";
  */
 export interface ApiCronTarget {
   /** Closed name, stable across renames of the path — the key an operator greps for. */
-  target: "billing_reconcile" | "sessions_reap" | "smtp_size" | "scheduled_send"
-    | "send_reconcile" | "away_responder" | "billing_invoice_reconcile" | "platform_costs"
-    | "platform_signals";
+  target: "sessions_reap" | "smtp_size" | "scheduled_send"
+    | "send_reconcile" | "away_responder" | "platform_signals";
   /** The API route, poked as `GET {baseUrl}{route}` with the bearer secret. */
   route: string;
   /** The cadence. Jitter (up to {@link jitterMs}) is ADDED per wait, never subtracted. */
@@ -94,16 +93,6 @@ export interface ApiCronTarget {
  * not a discovery. The same test asserts `/internal/alerts/run` does NOT appear here.
  */
 export const API_CRON_TARGETS: readonly ApiCronTarget[] = [
-  {
-    target: "billing_reconcile",
-    route: "/internal/billing/reconcile/run",
-    everyMs: 60 * 60 * 1000,
-    // Past the rolling-deploy takeover window (measured seconds, bounded by lock heartbeats),
-    // and FIRST of the three: the staleness alert (`billing_reconciliation_stale`, 6 h) is the
-    // net under this schedule, and a fresh leader should put a run on the ledger promptly.
-    firstDelayMs: 90 * 1000,
-    timeoutMs: 120 * 1000,
-  },
   {
     target: "sessions_reap",
     route: "/internal/sessions/reap",
@@ -203,56 +192,6 @@ export const API_CRON_TARGETS: readonly ApiCronTarget[] = [
     // ceiling; this bound is the caller's mirror of that ceiling, not a hope.
     timeoutMs: 60 * 1000,
     jitterMs: 6 * 1000,
-  },
-  {
-    // THE INVOICE MIRROR'S HEAL (cloud 0029). A separate target from `billing_reconcile` above
-    // rather than a second job on its clock, and the separation is a budget and a cadence:
-    // that invocation already spends up to forty seconds walking Stripe's subscription list and
-    // re-driving apply transactions against a sixty-second ceiling, and an invoice is a RECORD
-    // rather than live state — a lost one is equally lost an hour later and equally healed a day
-    // later, so hourly would spend twenty-four times the rate limit to notice the same thing at
-    // the same time.
-    //
-    // EVERY 24 h, and the pass's own listing window (35 days) is what makes that safe rather than
-    // the cadence: the window is strictly longer than the cadence it covers, so a pass that
-    // skipped a night still sees everything the missed one would have.
-    target: "billing_invoice_reconcile",
-    route: "/internal/billing/invoices/reconcile/run",
-    everyMs: 24 * 60 * 60 * 1000,
-    // Its OWN stagger, deliberately not sharing `billing_reconcile`'s 90 s: both dial the plane,
-    // which dials Stripe, and two listings starting together on every leader takeover is two
-    // rate-limit budgets spent at once. Late enough that the hourly subscription pass has
-    // finished its first walk.
-    firstDelayMs: 6 * 60 * 1000,
-    // The pass bounds itself at 40 s (`INVOICE_RECONCILE_DEADLINE_MS`) inside a route whose
-    // platform ceiling is 60 s; this is the caller's mirror of that ceiling, not a hope.
-    timeoutMs: 120 * 1000,
-  },
-  {
-    // WHAT THE VENDORS CHARGE (cloud 0029) — two vendors asked, four times a day.
-    //
-    // SIX HOURS rather than daily, and the reason is the CURRENT month: both providers with an
-    // adapter report usage-to-date, so the open month's figure moves all day and a
-    // once-a-day read makes the board's projection up to 24 hours behind on the one number an
-    // operator is watching precisely because it is moving. It is also what the staleness word
-    // is written against — `COST_STALE_AFTER_MS` is 24 h, four cadences, so a pass missed on a
-    // deploy does not make a healthy provider read as one that stopped answering.
-    //
-    // A deployment that has configured no provider credential gets `unconfigured` from every
-    // adapter, so this clock writes nothing and SAYS SO — which the board renders as "not
-    // configured", and which is deliberately distinguishable from a clock that never fired.
-    //
-    // The three providers with no adapter (there is no billing API to call for any of them) are
-    // never asked at all: `API_COST_PROVIDERS` is the list, and a provider on it with no
-    // reachable endpoint would report `failed` four times a day for ever, which is how a real
-    // outage becomes background noise.
-    target: "platform_costs",
-    route: "/internal/platform-costs/run",
-    everyMs: 6 * 60 * 60 * 1000,
-    // Its own stagger. Nothing here is urgent — a cost figure is hours old by nature — so it
-    // goes last, behind every pass that has a customer waiting on it.
-    firstDelayMs: 9 * 60 * 1000,
-    timeoutMs: 60 * 1000,
   },
   {
     // WHAT THE PLATFORM SERVED (cloud 0030) — the API host's own 5xx rate, which the API host
