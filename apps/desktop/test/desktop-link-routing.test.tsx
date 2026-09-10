@@ -72,11 +72,10 @@ async function openServerDoor(): Promise<HTMLElement> {
   root = createRoot(mount);
   await act(async () => {
     root!.render(
-      h(
-        NextIntlClientProvider,
-        { locale: "en", messages: en as never, timeZone: "Europe/Zurich" },
-        h(DoorChooser, { start: "server", onEntered: () => {} }),
-      ),
+      h(NextIntlClientProvider, {
+        locale: "en", messages: en as never, timeZone: "Europe/Zurich",
+        children: h(DoorChooser, { start: "server", onEntered: () => {} }),
+      }),
     );
   });
   return mount;
@@ -218,11 +217,10 @@ describe("a redeem refused while an earlier start over is pending", () => {
     root = createRoot(mount);
     await act(async () => {
       root!.render(
-        h(
-          NextIntlClientProvider,
-          { locale: "en", messages: en as never, timeZone: "Europe/Zurich" },
-          h(DoorChooser, { start: "host", onEntered: () => {} }),
-        ),
+        h(NextIntlClientProvider, {
+          locale: "en", messages: en as never, timeZone: "Europe/Zurich",
+          children: h(DoorChooser, { start: "host", onEntered: () => {} }),
+        }),
       );
     });
     const el = mount;
