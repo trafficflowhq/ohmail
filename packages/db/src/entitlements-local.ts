@@ -5,7 +5,7 @@ import { makeAiCreditGate } from "./ai-gate.js";
 import type { WeightedDebitReason } from "./ledger-source.js";
 import type { Tx } from "./change-log.js";
 import type {
-  AccessVerdict, EntitlementsPort, ReleaseOutcome, SpendVerdict,
+  AccessVerdict, EntitlementsPort, ReleaseOutcome, SpendAction, SpendOutcome, SpendRelease,
 } from "./entitlements-port.js";
 
 /**
@@ -35,13 +35,27 @@ export interface LocalEntitlementsConfig {
   manageLink?: (accountId: string) => Promise<{ url: string } | null>;
   /** Erasure's "stop the money", composed by the host for the same reason. Absent ⇒ `"none"`. */
   releaseAccount?: (accountId: string) => Promise<ReleaseOutcome>;
-  /** Which ledger namespace `spend` books into. Defaults to the classify weight. */
-  spendReason?: WeightedDebitReason;
 }
+
+/**
+ * The program prices per CALL SITE; this database's gate books per ledger REASON. One mapping,
+ * here, so the two can never disagree — the same table the program's contract states.
+ */
+const REASON_OF: Record<SpendAction, WeightedDebitReason> = {
+  classify_ingest: "debit_classify",
+  screener: "debit_classify",
+  draft: "debit_draft",
+  propose: "debit_propose",
+  workflow: "debit_workflow",
+};
 
 export function makeLocalEntitlements(cfg: LocalEntitlementsConfig): EntitlementsPort {
   const now = cfg.now ?? (() => new Date());
-  const reason: WeightedDebitReason = cfg.spendReason ?? "debit_classify";
+  /** The Screener is the one call site that serializes its spenders — the gate's `exclusive`. */
+  const gateFor = (action: SpendAction, accountId: string): ReturnType<typeof makeAiCreditGate> =>
+    makeAiCreditGate(cfg.db, accountId, {
+      reason: REASON_OF[action], now, ...(action === "screener" ? { exclusive: true } : {}),
+    });
 
   return {
     /**
@@ -66,28 +80,40 @@ export function makeLocalEntitlements(cfg: LocalEntitlementsConfig): Entitlement
         limits: {
           mailboxes: ent.mailboxLimit,
           storageBytes: ent.storageBytesLimit,
+          canAddMailbox: ent.canAddMailbox,
           aiEnabled: ent.aiEnabled,
         },
       };
     },
 
     /**
-     * The AI gate's own decision, in the port's four words. `inflight` has no word here and maps
-     * to `fault`: both degrade, and degrading is the only safe arm — answering `duplicate` would
-     * tell a second concurrent caller to proceed, which is the paid-twice defect the gate's
-     * exclusive claim exists to prevent.
+     * The AI gate's own decision, one-to-one. Every one of `AiSpendOutcome`'s five shapes has a
+     * word here, which is the reason the port carries five: folding `inflight` into `duplicate`
+     * tells the loser of a race to proceed, and folding a state refusal into `insufficient`
+     * demands payment from a funded account whose owner switched AI off.
      */
-    async spend(accountId: string, action: string, attemptKey: string): Promise<SpendVerdict> {
-      const gate = makeAiCreditGate(cfg.db, accountId, { reason, now });
-      const outcome = await gate.spend(attemptKey, { action });
-      if (outcome.permitted) return outcome.charged ? "ok" : "duplicate";
-      if (outcome.refusal === "quantity" || outcome.refusal === "state") return "insufficient";
-      return "fault";
+    async spend(accountId: string, action: SpendAction, attemptKey: string): Promise<SpendOutcome> {
+      const outcome = await gateFor(action, accountId).spend(attemptKey, { action });
+      if (outcome.permitted) {
+        return outcome.charged
+          ? { verdict: "ok", charged: true, attempt: outcome.attempt }
+          : { verdict: "duplicate", charged: false, attempt: outcome.attempt };
+      }
+      if (outcome.refusal === "quantity") return { verdict: "insufficient", reason: outcome.reason };
+      if (outcome.refusal === "state") return { verdict: "refused", reason: outcome.reason };
+      if (outcome.refusal === "inflight") return { verdict: "inflight", source: outcome.source };
+      return { verdict: "fault" };
     },
 
-    async release(accountId: string, attemptKey: string): Promise<void> {
-      const gate = makeAiCreditGate(cfg.db, accountId, { reason, now });
-      await gate.refundAttempt(attemptKey);
+    /**
+     * `refund: false` gives the exclusive claim back and leaves the charge standing — the work was
+     * delivered, and an open attempt is what makes its retries free. `true` also reverses the
+     * named attempt, which is the abandoned case.
+     */
+    async release(accountId: string, r: SpendRelease): Promise<void> {
+      const gate = gateFor(r.action, accountId);
+      if (r.refund) await gate.refundAttempt(r.attempt);
+      await gate.release?.(r.attemptKey);
     },
 
     async manageLink(accountId: string): Promise<{ url: string } | null> {
@@ -106,7 +132,9 @@ export function makeLocalEntitlements(cfg: LocalEntitlementsConfig): Entitlement
       try {
         return await cfg.releaseAccount(accountId);
       } catch {
-        return "failed";
+        // Never "none": the customer's screen must not read "nothing to cancel" when the truth
+        // is "we could not cancel it" — that is a deleted account still being charged.
+        return "cancel_failed";
       }
     },
   };

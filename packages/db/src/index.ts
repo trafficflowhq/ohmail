@@ -328,5 +328,5 @@ export {
   UNMETERED, UNMETERED_ACCESS, accessOf, isMetered,
   type EntitlementsPort, type EntitlementsComposition,
   type AccessVerdict, type AccessLimits, type AccessRefusal,
-  type SpendVerdict, type ReleaseOutcome,
+  type SpendOutcome, type SpendAction, type SpendRelease, type ReleaseOutcome,
 } from "./entitlements-port.js";

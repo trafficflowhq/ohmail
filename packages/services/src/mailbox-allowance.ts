@@ -106,6 +106,13 @@ export interface MailboxAllowance {
    * how a refusal ends up quoting a number the gate did not use.
    */
   mailboxLimit: number | null;
+  /**
+   * MAY this account connect another at all, FROM THE PORT — a separate question from the count,
+   * and not derivable from it: an account may retain the mailboxes it has and be forbidden
+   * another. The local `entitlements.reason` still chooses the SENTENCE, which is the one half of
+   * this decision the port deliberately does not carry.
+   */
+  canAddMailbox: boolean;
   entitlements: Entitlements;
   /**
    * Mailboxes that currently OCCUPY a slot: every row whose `status` is not `'disabled'`.
@@ -198,7 +205,7 @@ export class MailboxAllowanceError extends ServiceError {
  * and an account whose plan is 0 mailboxes must read `no_subscription` rather than `at_limit`.
  */
 export function decideMailboxAllowance(a: MailboxAllowance): MailboxRefusal | null {
-  if (!a.entitlements.canAddMailbox) {
+  if (!a.canAddMailbox) {
     return a.entitlements.reason === "no_subscription" ? "no_subscription" : "not_permitted";
   }
   // `null` is UNBOUNDED, not zero: an unmetered install has no count to exceed.
@@ -304,8 +311,9 @@ export async function readMailboxAllowance(
   const suspended = await isSuspended(tx, accountId);
 
   return {
-    // The port decides how many; a refused account may add none at all.
+    // The port decides both, and a refused account may add none at all.
     mailboxLimit: input.access.ok ? input.access.limits.mailboxes : 0,
+    canAddMailbox: input.access.ok ? input.access.limits.canAddMailbox : false,
     entitlements: entitlementsFor({
       sub,
       balance,

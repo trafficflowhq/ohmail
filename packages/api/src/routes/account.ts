@@ -87,8 +87,7 @@ export const accountRoutes: Route[] = [
        * STOP THE MONEY. Two arms, and the ORDER is deliberate: while this host still composes the
        * in-tree billing service, that arm answers, because it is the one holding the subscription.
        * The port arm is what a host answers with once the state has moved out — `releaseAccount`
-       * is bounded, never throws, and its three outcomes are the three this response has always
-       * carried: nothing to stop, stopped, could not be stopped.
+       * is bounded, never throws, and answers this response's own three words.
        *
        * Preferring the port while the local service is armed would report `none` for every erasure
        * on a host whose port has no manage surface yet — a customer deleted and still charged,
@@ -102,9 +101,9 @@ export const accountRoutes: Route[] = [
       const port = plane && billing ? null : entitlementsPort(deps);
       if (port) {
         try {
-          const outcome = await port.releaseAccount(ctx.accountId);
-          subscription = outcome === "released" ? "cancelled"
-            : outcome === "failed" ? "cancel_failed" : "none";
+          // ONE-TO-ONE: the port answers this response's own three words, so nothing translates
+          // between them and none of them can be reported as another.
+          subscription = await port.releaseAccount(ctx.accountId);
         } catch {
           subscription = "cancel_failed";
         }

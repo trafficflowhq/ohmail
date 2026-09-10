@@ -917,34 +917,41 @@ export interface BillingPlaneHostConfig {
 export interface EntitlementsHostConfig {
   /** The program's origin (`https://…`), normalized — no path, no query, no credentials. */
   url: string;
-  /** `ENTITLEMENTS_SECRET` — the bearer every `/v1/*` call presents. >= 24 chars. */
+  /** `BILLING_PLANE_SECRET` — the program's own bearer, per its wire contract. >= 24 chars. */
   secret: string;
 }
 
-/** The two variables that make up the entitlements block. Both present, or both absent. */
-const ENTITLEMENTS_VARS = ["ENTITLEMENTS_URL", "ENTITLEMENTS_SECRET"] as const;
+/**
+ * The entitlements block: `ENTITLEMENTS_URL` plus the program's OWN secret.
+ *
+ * One program, one credential — the entitlements endpoints and the Stripe machinery are the same
+ * service, and its contract names `BILLING_PLANE_SECRET` as the bearer. A second variable holding
+ * the same value is a second thing to rotate and a second way for the two to disagree.
+ */
+const ENTITLEMENTS_VARS = ["ENTITLEMENTS_URL", "BILLING_PLANE_SECRET"] as const;
 
 /**
- * The entitlements block — **both, or none**, on {@link loadBillingPlaneConfig}'s exact terms and
- * validated by the same rules. "None" is a host that answers from its own tables; "some" is a host
- * someone tried to configure and got wrong, and a client that 401s every call would fail OPEN by
- * design — every account allowed, silently, which is the one failure nobody would notice.
+ * The entitlements block, validated on {@link loadBillingPlaneConfig}'s exact terms.
+ *
+ * `ENTITLEMENTS_URL` UNSET ⇒ no client, and this host answers from its own tables — which is the
+ * state until the cutover. SET without the secret is a host someone tried to configure and got
+ * wrong, and it is refused at cold start rather than at request time: a client whose every call
+ * 401s would fail OPEN by design — every account allowed, silently, which is the one failure
+ * nobody notices from the outside.
  *
  * Every message names the VARIABLE and never the value.
  */
 export function loadEntitlementsConfig(env: NodeJS.ProcessEnv): EntitlementsHostConfig | null {
-  const present = ENTITLEMENTS_VARS.filter((v) => (env[v] ?? "").trim() !== "");
-  if (present.length === 0) return null;
-  if (present.length < ENTITLEMENTS_VARS.length) {
-    const missing = ENTITLEMENTS_VARS.filter((v) => !present.includes(v));
+  if ((env.ENTITLEMENTS_URL ?? "").trim() === "") return null;
+  if ((env.BILLING_PLANE_SECRET ?? "").trim() === "") {
     throw new Error(
-      "Entitlements are PARTIALLY configured, which is never a valid deployment: set both " +
-        `of ${ENTITLEMENTS_VARS.join(", ")} or neither. Missing: ${missing.join(", ")}`,
+      "ENTITLEMENTS_URL is set without BILLING_PLANE_SECRET, which is never a valid deployment: "
+        + "the entitlements endpoints are the billing plane's own, and its bearer is that secret.",
     );
   }
-  const secret = env.ENTITLEMENTS_SECRET!.trim();
+  const secret = env.BILLING_PLANE_SECRET!.trim();
   if (secret.length < 24) {
-    throw new Error("ENTITLEMENTS_SECRET must be at least 24 characters");
+    throw new Error("BILLING_PLANE_SECRET must be at least 24 characters");
   }
   const raw = env.ENTITLEMENTS_URL!.trim();
   let url: URL;
