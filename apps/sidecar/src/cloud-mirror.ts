@@ -358,8 +358,18 @@ export const WINDOW_REFUSALS_MAX = 3;
  * The re-pull is the ordinary bootstrap machinery — 500-row pages, one transaction and one cursor
  * write per page, resumable after a crash — not a discard: `message_bodies` is keyed on
  * `message_id` alone and entity ids are preserved, so the body store is untouched by it.
+ *
+ * ── VERSION 2: THE TRIAGE STATE'S IDENTITY ──────────────────────────────────────────────────
+ *
+ * Same shape, one table over. `message_states` rows were written with a LOCAL random id while
+ * the change log announced them under the hosted one, so the local `/sync` could not
+ * materialize them and served every triage state as a delete tombstone — no pile, and parked
+ * mail left standing in the Ohbox. The upsert carries the hosted id now, and this bump is what
+ * reaches the rows already on disk: a state nobody touches again emits no delta, so an
+ * incremental drain would repair only the states that happen to change and leave the rest
+ * wrong for ever.
  */
-export const CURSOR_VERSION = 1;
+export const CURSOR_VERSION = 2;
 
 interface CursorState {
   /**
@@ -665,8 +675,9 @@ const isBootstrapCursor = (s: string): boolean => !s || s === "0";
  * deleted on Cloud while the mirror was offline — its tombstone since fallen below the retention
  * horizon — is simply absent from the replay, and a plain re-pull would leave the local row as a
  * PHANTOM forever. The fix is mark-and-sweep: tag every managed row this generation writes, then
- * delete the managed rows it never touched. Membership is keyed by each table's own id, except
- * `message_state`, whose `/sync` id is its `messageId` (as {@link applyPage} records it).
+ * delete the managed rows it never touched. Membership is keyed by each table's own id — every
+ * type, `message_state` included: its DTO carries no `id`, which is what once made this set (and
+ * the sweep, and the delete arm) key on the messageId while {@link applyPage} recorded the row id.
  */
 interface MarkSet {
   add(id: string): void;
@@ -1281,7 +1292,27 @@ async function applyUpsert(
       const s = ch.entity as MessageStateDTO | undefined;
       if (!s) return false;
       if (!(await messagePresent(tx, s.messageId))) return false;
+      /**
+       * THE HOSTED ROW'S ID, CARRIED — the one field this case used to leave to `defaultRandom()`.
+       *
+       * `MessageStateDTO` is the only DTO on the wire with no `id` of its own, so this insert
+       * omitted one and let PGlite mint a random uuid, while `applyPage` recorded the local
+       * change-log row under the HOSTED id (`ch.id`) like every other type. The local `/sync`
+       * materializes a `message_state` by `message_states.id`, found nothing under that id, and —
+       * by the delta contract — served the change as a DELETE TOMBSTONE. So a Cloud-door install
+       * announced every triage state and withdrew it in the same breath: `parkedMessageIds` and
+       * `triagePiles` read that entity, so nothing was held out of the Ohbox and nothing was
+       * listed under Resurface, while `MessageDTO.triage` — joined by MESSAGE id — landed
+       * correctly and kept the row's "back tomorrow" chip. Mail parked until Tuesday sat unread
+       * in the Ohbox wearing the date it was waiting for.
+       *
+       * The conflict target stays `message_id` (the unique the hosted table also carries), so an
+       * install whose rows were minted before this line HEALS in place on the next page rather
+       * than needing a migration; `id` is in the `set` for exactly that.
+       */
+      const stateId = ch.id;
       await tx.insert(messageStates).values({
+        id: stateId,
         accountId: world.accountId,
         messageId: s.messageId,
         state: s.state,
@@ -1291,13 +1322,16 @@ async function applyUpsert(
       }).onConflictDoUpdate({
         target: messageStates.messageId,
         set: {
+          id: stateId,
           state: s.state,
           bubbleUpAt: asDate(s.bubbleUpAt),
           setAt: asDate(s.setAt) ?? now,
           updatedAt: asDate(s.updatedAt) ?? now,
         },
       });
-      gen?.message_state.add(s.messageId);
+      // Marked by the ROW id, which is what `sweepPhantoms` now selects and what `applyDelete`
+      // keys on — one spelling of this entity's identity across all three.
+      gen?.message_state.add(stateId);
       return true;
     }
     case "rule": {
@@ -1545,7 +1579,10 @@ async function applyDelete(tx: Tx, ch: SyncChange, detached?: DetachedSurvivor[]
       return true;
     }
     case "message_state":
-      await tx.delete(messageStates).where(eq(messageStates.messageId, ch.id));
+      // BY ROW ID, the same identity the upsert carries. Keyed on `message_id` this matched
+      // nothing for a hosted delete, whose change names the row — so an un-park done on another
+      // device left the pile entry standing here for ever.
+      await tx.delete(messageStates).where(eq(messageStates.id, ch.id));
       return true;
     case "rule":
       await tx.delete(rules).where(eq(rules.id, ch.id));
@@ -1690,9 +1727,10 @@ async function sweepPhantoms(db: LocalDb, world: LocalWorld, gen: BootstrapGen, 
       if (!gen.approval.has(r.id)) await sweepOne("approval", r.id);
     for (const r of await tx.select({ id: drafts.id }).from(drafts).where(eq(drafts.accountId, world.accountId)))
       if (!gen.draft.has(r.id)) await sweepOne("draft", r.id);
-    // `message_state`'s /sync id is its messageId (see applyPage's record call).
-    for (const r of await tx.select({ messageId: messageStates.messageId }).from(messageStates).where(eq(messageStates.accountId, world.accountId)))
-      if (!gen.message_state.has(r.messageId)) await sweepOne("message_state", r.messageId);
+    // By ROW id, like every other type: a `message_state`'s /sync id IS its row id (the DTO is
+    // the one with no `id` field, which is what made this read as the messageId).
+    for (const r of await tx.select({ id: messageStates.id }).from(messageStates).where(eq(messageStates.accountId, world.accountId)))
+      if (!gen.message_state.has(r.id)) await sweepOne("message_state", r.id);
     for (const r of await tx.select({ id: rules.id }).from(rules).where(eq(rules.accountId, world.accountId)))
       if (!gen.rule.has(r.id)) await sweepOne("rule", r.id);
     for (const r of await tx.select({ id: messages.id }).from(messages).where(eq(messages.accountId, world.accountId)))

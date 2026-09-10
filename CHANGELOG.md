@@ -26,6 +26,13 @@ See [Status](README.md#status--read-this-first).
 - A move or delete made from a paired device just as another machine took over organizing the
   mailbox is handed to that machine, instead of being recorded on the old one and never sent.
 
+### Triage piles on the desktop
+
+- Mail you set aside, put in Answer Later or parked until a later time stayed in your Ohbox
+  and was missing from its pile. Parked mail now waits under Resurface until its time comes,
+  as it does on the web.
+- Clearing one of those piles on another device now clears it here too.
+
 ### Away replies
 
 - Saving away settings from a device that does not organize the mailbox says the change is
