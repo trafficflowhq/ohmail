@@ -280,6 +280,15 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     fence: "leader lock",
   },
   {
+    name: "api_fault_prune",
+    module: `${W}/api-fault-prune.ts`, entry: "apiFaultPrunePass",
+    triggers: ["interval"],
+    cadence: "on the alert pass's own cadence, immediately after it",
+    budget: "one indexed range scan on api_faults.at (api_faults_at_idx), empty when nothing is due",
+    owns: "api_faults keeps seven days and no more — the table the reliability rules read",
+    fence: "leader lock (it rides the alert pass, which holds it)",
+  },
+  {
     name: "api_cron",
     module: `${W}/api-cron.ts`, entry: "startApiCron",
     triggers: ["interval"],

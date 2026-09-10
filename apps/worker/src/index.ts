@@ -85,6 +85,7 @@ import { threadJoinHealPass, type ThreadJoinHealCursor } from "./thread-join-hea
 import { inboundQuietPass } from "./inbound-quiet.js";
 import { makeAwayReplySweep } from "./away-reply-sweep.js";
 import { ruleRetroPass } from "./rule-retro.js";
+import { apiFaultPrunePass } from "./api-fault-prune.js";
 import { ohboxTidyPass } from "./ohbox-tidy.js";
 import { screenerAutoApplyPass } from "./screener-auto.js";
 import { screenerAutoSuggestPass } from "./screener-auto-suggest.js";
@@ -5865,6 +5866,11 @@ export async function startWorkerWithLock(
           });
         }
         for (const key of result.resolved) log.info("alert_resolved", { alertKey: key });
+        // `api_faults`' seven-day retention, on the cadence of the arm that reads the table.
+        // AFTER the pass, never before: the rules read a ten-minute window, so a prune ahead of
+        // them could only ever delete rows they were about to ignore — and if it throws, the
+        // pass has already delivered. It swallows its own faults; see the module.
+        await apiFaultPrunePass(db as unknown as Tx, new Date(), log);
         if (result.notified.length > 0) {
           log.warn("alert_notified", {
             alertKeys: result.notified.map((a) => a.key),
