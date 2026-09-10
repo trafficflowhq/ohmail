@@ -3166,7 +3166,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * server is talking at all, and a driver that knows its socket is gone has already
        * reported through {@link noteConnectionDead}.
        */
-      const heartbeat = async (): Promise<void> => {
+      const probeConnection = async (): Promise<void> => {
         /* A stopped runtime and a connection already known dead are both states in which asking
            changes nothing; the second is `redialIfDead`'s to act on. */
         if (stopped || connectionDeadSince !== null) return;
@@ -3204,6 +3204,34 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         /* Re-checked after the await, generation included: this heartbeat was issued on ONE
            connection, and a re-dial or a `detach()` can land while it is outstanding. */
         if (stopped || gen !== generation || connectionDeadSince !== null) return;
+        /* ── AN UNANSWERED PROBE IS NOT YET A DEAD LINK: ASK WHETHER THE SERVER IS TALKING ────
+         *
+         * imapflow writes one command at a time (`imap-flow.js:611-622`: `trySend` sends only
+         * while nothing is in flight), so a NOOP issued during a legitimately long FETCH is
+         * still sitting in the queue when its window elapses — and force-closing there killed a
+         * healthy connection, reported the mailbox unreachable and threw the cycle away. The
+         * probe's window alone cannot tell that from a half-open link, because in both the probe
+         * is unanswered and the socket is up.
+         *
+         * The server's own bytes can. A streaming FETCH is heard from continuously; a half-open
+         * link is heard from not at all. So the window is charged to the connection only while
+         * it is ALSO silent, and a long healthy command is never interrupted by this.
+         *
+         * `null` is UNKNOWN, not silence, and it is deliberately read as silence here: an
+         * adapter that cannot say leaves the window as the only evidence, which is what shipped
+         * before. Reading it the other way would make the detector unable to fire. */
+        const heardMs = who.lastServerActivityAt?.()?.getTime() ?? null;
+        if (heardMs !== null && now().getTime() - heardMs < heartbeatTimeoutMs) {
+          log("mailbox_heartbeat_deferred", {
+            mailboxId: mb.id,
+            totalMs: heartbeatTimeoutMs,
+            reason: "the connection did not answer an IMAP NOOP inside the heartbeat window, and " +
+              "the server was heard from inside that same window — so the probe is queued " +
+              "behind a command that is still running rather than lost on a dead link. The " +
+              "connection is left alone and asked again next window",
+          });
+          return;
+        }
         connectionDeadSince = now();
         connectionDeadBy = "heartbeat";
         outageSince ??= connectionDeadSince;               // the person's clock; see the field
@@ -3218,6 +3246,46 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         });
         // The INSTANCE, never the binding: a re-dial may already have installed a new adapter.
         try { who.forceClose?.(); } catch { /* the socket is going away regardless */ }
+      };
+
+      /**
+       * ONE PROBE AT A TIME, AND AT MOST ONE PER WINDOW.
+       *
+       * Two callers now — the drain's preflight and {@link heartbeatTimer} — and the gate is what
+       * keeps that from doubling the NOOPs on the wire: the second caller inside a window joins
+       * the probe in flight or returns, and never opens a second one. At the defaults (a 15 s
+       * poll against a 30 s window) the wire therefore carries fewer NOOPs than the preflight
+       * alone did, not more.
+       */
+      const heartbeat = async (): Promise<void> => {
+        const running = heartbeatInFlight;
+        if (running !== null) { await running; return; }
+        const last = heartbeatSettledAtMs;
+        if (last !== null && now().getTime() - last < heartbeatTimeoutMs) return;
+        const run = probeConnection().finally(() => {
+          heartbeatSettledAtMs = now().getTime();
+          heartbeatInFlight = null;
+        });
+        heartbeatInFlight = run;
+        await run;
+      };
+
+      /* RE-ARMED FROM THE PROBE'S OWN SETTLEMENT, never from a cycle — see
+         {@link heartbeatTimer}. Unreferenced, so it does not hold the process open.
+
+         THE HEAL FOLLOWS THE PROBE, exactly as it does in `syncUntilQuiet`, and leaving it out
+         was half a fix: the timer stamped a hung link dead within the window and then nothing
+         re-dialled it, because the re-dial rides a drain and the drain was the thing that was
+         hung. Detection and heal both have to be independent of the cycle or neither is. */
+      const armHeartbeat = (): void => {
+        if (stopped) return;
+        heartbeatTimer = setTimeout(() => {
+          void heartbeat()
+            .then(() => redialIfDead())     // the ladder holds: the timer passes no `force`
+            .catch(() => undefined)
+            .finally(armHeartbeat);
+        }, heartbeatTimeoutMs);
+        heartbeatTimer.unref?.();
       };
 
       let adapter: MailboxAdapter = dialAdapter();
@@ -3253,6 +3321,21 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
 
       let stopped = false;
       let timer: ReturnType<typeof setTimeout> | null = null;
+      /**
+       * THE HEARTBEAT'S OWN TIMER, AND WHY IT IS NOT THE POLL'S.
+       *
+       * The probe used to run only as the drain's preflight, and the drain re-armed itself from
+       * `.finally(schedule)` — so a cycle that HUNG re-armed nothing and the one detector that
+       * can see a hung cycle stopped running for as long as the hang lasted. The link then read
+       * reachable and organized until the socket deadline fired minutes later, which is the
+       * window this timer closes: it is re-armed by the probe's own settlement and by nothing
+       * else, so it keeps asking while the cycle is stuck.
+       */
+      let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
+      /** The probe in flight, so the preflight and the timer cannot ask twice at once. */
+      let heartbeatInFlight: Promise<void> | null = null;
+      /** When the last probe SETTLED — one probe per window, whichever caller arrives first. */
+      let heartbeatSettledAtMs: number | null = null;
       /** One serial queue: a poll tick must never start a cycle while one is running, and `stop()`
        *  must be able to wait for whatever is in flight before closing IMAP and the database. */
       let tail: Promise<unknown> = Promise.resolve();
@@ -4434,6 +4517,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 organizer = { organizing: false, reason: null, heldBy: null, unreadableSince: null };
                 stopped = true;
                 if (timer) clearTimeout(timer);
+                if (heartbeatTimer) clearTimeout(heartbeatTimer);
                 try {
                   await adapter.close();
                 } catch (closeErr) {
@@ -6041,6 +6125,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // ARMED HERE and not inside the sequence above. `schedule()` returns at `stopped`,
           // which is the mailbox-was-removed arm's exit and the one path that must not poll.
           schedule();
+          /* AND THE HEARTBEAT'S OWN TIMER, on the same rule and for the reason its field states:
+             the probe may not depend on a cycle finishing. */
+          armHeartbeat();
         },
         /**
          * STOP THIS MAILBOX AND LEAVE THE STORE ALONE.
@@ -6058,6 +6145,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         async detach() {
           stopped = true;
           if (timer) clearTimeout(timer);
+          if (heartbeatTimer) clearTimeout(heartbeatTimer);
           try {
             await tail;
           } catch {

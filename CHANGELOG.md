@@ -24,6 +24,14 @@ alive after the view has moved on — one such copy was left, and on a large mai
 small. And the app's store is a fixed cost measured at about 200 MB whatever the size of your
 mailbox, so it is now written down as one.
 
+### A long mail-server command is not cut off by the connection check
+
+A large fetch, or a slow server, can hold the connection for longer than the check that watches
+it. A connection now counts as gone only while the server has stopped answering as well, so
+pressing Sync now during a big fetch leaves the fetch running. And a link that drops after the
+check has already passed is picked up by the next check, instead of waiting out the connection's
+own timeout.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

@@ -1174,6 +1174,19 @@ export interface MailboxAdapter {
    * the socket is also the only thing that ends that command. Optional, like {@link noop}.
    */
   forceClose?(): void;
+  /**
+   * THE LAST MOMENT THIS CONNECTION WAS HEARD FROM — the server's own bytes, not our writes.
+   *
+   * A heartbeat alone cannot tell a BUSY link from a DEAD one: imapflow writes one command at a
+   * time, so a NOOP issued during a legitimately long FETCH is not on the wire yet and its
+   * window says nothing about the link. What tells them apart is whether the server is still
+   * talking — a streaming FETCH answers continuously, a half-open link answers nothing at all.
+   *
+   * `null` means "nothing has been heard yet", which a caller must read as unknown rather than
+   * as silence. Optional, like {@link noop}: an adapter without it leaves the heartbeat's window
+   * as the only evidence, which is what this repository shipped before.
+   */
+  lastServerActivityAt?(): Date | null;
   capabilities(): Promise<ImapCapabilities>;
   ensureFolders(): Promise<void>;
   changesSince(cursor: ImapCursor): Promise<ChangeBatch>;

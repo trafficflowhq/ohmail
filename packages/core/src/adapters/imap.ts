@@ -304,6 +304,13 @@ export function imapFlowOptions(
      */
     ...(pin ? { tls: { ...floor.tls, lookup: pinnedLookup(pin) } } : {}),
     auth: config.auth, qresync: true, logger: opts.logger ? undefined : false,
+    /* THE ONLY WAY TO SEE THE SERVER TALK WITHOUT WAITING FOR A COMMAND TO FINISH.
+       `on("response")` fires only for TAGGED responses (`imap-flow.js:704-718`), i.e. command
+       completion, so a 45-second FETCH emits nothing until its last line; `emitLogs` emits one
+       entry per server line, which is what {@link ImapAdapter.lastServerActivityAt} counts.
+       Independent of `logger`: the emit sits outside the `logger !== false` branch
+       (`imap-flow.js:4045-4069`), so this adds an event and no output. */
+    emitLogs: true,
     connectionTimeout: t.connectionMs, greetingTimeout: t.greetingMs, socketTimeout: t.socketMs,
   };
 }
@@ -1150,6 +1157,19 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   private now(): number { return (this.opts.nowMs ?? Date.now)(); }
 
   /**
+   * WHEN THE SERVER LAST SAID ANYTHING — see {@link MailboxAdapter.lastServerActivityAt}.
+   *
+   * A timestamp and nothing else. The entries this is stamped from carry the masked IMAP
+   * transcript, and none of it is read or kept: `src` decides, the rest is dropped where it
+   * arrives.
+   */
+  private serverActivityMs: number | null = null;
+
+  lastServerActivityAt(): Date | null {
+    return this.serverActivityMs === null ? null : new Date(this.serverActivityMs);
+  }
+
+  /**
    * The budget for the `changesSince` pass currently running, or `undefined` outside one.
    *
    * Set on entry and cleared in a `finally` so it can never leak into the NEXT pass — a stale
@@ -1460,6 +1480,15 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   private guardAsyncErrors(): void {
     const emitter = this.client as unknown as { on?: (ev: string, fn: (e: unknown) => void) => void };
     if (typeof emitter.on !== "function") return;   // an injected fake without an event surface
+    /* THE ACTIVITY STAMP. `src: "s"` is a line READ from the server, `"c"` one we wrote; only the
+       first is evidence about the link. Nothing but the moment is taken — see
+       {@link serverActivityMs} — and a fake with no `emitLogs` simply never stamps, which
+       `lastServerActivityAt` reports as `null` rather than as silence. */
+    emitter.on("log", (entry: unknown) => {
+      if (typeof entry === "object" && entry !== null && (entry as { src?: unknown }).src === "s") {
+        this.serverActivityMs = this.now();
+      }
+    });
     emitter.on("error", (err: unknown) => {
       // A handler that throws inside an `error` listener is the same uncaught exception again,
       // one frame further out. There is nowhere for it to go, so it goes nowhere.
