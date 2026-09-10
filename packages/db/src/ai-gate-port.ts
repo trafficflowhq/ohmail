@@ -28,9 +28,9 @@
  * These strings are already visible to any client that receives a refusal, so naming them here
  * discloses nothing that a refused request does not.
  */
-export type EntitlementReason =
-  | "suspended" | "no_subscription" | "trialing" | "active"
-  | "past_due_grace" | "past_due" | "unpaid" | "canceled" | "paused"
+export const ENTITLEMENT_REASONS = [
+  "suspended", "no_subscription", "trialing", "active",
+  "past_due_grace", "past_due", "unpaid", "canceled", "paused",
   /*
    * The account owner's own AI switch, off. Unlike every other member, it is not a subscription
    * state at all — which is exactly why it is here rather than only in {@link AiRefusalReason}.
@@ -43,7 +43,11 @@ export type EntitlementReason =
    * why the two do not disagree: same string, same meaning, one produced before the subscription
    * read and one after.
    */
-  | "ai_disabled";
+  "ai_disabled",
+] as const;
+
+/** The members as a TYPE — derived, so the list and the union cannot come apart. */
+export type EntitlementReason = (typeof ENTITLEMENT_REASONS)[number];
 
 /**
  * Why a spend was refused.
@@ -54,7 +58,21 @@ export type EntitlementReason =
  * is quiet in the default refusal reporter, and why the drafting path answers `409` for it rather
  * than the `402` that means "pay us".
  */
-export type AiRefusalReason = "out_of_credits" | "ai_disabled" | EntitlementReason;
+export const AI_REFUSAL_REASONS = ["out_of_credits", ...ENTITLEMENT_REASONS] as const;
+
+export type AiRefusalReason = (typeof AI_REFUSAL_REASONS)[number];
+
+/**
+ * IS THIS ONE OF OUR REASONS — the predicate the entitlements client narrows on.
+ *
+ * A refusal crosses the wire as a bare string, and the open app's sentences are written against
+ * these words. An unrecognised one is a DRIFT between the two programs, not a new refusal: read
+ * as one it would be rendered as a payment demand or a silent skip on a state nobody here can
+ * explain. The client reports it by name and takes the fault path instead.
+ */
+export function isAiRefusalReason(value: unknown): value is AiRefusalReason {
+  return typeof value === "string" && (AI_REFUSAL_REASONS as readonly string[]).includes(value);
+}
 
 /**
  * The FULL answer to "may this account spend?", for callers that can act on the difference.

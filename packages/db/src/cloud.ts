@@ -260,11 +260,12 @@ export {
   // construct against a flat schedule. See `ledger-source.ts`.
   AI_ACTION_WEIGHTS, WEIGHTED_DEBIT_REASONS, aiActionCost, assertWeightedScheduleActive,
   type WeightedDebitReason,
-  // The account-level AI off switch (migration 0022). Read by the gate itself on every
-  // spend decision; these two are the settings surface over the same column.
-  getAiAnswer, getAiEnabled, setAiEnabled,
   type AiCreditGate, type AiCreditGateOptions, type AiSpendOutcome, type AiRefusalReason,
 } from "./ai-gate.js";
+
+/* The account-level AI off switch (migration 0022) — its OWN module, because the switch is the
+ * product on every deployment while the metering that consults it is one operator's concern. */
+export { aiEnabledFor, getAiAnswer, getAiEnabled, setAiEnabled } from "./ai-settings.js";
 
 /**
  * The EXCLUSIVE work claim behind {@link AiCreditGateOptions.exclusive}.

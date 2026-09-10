@@ -2,10 +2,13 @@ import { balanceOf } from "./credits.js";
 import { effectiveSubscriptionOf, entitlementsFor } from "./billing.js";
 import { isSuspended } from "./suspension.js";
 import { makeAiCreditGate } from "./ai-gate.js";
-import type { WeightedDebitReason } from "./ledger-source.js";
+import { withSetupPool } from "./setup-grant.js";
+import { SPEND_ACTIONS, sourceFor } from "./ledger-source.js";
+import type { AiCreditGate, AiRefusalReason } from "./ai-gate-port.js";
 import type { Tx } from "./change-log.js";
 import type {
-  AccessVerdict, EntitlementsPort, ReleaseOutcome, SpendAction, SpendOutcome, SpendRelease,
+  AccessVerdict, EntitlementsPort, ReleaseOutcome, SpendAction, SpendMeta, SpendOutcome,
+  SpendRelease,
 } from "./entitlements-port.js";
 
 /**
@@ -35,27 +38,48 @@ export interface LocalEntitlementsConfig {
   manageLink?: (accountId: string) => Promise<{ url: string } | null>;
   /** Erasure's "stop the money", composed by the host for the same reason. Absent ⇒ `"none"`. */
   releaseAccount?: (accountId: string) => Promise<ReleaseOutcome>;
+  /**
+   * Where a swallowed spend FAULT goes. Absent ⇒ the gate's own default (`console.error`).
+   *
+   * On the port because the gate is this module's private detail now: a host or a suite that
+   * needs a fault counted rather than printed has nowhere else to ask. It is per-HOST and never
+   * per-action — a fault is a fault whichever call site met it.
+   */
+  onError?: (err: unknown, ctx: { phase: "debit" | "refund"; accountId: string; source: string }) => void;
+  /** Where a REFUSAL goes. Absent ⇒ the gate's default, which reports state and stays quiet
+   *  about an empty balance. Here for `onError`'s reason. */
+  onRefusal?: (ctx: {
+    kind: "state" | "quantity"; reason: AiRefusalReason; accountId: string; source: string;
+  }) => void;
 }
-
-/**
- * The program prices per CALL SITE; this database's gate books per ledger REASON. One mapping,
- * here, so the two can never disagree — the same table the program's contract states.
- */
-const REASON_OF: Record<SpendAction, WeightedDebitReason> = {
-  classify_ingest: "debit_classify",
-  screener: "debit_classify",
-  draft: "debit_draft",
-  propose: "debit_propose",
-  workflow: "debit_workflow",
-};
 
 export function makeLocalEntitlements(cfg: LocalEntitlementsConfig): EntitlementsPort {
   const now = cfg.now ?? (() => new Date());
-  /** The Screener is the one call site that serializes its spenders — the gate's `exclusive`. */
-  const gateFor = (action: SpendAction, accountId: string): ReturnType<typeof makeAiCreditGate> =>
-    makeAiCreditGate(cfg.db, accountId, {
-      reason: REASON_OF[action], now, ...(action === "screener" ? { exclusive: true } : {}),
+
+  /**
+   * THE GATE FOR ONE CALL SITE — composed from {@link SPEND_ACTIONS} and from nothing else.
+   *
+   * Every term the call sites used to choose for themselves is read off the table here: the
+   * ledger reason, the exclusive claim, the draft path's retry window, and the Screener's setup
+   * pool. That is what makes the two implementations of this port interchangeable — the
+   * entitlements program composes its gate from the same table, so a host cannot hand one call
+   * site another's terms, and the terms cannot differ between a local and a remote answer.
+   *
+   * The wrapper ORDER is load-bearing and is the program's: `withSetupPool` OUTSIDE the
+   * exclusive gate, so the pool draw extends the claim rather than answering around it.
+   */
+  const gateFor = (action: SpendAction, accountId: string): AiCreditGate => {
+    const spec = SPEND_ACTIONS[action];
+    const inner = makeAiCreditGate(cfg.db, accountId, {
+      reason: spec.reason,
+      now,
+      ...(cfg.onError ? { onError: cfg.onError } : {}),
+      ...(cfg.onRefusal ? { onRefusal: cfg.onRefusal } : {}),
+      ...(spec.exclusive ? { exclusive: true as const } : {}),
+      ...("retryWindowMs" in spec ? { retryWindowMs: spec.retryWindowMs } : {}),
     });
+    return spec.setupPool ? withSetupPool(cfg.db, accountId, inner, { now }) : inner;
+  };
 
   return {
     /**
@@ -92,8 +116,20 @@ export function makeLocalEntitlements(cfg: LocalEntitlementsConfig): Entitlement
      * tells the loser of a race to proceed, and folding a state refusal into `insufficient`
      * demands payment from a funded account whose owner switched AI off.
      */
-    async spend(accountId: string, action: SpendAction, attemptKey: string): Promise<SpendOutcome> {
-      const outcome = await gateFor(action, accountId).spend(attemptKey, { action });
+    async spend(
+      accountId: string, action: SpendAction, attemptKey: string, meta?: SpendMeta,
+    ): Promise<SpendOutcome> {
+      // THE SOURCE IS COMPOSED, NEVER PASSED IN — and this line is the whole of the money fix.
+      //
+      // `attemptKey` used to reach the gate as the source itself, so this adapter meant a FULL
+      // source by it while the program means a BARE key. Swapping the two implementations under
+      // one caller would then have double-prefixed one direction and stripped the other: a
+      // double-prefixed source passes the ledger's namespace CHECK and its UNIQUE, so work that
+      // was already paid for answers `ok` instead of `duplicate` and is charged a second time.
+      // `sourceFor` is the one composer both sides use, and it refuses a key that is already a
+      // source rather than composing one nobody can read.
+      const source = sourceFor(action, attemptKey);
+      const outcome = await gateFor(action, accountId).spend(source, { ...meta, action });
       if (outcome.permitted) {
         return outcome.charged
           ? { verdict: "ok", charged: true, attempt: outcome.attempt }
@@ -110,10 +146,27 @@ export function makeLocalEntitlements(cfg: LocalEntitlementsConfig): Entitlement
      * delivered, and an open attempt is what makes its retries free. `true` also reverses the
      * named attempt, which is the abandoned case.
      */
+    /**
+     * The reversal names the ATTEMPT the caller was told it charged, and the claim is given back
+     * by SOURCE.
+     *
+     * `refundAttempt` rather than `refund`: `refund`'s guard is an in-process marker on the gate
+     * instance that charged, and there is no such instance across a network hop — nor across two
+     * cycles of a retrying worker, whose second `duplicate` clears the marker while the first
+     * cycle's charge is the one that has to come back. The exactly-once layers that do not care
+     * who asks are the two in the database: the refund's own source is unique per account, and a
+     * trigger refuses a refund naming no debit. So the caller's obligation is the one the port
+     * states — pass an `attempt` this account was told was `charged: true`, once per abandonment.
+     *
+     * The claim is released only for an action that takes one, exactly as the program does it;
+     * `release` on a gate with no claim is a no-op either way, and reading the term off the table
+     * is what keeps the two answers the same.
+     */
     async release(accountId: string, r: SpendRelease): Promise<void> {
+      const source = sourceFor(r.action, r.attemptKey);
       const gate = gateFor(r.action, accountId);
-      if (r.refund) await gate.refundAttempt(r.attempt);
-      await gate.release?.(r.attemptKey);
+      if (r.refund) await gate.refundAttempt(r.attempt, { ...r.meta, action: r.action });
+      if (SPEND_ACTIONS[r.action].exclusive) await gate.release?.(source);
     },
 
     async manageLink(accountId: string): Promise<{ url: string } | null> {

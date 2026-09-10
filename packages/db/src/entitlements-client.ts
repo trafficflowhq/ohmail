@@ -1,8 +1,10 @@
 import {
   UNMETERED_ACCESS,
   type AccessRefusal, type AccessVerdict, type EntitlementsPort,
-  type ReleaseOutcome, type SpendAction, type SpendOutcome, type SpendRelease,
+  type ReleaseOutcome, type SpendAction, type SpendMeta, type SpendOutcome, type SpendRelease,
 } from "./entitlements-port.js";
+import { isAiRefusalReason } from "./ai-gate-port.js";
+import { assertAttemptKey } from "./ledger-source.js";
 
 /**
  * THE HTTP CLIENT of an entitlements program, implementing {@link EntitlementsPort} over that
@@ -127,9 +129,12 @@ function spendOf(body: unknown): SpendOutcome | { bad: string } {
     }
     case "insufficient":
     case "refused": {
-      const reason = typeof b.reason === "string" ? b.reason : "";
-      if (reason === "") return { bad: "reason" };
-      return { verdict: b.verdict, reason };
+      // THE ONE PLACE THE WIRE'S FREE STRING BECOMES OUR CLOSED WORD. Every surface downstream
+      // renders a sentence per member, so a reason nobody here has a sentence for is a drift
+      // between the two programs — named, then the fault path, never a payment demand invented
+      // from a word we cannot read.
+      if (!isAiRefusalReason(b.reason)) return { bad: "reason" };
+      return { verdict: b.verdict, reason: b.reason };
     }
     case "inflight": {
       if (typeof b.source !== "string" || b.source.length === 0) return { bad: "source" };
@@ -246,8 +251,15 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
       return held?.verdict ?? UNMETERED_ACCESS;
     },
 
-    async spend(accountId: string, action: SpendAction, attemptKey: string): Promise<SpendOutcome> {
-      const res = await post("/v1/spend", { accountId, action, attemptKey });
+    async spend(
+      accountId: string, action: SpendAction, attemptKey: string, meta?: SpendMeta,
+    ): Promise<SpendOutcome> {
+      // Refused HERE, before the dial, by the same guard the local adapter composes through: the
+      // program answers 400 for a key that is already a source, and a 400 arrives at the branch
+      // below as `fault` — which would degrade AI silently on a caller bug. Same input, same
+      // named refusal, whichever implementation is composed.
+      assertAttemptKey(action, attemptKey);
+      const res = await post("/v1/spend", { accountId, action, attemptKey, ...(meta ? { meta } : {}) });
       if (!res || res.status !== 200) return { verdict: "fault" };
       const read = res.bodyIsJson ? spendOf(res.body) : { bad: "body" };
       if ("bad" in read) {
@@ -261,8 +273,10 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
       // A lost release leaves the attempt OPEN, so its retry is free — losing one costs the
       // customer nothing, which is why this swallows rather than retries. A lost REFUND is the
       // dearer half and the ledger is what makes reissuing it safe, so the caller may repeat it.
+      assertAttemptKey(r.action, r.attemptKey);
       await post("/v1/spend/release", {
         accountId, action: r.action, attemptKey: r.attemptKey, attempt: r.attempt, refund: r.refund,
+        ...(r.meta ? { meta: r.meta } : {}),
       });
     },
 

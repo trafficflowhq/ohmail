@@ -87,6 +87,128 @@ export function clientIdempotencyKey(headerValue: string): IdempotencyKey {
  * to its namespace, so a debit physically cannot be written under an `invoice:` source and be
  * reported back as a harmless `duplicate`.
  */
+/**
+ * How long a charged `draft` attempt keeps paying for free retries.
+ *
+ * It must equal `IDEMPOTENCY_TTL_MS` — inside that window a repeat of one client key IS a retry
+ * and must not be charged twice; outside it the key means nothing to the request path any more,
+ * so a request carrying it is new intent and pays like one. Named here rather than imported
+ * because this module is a leaf the desktop engine compiles and `idempotency.ts` is not one;
+ * `test/spend-actions-contract.test.ts` pins the two figures equal.
+ */
+export const DRAFT_RETRY_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * THE FIVE METERED CALL SITES, and the terms each one spends on.
+ *
+ * The key is the CALL SITE and not the ledger reason, because one reason is spent on different
+ * terms: `debit_classify` is spent by ingest (no claim, no pool) and by the Screener (exclusive
+ * claim, setup pool drawn first), so a table keyed by reason would silently give one of them the
+ * other's terms. It is the entitlements program's own table (`docs/PORT-CONTRACT.md`, its
+ * `src/port.ts`), duplicated here rather than imported because the two programs may not link —
+ * `test/spend-actions-contract.test.ts` pins the two against each other.
+ */
+export const SPEND_ACTIONS = {
+  classify_ingest: { reason: "debit_classify", namespace: "classify", exclusive: false, setupPool: false },
+  screener: { reason: "debit_classify", namespace: "classify", exclusive: true, setupPool: true },
+  draft: { reason: "debit_draft", namespace: "draft", exclusive: false, setupPool: false,
+    retryWindowMs: DRAFT_RETRY_WINDOW_MS },
+  propose: { reason: "debit_propose", namespace: "propose", exclusive: false, setupPool: false },
+  workflow: { reason: "debit_workflow", namespace: "workflow_run", exclusive: false, setupPool: false },
+} as const satisfies Record<string, {
+  reason: WeightedDebitReason; namespace: string; exclusive: boolean; setupPool: boolean;
+  retryWindowMs?: number;
+}>;
+
+/** Which call site is spending. */
+export type SpendAction = keyof typeof SPEND_ACTIONS;
+
+export function isSpendAction(value: unknown): value is SpendAction {
+  return typeof value === "string" && Object.hasOwn(SPEND_ACTIONS, value);
+}
+
+/**
+ * The most an `attemptKey` may be. {@link MAX_SOURCE_LENGTH} caps the whole source at 200
+ * characters, so a longer key would raise from inside the caller's transaction instead of being
+ * refused where it was built.
+ */
+export const ATTEMPT_KEY_MAX = 160;
+
+const ATTEMPT_KEY_SHAPE = /^[A-Za-z0-9:_.~@+-]+$/;
+
+/** The namespaces {@link sourceFor} may prepend — the set a key may therefore not START with. */
+const SPEND_NAMESPACES: readonly string[] =
+  [...new Set(Object.values(SPEND_ACTIONS).map((s) => s.namespace))];
+
+/**
+ * REFUSE A KEY THAT IS ALREADY A SOURCE, AND REFUSE IT LOUDLY.
+ *
+ * An `attemptKey` names one unit of WORK — a message, a draft plus its client key, a run, a step.
+ * A caller that passes a full ledger source instead gets `<namespace>:<namespace>:<key>`, which
+ * passes the ledger's namespace CHECK and its UNIQUE, so already-paid work answers `ok` rather
+ * than `duplicate` and is charged a second time. That is the one defect a green suite could not
+ * see: both spellings write a well-formed row.
+ *
+ * It throws rather than answering a verdict, and the never-throw contract of
+ * `EntitlementsPort.spend` is not weakened by it: this is the caller-bug class the wire contract
+ * answers 400 for — *"a bug on the caller's side; never a verdict about money"* — and it is
+ * reached before any decision, so no money moves either way. Degrading instead would switch AI
+ * off for a whole path with nothing in any log, which is the failure this repo keeps paying for.
+ */
+export function assertAttemptKey(action: SpendAction, attemptKey: string): void {
+  if (attemptKey.length === 0 || attemptKey.length > ATTEMPT_KEY_MAX) {
+    throw new Error(
+      `assertAttemptKey: the ${action} attempt key is ${attemptKey.length} characters; a key is ` +
+      `1..${ATTEMPT_KEY_MAX}. Build it with this module's key functions.`);
+  }
+  if (!ATTEMPT_KEY_SHAPE.test(attemptKey)) {
+    throw new Error(
+      `assertAttemptKey: the ${action} attempt key carries a character outside ` +
+      "[A-Za-z0-9:_.~@+-]. Build it with this module's key functions.");
+  }
+  const prefix = SPEND_NAMESPACES.find((ns) => attemptKey.startsWith(`${ns}:`));
+  if (prefix !== undefined) {
+    throw new Error(
+      `assertAttemptKey: the ${action} attempt key already begins with the ledger namespace ` +
+      `\`${prefix}:\` — this is a SOURCE where a bare KEY belongs. Composing it would write ` +
+      `\`${prefix}:${prefix}:…\`, which passes the namespace CHECK and the UNIQUE, so work that ` +
+      "is already paid for would be charged again.");
+  }
+}
+
+/**
+ * `<namespace>:<attemptKey>` — THE ONE PLACE A SPEND SOURCE IS COMPOSED.
+ *
+ * One function, so the namespace can never disagree with the reason, and so the local adapter
+ * and the entitlements program cannot mean different things by `attemptKey`. Everything below
+ * that used to build one of the four spend namespaces by hand now comes through here.
+ */
+export function sourceFor(action: SpendAction, attemptKey: string): string {
+  assertAttemptKey(action, attemptKey);
+  return `${SPEND_ACTIONS[action].namespace}:${attemptKey}`;
+}
+
+/** The work ONE ingest classification is a classification of — the mailbox and its dedup key. */
+export function classifyAttemptKey(mailboxId: string, dedupKey: string): string {
+  return `${mailboxId}:${shortHash(dedupKey)}`;
+}
+
+/** The work ONE Screener pre-suggestion is about. The `screener:` here is part of the KEY, not a
+ *  namespace: it is what keeps a pre-suggestion from sharing an ingest classification's source. */
+export function screenerAttemptKey(messageId: string): string {
+  return `screener:${messageId}`;
+}
+
+/** The work ONE AI draft is a draft of: the message, and the client's own intent token. */
+export function draftAttemptKey(messageId: string, attemptKey: IdempotencyKey): string {
+  return `${messageId}:${shortHash(attemptKey)}`;
+}
+
+/** The work ONE workflow step is a step of. */
+export function workflowAttemptKey(runId: string, stepIndex: number): string {
+  return `${runId}:${stepIndex}`;
+}
+
 export const ledgerSources = {
   /* The parameter is the payment processor's invoice id, and the name says `invoice` rather
    * than naming the processor because this file is compiled into the desktop engine, and the
@@ -95,7 +217,7 @@ export const ledgerSources = {
    * census is only useful while it is precise. */
   invoiceGrant: (invoiceId: string) => `invoice:${invoiceId}`,
   periodExpiry: (priorInvoiceId: string) => `expiry:${priorInvoiceId}`,
-  classify: (messageId: string) => `classify:${messageId}`,
+  classify: (messageId: string) => sourceFor("classify_ingest", messageId),
   /**
    * `attemptKey` MUST be the request's `Idempotency-Key` — hence the {@link IdempotencyKey}
    * brand, which a server-minted `randomUUID()` cannot satisfy without someone writing
@@ -113,9 +235,10 @@ export const ledgerSources = {
    * key EXISTS at the only call site that needs one.
    */
   draft: (draftId: string, attemptKey: IdempotencyKey) =>
-    `draft:${draftId}:${createHash("sha256").update(attemptKey).digest("hex").slice(0, 32)}`,
-  propose: (proposalRunId: string) => `propose:${proposalRunId}`,
-  workflowStep: (runId: string, stepIndex: number) => `workflow_run:${runId}:${stepIndex}`,
+    sourceFor("draft", draftAttemptKey(draftId, attemptKey)),
+  propose: (proposalRunId: string) => sourceFor("propose", proposalRunId),
+  workflowStep: (runId: string, stepIndex: number) =>
+    sourceFor("workflow", workflowAttemptKey(runId, stepIndex)),
   refund: (originalSource: string) => `refund:${originalSource}`,
   admin: (adjustmentId: string) => `admin:${adjustmentId}`,
   /**
@@ -329,7 +452,7 @@ export function assertWeightedScheduleActive(
  * going forward would have left the whole historical oracle readable.
  */
 export function classifyLedgerSource(mailboxId: string, dedupKey: string): string {
-  return ledgerSources.classify(`${mailboxId}:${shortHash(dedupKey)}`);
+  return sourceFor("classify_ingest", classifyAttemptKey(mailboxId, dedupKey));
 }
 
 /**
@@ -375,7 +498,7 @@ export function classifyLedgerSource(mailboxId: string, dedupKey: string): strin
  * buy at all). The second is not a ledger concept and does not belong in this vocabulary.
  */
 export function screenerLedgerSource(messageId: string): string {
-  return ledgerSources.classify(`screener:${messageId}`);
+  return sourceFor("screener", screenerAttemptKey(messageId));
 }
 
 /** sha-256, first 128 bits, hex — the same shortening `ledgerSources.draft` uses. */

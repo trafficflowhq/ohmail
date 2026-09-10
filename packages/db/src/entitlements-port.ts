@@ -1,3 +1,6 @@
+import type { SpendAction } from "./ledger-source.js";
+import type { AiRefusalReason } from "./ai-gate-port.js";
+
 /**
  * THE ENTITLEMENTS PORT — the one question the open server asks about an account's standing, and
  * nothing that answers it.
@@ -58,26 +61,46 @@ export type SpendOutcome =
   /** Proceed, free: an attempt for this work is already open and paid for. */
   | { verdict: "duplicate"; charged: false; attempt: string }
   /** The plan could spend and the balance is empty. A payment demand. */
-  | { verdict: "insufficient"; reason: string }
+  | { verdict: "insufficient"; reason: AiRefusalReason }
   /** The subscription or the account's own switch may not spend. NOT a payment demand. */
-  | { verdict: "refused"; reason: string }
+  | { verdict: "refused"; reason: AiRefusalReason }
   /** Another caller holds the claim on this exact work. Transient, never charged, do not proceed. */
   | { verdict: "inflight"; source: string }
   /** We do not know. Degrade — never a charge and never a demand. */
   | { verdict: "fault" };
 
-/** Which call site is spending. The program prices and claims per action, not per ledger reason. */
-export type SpendAction = "classify_ingest" | "screener" | "draft" | "propose" | "workflow";
+/**
+ * WHICH CALL SITE IS SPENDING — the terms table's own keys, and not a second list of them.
+ *
+ * It was a hand-written union of the same five words. One definition, because the terms
+ * (`SPEND_ACTIONS`: reason, namespace, exclusivity, pool, retry window) and the names have to
+ * move together — a sixth action added to the table with no word here, or a word here with no
+ * terms, is what a port cannot express.
+ */
+export type { SpendAction } from "./ledger-source.js";
 
 /** How a spend ended. `refund: false` gives the claim back; `true` also reverses the charge. */
 export interface SpendRelease {
   action: SpendAction;
   attemptKey: string;
-  /** What {@link SpendOutcome} returned as `attempt`. A reversal names an attempt, not a key. */
+  /** What {@link SpendOutcome} returned as `attempt`. A reversal names an attempt, not a key.
+   *  Pass it only when THIS caller was told `charged: true` — see {@link EntitlementsPort.release}. */
   attempt: string;
   /** `true` only when the work was ABANDONED — a delivered attempt's charge stands. */
   refund: boolean;
+  /** Provenance for the ledger row. Ids and counts, never a message's subject or body. */
+  meta?: SpendMeta;
 }
+
+/**
+ * PROVENANCE FOR THE LEDGER ROW, and the reason it is not free-form in practice.
+ *
+ * It is a `jsonb` column and indexes nothing, which is why identifiers too long or too variable
+ * for a source belong here — the mailbox, the message, the run and its step. It is also the
+ * column a privacy review found carrying a raw `Message-ID`, so what goes in are ids WE minted
+ * and counts, and nothing a sender chose.
+ */
+export type SpendMeta = Record<string, unknown>;
 
 /**
  * What erasure learned when it stopped the money — the erasure response's own three values, so
@@ -93,9 +116,21 @@ export interface EntitlementsPort {
    * on the mail path is refused at review.
    */
   access(accountId: string): Promise<AccessVerdict>;
-  /** Charge one AI action against `attemptKey`, which names the unit of WORK so retries are free.
-   *  Never throws — see {@link SpendOutcome}. */
-  spend(accountId: string, action: SpendAction, attemptKey: string): Promise<SpendOutcome>;
+  /**
+   * Charge one AI action against `attemptKey`, which names the unit of WORK so retries are free.
+   *
+   * `attemptKey` is the BARE key — the message, `<messageId>:<hashed client key>`, the run id,
+   * `<runId>:<stepIndex>` — never a composed ledger source. Both implementations compose the
+   * source through the one composer (`sourceFor`), which refuses a key that is already a source:
+   * a double-prefixed one passes the ledger's namespace CHECK and its UNIQUE, so already-paid
+   * work would answer `ok` and be charged twice. Build keys with `ledger-source.ts`.
+   *
+   * Never answers a money verdict by throwing — see {@link SpendOutcome}. A malformed key is not
+   * a money verdict: it is the caller-bug class, and it raises.
+   */
+  spend(
+    accountId: string, action: SpendAction, attemptKey: string, meta?: SpendMeta,
+  ): Promise<SpendOutcome>;
   /** The work is over, whichever way it ended. Never throws; replay-safe. */
   release(accountId: string, r: SpendRelease): Promise<void>;
   /**
@@ -123,6 +158,23 @@ export const UNMETERED = "unmetered" as const;
 
 /** A composition either reaches an entitlements program or declares itself unmetered. */
 export type EntitlementsComposition = EntitlementsPort | typeof UNMETERED;
+
+/**
+ * THE SPEND HALF ALONE — what an AI call site is handed.
+ *
+ * A call site asks about money and says when the work ended; it has no business reading limits,
+ * minting a manage link or cancelling a subscription. Narrowing it here rather than at each site
+ * means the ten of them name one type, and a test double is two methods rather than five.
+ */
+export type SpendPort = Pick<EntitlementsPort, "spend" | "release">;
+
+/** A call site either reaches an entitlements program or is told this host meters nothing. */
+export type SpendComposition = SpendPort | typeof UNMETERED;
+
+/** True iff this host meters spend at all. The unmetered arm charges nothing and asks nobody. */
+export function isSpendMetered(e: SpendComposition): e is SpendPort {
+  return e !== UNMETERED;
+}
 
 /** The unmetered verdict as a value — unbounded limits, AI gated only by a provider key. */
 export const UNMETERED_ACCESS: AccessVerdict = {

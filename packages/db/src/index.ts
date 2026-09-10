@@ -241,6 +241,11 @@ export {
   clientIdempotencyKey, ledgerSources,
   AI_ACTION_WEIGHTS, WEIGHTED_DEBIT_REASONS, aiActionCost, assertWeightedScheduleActive,
   classifyLedgerSource, screenerLedgerSource,
+  // THE SPEND TERMS AND THE ONE SOURCE COMPOSER. The call sites name an action and build a BARE
+  // attempt key; whoever answers composes `<namespace>:<key>` through `sourceFor` and nowhere
+  // else. `assertAttemptKey` is what refuses a key that is already a source.
+  SPEND_ACTIONS, DRAFT_RETRY_WINDOW_MS, ATTEMPT_KEY_MAX, sourceFor, assertAttemptKey, isSpendAction,
+  classifyAttemptKey, screenerAttemptKey, draftAttemptKey, workflowAttemptKey,
   type IdempotencyKey, type WeightedDebitReason,
 } from "./ledger-source.js";
 
@@ -325,8 +330,9 @@ export {
  * tables and the network capability they need.
  */
 export {
-  UNMETERED, UNMETERED_ACCESS, accessOf, isMetered,
+  UNMETERED, UNMETERED_ACCESS, accessOf, isMetered, isSpendMetered,
   type EntitlementsPort, type EntitlementsComposition,
+  type SpendPort, type SpendComposition, type SpendMeta,
   type AccessVerdict, type AccessLimits, type AccessRefusal,
   type SpendOutcome, type SpendAction, type SpendRelease, type ReleaseOutcome,
 } from "./entitlements-port.js";
