@@ -562,10 +562,7 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
   if (local !== undefined && origin !== LOCAL_ENGINE_ORIGIN) {
     return {
       kind: "refused",
-      reason:
-        `a standalone install's engine is reached at "${LOCAL_ENGINE_ORIGIN}", not at ` +
-        `"${origin}" — a caller passing both a local engine and a remote address has not decided ` +
-        "which of the two it is talking to",
+      reason: refuse("bootLocalEngineOffOrigin", LOCAL_ENGINE_ORIGIN, origin),
     };
   }
   const token = config.token?.trim() ?? "";

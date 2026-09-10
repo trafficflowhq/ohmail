@@ -1322,6 +1322,10 @@ const TABLE = {
   bootApiBaseOffOrigin: (base: string, origin: string) =>
     `this server's API base "${base}" is not on the paired address "${origin}" — `
     + "re-pair this server to record it again",
+  bootLocalEngineOffOrigin: (expected: string, origin: string) =>
+    `a standalone install's engine is reached at "${expected}", not at "${origin}" — a caller `
+    + "passing both a local engine and a remote address has not decided which of the two it is "
+    + "talking to",
   bootNeedsCredential: "a credential and an account id are both required",
   bootAccountMismatch: (serverSays: string, expected: string) =>
     `this bearer belongs to account "${serverSays}", not "${expected}" — check the account id you entered`,

@@ -786,6 +786,10 @@ export const DE: Deck = {
   bootApiBaseOffOrigin: (base: string, origin: string) =>
     `die API-Adresse dieses Servers, „${base}“, liegt nicht auf der gekoppelten Adresse „${origin}“ — `
     + "koppele diesen Server erneut, damit sie erfasst wird",
+  bootLocalEngineOffOrigin: (expected: string, origin: string) =>
+    `die Engine einer eigenständigen Installation ist unter „${expected}“ erreichbar, nicht unter `
+    + `„${origin}“ — wer sowohl eine lokale Engine als auch eine entfernte Adresse übergibt, hat `
+    + "sich nicht entschieden, mit welcher der beiden gesprochen wird",
   bootNeedsCredential: "eine Anmeldung und eine Konto-Kennung werden beide gebraucht",
   bootAccountMismatch: (serverSays: string, expected: string) =>
     `diese Anmeldung gehört zum Konto „${serverSays}“, nicht zu „${expected}“ — prüfe die eingegebene Konto-Kennung`,
