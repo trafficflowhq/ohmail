@@ -216,7 +216,6 @@ jobs:
           echo "Linux .rpm: $([ "$RPM_LINUX" = 1 ] && echo required || echo "not expected (below $RPM_FROM)")"
 
           PUB_DATE_ISO="${RELEASE_PUBLISHED_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
-          NOTES="${RELEASE_BODY:-ohmail $VERSION}"
 
           # ── Pull the release's binary assets ───────────────────────────────
           rm -rf assets && mkdir assets
@@ -413,7 +412,7 @@ jobs:
           # XPC services that each carry a `*/Contents/Info.plist`, and a bare `-name` match would pick
           # one of those (reporting Sparkle's version, e.g. 2.9.4). Anchor on the app bundle.
           APP_PLIST="$(find appdir -path '*/ohmail.app/Contents/Info.plist' | head -1)"
-          test -f "$APP_PLIST" || { echo "no Contents/Info.plist inside $MAC_ZIP" >&2; exit 1; }
+          test -f "$APP_PLIST" || { echo "no Contents/Info.plist inside $MAC_TGZ" >&2; exit 1; }
           SHORT_VER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PLIST")"
           BUNDLE_VER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PLIST")"
           MIN_OS="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP_PLIST" 2>/dev/null || echo 15.0)"
@@ -457,6 +456,7 @@ jobs:
             echo "MAC_TGZ=$MAC_TGZ"
             echo "LIN_X64_APPIMAGE=$LIN_X64_APPIMAGE"
             echo "LIN_ARM_APPIMAGE=$LIN_ARM_APPIMAGE"
+            echo "ARM_FROM=$ARM_FROM"
             echo "PUB_DATE_ISO=$PUB_DATE_ISO"
             echo "SHORT_VER=$SHORT_VER"
             echo "BUNDLE_VER=$BUNDLE_VER"
