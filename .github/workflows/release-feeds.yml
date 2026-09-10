@@ -624,17 +624,20 @@ jobs:
           test -n "$LIN_X64_SIG" || { echo "empty Linux x86_64 signature" >&2; exit 1; }
           test -n "$MAC_SIG"     || { echo "empty macOS signature" >&2; exit 1; }
           if [ "$ARM_LINUX" = 1 ]; then
-            LIN_ARM_SIG="$(sign_tauri "$LIN_ARM_APPIMAGE")"
-            test -n "$LIN_ARM_SIG" || { echo "empty Linux arm64 signature" >&2; exit 1; }
-            # The two Linux signatures are over two different files, so they must
-            # differ. Identical ones mean both `sign_tauri` calls were handed the
-            # same path — the failure the by-name picks above exist to prevent,
-            # caught here as well because this is the last place before the bytes
-            # become a published feed.
-            if [ "$LIN_X64_SIG" = "$LIN_ARM_SIG" ]; then
-              echo "the two Linux AppImages produced the same signature — they are the same file" >&2
+            # THE TWO PATHS, compared before either is signed — not the two
+            # signatures afterwards, which is what this used to do and which
+            # could never fire: minisign puts a TIMESTAMP in the trusted comment,
+            # so signing ONE file twice already produces two different signatures
+            # (measured, one second apart). The check read as a guarantee against
+            # both calls being handed the same path and was not one. The path is
+            # the thing that can be wrong; the manifest's two urls are asserted
+            # distinct further down as well, on the object the clients read.
+            if [ "$LIN_X64_APPIMAGE" = "$LIN_ARM_APPIMAGE" ]; then
+              echo "both Linux entries name $LIN_X64_APPIMAGE — one architecture would be handed the other's payload" >&2
               exit 1
             fi
+            LIN_ARM_SIG="$(sign_tauri "$LIN_ARM_APPIMAGE")"
+            test -n "$LIN_ARM_SIG" || { echo "empty Linux arm64 signature" >&2; exit 1; }
           fi
 
           # The signatures are left on disk for the next step, which holds no key.
