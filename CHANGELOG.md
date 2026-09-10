@@ -102,6 +102,29 @@ actually sent you, or the folder your mail server filed it in. Compose suggestio
 you have written to first, and label someone who has only written to you. Nothing is hidden and
 nothing moves: a conversation you have not replied to keeps a new sender's reply in History until
 you do.
+### Mail filed while a mailbox changes hands
+
+- The handover of moves made just before another machine took over organizing a mailbox now covers
+  every one of them rather than the first two hundred, and it happens in the same step as the
+  change of organizer: if it cannot be written, nothing is handed over and nothing is recorded,
+  and the next check does both.
+- A message you had moved once before and moved again during a handover is handed over too. The
+  earlier move being finished no longer counts as this one already being on its way.
+
+### Away replies
+
+- When the machine that organizes the mailbox applies an away setting you saved somewhere else,
+  the pane says so and shows the settings it applied, instead of leaving the old values under a
+  note about a request that has already landed.
+
+### Sync now says what it did
+
+- A mailbox this app holds but is not running — one it stopped organizing under an older release —
+  showed a Sync now button that answered “Sync queued” and did nothing. The press is refused with
+  a sentence instead, so nothing tells you a sync started when none did.
+- The log now names such a mailbox at start-up, with the reason it is not being run. It named only
+  how many mailboxes were running, and the one line that printed an id printed the id of the
+  mailbox with no engine, which made the record read backwards.
 
 ### Still to come
 
