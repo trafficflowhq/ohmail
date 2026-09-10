@@ -505,6 +505,13 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // a disclosure about both of them. The lines carry `messageId` and `mailboxId` — ids that point
   // into rows the deletion sweep erases — and the responder's own text is never logged either.
   "throttled", "suppressed", "throttle", "deferredAccounts", "deferredCandidates",
+  // `undeliverableMarked` is the same pass's fifth number and it was NOT on this census, so the
+  // one line that reports a correspondent's address going dead has been dropping it since the
+  // bounce slice shipped — the `sent` failure this entry's own paragraph records, one field over,
+  // found by `log-fields.test.ts`'s away case rather than by a live log. A `++` counter over rows
+  // the pass itself stamped: structurally an integer, and it can carry no mail.
+  // (`expired`, the sixth, is already on this list as the request drain's own counter.)
+  "undeliverableMarked",
   // `mirrorDraining` is the OTHER half of the same `shutdown` line, and it is here because
   // `inFlight` alone was misleading rather than merely incomplete: the Cloud mirror's pull is not a
   // stdio request, so `inFlight` reads 0 in exactly the case where the mirror is what the quit is
