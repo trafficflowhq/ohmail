@@ -122,24 +122,24 @@ jobs:
         with:
           node-version: 22
 
-      - name: Sign the artifacts and write both feeds
+      # ── 1 · EVERYTHING THAT REACHES THE NETWORK, AND NO KEY IN SIGHT ─────
+      #
+      # This step and the one that signs used to be one `run:`. Both private keys
+      # were in its environment while it fetched release assets, resolved a floating
+      # `@tauri-apps/cli@2` from the registry and unpacked a curled Sparkle archive —
+      # so whatever those publishers shipped that day ran with the keys that sign
+      # every update. Splitting it is the whole point: the fetching happens here with
+      # no key, each signer is checked against a pin, and the signing step below has
+      # nothing left to download.
+      - name: Download the release assets and pin the signers
         env:
           GH_TOKEN: ${{ github.token }}
-          # Secrets are read into the environment rather than interpolated into
-          # the script text: a `${{ secrets.* }}` expanded inline would land in
-          # the run-command and could leak through logs or shell parsing.
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          OHMAIL_SPARKLE_ED_PRIVATE_KEY: ${{ secrets.OHMAIL_SPARKLE_ED_PRIVATE_KEY }}
           RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
-          RELEASE_BODY: ${{ github.event.release.body }}
           RELEASE_PUBLISHED_AT: ${{ github.event.release.published_at }}
         run: |
           set -euo pipefail
 
           test -n "$RELEASE_TAG" || { echo "no release tag to work on" >&2; exit 1; }
-          test -n "${TAURI_SIGNING_PRIVATE_KEY:-}" || { echo "TAURI_SIGNING_PRIVATE_KEY is not set" >&2; exit 1; }
-          test -n "${OHMAIL_SPARKLE_ED_PRIVATE_KEY:-}" || { echo "OHMAIL_SPARKLE_ED_PRIVATE_KEY is not set" >&2; exit 1; }
 
           REPO="$GITHUB_REPOSITORY"                       # trafficflowhq/ohmail on the mirror
           BASE="https://github.com/$REPO/releases/download/$RELEASE_TAG"
@@ -241,7 +241,6 @@ jobs:
           rm -f assets/latest.json assets/appcast-macos.xml assets/SHA256SUMS
           echo "assets to be signed and hashed:"; ls -la assets
 
-          pick() { ls assets/$1 2>/dev/null | head -1 || true; }
           # ── NAMED, NOT GLOBBED, FOR THE REASON THE LINUX PICKS GIVE BELOW ──
           #
           # This was `pick '*-setup.exe'`, and `pick` ends in `head -1`. The
@@ -407,6 +406,95 @@ jobs:
           # would read whatever a previous run left there, and certify it.
           cp SHA256SUMS assets/SHA256SUMS
 
+          # The .app the appcast describes, and the handover floor — read from the
+          # bundle, no key involved.
+          rm -rf appdir && mkdir appdir && tar -xzf "$MAC_TGZ" -C appdir
+          # The app's OWN Info.plist, not a nested helper's: Sparkle.framework ships Updater.app and
+          # XPC services that each carry a `*/Contents/Info.plist`, and a bare `-name` match would pick
+          # one of those (reporting Sparkle's version, e.g. 2.9.4). Anchor on the app bundle.
+          APP_PLIST="$(find appdir -path '*/ohmail.app/Contents/Info.plist' | head -1)"
+          test -f "$APP_PLIST" || { echo "no Contents/Info.plist inside $MAC_ZIP" >&2; exit 1; }
+          SHORT_VER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PLIST")"
+          BUNDLE_VER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PLIST")"
+          MIN_OS="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP_PLIST" 2>/dev/null || echo 15.0)"
+          echo "app reports shortVersion=$SHORT_VER build=$BUNDLE_VER minOS=$MIN_OS"
+
+          # ── THE FLOOR, AND WHY IT IS A HARD REFUSAL ───────────────────────
+          # 291 is the CFBundleVersion of the last SwiftUI release (v0.6.1); 251
+          # was v0.5.0. Sparkle offers an update only when sparkle:version is
+          # strictly greater than what is installed, so anything at or below 291
+          # is an appcast that no existing Mac will ever act on — and it fails
+          # the way that is impossible to notice, by the client simply saying it
+          # is up to date. Refusing the release is the only signal available.
+          LAST_SWIFT_BUILD=291
+          case "$BUNDLE_VER" in
+            ''|*[!0-9]*)
+              echo "CFBundleVersion is \"$BUNDLE_VER\", which is not an integer build number." >&2
+              echo "Sparkle compares it against installed builds numbered up to $LAST_SWIFT_BUILD;" >&2
+              echo "a non-integer cannot order above them. See apps/desktop/src-tauri/Info.plist." >&2
+              exit 1 ;;
+          esac
+          if [ "$BUNDLE_VER" -le "$LAST_SWIFT_BUILD" ]; then
+            echo "CFBundleVersion $BUNDLE_VER is not above the last SwiftUI build ($LAST_SWIFT_BUILD)." >&2
+            echo "Every installed macOS client would read this release as a downgrade and refuse it," >&2
+            echo "silently and permanently. See apps/desktop/src-tauri/Info.plist." >&2
+            exit 1
+          fi
+          echo "handover floor ok: $BUNDLE_VER > $LAST_SWIFT_BUILD"
+
+          # ── THE SIGNERS, PINNED BEFORE THE KEYS EXIST IN ANY ENVIRONMENT ──
+          # Two pins the release cannot start without: the Tauri signer against the
+          # `integrity` this repository's own pnpm-lock.yaml records, and Sparkle's
+          # `sign_update` by the sha256 of the archive AND of the binary inside it.
+          # The script says why each one is there.
+          node scripts/fetch-pinned-signers.mjs signers
+
+          # What the next two steps need, so neither has to re-derive it.
+          {
+            echo "VERSION=$VERSION"
+            echo "ARM_LINUX=$ARM_LINUX"
+            echo "WIN_EXE=$WIN_EXE"
+            echo "MAC_TGZ=$MAC_TGZ"
+            echo "LIN_X64_APPIMAGE=$LIN_X64_APPIMAGE"
+            echo "LIN_ARM_APPIMAGE=$LIN_ARM_APPIMAGE"
+            echo "PUB_DATE_ISO=$PUB_DATE_ISO"
+            echo "SHORT_VER=$SHORT_VER"
+            echo "BUNDLE_VER=$BUNDLE_VER"
+            echo "MIN_OS=$MIN_OS"
+          } >> "$GITHUB_ENV"
+
+      # ── 2 · THE ONLY STEP THAT HOLDS A KEY ───────────────────────────────
+      #
+      # No network and no resolution: it runs the two binaries the step above
+      # pinned, over files already on disk. Each key is written to a private temp
+      # file and passed BY PATH, which keeps it off the process argument list and
+      # out of the signer's environment — the Sparkle half already worked this way
+      # and the Tauri half now does too.
+      - name: Sign the artifacts
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          OHMAIL_SPARKLE_ED_PRIVATE_KEY: ${{ secrets.OHMAIL_SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "${TAURI_SIGNING_PRIVATE_KEY:-}" || { echo "TAURI_SIGNING_PRIVATE_KEY is not set" >&2; exit 1; }
+          test -n "${OHMAIL_SPARKLE_ED_PRIVATE_KEY:-}" || { echo "OHMAIL_SPARKLE_ED_PRIVATE_KEY is not set" >&2; exit 1; }
+
+          # The pinned signers, read from the manifest the step above wrote rather
+          # than searched for: `find … -name sign_update | head -1` reads directory
+          # order over three candidates, one of them the retired DSA signer.
+          TAURI_SIGNER="$(jq -r .tauriSigner signers/signers.json)"
+          SIGN_UPDATE="$(jq -r .signUpdate signers/signers.json)"
+          test -f "$TAURI_SIGNER" || { echo "no pinned Tauri signer at $TAURI_SIGNER" >&2; exit 1; }
+          test -x "$SIGN_UPDATE"  || { echo "no pinned sign_update at $SIGN_UPDATE" >&2; exit 1; }
+
+          # The key on disk, readable by nobody else, gone before the step ends.
+          TAURI_KEY_FILE="$(mktemp)"; chmod 600 "$TAURI_KEY_FILE"
+          printf %s "$TAURI_SIGNING_PRIVATE_KEY" > "$TAURI_KEY_FILE"
+          EDKEY_FILE="$(mktemp)"; chmod 600 "$EDKEY_FILE"
+          printf %s "$OHMAIL_SPARKLE_ED_PRIVATE_KEY" > "$EDKEY_FILE"
+          trap 'rm -f "$TAURI_KEY_FILE" "$EDKEY_FILE"' EXIT INT TERM
+
           # ════════════════════════════════════════════════════════════════════
           # latest.json — the Tauri updater manifest, all three platforms.
           # Each artifact is minisign-signed; the `signature` field is the exact
@@ -461,16 +549,24 @@ jobs:
           # this release, and fails the publish rather than shipping a feed that
           # would stall every install.
           sign_tauri() {
-            # Reads TAURI_SIGNING_PRIVATE_KEY(+_PASSWORD) from the environment.
-            # </dev/null so a password-required key fails fast instead of
-            # blocking on a prompt; the signer's own chatter goes to stderr so
-            # this function's stdout is ONLY the .sig content the manifest needs.
+            # The key by PATH, not through the environment: `signer sign` in the
+            # pinned CLI reads `TAURI_PRIVATE_KEY`, not the `TAURI_SIGNING_*`
+            # names the BUNDLER uses, so the env form silently found no key and
+            # only worked while the floating `@2` range happened to accept both.
+            # `--private-key-path` is the same door the Sparkle half uses and it
+            # keeps the key off the argument list. </dev/null so a
+            # password-required key fails fast instead of blocking on a prompt;
+            # the signer's chatter goes to stderr so this function's stdout is
+            # ONLY the .sig content the manifest needs.
             mkdir -p signing
             # The copy is what gets signed; "$1" is what gets published. Same
             # bytes, so the signature verifies against the published asset.
             local signed_as="signing/${VERSION}@$(basename "$1")"
             cp "$1" "$signed_as"
-            npx --yes @tauri-apps/cli@2 signer sign "$signed_as" < /dev/null 1>&2
+            node "$TAURI_SIGNER" signer sign \
+              --private-key-path "$TAURI_KEY_FILE" \
+              --password "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" \
+              "$signed_as" < /dev/null 1>&2
             # ── AND READ BACK WHAT WAS ACTUALLY SIGNED ──────────────────────
             #
             # THE FAILURE WINDOW THIS CLOSES. This workflow runs on `release:
@@ -533,6 +629,44 @@ jobs:
               exit 1
             fi
           fi
+
+          # The signatures are left on disk for the next step, which holds no key.
+          printf %s "$WIN_SIG"     > signing/win.sig
+          printf %s "$LIN_X64_SIG" > signing/lin-x64.sig
+          printf %s "$MAC_SIG"     > signing/mac.sig
+          if [ "$ARM_LINUX" = 1 ]; then printf %s "$LIN_ARM_SIG" > signing/lin-arm.sig; fi
+
+          # sign_update --ed-key-file <file> <archive>  → sparkle:edSignature="…" length="…"
+          # Sparkle 2.9.4 REMOVED the inline `-s <key>` form ("Specifying private key as an argument
+          # is no longer supported" — it exits non-zero). The key is written to a private temp file
+          # and read with --ed-key-file, which also keeps it off the process argument list.
+          ENCLOSURE_ATTRS="$("$SIGN_UPDATE" --ed-key-file "$EDKEY_FILE" "$MAC_TGZ")"
+          test -n "$ENCLOSURE_ATTRS" || { echo "sign_update produced no signature" >&2; exit 1; }
+          case "$ENCLOSURE_ATTRS" in
+            *edSignature=*length=*) : ;;
+            *) echo "unexpected sign_update output: $ENCLOSURE_ATTRS" >&2; exit 1 ;;
+          esac
+          printf %s "$ENCLOSURE_ATTRS" > signing/enclosure.attrs
+
+      # ── 3 · THE FEEDS, FROM SIGNATURES ALREADY MADE ──────────────────────
+      # Writes, verifies and attaches. It reads the .sig files the signing step
+      # left and never sees a key, so the verifier and both `gh` calls run with
+      # nothing to leak.
+      - name: Write, verify and attach the feeds
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          RELEASE_BODY: ${{ github.event.release.body }}
+        run: |
+          set -euo pipefail
+          REPO="$GITHUB_REPOSITORY"
+          BASE="https://github.com/$REPO/releases/download/$RELEASE_TAG"
+          NOTES="${RELEASE_BODY:-ohmail $VERSION}"
+          WIN_SIG="$(cat signing/win.sig)"
+          LIN_X64_SIG="$(cat signing/lin-x64.sig)"
+          MAC_SIG="$(cat signing/mac.sig)"
+          ENCLOSURE_ATTRS="$(cat signing/enclosure.attrs)"
+          if [ "$ARM_LINUX" = 1 ]; then LIN_ARM_SIG="$(cat signing/lin-arm.sig)"; fi
 
           jq -n \
             --arg version  "$VERSION" \
@@ -619,59 +753,6 @@ jobs:
           # ════════════════════════════════════════════════════════════════════
           # The Sparkle release the retired macOS client embedded, so the
           # signature this produces is the one those installs know how to verify.
-          SPARKLE_VER=2.9.4
-          curl -fsSL "https://github.com/sparkle-project/Sparkle/releases/download/$SPARKLE_VER/Sparkle-$SPARKLE_VER.tar.xz" -o sparkle.tar.xz
-          mkdir -p sparkle && tar -xJf sparkle.tar.xz -C sparkle
-          SIGN_UPDATE="$(find sparkle -type f -name sign_update | head -1)"
-          test -x "$SIGN_UPDATE" || { echo "sign_update not found in the Sparkle distribution" >&2; exit 1; }
-
-          rm -rf appdir && mkdir appdir && tar -xzf "$MAC_TGZ" -C appdir
-          # The app's OWN Info.plist, not a nested helper's: Sparkle.framework ships Updater.app and
-          # XPC services that each carry a `*/Contents/Info.plist`, and a bare `-name` match would pick
-          # one of those (reporting Sparkle's version, e.g. 2.9.4). Anchor on the app bundle.
-          APP_PLIST="$(find appdir -path '*/ohmail.app/Contents/Info.plist' | head -1)"
-          test -f "$APP_PLIST" || { echo "no Contents/Info.plist inside $MAC_ZIP" >&2; exit 1; }
-          SHORT_VER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PLIST")"
-          BUNDLE_VER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PLIST")"
-          MIN_OS="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP_PLIST" 2>/dev/null || echo 15.0)"
-          echo "app reports shortVersion=$SHORT_VER build=$BUNDLE_VER minOS=$MIN_OS"
-
-          # ── THE FLOOR, AND WHY IT IS A HARD REFUSAL ───────────────────────
-          # 291 is the CFBundleVersion of the last SwiftUI release (v0.6.1); 251
-          # was v0.5.0. Sparkle offers an update only when sparkle:version is
-          # strictly greater than what is installed, so anything at or below 291
-          # is an appcast that no existing Mac will ever act on — and it fails
-          # the way that is impossible to notice, by the client simply saying it
-          # is up to date. Refusing the release is the only signal available.
-          LAST_SWIFT_BUILD=291
-          case "$BUNDLE_VER" in
-            ''|*[!0-9]*)
-              echo "CFBundleVersion is \"$BUNDLE_VER\", which is not an integer build number." >&2
-              echo "Sparkle compares it against installed builds numbered up to $LAST_SWIFT_BUILD;" >&2
-              echo "a non-integer cannot order above them. See apps/desktop/src-tauri/Info.plist." >&2
-              exit 1 ;;
-          esac
-          if [ "$BUNDLE_VER" -le "$LAST_SWIFT_BUILD" ]; then
-            echo "CFBundleVersion $BUNDLE_VER is not above the last SwiftUI build ($LAST_SWIFT_BUILD)." >&2
-            echo "Every installed macOS client would read this release as a downgrade and refuse it," >&2
-            echo "silently and permanently. See apps/desktop/src-tauri/Info.plist." >&2
-            exit 1
-          fi
-          echo "handover floor ok: $BUNDLE_VER > $LAST_SWIFT_BUILD"
-
-          # sign_update --ed-key-file <file> <archive>  → sparkle:edSignature="…" length="…"
-          # Sparkle 2.9.4 REMOVED the inline `-s <key>` form ("Specifying private key as an argument
-          # is no longer supported" — it exits non-zero). The key is written to a private temp file
-          # and read with --ed-key-file, which also keeps it off the process argument list.
-          EDKEY_FILE="$(mktemp)"; printf '%s' "$OHMAIL_SPARKLE_ED_PRIVATE_KEY" > "$EDKEY_FILE"
-          ENCLOSURE_ATTRS="$("$SIGN_UPDATE" --ed-key-file "$EDKEY_FILE" "$MAC_TGZ")"
-          rm -f "$EDKEY_FILE"
-          test -n "$ENCLOSURE_ATTRS" || { echo "sign_update produced no signature" >&2; exit 1; }
-          case "$ENCLOSURE_ATTRS" in
-            *edSignature=*length=*) : ;;
-            *) echo "unexpected sign_update output: $ENCLOSURE_ATTRS" >&2; exit 1 ;;
-          esac
-
           PUB_DATE_RFC="$(date -u -jf %Y-%m-%dT%H:%M:%SZ "$PUB_DATE_ISO" +"%a, %d %b %Y %H:%M:%S +0000" 2>/dev/null || date -u +"%a, %d %b %Y %H:%M:%S +0000")"
           MAC_URL="$BASE/$(basename "$MAC_TGZ")"
 
