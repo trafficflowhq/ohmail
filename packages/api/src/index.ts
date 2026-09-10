@@ -74,6 +74,8 @@ export {
   // judges it with. Exported so a guard can sweep the table rather than re-deriving the
   // permissive set from a copy of it — a copied predicate rots alone.
   UNVERIFIED_MAY_REACH, unverifiedMayReach,
+  // The lock's open doors, for the census that asserts every route is classified for it.
+  ACCESS_REFUSED_MAY_REACH, ACCESS_REFUSED_MAY_REACH_ROUTES, accessRefusedMayReach,
   type CostClass,
   type Route, type RouteOptions, type RouteParams, type Handler, type MatchResult,
 } from "./router.js";
