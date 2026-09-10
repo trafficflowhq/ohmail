@@ -22,7 +22,7 @@ import {
   ENGINE_DB_FILE,
   openLocalEnginePlatform,
   type EngineStoreDatabase,
-  type LocalEnginePlatform,
+  type LocalEnginePlatformVerdict,
 } from "./local-engine";
 import type { RandomKekHex } from "./kek";
 
@@ -36,7 +36,7 @@ export async function openEngineDatabase(name: string = ENGINE_DB_FILE): Promise
 }
 
 /** What the connect screen hands to the engine factory it loaded from the bundle. */
-export function nativeEnginePlatform(): Promise<LocalEnginePlatform> {
+export function nativeEnginePlatform(): Promise<LocalEnginePlatformVerdict> {
   return openLocalEnginePlatform({
     openDatabase: openEngineDatabase,
     kv: secureKV(),

@@ -60,6 +60,7 @@
  * The shape is kept so that adding version 2 is a write and a map entry rather than a redesign,
  * and so the value handed to the engine is the same `Record<number, …>` the desktop hands it.
  */
+import { refuse, type Refusal } from "../refusal";
 import type { SecureKV } from "../state/servers";
 
 /**
@@ -89,18 +90,18 @@ export const KEK_BYTES = 32;
 export type RandomKekHex = () => string | Promise<string>;
 
 /**
- * THE KEY IS MALFORMED AND NOTHING WILL BE REGENERATED — see the banner's first rule.
+ * WHAT {@link ensureKek} ANSWERS — a key, or a refusal a reader can act on.
  *
- * Its own class so a caller can tell "this device has no engine key yet" (which is ordinary and
- * recoverable) from "this device's engine key is unreadable" (which is neither). The message never
- * carries the offending value.
+ * It used to throw English `Error`s, which `faultDetail` classifies as somebody else's words and
+ * quotes verbatim inside a translated sentence. The failure is a VALUE carrying a deck key now, in
+ * the shape `bootEngine` already returns, so the door routes it the way `gate.ts` routes every
+ * other refusal — to Servers, the one surface that renders a reason and the remedies. It carries
+ * NO arguments, which makes the banner's logging rule structural: there is nowhere for the value
+ * in the slot to travel.
  */
-export class KekUnreadableError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "KekUnreadableError";
-  }
-}
+export type KekVerdict =
+  | { kind: "key"; hex: string }
+  | { kind: "refused"; reason: Refusal };
 
 /**
  * ONE MUTATION AT A TIME, for this module's lifetime.
@@ -129,10 +130,11 @@ function serialize<T>(job: () => Promise<T>): Promise<T> {
  * boundary carries the same string the desktop's environment variable carries, and exactly one
  * place converts it.
  *
- * @throws {KekUnreadableError} when a key is present and does not match {@link KEK_HEX_RE}, or
- * when a freshly generated key does not read back as what was written.
+ * REFUSES — never throws, and never regenerates — when a key is present and does not match
+ * {@link KEK_HEX_RE}, when the random source produces something that is not a key, or when a
+ * freshly generated key does not read back as what was written.
  */
-export async function ensureKek(kv: SecureKV, randomKekHex: RandomKekHex): Promise<string> {
+export async function ensureKek(kv: SecureKV, randomKekHex: RandomKekHex): Promise<KekVerdict> {
   return serialize(async () => {
     const existing = await kv.get(KEK_KEY);
     if (existing !== null) {
@@ -140,22 +142,15 @@ export async function ensureKek(kv: SecureKV, randomKekHex: RandomKekHex): Promi
       if (!KEK_HEX_RE.test(trimmed)) {
         // No value, no length, no prefix — see the banner. A reader who needs to know what is in
         // the slot can look at the slot; a log line cannot be taken back.
-        throw new KekUnreadableError(
-          "this install's engine key is stored but unreadable. It is NOT being replaced: every " +
-            "credential on this device is sealed under the key that is there, so minting a new " +
-            "one would make the mailbox password permanently unopenable rather than recover it.",
-        );
+        return { kind: "refused", reason: refuse("kekUnreadable") };
       }
-      return trimmed;
+      return { kind: "key", hex: trimmed };
     }
 
     const minted = (await randomKekHex()).trim();
     if (!KEK_HEX_RE.test(minted)) {
       // The random source, not the store. Distinguished because the fix is in a different file.
-      throw new KekUnreadableError(
-        `the random source produced something that is not a ${KEK_BYTES}-byte key in hex ` +
-          `(${minted.length} characters). No key was stored.`,
-      );
+      return { kind: "refused", reason: refuse("kekNotGenerated") };
     }
     await kv.set(KEK_KEY, minted);
     // ── THE READ-BACK, AND IT IS NOT BELT AND BRACES ────────────────────────────────────────
@@ -164,13 +159,9 @@ export async function ensureKek(kv: SecureKV, randomKekHex: RandomKekHex): Promi
     // password, with nothing pointing at the keystore.
     const readBack = await kv.get(KEK_KEY);
     if (readBack === null || readBack.trim() !== minted) {
-      throw new KekUnreadableError(
-        "this install's engine key was written to the keystore and did not read back. Nothing " +
-          "has been sealed under it — a credential stored now would be unopenable on the next " +
-          "launch.",
-      );
+      return { kind: "refused", reason: refuse("kekNotKept") };
     }
-    return minted;
+    return { kind: "key", hex: minted };
   });
 }
 

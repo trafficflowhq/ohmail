@@ -46,6 +46,7 @@
  * question and is deliberately not decided here.
  */
 import { ensureKek, kekRing, type RandomKekHex } from "./kek";
+import type { Refusal } from "../refusal";
 import type { SecureKV } from "../state/servers";
 
 /**
@@ -181,11 +182,22 @@ export interface LocalEnginePlatform {
 }
 
 /**
+ * WHAT OPENING THE PLATFORM ANSWERS — the pair, or a refusal a screen can render.
+ *
+ * `EngineBoot`'s shape, deliberately: a refusal is a value carrying a deck key, and `gate.ts`
+ * sends one to the Servers surface whatever the pairing count. So the door that starts a
+ * standalone install reads ONE verdict shape for both halves of its start-up.
+ */
+export type LocalEnginePlatformVerdict =
+  | ({ kind: "ready" } & LocalEnginePlatform)
+  | { kind: "refused"; reason: Refusal };
+
+/**
  * OPEN THE ENGINE'S STORE AND RESOLVE ITS KEY — the two things that must both succeed.
  *
  * Ordered store-then-key on purpose. Both can fail, and the key's failure is the one that must not
  * leave a half-built install behind: if the key is unreadable, the store is CLOSED again before the
- * error leaves this function, so nothing is holding a file handle for an engine that will not
+ * refusal leaves this function, so nothing is holding a file handle for an engine that will not
  * start.
  *
  * The random source and the keystore arrive through seams so the node-side suite drives this
@@ -197,12 +209,18 @@ export async function openLocalEnginePlatform(deps: {
   openDatabase: (name: string) => Promise<EngineStoreDatabase>;
   kv: SecureKV;
   randomKekHex: RandomKekHex;
-}): Promise<LocalEnginePlatform> {
+}): Promise<LocalEnginePlatformVerdict> {
   const exec = expoEngineExecutor(await deps.openDatabase(ENGINE_DB_FILE));
   try {
-    const hex = await ensureKek(deps.kv, deps.randomKekHex);
-    return { exec, keks: kekRing(hex) };
+    const kek = await ensureKek(deps.kv, deps.randomKekHex);
+    if (kek.kind === "refused") {
+      await exec.close().catch(() => undefined);
+      return { kind: "refused", reason: kek.reason };
+    }
+    return { kind: "ready", exec, keks: kekRing(kek.hex) };
   } catch (err) {
+    /* Not one of ours: a keystore or a driver raising its own exception. Re-thrown rather than
+       worded, so it reaches the door as the platform's own words — the diagnostic rule. */
     await exec.close().catch(() => undefined);
     throw err;
   }

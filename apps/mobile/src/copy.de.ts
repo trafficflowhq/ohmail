@@ -803,6 +803,20 @@ export const DE: Deck = {
   installPurgeFailed: (detail: string) =>
     `die Kopplungen der alten Installation ließen sich nicht entfernen: ${detail}`,
   installMarkerUnreadable: (detail: string) => `die Installationsmarke ließ sich nicht lesen: ${detail}`,
+  /* Drei Absagen ohne Argument — der Wert im Schlüsselspeicher ist geheim; siehe `copy.en.ts`. */
+  kekUnreadable:
+    "Der Schlüsselspeicher dieses Telefons hält etwas, das kein Schlüssel ist, deshalb lässt sich "
+    + "das damit versiegelte Postfach-Passwort nicht öffnen. ohmail ersetzt ihn nicht: ein neuer "
+    + "Schlüssel würde dieses Passwort endgültig aussperren. Deine Post auf dem Server bleibt "
+    + "unberührt — richte dieses Telefon für das Postfach neu ein, um von vorn zu beginnen.",
+  kekNotGenerated:
+    "Dieses Telefon konnte den Schlüssel für das Postfach-Passwort nicht erzeugen, deshalb wurde "
+    + "nichts gespeichert und nichts versiegelt. Auf dem Server hat sich nichts geändert. Schließe "
+    + "ohmail und öffne es erneut.",
+  kekNotKept:
+    "Der Schlüsselspeicher dieses Telefons hat den Schlüssel für das Postfach-Passwort angenommen "
+    + "und nicht zurückgegeben, deshalb wurde nichts damit versiegelt. Auf dem Server hat sich "
+    + "nichts geändert. Schließe ohmail und öffne es erneut.",
   connectSuperseded: "ein neuerer Verbindungsversuch hat übernommen.",
 
   /* "geht nach" + a place name has the same case problem; the web client's own heading for this

@@ -1347,6 +1347,25 @@ const TABLE = {
   installPurgeFailed: (detail: string) =>
     `the old install's pairings could not be purged: ${detail}`,
   installMarkerUnreadable: (detail: string) => `the install marker could not be read: ${detail}`,
+  /*
+   * THE STANDALONE INSTALL'S ENGINE KEY — three refusals, and none of them takes an argument.
+   *
+   * `kek.ts` refuses rather than minting a replacement, because every credential on the device is
+   * sealed under the key that is there. No argument is deliberate: the value in the slot is a
+   * secret, and a sentence that interpolated it would carry it wherever the sentence goes.
+   */
+  kekUnreadable:
+    "This phone's key store holds something that is not a key, so the mailbox password sealed "
+    + "under it cannot be opened. ohmail is not replacing it: a new key would lock that password "
+    + "away for good. Your mail on the server is untouched — set this phone up for the mailbox "
+    + "again to start over.",
+  kekNotGenerated:
+    "This phone could not generate the key that seals the mailbox password, so nothing was stored "
+    + "and nothing was sealed. Nothing on the server changed. Close ohmail and open it again.",
+  kekNotKept:
+    "This phone's key store took the key that seals the mailbox password and did not give it back, "
+    + "so nothing has been sealed under it. Nothing on the server changed. Close ohmail and open "
+    + "it again.",
   /**
    * A CONNECTION ATTEMPT THAT LOST A RACE TO A NEWER ONE.
    *
