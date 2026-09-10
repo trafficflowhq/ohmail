@@ -390,6 +390,11 @@ export async function openPhoneStore(
     // journal is the platform's and there is nothing for a caller to reclaim, so this answers zero
     // rather than pretending to have flushed something.
     checkpoint: async () => 0,
+    // THE CONTRACT'S DEFINED ANSWER FOR A RUNTIME WITH NO STORE HEAP, not a made-up figure:
+    // `OpenLocalDb.storeBytes` documents `0` as exactly that. The desktop's number is the WASM
+    // heap Postgres runs inside, and this store has none — SQLite is the platform's, on disk and
+    // outside this process, so it contributes nothing to `rss` and there is no half to attribute.
+    storeBytes: () => 0,
     close: async () => { await exec.close(); },
   };
 }
