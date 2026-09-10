@@ -96,7 +96,7 @@ import { activeFormatLocale, activeFormatZone } from "../../webapp/app/shell/loc
 import { useMailState } from "../../webapp/app/shell/MailStateProvider";
 import { goFirstRun } from "../../webapp/app/shell/routing";
 import { readerHolder } from "../../webapp/app/shell/reader-holder";
-import { bridgeFetch, engineLogout, type EngineStatus } from "./bridge-fetch.js";
+import { bridgeFetch, engineLogout, retryingBridgeFetch, type EngineStatus } from "./bridge-fetch.js";
 import { firstRunDoorFor } from "./doors.js";
 import { openWeb } from "./native.js";
 
@@ -534,7 +534,7 @@ export async function readMailboxReachVia(
  * "Syncing your mail" over a mailbox that finished months ago.
  */
 export async function readMailboxFacts(): Promise<MailboxFacts[]> {
-  return readMailboxFactsVia(bridgeFetch);
+  return readMailboxFactsVia(retryingBridgeFetch);
 }
 
 /**
@@ -982,7 +982,7 @@ export function DesktopMailboxes(
     };
     const read = (): void => {
       const seq = ++issued;
-      void readMailboxReachVia(bridgeFetch).then((r) => {
+      void readMailboxReachVia(retryingBridgeFetch).then((r) => {
         if (!live || seq <= shown) return;
         shown = seq;
         noteLanding(r);

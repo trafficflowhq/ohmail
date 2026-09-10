@@ -576,7 +576,10 @@ export function ComposeView({
       // reason `ccBccOpen` reveals the row when it is non-empty. `bcc` is never on an AI draft.
       cc: fields.cc || formatRecipientChips(draft.cc),
       subject: fields.subject || draft.subject,
-      body: draft.body,
+      /* WHAT IS ON SCREEN WINS OVER A BODY THE MIRROR DOES NOT HOLD. `null` is a row that
+         arrived without its text (see `EngineDraft.body`), and writing it in as "" would take
+         away whatever had been typed. */
+      body: draft.body ?? fields.body,
       // `EngineDraft.body` IS PLAIN TEXT, so the markup half is emptied rather than left
       // holding whatever the user had typed before. Carrying it over would mean the editor
       // rendering the old message's formatting around the new message's words — and, worse,

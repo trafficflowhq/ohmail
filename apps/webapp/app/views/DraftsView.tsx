@@ -176,7 +176,7 @@ export function DraftsView({
                         <span className="draft-line">
                           <span className="draft-to">{to || t("noRecipient")}</span>
                         </span>
-                        <span className="draft-preview">{preview(d.body)}</span>
+                        <span className="draft-preview">{preview(d.body ?? "")}</span>
                       </button>
                       <button
                         type="button"
@@ -223,7 +223,7 @@ export function DraftsView({
                         <span className="draft-to">{to || t("noRecipient")}</span>
                         {repliesHere(d) ? <span className="draft-badge">{t("isReply")}</span> : null}
                       </span>
-                      <span className="draft-preview">{preview(d.body)}</span>
+                      <span className="draft-preview">{preview(d.body ?? "")}</span>
                       {/* WHAT IS AND IS NOT KNOWN, in the row — before any press. `role="status"`
                           for the same reason `SendStatus` carries it: the condition arrived out
                           of band, possibly days ago, and this line is the first anyone hears of

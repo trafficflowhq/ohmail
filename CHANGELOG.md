@@ -54,6 +54,17 @@ The same holds for a build from source and for an AppImage you have unpacked and
 the extracted files — neither can replace itself, and neither says it can. The AppImage, the
 Windows setup and the macOS app are unchanged.
 
+### A draft you open is the draft you wrote
+
+Opening a draft now waits for its text to arrive before the editor appears, so a draft can never
+open empty and be saved that way over what you had written. If the text cannot be fetched, the
+draft does not open and the row says why.
+
+### The app waits the time the server asks for
+
+When the server is briefly too busy to answer a read and says when to come back, the app waits that
+long and asks again instead of reporting that it cannot reach anything.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

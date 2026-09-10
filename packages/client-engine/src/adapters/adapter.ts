@@ -161,6 +161,17 @@ export interface EngineAdapter {
   fetchBody(messageId: string): Promise<MessageBodyWire | null>;
 
   /**
+   * `GET /drafts/:id` — THE DRAFT'S TEXT, when the mirror row arrived without it.
+   *
+   * OPTIONAL for the reason `fetchBodies` is: absence is a real answer. The FixturesAdapter's
+   * rows always carry a body, so the demo keeps not having this and the compose surface never
+   * asks. `null` means the server answered and named no text; a refusal THROWS, because
+   * "unknown" and "empty" are the two states the caller has to tell apart — see
+   * `EngineDraft.body`.
+   */
+  fetchDraftBody?(draftId: string): Promise<string | null>;
+
+  /**
    * `GET /messages/bodies?ids=…` — EVERY body a thread needs, in ONE request.
    *
    * Opening a conversation asks for the opened message and each of its siblings, and until this

@@ -2846,6 +2846,7 @@
     "openTitle": "Open this draft",
     "openRecoverTitle": "Open this message — it is held until you know whether it arrived",
     "heldReopenBlocked": "Finish or put aside the message you are writing — opening this held one would replace it.",
+    "bodyUnavailable": "This draft’s text hasn’t reached this device yet. Try again in a moment.",
     "heldDiscardBlocked": "This message has a send we couldn't confirm. Tell us whether it arrived and you can discard it.",
     "resolveWhat": "Did this message arrive?",
     "resolveArrived": "It arrived",

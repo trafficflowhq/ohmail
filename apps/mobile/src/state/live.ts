@@ -522,7 +522,10 @@ export function liveScheduled(reader: EntityReader, v: WorldView): WorldSchedule
     when: d.status === "scheduled" && d.sendAt ? scheduleLabel(d.sendAt, v.now, v.zone) : null,
     subject: d.subject.trim() === "" ? Copy.scheduledNoSubject : d.subject,
     to: d.to.map((a) => a.name ?? a.address).join(", "),
-    preview: d.body.replace(/\s+/g, " ").trim().slice(0, 140),
+    /* A row whose text this mirror never received previews as nothing — see `EngineDraft.body`.
+       The subject and recipients above still identify it, and inventing a preview from a body
+       nobody sent would be the list asserting the draft is empty. */
+    preview: (d.body ?? "").replace(/\s+/g, " ").trim().slice(0, 140),
     failure: d.sendError ?? null,
     /** A standing appointment can be cancelled; a failed one has nothing left to cancel. */
     cancellable: d.status === "scheduled",

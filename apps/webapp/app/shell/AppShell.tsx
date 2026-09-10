@@ -42,6 +42,7 @@ import {
   triagePiles,
   type ComposeAttachment,
   type ConsentPartition,
+  draftBodyKnown,
   type EngineDraft,
   type EngineMessage,
   type EngineMutation,
@@ -560,6 +561,35 @@ export function makeHydrateBody(
   return (messageId, opts) => {
     void engine.hydrateBody(messageId, opts);
   };
+}
+
+/**
+ * WHETHER A DRAFT MAY BE OPENED YET — a named unit for the reason `makeHydrateBody` is.
+ *
+ * A bounded sync page can carry a draft row without its text, and the stale-resume freshen
+ * applies page 1 over the mirror on every session older than five minutes. Seeded as "" that row
+ * is an empty editor whose next autosave PUT replaces what the person wrote. So an unknown body
+ * is fetched (`GET /drafts/:id`, one read) and the editor opens only with the text in hand; a
+ * read that cannot answer opens nothing and says so, because every other arm shows the message
+ * as shorter than it is.
+ */
+export async function openDraftDecision(
+  draft: EngineDraft,
+  io: {
+    readDraftBody: (draftId: string) => Promise<string | null>;
+    openWithBody: (draft: EngineDraft, body: string) => void;
+    unavailable: () => void;
+  },
+): Promise<void> {
+  if (draftBodyKnown(draft)) {
+    /* `?? ""` is unreachable past the predicate and is the type's, not a default: an empty string
+       is a KNOWN body and takes this arm, which is what lets somebody clear a draft. */
+    io.openWithBody(draft, draft.body ?? "");
+    return;
+  }
+  const text = await io.readDraftBody(draft.id);
+  if (text === null) { io.unavailable(); return; }
+  io.openWithBody({ ...draft, body: text }, text);
 }
 
 /**
@@ -4006,8 +4036,33 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     (d: EngineDraft): boolean =>
       d.inReplyToMessageId != null && reader.get<EngineMessage>("message", d.inReplyToMessageId) != null,
   );
-  const openDraft = useStableCallback(
-    (d: EngineDraft) => {
+  /**
+   * ── A DRAFT IS NEVER OPENED WITH A BODY THIS CLIENT DOES NOT HAVE ─────────────────────────
+   *
+   * A bounded sync page can carry a draft row without its text (`EngineDraft.body` is `null`
+   * then), and the resume freshen applies page 1 over the mirror on every session older than
+   * five minutes. Seeded as "" that row becomes an empty editor, and autosave's next PUT writes
+   * the blank over what the person actually wrote.
+   *
+   * So the text is asked for — `GET /drafts/:id`, one read, the route the AI draft already reads
+   * back — and the editor opens only once it has arrived. If it cannot be had, the draft does not
+   * open and the row says so; a refusal is the only honest arm, because every other one presents
+   * a message as shorter than it is.
+   */
+  const openDraft = useStableCallback((d: EngineDraft) => {
+    void openDraftDecision(d, {
+      readDraftBody: (id) => engine.readDraftBody(id),
+      openWithBody: (row, body) => { openDraftWithBody(row, body); },
+      unavailable: () => { toast(t("drafts.bodyUnavailable")); },
+    });
+  });
+  /**
+   * OPEN A DRAFT WHOSE TEXT IS KNOWN. `body` is a parameter and not read off the row, so the
+   * type carries the invariant: this door cannot be reached with a body the mirror does not
+   * hold — {@link openDraft} above is the one that decides.
+   */
+  const openDraftWithBody = useStableCallback(
+    (d: EngineDraft, body: string) => {
       const parent = d.inReplyToMessageId
         ? reader.get<EngineMessage>("message", d.inReplyToMessageId)
         : null;
@@ -4038,7 +4093,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
            not `openMessage` directly: that callback needs the screener row map and the consent
            partition and is therefore declared far below this one, so the reference is late-bound
            for the same reason `settleComposeRef` is. */
-        setReplyBody({ text: d.body, html: "" });
+        setReplyBody({ text: body, html: "" });
         setReplyTo(parent.id);
         /* REMEMBER WHICH ROW SEEDED THIS EDITOR. The inline reply has no autosave, so the send
            will create its own row — and without this note the seeded row would stay in Drafts
@@ -4056,7 +4111,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
         cc: formatRecipientChips(d.cc),
         bcc: formatRecipientChips(d.bcc),
         subject: d.subject,
-        body: d.body,
+        body,
         // NO `html`. The row stores the markup the server derived its plain part FROM, and the
         // mirror's `EngineDraft` does not carry it — seeding the rich editor from `body` would
         // silently flatten a formatted draft to text and then save the flattening back over it.

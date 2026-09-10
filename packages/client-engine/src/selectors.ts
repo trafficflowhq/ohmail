@@ -1476,6 +1476,23 @@ export function draftsList(reader: EntityReader, now: Date = new Date()): Engine
 }
 
 /**
+ * DOES THIS MIRROR HOLD THE DRAFT'S TEXT — the one rule, so no surface writes a second one.
+ *
+ * `false` for `null` and for a row from a page that carried no `body` key at all, which is the
+ * same fact and reaches a reader as `undefined` past a type that promises otherwise
+ * (`applyToRecords` stores the DTO verbatim). `true` for the empty string: a draft with nothing
+ * typed in it is a known body, and treating it as unknown would refuse to save the one edit that
+ * empties a message.
+ *
+ * Consulted before the text is seeded into an editor and before autosave writes it back. A row
+ * whose body is unknown must not become a PUT — that PUT would replace what the person wrote
+ * with the blank this client happens to be holding.
+ */
+export function draftBodyKnown(draft: { body?: string | null }): boolean {
+  return typeof draft.body === "string";
+}
+
+/**
  * THE SCHEDULED SENDS (Send later, mail 0077) — every draft wearing an appointment, soonest
  * first. Its own list rather than a branch of {@link draftsList}, because the two surfaces make
  * different promises: Drafts is "what you have not sent", ordered by recency of touch;

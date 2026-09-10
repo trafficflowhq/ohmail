@@ -747,7 +747,15 @@ export interface EngineDraft {
   threadId: string | null;
   inReplyToMessageId: string | null;
   subject: string;
-  body: string;
+  /**
+   * The draft's plain text, or `null` when THIS MIRROR DOES NOT HOLD IT.
+   *
+   * Two states, named rather than collapsed: a string — empty included — is the text of record,
+   * and `null` is a row that arrived without one. `/sync` changes carry whole DTOs, so `null` is
+   * reachable only from a bounded page that omits the field; the type is nullable so no reader
+   * can seed an editor from a body nobody sent. {@link draftBodyKnown} is the one predicate.
+   */
+  body: string | null;
   to: EmailAddress[];
   cc: EmailAddress[];
   /** Blind-carbon recipients. Delivered on the envelope only; never a header on the sent mail. */

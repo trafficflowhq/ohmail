@@ -240,6 +240,9 @@ export {
   readsPartition,
   receiptsByDay,
   draftsList,
+  // Whether a draft row carries its text at all — see {@link EngineDraft.body}. Exported so the
+  // compose surfaces and autosave read the shipped rule rather than each testing for null.
+  draftBodyKnown,
   scheduledSendsList,
   SENDING_STALE_AFTER_MS,
   rulesList,
@@ -318,6 +321,15 @@ export {
   type HttpAdapterOptions,
   type ServerMessageView,
 } from "./adapters/http-adapter.js";
+
+// The retrying read transport: one wrapper over the client's idempotent GETs, shared by the
+// adapter and by the desktop window's roster polls. Exported so a caller wraps the shipped rule
+// rather than writing a second backoff, and so a guard reads the shipped attempt bound.
+export {
+  RETRYING_READ_ATTEMPTS,
+  retryAfterMsOf,
+  retryingRead,
+} from "./adapters/retrying-read.js";
 
 // The engine.
 export {

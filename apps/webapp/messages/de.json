@@ -2846,6 +2846,7 @@
     "openTitle": "Diesen Entwurf öffnen",
     "openRecoverTitle": "Diese Nachricht öffnen — sie wird festgehalten, bis klar ist, ob sie angekommen ist",
     "heldReopenBlocked": "Schreib die Nachricht fertig oder leg sie beiseite — diese festgehaltene zu öffnen würde sie ersetzen.",
+    "bodyUnavailable": "Der Text dieses Entwurfs ist auf diesem Gerät noch nicht angekommen. Versuch es gleich noch einmal.",
     "heldDiscardBlocked": "Für diese Nachricht konnten wir den Versand nicht bestätigen. Sag uns, ob sie angekommen ist, dann kannst du sie verwerfen.",
     "resolveWhat": "Ist diese Nachricht angekommen?",
     "resolveArrived": "Sie ist angekommen",

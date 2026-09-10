@@ -2407,10 +2407,12 @@ describe("the UI bundle's build config", () => {
     // The mailbox list is read from the ENGINE, over the pipe — never from the mirror, which has
     // no such entity and is what made the shared fallback empty. The read is a factory over the
     // transport now (`readMailboxFactsVia`), because the served host-client asks the identical
-    // question over its bearer socket; the WINDOW's instance still rides the bridge, asserted
-    // in both halves so neither can drift.
+    // question over its bearer socket; the WINDOW's instance rides the bridge through the
+    // RETRYING read, so one refused frame is not the whole answer.
     const mailboxes = read("src/DesktopMailboxes.tsx");
-    expect(mailboxes).toMatch(/readMailboxFactsVia\(bridgeFetch\)/);
+    expect(mailboxes).toMatch(/readMailboxFactsVia\(retryingBridgeFetch\)/);
+    expect(mailboxes, "the pane's reach poll rides the same retrying transport")
+      .toMatch(/readMailboxReachVia\(retryingBridgeFetch\)/);
     expect(mailboxes).toMatch(/fetchImpl\("\/mailboxes"\)/);
     // A FAILED read is not an empty account. The ladder renders "No mailbox connected" for the
     // second, so collapsing the first into it would say that to somebody whose mailbox works.

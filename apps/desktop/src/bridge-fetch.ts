@@ -36,7 +36,7 @@
  * which the guard has replaced with a thrower. A forgotten wire is loud rather than silent.
  */
 
-import { HttpAdapter, OhmailEngine } from "@ohmail/client-engine";
+import { HttpAdapter, OhmailEngine, retryingRead } from "@ohmail/client-engine";
 
 /**
  * The shape `HttpAdapterOptions.fetch` is satisfied by.
@@ -243,6 +243,16 @@ export const bridgeFetch: BridgeFetch = async (url, init) => {
 
   return toResponse(asBytes(bytes));
 };
+
+/**
+ * {@link bridgeFetch} FOR THE WINDOW'S OWN POLLS — the same request, asked again when the engine
+ * answers `503` and names a `Retry-After`.
+ *
+ * The shell refuses a bridge request while 32 are already waiting, and a bare single-shot poll
+ * reads one refusal as its whole answer: the roster reads render "can't check" for a machine that
+ * would have answered a moment later. GET only — the wrapper throws on anything else.
+ */
+export const retryingBridgeFetch: BridgeFetch = retryingRead(bridgeFetch);
 
 function abortError(): Error {
   const err = new Error("ohmail Desktop: the request was aborted.");
