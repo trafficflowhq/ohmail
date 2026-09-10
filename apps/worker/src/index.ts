@@ -5,6 +5,7 @@ import {
   messages, folderState, junkSweepCandidateWhere, closeStoodDownAppointments,
   RELEASED_ORGANIZER_SEND_SENTENCE, capabilitiesColumn, exportPendingMovesOnStandDown,
   UNMETERED, isMetered, type EntitlementsComposition,
+  type StandDownExport,
 } from "@trafficflow/db";
 import {
   makeEntitlementsClient, makeOwnedDb, makeChangeWakeHub, type OwnedDb, type ChangeWakeFanout } from "@trafficflow/db/cloud";
@@ -1970,14 +1971,28 @@ export async function startWorkerWithLock(
        * gate answers `stand_down` every cycle while a foreign claim stands, so an ungated export
        * would mint a request per cycle. Best-effort like the appointment close below it and for
        * the same reason: this process has already stopped organizing the mailbox. */
-      if (lease.organizerRole === "organizer") await standDownExport(mb);
-      /* THE ROW'S MIRROR, AS `markMailboxStoodDown` IS ABOUT TO LEAVE IT . This line
-         was `lease.disabledReason = outcome.reason`, which had been true of the write below and
-         stopped being true when the demotion moved onto the role: the column gains no writer
-         there, so the mirror was recording a value the row does not hold. It happened to keep the
-         promotion above firing IN THIS PROCESS, which is precisely what hid the missing term from
-         every test that demoted and promoted inside one run. */
-      lease.organizerRole = "reader";
+      /* ── THE HANDOVER RIDES THE DEMOTION'S OWN TRANSACTION, AND BOTH HALVES ARE CONTINGENT ──
+       *
+       * It used to be a separate transaction ahead of the write below, which left two sequences
+       * open. The first: a paired device's forwarded move can commit AFTER a handover that has
+       * already read its pending set and BEFORE the demotion — so this host accepted the move,
+       * became a reader, and neither performed nor exported it. The second: the handover's own
+       * failure was swallowed, so a demotion was recorded with an export that did not happen and
+       * every not-yet-exported move stayed on a reader for ever.
+       *
+       * One transaction closes both. `markMailboxStoodDown` takes `FOR UPDATE` on the mailbox row
+       * first (it is fenced), and `assertOrganizerRole` takes `FOR SHARE` on that row inside the
+       * transaction that records a forwarded move — so the lock is granted only once every such
+       * write in flight has committed, and one arriving afterwards waits for this commit and is
+       * then refused. Exported, or refused.
+       *
+       * ON THE TRANSITION ONLY — `lease.organizerRole` still holds what the row says, and this
+       * gate answers `stand_down` every cycle while a foreign claim stands, so an ungated export
+       * would mint a request per cycle. */
+      const wasOrganizer = lease.organizerRole === "organizer";
+      /* A HOLDER RATHER THAN A `let`, so the read below is the handover's own answer and not a
+         narrowing of the initializer: the assignment happens inside the transaction's callback. */
+      const handed: { r: StandDownExport | null } = { r: null };
       log.warn("organizer_stand_down", {
         mailboxId: mb.mailboxId, accountId: mb.accountId, phase,
         disabledReason: outcome.reason,
@@ -2000,6 +2015,16 @@ export async function startWorkerWithLock(
         // reads the row precisely so no client has to dial IMAP to render one.
         const written = await markMailboxStoodDown(db, mb.mailboxId, outcome.reason, {
           fence,
+          ...(wasOrganizer
+            ? {
+              also: async (tx: typeof db): Promise<void> => {
+                handed.r = await exportPendingMovesOnStandDown(tx as unknown as Tx, {
+                  accountId: mb.accountId, mailboxId: mb.mailboxId, now: new Date(),
+                  mintId: randomUUID,
+                });
+              },
+            }
+            : {}),
           by: {
             kind: outcome.by ? outcome.by.kind : null,
             // Mail 0092 — the winner's install id, so a stood-down row names WHICH install beat
@@ -2014,15 +2039,40 @@ export async function startWorkerWithLock(
         if (!written) {
           log.info("organizer_stand_down_write_fenced", {
             mailboxId: mb.mailboxId, accountId: mb.accountId,
-            reason: "the mailbox is a tombstone, or this instance no longer leads the shard",
+            reason: "the mailbox is a tombstone, or this instance no longer leads the shard; the "
+              + "handover of pending local moves did not run either, and the instance that does "
+              + "lead the shard stands the same mailbox down on its own next pass",
+          });
+        } else {
+          /* THE ROW'S MIRROR, AS `markMailboxStoodDown` HAS JUST LEFT IT — and it moves only on a
+             write that LANDED. It used to be set ahead of the write, which made the mirror say
+             `reader` after a write that threw: the next cycle's transition gate then skipped the
+             handover for ever, so one failed write stranded every pending intent. Leaving it at
+             `organizer` costs one more cycle of this row admitting a forwarded move, and that
+             move is exported by the retry. */
+          lease.organizerRole = "reader";
+        }
+        // Only when there was something to hand over: the overwhelming majority of stand-downs
+        // have no pending intent and must stay silent.
+        const r = handed.r;
+        if (r !== null && (r.exported > 0 || r.unmappable > 0)) {
+          log.warn("organizer_stand_down_moves_handed_over", {
+            mailboxId: mb.mailboxId, accountId: mb.accountId,
+            exported: r.exported, already: r.already, unmappable: r.unmappable,
+            reason: "these moves were recorded here before the lease was read again; each is now a "
+              + "request for the install that holds the mailbox. `unmappable` are intents this "
+              + "handover cannot express — a desired folder no destination word covers, or a "
+              + "message with no usable dedup key — and they stay pending exactly where they are",
           });
         }
       } catch (err) {
         log.error("organizer_stand_down_write_failed", {
           mailboxId: mb.mailboxId, accountId: mb.accountId, err,
-          reason: "this process has stopped organizing the mailbox regardless; the row could " +
-            "not record why, so the UI will show an ordinary disabled mailbox",
+          reason: "neither the demotion nor the handover of pending local moves was recorded, so "
+            + "the row still says this install organizes the mailbox; this cycle organizes "
+            + "nothing and the next one demotes and hands over again",
         });
+        return false;
       }
       // ── AND THE APPOINTMENTS THIS PROCESS CAN NO LONGER KEEP ARE CLOSED WITH A SENTENCE ────
       //
@@ -2056,35 +2106,6 @@ export async function startWorkerWithLock(
       return false;
     }
 
-    /**
-     * The stand-down's HANDOVER of pending local moves — see the call site for the window that
-     * produces them. Its own function for `standDownAppointments`' reason, and it never throws
-     * for the same one: the mailbox has changed hands whatever this write does.
-     */
-    async function standDownExport(mb: { mailboxId: string; accountId: string }): Promise<void> {
-      try {
-        const r = await db.transaction((tx) => exportPendingMovesOnStandDown(tx as unknown as Tx, {
-          accountId: mb.accountId, mailboxId: mb.mailboxId, now: new Date(), mintId: randomUUID,
-        }));
-        // Only when there was something to hand over: the overwhelming majority of stand-downs
-        // have no pending intent and must stay silent.
-        if (r.exported > 0 || r.unmappable > 0 || r.more) {
-          log.warn("organizer_stand_down_moves_handed_over", {
-            mailboxId: mb.mailboxId, accountId: mb.accountId,
-            exported: r.exported, already: r.already, unmappable: r.unmappable, more: r.more,
-            reason: "these moves were recorded here before the lease was read again; each is now a "
-              + "request for the install that holds the mailbox. `unmappable` are desired folders "
-              + "no destination word covers (a user folder) and stay where they are",
-          });
-        }
-      } catch (err) {
-        log.error("organizer_stand_down_moves_handover_failed", {
-          mailboxId: mb.mailboxId, accountId: mb.accountId, err,
-          reason: "a move recorded here will not reach the install that organizes the mailbox now; "
-            + "the row stays pending and this install performs nothing",
-        });
-      }
-    }
 
     /**
      * The stand-down's appointment close. Its own function rather than four inline statements in

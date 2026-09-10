@@ -3591,39 +3591,6 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       };
 
       /**
-       * THE INTENTS THIS INSTALL RECORDED AND MAY NO LONGER CARRY OUT — handed to whoever holds
-       * the mailbox now. See `exportPendingMovesOnStandDown` for the window that produces them:
-       * between another install's takeover and this poll the row still read `organizer`, so a
-       * paired device's forwarded move was recorded here and nothing would ever perform it.
-       *
-       * Never throws, for `standDownAppointments`' reason. DELIBERATELY NOT a launch catch-up
-       * like the one below: a pending row on a long-stood-down install is a decision from an
-       * unknown time ago, and moving somebody's mail on the strength of it is the guess the
-       * held-intent journal's own day-long horizon refuses to make.
-       */
-      const standDownExport = async (): Promise<void> => {
-        try {
-          const r = await exportPendingMovesOnStandDown(db as unknown as Tx, {
-            accountId: world.accountId, mailboxId: mb.id, now: now(), mintId: randomUUID,
-          });
-          if (r.exported > 0 || r.unmappable > 0 || r.more) {
-            log("organizer_stand_down_moves_handed_over", {
-              exported: r.exported, already: r.already, unmappable: r.unmappable, more: r.more,
-              reason: "these moves were recorded here before the lease was read again; each is now "
-                + "a request for the install that holds the mailbox. `unmappable` are desired "
-                + "folders no destination word covers (a user folder) and stay where they are",
-            });
-          }
-        } catch (err) {
-          log("organizer_stand_down_moves_handover_failed", {
-            err,
-            reason: "a move recorded here will not reach the install that organizes the mailbox "
-              + "now; the row stays pending and this install performs nothing",
-          });
-        }
-      };
-
-      /**
        * THE LAUNCH CATCH-UP — a stood-down install closes its own appointments on every start.
        *
        * The stand-down hook above covers the transition. This covers the STATE, and it is needed
@@ -4584,15 +4551,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         // Standing down voids any unspent authorization, in memory and on the row below. We are not
         // the organizer, so becoming one again is a new becoming and needs a new explicit request.
         takeoverAuthorized = false;
-        /* ON THE TRANSITION ONLY. `priorStandDown` still holds what this process knew BEFORE this
-           cycle — the row's own memory at assembly — and this gate answers `stand_down` every
-           cycle while a foreign claim stands, so an ungated export would mint a request per poll. */
-        if (priorStandDown === null) await standDownExport();
-        // …AND IT IS REMEMBERED FOR THE REST OF THIS PROCESS, not only on the row. A reader keeps
-        // polling, so without this line the next cycle would ask the lease again and take the
-        // mailbox back the moment the other organizer released it. See {@link priorStandDown}.
-        priorStandDown = outcome.reason;
         log("organizer_stand_down", {
+          /* THE MAILBOX THIS VERDICT IS ABOUT. A stand-down is a per-mailbox decision and this
+             line named none, so on an install holding more than one mailbox the log could not say
+             which one had changed hands — an incident nobody can read off the record it leaves.
+             The id and never the address: this is a log. */
+          mailboxId: mb.id,
           disabledReason: outcome.reason,
           heldBy: organizer.heldBy,
           // `state` and NOT `organizerState`, which is the name this line shipped with and which
@@ -4604,6 +4568,29 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             "keeps its login and its poll timer, its mirror goes on growing, it can mark mail read " +
             "and send, and it moves, files and deletes nothing",
         });
+        /* ── THE HANDOVER RIDES THE DEMOTION'S TRANSACTION, AND THE LATCH RIDES ITS SUCCESS ────
+         *
+         * Three statements used to run in a row here, each on its own: the handover of pending
+         * local moves, the in-memory latch, and the row write. That left two sequences open, and
+         * the hosted twin's call site states them in the same words. The first: a paired device's
+         * forwarded move can commit AFTER a handover that has already read its pending set and
+         * BEFORE the demotion, so this install accepted the move, became a reader, and neither
+         * performed nor exported it. The second: the handover's failure was swallowed while the
+         * latch was set anyway — so a demotion was recorded with an export that did not happen,
+         * the next cycle's transition gate skipped the handover for ever, and every not-yet-
+         * exported move stayed on a reader.
+         *
+         * One transaction, and the latch only if it committed. `exportPendingMovesOnStandDown`
+         * takes `FOR UPDATE` on this mailbox row as its first statement, and `assertOrganizerRole`
+         * takes `FOR SHARE` on that row inside the transaction that records a forwarded move — so
+         * the handover cannot miss an intent that was admitted, and none is admitted afterwards.
+         * Exported, or refused.
+         *
+         * ON THE TRANSITION ONLY — `priorStandDown` still holds what this process knew BEFORE
+         * this cycle, and this gate answers `stand_down` every cycle while a foreign claim
+         * stands, so an ungated export would mint a request per poll.
+         */
+        const wasOrganizing = priorStandDown === null;
         try {
           /* -- THE ROLE, NOT THE STATUS  ------------------------------------------
            *
@@ -4621,7 +4608,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            * plan-disable, full stop, and a reader that also carried a stand-down reason would be a
            * row saying two different things about itself.
            */
-          await db.update(mailboxes)
+          const handed = await db.transaction(async (tx) => {
+            const exported = wasOrganizing
+              ? await exportPendingMovesOnStandDown(tx as unknown as Tx, {
+                accountId: world.accountId, mailboxId: mb.id, now: now(), mintId: randomUUID,
+              })
+              : null;
+            await tx.update(mailboxes)
             .set({
               organizerRole: "reader",
               // Mail 0088 — BEING BEATEN IS NOT RELEASING. A row carrying both would report the
@@ -4654,10 +4647,30 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               organizerEventAt: now(),
             })
             .where(eq(mailboxes.id, mb.id));
+            return exported;
+          });
+          /* THE LATCH, AFTER THE COMMIT. A reader keeps polling, so without it the next cycle
+             would ask the lease again and take the mailbox back the moment the other organizer
+             released it — and setting it before the write meant a failed write silently retired
+             the handover with it. See {@link priorStandDown}. */
+          priorStandDown = outcome.reason;
+          if (handed !== null && (handed.exported > 0 || handed.unmappable > 0)) {
+            log("organizer_stand_down_moves_handed_over", {
+              mailboxId: mb.id,
+              exported: handed.exported, already: handed.already, unmappable: handed.unmappable,
+              reason: "these moves were recorded here before the lease was read again; each is now "
+                + "a request for the install that holds the mailbox. `unmappable` are intents this "
+                + "handover cannot express — a desired folder no destination word covers, or a "
+                + "message with no usable dedup key — and they stay pending exactly where they are",
+            });
+          }
         } catch (err) {
           log("organizer_stand_down_write_failed", {
+            mailboxId: mb.id,
             err,
-            reason: "this install reads the mailbox regardless; the row could not record who organizes it",
+            reason: "neither the demotion nor the handover of pending local moves was recorded, so "
+              + "the row still says this install organizes the mailbox; this install reads it "
+              + "regardless and the next cycle demotes and hands over again",
           });
         }
         // ── AND THE APPOINTMENTS THIS INSTALL CAN NO LONGER KEEP ARE CLOSED, HERE ──────────────

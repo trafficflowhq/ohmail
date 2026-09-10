@@ -1350,7 +1350,19 @@ export interface StandDownHolder {
 
 export async function markMailboxStoodDown(
   db: WorkerDb, mailboxId: string, reason: MailboxDisabledReason,
-  opts: { fence?: LeaderFence; by?: StandDownHolder; now?: Date } = {},
+  opts: {
+    fence?: LeaderFence; by?: StandDownHolder; now?: Date;
+    /**
+     * A CONSEQUENCE OF THE DEMOTION, IN THE SAME TRANSACTION — {@link applyFenced}'s `also`,
+     * exposed here for the one caller that has one: the stand-down's HANDOVER of pending local
+     * moves. Two transactions could leave a demotion with its handover missing (every not-yet-
+     * exported intent stranded on a reader for ever) or a handover with its demotion missing
+     * (requests minted for a mailbox this install still believes it organizes). It also runs
+     * after `applyFenced`'s `FOR UPDATE`, which is what makes the handover's own read complete —
+     * see `exportPendingMovesOnStandDown`.
+     */
+    also?: (db: WorkerDb) => Promise<void>;
+  } = {},
 ): Promise<boolean> {
   const safe: MailboxDisabledReason =
     isMailboxDisabledReason(reason) ? reason : "organized_elsewhere:unknown";
@@ -1438,7 +1450,7 @@ export async function markMailboxStoodDown(
     // so advancing `event_at` is already the whole of "show this again" — and clearing the
     // acknowledgement as well would lose the record of an older dismissal for no gain.
     organizerEventAt: opts.now ?? new Date(),
-  }).where(lifecycleWhere(mailboxId, opts.fence)).returning({ id: mailboxes.id }));
+  }).where(lifecycleWhere(mailboxId, opts.fence)).returning({ id: mailboxes.id }), opts.also);
 }
 
 /**

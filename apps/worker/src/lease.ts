@@ -307,6 +307,24 @@ export async function readMailboxLease(input: MailboxLeaseInput): Promise<Mailbo
     );
   }
 
+  /* ── EVERY LINE THE GATE WRITES NAMES THE MAILBOX, AND IT IS BOUND HERE FOR BOTH HOSTS ─────
+   *
+   * `runLeaseGate` is deliberately mailbox-agnostic: it works through `io` against one mailbox's
+   * `_meta` folder and holds no id at all. So its lines said what happened and never what it
+   * happened TO — and `lease_stand_down` is a PER-MAILBOX verdict, which on an install holding
+   * more than one mailbox made the record unreadable: a handover nobody can attribute from the
+   * log it leaves. Bound once here rather than at each of the gate's own call sites, because both
+   * hosts reach the gate through this function and neither should have to remember.
+   *
+   * `mailboxId` goes FIRST so a line that already carries one keeps its own value.
+   */
+  const caller = input.log;
+  const leaseLog = caller === undefined
+    ? undefined
+    : (event: string, detail: Record<string, unknown>): void => {
+      caller(event, { mailboxId: input.mailboxId, ...detail });
+    };
+
   const result = await runLeaseGate({
     io: adapter.leaseIo({ installId: self.installId, mailboxId: input.mailboxId }),
     self,
@@ -314,7 +332,7 @@ export async function readMailboxLease(input: MailboxLeaseInput): Promise<Mailbo
     capabilities: organizerCapabilitiesFor({ hasRequestKey: input.hasRequestKey }),
     ...(input.takeover !== undefined ? { takeover: input.takeover } : {}),
     ...(input.staleAfterMs !== undefined ? { staleAfterMs: input.staleAfterMs } : {}),
-    ...(input.log !== undefined ? { log: input.log } : {}),
+    ...(leaseLog !== undefined ? { log: leaseLog } : {}),
   });
 
   if (result.verdict.verdict === "organize") {

@@ -1,10 +1,10 @@
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, isNull, notInArray, sql, type SQL } from "drizzle-orm";
 import {
   accountSettings, awayResponders, folderState, mailboxes, messages, organizerRequests,
   rules as rulesTbl,
 } from "./schema-mail.js";
 import { recordChange, type LedgerTx, type Tx } from "./change-log.js";
-import { insertOrganizerRequest } from "./organizer-requests.js";
+import { insertOrganizerRequest, TERMINAL_REQUEST_STATES } from "./organizer-requests.js";
 
 /**
  * `recordChange` wants `LedgerTx` (`PgTransaction`, narrower than `Tx`/`PgDatabase`) because it is
@@ -995,9 +995,14 @@ const DESTINATION_WORD: ReadonlyMap<string, string> = new Map(
 );
 
 /**
- * How many intents one stand-down hands over. The ingest batch's number: a mailbox with more
- * pending moves than this at the instant it changes hands is a state nobody has produced, and the
- * remainder is REPORTED rather than silently dropped.
+ * How many intents one PAGE of the handover reads — the ingest batch's number.
+ *
+ * A PAGE SIZE and no longer a bound. It was read once and the remainder was reported as `more`,
+ * which meant a mailbox holding one intent past this number handed over 200 of 201 and demoted
+ * anyway: the last intent stayed pending on an install that may not perform it, in front of the
+ * one install that could. The walk in {@link exportPendingMovesOnStandDown} now continues until
+ * the pending set is exhausted, and the number below only decides how many rows one statement
+ * reads.
  */
 export const STAND_DOWN_EXPORT_MAX = 200;
 
@@ -1008,25 +1013,31 @@ export interface StandDownExport {
   /** Intents already travelling — a repeated stand-down on the same row mints nothing. */
   already: number;
   /**
-   * Intents whose desired folder no destination WORD covers — a user folder. A request may not
-   * carry a raw IMAP path (see {@link MOVE_DESTINATIONS}), so these stay where they are and are
-   * counted: a number in a log is a thing somebody can select, an absence is not.
+   * Intents this handover cannot express: a desired folder no destination WORD covers (a user
+   * folder), and — failing closed — a message with no usable `dedup_key`. A request may not carry
+   * a raw IMAP path (see {@link MOVE_DESTINATIONS}), so these stay exactly where they are: a
+   * pending row, still counted in `MailboxDTO.pendingMoves`, performed if this install is ever
+   * promoted again. The number is reported because an absence is not something anybody can select.
    */
   unmappable: number;
-  /**
-   * TRUE when at least one intent was past {@link STAND_DOWN_EXPORT_MAX} — and a FLAG rather than
-   * a count because the read is bounded at `limit + 1`: a number here could only ever say 0 or 1
-   * while reading as a total, which is the quiet inaccuracy a log gets believed for.
-   */
-  more: boolean;
+}
+
+/** One pending local intent, as one page of the handover reads it. */
+interface PendingIntentRow {
+  dedupKey: string | null;
+  desiredFolder: string;
+  updatedAt: Date;
+  messageId: string;
 }
 
 /**
  * HAND EVERY PENDING LOCAL MOVE TO THE INSTALL THAT HOLDS THE MAILBOX NOW.
  *
- * Called from the stand-down arm of both hosts' lease gates, in the same decision as the role
- * write. Best-effort by contract: standing down is a decision this process has already made and
- * may not be made contingent on a second write.
+ * Called from the stand-down arm of both hosts' lease gates, IN THE SAME TRANSACTION as the role
+ * write — see either caller. That is not tidiness: a handover that commits without the demotion
+ * mints requests for a mailbox this install still believes it organizes, and a demotion that
+ * commits without the handover is the lost filing this function exists to prevent. One
+ * transaction makes both halves land or neither.
  *
  * `deleted_at` is deliberately NOT a filter, for the reason {@link applyMessageMove}'s own lookup
  * gives: a delete IS a move to Trash, its tombstone is local to this install, and leaving it
@@ -1034,40 +1045,42 @@ export interface StandDownExport {
  *
  * Idempotent on TWO independent terms, because one of them is not enough: the caller exports only
  * on the stand-down TRANSITION (a gate that answers `stand_down` every cycle would otherwise mint
- * a request per cycle), and a message already carrying a non-terminal `message.move` request is
+ * a request per cycle), and a message already carrying a NON-TERMINAL `message.move` request is
  * skipped here — which covers two instances standing the same row down.
  */
 export async function exportPendingMovesOnStandDown(
   tx: Tx,
   input: { accountId: string; mailboxId: string; now: Date; mintId: () => string; limit?: number },
 ): Promise<StandDownExport> {
-  const limit = input.limit ?? STAND_DOWN_EXPORT_MAX;
+  const page = input.limit ?? STAND_DOWN_EXPORT_MAX;
+  /* ── THE ROW LOCK IS THE FIRST STATEMENT, AND IT IS WHAT MAKES THE READ BELOW COMPLETE ──────
+   *
+   * `assertOrganizerRole` takes `FOR SHARE` on this row inside the transaction that records a
+   * forwarded move (see its own header for the interleaving). So an exclusive lock here is
+   * granted only once every such write in flight has COMMITTED — its intent is therefore visible
+   * to the read below — and a write arriving afterwards blocks until this transaction commits and
+   * then re-reads the role this transaction demoted, and is refused. Exported, or refused: an
+   * intent admitted between the read and the demotion is the sequence this closes.
+   *
+   * It is also why the walk terminates: nothing can add to the pending set while the lock is
+   * held, so a strictly advancing cursor exhausts a fixed set.
+   */
   const [mb] = await tx.select({ trashFolder: mailboxes.trashFolder }).from(mailboxes)
-    .where(and(eq(mailboxes.id, input.mailboxId), eq(mailboxes.accountId, input.accountId))).limit(1);
+    .where(and(eq(mailboxes.id, input.mailboxId), eq(mailboxes.accountId, input.accountId)))
+    .for("update");
   const trash = mb?.trashFolder ?? null;
 
-  const pending = await tx.select({
-    dedupKey: messages.dedupKey, desiredFolder: folderState.desiredFolder,
-  })
-    .from(folderState)
-    .innerJoin(messages, eq(messages.id, folderState.messageId))
-    .where(and(
-      eq(messages.accountId, input.accountId),
-      eq(messages.mailboxId, input.mailboxId),
-      eq(folderState.reconcileStatus, "pending"),
-      // OUR OWN intents only. A row the worker left pending from its own reconcile bookkeeping is
-      // not somebody's decision to hand over.
-      eq(folderState.lastSetBy, "us"),
-    ))
-    .orderBy(asc(folderState.updatedAt), asc(messages.id))
-    .limit(limit + 1);
-
-  // Everything already travelling for this mailbox, by the name both installs share.
+  /* Everything already travelling for this mailbox, by the name both installs share — and
+   * NON-TERMINAL ONLY. An `applied`, `refused` or `expired` row is a request that is OVER, and
+   * counting it here made a LATER move of the same message read as one already handed over: the
+   * new intent was dropped, the host demoted, and the mailbox never heard of it. `sent` and
+   * `pending` are the two states in which a request is genuinely still travelling. */
   const inFlight = await tx.select({ payload: organizerRequests.payload })
     .from(organizerRequests)
     .where(and(
       eq(organizerRequests.mailboxId, input.mailboxId),
       eq(organizerRequests.kind, "message.move"),
+      notInArray(organizerRequests.state, [...TERMINAL_REQUEST_STATES]),
     ));
   const travelling = new Set<string>();
   for (const r of inFlight) {
@@ -1075,25 +1088,62 @@ export async function exportPendingMovesOnStandDown(
     if (p && typeof p.dedupKey === "string") travelling.add(p.dedupKey);
   }
 
-  const out: StandDownExport = { exported: 0, already: 0, unmappable: 0, more: false };
-  for (const row of pending.slice(0, limit)) {
-    if (row.dedupKey === null || row.dedupKey === "") { out.unmappable += 1; continue; }
-    if (travelling.has(row.dedupKey)) { out.already += 1; continue; }
-    const destination = row.desiredFolder === trash && trash !== null
-      ? "trash"
-      : DESTINATION_WORD.get(row.desiredFolder);
-    if (destination === undefined) { out.unmappable += 1; continue; }
-    await insertOrganizerRequest(tx, {
-      id: input.mintId(),
-      accountId: input.accountId,
-      mailboxId: input.mailboxId,
-      kind: "message.move",
-      payload: { dedupKey: row.dedupKey, destination },
-      decidedAt: input.now,
-    });
-    travelling.add(row.dedupKey);
-    out.exported += 1;
+  const out: StandDownExport = { exported: 0, already: 0, unmappable: 0 };
+  /* THE CURSOR IS A KEYSET AND NOT AN OFFSET, and it is not an optimization: exporting does not
+     change `reconcile_status`, so re-reading the same predicate without one would return the same
+     page for ever. `(updated_at, id)` is the order intents are handed over in — oldest first, the
+     order the person made them — and it is unique because `messages.id` is. */
+  let cursor: { updatedAt: Date; id: string } | null = null;
+  /* ANNOTATED, and that is not decoration: the page read's `where` mentions the cursor and the
+     cursor is assigned from the page's last row, so an inferred return type here is a cycle tsc
+     refuses (TS7022) rather than a type it resolves. */
+  const after = (c: { updatedAt: Date; id: string } | null): SQL[] => (c === null
+    ? []
+    /* BOUND AS TEXT AND CAST, never as a JS `Date` in a bare fragment: a value interpolated into
+       raw SQL has no column to take its type from, and the two drivers this runs under disagree
+       about what to do with that. */
+    : [sql`(${folderState.updatedAt}, ${messages.id}) > (${c.updatedAt.toISOString()}::timestamptz, ${c.id}::uuid)`]);
+  for (;;) {
+    /* ANNOTATED for the same TS7022 reason `after` is: the page read mentions the cursor and the
+       cursor is assigned out of the page's last row, so an inferred type here closes a cycle. */
+    const rows: PendingIntentRow[] = await tx.select({
+      dedupKey: messages.dedupKey, desiredFolder: folderState.desiredFolder,
+      updatedAt: folderState.updatedAt, messageId: messages.id,
+    })
+      .from(folderState)
+      .innerJoin(messages, eq(messages.id, folderState.messageId))
+      .where(and(
+        eq(messages.accountId, input.accountId),
+        eq(messages.mailboxId, input.mailboxId),
+        eq(folderState.reconcileStatus, "pending"),
+        // OUR OWN intents only. A row the worker left pending from its own reconcile bookkeeping is
+        // not somebody's decision to hand over.
+        eq(folderState.lastSetBy, "us"),
+        ...after(cursor),
+      ))
+      .orderBy(asc(folderState.updatedAt), asc(messages.id))
+      .limit(page);
+    if (rows.length === 0) return out;
+    for (const row of rows) {
+      if (row.dedupKey === null || row.dedupKey === "") { out.unmappable += 1; continue; }
+      if (travelling.has(row.dedupKey)) { out.already += 1; continue; }
+      const destination = row.desiredFolder === trash && trash !== null
+        ? "trash"
+        : DESTINATION_WORD.get(row.desiredFolder);
+      if (destination === undefined) { out.unmappable += 1; continue; }
+      await insertOrganizerRequest(tx, {
+        id: input.mintId(),
+        accountId: input.accountId,
+        mailboxId: input.mailboxId,
+        kind: "message.move",
+        payload: { dedupKey: row.dedupKey, destination },
+        decidedAt: input.now,
+      });
+      travelling.add(row.dedupKey);
+      out.exported += 1;
+    }
+    const last = rows[rows.length - 1]!;
+    cursor = { updatedAt: last.updatedAt, id: last.messageId };
+    if (rows.length < page) return out;
   }
-  out.more = pending.length > limit;
-  return out;
 }
