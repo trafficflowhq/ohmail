@@ -881,6 +881,39 @@ export interface ApiDeps {
    * global. A hosted deployment injects a real logger.
    */
   logger?: Logger;
+  /** See {@link ApiFaultLogPort}. */
+  faultLog?: ApiFaultLogPort;
+}
+
+/**
+ * WHERE A 5xx GOES TO BE COUNTED — a port, because this file is inside the desktop engine's
+ * import closure and may never name a Cloud table.
+ *
+ * `withErrorEnvelope` calls it once per 5xx it answers. The implementation writes `api_faults`
+ * (cloud 0033) and is wired by the hosted and self-host composition roots; `packages/api` names
+ * neither the table nor `@trafficflow/db`'s cloud entry point, for the reason
+ * `DB_ACQUIRE_TIMEOUT_ERROR` in `middleware.ts` is a string.
+ *
+ * ── ABSENT AND FAILING ARE TWO STATES AND BOTH ARE NAMED ───────────────────────────────────
+ *
+ * ABSENT means this shell has no fault log at all — the desktop engine and a local install,
+ * where there is no such table and nothing to record. The envelope records nothing and says
+ * nothing: that is not a degradation, it is the correct behaviour for a host with one user.
+ * PRESENT AND THROWING is a hosted deployment whose write failed, which IS worth a line, and
+ * the envelope logs one. Collapsing the two would either spam a desktop log or hide a broken
+ * board.
+ */
+export interface ApiFaultLogPort {
+  /**
+   * Never throws, never rejects, and never changes the answer. The envelope awaits it — a
+   * serverless invocation is killed the moment it returns, so a floating promise here would
+   * record nothing on precisely the platform this table exists for — but it awaits it behind the
+   * implementation's own deadline, and a fault that cannot be recorded must still be answered.
+   */
+  record(fault: {
+    route: string; method: string; status: number;
+    errorClass: string; requestId: string | null; at: Date;
+  }): Promise<void>;
 }
 
 

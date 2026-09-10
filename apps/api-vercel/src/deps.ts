@@ -3,7 +3,7 @@ import {
   type EntitlementsComposition, type SpendPort, type Tx,
 } from "@trafficflow/db";
 import {
-  API_MAX_DURATION_MS, makePooledDb,
+  API_MAX_DURATION_MS, makePooledDb, recordApiFault,
   makeEntitlementsClient,
 } from "@trafficflow/db/cloud";
 import { adminDbFor, attestStaffDbFault, resetAdminDbs, webhookAlertSink, telegramAlertSink, acquireImapSlot, releaseImapSlot, resolveOAuthProviderConfig, rotateMailboxOAuthSecret, MICROSOFT_PROVIDER, // The staging BUCKET client. It sits beside the `attachment_staging` rows rather than with the
@@ -767,6 +767,29 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
     // id the client also got back in `x-request-id`. Built per request because the binding is
     // per request; the underlying sink is `console.log`, so this costs three closures.
     logger: hostLogger(cfg),
+    /**
+     * WHERE THIS HOST'S 5xx GO TO BE COUNTED (cloud 0033) — `arm: "api"`, a literal for
+     * `aiUsage`'s reason one screen up: the arm is in what a reader groups by, and two processes
+     * writing under one name makes "which host is failing" unanswerable.
+     *
+     * A FRESH pooled handle rather than the request's `db`, and this is the load-bearing choice:
+     * the branch that answers `503 db_busy` is the one whose handle just refused an acquire, and
+     * recording through it would be a second refusal by construction. It is the same module-cached
+     * pool, so this costs no connection.
+     *
+     * The write NEVER throws out of here. `recordApiFault` can fail for two reasons an operator
+     * cannot act on mid-request — the pool is saturated, or this host is deployed ahead of the
+     * migration — and a request that already failed must still be answered. `withErrorEnvelope`
+     * logs the swallow; the platform poller's own 5xx count is the arm that stays truthful when
+     * this one cannot write.
+     */
+    faultLog: {
+      record: async (fault) => {
+        await recordApiFault(makePooledDb(cfg.databaseUrlPooled) as unknown as Tx, {
+          ...fault, arm: "api",
+        });
+      },
+    },
     cronSecret: cfg.cronSecret,
     alerts: cfg.alerts
       ? {

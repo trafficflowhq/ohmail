@@ -309,6 +309,22 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
     // above: here, the harden script's column-scoped grants, and the census equality.
     "sample_cause",
   ],
+  // ── THE API'S OWN 5xx RECORD (cloud 0033) ─────────────────────────────────────────────────
+  //
+  // Granted whole, and the reason is the same one `platform_signals` gives one table up: every
+  // column is a literal this repository chose or an integer. `route` is a route PATTERN from the
+  // API's own route table, never a request target; `error_class` is a class NAME and never a
+  // message; `request_id` is our own uuid. No address, no subject, no parameter value.
+  //
+  // It is granted rather than excluded because the API arm of the alert pass reads it through
+  // the blind role — `imap_admission_refused` is the row that shows what withholding costs: the
+  // API arm raised 42501, emitted no key, and deleted the worker's finding on every pass.
+  //
+  // No `account_id`, and there cannot be one: the envelope records the fault ABOVE the session,
+  // and a route that failed for want of a connection has no account resolved to attribute it to.
+  "public.api_faults": [
+    "id", "at", "route", "method", "status", "error_class", "request_id", "arm",
+  ],
   // The `security_barrier` view, and the ONLY route to `audit_log`. Four named scalars: no
   // `payload`, no `inverse`. The bags are never granted, in any shape.
   "admin.audit_log": ["id", "account_id", "action", "created_at"],

@@ -8,7 +8,7 @@ import { silentLogger } from "@trafficflow/core/mail";
 import { csrfTokenFor } from "./csrf.js";
 import { errorResponse, jsonResponse } from "./responses.js";
 import { lookupIdempotent, type StoredIdempotent } from "./idempotency.js";
-import type { SessionVia } from "./deps.js";
+import type { ApiDeps, SessionVia } from "./deps.js";
 import { accessRefusedMayReach, unverifiedMayReach } from "./router.js";
 import { accessFor } from "./routes/shared.js";
 import type { Handler, Route } from "./router.js";
@@ -383,6 +383,48 @@ export function isOrganizerRefusal(err: unknown): boolean {
     && typeof e.code === "string" && typeof e.httpStatus === "number";
 }
 
+/**
+ * The class name of a thrown value — `String` for a thrown primitive, `null`/`undefined` for
+ * those. Never the message: a driver's message quotes connection strings and an application's
+ * quotes what a person typed, which is the reversal the instruments lane's item 5 was refused
+ * for. `@trafficflow/db`'s `faultClassOf` is the same function; it is duplicated here rather
+ * than imported for {@link DB_ACQUIRE_TIMEOUT_ERROR}'s reason — this module is published inside
+ * the desktop engine and may not reach that package's entry point.
+ */
+function faultClassOf(err: unknown): string {
+  if (err === null) return "null";
+  if (err === undefined) return "undefined";
+  if (typeof err !== "object") return err.constructor?.name ?? typeof err;
+  const named = (err as { name?: unknown }).name;
+  if (typeof named === "string" && named.length > 0) return named;
+  return (err as object).constructor?.name ?? "Object";
+}
+
+/**
+ * Count one 5xx, if this host counts them at all.
+ *
+ * The port's absence is the local shell's normal state and says nothing; a present port that
+ * throws is a hosted board going dark and says so once. See {@link ApiFaultLogPort}.
+ */
+async function countFault(
+  deps: ApiDeps, route: Route, req: Request, status: number, err: unknown,
+): Promise<void> {
+  const port = deps.faultLog;
+  if (!port) return;
+  try {
+    await port.record({
+      route: route.pattern, method: req.method, status,
+      errorClass: faultClassOf(err),
+      requestId: deps.requestId || null,
+      at: deps.now(),
+    });
+  } catch (recordErr) {
+    (deps.logger ?? silentLogger).warn("api_fault_record_failed", {
+      route: route.pattern, status, err: recordErr,
+    });
+  }
+}
+
 export const withErrorEnvelope: Middleware = (next, route) => async (req, deps, params) => {
   try {
     return await next(req, deps, params);
@@ -414,6 +456,12 @@ export const withErrorEnvelope: Middleware = (next, route) => async (req, deps, 
       log.warn("request_db_busy", {
         method: req.method, route: route.pattern, status: 503, code: "db_busy",
       });
+      // COUNTED, even though the connection is what just refused us. The write goes through a
+      // fresh acquire and will often be refused too — that is honest, not a defect: a refusal
+      // this rule never sees is one the pool was too saturated to record, and the platform
+      // poller's own 5xx count is the arm that stays truthful there. Recording the ones that DO
+      // land is what turns "the pooler is busy" from a log line into `pooler_refusals`.
+      await countFault(deps, route, req, 503, err);
       return dbBusyResponse(req, {
         routeIsIdempotent: route.options?.idempotent === true,
         hasAccount: Boolean(deps.session?.accountId),
@@ -463,10 +511,15 @@ export const withErrorEnvelope: Middleware = (next, route) => async (req, deps, 
         log.error("request_failed", {
           method: req.method, route: route.pattern, status: err.httpStatus, code: err.code, err,
         });
+        // Gated on the SAME condition as the log line above, so the table and the log can never
+        // disagree about what a 5xx was. A 4xx `ServiceError` is the API working and is refused
+        // by cloud 0033's own CHECK as well as by this branch.
+        await countFault(deps, route, req, err.httpStatus, err);
       }
       return errorResponse(err.code, err.httpStatus, err.message, err.details, err.retryable);
     }
     log.error("request_unhandled", { method: req.method, route: route.pattern, status: 500, err });
+    await countFault(deps, route, req, 500, err);
     return errorResponse("internal", 500, "internal error");
   }
 };

@@ -50,7 +50,11 @@ export type AdminAlertKind =
   // census is not left to the compiler. The five subscription and credit-accounting kinds left
   // with the rules that emitted them; whoever operates a metered service watches those there.
   | "worker_degraded" | "api_5xx_rate" | "schema_behind" | "imap_admission_refused"
-  | "ai_provider_down" | "alert_driver_dark" | "credential_replay_wide";
+  | "ai_provider_down" | "alert_driver_dark" | "credential_replay_wide"
+  // Cloud 0033's two first-party rules, read from `api_faults`: one route answering 5xx above a
+  // floor, and the pooled-acquire ceiling refusing work. `api_5xx_rate` above them counts what
+  // the PLATFORM served and needs a vendor token; these two need none and name the route.
+  | "api_fault_rate" | "pooler_refusals";
 /**
  * INCIDENT or SIGNAL — the class that decided whether this row went to a sink.
  *

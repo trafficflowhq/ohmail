@@ -5,6 +5,7 @@ import {
   devices, mailboxes, outboundSends, platformSignals, sessions, workerHeartbeats,
 } from "./schema.js";
 import { imapRefusalsInWindow } from "./imap-admission.js";
+import { apiFaultWindow, poolerRefusalsInWindow } from "./api-faults.js";
 import type { Tx } from "./change-log.js";
 
 /**
@@ -156,6 +157,24 @@ export type AlertKind =
    * platform's own request log into a table and this rule reads that.
    */
   | "api_5xx_rate"
+  /**
+   * ONE ROUTE is answering 5xx above the threshold, read from `api_faults` (cloud 0033).
+   *
+   * `api_5xx_rate` beside it counts what the PLATFORM served and names no route — it is the only
+   * surface that sees a killed invocation, and it depends on a vendor token a deployment may not
+   * have. This one is first-party: the API's own error envelope writes the row, so it names the
+   * route and the error class and it works with no vendor at all. Neither subsumes the other.
+   */
+  | "api_fault_rate"
+  /**
+   * The pooled-acquire ceiling has REFUSED more than the threshold inside the window: the
+   * database connection is saturated and requests are being declined rather than served.
+   *
+   * Deployment-wide and not per route — a saturated pooler refuses whoever asked next. It is a
+   * COUNT of refusals and deliberately not a wait p95: nothing records how long an acquire
+   * waited, so a percentile here would be invented.
+   */
+  | "pooler_refusals"
   /**
    * THE HOST EVALUATING THIS RULE is running against a database older than the migration journal
    * it ships with. HOST-LOCAL by construction: each driver asks the question about ITSELF, and
@@ -322,6 +341,38 @@ export interface AlertThresholds {
    */
   api5xxMinRate: number;
   /**
+   * The window `api_fault_rate` and `pooler_refusals` count over. Ten minutes, and it is a
+   * different width from {@link api5xxWindowMs} for a reason: that one sums five-minute POLL
+   * buckets and needs three of them, while `api_faults` rows carry their own instants and need
+   * no bucket at all.
+   */
+  apiFaultWindowMs: number;
+  /**
+   * How many faults ON ONE ROUTE inside the window make an incident.
+   *
+   * A COUNT and no rate, because this table holds no successes — see `apiFaultWindow`. Ten,
+   * from the platform's own 5xx distribution over 2026-09-07..09-10 (654 complete five-minute
+   * buckets, 17 274 requests, 59 5xx): the median bucket had 0, p99 had 1, and the p95 of a
+   * fifteen-minute sum was 1. Ten on ONE route is five times the worst quiet fifteen minutes
+   * deployment-wide, and below the 26-error window that span's real burst produced.
+   *
+   * The platform's counts are a SUPERSET of this table's (they include a killed invocation,
+   * which writes nothing here), so a threshold a quiet week never crosses in the superset is
+   * one the subset never crosses either. It is calibrated on that bound and not on `api_faults`
+   * itself, which had no rows anywhere when the number was chosen.
+   */
+  apiFaultMinPerRoute: number;
+  /**
+   * How many pooled-acquire refusals inside the window make an incident, deployment-wide.
+   *
+   * One refusal is the acquire ceiling WORKING (`middleware.ts` says so at the branch), so the
+   * quantity is a rate and never a presence. Ten, the same floor as the per-route rule: nothing
+   * in the measured span refused at all, so there is no observed distribution to calibrate
+   * against — the number is the sibling rule's, and the missing measurement is named here rather
+   * than dressed up as one.
+   */
+  poolerRefusalThreshold: number;
+  /**
    * How far back `imap_admission_refused` counts refusals, and how long a refusal counter lives.
    * Fifteen minutes: long enough that a burst is still visible when the pass next runs (the
    * worker's cadence is one minute, the API driver's is longer), short enough that the incident
@@ -384,6 +435,9 @@ export const DEFAULT_ALERT_THRESHOLDS: AlertThresholds = {
   api5xxWindowMs: 15 * 60 * 1000,
   api5xxMinErrors: 10,
   api5xxMinRate: 0.02,
+  apiFaultWindowMs: 10 * 60 * 1000,
+  apiFaultMinPerRoute: 10,
+  poolerRefusalThreshold: 10,
   imapRefusalWindowMs: 15 * 60 * 1000,
   imapRefusalThreshold: 5,
   aiCircuitOpenMs: 10 * 60 * 1000,
@@ -637,8 +691,13 @@ export function humanAge(seconds: number | null): string {
  * overview then failed selecting a column it had just declared readable — and a migration
  * interrupted between the two passed both this check and the matching `/health` marker. Adding a
  * statement to 0030 means moving this constant and that marker together, every time.
+ *
+ * It now names cloud 0033's last column rather than 0030's, and the obligation above is why: two
+ * of this pass's rules read `api_faults`, so a database at 0031 would satisfy a marker on 0030
+ * and then throw 42P01 inside the evaluation — the pass dying before it could deliver the
+ * finding that explains it, which is the exact failure this preflight removes.
  */
-const SCHEMA_BEHIND_MARKER = { table: "platform_signals", column: "sample_cause" } as const;
+const SCHEMA_BEHIND_MARKER = { table: "api_faults", column: "arm" } as const;
 
 /**
  * IS THIS DATABASE OLDER THAN THE BUNDLE WE ARE RUNNING? — the alert pass's preflight.
@@ -1686,6 +1745,88 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
       // cadence for as long as the incident lasted. A whole percentage point of movement is a
       // real change; the third decimal place is not.
       signature: `5xx|${Math.round(rate * 100)}`,
+    });
+  }
+
+  // ── 11b. THE API'S OWN FAULTS, PER ROUTE — first-party, no vendor involved ──────────────
+  //
+  // `api_faults` (cloud 0033) is written by the error envelope on the request that failed, so
+  // unlike the rule above it names the route and the error class, and it needs no platform
+  // token. What it CANNOT see is a killed invocation: a 504 leaves no row, which is exactly the
+  // population the platform poller covers. Two rules, two blind spots, neither redundant.
+  //
+  // A COUNT and no rate. The table holds only faults, so there is no denominator — the ratio
+  // question belongs to the rule above, which has both counts. Inventing a rate from one of them
+  // would be a quotient over a population nobody measured, which is the mistake the sampled
+  // buckets paragraph above exists to refuse, one table over.
+  //
+  // PER ROUTE, because that is the whole gain over the platform view: ten faults spread across
+  // forty routes is a deployment having a bad hour, and ten on `/auth/session` is readers who
+  // cannot open their mail. Keyed per route AND arm so the two hosts' findings stay separable.
+  //
+  // NOT in SCOPED_ALERT_KINDS, deliberately: both arms read the same table through grants that
+  // both hold (`staff-grants.ts` names it), so absence from a firing set means the condition
+  // cleared. That is a claim about a GRANT, and it is the claim `imap_admission_refused` got
+  // wrong — so `alerts-reliability.test.ts` drives both arms over one database and asserts
+  // neither deletes the other's row.
+  const faultWindow = await apiFaultWindow(db, now, t.apiFaultWindowMs);
+  for (const r of faultWindow) {
+    if (r.faults < t.apiFaultMinPerRoute) continue;
+    alerts.push({
+      key: `api_fault_rate:${r.arm}:${r.route}`,
+      kind: "api_fault_rate",
+      severity: "critical",
+      title: `${r.route} answered ${r.faults} 5xx`,
+      detail:
+        `${r.route} returned ${r.faults} 5xx from the ${r.arm} in the last ` +
+        `${humanAge(Math.round(t.apiFaultWindowMs / 1000))}, past the floor of ` +
+        `${t.apiFaultMinPerRoute}. Newest ${humanAge(secondsBetween(now, r.newest))} ago.`,
+      count: r.faults,
+      oldestSeconds: null,
+      cls: "incident",
+      // The envelope records the fault above the session, so no row carries an account.
+      affectedAccounts: null,
+      fixHref: "/reliability",
+      // Bucketed to a whole ten, for the reason the rule above buckets its rate: the raw count
+      // moves on every pass during an incident and would re-page each cadence.
+      signature: `faults|${Math.floor(r.faults / 10) * 10}`,
+    });
+  }
+
+  // ── 11c. THE POOLER IS REFUSING WORK ───────────────────────────────────────────────────
+  //
+  // A `DbAcquireTimeoutError` means the connection did not begin this statement inside the
+  // acquire ceiling, so the API declined the request with a 503. ONE of those is the ceiling
+  // WORKING — `middleware.ts` says so at the branch that answers it — and the incident is the
+  // RATE, which is why this is a count over a window and not a presence check.
+  //
+  // Deployment-wide, not per route: a saturated pooler refuses whichever request asked next, so
+  // the route it landed on carries no information. The number of DISTINCT routes affected is in
+  // the sentence instead, because one route refusing is a hot path and eleven is the pool.
+  //
+  // IT IS NOT A WAIT PERCENTILE, and the difference is worth naming: nothing in this deployment
+  // records how long an acquire waited, so a p95 here would be a statistic over a population
+  // that does not exist. What the ceiling leaves behind is a refusal at a known bound, and this
+  // rule counts those.
+  const pooler = await poolerRefusalsInWindow(db, now, t.apiFaultWindowMs);
+  if (pooler.refusals >= t.poolerRefusalThreshold) {
+    alerts.push({
+      key: "pooler_refusals",
+      kind: "pooler_refusals",
+      severity: "critical",
+      title: `the database pool refused ${pooler.refusals} request(s)`,
+      detail:
+        `${pooler.refusals} request(s) across ${pooler.routes} route(s) were declined with 503 ` +
+        `because the database connection did not begin their statement inside the acquire ` +
+        `ceiling, in the last ${humanAge(Math.round(t.apiFaultWindowMs / 1000))} — past the ` +
+        `floor of ${t.poolerRefusalThreshold}. One refusal is the ceiling working; this many is ` +
+        `a saturated pool. Newest ${humanAge(secondsBetween(now, pooler.newest))} ago.`,
+      count: pooler.refusals,
+      oldestSeconds: null,
+      cls: "incident",
+      affectedAccounts: null,
+      fixHref: "/reliability",
+      signature: `pooler|${Math.floor(pooler.refusals / 10) * 10}`,
     });
   }
 

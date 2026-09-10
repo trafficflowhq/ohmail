@@ -145,6 +145,14 @@ export {
   resendAlertSink, RESEND_EMAILS_URL, type ResendAlertSinkConfig,
 } from "./alert-mail.js";
 
+/* The API's own 5xx record (cloud 0033). CLOUD-ONLY — `index.ts` does not carry it, because the
+ * table does not exist in a local install and the recorder reaches it through a port. */
+export {
+  recordApiFault, apiFaultWindow, poolerRefusalsInWindow, pruneApiFaults, faultClassOf,
+  API_FAULT_RETENTION_MS, POOLER_REFUSAL_ERROR_CLASS,
+  type ApiFaultInput, type ApiFaultArm, type ApiFaultRouteCount,
+} from "./api-faults.js";
+
 /**
  * The PUSH arm — the pager's second vendor. Same seam, same `PostJson`, a different company,
  * a different credential and a different delivery channel from the mail arm above; the whole

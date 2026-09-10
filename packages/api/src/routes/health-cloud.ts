@@ -190,6 +190,18 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // the other, because the alert preflight must not import an API route to answer a question
   // about the database.
   ["platform_signals", "sample_cause"],
+  // cloud 0033_api_faults — `arm` is the table's LAST column, on the rule the `sample_cause`
+  // entry above states: only the last column's presence implies every object above it. A
+  // statement appended after it means moving this AND `alerts.ts`'s SCHEMA_BEHIND_MARKER, which
+  // names the same pair for the alert pass's own preflight.
+  //
+  // The loudness is the SWALLOWED kind again, and from both sides. The recorder's write is
+  // best-effort by contract — a request that failed must still be answered — so an API deployed
+  // ahead of the migration 42P01s into a swallowed catch on every 5xx, and the symptom is a
+  // reliability board that stays empty while the deployment reports healthy. Meanwhile the alert
+  // pass READS the table, so a worker ahead of it dies inside the evaluation rather than
+  // delivering the finding that would explain why.
+  ["api_faults", "arm"],
 ] as const;
 
 /**
@@ -318,10 +330,16 @@ export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;
  * tables are gone". A database that has not taken it carries tables nothing reads, which costs
  * disk and nothing else — so the deploy gate has nothing to refuse, deliberately.
  *
+ * `0033_api_faults` creates a table with real columns, so it is the easy case and takes one
+ * ordinary column marker on `arm`, its last. It adds two indexes and three CHECKs and none of
+ * them is owed a marker: the CHECKs are all new constraints on a new table, so the `0011`/`0029`
+ * replacement problem cannot arise, and both indexes serve reads over the table the same
+ * migration creates — the column marker already catches every database that lacks either.
+ *
  * The tag moves for its own reason: what this constant asserts is "the markers were reconciled
  * against the newest entry", and a stale tag beside an unchanged list is the state the assertion
  * exists to refuse — it cannot tell "nothing needed adding" from "nobody looked". */
-export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0032_retire_billing_tables";
+export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0033_api_faults";
 
 /** The journal entries {@link SCHEMA_MARKERS} was last reconciled against (asserted by a test). */
 export const SCHEMA_MARKER_JOURNAL_TAG =

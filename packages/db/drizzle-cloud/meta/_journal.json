@@ -127,6 +127,13 @@
       "when": 1791328164217,
       "tag": "0032_retire_billing_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1791328224216,
+      "tag": "0033_api_faults",
+      "breakpoints": true
     }
   ]
 }
