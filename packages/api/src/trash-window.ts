@@ -11,7 +11,7 @@ import { normalizeMime } from "@trafficflow/core/mail";
 import {
   ServiceError, foldersEnabled, isUuid, requireImapUint32, requireUuid, IMAP_UINT32_MAX,
 } from "@trafficflow/services/mail";
-import { openMailboxImap } from "./attachments-adapter.js";
+import { IMAP_DOOR_DEADLINE_MS, withinDoorBudget } from "./imap-door.js";
 import type { ApiDeps } from "./deps.js";
 
 /**
@@ -45,9 +45,10 @@ import type { ApiDeps } from "./deps.js";
  * The architecture rule draws its line at applying ORGANIZATION: moves defer to the worker via
  * desired state so a serverless function can never leave a mailbox half-moved, while on-demand
  * reads that store nothing already open a short-lived connection. A Trash LIST/BODY read is
- * exactly that shape, so the reads go through {@link openMailboxImap} — the same
- * admission-capped, budget-counted door every other API dial uses — and the connection is closed
- * before the response leaves. The window serves only mailboxes whose `status` is not `disabled`:
+ * exactly that shape, so the reads go through {@link withinDoorBudget} — the same
+ * admission-capped, budget-counted door every other API dial uses, and the reason this module
+ * owns no dialling code of its own — and the connection is closed before the response leaves.
+ * The window serves only mailboxes whose `status` is not `disabled`:
  * a stood-down mailbox is another organizer's, and this module never dials one Cloud does not
  * serve.
  *
@@ -68,7 +69,17 @@ export const TRASH_BODY_MAX_BYTES = 2_000_000;
  * PARALLEL across the account's mailboxes and each is raced against this, so a slow provider
  * costs the response one stated degrade — never the whole invocation's budget.
  */
-export const TRASH_READ_TIMEOUT_MS = 20_000;
+/**
+ * How long one mailbox's Trash read may take before it is reported `unreachable`. Reads run in
+ * PARALLEL across the account's mailboxes and each is raced against this, so a slow provider
+ * costs the response one stated degrade rather than the whole invocation's budget.
+ *
+ * The BUDGET is {@link IMAP_DOOR_DEADLINE_MS} and this is the name the Trash window's callers
+ * know it by, which is `JUNK_READ_TIMEOUT_MS`'s arrangement exactly: one literal for every
+ * API-side dial, so a change there cannot leave one door on an older number. This stood at a
+ * second literal `20_000` — the same value by hand, which is the way two numbers drift apart.
+ */
+export const TRASH_READ_TIMEOUT_MS = IMAP_DOOR_DEADLINE_MS;
 
 /** Longest search term the window accepts — a bound on what is handed to the provider's SEARCH. */
 export const TRASH_SEARCH_MAX_CHARS = 120;
@@ -199,53 +210,6 @@ async function trashMailboxesOf(
   return rows;
 }
 
-/** Race a step against the mailbox read's REMAINING budget; a timeout is an ordinary failure. */
-async function withDeadline<T>(work: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error("trash window read timed out")), ms);
-    (timer as unknown as { unref?: () => void }).unref?.();
-  });
-  try {
-    return await Promise.race([work, deadline]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/**
- * ONE deadline-raced, force-closed dial of one mailbox, running `work` on the opened adapter.
- *
- * ONE budget for dial and read TOGETHER — two fresh timers would be a 40 s read. The deadline
- * CANCELS rather than merely abandoning: a race that walked away would leave the admitted IMAP
- * slot and the socket held by a hung operation until the provider relented, and a couple of those
- * turn every later window/attachment request into `mailbox_busy`. So a read that outlives the
- * deadline has `forceClose()` run under it — the socket is destroyed, because a graceful LOGOUT
- * would queue exactly behind the hung command — and both admission slots return.
- */
-async function dialWithinBudget<T>(
-  deps: ApiDeps, mailboxId: string, budgetMs: number,
-  work: (adapter: Awaited<ReturnType<typeof openMailboxImap>>["adapter"]) => Promise<T>,
-): Promise<T> {
-  const startedAt = Date.now();
-  const remaining = (): number => Math.max(1, budgetMs - (Date.now() - startedAt));
-  const openedP = openMailboxImap(deps, mailboxId);
-  let opened: Awaited<typeof openedP>;
-  try {
-    opened = await withDeadline(openedP, remaining());
-  } catch (err) {
-    void openedP.then((o) => o.forceClose()).catch(() => { /* never came up */ });
-    throw err;
-  }
-  try {
-    const got = await withDeadline(work(opened.adapter), remaining());
-    await opened.close().catch(() => { /* socket gone; the slot release has its own guard */ });
-    return got;
-  } catch (err) {
-    await opened.forceClose().catch(() => { /* already down */ });
-    throw err;
-  }
-}
 
 /**
  * A Message-ID as a comparable key: trimmed, angle brackets off. The live envelope carries
@@ -345,11 +309,11 @@ export async function listServerTrash(
     }
     try {
       const held = before[box.id];
-      const page = await dialWithinBudget(deps, box.id, TRASH_READ_TIMEOUT_MS, (adapter) =>
+      const page = await withinDoorBudget(deps, box.id, (adapter) =>
         adapter.listFolderPage(box.trashFolder!, {
           limit: FOLDER_PAGE_MAX,
           ...(held !== undefined ? { beforeSeq: held.s, expectUidValidity: held.v } : {}),
-        }));
+        }), { budgetMs: TRASH_READ_TIMEOUT_MS });
       if (page === null) {
         // The recorded Trash path no longer opens on a LIVE connection — the same honest degrade
         // as no folder (transport failures throw and land in the catch below).
@@ -466,8 +430,9 @@ export async function searchServerTrash(
       return null;
     }
     try {
-      const page = await dialWithinBudget(deps, box.id, TRASH_READ_TIMEOUT_MS, (adapter) =>
-        adapter.searchFolderPage(box.trashFolder!, term, { limit: FOLDER_PAGE_MAX }));
+      const page = await withinDoorBudget(deps, box.id, (adapter) =>
+        adapter.searchFolderPage(box.trashFolder!, term, { limit: FOLDER_PAGE_MAX }),
+        { budgetMs: TRASH_READ_TIMEOUT_MS });
       if (page === null) {
         states.push({ id: box.id, address: box.address, window: "no_trash_folder" });
         return null;
@@ -519,7 +484,7 @@ export async function serverTrashBody(
   if (!box || box.trashFolder === null) {
     throw new ServiceError("no_trash_folder", 404, "this mailbox has no Trash folder");
   }
-  return dialWithinBudget(deps, args.mailboxId, TRASH_READ_TIMEOUT_MS, async (adapter) => {
+  return withinDoorBudget(deps, args.mailboxId, async (adapter) => {
     const fetched = await adapter.fetchByUid(box.trashFolder!, [args.uid], {
       maxBytes: TRASH_BODY_MAX_BYTES,
     });
@@ -542,5 +507,5 @@ export async function serverTrashBody(
     }
     const parsed = await normalizeMime(create.raw);
     return { subject: parsed.subject, text: parsed.textBody };
-  });
+  }, { budgetMs: TRASH_READ_TIMEOUT_MS });
 }
