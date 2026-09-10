@@ -1614,8 +1614,8 @@ describe("a standing stop request is on the row, and the pane's notes end when t
       status: 202, headers: { "content-type": "application/json" },
     });
     const el = await render("local");
-    await act(async () => { buttonSaying(el, "Stop organizing")!.click(); });
-    await act(async () => { buttonExactly(el, "Stop organizing")!.click(); });
+    await act(async () => { buttonSaying(el, mailboxCopy.stopOrganizingHandBack!)!.click(); });
+    await act(async () => { buttonExactly(el, mailboxCopy.stopOrganizingConfirm!)!.click(); });
     expect(el.textContent ?? "", "the stop press left no note of its own")
       .toContain(mailboxCopy.stopOrganizingQueued!);
 
@@ -1650,8 +1650,8 @@ describe("a standing stop request is on the row, and the pane's notes end when t
       status: 202, headers: { "content-type": "application/json" },
     });
     const el = await render("local");
-    await act(async () => { buttonSaying(el, "Stop organizing")!.click(); });
-    await act(async () => { buttonExactly(el, "Stop organizing")!.click(); });
+    await act(async () => { buttonSaying(el, mailboxCopy.stopOrganizingHandBack!)!.click(); });
+    await act(async () => { buttonExactly(el, mailboxCopy.stopOrganizingConfirm!)!.click(); });
     expect(el.textContent ?? "", "the rule suppressed a stop note nothing had withdrawn")
       .toContain(mailboxCopy.stopOrganizingQueued!);
   });
