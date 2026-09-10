@@ -7,7 +7,6 @@ export type {
   AlertArmHealth, AlertSinkSummary,
   HelloConfig,
   ChangeWakeHub,
-  AiCreditGateFactory,
   AttachmentStagingPort, AttachmentStagingFactory, StagedUploadGrantWire,
 } from "./deps.js";
 export { DEFAULT_SSE } from "./deps.js";

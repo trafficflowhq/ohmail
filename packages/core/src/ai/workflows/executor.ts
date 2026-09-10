@@ -11,7 +11,7 @@ import {
 } from "@trafficflow/db";
 /* THE LEAF, NOT `/cloud` — and the split below is load-bearing rather than tidy.
  *
- * This module is compiled into the desktop engine. `ledgerSources` is a VALUE, so its import edge
+ * This module is compiled into the desktop engine. `workflowAttemptKey` is a VALUE, so its edge
  * survives bundling: absent a `sideEffects` declaration a bundler must assume the named module has
  * work to do at load, and keeps its bytes. While that value was named through `@trafficflow/db/cloud`
  * the barrel came with it, and the barrel is billing, the credit ledger, the staff directory, the
@@ -19,11 +19,11 @@ import {
  * stranger downloads. `ledger-source.ts` imports `node:crypto` and nothing else, which is what makes
  * it nameable from here; its own header states the rule this line now keeps.
  *
- * `AiCreditGate` stays on `/cloud` because a TYPE-only import is erased at compile time and creates
- * no edge — `import type` rather than a bare `import` is the whole difference, so it must not be
- * collapsed back into one statement. */
-import { ledgerSources } from "@trafficflow/db/ledger-source";
-import type { AiCreditGate } from "@trafficflow/db/cloud";
+ * `SpendPort` comes from the root barrel as a TYPE ONLY, which is erased at compile time and
+ * creates no edge — `import type` rather than a bare `import` is the whole difference, so it must
+ * not be collapsed back into one statement. */
+import { workflowAttemptKey } from "@trafficflow/db/ledger-source";
+import type { SpendPort } from "@trafficflow/db";
 import { makeDrizzleRepo, type DrizzleRepo } from "../../adapters/drizzle-repo.js";
 import type { NativeLocator } from "../../ports.js";
 import type { DraftPort, DraftInput, DraftResult } from "../draft.js";
@@ -121,8 +121,8 @@ export interface ToolPrepareContext {
   runId: string;
   stepIndex: number;
   drafter: DraftPort;  // INJECTED (mocked in tests) — no live model client in core
-  /** The AI spend gate. Absent ⇒ unmetered. Charged and refunded HERE, never in `apply`. */
-  credits?: AiCreditGate;
+  /** The AI spend gate. Absent ⇒ unmetered. Charged and released HERE, never in `apply`. */
+  credits?: SpendPort;
 }
 
 /**
@@ -324,14 +324,16 @@ const draftReplyTool: Tool = {
     const target = await loadDraftTarget(ctx.db, ctx.accountId, messageId);
     const input = await buildDraftInput(ctx.db, ctx.accountId, target);
 
-    const source = ledgerSources.workflowStep(ctx.runId, ctx.stepIndex);
+    // The BARE key: the run and the step, which is the unit a crash-resume re-executes. The
+    // ledger source is composed by whoever answers, through the one composer.
+    const attemptKey = workflowAttemptKey(ctx.runId, ctx.stepIndex);
     const meta = { runId: ctx.runId, stepIndex: ctx.stepIndex, messageId };
     let chargedAttempt: string | null = null;
     if (ctx.credits) {
-      const outcome = await ctx.credits.spend(source, meta);
-      if (!outcome.permitted) {
+      const outcome = await ctx.credits.spend(ctx.accountId, "workflow", attemptKey, meta);
+      if (outcome.verdict !== "ok" && outcome.verdict !== "duplicate") {
         // A FAULT is our outage, not the customer's balance — never `insufficient_credits`.
-        if (outcome.refusal === "fault") throw new WorkflowStepError("ai_unavailable");
+        if (outcome.verdict === "fault") throw new WorkflowStepError("ai_unavailable");
         // AN OVERLAP is not a fault and not a balance either: another caller holds the exclusive
         // claim on this exact step and is running the model for it. Unreachable
         // today — the workflow gate does not set `exclusive`, because the loser path here is a
@@ -340,14 +342,18 @@ const draftReplyTool: Tool = {
         // through to the `outcome.reason` branch below, which would read `undefined` on this
         // variant and report a refusal the subscription never made. `ai_unavailable` is the
         // retryable answer, which is the honest one for a condition that clears by itself.
-        if (outcome.refusal === "inflight") throw new WorkflowStepError("ai_unavailable");
-        if (outcome.refusal === "quantity") throw new WorkflowStepError("insufficient_credits");
+        if (outcome.verdict === "inflight") throw new WorkflowStepError("ai_unavailable");
+        if (outcome.verdict === "insufficient") throw new WorkflowStepError("insufficient_credits");
         // A STATE refusal reports the subscription's OWN word (`ai_disabled` for the account's
         // own off switch, else `canceled` / `paused` / `past_due` / `unpaid` / `no_subscription` /
         // `suspended`), because "buy more credits" is the wrong sentence for every one of them.
         throw new WorkflowStepError(outcome.reason);
       }
-      chargedAttempt = outcome.charged ? outcome.attempt : null;
+      // KEPT ONLY WHEN THIS CALL CHARGED. The port's `attempt` IS the refund memory — there is
+      // no in-process marker across a network hop — and a `duplicate`'s attempt belongs to an
+      // earlier call whose work may well have been delivered. Reversing that one because this
+      // step later failed would hand back a charge for work the customer received.
+      chargedAttempt = outcome.verdict === "ok" ? outcome.attempt : null;
     }
 
     // THE PAID CALL. Outside every transaction, which is the whole point of `prepare`.
@@ -365,7 +371,13 @@ const draftReplyTool: Tool = {
     try {
       result = await ctx.drafter.draft(input);
     } catch (err) {
-      await ctx.credits?.refund(source, meta);
+      // `refund: true` only for an attempt THIS call charged; otherwise the claim goes back and
+      // the charge stands, which is what keeps a free retry free.
+      if (ctx.credits) {
+        await ctx.credits.release(ctx.accountId, chargedAttempt === null
+          ? { action: "workflow", attemptKey, refund: false, meta }
+          : { action: "workflow", attemptKey, refund: true, attempt: chargedAttempt, meta });
+      }
       throw err;
     }
     return {
@@ -572,7 +584,7 @@ export interface WorkflowExecutorDeps {
   db: Tx;              // top-level handle for the per-step db.transaction (crash-resume)
   drafter: DraftPort;  // INJECTED (mocked in tests)
   /** The AI spend gate, consulted by `draft_reply` only. Absent ⇒ unmetered. */
-  credits?: AiCreditGate;
+  credits?: SpendPort;
   now?: () => Date;
 }
 

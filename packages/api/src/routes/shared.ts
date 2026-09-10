@@ -12,7 +12,7 @@ import {
 import type { DraftPort } from "@trafficflow/core/mail";
 import {
   accessOf, isMetered,
-  type AccessVerdict, type EntitlementsComposition, type EntitlementsPort,
+  type AccessVerdict, type EntitlementsComposition, type EntitlementsPort, type SpendPort,
 } from "@trafficflow/db";
 import type { ImapAdmissionPort, ApiDeps } from "../deps.js";
 
@@ -42,6 +42,21 @@ export function entitlementsOf(deps: ApiDeps): EntitlementsComposition | null {
 export function entitlementsPort(deps: ApiDeps): EntitlementsPort | null {
   const e = entitlementsOf(deps);
   return e !== null && isMetered(e) ? e : null;
+}
+
+/**
+ * WHO CHARGES AN AI ACTION HERE, or nobody — the spend half alone, for the routes that spend.
+ *
+ * `undefined` for both an UNMETERED host and an unfinished one, and that collapse is correct for
+ * THIS question and only this one: a call site's answer to "nobody meters here" is the same in
+ * both cases — run the model, charge nothing — while `access` must keep them apart, because
+ * refusing on an unfinished composition would lock every account out of an install whose operator
+ * simply has no entitlements program. The routes that spend never need to tell the two apart; the
+ * one that renders a manage link does, and it uses `entitlementsPort` above.
+ */
+export function spendOf(deps: ApiDeps): SpendPort | undefined {
+  const e = entitlementsOf(deps);
+  return e !== null && isMetered(e) ? e : undefined;
 }
 
 /**

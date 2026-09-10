@@ -1,15 +1,15 @@
 import {
-  noticeSinkFor, setNoticeSink, IDEMPOTENCY_TTL_MS, UNMETERED, accessOf,
-  type EntitlementsComposition, type Tx,
+  noticeSinkFor, setNoticeSink, UNMETERED, accessOf, isMetered,
+  type EntitlementsComposition, type SpendPort, type Tx,
 } from "@trafficflow/db";
 import {
   API_MAX_DURATION_MS, makeAiUsageRecorder, makePooledDb,
   makeEntitlementsClient, makeLocalEntitlements,
 } from "@trafficflow/db/cloud";
 import {
-  adminDbFor, attestStaffDbFault, makeAiCreditGate, resetAdminDbs, webhookAlertSink,
+  adminDbFor, attestStaffDbFault, resetAdminDbs, webhookAlertSink,
   telegramAlertSink,
-  assertWeightedScheduleActive, grantSetupCredits, withSetupPool,
+  assertWeightedScheduleActive, grantSetupCredits,
   acquireImapSlot, releaseImapSlot, balanceOf, storageCapOf,
   resolveOAuthProviderConfig, rotateMailboxOAuthSecret, MICROSOFT_PROVIDER,
   // The staging BUCKET client. It sits beside the `attachment_staging` rows rather than with the
@@ -46,7 +46,7 @@ import {
   makePlatformSignalPort,
 } from "@trafficflow/services";
 import { makeProbeHostGuard, apiAlertSinkSummary } from "@trafficflow/api";
-import type { AiCreditGateFactory, ApiDeps, ApiServices, ChangeWakeHub } from "@trafficflow/api";
+import type { ApiDeps, ApiServices, ChangeWakeHub } from "@trafficflow/api";
 import { allowCookieAuthForRequest, type HostConfig } from "./config.js";
 import { makeChangeWakeHub } from "./wake-hub.js";
 
@@ -301,27 +301,16 @@ function buildServices(cfg: HostConfig): ApiServices {
     // Send later's two verbs (mail 0077) — the worker's scheduled-send pass is the sender.
     schedules: scheduleService,
     drafting: draftingService,
-    // The AI SPEND GATE, wired BEFORE any live model is. That order is the whole
-    // point: a host that can call a model but cannot meter it is the state the billing boundary
-    // exists to prevent. `drafter` (the Anthropic DraftPort) stays ABSENT, so the route still
-    // 500s cleanly on a deployment with no model; when it is wired, the meter is already here.
-    //
-    // A FACTORY, because a gate is per-account and this bag is per cold instance. Its presence
-    // also makes `Idempotency-Key` mandatory on `POST /messages/:id/draft`: the
-    // attempt key that scopes the debit must be the client's own.
-    //
-    // `retryWindowMs: IDEMPOTENCY_TTL_MS` is the one non-default option, and it is the only
-    // gate that gets it. Half of a `debit_draft` source is the CLIENT's `Idempotency-Key`
-    // (`draft:<messageId>:<hash(key)>`), so without a bound a client replaying one key would
-    // mint unlimited free drafts: every replay answers `duplicate`, proceeds, calls the model
-    // and stores a new draft, for ever, charging once. Bounding the free-retry window to
-    // exactly as long as the HTTP layer still honours that key makes a genuine retry free and
-    // a replay a year later new intent that pays. The classify gate deliberately has NO window
-    // — its source is derived from immutable mail, so a re-sync months later is the same work.
-    aiCredits: ((db, accountId) =>
-      makeAiCreditGate(db as unknown as Tx, accountId, {
-        reason: "debit_draft", retryWindowMs: IDEMPOTENCY_TTL_MS,
-      })) satisfies AiCreditGateFactory,
+    /* THE AI SPEND GATE IS COMPOSED ONCE, NOT PER ROUTE — see `entitlementsPort` below.
+     *
+     * This was `aiCredits`, a factory building a `debit_draft` gate per request with
+     * `retryWindowMs: IDEMPOTENCY_TTL_MS` as its one non-default option. Both halves moved: the
+     * spend half of the entitlements port answers the money question for every call site, and the
+     * draft path's retry window is a property of the ACTION (`SPEND_ACTIONS.draft`) rather than of
+     * whichever host happened to remember it. What did NOT move is the consequence for this
+     * route: `POST /messages/:id/draft` still requires the client's `Idempotency-Key` whenever
+     * something meters, because half of a draft's attempt key is that header.
+     */
     // `sendAdapter` is deliberately ABSENT: leaving it unset is what makes the send route use
     // the real `makeSendAdapter`. A test injects it; production must not fake it.
     sends: sendService,
@@ -422,6 +411,17 @@ function buildServices(cfg: HostConfig): ApiServices {
   // the cheaper failure. After the weighted schedule shipped it passes by construction; it exists
   // for the revert.
   if (anthropicApiKey && cfg.billingPlane) assertWeightedScheduleActive();
+  /**
+   * THE SPEND HALF OF WHATEVER THIS HOST DECLARED, or nothing when it meters nothing.
+   *
+   * Read from the bag rather than composed a second time: `entitlementsPort` below is memoised,
+   * and the port caches an account's access verdict, so two instances would each cache their own.
+   * Called from inside a lazy factory, so the getter it reads is defined by then.
+   */
+  const spendHalf = (): SpendPort | undefined => {
+    const composed = bag.entitlementsPort as EntitlementsComposition | undefined;
+    return composed !== undefined && isMetered(composed) ? composed : undefined;
+  };
   lazily(bag, "screener", () => makeScreenerService({
     /* -- THIS HOST IS KILLED BY A PLATFORM, AND IT IS THE ONLY ONE THAT IS -------------------
      *
@@ -440,28 +440,19 @@ function buildServices(cfg: HostConfig): ApiServices {
      * of the kill.
      */
     invocationBudgetMs: API_MAX_DURATION_MS,
-    // `exclusive: true` — closes the concurrent double-purchase race a money review found,
-    // and the ONE option this gate takes.
-    //
-    // The ledger makes a second concurrent purchase of the same message FREE; it cannot make it
-    // not happen. `duplicate` means "this work is already paid for", which is a fact about the
-    // past, so a caller still inside its model call and a genuine free retry arrive looking
-    // identical — and the second one was waved through to a paid model call nobody bought. This
-    // route is where that is unbounded: it is `idempotent: true`, so DISTINCT `Idempotency-Key`s
-    // never collapse against each other, and `middleware.ts` records that the control for
-    // invocation cost is an edge rate limit this deployment does not have.
-    //
-    // With it on, the loser is refused BEFORE the model, waits briefly for the holder's verdict
-    // and serves that instead. The worker's auto-suggest pass sets the same option against the
-    // same ledger source, which is what makes the cron/press collision — the reaching of this
-    // that needs no unusual behaviour from anyone — close on both sides rather than one.
-    // `withSetupPool` — the Screener draws each mailbox's screening-only setup grant BEFORE the
-    // main balance. Only the two Screener arms wear this wrapper (this one and the worker's
-    // auto-suggest gate); drafting, the proposer and workflow steps never see it, which is what
-    // makes the pool screening-only in mechanism rather than in prose.
-    credits: (db, accountId) =>
-      withSetupPool(db, accountId,
-        makeAiCreditGate(db, accountId, { reason: "debit_classify", exclusive: true })),
+    /* THE SCREENER'S TERMS ARE THE ACTION'S, and this is where they used to be chosen.
+     *
+     * The exclusive claim that closes the concurrent double-purchase race, and the `withSetupPool`
+     * wrapper that draws each mailbox's screening-only grant before the main balance, were both
+     * composed HERE — and the worker had to compose the same two, from its own code, for the cron
+     * half of the same call site. A host that got one of them wrong gave the Screener another call
+     * site's terms; that disagreement was a real defect, in which setup-funded spends skipped the
+     * claim entirely. Both now come from `SPEND_ACTIONS.screener`, which the entitlements program
+     * reads from its own copy of the same table.
+     */
+    // The spend half of whatever this host declared, read off the bag so there is ONE port per
+    // process — it caches its access verdicts, and a second instance would cache separately.
+    ...(spendHalf() ? { credits: spendHalf()! } : {}),
     // WHAT IS LEFT, so the summary after a run can answer "and how much have I got?" without
     // the client keeping a shadow ledger. `balanceOf` is the O(1) `credit_balances` read and
     // never a `SUM` over the ledger — see its own note. It is wired HERE, in the host that has

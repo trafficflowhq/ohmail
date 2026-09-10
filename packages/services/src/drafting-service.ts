@@ -1,12 +1,12 @@
 import { and, asc, eq, isNull, ne } from "drizzle-orm";
-import { messages, ledgerSources, type IdempotencyKey } from "@trafficflow/db";
+import { messages, draftAttemptKey, type IdempotencyKey } from "@trafficflow/db";
 // TYPE-ONLY, and it has to stay that way: `import type` is erased, so it creates no module edge
 // into the hosted half. A value import from `/cloud` here would put billing and the ledger into
 // the desktop engine, which mounts this service.
 /* The PORT, from the root barrel — not `@trafficflow/db/cloud`, which is the half that
  * answers. This service names a gate it may be handed; it never builds one, and it must
  * compile in a deployment where no gate and no ledger exist. */
-import type { AiCreditGate } from "@trafficflow/db";
+import type { SpendPort } from "@trafficflow/db";
 import { plainTextToOutboundBody, type DraftInput, type DraftPort } from "@trafficflow/core/mail";
 import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
@@ -42,7 +42,7 @@ export interface DraftFromMessageDeps {
    * metering existed). Present ⇒ {@link DraftFromMessageDeps.attemptKey} is REQUIRED, because a metered AI
    * action must carry the client's own statement of intent.
    */
-  credits?: AiCreditGate;
+  credits?: SpendPort;
   /**
    * The request's `Idempotency-Key`, branded by `clientIdempotencyKey` at the HTTP edge.
    *
@@ -172,10 +172,16 @@ export class DraftingService {
     //    credits", "your subscription may not spend" and "our ledger is unreachable" is the
     //    difference between three different answers, and collapsing them into one boolean is
     //    what made a funded customer receive `402 out_of_credits` for a dropped connection.
-    const creditSource = deps.credits ? this.debitSource(target.id, deps) : null;
-    if (deps.credits && creditSource) {
-      const outcome = await deps.credits.spend(creditSource, { messageId: target.id });
-      if (!outcome.permitted && outcome.refusal === "fault") {
+    // The BARE key — the message plus the client's own intent token. The ledger source is
+    // composed by whoever answers, through the one composer, so this path cannot double-prefix it.
+    const attemptKey = deps.credits ? this.debitKey(target.id, deps) : null;
+    /** The attempt THIS request charged, or null. The port's `attempt` is the refund memory. */
+    let chargedAttempt: string | null = null;
+    if (deps.credits && attemptKey) {
+      const outcome = await deps.credits.spend(
+        ctx.accountId, "draft", attemptKey, { messageId: target.id });
+      chargedAttempt = outcome.verdict === "ok" ? outcome.attempt : null;
+      if (outcome.verdict === "fault") {
         // A SERVER fault. 503, never 402 — we do not bill someone for our own outage, and we
         // do not tell them to buy credits they already have. Retryable, and the gate has
         // already reported the underlying error through `onError`.
@@ -183,7 +189,7 @@ export class DraftingService {
           "ai_unavailable", 503, "AI drafting is temporarily unavailable; please retry",
         );
       }
-      if (!outcome.permitted && outcome.refusal === "inflight") {
+      if (outcome.verdict === "inflight") {
         // ANOTHER CALLER HOLDS THIS DRAFT'S CLAIM. 503 for the same reason a fault
         // is 503 and emphatically not 402: this account is fully funded and nothing is wrong with
         // it, so a demand for money would be a bill for someone else's concurrency. Retryable,
@@ -201,7 +207,12 @@ export class DraftingService {
           "ai_unavailable", 503, "AI drafting is temporarily unavailable; please retry",
         );
       }
-      if (!outcome.permitted && outcome.reason === "ai_disabled") {
+      // BY REASON AND NOT BY VERDICT, which is how this line has always read. The switch arrives
+      // as `refused` from both implementations; accepting it under `insufficient` too is the
+      // fail-safe against the one drift that matters here — a state refusal folded into an
+      // out-of-credits answer bills a fully funded account for a setting it chose.
+      if ((outcome.verdict === "refused" || outcome.verdict === "insufficient")
+        && outcome.reason === "ai_disabled") {
         // THE ACCOUNT'S OWN OFF SWITCH — 409, never 402. 402 means "pay us", and it would be the
         // wrong sentence three times over: this account is fully funded, nothing it could buy
         // would change the answer, and the state was chosen deliberately by the person now
@@ -212,7 +223,7 @@ export class DraftingService {
           { reason: outcome.reason },
         );
       }
-      if (!outcome.permitted) {
+      if (outcome.verdict === "refused" || outcome.verdict === "insufficient") {
         // A machine-readable WHY, so the client can tell "buy more" from "fix your
         // subscription" instead of guessing. It comes from the decision the gate already made
         // rather than from a second read of the same subscription.
@@ -237,7 +248,15 @@ export class DraftingService {
     try {
       result = await deps.drafter.draft(input);
     } catch (err) {
-      if (creditSource) await deps.credits?.refund(creditSource, { messageId: target.id });
+      // `refund: true` only for an attempt THIS request charged. A `duplicate` names an earlier
+      // attempt whose work may have been delivered, and reversing that one because this request
+      // failed would hand back a charge for a draft the customer already has.
+      if (deps.credits && attemptKey) {
+        const meta = { messageId: target.id };
+        await deps.credits.release(ctx.accountId, chargedAttempt === null
+          ? { action: "draft", attemptKey, refund: false, meta }
+          : { action: "draft", attemptKey, refund: true, attempt: chargedAttempt, meta });
+      }
       throw err;
     }
 
@@ -297,14 +316,14 @@ export class DraftingService {
    *    retry of a lost response a second time, which is the exact failure the branded
    *    {@link IdempotencyKey} exists to make unrepresentable.
    */
-  private debitSource(messageId: string, deps: DraftFromMessageDeps): string {
+  private debitKey(messageId: string, deps: DraftFromMessageDeps): string {
     if (!deps.attemptKey) {
       throw new ServiceError(
         "internal", 500,
         "AI drafting is metered on this deployment but no client Idempotency-Key was threaded through",
       );
     }
-    return ledgerSources.draft(messageId, deps.attemptKey);
+    return draftAttemptKey(messageId, deps.attemptKey);
   }
 
   /**

@@ -260,6 +260,10 @@ export {
   // construct against a flat schedule. See `ledger-source.ts`.
   AI_ACTION_WEIGHTS, WEIGHTED_DEBIT_REASONS, aiActionCost, assertWeightedScheduleActive,
   type WeightedDebitReason,
+  // The spend TERMS and the one source composer — presented here beside the ledger writers.
+  SPEND_ACTIONS, DRAFT_RETRY_WINDOW_MS, ATTEMPT_KEY_MAX, sourceFor, assertAttemptKey,
+  isSpendAction, classifyAttemptKey, screenerAttemptKey, draftAttemptKey, workflowAttemptKey,
+  type SpendAction,
   type AiCreditGate, type AiCreditGateOptions, type AiSpendOutcome, type AiRefusalReason,
 } from "./ai-gate.js";
 

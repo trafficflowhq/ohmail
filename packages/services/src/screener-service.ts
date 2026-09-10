@@ -5,7 +5,7 @@ import {
   folderState,
   routingDecisions,
   claimIdempotencyKey,
-  screenerLedgerSource,
+  screenerAttemptKey,
   storeScreenerSuggestion,
   screenerSuggestionsBySender,
   SCREENER_SUGGESTION_PROVENANCE,
@@ -22,7 +22,7 @@ import {
 /* The PORT, from the root barrel — not `@trafficflow/db/cloud`, which is the half that
  * answers. This service names a gate it may be handed; it never builds one, and it must
  * compile in a deployment where no gate and no ledger exist. */
-import type { AiCreditGate } from "@trafficflow/db";
+import type { SpendPort } from "@trafficflow/db";
 import type { AdapterPort, ClassifierPort, Destination, NativeLocator, OhboxPolicy } from "@trafficflow/core/mail";
 import {
   applyReconcileAction, askScreeningQuestion, CLASSIFY_DESTINATIONS, createLogger,
@@ -134,7 +134,7 @@ export interface ScreenerSuggestDeps extends ScreenerDeps {
    * read path that can build a gate is a read path that can charge, and the two capabilities
    * are only useful together anyway.
    */
-  credits?: (db: Tx, accountId: string) => AiCreditGate;
+  credits?: SpendPort;
   /**
    * THE WALL-CLOCK CEILING THIS HOST KILLS A REQUEST AT — declared by the composition root,
    * ABSENT for a host that has none.
@@ -158,7 +158,7 @@ export interface ScreenerSuggestDeps extends ScreenerDeps {
   /**
    * THE BALANCE READ that answers "how much is left", beside the gate that spends it.
    *
-   * A separate dep and not a method on {@link AiCreditGate}, because the gate is a PORT — the
+   * A separate dep and not a method on {@link SpendPort}, because the gate is a PORT — the
    * question a caller asks about permission — and this is a read with no decision in it.
    * Widening that port would make every implementation of it, including the one-line test
    * doubles the pipeline's degrade-to-rules proof is written against, owe an answer about a
@@ -1765,7 +1765,7 @@ export class ScreenerService extends ScreenerReadService {
    * TypeScript enforces even through a cast to this class.
    */
   private readonly classifier?: ClassifierPort;
-  private readonly credits?: (db: Tx, accountId: string) => AiCreditGate;
+  private readonly credits?: SpendPort;
   /** The balance READ. Destructured out for the same reason as the two above. */
   private readonly remaining?: (db: Tx, accountId: string) => Promise<number>;
   /** This host's own invocation ceiling, or absent. See {@link ScreenerSuggestDeps}. */
@@ -2001,7 +2001,9 @@ export class ScreenerService extends ScreenerReadService {
     // `duplicate` costs the user nothing and costs US a model call.
     const stored = await this.storedSuggestions(ctx, [...rep.values()].map((r) => r.messageId), ohboxPolicy);
 
-    const gate = this.credits?.(asTx(ctx), ctx.accountId);
+    // NOT a factory over the request's handle any more: the port holds its own, deliberately, so
+    // a money answer is never taken inside somebody else's transaction. See the local adapter.
+    const gate = this.credits;
     /**
      * THE WHOLE REQUEST'S patience for senders another caller is already buying, as a deadline
      * rather than a per-sender allowance.
@@ -2155,9 +2157,23 @@ export class ScreenerService extends ScreenerReadService {
 
     /** The purchase itself, inside a lane slot. */
     const buyAdmitted = async ({ index, sender, row: r }: Purchase): Promise<void> => {
-      const source = screenerLedgerSource(r.messageId);
+      // The BARE key: the MESSAGE, which is what makes a re-ask of the same held mail free and
+      // what makes the cron and this press claim the same work. The source is composed by
+      // whoever answers.
+      const attemptKey = screenerAttemptKey(r.messageId);
+      /** What a release must name, when this lane charged one. */
+      let chargedAttempt: string | null = null;
+      /** Give the claim back, reversing the charge only if this lane made one. */
+      const releaseClaim = async (): Promise<void> => {
+        if (!gate) return;
+        const meta = { messageId: r.messageId };
+        await gate.release(ctx.accountId, chargedAttempt === null
+          ? { action: "screener", attemptKey, refund: false, meta }
+          : { action: "screener", attemptKey, refund: true, attempt: chargedAttempt, meta });
+      };
       if (gate) {
-        const outcome = await gate.spend(source, { messageId: r.messageId });
+        const outcome = await gate.spend(
+          ctx.accountId, "screener", attemptKey, { messageId: r.messageId });
 
         // ── SOMEBODY ELSE IS BUYING THIS ONE RIGHT NOW ─────────────────────────────────────
         //
@@ -2180,7 +2196,7 @@ export class ScreenerService extends ScreenerReadService {
         // bounded and the budget is per-REQUEST, so a large set whose senders are all held
         // elsewhere degrades to one wait and not one per sender — and now that the lanes overlap,
         // several such waits run inside that one budget rather than end to end.
-        if (!outcome.permitted && outcome.refusal === "inflight") {
+        if (outcome.verdict === "inflight") {
           const settled = await this.awaitHeldSuggestion(ctx, r.messageId, ohboxPolicy, waitUntil);
           if (settled) {
             // Charged NOTHING and asked NOTHING, and the sender is answered. `quoted` stays as it
@@ -2201,13 +2217,19 @@ export class ScreenerService extends ScreenerReadService {
           return;
         }
 
-        if (!outcome.permitted) {
-          const reason = outcome.refusal === "quantity" ? "out_of_credits" : "spend_unavailable";
+        if (outcome.verdict !== "ok" && outcome.verdict !== "duplicate") {
+          const reason = outcome.verdict === "insufficient" ? "out_of_credits" : "spend_unavailable";
           refused[index] = { sender, reason };
           stops[index] = reason;
-          refusals[index] = outcome.refusal === "fault"
+          // The wire words the client already reads, from the port's own verdict: `quantity` for
+          // an empty balance, `state` for a subscription (or the account's switch) that may not
+          // spend, `fault` for "we do not know" — which is never a payment demand.
+          refusals[index] = outcome.verdict === "fault"
             ? { refusal: "fault" }
-            : { refusal: outcome.refusal, ...(outcome.reason === undefined ? {} : { reason: outcome.reason }) };
+            : {
+                refusal: outcome.verdict === "insufficient" ? "quantity" : "state",
+                reason: outcome.reason,
+              };
           return;
         }
         // `charged: false` is a free retry of an attempt already on record — a `duplicate`.
@@ -2221,7 +2243,10 @@ export class ScreenerService extends ScreenerReadService {
         //
         // `charged` is a plain `+=` across lanes and that is sound: JavaScript runs one lane at a
         // time between `await`s, so a read-modify-write with no `await` inside it is atomic here.
-        if (outcome.charged) charged += AI_ACTION_WEIGHTS.debit_classify;
+        if (outcome.verdict === "ok") {
+          charged += AI_ACTION_WEIGHTS.debit_classify;
+          chargedAttempt = outcome.attempt;
+        }
 
         // ── A FREE RETRY LOOKS FOR THE RESULT IT IS A RETRY OF, BEFORE RE-BUYING TOKENS ────
         //
@@ -2242,11 +2267,11 @@ export class ScreenerService extends ScreenerReadService {
         // attempt, which only happens when the previous one was refunded or aged out, and a new
         // attempt is a purchase of a FRESH verdict — serving the old row would take the money and
         // hand back what the customer already had.
-        if (!outcome.charged) {
+        if (outcome.verdict === "duplicate") {
           const settled = (await this.storedSuggestions(ctx, [r.messageId], ohboxPolicy)).get(r.messageId);
           if (settled) {
             answered[index] = { sender, messageId: r.messageId, ...settled };
-            await gate.release?.(source);
+            await releaseClaim();
             return;
           }
         }
@@ -2298,15 +2323,19 @@ export class ScreenerService extends ScreenerReadService {
         // Not refunded, and the charge is what buys the retry: the source is stable, so the
         // next attempt over this message answers `duplicate` and costs nothing.
         refused[index] = { sender, reason: "model_unavailable" };
-        await gate?.release?.(source);
+        // The claim goes back and the CHARGE STANDS: the key is stable, so the next attempt over
+        // this message answers `duplicate` and is free. That free retry is what honours it.
+        chargedAttempt = null;
+        await releaseClaim();
         return;
       }
 
       // Persisted NOW, in its own transaction, before this lane takes another sender.
       await this.store(ctx, r.messageId, result);
-      // …and only NOW is the source free. See the block above the `try` for the window this
-      // ordering closes.
-      await gate?.release?.(source);
+      // …and only NOW is the claim free. See the block above the `try` for the window this
+      // ordering closes. The work was DELIVERED, so the charge stands.
+      chargedAttempt = null;
+      await releaseClaim();
       answered[index] = {
         sender,
         messageId: r.messageId,

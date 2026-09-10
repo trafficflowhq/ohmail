@@ -79,18 +79,31 @@ export type SpendOutcome =
  */
 export type { SpendAction } from "./ledger-source.js";
 
-/** How a spend ended. `refund: false` gives the claim back; `true` also reverses the charge. */
-export interface SpendRelease {
+/**
+ * HOW A SPEND ENDED — `refund: false` gives the claim back, `true` also reverses the charge.
+ *
+ * A UNION, and the asymmetry is deliberate: a reversal must NAME the attempt it reverses, and a
+ * release that reverses nothing has nothing to name. Written as one shape with an optional
+ * `attempt`, "refund this, I forget which attempt" is representable — and it is the shape that
+ * reverses a neighbour's charge, because the gate falls back to the bare source, which is
+ * attempt 1 and may belong to work that was delivered months ago.
+ *
+ * Pass `refund: true` only with an `attempt` THIS caller was told was `charged: true`, once per
+ * abandonment. A `duplicate` charged nothing, so its caller releases and does not refund.
+ */
+export type SpendRelease = {
   action: SpendAction;
   attemptKey: string;
-  /** What {@link SpendOutcome} returned as `attempt`. A reversal names an attempt, not a key.
-   *  Pass it only when THIS caller was told `charged: true` — see {@link EntitlementsPort.release}. */
-  attempt: string;
-  /** `true` only when the work was ABANDONED — a delivered attempt's charge stands. */
-  refund: boolean;
-  /** Provenance for the ledger row. Ids and counts, never a message's subject or body. */
+  /** Provenance for the reversal's own ledger row. Ids and counts, never a message's content. */
   meta?: SpendMeta;
-}
+} & (
+  | { refund: false }
+  | {
+      refund: true;
+      /** What {@link SpendOutcome} returned as `attempt` for a `charged: true` answer. */
+      attempt: string;
+    }
+);
 
 /**
  * PROVENANCE FOR THE LEDGER ROW, and the reason it is not free-form in practice.

@@ -1,3 +1,4 @@
+import type { SpendOutcome, SpendPort } from "@trafficflow/db";
 import type { NormalizedMessage, Destination, AttachmentMeta, EmailAddress } from "./types.js";
 import type { AuthVerdict, Rule } from "./rules.js";
 import type { ClassifierPort } from "./classifier-port.js";
@@ -669,13 +670,47 @@ export interface RoutingPort {
  * `{ tryDebit(source) }` shape and a one-method test double is a complete implementation rather
  * than a convenient partial one.
  *
- * The production implementation is the AI credit gate in `@trafficflow/db`, which is wider
- * (`spend`, `refund`, `refundAttempt`) for the call sites that need more; structural typing means
- * the pipeline still only ever sees the one method it is allowed to use.
+ * The production implementation is the entitlements port's spend half, which also carries
+ * `release` for the call sites that reverse an abandoned charge; structural typing means the
+ * pipeline still only ever sees the one method it is allowed to use.
+ *
+ * `SpendPort` and not a `tryDebit` boolean, because the port answers SIX verdicts and the boolean
+ * threw five of them away. This path still needs only "may I run the model", and
+ * {@link aiSpendPermitted} is where that reading is made — once, exhaustively, so a verdict added
+ * to the port is a compile error here rather than a silent `false`.
  */
-export interface CreditGate {
-  /** `true` ⇒ the AI branch may run (charged now, or already paid for); `false` ⇒ skip it. */
-  tryDebit(source: string, meta?: Record<string, unknown>): Promise<boolean>;
+export type CreditGate = Pick<SpendPort, "spend">;
+
+/**
+ * MAY THE AI BRANCH RUN — the INGEST path's reading of a spend verdict, and only its.
+ *
+ * The other call sites read the same six words differently and must: the Screener waits out an
+ * `inflight` and serves the holder's answer, the drafting path answers 402 for `insufficient`,
+ * 409 for a `refused` the account chose, 503 for a `fault`. Here there is exactly one thing to do
+ * with a no — file the message on the deterministic rules — so the reading is a boolean.
+ *
+ * `ok` and `duplicate` proceed: the first charged this attempt, the second found the work already
+ * paid for, and refusing a duplicate would charge twice for one message or drop routing already
+ * bought. `inflight` does NOT proceed — another caller is running the model for this exact mail,
+ * and proceeding buys a second paid call for one credit.
+ */
+export function aiSpendPermitted(outcome: SpendOutcome): boolean {
+  switch (outcome.verdict) {
+    case "ok":
+    case "duplicate":
+      return true;
+    case "insufficient":
+    case "refused":
+    case "inflight":
+    case "fault":
+      return false;
+    default: {
+      // A verdict nobody here has read. Unreachable while the port has six, and a compile error
+      // the day it has seven — which is why every arm above is spelled out.
+      const unread: never = outcome;
+      return unread;
+    }
+  }
 }
 
 /**

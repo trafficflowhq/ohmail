@@ -7,7 +7,7 @@ import {
 import { serviceContext } from "../context.js";
 import { jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
-import { message, drafting, drafter, readBody } from "./shared.js";
+import { message, drafting, drafter, readBody, spendOf } from "./shared.js";
 
 /**
  * §5.2 — messages. `GET /messages?view=…` is the view-partitioned list (400
@@ -164,7 +164,7 @@ export const messageRoutes: Route[] = [
     options: { idempotent: true },
     handler: async (req, deps, params) => {
       const ctx = serviceContext(deps, req);
-      const credits = deps.services?.aiCredits?.(deps.db, ctx.accountId);
+      const credits = spendOf(deps);
       if (credits && !deps.idempotency) {
         throw new ServiceError(
           "idempotency_key_required", 400,

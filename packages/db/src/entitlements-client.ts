@@ -275,7 +275,11 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
       // dearer half and the ledger is what makes reissuing it safe, so the caller may repeat it.
       assertAttemptKey(r.action, r.attemptKey);
       await post("/v1/spend/release", {
-        accountId, action: r.action, attemptKey: r.attemptKey, attempt: r.attempt, refund: r.refund,
+        accountId, action: r.action, attemptKey: r.attemptKey, refund: r.refund,
+        // Named only when there is a charge to reverse. The program defaults a missing `attempt`
+        // to the bare source, which is attempt 1 — so sending one on a non-refund call would put
+        // a neighbour's attempt into a request that must reverse nothing.
+        ...(r.refund ? { attempt: r.attempt } : {}),
         ...(r.meta ? { meta: r.meta } : {}),
       });
     },

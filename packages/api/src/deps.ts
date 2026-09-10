@@ -33,13 +33,7 @@ import type { SmtpLoginProof } from "@trafficflow/core/adapters/imap";
 import type { ProbeHostGuard } from "./imap-probe.js";
 /* The spend gate's PORT, from the root barrel. `@trafficflow/db/cloud` is the half that answers,
  * and a route table must be able to say it may be handed a gate without depending on the ledger. */
-import type { AiCreditGate, EntitlementsComposition } from "@trafficflow/db";
-
-/**
- * Builds the per-request AI spend gate. `db` is the request's handle and `accountId`
- * comes from the resolved SESSION, never from the body (contract §1.9).
- */
-export type AiCreditGateFactory = (db: Db, accountId: string) => AiCreditGate;
+import type { EntitlementsComposition } from "@trafficflow/db";
 
 /**
  * HOW A HOST ADMITS AN IMAP CONNECTION, as a port rather than as an import.
@@ -250,16 +244,12 @@ export interface ApiServices {
   // absent — the same seam the classifier uses.
   drafting?: DraftingService;
   drafter?: DraftPort;
-  /**
-   * The AI SPEND GATE factory. A factory rather than an instance because a
-   * gate is per-ACCOUNT and the account is only known once `withSession` has resolved the
-   * request, while this bag is built once per cold instance.
-   *
-   * Its ABSENCE means the deployment is unmetered, and that is the honest default for a host
-   * with no billing configured — but it also means `POST /messages/:id/draft` stops requiring
-   * an `Idempotency-Key`, so the two must be wired together (the hosted API does).
-   */
-  aiCredits?: AiCreditGateFactory;
+  /* THE AI SPEND GATE IS NO LONGER A MEMBER OF THIS BAG. It was `aiCredits`, a factory over the
+   * request's handle building a gate per account, and every route that spent had to know which
+   * terms its call site spends on. The spend half of `entitlementsPort` answers it now: one
+   * declaration per host, the terms per call site read from the shared table, and the route hands
+   * a call site an `action` and a bare attempt key. `spendOf` in `routes/shared.ts` is where the
+   * three states — a port, `UNMETERED`, and an unfinished composition — are told apart. */
   /**
    * WHO ANSWERS "may this account use the service, and within what limits" — an entitlements
    * port, or the literal `UNMETERED` for a host that operates no such program.

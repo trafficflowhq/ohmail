@@ -22,11 +22,12 @@ import type { WorkerRepo } from "./adapters/drizzle-repo.js";
 import { resolveThread } from "./threading.js";
 // The LEAF, not `/cloud` and not the root barrel: this module runs inside the desktop engine, and
 // `/cloud` is billing, the credit ledger, the staff handle and the whole hosted schema.
-// `classifyLedgerSource` is a pure template over its two arguments and lives on a leaf both halves
+// `classifyAttemptKey` is a pure template over its two arguments and lives on a leaf both halves
 // can name — this line used to say exactly that while naming the root BARREL, which only avoided
 // the hosted half for as long as the barrel happened not to reach it. Naming the leaf itself is
 // what makes that a property instead of a coincidence.
-import { classifyLedgerSource } from "@trafficflow/db/ledger-source";
+import { classifyAttemptKey } from "@trafficflow/db/ledger-source";
+import { aiSpendPermitted } from "./ports.js";
 import type {
   Change, CreditGate, MoveEvidence, PipelineDeps, RepoPort, RoutingPort, FolderStateRow,
   MessageBodyInput, NativeLocator, StoredMessage,
@@ -1292,9 +1293,12 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
         : decision.destination ?? change.locator.folder;
 
     let ai: AiPlan | undefined;
-    // The ledger identity of ONE classification of THIS mail. Computing it writes nothing —
-    // only `tryDebit` below can move money — so it is safe to build before the gate runs.
-    const creditSource = classifyLedgerSource(mailboxId, key);
+    // The identity of ONE classification of THIS mail — the mailbox and the hashed dedup key,
+    // which is what makes a reprocess of the same mail the same work. It is the BARE key: whoever
+    // answers composes the ledger source from it, and a key that already carries a namespace is
+    // refused there rather than doubled (see `sourceFor`). Computing it writes nothing — only the
+    // spend below can move money — so it is safe to build before the gate runs.
+    const attemptKey = classifyAttemptKey(mailboxId, key);
     // AI GATE: classify only on the unclear residue, NEVER for
     // sensitive/no_ai mail, and only when the account may spend. The classifier is not even
     // constructed here for sensitive messages, so the raw secret never leaves the process.
@@ -1319,11 +1323,15 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
       // correspondent into a table that cannot be rewritten, and closing the admin console's
       // render path did not remove one byte of it from disk or from backups.
       //
-      // Nothing needed it. Debit identity is `creditSource`, which sha256s the key already
-      // (`classifyLedgerSource`), so `meta.dedupKey` was redundant as well as unsafe — the same
+      // Nothing needed it. The spend identity is `attemptKey`, which sha256s the key already
+      // (`classifyAttemptKey`), so `meta.dedupKey` was redundant as well as unsafe — the same
       // finding as `mailboxes.error_detail`, one column over: the projection asked what TYPE the
       // value was and never asked WHO WROTE IT.
-      (credits == null || await credits.tryDebit(creditSource, { mailboxId }))
+      // `aiSpendPermitted` reads the six-verdict answer for THIS path: proceed on `ok` and on
+      // `duplicate` (already paid for), skip on everything else — including `inflight`, where
+      // another caller is running the model for this exact mail right now.
+      (credits == null || aiSpendPermitted(
+        await credits.spend(accountId, "classify_ingest", attemptKey, { mailboxId })))
     ) {
       let result: ClassifierResult;
       try {
@@ -1347,7 +1355,7 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
         // sync cursor unadvanced — the existing crash-safe behaviour — so `runSyncCycle`
         // re-plans this exact mail on its next pass.
         //
-        // The absent refund: that retry is FREE, because `creditSource` is already on record
+        // The absent refund: that retry is FREE, because `attemptKey` is already on record
         // and the gate answers `duplicate → proceed` for an open attempt. The charge is
         // therefore honoured by the retry, and refunding as well would hand the work over for
         // nothing — a model outage would have re-classified the entire backlog free (the
