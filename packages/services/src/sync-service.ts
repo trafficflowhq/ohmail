@@ -881,7 +881,12 @@ export class SyncService {
     // Keyed to the page instead, both close at once: at most `limit` parents is at most `limit`
     // children, and a child cannot arrive without the row it describes. Same rule the threads
     // above follow, and for the same reason.
-    for (const c of await materializeMessageChildren(db, accountId, rows.map((r) => r.id))) {
+    //
+    // On `pageMessages` and NOT on the keyset `rows`: `materializeMessagesInOrder` drops an id
+    // whose row no longer matches — it re-applies the living-view filter — so a message
+    // tombstoned between the two reads is in `rows` and absent from the page. Keying on `rows`
+    // would emit that message's children with no parent, which is the case this exists to close.
+    for (const c of await materializeMessageChildren(db, accountId, pageMessages.map((m) => m.id))) {
       emit(c.type, c.id, c.entity, c.updatedAt);
     }
 
