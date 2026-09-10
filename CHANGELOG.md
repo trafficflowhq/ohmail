@@ -89,6 +89,16 @@ identical from inside the app. The row now reads the version followed by the fir
 of the commit it was built from, which is what a bug report needs to be answerable. A build made
 from a checkout shows the version alone.
 
+### Self-hosting: no plans, no metering, no billing surface
+
+The server no longer carries subscription billing or credit accounting. A self-hosted or
+standalone install has no plan to choose, no balance to run out of and no billing screen — every
+limit is off, and AI features run on the provider keys you configure.
+
+Fresh installs never create the billing tables. An install that already has them drops the empty
+ones when it migrates; a table that still holds rows is left in place and named in the migration
+log, so nothing is removed without you deciding to.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
