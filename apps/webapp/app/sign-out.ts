@@ -1,7 +1,10 @@
 import { clearAllMirrors } from "@ohmail/client-engine";
 import { auth } from "./api-client";
 import { clearBootCaches, dropLocalStorageKeys } from "./shell/boot-cache";
-import { COMPOSE_DRAFT_PREFIX, COMPOSE_ROW_PREFIX, COMPOSE_SESSION_PREFIX, LEGACY_COMPOSE_DRAFT_KEY } from "./shell/compose";
+import {
+  COMPOSE_DRAFT_PREFIX, COMPOSE_ROW_PREFIX, COMPOSE_SESSION_PREFIX, forgetComposeRows,
+  LEGACY_COMPOSE_DRAFT_KEY,
+} from "./shell/compose";
 import { REPLY_DRAFT_PREFIX, REPLY_META_PREFIX } from "./shell/mail-send";
 import {
   NOTIFICATION_SUBSCRIPTION_PREFIX, revokeWakeRegistration,
@@ -265,6 +268,14 @@ export async function forgetThisBrowser(
    * Wrapped, like every other accessor here: a private window or a browser refusing site data can
    * make the accessor itself throw, and a sign-out must not fail because a storage read did.
    */
+  /*
+   * AND THE HALF OF `COMPOSE_ROW_PREFIX` THAT IS NOT IN A JAR. A browser refusing this app its
+   * storage remembers the row the composer opened in memory for the life of the tab
+   * (`forgetComposeRows`), and every reason the key above is swept applies to it: left behind, the
+   * next sign-in's composer would be holding a row on the departed account. Unconditional and
+   * unwrapped — it touches no storage, so nothing here can throw.
+   */
+  forgetComposeRows();
   let deviceCeremonySwept = true;
   try {
     sessionStorage.removeItem("ohmail.deviceCeremony");

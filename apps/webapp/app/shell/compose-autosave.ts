@@ -67,6 +67,43 @@ export function worthSaving(f: ComposeFields): boolean {
 }
 
 /**
+ * ── WOULD REOPENING A ROW WRITE OVER WHAT IS ON SCREEN? ─────────────────────────────────────
+ *
+ * The reopen puts the row's stored fields into the form and into the scratch buffer, and for a
+ * PARKED message that buffer is the only copy of anything typed since: a parked message's saves
+ * are refused, so autosave has stored none of it.
+ *
+ * The question used to be "is a DIFFERENT row on screen", which the held message's OWN row
+ * answers no to — that binding is exactly what an unconfirmed send leaves in place — so its text
+ * was replaced by the row's pre-send text with nothing asking. So it asks about the buffer's
+ * DRIFT from the row: something worth keeping, and a value the reopen would change.
+ *
+ * Recipients are compared as ADDRESSES and not as chip text. The row stores parsed addresses and
+ * the buffer holds what somebody typed, so a formatting round-trip would otherwise read as an
+ * edit and refuse a reopen nobody had changed anything before.
+ */
+export function reopenWouldOverwrite(buffer: ComposeFields, seeded: ComposeFields): boolean {
+  const files = buffer.attachments?.length ?? 0;
+  // Attachments count, which {@link worthSaving} does not: a compose holding only a file was
+  // called empty and had the file dropped. Same idiom as the cancel confirmation's.
+  if (!worthSaving(buffer) && files === 0) return false;
+  if (files > (seeded.attachments?.length ?? 0)) return true;
+  if (buffer.subject.trim() !== seeded.subject.trim()) return true;
+  if (buffer.body.trim() !== seeded.body.trim()) return true;
+  /* The parsed addresses AND what did not parse. A half-typed address lives in `invalid`, and it
+     is text somebody typed: dropping it silently is the loss this predicate exists to refuse. */
+  const addresses = (s: string): string => {
+    const parsed = parseRecipients(s);
+    return [
+      ...parsed.addresses.map((a) => a.address.toLowerCase()),
+      ...parsed.invalid.map((v) => v.trim()),
+    ].sort().join(",");
+  };
+  return (["to", "cc", "bcc"] as const)
+    .some((k) => addresses(buffer[k] ?? "") !== addresses(seeded[k] ?? ""));
+}
+
+/**
  * ── WHAT IS WORTH *CREATING* A ROW FOR, WHICH IS NOT THE SAME QUESTION ──────────────────────
  *
  * A RECIPIENT IS NOT A MESSAGE. Every door that opens a compose with somebody already in the To

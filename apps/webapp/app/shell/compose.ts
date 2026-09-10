@@ -352,25 +352,55 @@ export function composeRowKey(owner: string | null = storageOwner()): string {
   return `${COMPOSE_ROW_PREFIX}${owner ?? "local"}`;
 }
 
+/**
+ * ── AND FOR A BROWSER THAT REFUSES THIS APP ITS STORAGE, THE TAB'S OWN MEMORY ───────────────
+ *
+ * In such a browser nothing can be written, so `readComposeRow` answered `null` BY CONSTRUCTION
+ * and the surface had no witness that it was holding a row at all: `holdOf` answered `unknown`,
+ * the adoption waited, and the autosave's timer created a SECOND row for the one the reopen had
+ * just opened. Two rows for one message.
+ *
+ * So the row the door opened is remembered here for the life of the tab, which is what such a
+ * browser can have. Keyed by the same storage key, so it is account-scoped exactly as the jar is,
+ * and swept by {@link forgetComposeRows} at sign-out for the reason the key itself is swept: an id
+ * on the departed account must not survive into the next sign-in.
+ *
+ * It answers ONLY when the jar throws. A jar that works and says `null` is authoritative — that is
+ * another tab having cleared the row, and preferring a remembered value there would resurrect it.
+ */
+const composeRowInMemory = new Map<string, string>();
+
+/** Forget every remembered row — the sign-out sweep's half of {@link COMPOSE_ROW_PREFIX}. */
+export function forgetComposeRows(): void {
+  composeRowInMemory.clear();
+}
+
 export function readComposeRow(owner: string | null = storageOwner()): string | null {
   try {
     const held = window.localStorage.getItem(composeRowKey(owner));
     return held !== null && held.length > 0 ? held : null;
   } catch {
-    return null;
+    return composeRowInMemory.get(composeRowKey(owner)) ?? null;
   }
 }
 
 export function writeComposeRow(id: string | null, owner: string | null = storageOwner()): void {
+  const key = composeRowKey(owner);
+  if (id === null) composeRowInMemory.delete(key);
+  else composeRowInMemory.set(key, id);
   try {
-    if (id === null) window.localStorage.removeItem(composeRowKey(owner));
-    else window.localStorage.setItem(composeRowKey(owner), id);
+    if (id === null) window.localStorage.removeItem(key);
+    else window.localStorage.setItem(key, id);
   } catch {
-    /* private mode, or a full quota — the row is as durable as the tab, as it was before */
+    /* private mode, or a full quota — the row is as durable as the tab, remembered above */
   }
 }
 
 export function clearComposeDraft(owner: string | null = storageOwner()): void {
+  // BEFORE the try, because in the browser the memory exists for the first jar call throws and
+  // everything below it is skipped — which would leave the remembered row naming a message that
+  // has been cleared.
+  composeRowInMemory.delete(composeRowKey(owner));
   try {
     window.localStorage.removeItem(composeDraftKey(owner));
     // The session id goes with the buffer it names: the message-in-progress is over, so the next

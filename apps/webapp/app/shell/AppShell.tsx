@@ -105,7 +105,9 @@ import { useScreenerSuggestions, type SenderSuggestion, type SuggestWire } from 
 import { AutoSuggestRow } from "./AutoSuggestRow";
 import { ScreeningSection } from "./ScreeningSection";
 import { DormancyRow } from "./DormancyRow";
-import { useComposeAutosave, worthSaving, type ComposeFate } from "./compose-autosave";
+import {
+  useComposeAutosave, reopenWouldOverwrite, type ComposeFate,
+} from "./compose-autosave";
 import { RemoteImagesRow } from "./RemoteImagesRow";
 import { TrackingPixelsRow } from "./TrackingPixelsRow";
 import { AutoUnsubscribeRow } from "./AutoUnsubscribeRow";
@@ -4122,7 +4124,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
          writing a row on the way through. So the reopen is REFUSED and says why. Only against
          unsaved text, and only for a row this composer is not already holding: reopening the very
          row on screen changes nothing about it. */
-      if (parked && autosave.draftId !== d.id && worthSaving(composeRef.current)) {
+      if (parked && reopenWouldOverwrite(composeRef.current, seeded)) {
         toast(t("drafts.heldReopenBlocked"));
         return;
       }
