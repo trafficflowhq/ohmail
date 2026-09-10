@@ -69,9 +69,9 @@ import { goFirstRun } from "../../shell/routing";
 import {
   ApiError,
   apiConfigured,
+  account,
   assertPasskey,
   auth,
-  billing,
   codeOf,
   mailboxes as mailboxApi,
   messageOf,
@@ -288,60 +288,61 @@ export { addressKey };
  *
  * ── WHAT WAS ON SCREEN ──────────────────────────────────────────────────────────────────
  *
- * Walked end to end on a live Cloud account. Someone who answered "Do this
- * later" at onboarding's plan step (`JoinScreen` links it to `/`) arrives here with no
- * `billing_subscriptions` row. This pane offered **"Connect a mailbox"** and walked them
- * through every screen it has — provider, credentials, the ohmail account password, and a
- * FRESH SECOND FACTOR — and only then did `POST /mailboxes` answer 402 `no_subscription`.
+ * Walked end to end on a live Cloud account. Someone whose account was not entitled to another
+ * mailbox was offered **"Connect a mailbox"** and walked through every screen this pane has —
+ * provider, credentials, the ohmail account password, and a FRESH SECOND FACTOR — and only then
+ * did `POST /mailboxes` refuse.
  *
  * So the product asked for a second factor before saying it was never going to work. That is
  * the worst possible ordering: the most annoying step sat in front of the refusal.
  *
  * ── EVERY FACT THIS NEEDS WAS ALREADY ON THE WIRE ───────────────────────────────────────
  *
- * Nothing here re-decides anything. `GET /billing/subscription` is `cost: "read"` with no
- * `stepUp` (`packages/api/src/routes/billing.ts`) and `BillingService.subscriptionStatus`
- * builds its `entitlements` from the SAME pure `entitlementsFor` that
- * `readMailboxAllowance` feeds; `emailVerified` rides on `GET /auth/session`, which this pane
- * already calls; and the slot count is the list it already holds, filtered exactly as the gate
- * counts it (`status <> 'disabled'`).
+ * Nothing here re-decides anything. `GET /account/access` is `cost: "read"` with no `stepUp`
+ * and answers the entitlements port's own verdict — the same port `readMailboxAllowance`
+ * consults inside the create's transaction; `emailVerified` rides on `GET /auth/session`,
+ * which this pane already calls; and the slot count is the list it already holds, filtered
+ * exactly as the gate counts it (`status <> 'disabled'`).
  *
  * ── THE PRECEDENCE IS THE SERVER'S PIPELINE, IN ORDER ───────────────────────────────────
  *
  * `withStepUp` → `withSpendGate` → handler (`packages/api/src/app.ts`), so an unverified
- * address is refused BEFORE the allowance gate is reached. A pane that offered "choose a
- * plan" to an unverified account would be naming a refusal that never fires. Then
+ * address is refused BEFORE the allowance gate is reached. A pane that named a limit to an
+ * unverified account would be naming a refusal that never fires. Then
  * `decideMailboxAllowance`'s own order: `canAddMailbox` first, the count second — an account
- * whose subscription forbids creation must be told THAT, not that it is full.
+ * that may not add another must be told THAT, not that it is full.
  *
  * ── IT MAY ONLY EVER WITHHOLD AN OFFER IT CAN PROVE IS DEAD ─────────────────────────────
  *
  * The read is a snapshot; the gate is `SELECT … FOR UPDATE` inside the create's transaction.
- * They can disagree, so every unknown fails OPEN — an unreadable billing status, an unreadable
+ * They can disagree, so every unknown fails OPEN — an unreadable verdict, an unreadable
  * session, a list that has not arrived — and `connect()`'s catch is untouched. Withholding a
  * connect the server would have allowed is worse than the defect being fixed.
  *
- * **AND `no_subscription` IS ONLY ACTED ON WHEN THERE IS NO ROW AT ALL.** The two reads are
- * not identical: the gate prefers the LIVE row and falls back to newest-of-any-status
- * (`mailbox-allowance.ts`), while the status route always takes newest-of-any-status
- * (`billing/billing-service.ts`). So a live `active` row can be shadowed in newest-ordering by
- * a dead one with a later `stripe_event_ts` — an abandoned Checkout leaves an `incomplete` row,
- * and Stripe bumps it to `incomplete_expired` about a day later, which `entitlementsFor` maps
- * to the `no_subscription` shape. That account is fully entitled and the server would admit it.
- * With zero rows the two reads provably collapse to the same `null`, which is the only case
- * this refuses in advance; anything else keeps the button and lets the transaction answer.
+ * ── THE TWO SUBSCRIPTION-SHAPED BLOCKS ARE GONE, AND NOT BECAUSE THEY WERE WRONG ────────
+ *
+ * They named states this pane can no longer be in. An account the service has REFUSED does not
+ * reach a settings pane at all: every door answers 402 and the client swaps the whole surface
+ * for the lock screen, which is where the way back to paying now lives. So the states left for
+ * this gate to describe are the ones an ACTIVE account can be in — may it add another mailbox,
+ * and has it filled the ones it has — and a sentence about choosing a plan would be naming a
+ * refusal that cannot fire here, which is the same defect as the ordering above wearing
+ * different words.
  */
-export type ConnectBlock =
-  | "email_unverified" | "no_subscription" | "subscription_inactive" | "at_limit";
+export type ConnectBlock = "email_unverified" | "cannot_add" | "at_limit";
 
 /** Everything the decision is made from. Every field is nullable, and null means UNKNOWN. */
 export interface ConnectFacts {
   /** `GET /auth/session` → `user.emailVerified`. */
   emailVerified: boolean | null;
-  /** `GET /billing/subscription` → `entitlements`, the server's own verdict. */
-  entitlements: { canAddMailbox: boolean; mailboxLimit: number; reason: string } | null;
-  /** The same response's newest `billing_subscriptions` row. `null` = the account has none. */
-  subscription: { status: string } | null;
+  /**
+   * `GET /account/access` — the entitlements port's verdict, or `null` while unread.
+   *
+   * `mailboxes: null` is UNBOUNDED (the port's convention), which an unmetered host also
+   * reaches by answering `canAddMailbox: true` with no number. Both mean "the count cannot
+   * block", so the count test below is skipped rather than compared against a made-up ceiling.
+   */
+  access: { canAddMailbox: boolean; mailboxes: number | null } | null;
   /** Mailboxes occupying a slot: `status <> 'disabled'`, exactly as the gate counts. */
   enabledCount: number | null;
 }
@@ -349,20 +350,17 @@ export interface ConnectFacts {
 /** Why the connect button is withheld, or `null` when it is offered. Pure, and total. */
 export function connectBlock(f: ConnectFacts): ConnectBlock | null {
   if (f.emailVerified === false) return "email_unverified";
-  const ent = f.entitlements;
-  if (!ent) return null;
-  if (!ent.canAddMailbox) {
-    if (ent.reason !== "no_subscription") return "subscription_inactive";
-    // The shadowed-row case above: a `no_subscription` REASON with a row present is not
-    // evidence that the create would be refused.
-    return f.subscription === null ? "no_subscription" : null;
-  }
+  const a = f.access;
+  if (!a) return null;
+  // `canAddMailbox` FIRST, the count second — `decideMailboxAllowance`'s own order. An account
+  // forbidden another mailbox must be told that, not that it is full: the two are separate
+  // questions and the port carries them separately for exactly this reason.
+  if (!a.canAddMailbox) return "cannot_add";
   // An unread count fails OPEN, like every other unknown here, and `?? 0` is what that means
   // for a `>=` test: it can only ever offer a connect the server may still refuse, never
-  // withhold one it would have allowed. Guarding on `!== null` instead would read the same for
-  // every entitlement that exists — `entitlementsFor` never pairs `canAddMailbox: true` with a
-  // zero limit — so it would be a branch nothing could ever watch fail.
-  if ((f.enabledCount ?? 0) >= ent.mailboxLimit) return "at_limit";
+  // withhold one it would have allowed. An UNBOUNDED limit skips the test outright — there is
+  // no number to reach, and comparing against one would invent a ceiling.
+  if (a.mailboxes !== null && (f.enabledCount ?? 0) >= a.mailboxes) return "at_limit";
   return null;
 }
 
@@ -534,9 +532,7 @@ export function MailboxSection() {
   /** `null` until the session read answers, and `null` for ever if it never does. */
   const [emailVerified, setEmailVerified] = useState<boolean | null>(null);
   /** The server's own entitlement verdict; `null` while unread or unreadable. */
-  const [gate, setGate] = useState<Pick<ConnectFacts, "entitlements" | "subscription">>({
-    entitlements: null, subscription: null,
-  });
+  const [gate, setGate] = useState<Pick<ConnectFacts, "access">>({ access: null });
   /**
    * Has the entitlement read SETTLED once? Until it has, the list stage shows neither the
    * button nor a refusal — offering a connect and withdrawing it a moment later is the same
@@ -580,7 +576,8 @@ export function MailboxSection() {
   const [noFactor, setNoFactor] = useState(false);
   /** Re-render clock, so the relative "synced 2 minutes ago" stays true while the pane is open. */
   const [now, setNow] = useState(() => Date.now());
-  /** Mailboxes whose resync this pane has queued, so the row can say so until it lands. */
+  /** Mailboxes whose resync this pane has queued — a press the server has not been given yet.
+   *  The worker's own cycles never write here; both answers end the mark. See {@link resync}. */
   const [queued, setQueued] = useState<Set<string>>(new Set());
   /** Mailboxes whose quiet-notice dismissal is in flight, so the button debounces (mail 0078). */
   const [dismissingQuiet, setDismissingQuiet] = useState<Set<string>>(new Set());
@@ -920,10 +917,18 @@ export function MailboxSection() {
    */
   const loadGate = useCallback(async (): Promise<void> => {
     try {
-      const { entitlements, subscription } = await billing.subscription();
-      if (alive.current) setGate({ entitlements, subscription });
+      const a = await account.access();
+      if (!alive.current) return;
+      /* AN UNMETERED HOST HAS NOTHING TO BLOCK ON, and it says so rather than sending numbers:
+         `metered: false` becomes an unbounded allow, so the pure gate below takes the same path
+         a metered account with room takes and no arm has to know which host it is on. */
+      setGate({
+        access: a.metered
+          ? { canAddMailbox: a.canAddMailbox, mailboxes: a.mailboxes }
+          : { canAddMailbox: true, mailboxes: null },
+      });
     } catch {
-      if (alive.current) setGate({ entitlements: null, subscription: null });
+      if (alive.current) setGate({ access: null });
     } finally {
       if (alive.current) setGateRead(true);
     }
@@ -1032,6 +1037,10 @@ export function MailboxSection() {
         // this the row says "Sync queued" while the strip above it is up to thirty seconds
         // behind — two surfaces disagreeing about one mailbox, which is the whole defect.
         refreshMailState();
+        /* The press is the server's now, so the mark ends here as well as in the `catch`: 202 is
+           the only answer this route gives, and the row's own state line says the rest. */
+        if (!alive.current) return;
+        setQueued((q) => { const n = new Set(q); n.delete(id); return n; });
       } catch (err) {
         if (!alive.current) return;
         setError(messageOf(err));
@@ -1799,8 +1808,7 @@ export function MailboxSection() {
    */
   const block = connectBlock({
     emailVerified,
-    entitlements: gate.entitlements,
-    subscription: gate.subscription,
+    access: gate.access,
     enabledCount: items === null ? null : items.filter((m) => m.status !== "disabled").length,
   });
 
@@ -2484,11 +2492,10 @@ export function MailboxSection() {
       {stage === "list" && gateRead && !device ? (
         <>
           {/* THE REFUSAL, AT SCREEN ONE. See `connectBlock` for why each state gets its
-              own sentence and why an unknown never produces one. The remedy for all three
-              billing states is the Subscription pane (`BillingSection`), which renders the plan
-              cards for an account with no subscription and the billing portal for one whose
-              state is wrong — it is the adjacent entry in the settings nav beside this pane, so
-              `blocked_where` names a control that is on screen rather than a destination. */}
+              own sentence and why an unknown never produces one. The remedy for all three of
+              these states is the Subscription entry in the settings nav beside this pane, which
+              links to the page the service operator serves — so `blocked_where` still names
+              something on screen rather than a destination this app would have to describe. */}
           {block ? (
             <>
               <p className="acct-lead">{t(`blocked_${block}`)}</p>

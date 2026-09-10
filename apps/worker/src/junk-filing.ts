@@ -274,6 +274,11 @@ async function settle(
  * Both writes ride the caller's transaction group, so a cleared tombstone without its delta —
  * a row that is live on the server and still absent from every mirror — is not a state this can
  * leave behind.
+ *
+ * CALLED ONLY WHEN THE COMPLETION CLAIMED THE ROW. A superseded completion has landed a move
+ * that is already historical: the desire it was computed against is gone, and on a tombstoned
+ * row the writer that superseded it is a fresh DELETE. Clearing there erases that delete's
+ * tombstone with nothing left to re-stamp it. See the call site.
  */
 async function unDeleteOnLandedMove(
   r: WorkerRepo, accountId: string, messageId: string,
@@ -313,13 +318,15 @@ export async function completeFiling(
   const physical = newLoc.folder;
   await r.updateLocator(p.messageId, newLoc);
   if (!parksLocator(p, physical, special)) {
-    await settle(r, accountId, p, physical, { observedFolder: p.desiredFolder, lastSetBy: "us" });
+    const claimed = await settle(r, accountId, p, physical, { observedFolder: p.desiredFolder, lastSetBy: "us" });
     /* THE MOVE DID NOT GO TO TRASH, SO THE MESSAGE IS NOT DELETED — see
-       {@link unDeleteOnLandedMove} for the invariant, the measured defect it closes and why the
-       negative control is structural. Called AFTER `settle` and regardless of what it returned:
-       what is being recorded is PHYSICAL — the server has this message in a watched folder that
-       is not Trash — and that is true whether or not this pass's own intent won the row. */
-    await unDeleteOnLandedMove(r, accountId, p.messageId);
+       {@link unDeleteOnLandedMove} for the invariant and the measured defect it closes.
+       GATED ON THE CLAIM, and the ungated form was a defect: a restore's move landing while a
+       second tab re-deletes the row loses the CAS, and clearing `deleted_at` there erased the
+       tombstone the newer delete had just written — no later completion re-stamps it, so the
+       copy sat in Trash absent from the live mirror AND from the Trash list. A completion that
+       lost its CAS writes nothing; the winner's own landing decides `deleted_at`. */
+    if (claimed) await unDeleteOnLandedMove(r, accountId, p.messageId);
     return false;
   }
   // ══════════════════════════════════════════════════════════════════════════════════════════

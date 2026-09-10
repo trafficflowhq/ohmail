@@ -5,7 +5,7 @@ import {
   rules,
 } from "@trafficflow/db";
 import { makeDb } from "@trafficflow/db/cloud";
-import { workerHeartbeats, accountsWithSyncDisabled } from "@trafficflow/db/cloud";
+import { workerHeartbeats } from "@trafficflow/db/cloud";
 import type { KeyProvider, OAuthTokenProvider } from "@trafficflow/core";
 import {
   buildImapAuth, oauthSmtpEndpoint, type ImapAuth, type CredMetaAuth,
@@ -217,54 +217,35 @@ function shardPredicate(shards: number, shardIndex: number): SQL {
 }
 
 /**
- * Accounts (of those given) whose BILLING STATE says their mail must not be synced — **db's
- * function, re-exported.** Read `packages/db/src/billing.ts` for why the gate is phrased as
- * "disabled" rather than "enabled" and why an account with no billing row keeps syncing.
+ * WHICH ACCOUNTS THE ROSTER MUST SKIP — composed by the host, absent on a deployment that meters
+ * nothing.
  *
- * ── WHY THE WORKER HAS TO ASK THIS AT ALL ───────────────────────────────────────────────
- *
- * `entitlementsFor` has computed a `syncEnabled` flag since the billing gate landed and, until this gate, NOTHING
- * in production read it. The roster derived purely from `mailboxes.status <> 'disabled'`, and
- * cancellation only mirrors the Stripe status and disables mailboxes ABOVE the numeric plan
- * limit. So an account that subscribed, connected one mailbox and then cancelled kept full
- * always-on IMAP sync indefinitely — past the 30-day export window `entitlementsFor` computes
- * and the pricing page relies on. We were doing paid work, forever, for free, and telling
- * customers otherwise.
- *
- * ── AND WHY IT IS A RE-EXPORT ───────────────────────────────────────────────────────────
- *
- * This was a byte-for-byte copy of db's query, and a copy is a second answer waiting to
- * happen. It already was one: the shared question "which subscription row is this account's
- * CURRENT one" had five implementations, and the ones that took newest-of-any-status — this
- * copy included — read a dead `incomplete_expired` row in preference to a live `active` one
- * whenever an abandoned Checkout expired after the real subscription was mirrored. The
- * entitlement for `incomplete_expired` is the zero shape, so **this function parked a paying
- * account and stopped its mail**, and `alerts.ts`'s `sync_lag` rule — which reads db's copy —
- * correctly went quiet about it.
- *
- * There is now one query. The worker may import core + db only, so db is the only home both
- * this and the API side can reach; `WorkerDb` is a `PostgresJsDatabase`, which is a `PgDatabase`,
- * so db's `Tx` parameter accepts it with no wrapper and nothing to keep in step.
+ * It used to be one query over this database's own subscription and suspension rows, shared with
+ * the API side so the two could not disagree about which row is an account's current one. Those
+ * rows belong to whoever operates metering now, and the entitlements port answers per account
+ * rather than in bulk — so the reader is a parameter, and ABSENT means NO ACCOUNT IS PARKED:
+ * every enabled mailbox syncs, which is a self-hosted install's truth and the fail-open
+ * direction, since a missing reader can only sync more and never drop a customer.
  */
-export { accountsWithSyncDisabled };
+export type ParkedAccountsReader =
+  (accountIds: readonly string[], now: Date) => Promise<Set<string>>;
 
 /**
  * Every syncable mailbox in the selection: anything not soft-disabled
- * (status != 'disabled') whose account is billing-entitled to sync, oldest first so the
+ * (status != 'disabled') whose account is not parked, oldest first so the
  * `maxMailboxes` cap truncates DETERMINISTICALLY (the same processes keep the same
  * mailboxes across restarts).
  *
  * A quarantined mailbox (status='error') IS returned — quarantine is a retry state, not a
  * terminal one; the worker's per-mailbox backoff decides when to try it again.
  *
- * The billing gate is {@link accountsWithSyncDisabled}; read its header for why a subscribed
- * account that lapses is dropped from the roster and an account with no billing row is not.
- * Dropping an account here is not destructive: `reconcileRoster` detaches its runtimes and
- * leaves the rows alone, so restoring the subscription puts it straight back on the next
- * pass with nothing to migrate.
+ * The parking gate is {@link ParkedAccountsReader}, supplied by the host. Dropping an account
+ * here is not destructive: `reconcileRoster` detaches its runtimes and leaves the rows alone, so
+ * an account that comes back is straight on the next pass with nothing to migrate.
  */
 export async function loadEnabledMailboxes(
   db: WorkerDb, selection: MailboxSelection = {}, now: Date = new Date(),
+  parkedAccounts?: ParkedAccountsReader,
 ): Promise<EnabledMailbox[]> {
   const { shards, shardIndex } = validateShard(selection);
 
@@ -295,7 +276,10 @@ export async function loadEnabledMailboxes(
     .where(and(...filters))
     .orderBy(asc(mailboxes.createdAt), asc(mailboxes.id));
 
-  const parked = await accountsWithSyncDisabled(db, [...new Set(rows.map((r) => r.accountId))], now);
+  const ids = [...new Set(rows.map((r) => r.accountId))];
+  const parked = parkedAccounts && ids.length > 0
+    ? await parkedAccounts(ids, now)
+    : new Set<string>();
   return rows
     .filter((r) => !parked.has(r.accountId))
     .map((r) => ({

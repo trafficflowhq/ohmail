@@ -989,26 +989,11 @@ jobs:
           # The payload's member names may or may not carry a leading `./` — that depends on the writer, not
           # on the package — so the entry is found by SUFFIX in the listing, and an empty listing or a
           # failed extraction prints cpio's own words instead of exiting in silence.
-          # The rpm2cpio | cpio pipeline exits NON-ZERO on this runner while printing a complete listing and
-          # no error (measured on the 0.16.0 rebuild: 355 members, the entry among them, exit 1). The
-          # assertion is about the ARTIFACT's content, so the content decides and the two exit statuses are
-          # printed for the record rather than allowed to end the step in silence.
-          LISTING="$(mktemp)"
-          set +e +o pipefail
-          rpm2cpio "$RPM" | cpio -it --quiet > "$LISTING" 2>&1; LIST_STATUS="${PIPESTATUS[*]}"
-          set -e -o pipefail
-          MEMBERS="$(cat "$LISTING")"
-          echo "payload listing: $(grep -c . "$LISTING") line(s); rpm2cpio/cpio exit statuses: $LIST_STATUS"
+          MEMBERS="$(rpm2cpio "$RPM" | cpio -it --quiet 2>&1)" || { echo "listing the .rpm payload failed: $MEMBERS" >&2; exit 1; }
           ENTRY_MEMBER="$(grep -E '(^|/)usr/share/applications/ohmail\.desktop$' <<< "$MEMBERS" | head -n 1 || true)"
           echo "desktop entry member: ${ENTRY_MEMBER:-<none>}"
           [ -n "$ENTRY_MEMBER" ] || { echo "the .rpm payload lists no usr/share/applications/ohmail.desktop member" >&2; exit 1; }
-          ENTRY_OUT="$(mktemp)"
-          set +e +o pipefail
-          rpm2cpio "$RPM" | cpio -i --quiet --to-stdout "$ENTRY_MEMBER" > "$ENTRY_OUT" 2>&1; EXTRACT_STATUS="${PIPESTATUS[*]}"
-          set -e -o pipefail
-          RPM_ENTRY="$(cat "$ENTRY_OUT")"
-          echo "desktop entry extracted: $(grep -c . "$ENTRY_OUT") line(s); rpm2cpio/cpio exit statuses: $EXTRACT_STATUS"
-          [ -n "$RPM_ENTRY" ] || { echo "the .rpm desktop entry extracted EMPTY (statuses $EXTRACT_STATUS)" >&2; exit 1; }
+          RPM_ENTRY="$(rpm2cpio "$RPM" | cpio -i --quiet --to-stdout "$ENTRY_MEMBER" 2>&1)" || { echo "extracting $ENTRY_MEMBER failed: $RPM_ENTRY" >&2; exit 1; }
           printf '%s\n' "$RPM_ENTRY"
           printf '%s\n' "$RPM_ENTRY" | grep -qx 'Exec=ohmail %U' || {
             echo "the .rpm's desktop entry does not hand the URL to the app" >&2; exit 1; }
@@ -1701,26 +1686,11 @@ jobs:
           # The payload's member names may or may not carry a leading `./` — that depends on the writer, not
           # on the package — so the entry is found by SUFFIX in the listing, and an empty listing or a
           # failed extraction prints cpio's own words instead of exiting in silence.
-          # The rpm2cpio | cpio pipeline exits NON-ZERO on this runner while printing a complete listing and
-          # no error (measured on the 0.16.0 rebuild: 355 members, the entry among them, exit 1). The
-          # assertion is about the ARTIFACT's content, so the content decides and the two exit statuses are
-          # printed for the record rather than allowed to end the step in silence.
-          LISTING="$(mktemp)"
-          set +e +o pipefail
-          rpm2cpio "$RPM" | cpio -it --quiet > "$LISTING" 2>&1; LIST_STATUS="${PIPESTATUS[*]}"
-          set -e -o pipefail
-          MEMBERS="$(cat "$LISTING")"
-          echo "payload listing: $(grep -c . "$LISTING") line(s); rpm2cpio/cpio exit statuses: $LIST_STATUS"
+          MEMBERS="$(rpm2cpio "$RPM" | cpio -it --quiet 2>&1)" || { echo "listing the .rpm payload failed: $MEMBERS" >&2; exit 1; }
           ENTRY_MEMBER="$(grep -E '(^|/)usr/share/applications/ohmail\.desktop$' <<< "$MEMBERS" | head -n 1 || true)"
           echo "desktop entry member: ${ENTRY_MEMBER:-<none>}"
           [ -n "$ENTRY_MEMBER" ] || { echo "the .rpm payload lists no usr/share/applications/ohmail.desktop member" >&2; exit 1; }
-          ENTRY_OUT="$(mktemp)"
-          set +e +o pipefail
-          rpm2cpio "$RPM" | cpio -i --quiet --to-stdout "$ENTRY_MEMBER" > "$ENTRY_OUT" 2>&1; EXTRACT_STATUS="${PIPESTATUS[*]}"
-          set -e -o pipefail
-          RPM_ENTRY="$(cat "$ENTRY_OUT")"
-          echo "desktop entry extracted: $(grep -c . "$ENTRY_OUT") line(s); rpm2cpio/cpio exit statuses: $EXTRACT_STATUS"
-          [ -n "$RPM_ENTRY" ] || { echo "the .rpm desktop entry extracted EMPTY (statuses $EXTRACT_STATUS)" >&2; exit 1; }
+          RPM_ENTRY="$(rpm2cpio "$RPM" | cpio -i --quiet --to-stdout "$ENTRY_MEMBER" 2>&1)" || { echo "extracting $ENTRY_MEMBER failed: $RPM_ENTRY" >&2; exit 1; }
           printf '%s\n' "$RPM_ENTRY"
           printf '%s\n' "$RPM_ENTRY" | grep -qx 'Exec=ohmail %U' || {
             echo "the .rpm's desktop entry does not hand the URL to the app" >&2; exit 1; }
@@ -2264,7 +2234,7 @@ jobs:
           docker run --rm \
             -v "$PWD/build:/work:ro" \
             registry.fedoraproject.org/fedora:42 \
-            bash -c 'dnf -y install desktop-file-utils findutils file >/dev/null && bash /work/rpm-install-drill.sh'
+            bash -c 'dnf -y install desktop-file-utils findutils >/dev/null && bash /work/rpm-install-drill.sh'
 
       - name: Run summary
         if: always()
