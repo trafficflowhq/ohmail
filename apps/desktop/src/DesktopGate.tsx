@@ -368,17 +368,40 @@ export function DesktopGate() {
   const [signInAfterExpiry, setSignInAfterExpiry] = useState(false);
 
   /**
+   * IS THERE A HOSTED ACCOUNT BEHIND THIS WINDOW — the one gate every account-shaped surface below
+   * reads, so they can only appear and disappear together.
+   *
+   * The settings surface an install shows should be the settings surface the same account shows in
+   * a browser tab, wherever the routes behind it are reachable — and on this door they are: the
+   * engine serves the mail READS out of its mirror and forwards everything else to the account with
+   * its bearer (`cloud-proxy.ts`), so `/consent`, `/consent/settings`, `/screener`,
+   * `/billing/subscription` and `/account/ai` are the account's own rows, one hop away.
+   *
+   * What was missing was never the transport, it was the ASKING: `apiConfigured()` is false in
+   * every desktop build, so the shared shell's own reads never ran and each control was withheld as
+   * "there is no server here". That is true of the standalone door and false of this one.
+   * `accountDoorFor` is where the distinction lives, as a pure function a test can drive.
+   *
+   * DERIVED UP HERE, above every early return, because the manage-link hook below now reads it:
+   * `status` is re-derived from the same `shell` further down, so the two spellings are one value.
+   */
+  const accountDoor =
+    accountDoorFor(shell?.kind === "status" ? shell.status : null, hostedSession) === "cloud";
+
+  /**
    * WHERE THIS ACCOUNT MANAGES ITS SUBSCRIPTION — `null` where no page is served.
    *
    * Read in the GATE, not inside the pane: `SettingsView` grows the nav entry from the prop's
    * presence, so the only way to withhold the entry is to withhold the node.
    *
    * UP HERE with the other unconditional hooks, because everything from the mount switch down is
-   * behind an early return — a hook beside `accountDoor` renders on some paths and not others,
-   * which React answers with "Rendered more hooks than during the previous render" and every
-   * SET-C case red. `accountDoor` still gates the mount; this only gates the URL.
+   * behind an early return — a hook called below one renders on some paths and not others, which
+   * React answers with "Rendered more hooks than during the previous render" and every SET-C case
+   * red. So the hook is always CALLED and `accountDoor` is passed in: it gates the ask as well as
+   * the mount, because a door with no hosted account behind it has no manage page and no server to
+   * ask for one.
    */
-  const manageUrl = useDesktopManageLink();
+  const manageUrl = useDesktopManageLink(accountDoor);
   useEffect(() => {
     // A new key is a new engine (or no cloud engine at all): the expiry flow's held step is
     // about an answer that no longer exists. The stored answer itself needs no reset — a stale
@@ -904,22 +927,6 @@ export function DesktopGate() {
   })();
 
   const suggestDoor = suggestDoorFor(status, hostedSession);
-  /**
-   * IS THERE A HOSTED ACCOUNT BEHIND THIS WINDOW — the one gate every account-shaped surface below
-   * reads, so they can only appear and disappear together.
-   *
-   * The settings surface an install shows should be the settings surface the same account shows in
-   * a browser tab, wherever the routes behind it are reachable — and on this door they are: the
-   * engine serves the mail READS out of its mirror and forwards everything else to the account with
-   * its bearer (`cloud-proxy.ts`), so `/consent`, `/consent/settings`, `/screener`,
-   * `/billing/subscription` and `/account/ai` are the account's own rows, one hop away.
-   *
-   * What was missing was never the transport, it was the ASKING: `apiConfigured()` is false in
-   * every desktop build, so the shared shell's own reads never ran and each control was withheld as
-   * "there is no server here". That is true of the standalone door and false of this one.
-   * `accountDoorFor` is where the distinction lives, as a pure function a test can drive.
-   */
-  const accountDoor = accountDoorFor(status, hostedSession) === "cloud";
 
   /* Null on the one render where the engine has just been asked for and the state that holds it
      has not caught up. React re-renders before painting, so that render is never seen; it still

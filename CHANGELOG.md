@@ -287,6 +287,12 @@ log, so nothing is removed without you deciding to.
   address still in it. The address is replaced before the line is written, and the message itself
   is kept — it is often the only account of what the server refused.
 
+### A door with no account asks nothing about one
+
+A standalone install, and one paired to another computer, no longer asks where to manage a
+subscription each time the window opens. Neither door has an account behind it, so there was
+never an answer to that question; nothing on screen changes.
+
 ## [0.16.0] — 2026-09-10
 
 ### Trash and filing
