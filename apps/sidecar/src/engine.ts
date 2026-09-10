@@ -26,6 +26,9 @@ import {
   // Mail 0083 — the role vocabulary and the machine-name bound. One spelling for the sidecar's
   // gate, the worker's gate and the eleven service write doors; see `db/src/organizer-role.ts`.
   organizerDisplayName, isOrganizerRole, capabilitiesColumn,
+  // The entitlements composition this host declares. From the MAIL barrel — the port is pure
+  // types and one literal, and the halves that answer it stay on `@trafficflow/db/cloud`.
+  UNMETERED,
   type MailboxDisabledReason, type OrganizerRole, type Tx,
 } from "@trafficflow/db";
 import {
@@ -843,6 +846,14 @@ function localServices(
     // on the user's own machine, so there is no cross-tenant network to protect. Named explicitly,
     // never a default — the hosted deployment wires the enforcing `makeProbeHostGuard` instead.
     probeHostGuard: ALLOW_ANY_PROBE_HOST,
+    /**
+     * UNMETERED, SAID OUT LOUD — the ITEM-10 distinction, in the one bag where it matters most.
+     *
+     * An absent member is a composition nobody finished; this literal is a deployment that means
+     * it. Nothing here dials anyone about an account's standing, no limit applies, and the AI half
+     * is gated by whether this install has a model key of its owner's own and by nothing else.
+     */
+    entitlementsPort: UNMETERED,
     mailbox: makeMailboxService({ keyProvider, allowance: UNMETERED_MAILBOX_ALLOWANCE, installId }),
     rules: rulesService,
     message: messageService,

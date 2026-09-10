@@ -8,7 +8,8 @@ import {
   standDownMemory,
   closeRemovedMailboxAppointments,
   filingDue, filingDeferred, ourOutstandingFiling, isFilingRefusalClass,
-  type LedgerTx, type MailboxErrorCode, type Tx,
+  UNMETERED_ACCESS,
+  type AccessVerdict, type LedgerTx, type MailboxErrorCode, type Tx,
 } from "@trafficflow/db";
 import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
@@ -733,7 +734,12 @@ export type MailboxAllowancePolicy = (
   tx: LedgerTx,
   accountId: string,
   now: Date,
-  opts?: { excludeMailboxId?: string },
+  /**
+   * The account's access verdict, read BEFORE the transaction opened, plus the re-enable
+   * exclusion. Answering `access` may be a network hop, so it is never read inside this
+   * transaction — see `MailboxAllowanceInput`. An unmetered policy ignores it.
+   */
+  input: { access: AccessVerdict; excludeMailboxId?: string },
 ) => Promise<unknown>;
 
 export interface MailboxServiceDeps {
@@ -770,6 +776,15 @@ export interface MailboxServiceDeps {
    * accident. A test in this package holds that as an assertion.
    */
   allowance?: MailboxAllowancePolicy;
+  /**
+   * THE ACCOUNT'S ACCESS VERDICT, read once per write BEFORE the transaction opens.
+   *
+   * Injected for the reason {@link MailboxServiceDeps.allowance} is: on the hosted tier the answer
+   * comes from whoever operates the service and may be a network hop, and this module is inside the
+   * desktop engine's import graph. Absent ⇒ UNMETERED — the local tiers' own grammar, and the same
+   * verdict their allowance policy already implies.
+   */
+  accessOf?: (accountId: string) => Promise<AccessVerdict>;
   /**
    * Runs INSIDE the create transaction, after the allowance gate and the insert — the hosted
    * composition's hook for per-mailbox onboarding state (today: the one-time screening-only
@@ -1045,6 +1060,14 @@ export class MailboxService {
    */
   private get allowance(): MailboxAllowancePolicy {
     return this.deps.allowance ?? defaultMailboxAllowance();
+  }
+
+  /**
+   * The account's access verdict, read OUTSIDE any transaction — the allowance gate needs it and
+   * may not ask for it under a row lock. Absent dep ⇒ unmetered, the local tiers' grammar.
+   */
+  private async access(accountId: string): Promise<AccessVerdict> {
+    return this.deps.accessOf ? this.deps.accessOf(accountId) : UNMETERED_ACCESS;
   }
 
   /**
@@ -1354,9 +1377,13 @@ export class MailboxService {
       provenSmtp = verdict.proven;
     }
 
+    // Read the access verdict BEFORE the transaction: answering it may be a network hop, and a
+    // remote call under the account's row lock is the deadlock the send pass already records.
+    const access = await this.access(ctx.accountId);
+
     const mb = await asTx(ctx).transaction(async (tx) => {
       // The gate FIRST: it takes the lock every later statement is serialized behind.
-      await this.allowance(tx as LedgerTx, ctx.accountId, ctx.now());
+      await this.allowance(tx as LedgerTx, ctx.accountId, ctx.now(), { access });
 
       const [row] = await tx.insert(mailboxes).values({
         accountId: ctx.accountId,
@@ -1552,6 +1579,10 @@ export class MailboxService {
       ...(o.smtp ? { smtp: { host: o.smtp.host, port: o.smtp.port, secure: o.smtp.secure } } : {}),
     };
 
+    // The access verdict, read BEFORE the transaction: answering it may be a network hop, and a
+    // remote call under the account's row lock is the deadlock the send pass already records.
+    const access = await this.access(ctx.accountId);
+
     const out = await asTx(ctx).transaction(async (tx) => {
       const [existing] = await tx.select().from(mailboxes)
         .where(and(
@@ -1605,7 +1636,7 @@ export class MailboxService {
       // The gate FIRST, exactly as `create` orders it: it takes the lock every later statement is
       // serialized behind. A reconnect does NOT reach here, so re-consenting a mailbox you already
       // have never spends allowance — only a new address does.
-      await this.allowance(tx as LedgerTx, ctx.accountId, ctx.now());
+      await this.allowance(tx as LedgerTx, ctx.accountId, ctx.now(), { access });
 
       const [created] = await tx.insert(mailboxes).values({
         accountId: ctx.accountId,
@@ -1730,6 +1761,10 @@ export class MailboxService {
       ? await this.probedSmtpMeta(ctx, id, patch, opts.smtpProbe)
       : undefined;
 
+    // The access verdict, read BEFORE the transaction: answering it may be a network hop, and a
+    // remote call under the account's row lock is the deadlock the send pass already records.
+    const access = await this.access(ctx.accountId);
+
     return asTx(ctx).transaction(async (tx) => {
       // `FOR UPDATE`, and it is the fix for a race between two concurrent PATCHes.
       // Without it a credentials-only PATCH took NO lock at all — it writes `mailbox_credentials`
@@ -1778,7 +1813,7 @@ export class MailboxService {
       // The gate BEFORE the write, and before the count it implies — same order as `create`.
       // The row itself is excluded: it does not yet hold the slot it is asking for.
       if (patch.status && patch.status !== "disabled" && current.status === "disabled") {
-        await this.allowance(tx as LedgerTx, ctx.accountId, ctx.now(), { excludeMailboxId: id });
+        await this.allowance(tx as LedgerTx, ctx.accountId, ctx.now(), { access, excludeMailboxId: id });
       }
 
       if (Object.keys(set).length > 0) {
@@ -2426,6 +2461,10 @@ export class MailboxService {
       )
       : null;
 
+    // The access verdict, read BEFORE the transaction: answering it may be a network hop, and a
+    // remote call under the account's row lock is the deadlock the send pass already records.
+    const access = await this.access(ctx.accountId);
+
     return asTx(ctx).transaction(async (tx) => {
       // `FOR UPDATE`, in the same order and on the same row as `update` and `delete` take it, so
       // the three serialize instead of interleaving. Without it, an organize and a `delete` can
@@ -2506,7 +2545,7 @@ export class MailboxService {
       // door `update` guards, because a user can cause a demotion at will simply by pointing
       // another install at their own mailbox, minting the free slot themselves. The row is
       // excluded from the count because it does not yet hold the slot it is asking for.
-      await this.allowance(tx as LedgerTx, ctx.accountId, ctx.now(), { excludeMailboxId: id });
+      await this.allowance(tx as LedgerTx, ctx.accountId, ctx.now(), { access, excludeMailboxId: id });
 
       /* -- AND WITH NO PASSWORD SUPPLIED, THERE MUST STILL BE ONE STORED --------------------
        *

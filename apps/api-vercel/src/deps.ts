@@ -1,5 +1,11 @@
-import { noticeSinkFor, setNoticeSink, IDEMPOTENCY_TTL_MS, type Tx } from "@trafficflow/db";
-import { API_MAX_DURATION_MS, makeAiUsageRecorder, makePooledDb } from "@trafficflow/db/cloud";
+import {
+  noticeSinkFor, setNoticeSink, IDEMPOTENCY_TTL_MS, UNMETERED, accessOf,
+  type EntitlementsComposition, type Tx,
+} from "@trafficflow/db";
+import {
+  API_MAX_DURATION_MS, makeAiUsageRecorder, makePooledDb,
+  makeEntitlementsClient, makeLocalEntitlements,
+} from "@trafficflow/db/cloud";
 import {
   adminDbFor, attestStaffDbFault, makeAiCreditGate, resetAdminDbs, webhookAlertSink,
   telegramAlertSink,
@@ -348,6 +354,12 @@ function buildServices(cfg: HostConfig): ApiServices {
   // without the hook, exactly as they pass their own `allowance`.
   lazily(bag, "mailbox", () => makeMailboxService({
     keyProvider, onCreated: grantSetupCreditsLogged,
+    /* THE ACCESS VERDICT the allowance gate decides the LIMIT from, read before the create
+       transaction opens. It reads the bag's own port member, so the gate and everything else that
+       asks about this account's standing cannot answer differently. */
+    accessOf: (accountId) => accessOf(
+      (bag.entitlementsPort as EntitlementsComposition | undefined) ?? UNMETERED, accountId,
+    ),
     /* WHO THIS DEPLOYMENT IS TO A MAILBOX, resolved through the SAME function the worker
        resolves it with. The release asks whether a claim is ours, which is an identity
        question; answering it with the holder's KIND accepted another Cloud deployment's claim.
@@ -520,6 +532,27 @@ function buildServices(cfg: HostConfig): ApiServices {
     }));
     lazily(bag, "entitlements", () => makeEntitlementsService({ alert: billingAlert }));
   }
+
+  /**
+   * THE ENTITLEMENTS PORT — one of two answers, never absent on this host.
+   *
+   * `ENTITLEMENTS_URL` set ⇒ the HTTP client of that program. Unset ⇒ the LOCAL adapter over this
+   * database's own tables, which is what this deployment has always answered from, so arming the
+   * port moves nothing. `makePooledDb` memoises by URL, so this is the same connection every
+   * request already holds rather than a second pool.
+   *
+   * `manageLink` and `releaseAccount` are deliberately NOT composed on the local adapter: both
+   * are network hops through `packages/services`, which this package may not reach, and while the
+   * in-tree billing service is armed it is the arm that answers them (`routes/account.ts` states
+   * the ordering). So the local adapter answers no manage URL, and `POST /account/manage-link`
+   * 404s — the honest answer for a surface this host does not operate yet.
+   */
+  lazily(bag, "entitlementsPort", () => (cfg.entitlements
+    ? makeEntitlementsClient({
+      baseUrl: cfg.entitlements.url,
+      secret: cfg.entitlements.secret,
+    })
+    : makeLocalEntitlements({ db: makePooledDb(cfg.databaseUrlPooled) as unknown as Tx })));
 
   // WHAT THE PLATFORM SERVED — the 5xx poller's read port (cloud 0030).
   //

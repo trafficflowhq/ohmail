@@ -1,4 +1,4 @@
-import { users, providerFamily, type Tx } from "@trafficflow/db";
+import { users, providerFamily, UNMETERED, type Tx } from "@trafficflow/db";
 import {
   acquireImapSlot, releaseImapSlot, webhookAlertSink, makeAiUsageRecorder,
   resolveOAuthProviderConfig, rotateMailboxOAuthSecret, MICROSOFT_PROVIDER,
@@ -186,6 +186,10 @@ export interface ServerRuntime {
  * `makeAuthService`'s decoy hash stays computed once per process exactly as the timing-oracle
  * note in the managed composition requires).
  *
+ * `entitlementsPort` is DECLARED here rather than absent, and that is the one member of this bag
+ * whose absence would have meant something different: `UNMETERED` says this operator runs no
+ * entitlements program, where an absent member says nobody finished the composition.
+ *
  * WHAT IS ABSENT, against the managed bag, each on purpose (the bag-parity test freezes this
  * list): `billingPlane`/`entitlements` (nothing to buy), `waitlist` (no funnel), and `aiCredits`
  * (the operator supplies the model key and pays the model bill themselves — absent gate means
@@ -300,6 +304,8 @@ export function buildServerServices(cfg: ServerConfig, db: Db): ApiServices {
     // because this composition's database holds that table (obligation 3, routes/self-host.ts);
     // absent on any deployment that lacks it, where the route answers `validation_failed`.
     inviteRedeem: redeemInviteGrant,
+    // Unmetered, stated: no plan, no limit, no manage page, and AI on the operator's own keys.
+    entitlementsPort: UNMETERED,
     // Envelope-encrypts mailbox credentials with the SAME provider the organizer decrypts with —
     // the KEK identity on the two /health responses is what proves they agree. The explicit
     // allowance is obligation 1; see SELF_HOST_MAILBOX_ALLOWANCE above.

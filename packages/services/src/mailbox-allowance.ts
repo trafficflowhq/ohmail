@@ -1,5 +1,5 @@
 import { and, eq, ne, sql } from "drizzle-orm";
-import { mailboxes, type LedgerTx } from "@trafficflow/db";
+import { accounts, mailboxes, type AccessVerdict, type LedgerTx } from "@trafficflow/db";
 import {
   balanceOf,
   effectiveSubscriptionOf,
@@ -24,28 +24,26 @@ import { ServiceError } from "./errors.js";
  * nothing about the check is at fault: **the check is correct and the outcome is still wrong.**
  * A quota that is only read is not a quota.
  *
- * So the serialization is in the DATABASE, and it is the account's subscription row:
- * {@link readMailboxAllowance} takes `SELECT … FOR UPDATE` on it (the ledger shipped
- * `liveSubscriptionOf(tx, accountId, { forUpdate: true })` for exactly this) **before** it
- * reads the count. The second transaction blocks on that row lock until the first commits, and
- * then counts a world that already contains the winner's mailbox. Exactly one of the two
- * proceeds; the other gets a clean typed refusal rather than an over-provisioned account.
- * `test/mailbox-limit.concurrency.pg.test.ts` fires the race against a real
- * Postgres across two independent pools, and removing the `FOR UPDATE` makes it fail.
+ * So the serialization is in the DATABASE, and it is the account's OWN row:
+ * {@link readMailboxAllowance} takes `SELECT … FROM accounts … FOR UPDATE` **before** it reads the
+ * count. The second transaction blocks on that row lock until the first commits, and then counts a
+ * world that already contains the winner's mailbox. Exactly one of the two proceeds; the other
+ * gets a clean typed refusal rather than an over-provisioned account. The pg twin fires the race
+ * across two independent pools, and removing the `FOR UPDATE` makes it fail.
  *
- * ## Why locking the SUBSCRIPTION row, and not the mailboxes
+ * ## Why locking the ACCOUNT row, and not the mailboxes or the subscription
  *
  * There is no row to lock on the thing being counted — the contended resource is the COUNT, and
  * a row that does not exist yet cannot be locked. `SELECT … FOR UPDATE` over the existing
  * mailboxes would lock N rows and still miss the concurrent INSERT (Postgres row locks do not
- * lock gaps). The subscription row is the natural mutex: it is the row that *defines* the limit,
- * it is per-account, and the downgrade handler will want the same lock for the same reason.
+ * lock gaps).
  *
- * An account that has NEVER had a subscription row is the degenerate case: `FOR UPDATE` matching
- * zero rows takes no lock at all — a standing trap. That is harmless HERE and only here
- * — `entitlementsFor` gives such an account `mailboxLimit: 0`, so both racers are refused and
- * there is no allocation to serialize. Nothing may be added to this function that would make a
- * subscription-less account able to create a mailbox without also giving it a row to lock.
+ * The lock used to be the account's `billing_subscriptions` row, which defined the limit. The
+ * limit now comes from the entitlements port, so that row is no longer the natural mutex — and it
+ * carried a standing trap the account row does not: `FOR UPDATE` matching ZERO rows takes no lock
+ * at all, so an account with no subscription row serialized nothing. It was harmless only because
+ * such an account was refused anyway. `accounts` is per-account, always present, and cannot be
+ * absent for the caller — the session resolved through it.
  *
  * ## The `canceled` seam — and the disagreement that made it a SHARED read
  *
@@ -98,6 +96,16 @@ export type MailboxRefusal = "no_subscription" | "not_permitted" | "at_limit";
 
 /** Everything the decision was made from — carried into the error so the UI need not re-query. */
 export interface MailboxAllowance {
+  /**
+   * How many mailboxes this account may have connected, FROM THE ENTITLEMENTS PORT, and the one
+   * number both the decision and the message read. `null` ⇒ unbounded (an unmetered install).
+   *
+   * It is a field of its own rather than `entitlements.mailboxLimit` because the limit and the
+   * REASON now come from different places: the limit from whoever operates the service, the reason
+   * still from the local subscription state until that moves too. Two readings of "the limit" is
+   * how a refusal ends up quoting a number the gate did not use.
+   */
+  mailboxLimit: number | null;
   entitlements: Entitlements;
   /**
    * Mailboxes that currently OCCUPY a slot: every row whose `status` is not `'disabled'`.
@@ -122,7 +130,7 @@ const HTTP: Record<MailboxRefusal, { code: string; status: number }> = {
 /** Factual, per-state microcopy — no slogans, and never a lie about what was kept. */
 function messageFor(refusal: MailboxRefusal, a: MailboxAllowance): string {
   if (refusal === "at_limit") {
-    return `This plan includes ${a.entitlements.mailboxLimit} mailbox${a.entitlements.mailboxLimit === 1 ? "" : "es"} and ` +
+    return `This plan includes ${a.mailboxLimit} mailbox${a.mailboxLimit === 1 ? "" : "es"} and ` +
       `${a.enabledCount} are connected. Upgrade the plan or disconnect a mailbox to add another.`;
   }
   switch (a.entitlements.reason) {
@@ -168,7 +176,7 @@ export class MailboxAllowanceError extends ServiceError {
     super(code, status, messageFor(refusal, allowance), {
       reason: refusal,
       entitlementReason: allowance.entitlements.reason,
-      mailboxLimit: allowance.entitlements.mailboxLimit,
+      mailboxLimit: allowance.mailboxLimit,
       mailboxCount: allowance.enabledCount,
       plan: allowance.plan,
     });
@@ -193,7 +201,8 @@ export function decideMailboxAllowance(a: MailboxAllowance): MailboxRefusal | nu
   if (!a.entitlements.canAddMailbox) {
     return a.entitlements.reason === "no_subscription" ? "no_subscription" : "not_permitted";
   }
-  if (a.enabledCount >= a.entitlements.mailboxLimit) return "at_limit";
+  // `null` is UNBOUNDED, not zero: an unmetered install has no count to exceed.
+  if (a.mailboxLimit !== null && a.enabledCount >= a.mailboxLimit) return "at_limit";
   return null;
 }
 
@@ -218,11 +227,33 @@ export function decideMailboxAllowance(a: MailboxAllowance): MailboxRefusal | nu
  */
 export { effectiveSubscriptionOf };
 
+/** What {@link readMailboxAllowance} needs beyond the transaction it runs in. */
+export interface MailboxAllowanceInput {
+  /**
+   * THE ACCOUNT'S ACCESS VERDICT, READ BEFORE THIS TRANSACTION OPENED — REQUIRED.
+   *
+   * It is a parameter and not a read because answering it may be a network hop to whoever operates
+   * the service, and a remote call inside this transaction would hold the account's row lock across
+   * it. The caller reads it first and hands the snapshot down; `null` is not accepted, because an
+   * absent verdict and an unmetered one are different facts and only one of them means "no limit".
+   *
+   * The limit may therefore be microseconds staler than the count. That is the right way round: the
+   * count is the contended resource and is read under the lock, while a limit that changed in that
+   * window is re-read on the next request.
+   */
+  access: AccessVerdict;
+  /**
+   * The RE-ENABLE path (a mailbox moving out of `'disabled'` occupies a slot it does not yet hold):
+   * the row must not count itself.
+   */
+  excludeMailboxId?: string;
+}
+
 /**
  * Read the account's allowance UNDER A ROW LOCK. The two statements are ordered, and the order
  * is the mechanism:
  *
- *   1. `SELECT … FROM billing_subscriptions … FOR UPDATE`  ← the serializer
+ *   1. `SELECT … FROM accounts WHERE id = $1 FOR UPDATE`  ← the serializer
  *   2. `SELECT count(*) FROM mailboxes WHERE account_id = $1 AND status <> 'disabled'`
  *
  * A concurrent creator blocks at (1) and therefore reads (2) only after the winner's INSERT is
@@ -232,27 +263,26 @@ export { effectiveSubscriptionOf };
  * released at the end of its own statement and serializes nothing. The `LedgerTx` type refuses a
  * `PgDatabase` at compile time and the runtime guard catches the `as any` and the JS caller —
  * the same two layers the credit primitives sit under.
- *
- * `excludeMailboxId` is for the RE-ENABLE path (a mailbox moving out of `'disabled'` occupies a
- * slot it does not yet hold): the row must not count itself.
  */
 export async function readMailboxAllowance(
   tx: LedgerTx,
   accountId: string,
   now: Date,
-  opts: { excludeMailboxId?: string } = {},
+  input: MailboxAllowanceInput,
 ): Promise<MailboxAllowance> {
   if (typeof (tx as unknown as { rollback?: unknown }).rollback !== "function") {
     throw new NotInTransactionError("readMailboxAllowance");
   }
+  const opts = input;
 
-  // (1) The lock. Everything after this statement is serialized per account.
-  //
-  // ONE read, shared with the status route. It prefers the live row and falls back to the
-  // newest row of any status — the `canceled` seam, unchanged — and the point of it being a shared
-  // function is that `GET /billing/subscription` can no longer answer this question differently
-  // from the gate that actually admits the create.
-  const sub = await effectiveSubscriptionOf(tx, accountId, { forUpdate: true });
+  // (1) The lock. Everything after this statement is serialized per account. `accounts` always has
+  // this row — the session was resolved through it — so the lock is never silently absent.
+  await tx.select({ id: accounts.id }).from(accounts).where(eq(accounts.id, accountId)).for("update");
+
+  // The subscription snapshot, read under that lock, for the REASON a refusal is explained with.
+  // It prefers the live row and falls back to the newest row of any status — the `canceled` seam,
+  // unchanged. The LIMIT no longer comes from here; see `MailboxAllowance.mailboxLimit`.
+  const sub = await effectiveSubscriptionOf(tx, accountId);
 
   // (2) The count, read under that lock.
   const [row] = await tx
@@ -274,6 +304,8 @@ export async function readMailboxAllowance(
   const suspended = await isSuspended(tx, accountId);
 
   return {
+    // The port decides how many; a refused account may add none at all.
+    mailboxLimit: input.access.ok ? input.access.limits.mailboxes : 0,
     entitlements: entitlementsFor({
       sub,
       balance,
@@ -299,9 +331,9 @@ export async function assertMayAddMailbox(
   tx: LedgerTx,
   accountId: string,
   now: Date,
-  opts: { excludeMailboxId?: string } = {},
+  input: MailboxAllowanceInput,
 ): Promise<MailboxAllowance> {
-  const allowance = await readMailboxAllowance(tx, accountId, now, opts);
+  const allowance = await readMailboxAllowance(tx, accountId, now, input);
   const refusal = decideMailboxAllowance(allowance);
   if (refusal) throw new MailboxAllowanceError(refusal, allowance);
   return allowance;

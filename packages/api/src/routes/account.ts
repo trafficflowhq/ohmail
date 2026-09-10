@@ -84,15 +84,22 @@ export const accountRoutes: Route[] = [
       const ctx = serviceContext(deps, req);
       let subscription: ErasureBillingOutcome = "none";
       /**
-       * STOP THE MONEY THROUGH THE PORT. `releaseAccount` is bounded and documented never to
-       * throw, and the three outcomes map onto the three this response has always carried:
-       * nothing to stop, stopped, could not be stopped. A host with no entitlements program has
-       * nothing to stop and reports `none`.
+       * STOP THE MONEY. Two arms, and the ORDER is deliberate: while this host still composes the
+       * in-tree billing service, that arm answers, because it is the one holding the subscription.
+       * The port arm is what a host answers with once the state has moved out — `releaseAccount`
+       * is bounded, never throws, and its three outcomes are the three this response has always
+       * carried: nothing to stop, stopped, could not be stopped.
+       *
+       * Preferring the port while the local service is armed would report `none` for every erasure
+       * on a host whose port has no manage surface yet — a customer deleted and still charged,
+       * which is the exact defect this ordering was written for.
        *
        * The try/catch stays for the reason it was written: the thing it guards is a RIGHT, and a
        * bug in the money path may not become a 500 in front of an Art. 17 erasure.
        */
-      const port = entitlementsPort(deps);
+      const plane = deps.services?.billingPlane;
+      const billing = deps.services?.entitlements;
+      const port = plane && billing ? null : entitlementsPort(deps);
       if (port) {
         try {
           const outcome = await port.releaseAccount(ctx.accountId);
@@ -102,9 +109,7 @@ export const accountRoutes: Route[] = [
           subscription = "cancel_failed";
         }
       }
-      const plane = deps.services?.billingPlane;
-      const billing = deps.services?.entitlements;
-      if (!port && plane && billing) {
+      if (plane && billing) {
         // `cancelForErasure` is documented never to throw — and to answer inside a
         // hard bound even against a HANGING plane (the cancel is a network hop inside an
         // Art. 17 request now; see `ERASURE_CANCEL_TIMEOUT_MS`). The try/catch is here anyway,

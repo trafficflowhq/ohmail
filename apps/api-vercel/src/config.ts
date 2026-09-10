@@ -228,6 +228,12 @@ export interface HostConfig {
    * what makes a leftover `STRIPE_*` variable a refused deploy rather than silent decoration.
    */
   billingPlane: BillingPlaneHostConfig | null;
+  /**
+   * Where this host asks about an account's standing, or `null` when it asks nobody and answers
+   * from its own tables instead. ALL-OR-NOTHING like {@link HostConfig.billingPlane}, and for the
+   * same reason: a URL with no secret is a client every call 401s.
+   */
+  entitlements: EntitlementsHostConfig | null;
   /** Alerting, or `null` when `TF_ALERT_SECRET` is unset (`/internal/alerts` 404s). */
   alerts: AlertsHostConfig | null;
   /**
@@ -907,6 +913,58 @@ export interface BillingPlaneHostConfig {
   secret: string;
 }
 
+/** What this host needs to reach an entitlements program. Present or absent as a WHOLE. */
+export interface EntitlementsHostConfig {
+  /** The program's origin (`https://…`), normalized — no path, no query, no credentials. */
+  url: string;
+  /** `ENTITLEMENTS_SECRET` — the bearer every `/v1/*` call presents. >= 24 chars. */
+  secret: string;
+}
+
+/** The two variables that make up the entitlements block. Both present, or both absent. */
+const ENTITLEMENTS_VARS = ["ENTITLEMENTS_URL", "ENTITLEMENTS_SECRET"] as const;
+
+/**
+ * The entitlements block — **both, or none**, on {@link loadBillingPlaneConfig}'s exact terms and
+ * validated by the same rules. "None" is a host that answers from its own tables; "some" is a host
+ * someone tried to configure and got wrong, and a client that 401s every call would fail OPEN by
+ * design — every account allowed, silently, which is the one failure nobody would notice.
+ *
+ * Every message names the VARIABLE and never the value.
+ */
+export function loadEntitlementsConfig(env: NodeJS.ProcessEnv): EntitlementsHostConfig | null {
+  const present = ENTITLEMENTS_VARS.filter((v) => (env[v] ?? "").trim() !== "");
+  if (present.length === 0) return null;
+  if (present.length < ENTITLEMENTS_VARS.length) {
+    const missing = ENTITLEMENTS_VARS.filter((v) => !present.includes(v));
+    throw new Error(
+      "Entitlements are PARTIALLY configured, which is never a valid deployment: set both " +
+        `of ${ENTITLEMENTS_VARS.join(", ")} or neither. Missing: ${missing.join(", ")}`,
+    );
+  }
+  const secret = env.ENTITLEMENTS_SECRET!.trim();
+  if (secret.length < 24) {
+    throw new Error("ENTITLEMENTS_SECRET must be at least 24 characters");
+  }
+  const raw = env.ENTITLEMENTS_URL!.trim();
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error("ENTITLEMENTS_URL must be an absolute https URL");
+  }
+  if (url.protocol !== "https:") throw new Error("ENTITLEMENTS_URL must use https — the bearer rides every request");
+  if (url.username || url.password) throw new Error("ENTITLEMENTS_URL must not embed credentials");
+  if (url.search || url.hash) throw new Error("ENTITLEMENTS_URL must not carry a query string or fragment");
+  if (url.pathname !== "/" && url.pathname !== "") {
+    throw new Error(
+      "ENTITLEMENTS_URL must be a bare origin with no path — the client appends /v1/…, " +
+        "so a path would be silently doubled",
+    );
+  }
+  return { url: url.origin, secret };
+}
+
 /** The two variables that make up the plane block. Both present, or both absent. */
 const BILLING_PLANE_VARS = ["BILLING_PLANE_URL", "BILLING_PLANE_SECRET"] as const;
 
@@ -1094,6 +1152,7 @@ export function loadHostConfig(env: NodeJS.ProcessEnv): HostConfig {
   // what is left to refuse is a live Stripe credential parked on a host that no longer reads it.
   assertNoStaleStripeEnv(env);
   const billingPlane = loadBillingPlaneConfig(env);
+  const entitlements = loadEntitlementsConfig(env);
   return {
     databaseUrlPooled,
     keyProvider,
@@ -1109,6 +1168,7 @@ export function loadHostConfig(env: NodeJS.ProcessEnv): HostConfig {
     buildSource,
     buildError: buildIdentityError(env, version, buildSource),
     billingPlane,
+    entitlements,
     alerts,
     admin: admin.admin,
     adminError: admin.unarmed,
