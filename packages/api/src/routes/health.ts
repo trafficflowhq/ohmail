@@ -1939,12 +1939,21 @@ export const MAIL_EXPECTED_MARKERS =
  *
  * `0099_folder_state_trashed_from` is probed as `folder_state.trashed_from` — where a delete moved
  * a message out of, one additive nullable field, and the operand of both Trash doors. **It is the
- * newest entry, so it is also the tag below.**
+ * newest PROBEABLE entry, so it is also the tag below** — and since mail 0100 landed it is no
+ * longer the newest entry, which is a different thing.
  *
- * That last sentence is the one this docblock keeps getting wrong, and it is now attached to the
- * marker that is actually newest rather than left on an older one. It stood on `0081` and then on
- * `0083` while the tag had already moved to `0084`, so the file asserted "newest" of three
- * different entries at once. If you add a marker, move the sentence.
+ * `0100_reader_window_peer_restamp` gets NO marker and does NOT move the tag. It changes no
+ * schema: one DML statement over `folder_state.last_set_by`, a column that has existed for many
+ * migrations, so there is nothing a marker could read that a database without it would fail. That
+ * is mail 0061's rule (see its entry in `baseline-adoption.test.ts`: a data-only migration is
+ * unprobeable and carries no marker), and advancing the tag to it anyway is precisely the lie the
+ * paragraph below records — `/health` would certify a 0099 database as being through 0100.
+ *
+ * The "newest" sentence is the one this docblock keeps getting wrong, and it now says which KIND
+ * of newest it means. It stood on `0081` and then on `0083` while the tag had already moved to
+ * `0084`, so the file asserted "newest" of three different entries at once. If you add a marker,
+ * move the sentence; if you add a data-only migration, add an entry like 0100's and leave both
+ * the sentence and the tag where they are.
  *
  * **THE FIRST VERSION OF THIS BUMPED THE TAG AND ADDED NO MARKER, on the stated ground that "the
  * census probes COLUMNS". That ground is false and the mistake is recorded rather than quietly
