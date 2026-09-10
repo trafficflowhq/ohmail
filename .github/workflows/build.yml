@@ -1422,8 +1422,14 @@ jobs:
           # `set +e` around it on purpose: under `set -e` a red check would exit
           # the step here and the two lines below — the status this step reports
           # — would never run at all.
+          # AN AppImage SELF-MOUNTS THROUGH FUSE, and a runner image without
+          # libfuse2 fails to start it at all — which would be a check that
+          # refuses every correct release. The runtime's own extract-and-run
+          # path needs no FUSE; measured identical here, same window, same
+          # frame verdict.
           set +e
-          DISPLAY=:99 node scripts/verify-desktop-launch.mjs build/ohmail-linux-x86_64.AppImage \
+          APPIMAGE_EXTRACT_AND_RUN=1 DISPLAY=:99 \
+            node scripts/verify-desktop-launch.mjs build/ohmail-linux-x86_64.AppImage \
             --out launch-check --timeout 120
           RC=$?
           set -e
@@ -2191,8 +2197,14 @@ jobs:
           # `set +e` around it on purpose: under `set -e` a red check would exit
           # the step here and the two lines below — the status this step reports
           # — would never run at all.
+          # AN AppImage SELF-MOUNTS THROUGH FUSE, and a runner image without
+          # libfuse2 fails to start it at all — which would be a check that
+          # refuses every correct release. The runtime's own extract-and-run
+          # path needs no FUSE; measured identical here, same window, same
+          # frame verdict.
           set +e
-          DISPLAY=:99 node scripts/verify-desktop-launch.mjs build/ohmail-linux-aarch64.AppImage \
+          APPIMAGE_EXTRACT_AND_RUN=1 DISPLAY=:99 \
+            node scripts/verify-desktop-launch.mjs build/ohmail-linux-aarch64.AppImage \
             --out launch-check --timeout 120
           RC=$?
           set -e
