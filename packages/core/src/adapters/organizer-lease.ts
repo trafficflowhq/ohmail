@@ -2632,6 +2632,9 @@ export interface MetaFolderRead {
   total: number | null;
 }
 
+/** Which ceiling ended a read of the folder. The refusal's sentence and its limit follow it. */
+export type MetaTruncation = "records" | "bytes";
+
 /**
  * THE FOLDER HOLDS MORE THAN ONE READ MAY TAKE.
  *
@@ -2641,8 +2644,6 @@ export interface MetaFolderRead {
  * might forget to check. Carrying the counts is what lets the refusal say how full the folder is,
  * which is the one thing that tells somebody reading a log what to do about it.
  */
-export type MetaTruncation = "records" | "bytes";
-
 export class MetaFolderTruncatedError extends Error {
   /** Which ceiling ended the read — the sentence and {@link limit} both follow it. */
   readonly by: MetaTruncation;
