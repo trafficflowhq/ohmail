@@ -3017,6 +3017,7 @@
     "saving": "Wird gespeichert …",
     "saved": "Gespeichert.",
     "asked": "Hier nicht gespeichert — der Rechner, der dieses Postfach organisiert, übernimmt es beim nächsten Durchlauf.",
+    "applied": "Der Rechner, der dieses Postfach organisiert, hat es übernommen.",
     "failed": "Das wurde nicht gespeichert. Es hat sich nichts geändert.",
     "incomplete": "Trag eine Nachricht ein, bevor du das einschaltest.",
     "unreachable": "Deine Abwesenheitseinstellungen konnten gerade nicht gelesen werden. Hier hat sich nichts geändert.",

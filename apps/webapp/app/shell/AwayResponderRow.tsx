@@ -203,6 +203,16 @@ const PILE_LABEL = {
  */
 const THROTTLE_IDS: readonly Throttle[] = ["always", "per_message", "per_day", "per_week"];
 
+/**
+ * HOW OFTEN AND HOW LONG the `asked` watcher asks. See {@link watchForApplied}.
+ *
+ * The organizing machine's own cycle is tens of seconds and the request travels through the
+ * mailbox, so the interval is the cheaper of the two clocks to be wrong about. The COUNT is the
+ * part that matters: a settings row must not leave a timer running for the life of a tab.
+ */
+const ASKED_POLL_MS = 20_000;
+const ASKED_POLL_MAX = 12;
+
 type Draft = Omit<AwayResponderWire, "updatedAt">;
 
 const RESTING: Draft = {
@@ -274,7 +284,7 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
    * `asked` IS NOT `saved`, and it is the one distinction this row's answer has to carry: on an
    * account another install organizes, the write did not happen here and a request is waiting.
    */
-  const [state, setState] = useState<"idle" | "saved" | "asked" | "failed" | "expired">("idle");
+  const [state, setState] = useState<"idle" | "saved" | "asked" | "applied" | "failed" | "expired">("idle");
   /**
    * THE READ CAME BACK REFUSED — and this is a state rather than silence BECAUSE THE CONTROL HAS
    * ITS OWN PANE NOW.
@@ -312,9 +322,14 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
 
   /** Unmounted-after-await guard — a nav press swaps this pane out mid-request. */
   const alive = useRef(true);
+  /** The `asked` watcher's pending tick, so leaving the pane stops it. See {@link watchForApplied}. */
+  const askedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     alive.current = true;
-    return () => { alive.current = false; };
+    return () => {
+      alive.current = false;
+      if (askedTimer.current !== null) clearTimeout(askedTimer.current);
+    };
   }, []);
 
   useEffect(() => {
@@ -369,6 +384,60 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
   /** What the responder ACTUALLY answers — the projection the banner reads. See the group below. */
   const effective = awayEffectivePiles(draft.piles, draft.audience);
 
+  /**
+   * WAIT FOR THE ORGANIZING MACHINE TO APPLY THE REQUEST — and stop waiting.
+   *
+   * ── WHY A POLL AT ALL, AND WHY A BOUNDED ONE ────────────────────────────────────────────────
+   *
+   * The row's own state is the account's, and on a reader it is refreshed from the organizer's
+   * published profile by the sync loop. So the answer arrives at `GET /away-responder` on its own;
+   * what was missing was anything here that asked again. The discriminator this pane already
+   * carries is `updatedAt`: the 202 answers the row UNCHANGED, so the first read whose `updatedAt`
+   * differs is the organizer's write.
+   *
+   * BOUNDED, on purpose. An unbounded poll on a settings row is a timer nobody switches off, and
+   * a pane left open overnight would keep asking for ever about a request that may have been
+   * refused. {@link ASKED_POLL_MAX} attempts at {@link ASKED_POLL_MS} is a few minutes — several
+   * organizer cycles — after which `asked` simply stands, which is still the true sentence: the
+   * request is waiting. Coming back to the pane re-reads on mount.
+   *
+   * A read that throws is not a state: the request may still land, so the attempt is spent and the
+   * wait continues rather than turning a transient refusal into "that did not save".
+   */
+  const watchForApplied = (askedAt: string | null): void => {
+    let left = ASKED_POLL_MAX;
+    const tick = (): void => {
+      askedTimer.current = setTimeout(() => {
+        void (async () => {
+          if (!alive.current) return;
+          left -= 1;
+          try {
+            const now = await wireOf().state();
+            if (!alive.current) return;
+            if (now.updatedAt !== askedAt) {
+              setDraft({
+                enabled: now.enabled, body: now.body,
+                startsAt: now.startsAt, endsAt: now.endsAt,
+                audience: now.audience, throttle: now.throttle,
+                piles: now.piles ?? [...AWAY_PILES_DEFAULT],
+              });
+              changed.current?.({
+                enabled: now.enabled, audience: now.audience, throttle: now.throttle,
+                piles: now.piles ?? [...AWAY_PILES_DEFAULT],
+              });
+              setState("applied");
+              return;
+            }
+          } catch {
+            /* Still waiting. See the header: a refused read is not an answer about the request. */
+          }
+          if (left > 0) tick();
+        })();
+      }, ASKED_POLL_MS);
+    };
+    tick();
+  };
+
   const save = (): void => {
     if (pending || !draft) return;
     // The worker refuses to compose, so an enabled responder with nothing written in it would be
@@ -397,7 +466,19 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
         /* THE 202's DISCRIMINATOR DECIDES THE SENTENCE. `stored` is the row as it stands HERE —
            the saved one when the write happened here, the UNCHANGED one when it travelled — so
            without this the pane put the old values back and said "Saved." over them. */
-        setState(stored.pending === true ? "asked" : "saved");
+        if (stored.pending === true) {
+          setState("asked");
+          /* AND `asked` IS A STATE THAT HAS TO END. It says the organizing machine "applies it on
+             its next pass", and nothing here could ever learn that it had: no poll, no
+             subscription, no acknowledgement. So a pane left open showed the OLD values with a
+             note about a request that had already landed — a false state about what strangers are
+             told, which is the same defect the 202 discriminator was added to fix, one step later.
+             `watchForApplied` ends it, and the load effect's own read is what ends it for anyone
+             who left the pane and came back. */
+          watchForApplied(stored.updatedAt);
+        } else {
+          setState("saved");
+        }
       } catch {
         if (alive.current) setState("failed");
       } finally {
@@ -626,6 +707,9 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
         ) : null}
         {state === "asked" ? (
           <span className="set-note-inline" role="status">{t("asked")}</span>
+        ) : null}
+        {state === "applied" ? (
+          <span className="set-note-inline" role="status">{t("applied")}</span>
         ) : null}
         {state === "failed" ? (
           <span className="set-note-inline" role="alert">{complete ? t("failed") : t("incomplete")}</span>
