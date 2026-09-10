@@ -3356,9 +3356,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           const r = await exportPendingMovesOnStandDown(db as unknown as Tx, {
             accountId: world.accountId, mailboxId: mb.id, now: now(), mintId: randomUUID,
           });
-          if (r.exported > 0 || r.unmappable > 0 || r.deferred > 0) {
+          if (r.exported > 0 || r.unmappable > 0 || r.more) {
             log("organizer_stand_down_moves_handed_over", {
-              exported: r.exported, already: r.already, unmappable: r.unmappable, deferred: r.deferred,
+              exported: r.exported, already: r.already, unmappable: r.unmappable, more: r.more,
               reason: "these moves were recorded here before the lease was read again; each is now "
                 + "a request for the install that holds the mailbox. `unmappable` are desired "
                 + "folders no destination word covers (a user folder) and stay where they are",

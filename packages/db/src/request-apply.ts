@@ -998,8 +998,12 @@ export interface StandDownExport {
    * counted: a number in a log is a thing somebody can select, an absence is not.
    */
   unmappable: number;
-  /** Intents past {@link STAND_DOWN_EXPORT_MAX} this pass. */
-  deferred: number;
+  /**
+   * TRUE when at least one intent was past {@link STAND_DOWN_EXPORT_MAX} — and a FLAG rather than
+   * a count because the read is bounded at `limit + 1`: a number here could only ever say 0 or 1
+   * while reading as a total, which is the quiet inaccuracy a log gets believed for.
+   */
+  more: boolean;
 }
 
 /**
@@ -1056,7 +1060,7 @@ export async function exportPendingMovesOnStandDown(
     if (p && typeof p.dedupKey === "string") travelling.add(p.dedupKey);
   }
 
-  const out: StandDownExport = { exported: 0, already: 0, unmappable: 0, deferred: 0 };
+  const out: StandDownExport = { exported: 0, already: 0, unmappable: 0, more: false };
   for (const row of pending.slice(0, limit)) {
     if (row.dedupKey === null || row.dedupKey === "") { out.unmappable += 1; continue; }
     if (travelling.has(row.dedupKey)) { out.already += 1; continue; }
@@ -1075,6 +1079,6 @@ export async function exportPendingMovesOnStandDown(
     travelling.add(row.dedupKey);
     out.exported += 1;
   }
-  out.deferred = Math.max(0, pending.length - limit);
+  out.more = pending.length > limit;
   return out;
 }

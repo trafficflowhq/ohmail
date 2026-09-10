@@ -2046,10 +2046,10 @@ export async function startWorkerWithLock(
         }));
         // Only when there was something to hand over: the overwhelming majority of stand-downs
         // have no pending intent and must stay silent.
-        if (r.exported > 0 || r.unmappable > 0 || r.deferred > 0) {
+        if (r.exported > 0 || r.unmappable > 0 || r.more) {
           log.warn("organizer_stand_down_moves_handed_over", {
             mailboxId: mb.mailboxId, accountId: mb.accountId,
-            exported: r.exported, already: r.already, unmappable: r.unmappable, deferred: r.deferred,
+            exported: r.exported, already: r.already, unmappable: r.unmappable, more: r.more,
             reason: "these moves were recorded here before the lease was read again; each is now a "
               + "request for the install that holds the mailbox. `unmappable` are desired folders "
               + "no destination word covers (a user folder) and stay where they are",
