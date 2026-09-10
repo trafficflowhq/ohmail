@@ -703,6 +703,14 @@ interface BootstrapGen {
    * line from a re-applied page is absorbed by the set on load.
    */
   flush(): void;
+  /**
+   * This generation's marks were written under a DIFFERENT `CURSOR_VERSION`, so the ids they name
+   * are not this build's ids for every type. See {@link BOOTSTRAP_GEN_FILE}: the resume still
+   * happens (it has to — a restart on every interruption never finishes on a large mailbox), and
+   * {@link sweepPhantoms} skips the ONE type whose keying moved instead of sweeping it against
+   * marks it cannot read.
+   */
+  keyingStale: boolean;
 }
 
 /**
@@ -735,7 +743,7 @@ const GEN_TYPES = [
 ] as const;
 type GenType = (typeof GEN_TYPES)[number];
 
-function genOver(path: string, sets: Record<GenType, Set<string>>): BootstrapGen {
+function genOver(path: string, sets: Record<GenType, Set<string>>, keyingStale = false): BootstrapGen {
   const pending: string[] = [];
   const mark = (t: GenType): MarkSet => ({
     add(id: string): void {
@@ -748,6 +756,7 @@ function genOver(path: string, sets: Record<GenType, Set<string>>): BootstrapGen
     has: (id: string): boolean => sets[t].has(id),
   });
   return {
+    keyingStale,
     folder: mark("folder"),
     thread: mark("thread"), message: mark("message"), message_state: mark("message_state"),
     rule: mark("rule"), draft: mark("draft"), approval: mark("approval"),
@@ -800,9 +809,10 @@ function loadBootstrapGen(path: string): BootstrapGen | null {
   } catch {
     return null;
   }
-  // The keying stamp, before a single mark is read: marks made under another keying name other
-  // ids and cannot be compared with this build's. Absent ⇒ a version-1 file ⇒ refused.
-  if (!raw.startsWith(`${GEN_KEYING_PREFIX}${CURSOR_VERSION}\n`)) return null;
+  // The keying stamp. A file written under another keying is LOADED, not refused: the resume is
+  // load-bearing, and only `message_state`'s keying moved, so the sweep skips that one type
+  // rather than the whole generation. Absent ⇒ a version-1 file ⇒ stale.
+  const keyingStale = !raw.startsWith(`${GEN_KEYING_PREFIX}${CURSOR_VERSION}\n`);
   const sets = emptyGenSets();
   for (const line of raw.split("\n")) {
     if (!line) continue;
@@ -812,7 +822,7 @@ function loadBootstrapGen(path: string): BootstrapGen | null {
     if (!(GEN_TYPES as readonly string[]).includes(t)) continue;
     sets[t].add(line.slice(sp + 1));
   }
-  return genOver(path, sets);
+  return genOver(path, sets, keyingStale);
 }
 
 /** Drop the generation file — the bootstrap completed and swept, or is starting over. */
@@ -1750,8 +1760,17 @@ async function sweepPhantoms(db: LocalDb, world: LocalWorld, gen: BootstrapGen, 
       if (!gen.draft.has(r.id)) await sweepOne("draft", r.id);
     // By ROW id, like every other type: a `message_state`'s /sync id IS its row id (the DTO is
     // the one with no `id` field, which is what made this read as the messageId).
-    for (const r of await tx.select({ id: messageStates.id }).from(messageStates).where(eq(messageStates.accountId, world.accountId)))
-      if (!gen.message_state.has(r.id)) await sweepOne("message_state", r.id);
+    //
+    // SKIPPED ENTIRELY for a generation written under another keying, because its marks name
+    // messageIds and this query names row ids: every live state would read as unmarked and be
+    // deleted — which is the defect this release fixes, arriving through its own repair. Skipping
+    // can only LEAVE a row, and there is almost nothing to leave: the replay re-applies each
+    // state under its hosted id onto the unique `message_id`, so the row is healed in place, and
+    // a state whose message really is a phantom goes with that message's cascade below.
+    if (!gen.keyingStale) {
+      for (const r of await tx.select({ id: messageStates.id }).from(messageStates).where(eq(messageStates.accountId, world.accountId)))
+        if (!gen.message_state.has(r.id)) await sweepOne("message_state", r.id);
+    }
     for (const r of await tx.select({ id: rules.id }).from(rules).where(eq(rules.accountId, world.accountId)))
       if (!gen.rule.has(r.id)) await sweepOne("rule", r.id);
     for (const r of await tx.select({ id: messages.id }).from(messages).where(eq(messages.accountId, world.accountId)))
@@ -2473,8 +2492,12 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       if (resumed) {
         sweep = resumed;
         cfg.log?.("cloud_bootstrap_resumed", {
-          reason: "an interrupted bootstrap continues from its committed cursor against the same " +
-            "generation's marks, instead of replaying the whole feed from zero",
+          reason: resumed.keyingStale
+            ? "an interrupted bootstrap continues from its committed cursor, and its marks were " +
+              "written under an earlier keying, so the one type whose keying moved is not swept " +
+              "against ids those marks cannot name"
+            : "an interrupted bootstrap continues from its committed cursor against the same " +
+              "generation's marks, instead of replaying the whole feed from zero",
         });
       } else {
         if (reKeying && !isBootstrapCursor(cursor.sync)) {
