@@ -3,7 +3,9 @@ import { dialect } from "@trafficflow/db/dialect";
 import { assertOrganizerRole, messages, messageStates, folderState, claimIdempotencyKey, recordChange, type Tx } from "@trafficflow/db";
 import type { Db, ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
-import { materializeMessage, materializeMessageState } from "./dto/materialize.js";
+import {
+  materializeMessage, materializeMessageState, materializeMessagesInOrder,
+} from "./dto/materialize.js";
 import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
 import type { MessageDTO, MessageStateDTO, Page, TriageState } from "./dto/types.js";
 
@@ -298,11 +300,11 @@ export class TriageService {
       .where(and(...filters)).orderBy(asc(messageStates.messageId)).limit(limit + 1);
 
     const pageRows = rows.slice(0, limit);
-    const items: MessageDTO[] = [];
-    for (const r of pageRows) {
-      const dto = await materializeMessage(ctx.db, ctx.accountId, r.messageId);
-      if (dto) items.push(dto);
-    }
+    // The batch, for the reason at `MessageService.list`: round-trips constant in the page size,
+    // and `deleted: "include"` so only the round-trips change.
+    const items = await materializeMessagesInOrder(
+      ctx.db, ctx.accountId, pageRows.map((r) => r.messageId), { deleted: "include" },
+    );
     const nextCursor = rows.length > limit ? encodeListCursor(pageRows[pageRows.length - 1]!.messageId) : null;
     return { items, nextCursor };
   }

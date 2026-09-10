@@ -234,6 +234,14 @@ sooner on a big mailbox, and mail the app has not fetched yet no longer arrives 
 attached — which is what could put a row titled with an id, and no sender, in Answer Later or
 Parked.
 
+### Opening a list of mail no longer costs a round of database work per message
+
+Every list — the Ohbox, one of your own folders, the piles at the bottom — built its page one
+message at a time, asking the local database the same set of questions for each. It now asks them
+once for the whole page, whatever its length. The desktop's store answers one question at a time,
+so a list held it for the whole of that work; it now holds it for a fraction of it, and mail
+arriving in the background waits behind it less.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

@@ -399,18 +399,21 @@ export async function materializeMessages(
 }
 
 /**
- * The same four queries as {@link materializeMessages}, in the caller's order.
+ * The same six queries as {@link materializeMessages}, in the caller's order.
  *
  * `materializeMessages` is keyed by id and therefore says nothing about sequence, which is
  * exactly right for `getChanges` (the `change_log` page already carries the order). A snapshot
  * page IS an ordered window — newest first, keyset-paged — so it needs the DTOs back in the
  * order it asked for them. Ids the account does not own are absent from the map and are simply
  * skipped here, which preserves the batch's account filter rather than re-implementing it.
+ *
+ * `opts` passes straight through, so a caller that owes its reader a row it has just written
+ * keeps the receipt reader's `deleted: "include"` while still paying one page of round-trips.
  */
 export async function materializeMessagesInOrder(
-  db: Db, accountId: string, ids: readonly string[],
+  db: Db, accountId: string, ids: readonly string[], opts: MaterializeMessagesOpts = {},
 ): Promise<MessageDTO[]> {
-  const byId = await materializeMessages(db, accountId, ids);
+  const byId = await materializeMessages(db, accountId, ids, opts);
   const out: MessageDTO[] = [];
   for (const id of ids) {
     const dto = byId.get(id);

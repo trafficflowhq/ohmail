@@ -11,7 +11,9 @@ import { createLogger, httpsUnsubscribeUri, unsubscribeHeaderState } from "@traf
 import type { Db, ServiceContext } from "./context.js";
 import { foldersEnabled, userFolderById } from "./folders.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
-import { materializeMessage, materializeMessages } from "./dto/materialize.js";
+import {
+  materializeMessage, materializeMessages, materializeMessagesInOrder,
+} from "./dto/materialize.js";
 import {
   clampLimit, clampPageLimit, decodeKeysetCursor, decodeListCursor, decodeNullableKeysetCursor,
   encodeListCursor, encodeNullableKeysetCursor,
@@ -534,11 +536,20 @@ export class MessageService {
       .limit(limit + 1);
 
     const pageRows = rows.slice(0, limit);
-    const items: MessageDTO[] = [];
-    for (const r of pageRows) {
-      const dto = await materializeMessage(ctx.db, ctx.accountId, r.id);
-      if (dto) items.push(dto);
-    }
+    /**
+     * ONE PAGE, ONE SET OF ROUND-TRIPS.
+     *
+     * This was `for (const r of pageRows) await materializeMessage(...)`, and the singular form
+     * is a one-element wrapper over the batch: a page cost six sequential queries PER ROW where
+     * the batch costs six for the page whatever its size — the shape `materializeMessages` was
+     * written to have ended, and which `SearchService` had already ended on its own page. On a
+     * store that serialises (PGlite is the desktop's) those round-trips are the read's whole
+     * latency, so every other request waits behind them. `deleted: "include"` keeps the
+     * singular's exact selection: only the round-trips change.
+     */
+    const items = await materializeMessagesInOrder(
+      ctx.db, ctx.accountId, pageRows.map((r) => r.id), { deleted: "include" },
+    );
     const last = pageRows[pageRows.length - 1];
     const nextCursor = rows.length > limit && last ? encodeMsgCursor(last.date, last.id) : null;
     return { items, nextCursor };
@@ -669,11 +680,11 @@ export class MessageService {
       .orderBy(...MSG_ORDER)
       .limit(args.limit + 1);
     const pageRows = rows.slice(0, args.limit);
-    const items: MessageDTO[] = [];
-    for (const r of pageRows) {
-      const dto = await materializeMessage(ctx.db, ctx.accountId, r.id);
-      if (dto) items.push(dto);
-    }
+    // The batch, for the reason written at `list`'s own page: round-trips constant in the page
+    // size, and `deleted: "include"` so only the round-trips change.
+    const items = await materializeMessagesInOrder(
+      ctx.db, ctx.accountId, pageRows.map((r) => r.id), { deleted: "include" },
+    );
     const last = pageRows[pageRows.length - 1];
     const nextCursor = rows.length > args.limit && last ? encodeMsgCursor(last.date, last.id) : null;
     return { items, nextCursor };
@@ -1099,11 +1110,12 @@ export class MessageService {
       return last;
     });
 
-    const items: MessageDTO[] = [];
-    for (const id of ids) {
-      const dto = await materializeMessage(ctx.db, ctx.accountId, id);
-      if (dto) items.push(dto);
-    }
+    // The batch: this route accepts up to 200 ids, and the singular form made that 200 x 6
+    // statements awaited one after another. `deleted: "include"` is the receipt reader's rule —
+    // these are rows the transaction above just wrote.
+    const items = await materializeMessagesInOrder(
+      ctx.db, ctx.accountId, ids, { deleted: "include" },
+    );
     return { items, seq: seq === null ? null : Number(seq) };
   }
 
