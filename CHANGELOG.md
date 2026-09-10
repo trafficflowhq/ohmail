@@ -17,6 +17,8 @@ See [Status](README.md#status--read-this-first).
 
 - Deleting a message again while a restore of it was still travelling to your mail server no
   longer leaves it out of both your mail and Trash.
+- Restoring says “Restoring to Ohbox…” until your mail server has actually moved the message,
+  instead of reporting it as already back.
 
 ### Still to come
 

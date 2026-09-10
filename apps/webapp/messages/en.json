@@ -910,7 +910,7 @@
     "deletedAt": "Deleted {when}",
     "restore": "Restore",
     "restoreKey": "Restore it to where it was",
-    "toastRestored": "Restored to {place}.",
+    "toastRestoringTo": "Restoring to {place}\u2026",
     "toastRestoreUndone": "Kept in Trash.",
     "toastRestoreFailed": "Couldn't restore \u2014 it's still in Trash.",
     "noErase": "ohmail never erases mail \u2014 to remove it for good, use your own mail client.",

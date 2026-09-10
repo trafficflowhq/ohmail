@@ -1521,11 +1521,16 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     verb: "restore",
     /* THE DISPATCH RAISES THE PLACE SENTENCE, because that is the one moment the place is known
        — see `restoreDispatch`, where the alternative (a second call at the press) is named as
-       the thing that would silently cancel the undo window. */
+       the thing that would silently cancel the undo window.
+       AND IT SAYS "Restoring", never "Restored": the server's answer is a QUEUED intent
+       (`pending`), the mail server performs the move on the organizer's next turn, and the row
+       comes back when that landing is observed. The sentence this used to say claimed a
+       completed restore seconds before anything had moved, so an outage left the person told
+       their mail was back while it sat in Trash. The place is still the server's answer. */
     mutate: (messageId) => fileAndRefresh(
       restoreDispatch(
         (id) => engine.restoreFromTrash(id),
-        (restoreTo) => toast(t("trash.toastRestored", { place: placeLabel(restoreTo) })),
+        (restoreTo) => toast(t("trash.toastRestoringTo", { place: placeLabel(restoreTo) })),
       )(messageId),
     ),
     toast,
@@ -4997,7 +5002,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
            * ── AND THE PLACE IS NAMED BY THE SERVER, AFTERWARDS ─────────────────────────────
            *
            * The row's own `restoreTo` is what the LIST was rendered with, and the origin folder
-           * can be deleted between the page and the press — so the confirming toast is raised by
+           * can be deleted between the page and the press — so the place sentence is raised by
            * the window's DISPATCH, when the server has answered, rather than here. Raising it
            * here would need a second `restoreFromTrash` call at the press, which would issue the
            * request immediately and cancel the undo window with every guard still green; see

@@ -431,7 +431,8 @@ export function replayDeleteIntents(
 export function restoreDispatch(
   restoreFromTrash: (messageId: string) => Promise<{ state: string; restoreTo?: string }>,
   /**
-   * WHERE IT WENT, said when the SERVER has said it — and never at the press.
+   * WHERE IT IS GOING, said when the SERVER has answered — and never at the press. The answer is
+   * a queued intent, so the sentence the caller raises says "Restoring", not "Restored".
    *
    * The window's own `deleted` sentence is raised the moment the row is hidden, seconds before
    * anything reaches a server, so it cannot name a place: the row was rendered with the origin

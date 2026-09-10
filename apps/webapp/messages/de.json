@@ -910,7 +910,7 @@
     "deletedAt": "Gelöscht {when}",
     "restore": "Wiederherstellen",
     "restoreKey": "Dorthin zurücklegen, wo sie war",
-    "toastRestored": "Wiederhergestellt in {place}.",
+    "toastRestoringTo": "Wird in {place} wiederhergestellt…",
     "toastRestoreUndone": "Bleibt im Papierkorb.",
     "toastRestoreFailed": "Konnte nicht wiederhergestellt werden — sie ist noch im Papierkorb.",
     "noErase": "ohmail löscht nie unwiderruflich — zum endgültigen Entfernen nutze deinen eigenen Mail-Client.",
