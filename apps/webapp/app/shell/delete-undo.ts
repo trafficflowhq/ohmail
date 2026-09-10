@@ -152,7 +152,16 @@ export interface DeleteUndoCopy {
  * delete and what {@link RestoreOutcome} was given for a refused restore, precisely so this
  * one comparison covers both.
  */
-export type HeldDispatch = (messageId: string) => Promise<{ status: string }>;
+export type HeldDispatch = (
+  messageId: string,
+  /**
+   * THE PRESS THIS MESSAGE BELONGS TO — the id `delete-intents.ts` journalled, so a dispatch can
+   * name one intent on the wire. The restore's `Idempotency-Key` is built from it: the same press
+   * replayed at the next launch carries the same id, and a later press carries a different one.
+   * Every existing dispatch ignores it, which is what keeps the delete's call sites unchanged.
+   */
+  pressId: string,
+) => Promise<{ status: string }>;
 
 export interface DeleteUndoDeps {
   /**
@@ -272,7 +281,7 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
       if (refused > 0) deps.toast(say(deps.copy.failed, deps.copy.failedMany, refused));
     };
     for (const messageId of ids) {
-      void deps.mutate(messageId).then(
+      void deps.mutate(messageId, pressId).then(
         (res) => { if (res.status === "rolled_back") refused += 1; settled(); },
         () => { refused += 1; settled(); },
       );
@@ -407,7 +416,10 @@ export function replayDeleteIntents(
        flight. `Promise.allSettled` rather than `all`, because one refusal must not strand the
        rest of the press in the journal for ever. */
     void Promise.allSettled(
-      intent.messageIds.map((messageId) => fn(messageId)),
+      /* THE JOURNALLED PRESS ID TRAVELS WITH THE REPLAY, and it is the whole of the restore's
+         idempotency: this is the request whose first response was lost, so it must arrive under
+         the key the first attempt used rather than as a second press. */
+      intent.messageIds.map((messageId) => fn(messageId, intent.id)),
     ).then(() => disarmDeleteIntent(intent.id));
   }
   return intents.length;
@@ -429,7 +441,9 @@ export function replayDeleteIntents(
  * from the list with the message still in Trash.
  */
 export function restoreDispatch(
-  restoreFromTrash: (messageId: string) => Promise<{ state: string; restoreTo?: string }>,
+  restoreFromTrash: (
+    messageId: string, opts: { intentId: string },
+  ) => Promise<{ state: string; restoreTo?: string }>,
   /**
    * WHERE IT IS GOING, said when the SERVER has answered — and never at the press. The answer is
    * a queued intent, so the sentence the caller raises says "Restoring", not "Restored".
@@ -450,8 +464,8 @@ export function restoreDispatch(
    */
   onRestored?: (restoreTo: string) => void,
 ): HeldDispatch {
-  return async (messageId) => {
-    const outcome = await restoreFromTrash(messageId);
+  return async (messageId, pressId) => {
+    const outcome = await restoreFromTrash(messageId, { intentId: pressId });
     if (outcome.state === "restored") {
       onRestored?.(outcome.restoreTo && outcome.restoreTo !== "" ? outcome.restoreTo : "INBOX");
       return { status: "applied" };
@@ -564,7 +578,7 @@ export function useDeleteUndo(deps: Omit<DeleteUndoDeps, "onHeld">): {
   latest.current = deps;
   const queue = useMemo(
     () => createDeleteUndo({
-      mutate: (id) => latest.current.mutate(id),
+      mutate: (id, pressId) => latest.current.mutate(id, pressId),
       ...(latest.current.verb ? { verb: latest.current.verb } : {}),
       toast: (msg, opts) => latest.current.toast(msg, opts),
       get copy() { return latest.current.copy; },

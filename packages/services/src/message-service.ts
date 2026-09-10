@@ -1405,6 +1405,14 @@ export class MessageService {
    *    verb is IDEMPOTENT in the way that matters — pressing twice cannot move mail a second
    *    time), and one filed elsewhere by another client in the meantime. 409 rather than 404,
    *    because the message exists and the caller may read it; what is wrong is its state.
+   *
+   *    A REPLAY IS NOT A SECOND PRESS, and reading them as one was a defect: a client whose
+   *    first response was lost after the commit replays its durable intent, the message is no
+   *    longer in Trash — the write landed — and the answer was that 409, which the surface says
+   *    as "Couldn't restore" about a restore already committed to. The route is now
+   *    `idempotent`-marked and this claims the key inside the mutation transaction, so the
+   *    replay of one intent is answered with the first response and a genuinely NEW press (a new
+   *    key) still meets the state check above.
    *  · 404 for a message this account does not own, exactly as every other door here.
    *  · 422 `no_trash_folder` is unreachable and deliberately not written: a row can only be in a
    *    mailbox's Trash path if that path exists.
@@ -1420,6 +1428,7 @@ export class MessageService {
    */
   async restore(
     ctx: ServiceContext, id: string,
+    opts: { idempotency?: MoveIdempotency | null } = {},
   ): Promise<{ restoreTo: string; pending: true; seq: number }> {
     let filed: string | null = null;
     const answer = await asTx(ctx).transaction(async (tx) => {
@@ -1457,6 +1466,22 @@ export class MessageService {
         accountId: ctx.accountId, entityType: "message", entityId: id, op: "move",
         meta: { from: trash, to: target },
       }));
+      /* THE REPLAY OF A LOST RESPONSE IS ANSWERED AS APPLIED — see the header's own block on why
+         the 409 was the wrong answer to it. The verbatim `{restoreTo, pending}` the route returns
+         is stored IN this transaction, exactly as `move` and `delete` store theirs, so a commit
+         followed by a lost response replays one answer rather than executing twice. */
+      if (opts.idempotency) {
+        const claimed = await claimIdempotencyKey(tx, {
+          accountId: ctx.accountId,
+          key: opts.idempotency.key,
+          requestHash: opts.idempotency.requestHash,
+          responseStatus: 200,
+          responseJson: { restoreTo: target, pending: true },
+          seq,
+          now: ctx.now(),
+        });
+        if (!claimed) throw new IdempotencyRaceLost(ctx.accountId, opts.idempotency.key);
+      }
       return { restoreTo: target, pending: true as const, seq };
     });
 

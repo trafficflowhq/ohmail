@@ -218,13 +218,13 @@ export const messageRoutes: Route[] = [
      * caller's own account and queues an IMAP move for the organizer. It opens no socket and
      * calls no metered third party, so it is not `paid`.
      *
-     * NOT `options: { idempotent: true }`, and that is a decision rather than an omission. The
-     * two neighbours carry it because a replayed `move`/`delete` would re-emit delta rows for a
-     * change the client already has. This verb is idempotent in the state itself: the second
-     * request finds the message no longer in Trash and answers 409 `not_in_trash`, which is a
-     * true sentence about a completed restore and cannot move mail twice. An idempotency row
-     * would replay the FIRST response's 200 instead, which is the less honest of the two — it
-     * would tell a client that pressed twice that it had just restored something.
+     * `options: { idempotent: true }`, and the argument it replaces was wrong about one caller.
+     * "Idempotent in the state" holds for a second PRESS — the message is no longer in Trash, so
+     * 409 `not_in_trash` is true and moves nothing. It is false for a REPLAY: a client whose
+     * first response was lost after the commit re-sends the same durable intent, and that 409
+     * reads on screen as "Couldn't restore" about a restore this server is already committed to.
+     * The key tells the two apart — a replay carries the first request's key and is answered with
+     * the first response; a new press carries a new key and meets the state check.
      *
      * The response is `{ restoreTo, pending }` rather than the message DTO: the DTO would still
      * carry the Trash folder and a `deleted_at`, i.e. it would describe the state the caller is
@@ -235,9 +235,11 @@ export const messageRoutes: Route[] = [
     method: "POST",
     pattern: "/messages/:id/restore",
     cost: "work",
+    options: { idempotent: true },
     handler: async (req, deps, params) => {
       const { restoreTo, pending, seq } = await message(deps).restore(
         serviceContext(deps, req), params.id!,
+        { idempotency: deps.idempotency ?? null },
       );
       return jsonResponse({ restoreTo, pending }, { status: 200, seq });
     },

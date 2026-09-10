@@ -919,19 +919,24 @@ export class HttpAdapter implements EngineAdapter {
   /**
    * `POST /messages/:id/restore` — put one deleted message back where it was.
    *
-   * NO `Idempotency-Key`, and the route declares no idempotency either. The verb is idempotent in
-   * the STATE: a second request finds the message no longer in Trash and answers 409
-   * `not_in_trash`, which is a true sentence about a completed restore. An idempotency row would
-   * replay the first 200 instead and tell a client that pressed twice it had just restored
-   * something.
+   * The `Idempotency-Key` is the caller's, when it has one. The route is `idempotent`-marked, so a
+   * replay under the same key is answered with the first response — a client whose first response
+   * was lost after the commit used to meet the state check and be told 409 `not_in_trash` about a
+   * restore the server was already committed to. A second PRESS is a different intent with a
+   * different key and still meets that check. No key ⇒ no header, and the request is what it was.
    *
    * `restoreTo` is the SERVER's answer, which may not equal the row's rendered one — the origin
    * folder can disappear between the page and the press — so it is read off the response rather
    * than assumed. `pending` defaults true when absent: the honest reading of a missing field here
    * is "the mail server has not done it yet", never "it is done".
    */
-  async restoreFromTrash(messageId: string): Promise<RestoreFromTrashWire | null> {
-    const res = await this.request("POST", `/messages/${encodeURIComponent(messageId)}/restore`);
+  async restoreFromTrash(
+    messageId: string, opts: { idempotencyKey?: string } = {},
+  ): Promise<RestoreFromTrashWire | null> {
+    const res = await this.request(
+      "POST", `/messages/${encodeURIComponent(messageId)}/restore`,
+      opts.idempotencyKey === undefined ? {} : { idempotencyKey: opts.idempotencyKey },
+    );
     if (!res.ok) throw await this.rejectionOf(res);
     const wire = (await res.json()) as { restoreTo?: string; pending?: boolean };
     return {

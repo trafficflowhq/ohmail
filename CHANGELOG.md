@@ -21,6 +21,8 @@ See [Status](README.md#status--read-this-first).
   instead of reporting it as already back.
 - Restoring a message you deleted on a device that is not the one organizing the mailbox puts it
   back in the folder it came from, rather than in your Ohbox.
+- A restore whose answer never reached the app is finished on the next launch instead of saying
+  it could not be restored.
 
 ### Still to come
 

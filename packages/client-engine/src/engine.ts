@@ -1031,7 +1031,18 @@ export interface RestoreFromTrashWire {
   pending: boolean;
 }
 
-export type RestoreFromTrashFn = (messageId: string) => Promise<RestoreFromTrashWire | null>;
+export type RestoreFromTrashFn = (
+  messageId: string,
+  /**
+   * The `Idempotency-Key` for this ONE intent, when the caller has a durable record of it.
+   *
+   * The route is `idempotent`-marked: a replay under the same key is answered with the first
+   * response, where without one it met the state check and answered 409 `not_in_trash` about a
+   * restore the server had already committed to. Optional because a caller with no durable
+   * record has no stable key to send, and an invented one would make two presses one.
+   */
+  opts?: { idempotencyKey?: string },
+) => Promise<RestoreFromTrashWire | null>;
 
 /**
  * The adapter capabilities the two reach for.
@@ -6464,13 +6475,25 @@ export class OhmailEngine {
    * Single-flight per message id: a double press, or a window closing while a replay is in
    * flight, is one request.
    */
-  async restoreFromTrash(messageId: string): Promise<RestoreOutcome> {
+  async restoreFromTrash(
+    messageId: string,
+    /**
+     * WHICH PRESS THIS IS, from the surface's own durable journal — the one thing that tells a
+     * REPLAY from a second press. The key is composed here rather than by the surface so one
+     * place owns what goes in the header; a caller without a journal passes nothing and the
+     * request carries no key, exactly as before.
+     */
+    opts: { intentId?: string } = {},
+  ): Promise<RestoreOutcome> {
     const fn = this.restoreFromTrashFn;
     if (fn === null) return { state: "unavailable" };
     const inFlight = this.restoreCalls.get(messageId);
     if (inFlight) return inFlight;
 
-    const request = fn(messageId)
+    const key = opts.intentId === undefined || opts.intentId === ""
+      ? undefined
+      : `restore:${opts.intentId}:${messageId}`;
+    const request = fn(messageId, key === undefined ? {} : { idempotencyKey: key })
       .then((wire): RestoreOutcome => {
         // `null` ⇒ no restore route behind this transport. Same rule as the page above: it is
         // not a refusal and must not be reported as one.

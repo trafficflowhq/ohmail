@@ -1527,11 +1527,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
        comes back when that landing is observed. The sentence this used to say claimed a
        completed restore seconds before anything had moved, so an outage left the person told
        their mail was back while it sat in Trash. The place is still the server's answer. */
-    mutate: (messageId) => fileAndRefresh(
+    mutate: (messageId, pressId) => fileAndRefresh(
       restoreDispatch(
-        (id) => engine.restoreFromTrash(id),
+        (id, opts) => engine.restoreFromTrash(id, opts),
         (restoreTo) => toast(t("trash.toastRestoringTo", { place: placeLabel(restoreTo) })),
-      )(messageId),
+      )(messageId, pressId),
     ),
     toast,
     copy: {
@@ -1574,8 +1574,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
        answer the palette row and the chord read, so the surface cannot offer a verb whose
        replay would be dropped. */
     engine.trashAvailable()
-      ? (messageId) => fileAndRefresh(
-          restoreDispatch((id) => engine.restoreFromTrash(id))(messageId),
+      ? (messageId, pressId) => fileAndRefresh(
+          /* THE PRESS ID IS THE REPLAY'S WHOLE POINT HERE: this dispatch runs at the next launch
+             for a press whose response was lost, so it goes out under that press's own key and
+             the server answers it as already applied instead of "not in Trash". */
+          restoreDispatch((id, opts) => engine.restoreFromTrash(id, opts))(messageId, pressId),
         )
       : undefined,
   );
