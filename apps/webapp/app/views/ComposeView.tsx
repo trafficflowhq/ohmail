@@ -54,6 +54,7 @@ import { displayAddress } from "../shell/idn";
 import { canSend, sendStateFor, sendVerb, type SendState } from "../shell/mail-send";
 import { RichEditor } from "../shell/RichEditor";
 import { SendStatus } from "../shell/SendStatus";
+import { HeldSendResolve } from "../components/HeldSendResolve";
 import {
   RecipientField,
   ccBccOpen,
@@ -104,6 +105,7 @@ export function ComposeView({
   onSend,
   onSendLater,
   onCancel,
+  heldResolve = null,
 }: {
   engine: OhmailEngine;
   draft: EngineDraft | null;
@@ -184,6 +186,18 @@ export function ComposeView({
    * whether there is anything worth asking about — see `cancel` below.
    */
   onCancel: () => void;
+  /**
+   * THE HELD SEND'S WAY OUT, or `null` when this form holds no unconfirmed row.
+   *
+   * The composer showed the sentence and offered nothing to do about it, so the only exit was to
+   * go to the Drafts list and answer there. Same component and same words as that row's — see
+   * `HeldSendResolve`. `null` for a held message with no row of its own (pressed before the first
+   * save), which has nothing the server could resolve.
+   */
+  heldResolve?: {
+    draftId: string;
+    onResolve: (draftId: string, outcome: "arrived" | "not_arrived") => void;
+  } | null;
 }) {
   const t = useTranslations("compose");
   const toast = useToast();
@@ -1086,6 +1100,11 @@ export function ComposeView({
             </div>
 
             <SendStatus send={shown} scope="compose" />
+            {/* THE VERBS, off the SAME narrowed state the sentence renders from: an unresolved send
+                that does not name this message says nothing here, so it offers no answer either. */}
+            {heldResolve !== null && shown.phase === "unverified" ? (
+              <HeldSendResolve draftId={heldResolve.draftId} onResolve={heldResolve.onResolve} />
+            ) : null}
           </div>
         </div>
       </div>

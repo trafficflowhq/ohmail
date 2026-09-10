@@ -8062,6 +8062,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                 onSend={sendCompose}
                 onSendLater={sendCompose}
                 onCancel={cancelCompose}
+                /* THE HELD COMPOSE'S WAY OUT — the row this form is holding, and the same
+                   callback the Drafts list's verbs dispatch. A held message with no row of its
+                   own has nothing the server could resolve. */
+                heldResolve={((): { draftId: string; onResolve: typeof resolveHeldSend } | null => {
+                  const row = readComposeRow();
+                  return row === null ? null : { draftId: row, onResolve: resolveHeldSend };
+                })()}
               />
             ) : null}
 
