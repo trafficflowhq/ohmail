@@ -7,7 +7,7 @@ import {
 } from "@trafficflow/db";
 import { makeOwnedDb, makeChangeWakeHub, type OwnedDb, type ChangeWakeFanout } from "@trafficflow/db/cloud";
 import {
-  makeAiCreditGate, withSetupPool,
+  makeLocalEntitlements,
   runAlertPass,
   webhookAlertSink,
   resendAlertSink,
@@ -38,7 +38,6 @@ import {
   runCreditRollupPass, isNightlyRollupSlot,
   CREDIT_ROLLUP_HOURLY_DAYS, CREDIT_ROLLUP_NIGHTLY_DAYS,
   makeAiUsageRecorder,
-  type AiCreditGate,
   type AlertSink,
   type AlertSinkHealth,
   type AttachmentStagingStorage,
@@ -1244,61 +1243,25 @@ export async function startWorkerWithLock(
       return Math.min(retryBaseMs * 2 ** Math.max(0, attempts - 1), retryMaxMs);
     }
 
-    // ── The AI spend gates ──────────────────────────────────────────────────────────
+    // ── THE AI SPEND PORT ───────────────────────────────────────────────────────────────
     //
-    // One gate per (account, reason), memoised, because a gate carries the small set of
-    // "sources I charged" that tells a refund apart from a giveaway — rebuilding it per
-    // cycle would throw that away and a refund after a model failure would silently do
-    // nothing. Keyed by account and NEVER by config: this process serves every enabled
-    // mailbox in its shard, so one worker meters many customers.
+    // ONE for the process, where there were three memoised gate factories: a `debit_classify`
+    // gate for ingest, a second `debit_classify` gate with the exclusive claim and the setup-pool
+    // wrapper for the Screener's cron half, and a `debit_workflow` gate for workflow steps. Each
+    // call site's terms had to be composed here, correctly, and the api host had to compose the
+    // same two for the Screener from its own code — a host that got one wrong gave that call site
+    // another's terms, which is how setup-funded Screener spends once skipped the claim entirely.
+    // Now the call site names its ACTION and the terms come from `SPEND_ACTIONS`.
     //
-    // The gates are wired UNCONDITIONALLY, before any live model is. That ordering is the
-    // point: metering must exist before the spend does, not after — the
-    // opposite order is a deployment where customers are charged and nothing limits what
-    // they cost. Today `config.classifier` does not exist and `config.drafter` is usually
-    // absent, so these gates run against branches that do not fire yet; the day a model is
-    // wired, the meter is already there.
-    const gates = new Map<string, AiCreditGate>();
-    function gateFor(
-      accountId: string,
-      reason: "debit_classify" | "debit_workflow",
-      opts: { exclusive?: boolean } = {},
-    ): AiCreditGate {
-      const key = `${reason}:${opts.exclusive ? "x:" : ""}${accountId}`;
-      let gate = gates.get(key);
-      if (!gate) {
-        gate = makeAiCreditGate(db as unknown as Tx, accountId, { reason, ...opts });
-        gates.set(key, gate);
-      }
-      return gate;
-    }
-    const classifyGateFor = (accountId: string): AiCreditGate => gateFor(accountId, "debit_classify");
-    const workflowGateFor = (accountId: string): AiCreditGate => gateFor(accountId, "debit_workflow");
-    /**
-     * THE AUTO-SUGGEST PASS'S OWN GATE — same `debit_classify` reason, `exclusive: true`, and a
-     * SEPARATE instance from `classifyGateFor` (hence the `x:` in the memo key).
-     *
-     * The exclusivity has to be per CALL SITE and not per reason, which is why this is not one
-     * more flag on the shared gate. The ingest pipeline charges `debit_classify` too, and it is
-     * deliberately NOT exclusive in this change: its loser path is "file the message on rules
-     * alone", a routing decision with its own consequences, and trading a measured money defect
-     * for an unmeasured routing one is not a fix. This pass's loser path is "skip the candidate,
-     * the API is buying it" — nothing at all.
-     *
-     * What it closes is the double-charge that needs no unusual behaviour from
-     * anybody: this pass and a person pressing Suggest select the same representative held
-     * message by construction, so cron and press racing one sender is an everyday event on any
-     * opted-in account. Both sides now take the claim on the same ledger source, which is what
-     * makes them exclude each other rather than merely deduplicate.
-     */
-    const screenerAutoGateFor = (accountId: string): AiCreditGate =>
-      // `withSetupPool` — the cron half of the Screener draws the same screening-only setup
-      // pool as the request path, BEFORE the main balance, over the SAME memoized inner gate
-      // (so the exclusive claim and the in-process refund marker stay one instance per
-      // account). No other worker gate wears the wrapper: that is what scopes the pool to
-      // screening.
-      withSetupPool(db as unknown as Tx, accountId,
-        gateFor(accountId, "debit_classify", { exclusive: true }));
+    // The per-account memo is gone with them, and nothing is lost: it existed because a gate
+    // instance carried the "sources I charged" marker that told a refund from a giveaway, and the
+    // port answers that with `ok.attempt` — the caller keeps the attempt it was told it charged
+    // and names it when reversing. That works across a process restart and across a network hop,
+    // which the marker never could.
+    //
+    // Composed UNCONDITIONALLY, before any live model is, for the reason the gates were: metering
+    // must exist before the spend does, not after.
+    const entitlements = makeLocalEntitlements({ db: db as unknown as Tx });
 
     // ── The LIVE classifier, behind a per-process circuit breaker ─────────────────────
     //
@@ -1337,13 +1300,12 @@ export async function startWorkerWithLock(
       : undefined;
     /** The classifier + gate pair for one mailbox's cycle. */
     function aiFor(mailboxId: string, accountId: string): Pick<SyncDeps, "classifier" | "credits"> {
-      const gate = classifyGateFor(accountId);
-      if (!classifierCircuit) return { credits: gate };
+      if (!classifierCircuit) return { credits: entitlements };
       return {
         classifier: classifierCircuit.port(),
-        // The metered gate is what teaches the circuit which ledger attempt it charged, so a
+        // The metered port is what teaches the circuit which ledger attempt it charged, so a
         // trip can refund the message it just abandoned. See `ai-circuit.ts`.
-        credits: classifierCircuit.meter(mailboxId, gate),
+        credits: classifierCircuit.meter(mailboxId, entitlements),
       };
     }
 
@@ -2669,7 +2631,7 @@ export async function startWorkerWithLock(
           // actually run. `stopped` is deliberately NOT part of it: a graceful shutdown lets
           // in-flight writes complete, exactly as before.
           fence: makeSyncWriteFence(db, mb.mailboxId, fence, () => lockLost),
-          credits: classifyGateFor(mb.accountId),
+          credits: entitlements,
           // Whose `Authentication-Results` this mailbox may believe, resolved from the
           // SAME host string the adapter above dials. Empty for every provider the table does
           // not name, which routes exactly as before this field existed; for Gmail/Microsoft it
@@ -5010,7 +4972,7 @@ export async function startWorkerWithLock(
           // `sensitiveBackfillPass` gets, for the same reason.
           await workflowDrainPass(
             db as unknown as Tx,
-            { drafter: config.drafter ?? unconfiguredDrafter, credits: workflowGateFor(accountId), accountId },
+            { drafter: config.drafter ?? unconfiguredDrafter, credits: entitlements, accountId },
             nowTick,
           );
         } catch (err) {
@@ -5306,10 +5268,11 @@ export async function startWorkerWithLock(
       // makes the ledger's `classify:screener:<message_id>` source a real duplicate check across
       // this pass, the client's on-open batch and the manual ladder.
       //
-      // It is a DIFFERENT gate instance from `classifyGateFor`, though — `screenerAutoGateFor`,
-      // which is exclusive. A duplicate check was never enough here: it makes the second buyer of
-      // one message free and cannot make it not happen, so this pass and a user pressing Suggest
-      // both reached the model for one credit. See that function.
+      // The `screener` ACTION, though, not the ingest one: the same ledger reason on different
+      // terms — an exclusive claim, and the mailbox's screening-only setup grant drawn first. A
+      // duplicate check was never enough here, because it makes the second buyer of one message
+      // free and cannot make it not happen, so this pass and a user pressing Suggest both reached
+      // the model for one credit. Both come from `SPEND_ACTIONS.screener` now.
       for (const accountId of passAccounts) {
         if (stopped) return;
         try {
@@ -5322,7 +5285,7 @@ export async function startWorkerWithLock(
             {
               accountId, log,
               classifier: classifierCircuit?.port(),
-              credits: screenerAutoGateFor(accountId),
+              credits: entitlements,
               ...(screening.ohboxBar ? { ohboxBar: screening.ohboxBar } : {}),
             },
           );

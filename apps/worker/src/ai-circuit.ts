@@ -1,4 +1,4 @@
-import type { AiCreditGate } from "@trafficflow/db/cloud";
+import type { SpendPort } from "@trafficflow/db";
 import { ClassifierFaultError } from "./classifier-fault.js";
 import { SensitivePayloadRefusal } from "@trafficflow/core";
 import type { ClassifierPort, ClassifierInput, ClassifierResult, Logger } from "@trafficflow/core";
@@ -129,18 +129,25 @@ export interface ClassifierCircuit {
    */
   port(): ClassifierPort | undefined;
   /**
-   * Wrap this mailbox's account gate so the circuit learns which ledger attempt it charged.
+   * Wrap this mailbox's spend port so the circuit learns which ledger attempt it charged.
    *
-   * Calls `spend()` rather than `tryDebit()` — they are the same decision, but only `spend`
-   * reports `charged` and the `attempt` string, and both are needed to refund exactly the work
-   * that gets abandoned when the circuit trips.
+   * The wrapper only OBSERVES: it forwards the call unchanged and records the attempt when the
+   * answer says this call moved money. `attempt` is what a reversal must name, and the port
+   * carries it precisely because there is no in-process marker to consult across a hop.
    */
-  meter(mailboxId: string, gate: AiCreditGate): AiCreditGate;
+  meter(mailboxId: string, port: SpendPort): SpendPort;
   state(): ClassifierCircuitState;
 }
 
 /** One open charge this process made and has not yet seen delivered. */
-interface OpenCharge { gate: AiCreditGate; attempt: string }
+interface OpenCharge {
+  port: SpendPort;
+  accountId: string;
+  /** The BARE key, which a release must carry — the claim is per work, not per attempt. */
+  attemptKey: string;
+  /** What the port said it charged. A reversal names this and never the key. */
+  attempt: string;
+}
 
 export function makeClassifierCircuit(
   inner: ClassifierPort,
@@ -165,10 +172,12 @@ export function makeClassifierCircuit(
   function refundOpenCharges(reason: string): void {
     for (const [mailboxId, charge] of openCharges) {
       // Never awaited: this runs inside a classify failure path whose job is to rethrow, and a
-      // refund is best-effort by design (`refundAttempt` never throws, and an un-refunded
-      // charge is recoverable while a delayed rethrow is not). Exactly-once is enforced in the
-      // database, not by this call site.
-      void charge.gate.refundAttempt(charge.attempt, { mailboxId, reason });
+      // reversal is best-effort by design (an un-refunded charge is recoverable while a delayed
+      // rethrow is not). Exactly-once is enforced in the database, not by this call site.
+      void charge.port.release(charge.accountId, {
+        action: "classify_ingest", attemptKey: charge.attemptKey,
+        refund: true, attempt: charge.attempt, meta: { mailboxId, reason },
+      });
       log?.warn("classify_charge_refunded", { mailboxId, attempt: charge.attempt, reason });
     }
     openCharges.clear();
@@ -336,17 +345,21 @@ export function makeClassifierCircuit(
       return wrapper;
     },
 
-    meter(mailboxId: string, gate: AiCreditGate): AiCreditGate {
+    meter(mailboxId: string, port: SpendPort): SpendPort {
       return {
-        ...gate,
-        async tryDebit(source, meta) {
-          const outcome = await gate.spend(source, meta);
-          if (outcome.permitted && outcome.charged) {
+        ...port,
+        async spend(accountId, action, attemptKey, meta) {
+          const outcome = await port.spend(accountId, action, attemptKey, meta);
+          if (outcome.verdict === "ok") {
             // Record it BEFORE the model runs. If the model then faults us into a trip, this is
-            // the attempt whose money has to come back.
-            openCharges.set(mailboxId, { gate, attempt: outcome.attempt });
+            // the attempt whose money has to come back. Only `ok` — a `duplicate` charged
+            // nothing, and reversing its attempt would hand back a charge for work that may
+            // already have been delivered.
+            openCharges.set(mailboxId, {
+              port, accountId, attemptKey, attempt: outcome.attempt,
+            });
           }
-          return outcome.permitted;
+          return outcome;
         },
       };
     },

@@ -1,9 +1,9 @@
 import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import {
   accountSettings, folderState, messages,
-  screenerLedgerSource, storeScreenerSuggestion,
+  screenerAttemptKey, storeScreenerSuggestion,
   screenerSuggestedSenderExists, hasScreenerSuggestionForSender, AI_ACTION_WEIGHTS,
-  type AiCreditGate, type Tx,
+  type SpendPort, type Tx,
 } from "@trafficflow/db";
 import { askScreeningQuestion, silentLogger, type ClassifierPort, type Logger } from "@trafficflow/core/mail";
 
@@ -126,7 +126,7 @@ import { askScreeningQuestion, silentLogger, type ClassifierPort, type Logger } 
 
    What is left here is selection and pacing, which is genuinely this pass's own: the watermark,
    the cap, and stopping on the first refusal. The ledger source is shared too
-   (`screenerLedgerSource`), which is what makes a double-buy impossible rather than unlikely —
+   (`screenerAttemptKey`), which is what makes a double-buy impossible rather than unlikely —
    the same message bought by the client's batch and by this pass in the same minute answers
    `duplicate` on the second `spend`, charges nothing, and the stored row makes the second one
    never reach the model at all.
@@ -214,7 +214,7 @@ export interface ScreenerAutoSuggestDeps {
    * that this host has no ledger — this is the only thing in the product that spends without a
    * press, so "we did not supply one" is not a state it may operate in.
    */
-  credits?: AiCreditGate;
+  credits?: SpendPort;
   /**
    * **A HOST DECLARING THAT NOTHING HERE IS METERED, which is not the same as omitting the gate.**
    *
@@ -327,7 +327,9 @@ export async function screenerAutoSuggestPass(
     // account spend" in the codebase, and the day somebody wired it to the hosted side by mistake
     // nothing would refuse. `charged` stays 0 there, which is the truth — a standalone install
     // moves no credits because it has none.
-    const source = screenerLedgerSource(c.messageId);
+    // The BARE key: the MESSAGE. It is what makes this pass and a person's press claim the same
+    // work, and what makes the next cycle's ask over the same mail free.
+    const attemptKey = screenerAttemptKey(c.messageId);
     /**
      * THE ATTEMPT THIS CANDIDATE CHARGED, when it charged one — what the reversal below must name.
      *
@@ -337,8 +339,16 @@ export async function screenerAutoSuggestPass(
      * to serve for free.
      */
     let chargedAttempt: string | undefined;
+    /** Give the claim back; reverse the charge only when told to. */
+    const releaseClaim = async (refund: boolean): Promise<void> => {
+      if (!gate) return;
+      const meta = { messageId: c.messageId };
+      await gate.release(accountId, refund && chargedAttempt !== undefined
+        ? { action: "screener", attemptKey, refund: true, attempt: chargedAttempt, meta }
+        : { action: "screener", attemptKey, refund: false, meta });
+    };
     if (gate) {
-      const outcome = await gate.spend(source, { messageId: c.messageId });
+      const outcome = await gate.spend(accountId, "screener", attemptKey, { messageId: c.messageId });
       // ── SOMEBODY IS ALREADY BUYING THIS ONE: SKIP THE CANDIDATE, NOT THE PASS ─────────────
       //
       // `continue`, where every other refusal below `break`s, and the difference is the whole
@@ -354,25 +364,25 @@ export async function screenerAutoSuggestPass(
       // `selectCandidates` filters out messages that have one — so the next cycle simply does not
       // see this candidate again. And it is NOT counted in `stopped`, because the pass was not
       // stopped and reporting it as such would make a healthy cycle read as a refusal.
-      if (!outcome.permitted && outcome.refusal === "inflight") {
+      if (outcome.verdict === "inflight") {
         log.info("screener_auto_suggest_inflight", { accountId, messageId: c.messageId });
         continue;
       }
-      if (!outcome.permitted) {
+      if (outcome.verdict !== "ok" && outcome.verdict !== "duplicate") {
         // FIRST REFUSAL STOPS THE ACCOUNT'S PASS FOR THIS CYCLE. Every remaining candidate would be
         // refused for the same reason — the balance, the subscription state, or the ledger — so
         // continuing would be N useless round trips per cycle, for ever, on every empty account.
         // One refused call per opted-in account per cycle is the bound this gives.
-        result.stopped = outcome.refusal === "quantity"
+        result.stopped = outcome.verdict === "insufficient"
           ? "out_of_credits"
-          : outcome.refusal === "state" && outcome.reason === "ai_disabled"
+          : outcome.verdict === "refused" && outcome.reason === "ai_disabled"
             ? "ai_disabled"
             : "spend_unavailable";
         break;
       }
       // Recorded, not yet counted: `result.charged` is added to below, once this candidate is past
       // the entitlement re-check, because a charge that is handed straight back moved nothing.
-      if (outcome.charged) chargedAttempt = outcome.attempt;
+      if (outcome.verdict === "ok") chargedAttempt = outcome.attempt;
     }
 
     // ── THE ENTITLEMENT, RE-ASKED INSIDE THE EXCLUSIVE REGION (SEC3-MONEY-1, SEC3-MONEY-3) ────
@@ -402,9 +412,11 @@ export async function screenerAutoSuggestPass(
       if (chargedAttempt !== undefined) {
         log.info("screener_auto_suggest_sender_already_advised",
           { accountId, messageId: c.messageId, refunded: chargedAttempt });
-        await gate?.refundAttempt(chargedAttempt, { messageId: c.messageId, reason: "sender_already_advised" });
       }
-      await gate?.release?.(source);
+      // One call gives the claim back AND reverses the charge, if this pass made one. The
+      // reversal names the attempt this pass was told it charged, which is the stronger claim
+      // than any in-process marker: exactly-once is the ledger's, so a retry cannot pay twice.
+      await releaseClaim(true);
       continue;
     }
     // `+= the weight` and not `++`: the field is credits, and `spend()` moves that many per
@@ -445,7 +457,7 @@ export async function screenerAutoSuggestPass(
       // The claim goes back before the pass stops, for the reason the request path gives: the
       // charge stands and buys a free retry next cycle, and a claim left behind would make that
       // retry wait out the TTL first.
-      await gate?.release?.(source);
+      await releaseClaim(false);
       result.stopped = "model_unavailable";
       break;
     }
@@ -462,7 +474,7 @@ export async function screenerAutoSuggestPass(
     // window with no suggestion on record and nothing holding the source, and a request landing
     // in it would be told `duplicate` — already paid for, proceed — and call the model a second
     // time. That is the defect this claim exists to stop, narrower and harder to see.
-    await gate?.release?.(source);
+    await releaseClaim(false);
     result.bought++;
   }
 

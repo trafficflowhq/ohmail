@@ -1,6 +1,7 @@
 import { type Tx } from "@trafficflow/db";
 import { makeOwnedDb } from "@trafficflow/db/cloud";
-import { ledgerSources, makeAiCreditGate, type AiCreditGate } from "@trafficflow/db/cloud";
+import { makeLocalEntitlements } from "@trafficflow/db/cloud";
+import type { SpendPort } from "@trafficflow/db";
 import { generateProposals, silentLogger, unconfiguredProposer, type Logger, type WorkflowPort } from "@trafficflow/core";
 import { selectionOf, type WorkerConfig } from "./config.js";
 import { acquireLeaderLock, leaderLockKeyFor } from "./leader-lock.js";
@@ -36,11 +37,15 @@ export async function proposalGeneratePass(
      * transaction whose first act is to DELETE the account's open proposals — degrading to
      * "wipe the suggestions you already had" is a worse experience than showing yesterday's.
      */
-    credits?: AiCreditGate;
+    credits?: SpendPort;
   },
   now: Date = new Date(),
 ): Promise<{ generated: number }> {
-  const creditSource = ledgerSources.propose(proposalRunId(deps.accountId, now));
+  // The BARE key: the pass's own identity, `<accountId>:<UTC hour>`. Bucketing by the hour is
+  // what makes a crash-retry free and a deliberate re-run in a later bucket honest.
+  const attemptKey = proposalRunId(deps.accountId, now);
+  /** What a reversal must name, when this pass charged one. */
+  let chargedAttempt: string | null = null;
   try {
     const stored = await generateProposals(db, deps.accountId, {
       port: deps.port,
@@ -50,9 +55,15 @@ export async function proposalGeneratePass(
       // never charged) and before the model is called (so revenue precedes token spend). A
       // `false` here abandons the pass without deleting the account's open proposals.
       authorize: deps.credits
-        ? (patterns) => deps.credits!.tryDebit(creditSource, {
-            accountId: deps.accountId, patterns: patterns.length,
-          })
+        ? async (patterns): Promise<boolean> => {
+            const outcome = await deps.credits!.spend(
+              deps.accountId, "propose", attemptKey, { patterns: patterns.length });
+            // `ok` charged this pass, `duplicate` found it already paid for — both proceed. A
+            // refusal, an overlap and a fault all abandon the pass without deleting the
+            // account's open proposals, which is what `false` does here.
+            if (outcome.verdict === "ok") chargedAttempt = outcome.attempt;
+            return outcome.verdict === "ok" || outcome.verdict === "duplicate";
+          }
         : undefined,
     });
     return { generated: stored.length };
@@ -65,7 +76,13 @@ export async function proposalGeneratePass(
     // it. The refund closes the attempt, so a re-run inside the same bucket pays afresh rather
     // than being served free. A no-op when nothing was charged (an empty-pattern pass never
     // reached the gate).
-    await deps.credits?.refund(creditSource, { accountId: deps.accountId });
+    // Only an attempt THIS pass charged. A `duplicate` names an earlier pass's attempt, whose
+    // proposals may well have been delivered; a pass that never reached the gate charged nothing.
+    if (deps.credits) {
+      await deps.credits.release(deps.accountId, chargedAttempt === null
+        ? { action: "propose", attemptKey, refund: false }
+        : { action: "propose", attemptKey, refund: true, attempt: chargedAttempt });
+    }
     throw err;
   }
 }
@@ -122,14 +139,17 @@ export async function runProposalCron(
     // reaches no model would be charging for nothing — the one bill the ledger could never
     // explain.
     const metered = config.proposer != null;
+    // Composed once, beside the handle it answers from. See the local adapter for why the port
+    // holds its own handle rather than taking a caller's transaction.
+    const entitlements = makeLocalEntitlements({ db: db as unknown as Tx });
     let generated = 0;
     for (const accountId of await loadServedAccounts(db, selectionOf(config))) {
       try {
         const res = await proposalGeneratePass(db as unknown as Tx, {
           accountId, port,
-          credits: metered
-            ? makeAiCreditGate(db as unknown as Tx, accountId, { reason: "debit_propose" })
-            : undefined,
+          // ONE port for the invocation; the account is an argument to the spend and the terms
+          // come from `SPEND_ACTIONS.propose`.
+          ...(metered ? { credits: entitlements } : {}),
         }, now);
         generated += res.generated;
       } catch (err) {

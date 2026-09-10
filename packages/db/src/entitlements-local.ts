@@ -4,6 +4,7 @@ import { isSuspended } from "./suspension.js";
 import { makeAiCreditGate } from "./ai-gate.js";
 import { withSetupPool } from "./setup-grant.js";
 import { SPEND_ACTIONS, sourceFor } from "./ledger-source.js";
+import { UNMETERED_ACCESS } from "./entitlements-port.js";
 import type { AiCreditGate, AiRefusalReason } from "./ai-gate-port.js";
 import type { Tx } from "./change-log.js";
 import type {
@@ -95,19 +96,34 @@ export function makeLocalEntitlements(cfg: LocalEntitlementsConfig): Entitlement
      */
     async access(accountId: string): Promise<AccessVerdict> {
       const at = now();
-      const sub = await effectiveSubscriptionOf(cfg.db, accountId);
-      const balance = await balanceOf(cfg.db, accountId);
-      const suspended = await isSuspended(cfg.db, accountId);
-      const ent = entitlementsFor({ sub, balance, suspended, now: at });
-      return {
-        ok: true,
-        limits: {
-          mailboxes: ent.mailboxLimit,
-          storageBytes: ent.storageBytesLimit,
-          canAddMailbox: ent.canAddMailbox,
-          aiEnabled: ent.aiEnabled,
-        },
-      };
+      try {
+        const sub = await effectiveSubscriptionOf(cfg.db, accountId);
+        const balance = await balanceOf(cfg.db, accountId);
+        const suspended = await isSuspended(cfg.db, accountId);
+        const ent = entitlementsFor({ sub, balance, suspended, now: at });
+        return {
+          ok: true,
+          limits: {
+            mailboxes: ent.mailboxLimit,
+            storageBytes: ent.storageBytesLimit,
+            canAddMailbox: ent.canAddMailbox,
+            aiEnabled: ent.aiEnabled,
+          },
+        };
+      } catch (err) {
+        // FAIL OPEN, and never throw: `access` is consulted in front of mail reads, and the port
+        // states that a fault answers with the last verdict this process saw or, with none,
+        // unbounded. These three reads had no catch at all, so a dropped ledger connection came
+        // out of the port as a 500 on every mail read — the one direction the contract forbids,
+        // because it turns a billing blip into every customer's inbox going dark.
+        //
+        // There is no last-known verdict to fall back to here by design: this adapter reads the
+        // same database the request itself is using, so a fault means the whole request is
+        // already failing on its own terms and a cache would only hide which one. The operator is
+        // told by name instead.
+        cfg.onError?.(err, { phase: "debit", accountId, source: "access" });
+        return UNMETERED_ACCESS;
+      }
     },
 
     /**

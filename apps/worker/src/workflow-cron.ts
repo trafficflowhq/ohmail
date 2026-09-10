@@ -1,7 +1,8 @@
 import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
 import { workflowRuns, workflows as workflowsTbl, type Tx } from "@trafficflow/db";
 import { makeOwnedDb } from "@trafficflow/db/cloud";
-import { makeAiCreditGate, type AiCreditGate } from "@trafficflow/db/cloud";
+import { makeLocalEntitlements } from "@trafficflow/db/cloud";
+import type { SpendPort } from "@trafficflow/db";
 import { WorkflowExecutor, silentLogger, type DraftPort, type Logger, type WorkflowTrigger } from "@trafficflow/core";
 import { selectionOf, type WorkerConfig } from "./config.js";
 import { acquireLeaderLock, leaderLockKeyFor } from "./leader-lock.js";
@@ -44,7 +45,7 @@ export interface WorkflowDrainDeps {
    * "write a reply" has no rules-only fallback, and marking a step done that never ran would
    * be a silent AI action — nothing may act on mail without the user having decided it.
    */
-  credits?: AiCreditGate;
+  credits?: SpendPort;
   /** Scope the drain to ONE account — the worker loops its served accounts. Omitted ⇒ all accounts. */
   accountId?: string;
 }
@@ -349,6 +350,8 @@ export async function runWorkflowCron(
   try {
     const now = new Date();
     let drained = 0;
+    // ONE port for this invocation — it answers on its own handle, per the local adapter.
+    const entitlements = makeLocalEntitlements({ db: db as unknown as Tx });
     for (const accountId of await loadServedAccounts(db, selectionOf(config))) {
       try {
         // Enqueue any due time-triggered runs FIRST, then drain them this same pass.
@@ -357,8 +360,9 @@ export async function runWorkflowCron(
           db as unknown as Tx,
           {
             drafter: config.drafter ?? unconfiguredDrafter,
-            // One gate per account, built from the account this pass is scoped to.
-            credits: makeAiCreditGate(db as unknown as Tx, accountId, { reason: "debit_workflow" }),
+            // ONE port for the pass, not a gate per account: the account is an argument to the
+            // spend, and the step's terms come from `SPEND_ACTIONS.workflow`.
+            credits: entitlements,
             accountId,
           },
           now,
