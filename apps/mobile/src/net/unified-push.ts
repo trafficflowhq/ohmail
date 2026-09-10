@@ -1,3 +1,4 @@
+import { Platform } from "react-native";
 import type { UnifiedPushDistributor, WakeRegistration } from "./push";
 
 /**
@@ -21,11 +22,11 @@ import type { UnifiedPushDistributor, WakeRegistration } from "./push";
  * loads, answers "no distributor", and the app shows the sentence it already had for a phone without
  * one. A top-level import would take the whole Settings screen down on every iPhone.
  *
- * There is deliberately no `Platform.OS` check in front of it. Two reasons, and the second is the
- * one that decided it: the throw is caught and CACHED, so a platform test would save one exception
- * for the life of the process; and importing `react-native` here would pull its Flow-typed source
- * into every test that touches this file, which the test runner cannot parse — measured, not
- * guessed. The try/catch is the platform check, and it is one the tests can actually execute.
+ * THE TRY/CATCH IS NOT THE PLATFORM CHECK, and believing it was cost every iOS launch. Metro's
+ * `require` catches a module-init throw itself and hands it to `ErrorUtils.reportFatalError`
+ * instead of re-throwing, so the `catch` below never runs and the app dies at the red screen with
+ * `Cannot find native module 'ExpoUnifiedPush'`. The platform test therefore comes BEFORE the
+ * require, in {@link native} — the one point every function below reaches the module through.
  *
  * ── WHAT THE CONNECTOR'S API ACTUALLY LOOKS LIKE, BECAUSE IT IS NOT THE OBVIOUS SHAPE ─────────
  *
@@ -90,6 +91,11 @@ let cached: NativeApi | null | undefined;
 function native(): NativeApi | null {
   if (cached !== undefined) return cached;
   cached = null;
+  // UnifiedPush is an Android ecosystem, and `expo-unified-push` is correctly absent from Apple
+  // autolinking — so on iOS the require below is a module-init throw that metro turns into a fatal
+  // error before this function's `catch` can see it (see the header). Answering "no native module"
+  // here is the same answer the catch was meant to give, arrived at without throwing.
+  if (Platform.OS !== "android") return cached;
   // Metro gives every module a `require`; a plain node/test context may not. Checking rather than
   // assuming is what makes the "no native module" branch the one every test executes, instead of a
   // ReferenceError dressed as a missing module.
