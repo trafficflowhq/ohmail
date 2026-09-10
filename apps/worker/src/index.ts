@@ -2164,6 +2164,8 @@ export async function startWorkerWithLock(
            the lapse bound above records the release when the claim stops being renewed. */
         const released = await releaseMailboxClaim(
           rt.adapter, organizerInstallId, rt.mailboxId, rt.leaseNonce,
+          // The CONFIGURED window, so the stale term and every other reader of this folder agree.
+          ...(organizerStaleAfterMs !== undefined ? [{ staleAfterMs: organizerStaleAfterMs }] : []),
         );
         if (released > 0) {
           log.info("organizer_claim_released", {

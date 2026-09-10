@@ -765,9 +765,12 @@ async function releaseOwnClaim(
   nonce: string | null,
   log: Diagnostic,
   reason: string,
+  /** The configured window the stale term is measured against — one clock on every tier. */
+  staleAfterMs?: number,
 ): Promise<number | null> {
   try {
-    return await releaseMailboxClaim(adapter, installId, mailboxId, nonce);
+    return await releaseMailboxClaim(adapter, installId, mailboxId, nonce,
+      ...(staleAfterMs !== undefined ? [{ staleAfterMs }] : []));
   } catch (err) {
     log("organizer_claim_release_failed", { err, mailboxId, reason });
     return null;

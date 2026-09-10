@@ -388,8 +388,16 @@ export async function releaseMailboxClaim(
    * gated since launch). It is NOT a licence to delete by id: see the refusal below.
    */
   nonce: string | null,
+  /**
+   * THE STALENESS WINDOW the second term is measured against, and the clock to measure it at.
+   * Absent ⇒ {@link DEFAULT_STALE_AFTER_MS}: one staleness clock on every tier, which is the rule
+   * every other reader of this folder already holds to.
+   */
+  opts: { staleAfterMs?: number; now?: Date } = {},
 ): Promise<number> {
   if (!hasLeaseIo(adapter)) return 0;
+  const staleAfterMs = opts.staleAfterMs ?? DEFAULT_STALE_AFTER_MS;
+  const now = opts.now ?? new Date();
   const io = adapter.leaseIo({ installId, mailboxId });
   /* ── A FULL FOLDER MUST NOT STOP A RELEASE, AND THE ELECTION'S RULE IS NOT THIS ONE ─────────
    *
@@ -451,11 +459,23 @@ export async function releaseMailboxClaim(
   /* `parseClaim` rather than a header grep — one parser, the gate's own, so a folded header
    * cannot be ours to one layer and a stranger's to another. A profile document never parses as
    * a claim, which is what keeps the mailbox's settings out of the expunge below. */
-  const ownRefsIn = (messages: RawClaimMessage[]): unknown[] => messages
-    .map((m) => ({ ref: m.ref, claim: parseClaim(m.raw, m.ref) }))
-    .filter((c) => c.claim !== null && !isMalformed(c.claim)
-      && c.claim.installId === installId && c.claim.nonce === nonce)
-    .map((c) => c.ref);
+  const ownClaimsIn = (messages: RawClaimMessage[]): OrganizerClaim[] => messages
+    .map((m) => parseClaim(m.raw, m.ref))
+    .filter((c): c is OrganizerClaim =>
+      c !== null && !isMalformed(c) && c.installId === installId);
+  /**
+   * OLD ENOUGH THAT NOTHING IS RENEWING IT. `<=` at the boundary, and no forward clamp: a
+   * heartbeat in the future is not stale, which is the safe direction — a claim we cannot age out
+   * is one we leave alone.
+   */
+  const stale = (c: OrganizerClaim): boolean =>
+    c.heartbeat.getTime() <= now.getTime() - staleAfterMs;
+  /** OUR CLAIM, or a STRANDED record of ours — the two terms of one address. */
+  const releasableIn = (messages: RawClaimMessage[]): OrganizerClaim[] =>
+    ownClaimsIn(messages).filter((c) => c.nonce === nonce || stale(c));
+  /** A record of ours this install cannot name AND cannot age out: a LIVE sibling lineage. */
+  const unnameableIn = (messages: RawClaimMessage[]): OrganizerClaim[] =>
+    ownClaimsIn(messages).filter((c) => c.nonce !== nonce && !stale(c));
 
   /* ── A RELEASE IS ADDRESSED BY (INSTALL, NONCE), NOT BY INSTALL ALONE ──────────────────────
    *
@@ -477,26 +497,47 @@ export async function releaseMailboxClaim(
    * so. A live sibling is caught one layer earlier anyway: the election reads a same-id foreign
    * nonce as a clone and stands this install down before it renews anything.
    */
-  if (nonce === null) {
-    throw new ClaimReleaseError(
-      "nonce_unknown",
-      `this install cannot name the claim it holds in ${META_FOLDER}, so the release is not `
-      + "addressed by install id alone — that would take a sibling lineage's claim. Nothing was "
-      + "removed. Another copy of this computer keeps organizing this mailbox until its claim "
-      + "lapses, and the standing request is honoured by the lapse bound then",
-    );
-  }
+  const found = await locate();
+  const ours = releasableIn(found).map((c) => c.ref);
+  if (ours.length > 0) await io.removeClaims(ours);
 
-  const ours = ownRefsIn(await locate());
-  if (ours.length === 0) return 0;
-  await io.removeClaims(ours);
-  const remaining = ownRefsIn(await locate());
-  if (remaining.length > 0) {
+  /* ── THE CONFIRM, AND THE ONE RECORD IT MAY NOT CERTIFY OVER ──────────────────────────────
+   *
+   * `removeClaims` proves the uids it was handed are gone; the re-read is what proves nothing of
+   * ours is left. A record of ours that is FRESH and carries a nonce we did not write is a live
+   * sibling lineage — the mailbox is not free, and this install may neither delete it nor report
+   * it away. The refusal keeps its own code so the caller can tell it from a folder it could not
+   * read: the request stands, and the lapse bound records the release if the sibling stops
+   * renewing. */
+  const after = await locate();
+  const left = releasableIn(after);
+  if (left.length > 0) {
     throw new ClaimReleaseError(
       "still_present",
-      `${remaining.length} record(s) of this install's still stand in ${META_FOLDER} after the `
-      + `delete removed ${ours.length} — the folder moved under the release, so it is not `
+      `${left.length} releasable record(s) of this install's still stand in ${META_FOLDER} after `
+      + `the delete removed ${ours.length} — the folder moved under the release, so it is not `
       + "confirmed and the next pass locates afresh",
+    );
+  }
+  /* ── AND IT REFUSES ONLY WHEN IT ACCOMPLISHED NOTHING ─────────────────────────────────────
+   *
+   * This threw whenever an unnameable record stood, and that conflated two questions the rest of
+   * this file keeps apart: "did THIS install give up its claim" — which the count answers, and
+   * which is true even with a live sibling beside it — and "is the mailbox free", which is the
+   * PEEK's to decide at the caller and which correctly withholds the row's stamp on any live
+   * holder. Throwing over a completed release told the caller its own claim still stood.
+   *
+   * So the refusal is for the case where there was nothing this install could name or age out and
+   * something of its id is still being renewed: nothing happened, and saying `0` would read as
+   * "our claim was not there". */
+  const unnameable = unnameableIn(after);
+  if (ours.length === 0 && unnameable.length > 0) {
+    throw new ClaimReleaseError(
+      "nonce_unknown",
+      `${unnameable.length} record(s) in ${META_FOLDER} carry this install's id under a nonce it `
+      + "did not write and are still being renewed, so the mailbox is not free and this install "
+      + "may not delete them. Another copy of this computer keeps organizing this mailbox until "
+      + "its claim lapses, and the standing request is honoured by the lapse bound then",
     );
   }
   return ours.length;
