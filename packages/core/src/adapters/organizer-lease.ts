@@ -3932,7 +3932,7 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
    */
   const staleWindowMs = input.staleAfterMs ?? DEFAULT_STALE_AFTER_MS;
   if (staleWindowMs > MAX_FUTURE_SKEW_MS) {
-    // `LEASE-WINDOW-ABOVE-SKEW-CUTOFF`'s honest interim: the believability cutoff is fixed, so a
+    // The honest interim for a window above the cutoff: the cutoff is fixed, so a
     // longer configured window is silently the smaller of the two. Said out loud, never widened.
     log("lease_window_above_skew_cutoff", { staleAfterMs: staleWindowMs, effectiveMs: MAX_FUTURE_SKEW_MS });
   }

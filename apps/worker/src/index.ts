@@ -5,7 +5,6 @@ import {
   messages, folderState, junkSweepCandidateWhere, closeStoodDownAppointments,
   RELEASED_ORGANIZER_SEND_SENTENCE, capabilitiesColumn, exportPendingMovesOnStandDown,
   UNMETERED, isMetered, type EntitlementsComposition,
-  type StandDownExport,
 } from "@trafficflow/db";
 import {
   makeEntitlementsClient, makeOwnedDb, makeChangeWakeHub, type OwnedDb, type ChangeWakeFanout } from "@trafficflow/db/cloud";
@@ -39,7 +38,6 @@ import {
 import { makeDrizzleRepo, mailboxProviderAuthservIds } from "@trafficflow/core/adapters/drizzle-repo";
 import {
   ImapAdapter, ImapConnectionClosedError, WORKER_NET_TIMEOUTS, learnSmtpMaxSize,
-  isImapBoundExceeded,
   type MailboxAdapter,
 } from "@trafficflow/core/adapters/imap";
 import {
@@ -100,8 +98,7 @@ import { recordSmtpMaxSize, smtpSizeDial } from "./smtp-size.js";
 import type { Tx, OrganizerRole, OrganizerState } from "@trafficflow/db";
 import {
   loadEnabledMailboxes, loadMailboxCreds, loadMailboxById, bootstrapEnvCreds,
-  markMailboxFailed, markMailboxReadLimited, markMailboxConnected, markMailboxStoodDown,
-  clearOrganizerStandDown,
+  markMailboxFailed, markMailboxConnected, markMailboxStoodDown, clearOrganizerStandDown,
   markMailboxReleased, refreshOrganizerHolder,
   markMailboxSyncBlocked, clearMailboxSyncBlock,
   classifyMailboxError, mailboxErrorDetail,
@@ -965,16 +962,6 @@ export async function startWorkerWithLock(
      */
     const capDropped = new Map<string, SyncBlock>();
     /**
-     * Mailboxes whose last cycle ended on a ceiling WE set (`ImapBoundExceeded`) — the FOURTH
-     * arm, and the only one whose cause is the mailbox's SIZE rather than our roster.
-     *
-     * At closure scope for `capDropped`'s reason: the entry has to outlive the cycle that wrote
-     * it, or the grace could never elapse. It is dropped by the cycle that next completes, which
-     * is what makes `reconcileSyncBlocks` clear the row on the next healthy pass — the same
-     * mechanism the other three arms use, and the reason this needed no clearing code of its own.
-     */
-    const readLimited = new Map<string, SyncBlock>();
-    /**
      * Record a block, PRESERVING `since` across passes.
      *
      * A catch arm calls this and does nothing else — no I/O, no decision, no threshold. That is
@@ -1292,10 +1279,7 @@ export async function startWorkerWithLock(
     function aiFor(mailboxId: string, accountId: string): Pick<SyncDeps, "classifier" | "credits"> {
       if (!classifierCircuit) return { ...(spend ? { credits: spend } : {}) };
       return {
-        // The SAME mailbox id both halves take: `meter` records this mailbox's charge and the
-        // wrapper clears this mailbox's record on a success. Two different ids there, or one
-        // omitted, is how a success for one mailbox forfeits another's refund.
-        classifier: classifierCircuit.port(mailboxId),
+        classifier: classifierCircuit.port(),
         // The metered port is what teaches the circuit which ledger attempt it charged, so a
         // trip can refund the message it just abandoned. See `ai-circuit.ts`.
         ...(spend ? { credits: classifierCircuit.meter(mailboxId, spend) } : {}),
@@ -1588,10 +1572,7 @@ export async function startWorkerWithLock(
        */
       if (lease.releaseRequestedAt !== null) {
         const removed = await releaseOrganizerClaim(
-          // The nonce this gate's carrier holds. On the ATTACH path no gate has run yet, so it is
-          // `null` and the release refuses rather than deleting by id — the request stands and the
-          // lapse bound below records it once the claim stops being renewed.
-          { mailboxId: mb.mailboxId, accountId: mb.accountId, adapter, leaseNonce: nonce.leaseNonce },
+          { mailboxId: mb.mailboxId, accountId: mb.accountId, adapter },
           "the person asked this install to stop organizing this mailbox and keep reading it",
         );
         /* ══ ZERO CLAIMS REMOVED IS NOT A RELEASE ═════════════════════════════════════════════
@@ -1646,22 +1627,7 @@ export async function startWorkerWithLock(
          * "no peek on this adapter") are all forms of not knowing; this one is knowing.
          */
         let sawLiveHolder = false;
-        /* ── THE PEEK IS NOT GATED ON OUR REMOVAL, AND THAT MATTERS SINCE THE NONCE SCOPE ──────
-         *
-         * It used to sit inside `if (removed !== null)`, on the reading that a failed removal left
-         * nothing to certify. A release addressed by (install, nonce) added a THIRD outcome to
-         * that condition: an install that cannot name its claim refuses, `removed` is `null`, and
-         * the peek never ran — so `sawLiveHolder` stayed false and the lapse bound below stamped
-         * "nothing organizes this mailbox" while another install actively did. Measured, not
-         * reasoned: `release-stranded-claim.test.ts`'s holder case went red in exactly that
-         * direction the moment the refusal was introduced.
-         *
-         * The peek answers a different question from our removal — "is this mailbox free?", not
-         * "did our delete land" — so it is asked whenever the adapter can answer it. `mayMark`
-         * still requires our own removal to have happened, which is the part that was never the
-         * peek's to decide.
-         */
-        {
+        if (removed !== null) {
           const peek = (adapter as Partial<LeasePeekCapableAdapter>).leasePeekIo;
           if (typeof peek === "function") {
             try {
@@ -1685,7 +1651,7 @@ export async function startWorkerWithLock(
                  that; it is an unfinished release, and the next cycle removes it. */
               const live = seen.holders.find((h) => h.fresh);
               sawLiveHolder = live !== undefined;
-              mayMark = removed !== null && live === undefined && seen.unreadable === 0;
+              mayMark = live === undefined && seen.unreadable === 0;
               if (!mayMark) {
                 log.info("organizer_release_withheld", {
                   mailboxId: mb.mailboxId, accountId: mb.accountId,
@@ -1974,28 +1940,14 @@ export async function startWorkerWithLock(
        * gate answers `stand_down` every cycle while a foreign claim stands, so an ungated export
        * would mint a request per cycle. Best-effort like the appointment close below it and for
        * the same reason: this process has already stopped organizing the mailbox. */
-      /* ── THE HANDOVER RIDES THE DEMOTION'S OWN TRANSACTION, AND BOTH HALVES ARE CONTINGENT ──
-       *
-       * It used to be a separate transaction ahead of the write below, which left two sequences
-       * open. The first: a paired device's forwarded move can commit AFTER a handover that has
-       * already read its pending set and BEFORE the demotion — so this host accepted the move,
-       * became a reader, and neither performed nor exported it. The second: the handover's own
-       * failure was swallowed, so a demotion was recorded with an export that did not happen and
-       * every not-yet-exported move stayed on a reader for ever.
-       *
-       * One transaction closes both. `markMailboxStoodDown` takes `FOR UPDATE` on the mailbox row
-       * first (it is fenced), and `assertOrganizerRole` takes `FOR SHARE` on that row inside the
-       * transaction that records a forwarded move — so the lock is granted only once every such
-       * write in flight has committed, and one arriving afterwards waits for this commit and is
-       * then refused. Exported, or refused.
-       *
-       * ON THE TRANSITION ONLY — `lease.organizerRole` still holds what the row says, and this
-       * gate answers `stand_down` every cycle while a foreign claim stands, so an ungated export
-       * would mint a request per cycle. */
-      const wasOrganizer = lease.organizerRole === "organizer";
-      /* A HOLDER RATHER THAN A `let`, so the read below is the handover's own answer and not a
-         narrowing of the initializer: the assignment happens inside the transaction's callback. */
-      const handed: { r: StandDownExport | null } = { r: null };
+      if (lease.organizerRole === "organizer") await standDownExport(mb);
+      /* THE ROW'S MIRROR, AS `markMailboxStoodDown` IS ABOUT TO LEAVE IT . This line
+         was `lease.disabledReason = outcome.reason`, which had been true of the write below and
+         stopped being true when the demotion moved onto the role: the column gains no writer
+         there, so the mirror was recording a value the row does not hold. It happened to keep the
+         promotion above firing IN THIS PROCESS, which is precisely what hid the missing term from
+         every test that demoted and promoted inside one run. */
+      lease.organizerRole = "reader";
       log.warn("organizer_stand_down", {
         mailboxId: mb.mailboxId, accountId: mb.accountId, phase,
         disabledReason: outcome.reason,
@@ -2018,16 +1970,6 @@ export async function startWorkerWithLock(
         // reads the row precisely so no client has to dial IMAP to render one.
         const written = await markMailboxStoodDown(db, mb.mailboxId, outcome.reason, {
           fence,
-          ...(wasOrganizer
-            ? {
-              also: async (tx: typeof db): Promise<void> => {
-                handed.r = await exportPendingMovesOnStandDown(tx as unknown as Tx, {
-                  accountId: mb.accountId, mailboxId: mb.mailboxId, now: new Date(),
-                  mintId: randomUUID,
-                });
-              },
-            }
-            : {}),
           by: {
             kind: outcome.by ? outcome.by.kind : null,
             // Mail 0092 — the winner's install id, so a stood-down row names WHICH install beat
@@ -2042,40 +1984,15 @@ export async function startWorkerWithLock(
         if (!written) {
           log.info("organizer_stand_down_write_fenced", {
             mailboxId: mb.mailboxId, accountId: mb.accountId,
-            reason: "the mailbox is a tombstone, or this instance no longer leads the shard; the "
-              + "handover of pending local moves did not run either, and the instance that does "
-              + "lead the shard stands the same mailbox down on its own next pass",
-          });
-        } else {
-          /* THE ROW'S MIRROR, AS `markMailboxStoodDown` HAS JUST LEFT IT — and it moves only on a
-             write that LANDED. It used to be set ahead of the write, which made the mirror say
-             `reader` after a write that threw: the next cycle's transition gate then skipped the
-             handover for ever, so one failed write stranded every pending intent. Leaving it at
-             `organizer` costs one more cycle of this row admitting a forwarded move, and that
-             move is exported by the retry. */
-          lease.organizerRole = "reader";
-        }
-        // Only when there was something to hand over: the overwhelming majority of stand-downs
-        // have no pending intent and must stay silent.
-        const r = handed.r;
-        if (r !== null && (r.exported > 0 || r.unmappable > 0)) {
-          log.warn("organizer_stand_down_moves_handed_over", {
-            mailboxId: mb.mailboxId, accountId: mb.accountId,
-            exported: r.exported, already: r.already, unmappable: r.unmappable,
-            reason: "these moves were recorded here before the lease was read again; each is now a "
-              + "request for the install that holds the mailbox. `unmappable` are intents this "
-              + "handover cannot express — a desired folder no destination word covers, or a "
-              + "message with no usable dedup key — and they stay pending exactly where they are",
+            reason: "the mailbox is a tombstone, or this instance no longer leads the shard",
           });
         }
       } catch (err) {
         log.error("organizer_stand_down_write_failed", {
           mailboxId: mb.mailboxId, accountId: mb.accountId, err,
-          reason: "neither the demotion nor the handover of pending local moves was recorded, so "
-            + "the row still says this install organizes the mailbox; this cycle organizes "
-            + "nothing and the next one demotes and hands over again",
+          reason: "this process has stopped organizing the mailbox regardless; the row could " +
+            "not record why, so the UI will show an ordinary disabled mailbox",
         });
-        return false;
       }
       // ── AND THE APPOINTMENTS THIS PROCESS CAN NO LONGER KEEP ARE CLOSED WITH A SENTENCE ────
       //
@@ -2109,6 +2026,35 @@ export async function startWorkerWithLock(
       return false;
     }
 
+    /**
+     * The stand-down's HANDOVER of pending local moves — see the call site for the window that
+     * produces them. Its own function for `standDownAppointments`' reason, and it never throws
+     * for the same one: the mailbox has changed hands whatever this write does.
+     */
+    async function standDownExport(mb: { mailboxId: string; accountId: string }): Promise<void> {
+      try {
+        const r = await db.transaction((tx) => exportPendingMovesOnStandDown(tx as unknown as Tx, {
+          accountId: mb.accountId, mailboxId: mb.mailboxId, now: new Date(), mintId: randomUUID,
+        }));
+        // Only when there was something to hand over: the overwhelming majority of stand-downs
+        // have no pending intent and must stay silent.
+        if (r.exported > 0 || r.unmappable > 0 || r.more) {
+          log.warn("organizer_stand_down_moves_handed_over", {
+            mailboxId: mb.mailboxId, accountId: mb.accountId,
+            exported: r.exported, already: r.already, unmappable: r.unmappable, more: r.more,
+            reason: "these moves were recorded here before the lease was read again; each is now a "
+              + "request for the install that holds the mailbox. `unmappable` are desired folders "
+              + "no destination word covers (a user folder) and stay where they are",
+          });
+        }
+      } catch (err) {
+        log.error("organizer_stand_down_moves_handover_failed", {
+          mailboxId: mb.mailboxId, accountId: mb.accountId, err,
+          reason: "a move recorded here will not reach the install that organizes the mailbox now; "
+            + "the row stays pending and this install performs nothing",
+        });
+      }
+    }
 
     /**
      * The stand-down's appointment close. Its own function rather than four inline statements in
@@ -2178,11 +2124,7 @@ export async function startWorkerWithLock(
        * the adapter and the two ids and nothing else, and building a runtime to satisfy a
        * parameter would be inventing state to describe a mailbox this process is giving up.
        */
-      rt: {
-        mailboxId: string; accountId: string; adapter: MailboxAdapter;
-        /** The nonce of the claim being given up — a release is addressed by (install, nonce). */
-        leaseNonce: string | null;
-      },
+      rt: { mailboxId: string; accountId: string; adapter: MailboxAdapter },
       why: string,
     ): Promise<number | null> {
       /* IT RETURNS THE COUNT NOW, and `null` for "could not look". This returned `void` and
@@ -2195,14 +2137,7 @@ export async function startWorkerWithLock(
            take the mailbox id; this lane changed the control flow so the COUNT is returned and a
            zero no longer returns early — the caller has to tell "removed our claim" from "our
            claim was not there". Keeping either alone silently loses the other. */
-        /* THE NONCE THIS RUNTIME WROTE, so the delete names the claim this process holds and not a
-           sibling lineage's. `null` — no gate has run on this runtime yet — refuses inside, and
-           the lapse bound above records the release when the claim stops being renewed. */
-        const released = await releaseMailboxClaim(
-          rt.adapter, organizerInstallId, rt.mailboxId, rt.leaseNonce,
-          // The CONFIGURED window, so the stale term and every other reader of this folder agree.
-          ...(organizerStaleAfterMs !== undefined ? [{ staleAfterMs: organizerStaleAfterMs }] : []),
-        );
+        const released = await releaseMailboxClaim(rt.adapter, organizerInstallId, rt.mailboxId);
         if (released > 0) {
           log.info("organizer_claim_released", {
             mailboxId: rt.mailboxId, accountId: rt.accountId, claims: released, reason: why,
@@ -2262,31 +2197,14 @@ export async function startWorkerWithLock(
       // column that does not exist yet — a mailbox must never be un-quarantined by a
       // bookkeeping failure.
       const code = classifyMailboxError(reason, phase);
-      /**
-       * A CEILING WE SET IS NOT A BROKEN MAILBOX — the one arm that does not write `error`.
-       *
-       * `ImapBoundExceeded` is raised by this codebase, never by the server: the mailbox
-       * authenticated, answered, and sent more than one pass takes. `classifyMailboxError` has no
-       * way to see that (it reads response codes, errnos and a flag, and a bound breach carries
-       * none of them), so it answers `sync` and the row used to say the mailbox had failed.
-       *
-       * The backoff is UNCHANGED and deliberately so — the ladder above still runs, the in-memory
-       * entry is still written, and `retry_after` still persists it. Only the row's verdict moves.
-       * Keyed on the CLASS and not on a bound code, so a ceiling added later is covered without
-       * being enumerated here.
-       */
-      const bounded = isImapBoundExceeded(reason);
-      if (bounded) noteBlock(readLimited, mailboxId, "read_limited");
       try {
         // Mail migration 0039: the same statement now also records WHEN. That is what makes this backoff
         // survive a restart and — the point of the column — releasable by an operator, because
         // until now the only exits from quarantine were the ladder expiring and a redeploy.
-        const written = bounded
-          ? await markMailboxReadLimited(db, mailboxId, { fence, retryAfter: new Date(retryAt) })
-          : await markMailboxFailed(
-            db, mailboxId, { code, detail: mailboxErrorDetail(reason) },
-            { fence, retryAfter: new Date(retryAt) },
-          );
+        const written = await markMailboxFailed(
+          db, mailboxId, { code, detail: mailboxErrorDetail(reason) },
+          { fence, retryAfter: new Date(retryAt) },
+        );
         // Only a write that LANDED lets the column govern this mailbox. Re-read from the map
         // rather than closed over: the entry could have been dropped by a roster pass while this
         // write was in flight, and resurrecting it here would re-quarantine a mailbox that has
@@ -2311,13 +2229,8 @@ export async function startWorkerWithLock(
           reason: "the mailbox is quarantined in memory but its row could not record why",
         });
       }
-      // `errorCode` is the code that was WRITTEN, so a bounded refusal reports none: the row
-      // carries `sync_blocked_reason` instead, and naming `sync` here would send a reader looking
-      // for an `error_code` the row does not hold. The event and its level are unchanged — the
-      // backoff is real either way, and four suites read this line's `attempts`/`retryInMs`.
       log.error("mailbox_quarantined", {
-        mailboxId, accountId, attempts, retryInMs: wait, err: reason,
-        ...(bounded ? { syncBlockedReason: "read_limited" } : { errorCode: code }),
+        mailboxId, accountId, attempts, retryInMs: wait, errorCode: code, err: reason,
       });
     }
 
@@ -3537,8 +3450,7 @@ export async function startWorkerWithLock(
         if (stopped) return;
         const block = leaseBlocked.get(mb.mailboxId)
           ?? awaitingCreds.get(mb.mailboxId)
-          ?? capDropped.get(mb.mailboxId)
-          ?? readLimited.get(mb.mailboxId);
+          ?? capDropped.get(mb.mailboxId);
         try {
           // `>=`, so a grace of 0 writes on the first observation — which is what the roster guards
           // configure. The narrowing is written inline rather than hoisted into a `due` boolean
@@ -4336,11 +4248,6 @@ export async function startWorkerWithLock(
           // mailbox" about a mailbox that just completed a cycle — a row's claim is a contract,
           // broken here in the other direction.
           leaseBlocked.delete(rt.mailboxId);
-          // …and the read-ceiling bucket, on exactly the same evidence: a completed cycle read
-          // this mailbox inside every bound, so the soft block stops being true and the clear
-          // above falls out for it too. This is the whole of "it clears on the next healthy
-          // cycle" — there is no clearing statement anywhere else.
-          readLimited.delete(rt.mailboxId);
           /** Whether this is the FIRST cycle this runtime has completed — see the stamp below. */
           const firstSuccess = rt.lastSuccessAt === null;
           rt.lastSuccessAt = new Date();

@@ -4394,7 +4394,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // renews this install's claim, so a second run here is the same-millisecond
           // self-stand-down `MIN_PERMIT_TTL_MS` refuses.
           // No TTL knob: one value for the fleet (`DEFAULT_PERMIT_TTL_MS`). A configurable window
-          // beside a fixed believability cutoff is the truncation `LEASE-WINDOW` already names.
+          // beside a fixed believability cutoff is silently the smaller of the two.
           leasePermit = await acquireLeasePermit({ ...leaseArgs, adopt: { outcome, at: gateAskedAt }, now });
           // The gate renewed this install's claim with `gateAskedAt` as its heartbeat — the fact
           // the release's lapse bound reads. See `lastLeaseRenewalAt`.
