@@ -298,6 +298,9 @@ Saving plain text clears the formatting — saving text is saving the whole valu
 carry both shapes at once. A recipient whose mail client shows plain text only reads the same words:
 the plain version is worked out from the formatting when the signature is saved.
 
+On a mailbox one of your other devices organizes, the formatting travels with the words, so the
+sign-off that device appends for the address is the one you saved.
+
 ### Search results show the address, and an address opens everything from and to that person
 
 A search result printed its sender's name and, where the sender had one, nothing else: the address
