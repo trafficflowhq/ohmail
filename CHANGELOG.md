@@ -109,6 +109,21 @@ draft does not open and the row says why.
 When the server is briefly too busy to answer a read and says when to come back, the app waits that
 long and asks again instead of reporting that it cannot reach anything.
 
+### A self-hosted server records its own failed requests
+
+When a request fails with a 5xx the server now writes a row for it: the route pattern, the
+method, the status, the error's class name and the request id. Never a message, an address or
+anything a request carried. Rows are kept seven days.
+
+Two alerts read it. One fires when a single route answers more than ten 5xx in ten minutes; the
+other when the database connection pool has refused more than ten requests in that window. Both
+are silent on a server that is working — a single pool refusal is the connection ceiling doing
+its job, not an incident.
+
+There is also `POST /internal/fault`, which makes the server answer one deliberate 5xx so you
+can confirm the record and the alerts work on your own install. It needs the internal shared
+secret, and it is absent unless the server has somewhere to record faults.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
