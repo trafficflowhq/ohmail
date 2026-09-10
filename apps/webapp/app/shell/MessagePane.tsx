@@ -732,7 +732,7 @@ function ActionBar({
           filing fits on the row at the 569px the reading measure allows. */}
       <button
         type="button"
-        className="abar-b"
+        className="abar-b abar-v abar-later"
         aria-pressed={pile === "reply_later"}
         onClick={() => onAction("later")}
       >
@@ -741,7 +741,7 @@ function ActionBar({
       </button>
       <button
         type="button"
-        className="abar-b"
+        className="abar-b abar-v abar-aside"
         aria-pressed={pile === "set_aside"}
         onClick={() => onAction("aside")}
       >
@@ -755,7 +755,7 @@ function ActionBar({
       <button
         ref={measure ? undefined : resurfaceRef}
         type="button"
-        className="abar-b"
+        className="abar-b abar-v abar-resurface"
         aria-pressed={pile === "bubbled_up"}
         onClick={() => openPanel("resurface", "resurface")}
       >
@@ -787,7 +787,7 @@ function ActionBar({
    * see the admission order at the foot of `action-bar.css`.
    */
   const tag = onTag ? (
-    <div className="abar-g abar-tag">
+    <div className="abar-g abar-v abar-tag">
       <button
         type="button"
         className="abar-b abar-solo"
@@ -807,7 +807,7 @@ function ActionBar({
     <>
       <button
         type="button"
-        className="abar-b"
+        className="abar-b abar-v abar-screen"
         onClick={(e) => onScreen((e.currentTarget as HTMLElement | null) ?? null)}
       >
         {tr("action")}
@@ -816,7 +816,7 @@ function ActionBar({
       <button
         ref={measure ? undefined : moveRef}
         type="button"
-        className="abar-b"
+        className="abar-b abar-v abar-move"
         onClick={() => openPanel("move", "move")}
       >
         {t("actionMove")}
@@ -1018,9 +1018,9 @@ function ActionBar({
           run: () => { closeMenu(); onAction("forward"); },
         } as MoreMenuItem]
       : []),
-    { id: "later", group: "defer", label: t("actionLater"), run: () => { closeMenu(); onAction("later"); } },
-    { id: "aside", group: "defer", label: t("actionSetAside"), run: () => { closeMenu(); onAction("aside"); } },
-    { id: "resurface", group: "defer", label: t("actionResurface"), run: () => { closeMenu(); openPanel("resurface", "more"); } },
+    { id: "later", group: "later", label: t("actionLater"), run: () => { closeMenu(); onAction("later"); } },
+    { id: "aside", group: "aside", label: t("actionSetAside"), run: () => { closeMenu(); onAction("aside"); } },
+    { id: "resurface", group: "resurface", label: t("actionResurface"), run: () => { closeMenu(); openPanel("resurface", "more"); } },
     /**
      * TAG — THE FOLDED HALF OF THE ROW BUTTON, and it used to be the only half.
      *
@@ -1051,8 +1051,8 @@ function ActionBar({
           run: () => { closeMenu(); onTag(moreRef.current); },
         } as MoreMenuItem]
       : []),
-    { id: "screen", group: "file", label: tr("action"), run: () => { setMenuOpen(false); onScreen(moreRef.current); } },
-    { id: "move", group: "file", label: t("actionMove"), run: () => { closeMenu(); openPanel("move", "more"); } },
+    { id: "screen", group: "screen", label: tr("action"), run: () => { setMenuOpen(false); onScreen(moreRef.current); } },
+    { id: "move", group: "move", label: t("actionMove"), run: () => { closeMenu(); openPanel("move", "more"); } },
     {
       id: "draft",
       label: t("actionDraftReply"),
@@ -1112,7 +1112,7 @@ function ActionBar({
             both"; which widths those are depends on the locale and the face, which is why no
             number is written here. */}
         {canReplyAll ? (
-          <div className="abar-g abar-rall">
+          <div className="abar-g abar-v abar-rall">
             <button
               type="button"
               className="abar-b abar-solo"
@@ -1142,7 +1142,7 @@ function ActionBar({
             the admission order at the foot of `action-bar.css`. `mm-fwd` is the other half of
             "in the row or in the menu, never both". */}
         {canForward ? (
-          <div className="abar-g abar-fwd">
+          <div className="abar-g abar-v abar-fwd">
             <button
               type="button"
               className="abar-b abar-solo"

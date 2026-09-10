@@ -550,19 +550,27 @@
  * resurface / parked". A rung true for one font, one label set and one locale is false the
  * moment any of the three changes; the measurement is true for the row on screen.
  *
- * THE LAW. Every group is in the row or behind More, never both, never neither, at every
+ * THE LAW. Every VERB is in the row or behind More, never both, never neither, at every
  * width:
  *
  *   · Without `data-admit` (server render, hydration, no ResizeObserver) the row is its FLOOR —
- *     Reply, the read switch, More — and every group is behind More. The first measurement lands
+ *     Reply, the read switch, More — and every verb is behind More. The first measurement lands
  *     in the commit that mounts the measure row, before the browser paints.
- *   · With `data-admit="…"`, each named group stands in the row and its `mm-*` twin is hidden;
- *     each unnamed group is hidden in the row and its twin shows. One rule pair per group, and
+ *   · With `data-admit="…"`, each named verb stands in the row and its `mm-*` twin is hidden;
+ *     each unnamed verb is hidden in the row and its twin shows. One rule pair per verb, and
  *     the pair is the only thing that touches either half — no other selector in this file may
- *     set `display` on an `.abar-<group>` or `.mm-<group>` of a message bar.
- *   · Admission is a greedy PREFIX in row order (`bar-density.ts`): Reply all · Forward ·
- *     the horizons · Tag · filing. The row collapses from the right as room shrinks — filing
- *     first, then Tag, the horizons, Forward, Reply all — and the floor never folds.
+ *     set `display` on an `.abar-<verb>` or `.mm-<verb>` of a message bar outside a
+ *     `[data-admit~=…]` selector or the floor.
+ *   · Admission is a greedy PREFIX in row order (`bar-density.ts#BAR_VERB_ORDER`): Reply all ·
+ *     Forward · Later · Park · Resurface · Tag · Screening · Move. The row collapses from the
+ *     right as room shrinks — Move first, then Screening, Tag, Resurface, Park, Later, Forward,
+ *     Reply all — and the floor never folds.
+ *   · THE UNIT IS ONE VERB, and it used to be one GROUP. The horizons were admitted as a block
+ *     of three and filing as a block of two, so a row with room for Later and Park folded both
+ *     of them along with Resurface: measured at 1440 in the widest reading column the product
+ *     has, 150px of the pill's own room stood empty with eight verbs behind More. The two
+ *     segment WRAPPERS (`.abar-defer`, `.abar-file`) are not admissible themselves — each
+ *     follows its first member, which the prefix law makes exact.
  *   · THE FLOOR ITSELF YIELDS ONCE, and only its words: when even Reply + read switch + More
  *     do not fit (German "Als ungelesen markieren" in a 292px column), the read switch drops
  *     its label and keeps its dot and its keycap (`compact`). The dot is the same mark the
@@ -571,23 +579,31 @@
  *     wider than the pill by construction and the column is the thing that is too narrow.
  *
  * WHAT A TEST CAN HOLD. For every container width, in both locales, on both faces: (1) each
- * present group has exactly one visible half — `display` of `.abar-row .abar-<g>` XOR
- * `.mmenu .mm-<g>`; (2) `.abar-row`'s scrollWidth ≤ its clientWidth whenever `data-admit` is
- * present and the compact floor fits; (3) the pill's box equals its container's content box —
- * it fills the row it is given; (4) `data-admit` never names a group absent from the row.
+ * present verb has exactly one visible half — `display` of `.abar-row .abar-<v>` XOR
+ * `.mmenu .mm-<v>`; (2) `.abar-row`'s scrollWidth ≤ its clientWidth whenever `data-admit` is
+ * present and the compact floor fits; (3) the pill hugs its verbs and stands at its row's
+ * centre; (4) `data-admit` never names a verb absent from the row; (5) the room left over
+ * cannot seat the next folded verb — the reading that refuses group admission.
  *
  * AND THE SELECTION BAR IS ONE OF THESE BARS NOW: the retired selection strip had two
  * container rungs of its own below, in one reference font and in English only. A selection's
  * verbs wear this pill in the list column's foot, so they are measured by the same hook and
  * admitted by the same rules — one mechanism, and the same four claims hold over it. */
 
-/* THE FLOOR: every group hidden in the row until admitted. The menu twins are `.mm-item`
-   (display:flex) by default, so an unadmitted group is behind More with no further rule. */
-.abar-defer,
-.abar-file,
-.abar-tag,
+/* THE FLOOR: every VERB hidden in the row until admitted, and the two segment wrappers with
+   them. The menu twins are `.mm-item` (display:flex) by default, so an unadmitted verb is behind
+   More with no further rule. Every token is named rather than folded into `.abar-v`, so the
+   census can read the list back and refuse a verb that has no floor. */
+.abar-rall,
 .abar-fwd,
-.abar-rall { display: none; }
+.abar-later,
+.abar-aside,
+.abar-resurface,
+.abar-tag,
+.abar-screen,
+.abar-move,
+.abar-defer,
+.abar-file { display: none; }
 
 /* The measure row: rendered inside the pill so it inherits the exact font and control metrics,
    but out of flow, invisible, inert and heightless. Its groups — and the read switch's words —
@@ -603,6 +619,10 @@
   top: 0;
 }
 .abar-measure .abar-g { display: flex !important; }
+/* AND EVERY ADMISSIBLE VERB, which since the granularity change is a BUTTON inside a segment
+   and not only a group of its own: `.abar-g` alone left the horizons' and filing's members
+   folded in the copy, which would zero the very widths that decide the fold. */
+.abar-measure .abar-v { display: flex !important; }
 .abar-measure .abar-read-lab { display: inline !important; }
 /* AND THE COUNT CAPSULE'S WORD, for exactly the reason above — this one was measured the hard
    way. The compact rule is written `.abar-row .abar-count .abar-count-word`, and the measure
@@ -613,18 +633,46 @@
    A fold must never zero the width that decides the fold. */
 .abar-measure .abar-count-word { display: inline !important; }
 
-/* ADMISSION — one pair per group: the row half on, the menu half off. Nothing else in this
-   file touches these two selectors. */
+/* ADMISSION — one pair per VERB: the row half on, the menu half off. Nothing else in this
+   file touches these two selectors. `flex` and not `inline-flex` on all eight, so one value
+   covers a group that is one verb and a button that is one member of a segment; as a flex item
+   the two are laid out identically, and one value is what lets the census read the pairs back. */
 .msg-actions .abar[data-admit~="rall"] .abar-row .abar-rall { display: flex; }
 .msg-actions .abar[data-admit~="rall"] .mmenu .mm-rall { display: none; }
 .msg-actions .abar[data-admit~="fwd"] .abar-row .abar-fwd { display: flex; }
 .msg-actions .abar[data-admit~="fwd"] .mmenu .mm-fwd { display: none; }
-.msg-actions .abar[data-admit~="defer"] .abar-row .abar-defer { display: flex; }
-.msg-actions .abar[data-admit~="defer"] .mmenu .mm-defer { display: none; }
+.msg-actions .abar[data-admit~="later"] .abar-row .abar-later { display: flex; }
+.msg-actions .abar[data-admit~="later"] .mmenu .mm-later { display: none; }
+.msg-actions .abar[data-admit~="aside"] .abar-row .abar-aside { display: flex; }
+.msg-actions .abar[data-admit~="aside"] .mmenu .mm-aside { display: none; }
+.msg-actions .abar[data-admit~="resurface"] .abar-row .abar-resurface { display: flex; }
+.msg-actions .abar[data-admit~="resurface"] .mmenu .mm-resurface { display: none; }
 .msg-actions .abar[data-admit~="tag"] .abar-row .abar-tag { display: flex; }
 .msg-actions .abar[data-admit~="tag"] .mmenu .mm-tag { display: none; }
-.msg-actions .abar[data-admit~="file"] .abar-row .abar-file { display: flex; }
-.msg-actions .abar[data-admit~="file"] .mmenu .mm-file { display: none; }
+.msg-actions .abar[data-admit~="screen"] .abar-row .abar-screen { display: flex; }
+.msg-actions .abar[data-admit~="screen"] .mmenu .mm-screen { display: none; }
+.msg-actions .abar[data-admit~="move"] .abar-row .abar-move { display: flex; }
+.msg-actions .abar[data-admit~="move"] .mmenu .mm-move { display: none; }
+
+/* THE SEGMENT WRAPPERS FOLLOW THEIR FIRST MEMBER, and that is exact rather than approximate:
+   admission is a greedy prefix, so a segment has a visible member precisely when its first one
+   is admitted. Without these the wrapper would stand empty at `display: flex` and pay the row's
+   gap for nothing — which the pill's hug reading refuses. `bar-density.ts#BAR_SEGMENTS` holds
+   the same two pairs for the stylesheet pin to read. */
+.msg-actions .abar[data-admit~="later"] .abar-row .abar-defer { display: flex; }
+.msg-actions .abar[data-admit~="screen"] .abar-row .abar-file { display: flex; }
+
+/* THE SEGMENT'S TRAILING CAP RIDES THE LAST ADMITTED MEMBER. `.abar-seg .abar-b:last-child`
+   names Resurface and Move structurally, which is the wrong button for every partial segment —
+   a segment ending at Later would draw a square right edge. "Admitted, and the next member is
+   not" is exactly the last one that stands, again by the prefix law. Physical longhands, to
+   extend the physical shorthand above rather than half-flip it into a logical axis. */
+.msg-actions .abar[data-admit~="later"]:not([data-admit~="aside"]) .abar-row .abar-later,
+.msg-actions .abar[data-admit~="aside"]:not([data-admit~="resurface"]) .abar-row .abar-aside,
+.msg-actions .abar[data-admit~="screen"]:not([data-admit~="move"]) .abar-row .abar-screen {
+  border-top-right-radius:var(--r-pill);
+  border-bottom-right-radius:var(--r-pill);
+}
 
 /* THE COMPACT FLOOR: the read switch keeps its dot (or check) and its keycap; the words move
    to the button's name. */

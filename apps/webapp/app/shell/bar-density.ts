@@ -14,16 +14,16 @@
  * verbs a wider row could have carried. The direction it could NOT survive was a font that
  * renders WIDER than the reference — then the static width admits a group the row cannot hold.
  *
- * So the pill measures ITS OWN row: a hidden copy of every group the message could stand
+ * So the pill measures ITS OWN row: a hidden copy of every verb the message could stand
  * (same markup, same classes, same font — rendered invisibly inside the pill) gives each
- * group's REAL width, and groups are admitted greedily, in row order, while they actually fit.
+ * verb's REAL width, and verbs are admitted greedily, in row order, while they actually fit.
  *
  * THIS IS THE ONLY MECHANISM. The static widths are gone from `action-bar.css` — two mechanisms
  * deciding one question disagreed, and the static rule outranked the measurement's on the menu
  * twin, so a folded group stood in NEITHER place: Later, Park and Resurface were reachable from
  * nowhere on the messages where the two disagreed. Until the first measurement lands,
  * `data-admit` is absent and the row is its floor (Reply, the read switch, More) with every
- * group behind More; the measurement runs in the commit that mounts the copy, before the
+ * verb behind More; the measurement runs in the commit that mounts the copy, before the
  * browser paints.
  *
  * ── THE LAWS, KEPT ──────────────────────────────────────────────────────────────────────────
@@ -48,13 +48,14 @@
  *    its own width and nothing more. Admission being a prefix is what makes the segment's
  *    visible members a prefix too, which is what lets the stylesheet put the trailing cap on
  *    the last one that stands.
- *  · NO OVERFLOW. The admitted row's width — base + every admitted group + the gaps between —
+ *  · NO OVERFLOW. The admitted row's width — base + every admitted verb + the gaps between —
  *    is never allowed past the width the pill actually has. Folding too early is the benign
  *    direction; painting a control outside the pill is the defect this measurement exists to
  *    prevent.
  *  · IN THE ROW OR BEHIND MORE, NEVER BOTH. The `data-admit` CSS (foot of `action-bar.css`)
- *    switches each group's row form and its `mm-*` menu row in the same rule pair — the only
- *    rules that touch either half.
+ *    switches each verb's row form and its `mm-*` menu row in the same rule pair — the only
+ *    rules that touch either half. The two segment WRAPPERS follow their first member, which is
+ *    a consequence of the prefix law rather than a rule of their own.
  *  · THE FLOOR YIELDS ITS WORDS ONCE. When even the floor does not fit, ONE label in the floor
  *    is dropped (`compact` in `data-admit`) and the floor is re-measured without it; the glyph
  *    and the keycap beside it stay, and the verb moves to the button's name. Nothing below the
@@ -82,12 +83,43 @@ import { useCallback, useEffect, useRef, useState } from "react";
  *  live value is read off the pill itself in `measure()`. */
 export const PILL_PADDING_PX = 12;
 
-/** The row's gap between groups, when the computed style cannot be read (jsdom). */
+/** The row's gap between row groups, when the computed style cannot be read (jsdom). */
 export const FALLBACK_GAP_PX = 6;
 
-/** The density groups, in ROW ORDER — which is the admission order and the fold order. */
-export const BAR_GROUP_ORDER = ["rall", "fwd", "defer", "tag", "file"] as const;
-export type BarGroup = (typeof BAR_GROUP_ORDER)[number];
+/**
+ * THE ADMISSIBLE VERBS, IN ROW ORDER — which is the admission order and the fold order.
+ *
+ * `seg` names the segmented control a verb is a member of, or null for one that stands alone.
+ * The horizons and filing are segments — their members abut, with no row gap between them, and
+ * that is what makes three buttons read as one control — so a verb continuing the segment its
+ * predecessor opened costs its own width and no gap. Reply all, Forward and Tag stand alone and
+ * each pays a gap.
+ */
+export const BAR_VERB_ORDER = [
+  { verb: "rall", seg: null },
+  { verb: "fwd", seg: null },
+  { verb: "later", seg: "defer" },
+  { verb: "aside", seg: "defer" },
+  { verb: "resurface", seg: "defer" },
+  { verb: "tag", seg: null },
+  { verb: "screen", seg: "file" },
+  { verb: "move", seg: "file" },
+] as const;
+export type BarVerb = (typeof BAR_VERB_ORDER)[number]["verb"];
+export type BarSeg = "defer" | "file";
+
+/**
+ * THE SEGMENT WRAPPERS, each with the verb whose admission puts the wrapper in the row.
+ *
+ * A segment has a visible member exactly when its FIRST member is admitted — which is a
+ * consequence of admission being a greedy prefix, not a second rule. Exported so the stylesheet
+ * pin reads this mapping rather than a second copy of it.
+ */
+export const BAR_SEGMENTS: ReadonlyArray<{ seg: BarSeg; first: BarVerb }> = [
+  { seg: "defer", first: "later" },
+  { seg: "file", first: "screen" },
+];
+
 /** The `data-admit` token for the floor's one concession — a base button without its words. */
 export const COMPACT = "compact";
 
@@ -101,39 +133,55 @@ export const COMPACT_LABELS: ReadonlyArray<{ label: string; button: string }> = 
   { label: ".abar-count .abar-count-word", button: ".abar-count" },
 ];
 
-export interface MeasuredGroup {
-  name: BarGroup;
+export interface MeasuredVerb {
+  name: BarVerb;
   width: number;
+  /** The segment this verb belongs to, or null when it stands alone. See {@link BAR_VERB_ORDER}. */
+  seg: BarSeg | null;
+}
+
+/** What one verb costs to seat, given the segment the verb before it left open. */
+export function verbCost(verb: MeasuredVerb, openSeg: BarSeg | null, gapPx: number): number {
+  return verb.seg !== null && verb.seg === openSeg ? verb.width : gapPx + verb.width;
 }
 
 /**
- * Greedy prefix admission: walk the PRESENT groups in row order, admitting while the row still
- * fits, and STOP at the first that does not — never skip past it to a narrower later group,
+ * Greedy prefix admission: walk the PRESENT verbs in row order, admitting while the row still
+ * fits, and STOP at the first that does not — never skip past it to a narrower later verb,
  * because standing a later verb over a folded earlier one breaks the row-order law.
  *
- * `basePx` is the floor that always stands (Reply + the read switch with More); each admitted
- * group costs its own width plus one row gap.
+ * `basePx` is the floor that always stands (Reply + the read switch with More). Each admitted
+ * verb costs {@link verbCost}: its own width, plus one row gap unless it continues the segment
+ * its predecessor opened.
  */
-export function admitGroups(
+export function admitVerbs(
   availPx: number,
   basePx: number,
-  groups: readonly MeasuredGroup[],
+  verbs: readonly MeasuredVerb[],
   gapPx: number,
-): BarGroup[] {
-  const admitted: BarGroup[] = [];
+): BarVerb[] {
+  const admitted: BarVerb[] = [];
   let total = basePx;
-  for (const g of groups) {
-    const next = total + gapPx + g.width;
+  let openSeg: BarSeg | null = null;
+  for (const v of verbs) {
+    const next = total + verbCost(v, openSeg, gapPx);
     if (next > availPx) break;
-    admitted.push(g.name);
+    admitted.push(v.name);
     total = next;
+    openSeg = v.seg;
   }
   return admitted;
 }
 
-/** Read one measure-row group's density name off its class list, or null for a base group. */
-function groupNameOf(el: Element): BarGroup | null {
-  for (const name of BAR_GROUP_ORDER) if (el.classList.contains(`abar-${name}`)) return name;
+/** Read an element's verb token off its class list, or null when it carries none. */
+function verbNameOf(el: Element): BarVerb | null {
+  for (const { verb } of BAR_VERB_ORDER) if (el.classList.contains(`abar-${verb}`)) return verb;
+  return null;
+}
+
+/** Read a measure-row group's segment name off its class list, or null when it is not one. */
+function segNameOf(el: Element): BarSeg | null {
+  for (const { seg } of BAR_SEGMENTS) if (el.classList.contains(`abar-${seg}`)) return seg;
   return null;
 }
 
@@ -195,15 +243,35 @@ export function useBarDensity(): {
       (parseFloat(style.paddingRight) || 0) -
       pillPad;
     const gap = parseFloat(getComputedStyle(row).columnGap) || FALLBACK_GAP_PX;
+    /* THE WALK, AND WHY IT READS BUTTONS AND NOT GROUPS. `.abar-v` marks an element that is
+       admitted or folded on its own: for a group that is one verb it is the group itself, and
+       for a segment it is each member button. So a segmented control's three widths arrive as
+       three verbs rather than as one block, which is the whole granularity change. Anything with
+       neither mark is the floor. */
     let base = 0;
-    const groups: MeasuredGroup[] = [];
+    const verbs: MeasuredVerb[] = [];
     for (const child of row.children) {
       if (!(child instanceof HTMLElement) || !child.classList.contains("abar-g")) continue;
-      const name = groupNameOf(child);
-      const w = child.offsetWidth;
-      if (w <= 0) return; // the copy has no layout yet; a wrong zero must not admit the world
-      if (name === null) base += base === 0 ? w : gap + w;
-      else groups.push({ name, width: w });
+      const seg = segNameOf(child);
+      if (child.classList.contains("abar-v")) {
+        const name = verbNameOf(child);
+        const w = child.offsetWidth;
+        if (w <= 0) return; // the copy has no layout yet; a wrong zero must not admit the world
+        if (name === null) return; // marked admissible and unnamed: refuse rather than guess
+        verbs.push({ name, width: w, seg: null });
+      } else if (seg !== null) {
+        for (const member of child.querySelectorAll<HTMLElement>(":scope > .abar-v")) {
+          const name = verbNameOf(member);
+          const w = member.offsetWidth;
+          if (w <= 0) return;
+          if (name === null) return;
+          verbs.push({ name, width: w, seg });
+        }
+      } else {
+        const w = child.offsetWidth;
+        if (w <= 0) return;
+        base += base === 0 ? w : gap + w;
+      }
     }
     if (base === 0) return;
     /* THE COMPACT FLOOR — one word out of the floor, and it is the WIDEST of the words the
@@ -235,7 +303,7 @@ export function useBarDensity(): {
         tokens.push(COMPACT);
       }
     }
-    const next = [...admitGroups(avail, floor, groups, gap), ...tokens].join(" ");
+    const next = [...admitVerbs(avail, floor, verbs, gap), ...tokens].join(" ");
     setAdmit((prev) => (prev === next ? prev : next));
   }, []);
 

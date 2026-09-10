@@ -38,18 +38,23 @@
  * open the panel, which is the same two-step the row's own buttons perform.
  */
 import { useCallback, useEffect, useRef, type ReactNode } from "react";
+import type { BarVerb } from "./bar-density";
 
 export interface MoreMenuItem {
   /** Stable key, and the value a test selects on. */
   id: string;
   label: ReactNode;
   /**
-   * WHICH DENSITY GROUP THIS ITEM BELONGS TO, or absent for one that is only ever in the menu.
+   * WHICH ADMISSIBLE VERB THIS ITEM IS, or absent for one that is only ever in the menu.
    *
-   * Rendered as a class the admission rule switches off when the same group is standing in the
-   * row. Absent means "no row position at all" — Draft reply has never had one.
+   * Rendered as a class the admission rule switches off when the same verb is standing in the
+   * row. Absent means "no row position at all" — Draft reply and Delete have never had one.
+   *
+   * The type is `BarVerb`, read from the module that owns the order, not a second copy of the
+   * list: it used to name the five density GROUPS, and a group's members are admitted one by
+   * one now, so a menu item and a row button that had drifted apart would type-check.
    */
-  group?: "defer" | "file" | "rall" | "tag" | "fwd";
+  group?: BarVerb;
   /** Leading glyph, for the one item that carries one. */
   icon?: ReactNode;
   run: () => void;

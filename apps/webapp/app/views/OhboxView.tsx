@@ -2847,15 +2847,15 @@ function SelectionPill({
 
   const defer = (
     <>
-      <button type="button" className="abar-b" onClick={() => onRun("later")}>
+      <button type="button" className="abar-b abar-v abar-later" onClick={() => onRun("later")}>
         {t("actionLater")}
         <Key chord="a" />
       </button>
-      <button type="button" className="abar-b" onClick={() => onRun("aside")}>
+      <button type="button" className="abar-b abar-v abar-aside" onClick={() => onRun("aside")}>
         {t("actionSetAside")}
         <Key chord="e" />
       </button>
-      <button type="button" className="abar-b" onClick={() => onRun("resurface")}>
+      <button type="button" className="abar-b abar-v abar-resurface" onClick={() => onRun("resurface")}>
         {t("actionResurface")}
         <Key chord="b" />
       </button>
@@ -2864,11 +2864,11 @@ function SelectionPill({
 
   const file = (
     <>
-      <button type="button" className="abar-b" onClick={() => onPanel({ kind: "screen" })}>
+      <button type="button" className="abar-b abar-v abar-screen" onClick={() => onPanel({ kind: "screen" })}>
         {tr("action")}
         <Key chord="s" />
       </button>
-      <button type="button" className="abar-b" onClick={() => onPanel({ kind: "move" })}>
+      <button type="button" className="abar-b abar-v abar-move" onClick={() => onPanel({ kind: "move" })}>
         {t("actionMove")}
         <Key chord="m" />
       </button>
@@ -3034,9 +3034,9 @@ function SelectionPill({
    * not numbers at all but the measurement, which is the point of retiring the old strip.
    */
   const menuItems: MoreMenuItem[] = [
-    { id: "later", group: "defer", label: t("actionLater"), run: () => { closeMenu(); onRun("later"); } },
-    { id: "aside", group: "defer", label: t("actionSetAside"), run: () => { closeMenu(); onRun("aside"); } },
-    { id: "resurface", group: "defer", label: t("actionResurface"), run: () => { closeMenu(); onRun("resurface"); } },
+    { id: "later", group: "later", label: t("actionLater"), run: () => { closeMenu(); onRun("later"); } },
+    { id: "aside", group: "aside", label: t("actionSetAside"), run: () => { closeMenu(); onRun("aside"); } },
+    { id: "resurface", group: "resurface", label: t("actionResurface"), run: () => { closeMenu(); onRun("resurface"); } },
     {
       id: "tag",
       group: "tag",
@@ -3046,8 +3046,8 @@ function SelectionPill({
          under a menu that has just closed. */
       run: () => { const at = moreRef.current; setMenuOpen(false); bulk.tag(ids, at); onDone(); },
     },
-    { id: "screen", group: "file", label: tr("action"), run: () => { setMenuOpen(false); onPanel({ kind: "screen" }); } },
-    { id: "move", group: "file", label: t("actionMove"), run: () => { closeMenu(); onPanel({ kind: "move" }); } },
+    { id: "screen", group: "screen", label: tr("action"), run: () => { setMenuOpen(false); onPanel({ kind: "screen" }); } },
+    { id: "move", group: "move", label: t("actionMove"), run: () => { closeMenu(); onPanel({ kind: "move" }); } },
     /**
      * DELETE — last, menu-only, and carrying NO `group`, like Draft reply on a message: it has
      * no row position, so no admission rule can surface it as a row button. A destructive verb
@@ -3097,7 +3097,7 @@ function SelectionPill({
 
       {/* Between the horizons and filing, mirroring the message pill: a reader who has seen Tag
           there on a wide bar looks for it there on a narrow one. */}
-      <div className="abar-g abar-tag">{tagButton}</div>
+      <div className="abar-g abar-v abar-tag">{tagButton}</div>
 
       <div className="abar-g abar-seg abar-file" role="group" aria-label={t("groupFile")}>
         {file}
