@@ -274,8 +274,7 @@ const EN = {
   hostStartOver: "Start over",
   hostStartingOver: "Starting over…",
   hostRefuseSpent:
-    "That link has already been used or has expired. Make a new one from Settings → Devices on "
-    + "that computer.",
+    "That link is spent or expired. Make a new one from Settings → Devices on that computer.",
   hostRefuseUnreachable: (host: string) => `Could not reach ${host}.`,
   /* ── SHARED BY MORE THAN ONE CARD ────────────────────────────────────────────────────────── */
   password: "Password",

@@ -3379,7 +3379,7 @@
     "hostRefuseRestartFirst": "Es wurde nichts gekoppelt. Dieser Computer schließt noch einen früheren Neuanfang ab — beende ohmail, öffne es erneut und kopple dann mit {host}. Dein Kopplungslink wurde nicht verbraucht und funktioniert weiterhin.",
     "hostStartOver": "Neu anfangen",
     "hostStartingOver": "Neuanfang läuft…",
-    "hostRefuseSpent": "Dieser Link wurde schon benutzt oder ist abgelaufen. Erstelle unter Einstellungen → Geräte auf dem anderen Computer einen neuen.",
+    "hostRefuseSpent": "Dieser Link ist verbraucht oder abgelaufen. Erstelle unter Einstellungen → Geräte auf dem anderen Computer einen neuen.",
     "hostRefuseUnreachable": "{host} ist nicht erreichbar.",
     "hostFootStale": "{host} ist nicht erreichbar.",
     "hostFootStaleWhy": "Letzte Antwort {when}. Dieser {machine} zeigt die Kopie, die er hat; bis der andere Computer wieder da ist, lässt sich nichts ändern. Falls er nicht zurückkommt:",
