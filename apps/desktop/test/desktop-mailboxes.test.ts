@@ -1492,6 +1492,33 @@ describe("a standing stop request is on the row, and the pane's notes end when t
       "the pane offers to write the very ask that is already standing").toBeNull();
   });
 
+  /**
+   * THE COUNTERMAND HAS A DOOR NOW — "stop, then change your mind before the release lands".
+   *
+   * The engine has always had the arm (`organizer_claim_release_yielded_to_press`): a takeover
+   * stamped while a release is still being carried out wins, nothing is recorded as released, and
+   * the next poll organizes here again. Nothing in the product could reach it — the stop verb is
+   * withheld once the row carries the request, and there was no second button. The takeover door
+   * admits exactly this row (`already_organizing` needs a NULL request), so the button is what
+   * was missing.
+   */
+  it("a pending stop offers the takeover, which is the countermand's only door", async () => {
+    FACTS = [{ ...ORGANIZING, releaseRequestedAt: "2026-09-07T09:00:00.000Z" }];
+    const el = await render("local");
+    const btn = buttonSaying(el, "Organize here");
+    expect(btn, "a row with a pending stop offers no way to change your mind").not.toBeNull();
+    expect(el.textContent ?? "", "the countermand offers no account of what it does")
+      .toContain(mailboxCopy.organizeHereCountermandWhat!);
+    // It reaches the takeover door, which is what the engine's release arm compares against.
+    bridgeReply = () => new Response(JSON.stringify({ outcome: "authorized" }), {
+      status: 200, headers: { "content-type": "application/json" },
+    });
+    await act(async () => { btn!.click(); });
+    await act(async () => { buttonExactly(el, "Organize here")!.click(); });
+    expect(pressed(), "the countermand pressed something other than the takeover door")
+      .toEqual([{ url: "/local/organizer/takeover", method: "POST" }]);
+  });
+
   it("an ordinary organizer still reads as organized here — the positive control", async () => {
     FACTS = [ORGANIZING];
     const el = await render("local");
@@ -3011,7 +3038,7 @@ describe("the compact card — the role chip, its description, the quiet verb an
     expect(c.said!.hidden).toBe(true);
   });
 
-  it("while a stop stands on the row the chip reads Stopping and describes the wait; no verb", async () => {
+  it("while a stop stands the chip reads Stopping, the stop verb is gone and the countermand stands in its place", async () => {
     FACTS = [{ ...ORGANIZING, releaseRequestedAt: "2026-09-07T09:00:00.000Z" }];
     const el = await render("local");
     const c = chip(el);
@@ -3021,7 +3048,14 @@ describe("the compact card — the role chip, its description, the quiet verb an
     expect(c.description).not.toBe(mailboxCopy.stateOrganizingHere!);
     expect(buttonExactly(el, mailboxCopy.stopOrganizingHandBack!),
       "the verb was offered on a row that already carries the ask").toBeNull();
-    expect(el.querySelector(".mbx-verb"), "the verb's (i) outlived the verb").toBeNull();
+    /* This case asserted `.mbx-verb` ABSENT — the state the countermand row calls the defect: with
+       the stop verb withheld and nothing in its place, the engine's "changed my mind" arm was
+       unreachable from the product. The claim is narrowed to what it was really about (the STOP
+       verb is not re-offered) and the new consumer is named: the takeover, which is the door that
+       arm reads. */
+    const verb = el.querySelector(".mbx-verb");
+    expect(verb, "the countermand's slot is empty again").not.toBeNull();
+    expect(verb!.textContent ?? "").toContain(mailboxCopy.organizeHere!);
   });
 
   it("a press flips the chip to Stopping with the asked-for sentence, with no verdict line", async () => {

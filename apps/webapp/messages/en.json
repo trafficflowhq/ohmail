@@ -2274,6 +2274,7 @@
     "organizeHereWhat": "This asks for the mailbox; it does not take it. {name} stops organizing it on its next pass — within a minute — and goes on reading it. Your rules, the screening window and the away responder travel with the mailbox. Its copy of your mail is left alone either way.",
     "organizeHereWhatLegacy": "This asks for the mailbox; it does not take it. Quit and reopen ohmail and this computer starts organizing it. Its copy of your mail is left alone either way.",
     "organizeHereWhatNobody": "Nothing organizes this mailbox right now. This computer starts on its next pass — within a minute — and from then on it moves mail into your folders, screens strangers and applies your rules.",
+    "organizeHereCountermandWhat": "This cancels the stop you asked for. This computer keeps organizing the mailbox and nothing hands it over.",
     "organizeHereConfirm": "Organize here",
     "organizeHereQueued": "Asked for. This computer takes over on its next pass — within a minute. The other install becomes a reader and keeps its copy of your mail.",
     "organizeHereQueuedLegacy": "Asked for. Quit and reopen ohmail to organize this mailbox from this computer. Until then this one stays stood down.",

@@ -1911,9 +1911,20 @@ export function DesktopMailboxes(
             retry reachable for, so `reclaimed` gates the button and nothing else does. */}
         {open || releasing ? null
           : role === "organizer" ? (
-            /* Withheld while the row already carries the request: the button would write the
-               very ask the chip's sentence says is being carried out. */
-            m.releaseRequestedAt ? null : (
+            /* ── THE COUNTERMAND, WHICH HAD NO DOOR ────────────────────────────────────────
+               While the row carries the request, the STOP verb is withheld — it would write the
+               very ask the chip says is being carried out — and until now nothing stood in its
+               place, so the engine's "stop, then organize here before the release lands" arm was
+               unreachable from the product. The takeover is what reaches it: the door admits an
+               organizer row with a pending release (it is `already_organizing` only when the
+               request is null) and stamps the authorization the engine's release arm compares
+               against, so the later press stands and nothing is recorded as released. */
+            m.releaseRequestedAt ? (
+              <span className="mbx-verb">
+                <Button className="mbx-btn" onClick={() => setClaimFor(m.id)}>{t("organizeHere")}</Button>
+                <Gloss placement="chip" text={t("organizeHereCountermandWhat")} />
+              </span>
+            ) : (
               <span className="mbx-verb">
                 <Button variant="ghost" className="mbx-quiet" onClick={() => setReleaseFor(m.id)}>
                   {t("stopOrganizingHandBack")}

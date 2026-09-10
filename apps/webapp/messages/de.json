@@ -2274,6 +2274,7 @@
     "organizeHereWhat": "Das fragt nach dem Postfach, es nimmt es nicht. {name} hört beim nächsten Durchgang auf, es zu organisieren — innerhalb einer Minute — und liest es weiter. Deine Regeln, der Prüfzeitraum und die Abwesenheitsantwort wandern mit dem Postfach. Die dortige Kopie deiner Post bleibt so oder so unberührt.",
     "organizeHereWhatLegacy": "Das fragt nach dem Postfach, es nimmt es nicht. Beende ohmail und öffne es erneut, dann beginnt dieser Computer zu organisieren. Die dortige Kopie deiner Post bleibt so oder so unberührt.",
     "organizeHereWhatNobody": "Momentan organisiert nichts dieses Postfach. Dieser Computer beginnt beim nächsten Durchgang — innerhalb einer Minute — und verschiebt von da an Post in deine Ordner, sortiert Fremde aus und wendet deine Regeln an.",
+    "organizeHereCountermandWhat": "Das nimmt den angeforderten Stopp zurück. Dieser Computer organisiert das Postfach weiter, und nichts übergibt es.",
     "organizeHereConfirm": "Hier organisieren",
     "organizeHereQueued": "Angefragt. Dieser Computer übernimmt beim nächsten Durchgang — innerhalb einer Minute. Die andere Installation wird zum Leser und behält ihre Kopie deiner Post.",
     "organizeHereQueuedLegacy": "Angefragt. Beende ohmail und öffne es erneut, um dieses Postfach von diesem Computer aus zu organisieren. Bis dahin bleibt dieser hier zurückgetreten.",
