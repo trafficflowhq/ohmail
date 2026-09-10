@@ -277,6 +277,41 @@ export function resolveScreeningCutoff(
   return new Date(base - days * 24 * 60 * 60 * 1000);
 }
 
+/**
+ * WHAT A SCREENER HOLD ASKS OF A MESSAGE — the one predicate every writer of a hold consults.
+ *
+ * The router has no notion of age, so the gate's own verdict has to be subordinated to the
+ * backlog cutoff before a hold is written. That test lived inline in `planChange` while there
+ * was one writer; `sensitive-rescreen.ts` is a second, it re-evaluates already-filed mail into
+ * the gate, and it had no cutoff at all. A cutoff enforced at one of two doors is not a cutoff.
+ */
+export interface ScreenerAdmission {
+  /**
+   * The server's own receive clock. NULL ⇒ NOT old ⇒ ADMITTED: a message whose receive time the
+   * server did not vouch for is unknown, not ancient, and the safe answer for an unknown is the
+   * gate. The sender's `Date:` header is never an input here: it is written by the SENDER.
+   */
+  arrivedAt: Date | null;
+  /** The resolved backlog edge ({@link resolveScreeningCutoff}). `undefined` ⇒ no cutoff. */
+  cutoff: Date | undefined;
+  /** `evaluateRules`' verdict source: only the GATE's own `"screener"` is subordinated. */
+  source: RuleDecision["source"];
+  /** `auth === "fail"` — a statement about THIS message that an old date must never excuse. */
+  authFailed: boolean;
+}
+
+/**
+ * May this message be HELD at the consent gate? `false` means the caller leaves it where the
+ * mailbox already has it — pre-baseline backlog is not a question anybody asked.
+ */
+export function screenerAdmits(input: ScreenerAdmission): boolean {
+  if (input.cutoff === undefined) return true;
+  if (input.source !== "screener") return true;
+  if (input.authFailed) return true;
+  if (input.arrivedAt === null) return true;
+  return input.arrivedAt.getTime() >= input.cutoff.getTime();
+}
+
 export interface EvaluateRulesInput {
   msg: NormalizedMessage;
   rules: readonly Rule[];

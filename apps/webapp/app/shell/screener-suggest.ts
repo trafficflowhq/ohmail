@@ -832,6 +832,7 @@ export function useScreenerSuggestions(opts: {
         merge([
           ...res.suggestions.map((s) => ({ address: s.sender, suggestion: toSuggestion(s) })),
           ...toSkips(res.skipped),
+          ...toStopped(set, res),
         ]);
         // SAID OUT LOUD, every time, even though nobody pressed anything. This is the "visible
         // after the fact" half of the opt-in: money moved, so the same sentence the manual
@@ -1134,6 +1135,8 @@ export function useScreenerSuggestions(opts: {
             merge([
               ...res.suggestions.map((s) => ({ address: s.sender, suggestion: toSuggestion(s) })),
               ...toSkips(res.skipped),
+              // The rest of THIS chunk, when the gate stopped part-way through it.
+              ...toStopped(chunk, res),
             ]);
             gotSuggestions.push(...res.suggestions);
             gotSkipped.push(...res.skipped);
@@ -1307,6 +1310,34 @@ export function toSuggestion(a: {
  * `not_held` is deliberately absent: that sender is no longer at the gate, so their row is not on
  * screen to carry a chip. Every other reason describes a row the person is still looking at.
  */
+/**
+ * THE SENDERS A STOPPED RUN NEVER REACHED — the reason, on their own rows.
+ *
+ * A run that stops on the gate returns suggestions for the senders it got to and NOTHING for the
+ * rest, so every unreached row fell back to "No suggestion yet for this sender" — a promise, on
+ * an account that cannot buy one. A subscription that may not spend is a STANDING condition, so
+ * that sentence stood on every waiting sender indefinitely while the real fact arrived only as a
+ * one-off toast under the batch that discovered it. The copy for both stop reasons already exists
+ * (`aiSkip.*`); only the rows were missing it.
+ */
+export function toStopped(
+  asked: readonly string[],
+  res: { suggestions: Array<{ sender: string }>; skipped: Array<{ sender: string }>; stopped?: SuggestSkipShown },
+) {
+  if (!res.stopped) return [];
+  const answered = new Set<string>([
+    ...res.suggestions.map((x) => x.sender.toLowerCase()),
+    ...res.skipped.map((x) => x.sender.toLowerCase()),
+  ]);
+  const reason = res.stopped;
+  return asked
+    .filter((a) => !answered.has(a.toLowerCase()))
+    .map((address) => ({
+      address,
+      suggestion: { dest: "screener" as const, confidence: 0, rationale: "", noAnswer: reason },
+    }));
+}
+
 export function toSkips(skipped: Array<{ sender: string; reason: ScreenerSkipReason }>) {
   return skipped
     .filter((s) => s.reason !== "not_held")

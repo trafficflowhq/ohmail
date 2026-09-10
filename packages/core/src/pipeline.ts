@@ -6,7 +6,7 @@ import {
 import { classifySensitivity, type SensitivityResult } from "./sensitive.js";
 import {
   NO_TRUSTED_AUTHSERV_IDS, DEFAULT_OHBOX_POLICY, authVerdictFromHeaders, dsnVerdict,
-  effectForDestination, evaluateRules, type AuthVerdict, type OhboxPolicy,
+  effectForDestination, evaluateRules, screenerAdmits, type AuthVerdict, type OhboxPolicy,
 } from "./rules.js";
 import { classifyDedup, type DedupOutcome } from "./dedup.js";
 // The leaf predicate, not `adapters/imap.js`: this module is the model layer and naming the
@@ -1293,11 +1293,12 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
      * a backfill screens like fresh mail. That is fail-closed, and it is the accepted cost.
      */
     const arrivedAt = change.internalDate ?? null;
-    const preBaselineBacklog = deps.screeningCutoff !== undefined
-      && decision.source === "screener"
-      && authVerdict !== "fail"
-      && arrivedAt !== null
-      && arrivedAt.getTime() < deps.screeningCutoff.getTime();
+    /* Read off `screenerAdmits` rather than spelled here: `sensitive-rescreen.ts` writes holds
+       too and had no cutoff at all, and a cutoff enforced at one of two doors is not a cutoff. */
+    const preBaselineBacklog = !screenerAdmits({
+      arrivedAt, cutoff: deps.screeningCutoff, source: decision.source,
+      authFailed: authVerdict === "fail",
+    });
 
     /* ── THE GATE DEFERS WHILE THE MAILBOX'S TRAVELLING DECISIONS AWAIT THEIR ANSWER ─────────
      *

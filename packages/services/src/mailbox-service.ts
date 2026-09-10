@@ -2354,6 +2354,25 @@ export class MailboxService {
    * reason: a refusal must write nothing, and a 400 on a re-run must be the same 400 as on a
    * first run.
    */
+  /**
+   * CONSENT IS THE BASELINE — stamped once per account, never moved.
+   *
+   * Separate from {@link writeScreeningAnswer} because the dials are the answer a person just
+   * gave and this is a fact about when they first agreed: a door that sends no window still
+   * establishes one, and a re-run must not slide a live account's cutline (the `coalesce`).
+   */
+  private async stampScreeningBaseline(tx: Tx, ctx: ServiceContext): Promise<void> {
+    await tx.insert(accountSettings)
+      .values({ accountId: ctx.accountId, screeningBaselineAt: ctx.now(), updatedAt: ctx.now() })
+      .onConflictDoUpdate({
+        target: accountSettings.accountId,
+        set: {
+          screeningBaselineAt: sql`coalesce(${accountSettings.screeningBaselineAt}, ${ctx.now().toISOString()}::timestamptz)`,
+          updatedAt: ctx.now(),
+        },
+      });
+  }
+
   private async writeScreeningAnswer(
     tx: Tx, ctx: ServiceContext, screening: NonNullable<OrganizeHereInput["screening"]>,
   ): Promise<void> {
@@ -2558,6 +2577,10 @@ export class MailboxService {
          * untouched by construction — its upsert is a `COALESCE`, so a re-run cannot slide a
          * live account's cutline forward, which is the damage this branch existed to avoid.
          */
+        /* NO BASELINE STAMP HERE, and it was tried. A press on this branch may have said nothing
+         * about the window, and a press that asks nothing must write nothing — the rule this
+         * branch is already held to. A mailbox this install already organizes and that carries no
+         * baseline is its own question, and not one to answer silently from here. */
         if (input.screening) await this.writeScreeningAnswer(tx, ctx, input.screening);
         return { outcome: "already_organizing" as const };
       }
@@ -2627,6 +2650,15 @@ export class MailboxService {
        * settings before the mailbox row — is deliberate and matches every other writer of this
        * table (`setDormancyDays`, `setThemeFace`): one lock chain, always the same direction.
        */
+      /* -- THE BASELINE IS STAMPED WHETHER OR NOT A WINDOW CAME WITH THE CONSENT ---------
+       *
+       * `if (input.screening)` guarded BOTH the dials and the baseline, so a door that consents
+       * without sending a window left `screening_baseline_at` NULL — and NULL is "no cutoff", so
+       * the gate holds every unruled sender's mail whatever its age, which on a long-established
+       * mailbox is its whole history. `schema-mail.ts` states this write as the column's own
+       * contract, in the consent transaction; only the guard disagreed.
+       */
+      await this.stampScreeningBaseline(tx, ctx);
       if (input.screening) await this.writeScreeningAnswer(tx, ctx, input.screening);
 
       const rows = await tx.update(mailboxes).set({

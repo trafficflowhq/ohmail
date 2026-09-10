@@ -26,6 +26,22 @@ again, however long the mailbox has been in use.
 The pass that clears automated mail out of the Ohbox could file a message you had just moved back
 into it, if your move and the pass landed at the same moment. It now checks a second time, right
 before it files anything, whether you have moved the message — so your placement wins.
+### Connecting a mailbox sets the point the Screener counts from
+
+Connecting a mailbox without choosing a history window left the Screener with no cutoff, so every
+message from a sender you had not decided about waited for a decision whatever its date. A mailbox
+with years of mail arrived with years of it waiting. Agreeing to let ohmail organize a mailbox is
+now itself that point, so only mail that arrives afterwards is a question. Choosing a window still
+works the same way, and coming back to setup cannot move the point.
+
+Mail already waiting in the Screener is not moved by this. If yours holds old mail from before
+this release, it stays where it is until you decide on it.
+
+### A waiting sender says why no suggestion is coming
+
+When ohmail cannot ask for a suggestion — the AI budget is spent, or AI is switched off for the
+account — the senders it did not get to said "No suggestion yet", which reads as a promise. They
+say the reason instead.
 
 ### The app reports how much memory it is holding
 
