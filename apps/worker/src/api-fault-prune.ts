@@ -3,7 +3,7 @@ import type { Tx } from "@trafficflow/db";
 import type { Logger } from "@trafficflow/core/mail";
 
 /**
- * `api_faults`' RETENTION (cloud 0032) — seven days, deleted by the arm that reads the table.
+ * `api_faults`' RETENTION (cloud 0033) — seven days, deleted by the arm that reads the table.
  *
  * It rides the alert cadence rather than a timer of its own: the alert pass is already the only
  * reader, already holds the leader lock, and a `DELETE` on an indexed `at` with nothing due is an
