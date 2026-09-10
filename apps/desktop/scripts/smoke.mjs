@@ -547,24 +547,6 @@ function installShellStub(window) {
             })),
           }));
         }
-        /* `POST /account/manage-link` — WHERE THIS ACCOUNT MANAGES ITS SUBSCRIPTION, asked once at
-           mount by `useDesktopManageLink` on the account door. The engine forwards it rather than
-           answering from the mirror, which holds nothing about an account's standing.
-
-           404 IS A MODELLED ANSWER HERE, NOT AN OMISSION, and it is the self-hosted server's own:
-           whoever operates the service serves that page, and a stub engine with no such operator
-           behind it has no page to name. The hook reads a non-ok answer as "nowhere", so the pane
-           withholds itself and the nav grows no Subscription entry — which is the resting state of
-           the surface these checks then assert. Answering 200 with a URL would instead draw a row
-           and a nav entry, moving a product decision inside the asserted DOM; the `/consent` entry
-           above states the same rule. POST only and exact: there is no other verb on this route.
-           This entry was added AFTER the check named it red, which is the drift the `unmodelled`
-           list exists to say out loud. */
-        if (url === "/account/manage-link" && payload?.method === "POST") {
-          return Promise.resolve(frame(404, "Not Found", {
-            error: { code: "not_found", message: "no manage page is served here" },
-          }));
-        }
         /* RECORDED, not silently 404'd into a console error the checks would then
            report as a product defect. A surface that starts calling a second route
            at boot has to be modelled here; until it is, this says so by name. */

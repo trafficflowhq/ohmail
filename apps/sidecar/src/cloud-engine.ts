@@ -2004,7 +2004,9 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
        the other is the difference between a database cost and an engine one. This door runs a
        mirror rather than a mail pipeline, which makes it the closest thing to a control the
        measurement has. No-op when this install was given no logger. */
-    const stopVitals = log ? startEngineVitals(log) : () => { /* nothing to write to */ };
+    const stopVitals = log
+      ? startEngineVitals(log, { storeBytes: () => opened.storeBytes() })
+      : () => { /* nothing to write to */ };
 
     return {
       db,

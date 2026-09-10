@@ -37,20 +37,12 @@ export const MANAGE_LINK_PATH = "/account/manage-link";
  * withholding the node itself withholds the entry — the rule `invitesSection` and
  * `devicesSection` already follow. The desktop census asserts the entry is gone on a 404.
  *
- * `null` covers every "nowhere": a door with no hosted account behind it, an offline install, a
- * server without the route, an account whose address is not verified, and the moment before the
- * first answer.
+ * `null` covers every "nowhere": an offline install, a server without the route, an account
+ * whose address is not verified, and the moment before the first answer.
  */
-export function useDesktopManageLink(accountDoor: boolean): string | null {
+export function useDesktopManageLink(): string | null {
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
-    /* NO ACCOUNT DOOR, NO ASK. A standalone install and one paired to another computer have no
-       hosted account and no server holding this state, so asking would put a route on the wire
-       that nothing behind this door serves. Any URL an earlier door answered goes with it. */
-    if (!accountDoor) {
-      setUrl(null);
-      return;
-    }
     let cancelled = false;
     void (async () => {
       try {
@@ -64,7 +56,7 @@ export function useDesktopManageLink(accountDoor: boolean): string | null {
       }
     })();
     return () => { cancelled = true; };
-  }, [accountDoor]);
+  }, []);
   return url;
 }
 

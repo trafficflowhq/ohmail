@@ -6360,6 +6360,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        `startEngineVitals`; no threshold is attached to any of it. */
     const stopVitals = startEngineVitals(log, {
       ...(config.vitalsIntervalMs === undefined ? {} : { intervalMs: config.vitalsIntervalMs }),
+      // The store's own heap, so a rise in `rss` can be attributed to the database or to the
+      // engine instead of argued about. Read per sample from the live handle, never captured.
+      storeBytes: () => opened.storeBytes(),
     });
     /* ONE PER PROCESS, because the "have I already said this import is running" half is per
        launch — see `first-sync.ts`. Built here rather than inside the drain, which runs per pass. */

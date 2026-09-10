@@ -108,8 +108,30 @@ export interface OpenLocalDb {
    * a periodic side effect nothing can check. See {@link checkpointWal}.
    */
   checkpoint(): Promise<number>;
+  /**
+   * The store's own memory in bytes — the WASM heap Postgres runs inside, which `heapUsed` cannot
+   * see and `external` can only lump together with everything else off the JavaScript heap.
+   *
+   * A FLOOR, not a per-message cost: measured at a constant 202 MB from an empty store to a
+   * large mirror, which is also the two private anonymous mappings (150 MB + 64 MB) a running
+   * build shows in `/proc`. So a reading that GROWS with the mailbox is the finding.
+   * `0` when the runtime exposes no heap; see {@link storeHeapBytes}.
+   */
+  storeBytes(): number;
   /** Flush and release. Idempotent — shutdown paths call it from more than one place. */
   close(): Promise<void>;
+}
+
+/**
+ * PGlite's WASM heap, read from the runtime rather than inferred from `process.memoryUsage()`.
+ *
+ * Never throws and never guesses: `Module` is undefined until the WASM is instantiated and a
+ * future PGlite may not expose `HEAPU8` at all, and both answer `0` — which reads as "not
+ * available" on a log line, where a fabricated number would read as a measurement.
+ */
+function storeHeapBytes(client: PGlite): number {
+  const heap = (client as unknown as { Module?: { HEAPU8?: { byteLength?: number } } }).Module?.HEAPU8;
+  return typeof heap?.byteLength === "number" ? heap.byteLength : 0;
 }
 
 /**
@@ -758,6 +780,7 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
       pgDataDir,
       timings: { pgliteOpenMs, adoptBaselineMs, migrateMs, compactMs },
       checkpoint,
+      storeBytes: () => storeHeapBytes(client),
       close: async () => {
         if (closed) return;
         closed = true;

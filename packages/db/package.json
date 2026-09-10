@@ -10,7 +10,10 @@
     "./journal": "./src/journal.ts",
     "./ledger-source": "./src/ledger-source.ts",
     "./mail": "./src/schema-mail.ts",
-    "./testing": "./src/testing.ts"
+    "./testing": "./src/testing.ts",
+    "./dialect": "./src/dialect/index.ts",
+    "./mail-sqlite": "./src/schema-mail-sqlite.ts",
+    "./sqlite-migrate": "./src/sqlite-migrate.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "0.2.17",

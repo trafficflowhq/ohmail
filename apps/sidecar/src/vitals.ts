@@ -41,13 +41,14 @@ export const ENGINE_VITALS_INTERVAL_MS = 5 * 60_000;
  * sibling: a bar chosen before the first measurement would be a number somebody invented, and
  * every later reading would be judged against it instead of against reality.
  *
- * ── WHY THREE NUMBERS AND NOT ONE ─────────────────────────────────────────────────────────
+ * ── WHY FOUR NUMBERS AND NOT ONE ──────────────────────────────────────────────────────────
  *
  * `heapUsed` is the JavaScript heap, and this process keeps a DATABASE outside it — a WASM
  * heap that `heapUsed` cannot see and `external` can. `rss` is what the operating system charges the
  * process and is what a person's activity monitor shows, but on its own it cannot say which half
- * grew. The three together are the only way a reading distinguishes "the mirror is holding more
- * mail" from "something is not being released".
+ * grew. `storeBytes` names the database half exactly, read from the runtime rather than inferred,
+ * so a rise in `rss` can be attributed instead of argued about. Together they are the only way a
+ * reading distinguishes "the mirror is holding more mail" from "something is not being released".
  *
  * ── AND WHY IT IS A SEPARATE TIMER FROM EVERY OTHER ONE HERE ──────────────────────────────
  *
@@ -61,7 +62,16 @@ export const ENGINE_VITALS_INTERVAL_MS = 5 * 60_000;
  */
 export function startEngineVitals(
   log: Diagnostic,
-  opts: { intervalMs?: number } = {},
+  opts: {
+    /**
+     * The store's own heap (`OpenLocalDb.storeBytes`) — REQUIRED, and not optional so that the
+     * absent case cannot exist: without it the line carries a `heapUsed` that describes a
+     * fraction of the process and no reading can say which half moved. Both doors open a store
+     * before they start this, so an optional reader would only be a branch nobody can reach.
+     */
+    storeBytes: () => number;
+    intervalMs?: number;
+  },
 ): () => void {
   /* MONOTONIC, and the distinction is not pedantry here. `Date.now()` moves with the wall clock —
      an NTP step, a suspend, a user correcting the date — so a series built from it can decrease or
@@ -75,8 +85,11 @@ export function startEngineVitals(
       rss: m.rss,
       heapUsed: m.heapUsed,
       external: m.external,
+      // Named, never spread: the field census reads this object's keys, and a conditional spread
+      // makes the whole call site unreadable to it.
+      storeBytes: opts.storeBytes(),
       // WHICH READING THIS IS, in the only unit that lets a log be read as a series. Without it a
-      // sequence of three numbers has no x-axis and cannot answer the drift question at all.
+      // sequence of memory readings has no x-axis and cannot answer the drift question at all.
       uptimeMs: Math.round(performance.now() - bootedAt),
       reason: "the engine's memory, sampled on a timer; no threshold is attached and none " +
         "should be until the shipped build has been measured against real mailboxes",

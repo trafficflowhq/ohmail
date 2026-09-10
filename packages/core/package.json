@@ -22,7 +22,8 @@
     "./drain-policy": "./src/drain-policy.ts",
     "./reply-subject": "./src/reply-subject.ts",
     "./search-rank": "./src/search-rank.ts",
-    "./pair-link": "./src/pair-link.ts"
+    "./pair-link": "./src/pair-link.ts",
+    "./sender-headers": "./src/sender-headers.ts"
   },
   "dependencies": {
     "drizzle-orm": "0.36.4",

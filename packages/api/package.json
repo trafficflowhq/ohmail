@@ -8,7 +8,9 @@
     "./health-cloud": "./src/routes/health-cloud.ts",
     "./local": "./src/local.ts",
     "./self-host": "./src/routes/self-host.ts",
-    "./desktop-host": "./src/routes/desktop-host.ts"
+    "./desktop-host": "./src/routes/desktop-host.ts",
+    "./relay-allowlist": "./src/relay-allowlist.ts",
+    "./match-path": "./src/match-path.ts"
   },
   "dependencies": {
     "drizzle-orm": "0.36.4",

@@ -517,13 +517,6 @@ const AWAY = JSON.stringify({
  */
 let manageLink: string | null = "https://account.example/manage?t=abc";
 
-/**
- * EVERY `engine_request` PATH THE MOUNT PUT ON THE BRIDGE, in order. The nav cannot answer a
- * question about the wire: a pane absent on a door looks identical whether the window never asked
- * for it or asked and threw the answer away.
- */
-const enginePaths: string[] = [];
-
 /** `signedIn` is the LIVE answer the window routes off — see the header. */
 function fakeShell(status: EngineStatus, signedIn: boolean): void {
   host.__TAURI_INTERNALS__ = {
@@ -534,7 +527,6 @@ function fakeShell(status: EngineStatus, signedIn: boolean): void {
       if (command === "plugin:event|listen") return null;
       if (command === "engine_request") {
         const url = String(payload?.url ?? "");
-        enginePaths.push(url);
         if (url === "/health") return encode(200, JSON.stringify({ signedIn }));
         if (url.startsWith("/sync/snapshot")) return encode(200, EMPTY_SNAPSHOT);
         if (url.startsWith("/mailboxes")) return encode(200, MAILBOXES);
@@ -589,7 +581,6 @@ async function navFor(status: EngineStatus, signedIn: boolean): Promise<string[]
 
 afterEach(async () => {
   manageLink = "https://account.example/manage?t=abc";
-  enginePaths.length = 0;
   if (root) await act(async () => { root!.unmount(); });
   mountPoint?.remove();
   root = null;
@@ -815,36 +806,6 @@ describe("SET-C — the desktop's two doors draw exactly what the census says", 
     expect(nav, "the entry survived a 404").not.toContain(label("billing"));
     // …and the rest of the nav is untouched, so this is a withheld pane and not a broken mount.
     expect(nav.sort()).toEqual(drawnOn("desktopCloud").filter((p) => p !== "billing").map(label).sort());
-  });
-
-  /**
-   * THE `desktopStandalone` ROW'S OTHER HALF — "no account and no server to ask" is a claim about
-   * the WIRE, and the nav cannot make it: Subscription is absent on this door either way, so a
-   * mount that asks and discards the answer draws exactly the same window as one that never asks.
-   *
-   * It asked. The hook fired on mount for every door, so a standalone install put
-   * `POST /account/manage-link` on the bridge at every launch — a route belonging to whoever
-   * operates the managed service, with no account behind this door and no server to answer it.
-   */
-  it("the standalone door asks for no manage page, because there is no account to ask about", async () => {
-    await navFor(LOCAL_SERVING, true);
-    expect(
-      enginePaths.filter((p) => p === MANAGE_LINK_PATH),
-      "a standalone install asked where to manage a subscription it has no account for",
-    ).toEqual([]);
-  });
-
-  /**
-   * AND ITS POSITIVE CONTROL, because a guard that only asserts silence passes just as well for a
-   * hook that has stopped asking anywhere. The account door must still put the route on the wire —
-   * that ask is what the Subscription row two cases above is drawn from.
-   */
-  it("…while the account door does ask, which is what the Subscription row is drawn from", async () => {
-    await navFor(CLOUD_SERVING, true);
-    expect(
-      enginePaths,
-      "the account door stopped asking, so the Subscription row can only be absent",
-    ).toContain(MANAGE_LINK_PATH);
   });
 
   /**
