@@ -32,7 +32,10 @@
     "unconfirmedBodyWarm": "ohmail could not complete the check. What is on screen is this device's own copy of your mail. Try again in a moment.",
     "tryAgain": "Try again",
     "signIn": "Sign in",
-    "openDemo": "Open the demo"
+    "openDemo": "Open the demo",
+    "storageRefused": "This browser is not keeping your decisions between reloads — a private window, or storage that is full.",
+    "storageRefusedDismiss": "Dismiss",
+    "noUndoHere": "No undo — this browser cannot keep one."
   },
   "login": {
     "title": "Sign in",

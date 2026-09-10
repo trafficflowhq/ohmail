@@ -124,6 +124,15 @@ export interface DeleteUndoCopy {
   undone: string;
   /** The window closed and the server refused (no Trash folder, a lost row). */
   failed: string;
+  /**
+   * THE JAR REFUSED THE RECORD, so the delete went at once and no undo was offered.
+   *
+   * Required rather than optional: a caller that has not been taught about the degradation would
+   * otherwise offer an undo it cannot honour, silently — which is the defect. A compile error at
+   * every call site is the point of it. Read from `session` (the "what this browser can keep"
+   * namespace) so the Screener and the delete key say one sentence.
+   */
+  noUndo: string;
   /** The same three for a press over MORE THAN ONE message. Optional; see above. */
   deletedMany?: (count: number) => string;
   undoneMany?: (count: number) => string;
@@ -344,7 +353,17 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
          it. Synchronous, and it cannot throw — see `delete-intents.ts`. */
       /* THE VERB RIDES THE ROW. `"delete"` is the default, so a caller that says nothing writes
          exactly the shape previous builds wrote and a replay in an OLDER build reads it. */
-      armDeleteIntent({ id: pressId, messageIds: ids, at: clock(), kind: deps.verb ?? "delete" });
+      const written = armDeleteIntent({ id: pressId, messageIds: ids, at: clock(), kind: deps.verb ?? "delete" });
+      /* A REFUSED JAR TAKES THE UNDO AWAY, NOT THE DELETE.
+         The window is only reversible because nothing has been sent yet, and the only thing that
+         made it safe to postpone was the record on disk. With no record, a tab closed inside the
+         window drops a delete the toast has already reported — so the press acts at once and the
+         sentence says there is no undo, rather than offering one that cannot be honoured. */
+      if (written === "lost") {
+        dispatch(pressId, ids);
+        deps.toast(`${say(deps.copy.deleted, deps.copy.deletedMany, ids.length)} ${deps.copy.noUndo}`);
+        return true;
+      }
       const timer = arm(() => commit(pressId), windowMs);
       open.set(pressId, { ids, timer });
       for (const id of ids) heldBy.set(id, pressId);

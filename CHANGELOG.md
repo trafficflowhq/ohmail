@@ -126,6 +126,20 @@ you do.
   how many mailboxes were running, and the one line that printed an id printed the id of the
   mailbox with no engine, which made the record read backwards.
 
+### When this browser cannot keep your decisions, ohmail says so
+
+In a private window, or on a browser whose storage is full, ohmail cannot write anything down
+between reloads. It used to carry on as if it could: a Screener decision or a delete was reported
+as done, an Undo was offered for the next few seconds, and closing the tab in that window threw
+the decision away with nothing anywhere saying so.
+
+Those few seconds exist only because nothing has been sent yet, and only a record on disk made it
+safe to wait. With no record, the decision now goes at once and the toast says there is no undo. A
+quiet line at the top of the app says once that this browser is not keeping your decisions between
+reloads.
+
+The desktop app and a normal browser window are unaffected.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

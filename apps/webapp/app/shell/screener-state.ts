@@ -533,6 +533,9 @@ export function useScreenerState(
   // `toastRuleFailed`, …), chosen from what the server actually returned — so it reads them from
   // the `screening` namespace, exactly as `AppShell#changeScreening` does.
   const ts = useTranslations("screening");
+  /* "No undo — this browser cannot keep one." ONE sentence for the Screener and the delete key,
+     so it lives in the namespace the durability notice uses rather than twice in two piles'. */
+  const tSession = useTranslations("session");
   const [, bump] = useReducer((c: number) => c + 1, 0);
   const store = useRef({
     pending: new Map<string, PendingEntry>(),
@@ -1108,9 +1111,27 @@ export function useScreenerState(
      * The timers are still armed and still own the HAPPY path. This is not a second mechanism
      * racing them; it is the record they act on, and the only thing that outlives them.
      */
-    armScreenerIntent(intentOf(id, entry));
-    s.pending.set(id, entry);
-    s.out.add(id);
+    const written = armScreenerIntent(intentOf(id, entry));
+    /**
+     * A REFUSED JAR TAKES THE UNDO AWAY, NOT THE DECISION.
+     *
+     * The window is only reversible because nothing has been sent yet, and what made it safe to
+     * postpone was the record above. With no record, a tab closed inside the window loses a
+     * decision the toast has already reported — the whole defect this journal closes, arriving
+     * through a private window instead of through a crash. So the decision is sent at once and
+     * the sentence says the undo is not on offer; `commit`'s own tail, minus the timers.
+     */
+    const holds = written === "stored";
+    if (holds) {
+      s.pending.set(id, entry);
+      s.out.add(id);
+    } else {
+      clearTimeout(entry.outTimer);
+      clearTimeout(entry.commitTimer);
+      if (dest === "spam") s.pins = [entry.sender, ...s.pins];
+      s.overrides.delete(id);
+      dispatchDecision(intentOf(id, entry));
+    }
     bump();
     if (opts.quiet) return;
     const target = scopeText(sender, opts.scope);
@@ -1138,6 +1159,10 @@ export function useScreenerState(
               read: read ? "true" : "false",
               target,
             });
+    if (!holds) {
+      toast(`${message} ${tSession("noUndoHere")}`);
+      return;
+    }
     toast(message, {
       action: t("toastUndo"),
       duration: UNDO_MS,

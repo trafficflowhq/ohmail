@@ -32,7 +32,10 @@
     "unconfirmedBodyWarm": "ohmail konnte die Prüfung nicht abschließen. Was du siehst, ist die Kopie deiner Post auf diesem Gerät. Versuch es gleich noch einmal.",
     "tryAgain": "Erneut versuchen",
     "signIn": "Anmelden",
-    "openDemo": "Demo öffnen"
+    "openDemo": "Demo öffnen",
+    "storageRefused": "Dieser Browser behält deine Entscheidungen über ein Neuladen hinweg nicht — ein privates Fenster oder voller Speicher.",
+    "storageRefusedDismiss": "Ausblenden",
+    "noUndoHere": "Kein Rückgängig — dieser Browser kann keins aufbewahren."
   },
   "login": {
     "title": "Anmelden",

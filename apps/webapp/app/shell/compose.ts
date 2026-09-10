@@ -11,6 +11,7 @@
  */
 import type { ComposeAttachment, EmailAddress, EngineMutation } from "@ohmail/client-engine";
 import type { SignatureState } from "./signature";
+import { durableRemove, durableSet } from "./durable";
 import { storageOwner } from "./storage-owner";
 
 /** The compose form, verbatim as typed. `to` is TEXT; `plan()` is what turns it into addresses. */
@@ -228,33 +229,36 @@ export function readComposeDraft(): ComposeFields {
   }
 }
 
+/**
+ * THE SCRATCH BUFFER, THROUGH THE CHECKED WRITE — `durable.ts`.
+ *
+ * A refused jar loses what somebody has written, which is the same fact about the browser as a
+ * lost decision, so it raises the same notice. Nothing else changes here: there is no undo window
+ * over a compose to degrade, and the draft still lives in React state for the length of the tab.
+ */
 export function writeComposeDraft(f: ComposeFields): void {
-  try {
-    /**
-     * "EMPTY" IS ABOUT THE TEXT, and `fromMailboxId` deliberately does not count.
-     *
-     * A sender pick on a form with nothing written in it is not a draft — persisting it would
-     * turn every visit to Compose into a stored buffer, and it would make the pick sticky in a
-     * way ruling 2 rules out: the default is derived on every fresh compose, and the only thing
-     * worth remembering is a pick attached to a message somebody is actually writing.
-     *
-     * `html` does not count either, and for a sharper reason: an empty ProseMirror document
-     * serialises to `<p></p>`, so testing it would make every visit to Compose leave a stored
-     * buffer behind. `body` is the editor's plain rendering and is `""` for that document,
-     * which is why it is the field that decides. Same rule as `isRichEmpty`.
-     */
-    if (f.to === "" && f.cc === "" && f.bcc === "" && f.subject === "" && f.body === "") {
-      window.localStorage.removeItem(composeDraftKey());
-      return;
-    }
-    // STRIP THE ATTACHMENTS' BYTES. They are held in memory only (see `ComposeFields.attachments`):
-    // a photo's worth of base64 would blow a storage quota, and a restored buffer must not claim a
-    // paperclip pointing at bytes it no longer holds. Everything textual is persisted as before.
-    const { attachments: _drop, ...persisted } = f;
-    window.localStorage.setItem(composeDraftKey(), JSON.stringify(persisted));
-  } catch {
-    /* private mode refuses writes; the draft lives in React state only */
+  /**
+   * "EMPTY" IS ABOUT THE TEXT, and `fromMailboxId` deliberately does not count.
+   *
+   * A sender pick on a form with nothing written in it is not a draft — persisting it would
+   * turn every visit to Compose into a stored buffer, and it would make the pick sticky in a
+   * way ruling 2 rules out: the default is derived on every fresh compose, and the only thing
+   * worth remembering is a pick attached to a message somebody is actually writing.
+   *
+   * `html` does not count either, and for a sharper reason: an empty ProseMirror document
+   * serialises to `<p></p>`, so testing it would make every visit to Compose leave a stored
+   * buffer behind. `body` is the editor's plain rendering and is `""` for that document,
+   * which is why it is the field that decides. Same rule as `isRichEmpty`.
+   */
+  if (f.to === "" && f.cc === "" && f.bcc === "" && f.subject === "" && f.body === "") {
+    durableRemove(composeDraftKey(), "compose.draft");
+    return;
   }
+  // STRIP THE ATTACHMENTS' BYTES. They are held in memory only (see `ComposeFields.attachments`):
+  // a photo's worth of base64 would blow a storage quota, and a restored buffer must not claim a
+  // paperclip pointing at bytes it no longer holds. Everything textual is persisted as before.
+  const { attachments: _drop, ...persisted } = f;
+  durableSet(composeDraftKey(), JSON.stringify(persisted), "compose.draft");
 }
 
 /**

@@ -53,6 +53,7 @@
  * leaves the request exactly as durable as the tab, which is where it was before this file.
  */
 
+import { durableRemove, durableSet, type DurableWrite } from "./durable";
 import { storageOwner } from "./storage-owner";
 
 /**
@@ -175,13 +176,17 @@ function read(): DeleteIntent[] {
   }
 }
 
-function write(rows: DeleteIntent[]): void {
-  try {
-    if (rows.length === 0) window.localStorage.removeItem(deleteIntentsKey());
-    else window.localStorage.setItem(deleteIntentsKey(), JSON.stringify(rows.slice(-DELETE_INTENTS_MAX)));
-  } catch {
-    // A refused jar means this request is only as durable as the tab. Never throw at the press.
-  }
+/**
+ * WRITE THE JOURNAL, AND SAY WHETHER IT LANDED — `screener-intents.ts#save`'s reason.
+ *
+ * It never throws at the press; what changed is that a refusal is no longer silent. `remove`
+ * deletes at once on a `lost` write instead of opening an undo window it cannot honour.
+ */
+function write(rows: DeleteIntent[]): DurableWrite {
+  const key = deleteIntentsKey();
+  return rows.length === 0
+    ? durableRemove(key, "delete.intents")
+    : durableSet(key, JSON.stringify(rows.slice(-DELETE_INTENTS_MAX)), "delete.intents");
 }
 
 /**
@@ -192,7 +197,7 @@ function write(rows: DeleteIntent[]): void {
  * and the second would fail against a row that is already gone. A press left holding nothing
  * after that is removed with it.
  */
-export function armDeleteIntent(intent: DeleteIntent): void {
+export function armDeleteIntent(intent: DeleteIntent): DurableWrite {
   const claimed = new Set(intent.messageIds);
   const kept: DeleteIntent[] = [];
   for (const r of read()) {
@@ -200,7 +205,7 @@ export function armDeleteIntent(intent: DeleteIntent): void {
     const ids = r.messageIds.filter((id) => !claimed.has(id));
     if (ids.length > 0) kept.push(ids.length === r.messageIds.length ? r : { ...r, messageIds: ids });
   }
-  write([...kept, intent]);
+  return write([...kept, intent]);
 }
 
 /**

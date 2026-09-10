@@ -159,6 +159,7 @@ import { HostConnectionLine } from "./HostConnectionLine";
 import type { HostConnection } from "./host-connection";
 import { UnsavedChanges } from "./UnsavedChanges";
 import { UpdateNotice } from "./UpdateNotice";
+import { DurabilityNotice } from "./DurabilityNotice";
 import { MailStateProvider, useMailState, type FreshnessProbe, type MailboxProbe } from "./MailStateProvider";
 /* The ONE stand-down predicate, aggregated over the roster: what may the Screener do here, and
    what changed about who organizes these mailboxes that nobody has acknowledged? Settings →
@@ -1463,6 +1464,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       undo: t("screener.toastUndo"),
       undone: t("ohbox.deleteUndone"),
       failed: t("ohbox.deleteFailed"),
+      /* SAID WHEN THE JAR REFUSED THE RECORD — the press acts at once and offers no undo.
+         `session` rather than `ohbox`: it is the same sentence the Screener says. */
+      noUndo: t("session.noUndoHere"),
       /* THE PLURAL SET, for a press over a selection. Separate sentences rather than one string
          with a number in it: the singular is what the key has said since it shipped, and it stays
          word for word so nothing about the one-message press moves. */
@@ -7312,6 +7316,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             away. The offer is not withdrawn and not re-decided — it is simply not drawn until the
             compose is closed. */}
         <UpdateNotice quiet={effectiveView === "compose"} />
+
+        {/* THIS BROWSER IS NOT KEEPING DECISIONS — the same slot and the same argument as the
+            strip above: a fact about the app rather than about a pile. Said once per session and
+            absent from the DOM until a durable write has actually been refused. */}
+        <DurabilityNotice />
 
         <div className="topbar">
           <button

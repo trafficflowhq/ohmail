@@ -51,6 +51,7 @@
  */
 
 import type { DecisionDestination, DecisionScope } from "@ohmail/ui";
+import { durableRemove, durableSet, type DurableWrite } from "./durable";
 import { storageOwner } from "./storage-owner";
 
 /**
@@ -139,13 +140,20 @@ function load(): ScreenerIntent[] {
   }
 }
 
-function save(rows: ScreenerIntent[]): void {
-  try {
-    if (rows.length === 0) window.localStorage.removeItem(screenerIntentsKey());
-    else window.localStorage.setItem(screenerIntentsKey(), JSON.stringify(rows));
-  } catch {
-    /* private mode, or a full quota — the decision is as durable as the tab, exactly as before */
-  }
+/**
+ * WRITE THE JOURNAL, AND SAY WHETHER IT LANDED.
+ *
+ * This used to swallow, on the argument that a refused jar left the decision "as durable as the
+ * tab, exactly as before" — which is true and is not the whole of it: the undo window was still
+ * offered over a record nobody held, so the product went on promising a decision it had no way
+ * to keep. The answer travels to `decide`, which commits at once rather than offering an undo it
+ * cannot honour.
+ */
+function save(rows: ScreenerIntent[]): DurableWrite {
+  const key = screenerIntentsKey();
+  return rows.length === 0
+    ? durableRemove(key, "screener.intents")
+    : durableSet(key, JSON.stringify(rows), "screener.intents");
 }
 
 /**
@@ -156,14 +164,14 @@ function save(rows: ScreenerIntent[]): void {
  * makes the write idempotent under a re-press after an expiry, which is the only way the two can
  * meet.
  */
-export function armScreenerIntent(intent: ScreenerIntent): void {
+export function armScreenerIntent(intent: ScreenerIntent): DurableWrite {
   const rows = load().filter((r) => r.id !== intent.id);
   rows.push(
     intent.heldIds.length <= INTENT_HELD_IDS_MAX
       ? intent
       : { ...intent, heldIds: intent.heldIds.slice(0, INTENT_HELD_IDS_MAX) },
   );
-  save(rows);
+  return save(rows);
 }
 
 /**
