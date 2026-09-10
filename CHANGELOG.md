@@ -13,6 +13,13 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Still to come
+
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
+
+## [0.16.0] — 2026-09-10
+
 ### Trash and filing
 
 - Backspace, Delete and `d` move a message to Trash whether or not Use folders is on — Trash is your
@@ -126,11 +133,6 @@ About no longer says the publisher signs this app, because the builds are not si
 notice names all three platforms as the real mail clients they have been since 0.7.0. The composer's
 footnote no longer says a message is kept in this browser until you send it: it is not a browser in
 the desktop app, and drafts are saved to your account after a moment.
-
-### Still to come
-
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
 
 ## [0.15.0] — 2026-09-09
 
@@ -5372,7 +5374,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.16.0
 [0.15.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.15.0
 [0.14.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.14.2
 [0.14.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.14.1
