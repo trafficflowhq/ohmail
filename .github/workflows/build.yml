@@ -2264,7 +2264,7 @@ jobs:
           docker run --rm \
             -v "$PWD/build:/work:ro" \
             registry.fedoraproject.org/fedora:42 \
-            bash -c 'dnf -y install desktop-file-utils findutils >/dev/null && bash /work/rpm-install-drill.sh'
+            bash -c 'dnf -y install desktop-file-utils findutils file >/dev/null && bash /work/rpm-install-drill.sh'
 
       - name: Run summary
         if: always()
