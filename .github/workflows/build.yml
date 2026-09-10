@@ -350,6 +350,84 @@ jobs:
           fi
           echo "the packaged engine served, using only the runtime inside the app"
 
+      # ── THE SHIPPED macOS BINARY IS READ THE WAY THE OTHER THREE ARE ─────
+      #
+      # Windows and both Linux jobs grep the binary they built for the CSP and
+      # enumerate every URL in it; macOS did not, so a first-party address or a
+      # missing CSP compiled into the .app shipped unchallenged. Same check,
+      # same allow-list, read from the binary INSIDE the bundle — which is what
+      # both the DMG and the updater payload are made of.
+      #
+      # The universal binary carries two architectures, so every string appears
+      # twice; `sort -u` below already collapses that.
+      - name: Inspect the URLs and the CSP in the shipped binary
+        run: |
+          set -euo pipefail
+          B=apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle
+          BIN="$B/macos/ohmail.app/Contents/MacOS/ohmail"
+          test -s "$BIN"
+          # The shipped ELF is this job's architecture — see the `dpkg` note
+          # the machine out of the ELF header, which is the artifact's own answer
+          # rather than the runner's.
+          grep -aq "connect-src 'none'" "$BIN"
+          echo "URLs in the binary:"
+          ALL_URLS="$(grep -aoE 'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+' "$BIN" | sort -u)"
+          printf '%s\n' "$ALL_URLS"
+          # Identical rule to the Windows job — the update feed by prefix, the
+          # Cloud API by equality, the browser link table page by page, and the
+          # scheme split that keeps adjacent Rust literals from being judged as
+          # one address; see the reasoning there.
+          FEED_PREFIX='https://github.com/trafficflowhq/ohmail/releases/latest/download/latest.json'
+          CLOUD_URL='https://api.ohmail.app'
+          SPLIT_URLS="$(printf '%s\n' "$ALL_URLS" \
+            | awk '{ gsub(/https?:\/\//, "\n&"); print }' | grep -E '^https?://' || true)"
+          FIRST_PARTY="$(grep -Ei 'ohmail|mailoh|trafficflow' <<< "$SPLIT_URLS" | sort -u || true)"
+          if [ -z "$FIRST_PARTY" ]; then
+            echo "the pinned update feed URL is missing from the binary" >&2
+            exit 1
+          fi
+          BAD=0
+          while IFS= read -r u; do
+            [ -z "$u" ] && continue
+            case "$u" in
+              "$FEED_PREFIX"*) : ;;
+              # PREFIX, for the reason the comment above gives for the browser link
+              # table: these are Rust string literals with no terminator sitting next
+              # to each other in read-only data, so what comes back is whatever
+              # follows glued on. This was the one entry still matching exactly, and
+              # it held only while nothing happened to sit beside it — the first
+              # release build of 0.13.3 failed on
+              # `https://api.ohmail.appcloud-tokens.sealthe`, which is this URL with
+              # two unrelated literals stuck to its end. The re-split on the scheme
+              # above is what makes a prefix answer for exactly one address.
+              "$CLOUD_URL"*) : ;;
+              # The self-hosted door's PLACEHOLDER, not an endpoint. `example.com` is
+              # reserved by IANA precisely so it can never resolve to anyone, and this
+              # is the greyed-out example in the address field plus the same example
+              # in the sentence under it. It is caught here only because it contains
+              # the product name, which is what makes it a good placeholder.
+              'https://ohmail.example.com'*) : ;;
+              'https://ohmail.app/mailbox#/settings'*) : ;;
+              # The mailboxes pane hand-off: a hosted install manages mailbox
+              # ceremonies on the web, and the Settings pane opens this address
+              # through the same fixed link table as the entries around it.
+              'https://ohmail.app/mailbox?settings=mailboxes#/settings'*) : ;;
+              # The devices pane hand-off, admitted for the same reason. Minting and
+              # revoking a device is a step-up ceremony on the hosted door, and the
+              # Settings pane reaches that pane by key through the same fixed table.
+              'https://ohmail.app/mailbox?settings=devices#/settings'*) : ;;
+              'https://ohmail.app/link-desktop'*) : ;;
+              'https://ohmail.app/privacy'*) : ;;
+              'https://ohmail.app/subprocessors'*) : ;;
+              *) echo "  unexpected first-party URL: $u" >&2; BAD=1 ;;
+            esac
+          done <<< "$FIRST_PARTY"
+          if [ "$BAD" -ne 0 ]; then
+            echo "first-party URLs other than the named endpoints are present" >&2
+            exit 1
+          fi
+          echo "unique URL strings (reconcile with the README enumeration): $(grep -c . <<< "$ALL_URLS" || true)"
+
       - name: Upload ohmail.dmg
         uses: actions/upload-artifact@v7
         with:
