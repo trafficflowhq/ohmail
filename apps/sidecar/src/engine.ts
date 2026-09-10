@@ -4257,6 +4257,19 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             });
           }
           await notePeekedHolder(priorStandDown as MailboxDisabledReason | null);
+          /* ── THE ANSWER AND THE CACHE AGREE, EVEN WHEN BOTH READS FAILED ──────────────────────
+           *
+           * `notePeekedHolder` writes the whole record on its SUCCESS path and carries the previous
+           * one on its catch — correctly, because a look that failed is not evidence about who
+           * holds the mailbox. But this arm is reached when the ROW read failed too, and then
+           * nothing had set `organizing`: it kept the last GOOD answer, `true`, while this function
+           * returned false. `drain` decides organizer-only work from that field, so the pass that
+           * could not establish its role ran as the organizer.
+           *
+           * The pass is not organizing — that is what returning false means — so the field says so.
+           * A no-op on the success path, where it is already false; `unreadableSince` is what tells
+           * a person the difference between "nothing organizes this" and "we could not look". */
+          organizer = { ...organizer, organizing: false };
           /* ── AND CACHE THE ORGANIZER'S SETTINGS DOCUMENT, ONCE PER READER CYCLE (mail 0094) ──
            *
            * A reader's own responder/rule/window/signature rows are inert: the ones in force are in
