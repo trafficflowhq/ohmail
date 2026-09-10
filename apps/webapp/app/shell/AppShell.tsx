@@ -2326,16 +2326,21 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * slower clock; the component's own optimistic set covers the gap between the two. A REJECTION
    * is passed through rather than swallowed — the component puts the line back, because the
    * acknowledgement did not happen.
+   *
+   * ── AND WHY IT IS NOT A `useMemo` RETURNING A FUNCTION ────────────────────────────────────
+   *
+   * That was the last memoized closure in this component, and a memoized closure here is the
+   * webview's idle drift: every closure created in one render shares that render's whole scope,
+   * so a function React hands back unchanged pins the render it was made in — with its consent
+   * partition and its projection over every message. `useStableCallback`'s survivor closes over
+   * a ref and nothing else. `?.` rather than a null memo: the absence of a transport is decided
+   * where the notice is mounted, so nothing here needs a branch nobody can reach.
    */
-  const acknowledgeOrganizerNotice = useMemo<OrganizerNoticeTransport | null>(() => {
-    const wire = organizerNoticeTransport;
-    if (wire === undefined) return null;
-    return async (id: string) => {
-      const answer = await wire(id);
-      refreshFacts();
-      return answer;
-    };
-  }, [organizerNoticeTransport, refreshFacts]);
+  const acknowledgeOrganizerNotice: OrganizerNoticeTransport = useStableCallback(async (id: string) => {
+    const answer = await organizerNoticeTransport?.(id);
+    refreshFacts();
+    return answer;
+  });
   const screener = useScreenerState(
     engine, version, toast, suggestions.suggestions, presented, autoUnsubscribeDiscloses,
     screenerRole, suggestions.outstandingDecisions,
@@ -7545,8 +7550,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                        nothing without an unacknowledged change), so the only thing decided
                        here is whether there is any way to acknowledge — see
                        `acknowledgeOrganizerNotice`. Withheld on the demo, which has no row
-                       to stamp and no other install to change hands with. */
-                    const organizer = demo || acknowledgeOrganizerNotice === null
+                       to stamp and no other install to change hands with.
+
+                       THE TRANSPORT ITSELF is the condition, not the callback: the callback is
+                       stable and always present (it holds no render scope, which is why), so
+                       the honest question is whether either door supplied a way to write the
+                       stamp. A notice that cannot be acknowledged is withheld. */
+                    const organizer = demo || organizerNoticeTransport === undefined
                       ? null
                       : (
                         <OrganizerNotice
