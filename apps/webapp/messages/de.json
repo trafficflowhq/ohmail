@@ -3422,5 +3422,12 @@
     "installSignOutConfirmWhyHost": "Die Kopie deiner Post, die schon auf diesem {machine} liegt, bleibt liegen. Gelöscht wird die Kopplung mit {host} und über welchen Weg diese Installation gekommen ist. Von deinem Mailserver wird nichts entfernt.",
     "aboutDoorHostValue": "Ein anderer Computer von dir",
     "aboutDoorHostWhy": "ohmail auf {host} öffnet dein Postfach und organisiert es; dieser {machine} liest und handelt darüber. Über deine Post geht nichts an uns."
+  },
+  "accessLock": {
+    "title": "Dieses Konto ist nicht aktiv.",
+    "suspendedTitle": "Dieses Konto ist gesperrt.",
+    "kept": "Deine Post und deine Einstellungen bleiben. Es wurde nichts gelöscht, und deine Post liegt ohnehin auf deinem eigenen Server.",
+    "manage": "Abo verwalten",
+    "signOut": "Abmelden"
   }
 }

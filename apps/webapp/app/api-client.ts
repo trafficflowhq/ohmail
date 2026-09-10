@@ -815,6 +815,9 @@ async function attempt<T>(
       error?: { code?: string; message?: string; details?: unknown; retryable?: unknown };
     } | undefined)?.error;
     const retryAfterMs = retryAfterMsOf(res);
+    if (res.status === ACCESS_REFUSED_STATUS && env?.code === ACCESS_REFUSED_CODE) {
+      notifyAccessRefused(env.details);
+    }
     throw new ApiError(
       res.status,
       env?.code ?? "internal",
@@ -834,6 +837,52 @@ async function attempt<T>(
     );
   }
   return parsed as T;
+}
+
+/**
+ * ═══ THE ACCESS REFUSAL, RAISED ONCE FOR THE WHOLE CLIENT ═════════════════════════════════
+ *
+ * The server answers `402 subscription_required` at every door an inactive account may not
+ * reach, so every one of this module's ~200 callers could meet it. Handling it at the call sites
+ * would mean two hundred chances to render mail beside a refusal; the shell needs to know instead,
+ * once, and swap the whole surface for the lock screen.
+ *
+ * A NOTIFIER and not a thrown state: the `ApiError` still propagates unchanged, so nothing that
+ * already handles a refusal changes behaviour. This is a side channel the shell subscribes to.
+ */
+export const ACCESS_REFUSED_STATUS = 402;
+export const ACCESS_REFUSED_CODE = "subscription_required";
+
+/** Why access was refused, and where the customer can put it right. */
+export interface AccessRefusedFacts {
+  reason: "payment_required" | "suspended";
+  manageUrl?: string;
+}
+
+type AccessRefusedSink = (facts: AccessRefusedFacts) => void;
+let accessRefusedSink: AccessRefusedSink | null = null;
+
+/**
+ * Subscribe to access refusals. Returns the unsubscribe. LAST WRITER WINS — there is one shell
+ * per document, and a second subscriber would mean two surfaces disagreeing about the same fact.
+ */
+export function onAccessRefused(sink: AccessRefusedSink): () => void {
+  accessRefusedSink = sink;
+  return () => { if (accessRefusedSink === sink) accessRefusedSink = null; };
+}
+
+/** Narrow the envelope's `details`. An unrecognised reason is `payment_required` — the arm whose
+ *  remedy is a link the customer can act on, rather than one that reads as our fault. */
+function notifyAccessRefused(details: unknown): void {
+  const sink = accessRefusedSink;
+  if (!sink) return;
+  const d = (details ?? {}) as { reason?: unknown; manageUrl?: unknown };
+  const reason = d.reason === "suspended" ? "suspended" : "payment_required";
+  const url = typeof d.manageUrl === "string" && d.manageUrl.length > 0 ? d.manageUrl : undefined;
+  // A sink that throws must not replace the refusal with its own failure.
+  try {
+    sink({ reason, ...(url ? { manageUrl: url } : {}) });
+  } catch { /* the ApiError below is the answer either way */ }
 }
 
 // ── The shapes this flow actually exchanges ──────────────────────────────────────────────

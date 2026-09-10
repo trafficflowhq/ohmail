@@ -3422,5 +3422,12 @@
     "installSignOutConfirmWhyHost": "The copy of your mail already on this {machine} stays where it is. What is cleared is the pairing with {host} and which door this install came in by. Nothing is removed from your mail server.",
     "aboutDoorHostValue": "Another computer of yours",
     "aboutDoorHostWhy": "ohmail on {host} opens your mailbox and organizes it; this {machine} reads and acts through it. Nothing about your mail is sent to us."
+  },
+  "accessLock": {
+    "title": "This account is not active.",
+    "suspendedTitle": "This account is suspended.",
+    "kept": "Your mail and settings are kept. Nothing has been deleted, and your mail is on your own server either way.",
+    "manage": "Manage subscription",
+    "signOut": "Sign out"
   }
 }

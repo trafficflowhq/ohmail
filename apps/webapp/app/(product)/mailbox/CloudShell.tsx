@@ -1,16 +1,20 @@
 "use client";
 
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AppShell } from "../../shell/AppShell";
 import type { MailboxFacts } from "../../shell/mail-state";
 import { toMailboxFacts } from "./mailbox-facts";
 import { buildToken } from "../../shell/app-update";
 import { startBuildWatch } from "../../shell/build-watch";
 import { COMPOSE_ATTACH_STAGED_SURFACE_BYTES } from "../../components/ComposeAttach";
-import { bindApiOwner, mailboxes as mailboxApi, pendApiOwner } from "../../api-client";
+import {
+  bindApiOwner, mailboxes as mailboxApi, onAccessRefused, pendApiOwner,
+  type AccessRefusedFacts,
+} from "../../api-client";
 import { readOwner } from "../../shell/owner-cookie";
 import { resolveOwnerOutcome } from "../session-outcome";
 import { AboutSection } from "./AboutSection";
+import { AccessLock } from "./AccessLock";
 import { AccountLocale } from "./AccountLocale";
 import { AiCreditNotice } from "./AiCreditNotice";
 import { BillingSection } from "./BillingSection";
@@ -116,6 +120,23 @@ export function CloudShell({ demo }: { demo: boolean }) {
    * the server's own `features.pairing` word. The pane node is built only when both hold, so
    * on managed the Settings nav structurally cannot grow an Invites entry.
    */
+  /**
+   * HAS THE SERVICE REFUSED THIS ACCOUNT? Subscribed once, for the whole client.
+   *
+   * Any door may answer `402 subscription_required`, so the client raises it here rather than at
+   * two hundred call sites — and the whole surface swaps for the lock screen, because mail beside
+   * a refusal is the state this exists to prevent. It never UNSETS itself: a refusal is a fact
+   * about the account, and a later request that happens to succeed (a cached read, an open door)
+   * is not evidence that it was lifted. Signing in again after paying is what clears it.
+   *
+   * NOT ON THE DEMO: the landing page's mailbox reaches no server and has no account to refuse.
+   */
+  const [refused, setRefused] = useState<AccessRefusedFacts | null>(null);
+  useEffect(() => {
+    if (demo) return;
+    return onAccessRefused((facts) => setRefused((held) => held ?? facts));
+  }, [demo]);
+
   const userInvites = useUserInvites();
 
   /**
@@ -237,6 +258,16 @@ export function CloudShell({ demo }: { demo: boolean }) {
   // `AccountLocale` is the same seam expressed as a CONTEXT instead of a node, and it has to be:
   // the language row is the one control in Settings that a standalone install also has, so the ROW
   // is shared and only the account write is injected. See its header.
+  // The lock replaces the shell entirely — after the hooks above, so the hook order is stable
+  // across the swap, and inside `AccountLocale` so the screen speaks the account's language.
+  if (refused) {
+    return (
+      <AccountLocale>
+        <AccessLock facts={refused} />
+      </AccountLocale>
+    );
+  }
+
   return (
     <AccountLocale>
       <AppShell
