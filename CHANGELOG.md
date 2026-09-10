@@ -689,7 +689,7 @@ When a mail server's certificate is for a different name than the one you typed,
 before sending your password and says which name the certificate covers — and, when it can work
 out the host that would have answered, names that too. Until now you had to read it off the
 sentence and type it back into the field two lines below. There is a control beside the sentence
-now: "Use <host> as the IMAP server", or SMTP when the outgoing server is the one that did not
+now: `Use <host> as the IMAP server`, or SMTP when the outgoing server is the one that did not
 match. Pressing it fills that field and does nothing else — the next attempt dials that host and
 checks its certificate against it exactly as any address you type is checked. It appears only where
 there is a field to fill: behind a named provider the host is ohmail's own and there is nothing to
