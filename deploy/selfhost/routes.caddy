@@ -1,60 +1,25 @@
-# THE ROUTE TABLE — which container answers which path, and NOTHING about how this stack is
-# reached. It is a file of its own because there are two front doors and only one route table.
-#
-#   Caddyfile                 the door that owns TLS: the site address is OHMAIL_ORIGIN and Caddy
-#                             obtains the certificate (or issues it from its own local CA on a
-#                             private name).
-#   Caddyfile.external-tls    the door behind SOMEBODY ELSE'S terminator: plain HTTP on port 80,
-#                             no certificate of its own, X-Forwarded-* honoured from the
-#                             configured terminator address and from nowhere else.
-#
-# Both `import /etc/caddy/routes.caddy`, so the paths cannot drift apart between them — which is
-# the whole reason this is not two copies of the same twenty lines. docker-compose.yml mounts
-# THIS file at that path for either door, and selects which Caddyfile is mounted from one
-# variable (OHMAIL_EXTERNAL_TLS).
-#
-# Nothing here reads a scheme, a host or a certificate. A directive that does belongs in one of
-# the two files above, next to the door it is about.
+# The route table: which container answers which path. Imported by both front doors — Caddyfile
+# (owns TLS) and Caddyfile.external-tls (behind a terminator that does) — so the paths exist once.
 
-# The API's whole path surface, matched EXACTLY as the API mounts it. NO path
-# stripping anywhere: the API canonicalizes one leading `/api` off itself, so `/api/sync`
-# through this proxy and `/sync` from a native client hash identically for idempotency —
-# a strip here would double-strip `/api/api/…` shapes and desynchronize retries.
-#
-#   /api/*         the browser client's calls (NEXT_PUBLIC_API_BASE=/api)
-#   /auth/*        sign-in ceremonies, and the refresh cookie's own Path (/auth/refresh)
-#   /events        the SSE stream (long-lived; Caddy streams it unbuffered by default)
-#   /health        liveness + schema + key identity, for operators and health checks
-#   /hello         the capability handshake (flavor, needsSetup, features)
-#   /pair, /pair/* the pairing-token ceremony (first-run setup, invites, device pairing)
-#   /internal/*    the shared-secret alert intake (404 until TF_ALERT_SECRET arms it) —
-#                  an operator's monitor calls it at the documented path, so the proxy
-#                  must carry it even though nothing in the product's own UI ever does
+# NO path stripping: the API canonicalizes one leading `/api` off itself, so `/api/sync` here and
+# `/sync` from a native client hash identically for idempotency. A strip would double-strip
+# `/api/api/…`. `/internal/*` is the shared-secret alert intake an operator's monitor calls — 404
+# until TF_ALERT_SECRET arms it, and nothing in the product's own UI ever uses it.
 @api path /api /api/* /auth /auth/* /events /health /hello /pair /pair/* /internal /internal/*
 handle @api {
 	reverse_proxy api:8080
 }
 
-# THE STAGING BUCKET'S BROWSER DOOR. Attachment uploads are presigned against THIS origin
-# (`S3_PUBLIC_ENDPOINT`, defaulted to it), because the bundled MinIO has no browser-reachable
-# address and the app's CSP allows same-origin requests only. Two properties here are
-# load-bearing, one visible and one not:
-#   · the path is `/<bucket>/*` — path-style object addressing, the bucket name spelled in
-#     the URL, so the matcher must track S3_BUCKET (docker-compose.yml passes it in);
-#   · the Host header is PRESERVED — Caddy's reverse_proxy default, relied on rather than
-#     configured — because SigV4 signs the Host: the grant was signed for THIS origin's host,
-#     and MinIO recomputes the signature over the Host it receives. Rewrite the Host upstream
-#     and every upload 403s.
-# SECURITY: this exposes the bucket's path surface, and that is safe ONLY because the bucket
-# is PRIVATE — an unsigned request 403s, and the only grants ever minted are single-object
-# PUTs that expire within the hour. Never attach an anonymous policy to the bucket; the boot
-# smoke probes an unsigned GET and PUT and fails the push that breaks this.
+# The staging bucket's browser door. Uploads are presigned against THIS origin, so the path carries
+# the bucket name (track S3_BUCKET) and the Host must stay as sent — SigV4 signs it, and MinIO
+# recomputes over what it receives. Safe only because the bucket is PRIVATE: unsigned requests 403.
+# Never attach an anonymous policy; the boot check probes an unsigned GET and PUT.
 @staging path /{$S3_BUCKET:ohmail-staging}/*
 handle @staging {
 	reverse_proxy minio:9000
 }
 
-# Everything else is the web application: the landing, the sign-in pages, the client.
+# Everything else is the web application.
 handle {
 	reverse_proxy web:3000
 }

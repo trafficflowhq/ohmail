@@ -1,12 +1,9 @@
 /**
- * THE CANONICAL PATHNAME — the one routine that decides which spelling of a path is which route.
+ * The canonical pathname: RFC 3986 §6.2.2 escape normalization, slash runs collapsed, exactly one
+ * leading `/api` dropped, one trailing slash dropped except at the root. No case folding — static
+ * route segments are compared byte-for-byte, so folding would match routes the server would 404.
  *
- * RFC 3986 §6.2.2 escape normalization, slash runs collapsed, exactly one leading `/api` dropped,
- * one trailing slash dropped except at the root. No case folding: static route segments are
- * compared byte-for-byte, so folding here would match routes the server would 404.
- *
- * `apps/server` and `apps/api-vercel` each hold a code-identical copy; the relay allowlist reads
- * THIS one, and `relay-allowlist-census.test.ts` pins all three to the same source.
+ * `apps/server` and `apps/api-vercel` hold code-identical copies; the census pins all three.
  */
 
 /** The prefix the webapp's same-origin split may leave on the path. */

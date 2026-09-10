@@ -1,61 +1,13 @@
-# The self-host stack's ONE front door. Caddy owns the origin split that the managed
-# deployment performs with a Next rewrite: the browser only ever talks to this address, and
-# these routes decide which container answers.
-#
-# The site address IS the configuration: `OHMAIL_ORIGIN` (docker-compose.yml passes it in).
-#  · `https://mail.example.com`  — Caddy provisions and renews a certificate automatically
-#    (the domain must resolve to this box and ports 80/443 must be reachable from outside).
-#  · `http://localhost` or `http://localhost:<port>` — the same-box run, plain HTTP on a
-#    loopback origin. One browser caveat, documented rather than worked around: the API's
-#    cookies carry `Secure` unconditionally, and Safari — alone among the major engines —
-#    refuses Secure cookies over http://localhost. Same-box Safari therefore needs the HTTPS
-#    form (or any Chromium/Firefox browser); a real domain is unaffected.
-#  · `https://ohmail.test`, `https://mail.lan`, `https://ohmail.internal` — a PRIVATE name on
-#    your own network. Set `OHMAIL_TLS_INTERNAL=1` in `.env` for these; see below.
+# The front door that owns TLS. The site address IS the configuration: OHMAIL_ORIGIN, from
+# docker-compose.yml. Routes are in routes.caddy, which both doors import. For a stack behind a
+# terminator that owns the certificate, set OHMAIL_EXTERNAL_TLS=1 and compose mounts
+# Caddyfile.external-tls instead. Origin forms and the private-name recipe: docs/self-host/VPS.md.
 {$OHMAIL_ORIGIN} {
-	# ── A PRIVATE ORIGIN NEEDS ITS OWN CA, AND THE DEFAULT IS NOT MERELY UNHELPFUL ──────────
-	#
-	# Caddy picks the internal issuer on its own for `localhost` and for IP addresses, and for
-	# NOTHING else — a private name like `ohmail.test` or `mail.lan` goes to ACME like any
-	# public domain. Measured on a fresh self-host stack at `https://ohmail.test`:
-	#
-	#   1. every request fails the handshake with `tlsv1 alert internal error`, which names
-	#      nothing the operator can act on and appears in no place they would look;
-	#   2. Caddy registers a REAL ACCOUNT against Let's Encrypt PRODUCTION from the operator's
-	#      own machine — before anyone has agreed to anything — and orders a certificate;
-	#   3. LE refuses (`Domain name does not end with a valid public suffix`), and Caddy then
-	#      RETRIES for `max_duration` — thirty days — so one `docker compose up` on a private
-	#      name becomes a month of rejected orders against a shared public service, which is
-	#      how an account earns a failed-authorization rate limit.
-	#
-	# `OHMAIL_TLS_INTERNAL=1` selects Caddy's own local CA instead: certificates are issued on
-	# the box, nothing is asked of any public CA, and the operator installs the root once
-	# (`docker compose exec proxy cat /data/caddy/pki/authorities/local/root.crt`). The
-	# per-platform steps are in `.env.example` beside the switch, and in the guide's
-	# "Private self-hosting, and ohmail over Tailscale" section (`docs/self-host/VPS.md`).
-	# This comment used to say "the README spells that step out"; it did not — the private-name
-	# posture appeared only in `.env.example`, so a reader who followed README -> VPS.md was told
-	# a public domain was required and never learned this switch existed.
-	#
-	# NOTE ON EXTERNAL CERTIFICATES. This door still cannot be pointed at a certificate FILE, and
-	# deliberately so — an operator's `.env` may express the switch above and no other Caddy
-	# configuration. What changed is that it is no longer the end of the story: a stack behind a
-	# terminator that owns the certificate — `tailscale serve`, an existing reverse proxy, a
-	# corporate load balancer — sets OHMAIL_EXTERNAL_TLS in `.env` and gets the SIBLING door,
-	# `Caddyfile.external-tls`, which serves the same routes as plain HTTP and asks no authority
-	# for anything. That works because OHMAIL_ORIGIN stops being this site's address there while
-	# remaining the origin the application announces; the two were one value, and that is what
-	# used to make the whole class impossible. This paragraph said so as a standing limitation
-	# for several releases and is corrected rather than deleted.
-	#
-	# The placeholder expands to the whole directive or to nothing, and it can be exactly one
-	# of those two: docker-compose.yml maps a plain boolean to the literal text with
-	# `${OHMAIL_TLS_INTERNAL:+tls internal}`, so no Caddy configuration is reachable from the
-	# operator's `.env` — only the switch is.
+	# `tls internal` or nothing — compose maps the operator's boolean to exactly one of those, so
+	# no Caddy configuration is reachable from `.env`. Required for any private name: Caddy picks
+	# its internal issuer only for `localhost` and bare IPs, so `ohmail.test` otherwise goes to
+	# ACME, which cannot issue for it and retries for thirty days.
 	{$OHMAIL_TLS_DIRECTIVE:}
 
-	# The routes themselves — see routes.caddy. Imported rather than spelled here because
-	# Caddyfile.external-tls serves the same paths behind a terminator that owns the certificate,
-	# and two copies of a route table are two route tables.
 	import /etc/caddy/routes.caddy
 }

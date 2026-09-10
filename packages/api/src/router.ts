@@ -209,34 +209,15 @@ export interface Route {
    */
   cost: CostClass;
   /**
-   * REQUIRED, and it is a fact about a DIFFERENT program: may a Cloud-mode desktop install's
-   * write-through relay forward this route to the server its door names?
+   * REQUIRED. May a Cloud-mode install's write-through relay forward this route to the server its
+   * door names? `false` for a route that resolves a credential out of the REQUEST BODY
+   * (`credentialSubject`), for the browser hand-off ceremony, and for the hosted console, intake,
+   * back-office, waitlist and OAuth server surfaces.
    *
-   * ── WHY THE ROUTE TABLE ANSWERS THIS, AND WHY IT IS NOT OPTIONAL ─────────────────────────
-   *
-   * `apps/sidecar/src/cloud-proxy.ts` serves reads out of a local mirror and forwards everything
-   * else to the configured base with a bearer. When the door names a server the person runs
-   * THEMSELVES, "everything else" is a request leaving with a credential in its body — and the
-   * refusal was a DENYLIST of two paths, which is the shape three consecutive fixes were each a
-   * symptom of. Each fix closed one spelling and review found the next: a malformed percent
-   * escape, a trailing slash, a `/api` prefix, a folded case, a missing method comparison.
-   *
-   * An allowlist makes those unreachable by construction rather than by enumeration, and the
-   * allowlist has to be derived from THIS table, because this is the only place that knows what
-   * a route is. `relay-allowlist.ts` is the import-free projection the sidecar reads (it cannot
-   * import handlers — that would drag the IMAP adapter into an engine whose census exists to
-   * keep it out), and `relay-allowlist-census.test.ts` holds the two in agreement.
-   *
-   * NO DEFAULT, for the same reason `cost` has none. A default in either direction is wrong: a
-   * silent `true` re-opens the leak on the next route somebody adds, and a silent `false` breaks
-   * a shipped client's feature without a word. A new route DECLARES, and the census fails a
-   * runtime table whose member has not.
-   *
-   * `false` is the answer for a route that resolves a credential out of the REQUEST BODY
-   * (`credentialSubject`), for the browser hand-off ceremony, and for the planes a self-host
-   * relay has no business reaching at all — the hosted console, the alert intake, billing, the
-   * waitlist and the OAuth server surface. The census asserts the first of those by DERIVATION
-   * rather than by list, so a route that becomes a credential subject cannot stay relayable.
+   * No default in either direction: a silent `true` leaks on the next route added, a silent
+   * `false` breaks a shipped client without a word. `relay-allowlist.ts` is the import-free
+   * projection the sidecar reads; `relay-allowlist-census.test.ts` holds the two in agreement and
+   * derives the credential-subject refusal from the handlers rather than from a list.
    */
   relay: boolean;
   handler: Handler;

@@ -2,19 +2,11 @@ import { matchSpec } from "./match-path.js";
 import { MalformedPathError, normalizePathname } from "./canonical-path.js";
 
 /**
- * WHICH ROUTES A CLOUD-MODE DESKTOP'S WRITE-THROUGH RELAY MAY FORWARD.
- *
- * `apps/sidecar/src/cloud-proxy.ts` serves reads from a local mirror and forwards the rest to the
- * server its door names. When that server is one the person runs themselves, a forwarded request
- * carries whatever its body holds — so the refusal is an allowlist and a non-member is a 404.
- *
- * The list is a PROJECTION of `Route.relay` over the package's route tables, not a second opinion:
- * `relay-allowlist-census.test.ts` fails if the two disagree in either direction. It is a
- * hand-editable file because the sidecar cannot import handlers — that would pull the IMAP adapter
- * into an engine whose census exists to keep it out.
- *
- * The matcher and the canonicalizer it imports have no imports of their own — the condition for
- * the sidecar reading this at all.
+ * Which routes a Cloud-mode install's write-through relay may forward to the server its door
+ * names. A projection of `Route.relay`, not a second opinion — `relay-allowlist-census.test.ts`
+ * fails if the two disagree either way. It is a file rather than a derivation because the sidecar
+ * cannot import handlers: that would pull the IMAP adapter into an engine whose census keeps it
+ * out. The matcher and canonicalizer imported here have no imports of their own.
  */
 
 export interface RelaySpec {
@@ -190,12 +182,9 @@ export const RELAY_ALLOWLIST: readonly RelaySpec[] = [
 const HANDOFF = new Set(["POST /auth/desktop-claim", "POST /auth/desktop-link"]);
 
 /**
- * What the relay should do with this request.
- *
- * `handoff` is a refusal too — it only selects the wording, and it is decided on the CANONICAL
- * path, so every spelling that reaches the hosted hand-off route gets the sentence that says how
- * to sign in instead. Case is NOT folded: static route segments are compared byte-for-byte, so
- * `/AUTH/Desktop-Claim` is a path the server 404s and this refuses the same way.
+ * What the relay should do with this request. `handoff` is a refusal too — it selects the wording,
+ * decided on the CANONICAL path so every spelling of the hand-off route gets the sentence about
+ * signing in instead. Case is not folded, so `/AUTH/Desktop-Claim` is refused as the 404 it is.
  */
 export function relayVerdict(method: string, pathname: string): "forward" | "handoff" | "refuse" {
   let canonical: string;

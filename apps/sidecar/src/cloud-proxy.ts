@@ -62,16 +62,11 @@ export interface WriteThroughProxyConfig {
 }
 
 /**
- * WHAT MAY BE FORWARDED — an allowlist, and a non-member is a 404.
- *
- * The refusal used to be a denylist of two paths, and each of three fixes closed one spelling
- * while review found the next: a malformed escape, a trailing slash, an `/api` prefix, a folded
- * case, a missing method comparison. The list of relayable routes lives in the API's own route
- * table (`Route.relay`) and reaches here as `RELAY_ALLOWLIST`; `mayRelay` canonicalizes the path
- * with the server's routine and matches with the server's resolver, so a spelling that reaches a
- * hosted route reaches the same verdict here.
- *
- * `handoffForeign` no longer decides whether to refuse — only which sentence the refusal carries.
+ * WHAT MAY BE FORWARDED — an allowlist, and a non-member is a 404. The relayable routes are the
+ * API route table's own `Route.relay`, reaching here as `RELAY_ALLOWLIST`; `relayVerdict`
+ * canonicalizes and matches with the server's own routines, so a spelling that reaches a hosted
+ * route reaches the same verdict here. `handoffForeign` chooses the wording, never whether to
+ * refuse.
  */
 
 export interface WriteThroughProxy {
@@ -110,8 +105,7 @@ function parseSeq(raw: string | null): bigint | null {
 
 export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThroughProxy {
   const echoDeadlineMs = cfg.echoDeadlineMs ?? DEFAULT_ECHO_DEADLINE_MS;
-  /* A build whose allowlist arrived empty would refuse every write and read as an offline
-     install. Fail at construction, where it is one line to diagnose. */
+  /* An empty allowlist would refuse every write and read as an offline install. */
   if (RELAY_ALLOWLIST.length < ALLOWLIST_MIN) {
     throw new Error(`the relay allowlist holds ${RELAY_ALLOWLIST.length} routes; this build is incomplete`);
   }
@@ -125,12 +119,12 @@ export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThro
     const path = `${url.pathname}${url.search}`;
     const method = req.method.toUpperCase();
 
-    /* THE ALLOWLIST. Matched on the pathname, so a query string cannot slip past it. Refused
-       BEFORE the body is read, so a refused request reaches neither the network nor a buffer. */
+    /* Matched on the pathname, so a query string cannot slip past it, and refused before the body
+       is read — a refused request reaches neither the network nor a buffer. */
     const verdict = relayVerdict(method, url.pathname);
     if (verdict !== "forward") {
-      /* Logged, because a route added without a relay verdict would otherwise be a silent 404
-         wearing the clothes of a server that does not have the route. */
+      /* Logged: a route added without a verdict would otherwise be a 404 indistinguishable from a
+         server that does not have the route. */
       cfg.log?.("cloud_relay_refused", {
         method,
         path: url.pathname,
