@@ -2089,7 +2089,9 @@ export function makeLeasePeekIo(client: LeaseImapClient, toServerPath: (canonica
           { max: META_RECORDS_MAX_PER_FETCH, refuseWhenOver: true },
         );
         if (claims !== null) return claims;
-        throw new MetaFolderTruncatedError(read.records.length, read.total, read.records);
+        throw new MetaFolderTruncatedError(
+          read.records.length, read.total, read.records, read.truncatedBy,
+        );
       } finally {
         lock.release();
       }
@@ -2618,8 +2620,14 @@ export async function lastSequence(
 export interface MetaFolderRead {
   /** The records the window covered, in the server's own order (oldest first WITHIN the window). */
   records: RawMetaMessage[];
-  /** The folder holds more than {@link META_RECORDS_MAX_PER_FETCH}; older records were not read. */
+  /** The folder holds more than one read may take; older records were not read. */
   truncated: boolean;
+  /**
+   * WHICH ceiling ended it — the record count or the byte budget. Optional so a test double
+   * building this record by hand still compiles; production always sets it, and the refusal
+   * built from it names the ceiling that fired rather than assuming the count.
+   */
+  truncatedBy?: MetaTruncation;
   /** The folder's message count as the server reported it, or `null` when it did not say. */
   total: number | null;
 }
@@ -2633,7 +2641,11 @@ export interface MetaFolderRead {
  * might forget to check. Carrying the counts is what lets the refusal say how full the folder is,
  * which is the one thing that tells somebody reading a log what to do about it.
  */
+export type MetaTruncation = "records" | "bytes";
+
 export class MetaFolderTruncatedError extends Error {
+  /** Which ceiling ended the read — the sentence and {@link limit} both follow it. */
+  readonly by: MetaTruncation;
   /** How many records the window covered. */
   readonly read: number;
   /** The ceiling that bounded it. */
@@ -2655,15 +2667,28 @@ export class MetaFolderTruncatedError extends Error {
    * ever organized this mailbox" arm, over a folder that is demonstrably full. The one field whose
    * absence would be worst is the one an optional parameter makes easiest to omit.
    */
-  constructor(read: number, total: number | null, records: readonly RawMetaMessage[]) {
+  constructor(
+    read: number,
+    total: number | null,
+    records: readonly RawMetaMessage[],
+    /*
+     * The RECORD ceiling by default, because that is what every construction site written before
+     * the byte ceiling existed means — and it is the reading a caller with no window in hand can
+     * honestly give.
+     */
+    by: MetaTruncation = "records",
+  ) {
+    const ceiling = by === "bytes" ? IMAP_META_BYTES_MAX : META_RECORDS_MAX_PER_FETCH;
+    const what = by === "bytes" ? "bytes" : "records";
     super(
-      `${META_FOLDER} holds more than the ${META_RECORDS_MAX_PER_FETCH} records one read may take` +
-      `${total === null ? "" : ` (${total} present)`}, so what is in it is not fully known and ` +
-      `nothing was decided from it`,
+      `${META_FOLDER} holds more than the ${ceiling} ${what} one read may take` +
+      `${total === null ? "" : ` (${total} messages present)`}, so what is in it is not fully ` +
+      `known and nothing was decided from it`,
     );
     this.name = "MetaFolderTruncatedError";
+    this.by = by;
     this.read = read;
-    this.limit = META_RECORDS_MAX_PER_FETCH;
+    this.limit = ceiling;
     this.total = total;
     this.records = records;
   }
@@ -2780,7 +2805,9 @@ export async function readMetaFolderWindow(
   // make the constant's own claim ("one read of the folder") false in exactly the case the
   // re-read fires, and per-read ceilings compose into a total nobody bounded.
   const budget = ImapDeadline.in(IMAP_META_DEADLINE_MS, "read_deadline", now);
-  const readFrom = async (start: number): Promise<{ records: RawMetaMessage[]; evicted: boolean }> => {
+  const readFrom = async (
+    start: number,
+  ): Promise<{ records: RawMetaMessage[]; evicted: boolean; by: MetaTruncation | null }> => {
   /* ── A PAGE ASKS FOR ITS OWN WINDOW, NOT FOR EVERYTHING BELOW THE CURSOR ──────────────────
    *
    * This asked for `1:<cursor-1>` and let the eviction keep the newest ceiling's worth. Bounded in
@@ -2795,7 +2822,7 @@ export async function readMetaFolderWindow(
   const { lo: pageLo, hi: pageHi } = metaPageBounds(beforeUid ?? 1);
   const range = beforeUid !== undefined ? `${pageLo}:${pageHi}` : `${start}:*`;
   const byUid = beforeUid !== undefined;
-  if (beforeUid !== undefined && beforeUid <= 1) return { records: [], evicted: false };
+  if (beforeUid !== undefined && beforeUid <= 1) return { records: [], evicted: false, by: null };
   /*
    * Three ceilings, all three on the READ. COUNT evicts from the FRONT rather than stopping: a
    * sequence range arrives oldest first, so stopping keeps the superseded half. BYTES, because
@@ -2830,6 +2857,7 @@ export async function readMetaFolderWindow(
   return {
     records: read.items.filter((r): r is RawMetaMessage => r !== null),
     evicted: read.evicted,
+    by: read.evictedBy === "bytes" ? "bytes" : read.evictedBy === "count" ? "records" : null,
   };
   };
 
@@ -2867,11 +2895,20 @@ export async function readMetaFolderWindow(
     return {
       records: wide.records,
       truncated: wide.evicted,
+      ...(wide.by === null ? {} : { truncatedBy: wide.by }),
       total: wide.evicted ? null : wide.records.length,
     };
   }
 
-  return { records: first.records, truncated: from > 1 || first.evicted, total };
+  /* A WINDOW THAT SKIPPED OLDER RECORDS IS A RECORD-COUNT TRUNCATION even when nothing was
+   * evicted: the range itself started past them. The eviction's own reason wins where there is
+   * one, because it is the ceiling the read actually crossed. */
+  return {
+    records: first.records,
+    truncated: from > 1 || first.evicted,
+    ...(first.by !== null ? { truncatedBy: first.by } : from > 1 ? { truncatedBy: "records" as const } : {}),
+    total,
+  };
 }
 
 /**
@@ -3469,7 +3506,11 @@ export function makeLeaseIo(
         // BESIDE THE RECORDS, INSIDE THE LOCK — see `generationAtLastRead`. Sampled before the
         // truncation throw as well, because the gate acts on that window too.
         sampleGeneration();
-        if (read.truncated) throw new MetaFolderTruncatedError(read.records.length, read.total, read.records);
+        if (read.truncated) {
+          throw new MetaFolderTruncatedError(
+            read.records.length, read.total, read.records, read.truncatedBy,
+          );
+        }
         return read.records;
       } finally {
         lock.release();
@@ -5665,7 +5706,11 @@ function makeMetaRecordsList(
         // Inside the lock, with `_meta` open: this is the only place the right folder is
         // guaranteed to be the selected one.
         onGeneration?.(generationOf(client));
-        if (read.truncated) throw new MetaFolderTruncatedError(read.records.length, read.total, read.records);
+        if (read.truncated) {
+          throw new MetaFolderTruncatedError(
+            read.records.length, read.total, read.records, read.truncatedBy,
+          );
+        }
         return read.records;
       } finally {
         lock.release();

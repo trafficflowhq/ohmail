@@ -585,6 +585,12 @@ export interface BoundedFetchResult<R> {
   items: R[];
   /** A ceiling fired under `evict` and older items were dropped — the caller's UNKNOWN. */
   evicted: boolean;
+  /**
+   * WHICH ceiling evicted, so the refusal a caller builds from it names the one that fired.
+   * A report naming the wrong condition is worse than no report: it sends whoever reads it to
+   * the wrong place. The FIRST reason wins, because it is the one the window actually crossed.
+   */
+  evictedBy: "count" | "bytes" | null;
   /** Bytes retained, where the caller measures them; `0` with no byte arm. */
   bytes: number;
 }
@@ -641,6 +647,7 @@ export async function boundedFetch<T, R>(
   let seen = 0;
   let bytes = 0;
   let evicted = false;
+  let evictedBy: "count" | "bytes" | null = null;
   for (;;) {
     const step = opts.deadline === undefined
       ? await it.next()
@@ -674,12 +681,13 @@ export async function boundedFetch<T, R>(
     // saying so is what `evicted` is for.
     while (evict && items.length > 0
       && (items.length > opts.max || (opts.bytes !== undefined && bytes > opts.bytes.max))) {
+      evictedBy = evictedBy ?? (items.length > opts.max ? "count" : "bytes");
       items.shift();
       bytes -= costs.shift() ?? 0;
       evicted = true;
     }
   }
-  return { items, evicted, bytes };
+  return { items, evicted, evictedBy, bytes };
 }
 
 /** {@link boundedFetch} for a read with nothing on its byte axis — the adapter's UID streams. */
