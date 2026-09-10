@@ -215,6 +215,13 @@ built, so it could name an older release than the one the desktop buttons beside
 links the APK attached to the current release now, through the same address the desktop downloads
 use, and no build has to know a version for it to be right.
 
+### A message you move teaches the rule that filed it
+
+When ohmail has learned to file a sender for you and you move one of those messages somewhere
+else, that move now counts against the rule. Move two of them inside a fortnight and the rule
+stops filing on its own: it goes back to asking you first, and the rule shows as off in your
+rules list. Confirming its suggestions again brings it back.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
