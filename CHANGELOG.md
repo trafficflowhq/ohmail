@@ -231,8 +231,8 @@ mailbox rather than with the page.
 
 Those now arrive with the mail they belong to, a page at a time. The first screenful comes back
 sooner on a big mailbox, and mail the app has not fetched yet no longer arrives with triage state
-attached — which is what put occasional rows with no subject or sender in Reply later and Set
-aside.
+attached — which is what could put a row titled with an id, and no sender, in Answer Later or
+Parked.
 
 ### Still to come
 
