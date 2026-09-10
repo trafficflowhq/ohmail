@@ -474,9 +474,6 @@ export const profileImport: {
 
 export const billing: {
     subscription: () => Promise<SubscriptionStatus>;
-    portal: () => Promise<{
-        url: string;
-    }>;
     checkout: (plan: "solo" | "plus" | "pro") => Promise<{
         url: string;
     }>;
@@ -710,6 +707,9 @@ export const away: {
 
 export const account: {
     erase: () => Promise<ErasureResult>;
+    manageLink: () => Promise<{
+        url: string;
+    } | null>;
 } = absent;
 
 export const privacy: {

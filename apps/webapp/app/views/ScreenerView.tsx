@@ -607,7 +607,6 @@ export function ScreenerView({
   state,
   suggest,
   suggestNode,
-  aiCreditNode,
   segment,
   selection,
   settled,
@@ -656,7 +655,6 @@ export function ScreenerView({
    * the resting state too: an exhausted allowance is most worth saying on the visit where the
    * suggest control has nothing to offer and no explanation for it.
    */
-  aiCreditNode?: ReactNode;
   /**
    * The remote-image consent chrome, threaded to every held preview so the Screener's
    * "Show images" path is the reading pane's, unchanged. ABSENT on a client with no server
@@ -1407,26 +1405,18 @@ export function ScreenerView({
                   : t.rich("pendingBarLeadUnknown", { b: (chunks) => <b>{chunks}</b> })}
               </p>
             ) : null}
-            {/* THE STRIP APPEARS FOR THE BULK CONTROLS **OR** FOR THE ALLOWANCE LINE, and the
-                two conditions are genuinely different — which is what this wrapper used to get
-                wrong. `waitingCount > 0` is right for the buttons (a bulk control may not outlive
-                the thing it acts on) and exactly backwards for the line under them: `aiCreditNode`
-                exists to explain an exhausted allowance, and an empty queue is when that
-                explanation is most worth having, not least. Resolving the last waiting sender took
-                both the remaining balance and the plan offer off the screen, contradicting this
-                prop's own contract. */}
-            {/* AND NOTHING THAT DECIDES IS OFFERED ON A MAILBOX THIS INSTALL DOES NOT ORGANIZE.
-                `readOnly` takes the two bulk verbs off the strip outright — an inert button is
-                its own small lie, and both of these would answer every press with a refusal. The
-                allowance line stays: it is a statement about the account, not a control, and it
-                is as true here as anywhere. The suggest control stays for the same reason it
-                exists — a suggestion is advice, and a reader may still buy and read it. */}
-            {segment === "waiting" && (state.waitingCount > 0 || aiCreditNode) ? (
+            {/* A BULK CONTROL MAY NOT OUTLIVE THE THING IT ACTS ON — now the whole of the
+                strip's condition. It carried a second disjunct for the allowance line, which had
+                to appear on an EMPTY queue; that line has left this surface, so an empty queue
+                means an empty strip and the inner repeat of this test is gone with it.
+
+                NOTHING THAT DECIDES IS OFFERED ON A MAILBOX THIS INSTALL DOES NOT ORGANIZE.
+                `readOnly` takes the two bulk verbs off outright — an inert button is its own
+                small lie. The suggest control stays for the reason it exists: a suggestion is
+                advice, and a reader may still buy and read it. */}
+            {segment === "waiting" && state.waitingCount > 0 ? (
               <BulkStrip ariaLabel={t("bulkAria")}>
-                {state.waitingCount > 0 ? (
-                  <>
-                  {/* A BULK CONTROL MAY NOT OUTLIVE THE THING IT ACTS ON.
-                      Gated on `suggestedCount`, never on `waitingCount`: with no suggestions
+                  {/* Gated on `suggestedCount`, never on `waitingCount`: with no suggestions
                       this button used to file every waiting stranger into the Ohbox and
                       promote a rule for each, while its label said it was applying
                       suggestions the user was never shown. `markAllSpam` says exactly what it
@@ -1464,13 +1454,6 @@ export function ScreenerView({
                       {t("markAllSpam")}
                     </Button>
                   ) : null}
-                  </>
-                ) : null}
-                {/* THE ALLOWANCE, one line under the control that spends it — last in the strip
-                    and full-width, so it reads as a footnote to the row rather than as a fourth
-                    button in it. It renders itself away when there is nothing worth saying, so
-                    the ordinary case (AI on, plenty of allowance) is an unchanged strip. */}
-                {aiCreditNode}
               </BulkStrip>
             ) : null}
             {/* HOW FAR THE BULK HAS GOT. `applyAll` and `markAllSpam` dispatch one row every

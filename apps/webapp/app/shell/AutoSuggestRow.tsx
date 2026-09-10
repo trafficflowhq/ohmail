@@ -38,10 +38,10 @@
  *
  * ── THE SWITCH SHOWS THE STORED VALUE, NEVER THE HOPED-FOR ONE ──────────────────────────
  *
- * Deliberately not optimistic, unlike `BillingSection`'s AI switch. That one flips immediately
- * because a refusal there costs nothing; here the switch is the user's only record of whether
- * their money is committed, so it renders what the database answered and nothing else. Pressing
- * it ON opens the confirm and does NOT move it — the flag turns on when the confirm does.
+ * Deliberately not optimistic. This switch is the user's only record of whether their money is
+ * committed, so it renders what the database answered and nothing else — a switch that moved on
+ * the press would claim a commitment the server had not made. Pressing it ON opens the confirm
+ * and does NOT move it; the flag turns on when the confirm does.
  */
 
 import { useEffect, useRef, useState } from "react";

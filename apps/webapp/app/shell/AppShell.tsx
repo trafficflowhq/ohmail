@@ -777,7 +777,6 @@ export function AppShell({
   olderBodyWire,
   junkWire,
   suggestWire,
-  aiCredits,
   firstRun,
   mailtoDraft,
   onMailtoDraftSeeded,
@@ -1170,23 +1169,6 @@ export function AppShell({
    */
   suggestWire?: SuggestWire;
   /**
-   * WHAT THE ACCOUNT'S AI ALLOWANCE IS DOING, said where AI actions are bought.
-   *
-   * The same seam as {@link screenerSuggest} and for the identical reason: the answer comes from
-   * `GET /billing/subscription`, and this shared shell may not call `app/api-client` — it is
-   * published, and the mirror does not contain that module. A standalone install has no account
-   * and no allowance, so it hands in nothing and the line simply does not exist there.
-   *
-   * A FUNCTION rather than a node, because the offer this line makes ("start a plan") is
-   * worthless without somewhere to land, and WHERE it lands is this file's business. `go()` is a
-   * module export the Cloud client could import — the constraint is not reachability, it is that
-   * "Settings, on the Subscription pane" is a two-part act here: a hash change AND a one-shot
-   * pane request the settings view reads at its own mount. A node that only had `go()` would land
-   * people on General; a node given both would be a second copy of the shell's navigation living
-   * outside it. So the shell hands down the finished act and the injected node presses it.
-   */
-  aiCredits?: (ctx: { onStartPlan: () => void }) => ReactNode;
-  /**
    * THE FIRST-RUN STAGE'S DOOR — the calls setup makes, from the surface that can make them.
    *
    * Absent ⇒ THE STAGE DOES NOT EXIST on this surface, structurally, and `#/first-run` renders
@@ -1263,7 +1245,6 @@ export function AppShell({
             olderBodyWire={olderBodyWire}
             junkWire={junkWire}
             suggestWire={suggestWire}
-            aiCredits={aiCredits}
             firstRun={firstRun}
             mailtoDraft={mailtoDraft}
             onMailtoDraftSeeded={onMailtoDraftSeeded}
@@ -1311,7 +1292,7 @@ function MailStateHost({ probe, freshnessProbe, children }: { probe?: MailboxPro
   );
 }
 
-function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, billingSection, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, notificationHost, screeningSection, screenerSuggest, awayTransport, awayIsLocal, awayOnHost, profileImportTransport, consentTransport, olderBodyWire, junkWire, suggestWire, aiCredits, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
+function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, billingSection, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, notificationHost, screeningSection, screenerSuggest, awayTransport, awayIsLocal, awayOnHost, profileImportTransport, consentTransport, olderBodyWire, junkWire, suggestWire, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
   /** The pull settle watch's read — the same probe `MailStateHost` above provides the strip. */
   mailboxFacts?: MailboxProbe;
   /** See `AppShell`'s prop of this name — absent withholds the organizer notice. */
@@ -1347,7 +1328,6 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   /** The Junk window's wire — see the outer prop of the same name. */
   junkWire?: JunkWire;
   suggestWire?: SuggestWire;
-  aiCredits?: (ctx: { onStartPlan: () => void }) => ReactNode;
   /** The first-run stage's door — see the outer prop of the same name. */
   firstRun?: FirstRunHost;
   mailtoDraft?: ComposePrefill | null;
@@ -7735,17 +7715,6 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                         resuggestable: screener.suggestedSenders,
                         absorb: suggestions.absorb,
                       })
-                }
-                /* WHAT THE ALLOWANCE IS DOING, under the control that spends it. Bound here
-                   rather than inside the view for the reason every injected node is: the answer
-                   comes from the Cloud API, which this shared file may not call. The offer's
-                   destination is bound HERE too — `openSettingsPane("billing")` — so the shell
-                   keeps its routing and the injected node keeps its transport. Withheld on the
-                   demo, which has no account and therefore no allowance to describe. */
-                aiCreditNode={
-                  demo || !aiCredits
-                    ? undefined
-                    : aiCredits({ onStartPlan: () => openSettingsPane("billing") })
                 }
                 segment={route.screenerSegment}
                 selection={scnSel}

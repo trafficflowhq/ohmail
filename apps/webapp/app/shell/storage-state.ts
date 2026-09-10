@@ -1,39 +1,20 @@
 import type { SubscriptionStatus } from "../api-client";
 
 /**
- * WHAT TO SAY ABOUT STORAGE — one derivation, `ai-credit-state.ts`'s shape for the same reason:
- * the settings row and any surface that warns must not be able to disagree, and a pure function
- * over `GET /billing/subscription` is the whole of what a test needs.
+ * WHAT TO SAY ABOUT STORAGE — a derivation with NO CLIENT LEFT, kept for one reason.
  *
- * ── WHY IT LIVES IN THE SHARED SHELL AND NOT BESIDE THE PANE THAT FIRST READ IT ─────────────
+ * Both panes that rendered a storage row from it have left this tree with the rest of the
+ * subscription surface, so nothing here is called by the app any more. It stays because
+ * {@link BYTES_PER_STORED_EMAIL_ESTIMATE} is the client-side literal that
+ * `test/landing-pricing-matches-plan-card.test.ts` pins against the server's, and the marketing
+ * pricing page advertises the count derived from it. Whether the rest is deleted or a storage
+ * row returns is not decided here.
  *
- * TWO clients render a storage row over the same account row: the browser tab's billing pane
- * (`(product)/mailbox/BillingSection.tsx`) and the desktop app's subscription pane
- * (`apps/desktop/src/DesktopBilling.tsx`), which relays the same `GET /billing/subscription`
- * through its shell bridge. `shell/` is the directory both of them compile — imports run
- * `(product)` → `shell`, never back — so this is the only place a definition can sit without
- * one client either importing a route group it is not part of or keeping a second copy.
- *
- * A second copy is the failure mode worth naming: the two panes would then hold two thresholds
- * and two byte formatters, and the first thing to drift would be the number a person compares
- * between a browser tab and the app on their desk. There is one threshold, one formatter and
- * one estimate here, and both panes read them.
- *
- * The states are deliberately few. Below ninety percent there is nothing worth saying — the row
- * shows the numbers and stops. `near_cap` exists so the first a person hears of the cap is not
- * the moment it bites; `at_cap` states what is now true: mail keeps arriving and keeps being
- * organized, and new message CONTENT stops being stored on the hosted side. Nothing already
- * stored is touched — a storage state must never read as a threat to existing mail, because it
- * is not one.
- *
- * ── WHY BOTH NUMBERS MUST BE PRESENT ────────────────────────────────────────────────────────
- *
- * `storageUsedBytes` and `entitlements.storageBytesLimit` are optional on the wire (an older
- * server omits them), and absence means "say nothing about storage" — never "0 of 0", which
- * would render every account as at once empty and capped. The same read discipline as
- * `trialCredits`. A cap of 0 also says nothing: it is the zero-entitlement shape, whose
- * `syncEnabled: false` already stops ingest, and a full-red storage row on a suspended account
- * would name the wrong problem.
+ * The states it derives are few by design. Below ninety percent there is nothing worth saying;
+ * `near_cap` exists so the first a person hears of a cap is not the moment it bites; `at_cap`
+ * says new message CONTENT stops being stored and NOTHING already stored is touched — a storage
+ * state must never read as a threat to existing mail. Both numbers must be present: absence
+ * means "say nothing", never "0 of 0", which renders an account as at once empty and capped.
  */
 export type StorageState =
   | { kind: "near_cap"; usedBytes: number; capBytes: number }

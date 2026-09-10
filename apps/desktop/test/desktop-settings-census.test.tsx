@@ -6,6 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 
 import { DesktopGate } from "../src/DesktopGate.js";
+import { MANAGE_LINK_PATH } from "../src/DesktopSubscription.js";
 import { desktopPaneLabel } from "../src/DesktopSettings.js";
 import messages from "../../webapp/messages/en.json";
 import { PANE_IDS, type PaneId } from "../../webapp/app/shell/routing";
@@ -228,28 +229,38 @@ const MATRIX: Record<PaneId, Record<Door, Cell>> = {
     },
   },
   billing: {
-    managedWeb: { state: "present", why: "the plan, the renewal, the managed-AI switch" },
-    selfHostWeb: {
-      state: "inert",
+    managedWeb: {
+      state: "present",
       why:
-        "`billingRoutes` are spread at `routes/index.ts` and NOWHERE else, so a self-hosted server " +
-        "does not serve `/billing/subscription` at all — the pane's read refuses and its plan cards " +
-        "offer a checkout that cannot open. The AI switch beside them IS mounted " +
-        "(`aiSettingsRoutes` is on this composition), which is why the pane is not simply wrong " +
-        "everywhere. The signal is the same `/hello` feature word the folders row asks for: this " +
-        "client renders the managed client's panes because nothing tells it which server it is on",
+        "one row linking to the page the service operator serves, from the URL " +
+        "`POST /account/manage-link` answers. The pane holds nothing else: no plan, no balance " +
+        "and no payment method are this program's to state",
     },
-    desktopCloud: { state: "present", why: "`DesktopBilling` over the forwarded routes" },
-    desktopSelfHost: {
-      state: "inert",
+    selfHostWeb: {
+      state: "absent",
       why:
-        "`DesktopBilling` over a proxy pointed at a server with no `billingRoutes`, plus the same " +
-        "conflation the folders row names — `{ mode: \"cloud\" }` is both doors. PRE-EXISTING, and " +
-        "closed by the same `/hello` word rather than by a probe in the window",
+        "no manage page is served here, so the route answers 404, so the shell builds no node and " +
+        "the nav grows no entry. ABSENT rather than inert, and that is the whole gain of the " +
+        "change: the pane used to render plan cards offering a checkout that could not open, " +
+        "because nothing told the client which server it was on. Now the answer to " +
+        "`manage-link` IS that signal, and the surface withholds itself on it",
+    },
+    desktopCloud: {
+      state: "present",
+      why:
+        "`DesktopSubscription` over the forwarded `POST /account/manage-link`; the click leaves " +
+        "for the platform's browser through the interceptor every external link uses",
+    },
+    desktopSelfHost: {
+      state: "absent",
+      why:
+        "the same 404 the browser tab gets, through the proxy. This door could never tell itself " +
+        "from the managed one — `{ mode: \"cloud\" }` is both — and it no longer has to: the " +
+        "route's own answer decides, so the previously inert pane is simply not drawn",
     },
     desktopStandalone: {
       state: "absent",
-      why: "no account, so no subscription — a pane here would offer to sell what the tier gives away",
+      why: "no account and no server to ask, so there is no page to link to and nothing to draw",
     },
   },
   invites: {
@@ -469,6 +480,12 @@ const AWAY = JSON.stringify({
   audience: "screened_in", throttle: "per_day",
 });
 
+/**
+ * What `POST /account/manage-link` answers for the next mount: a URL, or `null` for the 404 a
+ * deployment with no such page gives. Reassigned per case, never captured by the stub.
+ */
+let manageLink: string | null = "https://account.example/manage?t=abc";
+
 /** `signedIn` is the LIVE answer the window routes off — see the header. */
 function fakeShell(status: EngineStatus, signedIn: boolean): void {
   host.__TAURI_INTERNALS__ = {
@@ -484,6 +501,13 @@ function fakeShell(status: EngineStatus, signedIn: boolean): void {
         if (url.startsWith("/mailboxes")) return encode(200, MAILBOXES);
         if (url.startsWith("/consent")) return encode(200, CONSENT);
         if (url.startsWith("/away-responder")) return encode(200, AWAY);
+        // The Subscription pane's one read. A URL here is the managed answer; `MANAGE_ABSENT`
+        // below drives the other arm, where the pane draws nothing at all.
+        if (url === MANAGE_LINK_PATH) {
+          return manageLink === null
+            ? encode(404, JSON.stringify({ error: { code: "no_manage_surface" } }))
+            : encode(200, JSON.stringify({ url: manageLink }));
+        }
         return encode(200, EMPTY_PAGE);
       }
       return null;
@@ -522,6 +546,7 @@ async function navFor(status: EngineStatus, signedIn: boolean): Promise<string[]
 }
 
 afterEach(async () => {
+  manageLink = "https://account.example/manage?t=abc";
   if (root) await act(async () => { root!.unmount(); });
   mountPoint?.remove();
   root = null;
@@ -732,6 +757,21 @@ describe("SET-C — the desktop's two doors draw exactly what the census says", 
   it("the standalone door", async () => {
     const nav = await navFor(LOCAL_SERVING, true);
     expect(nav.sort()).toEqual(drawnOn("desktopStandalone").map(label).sort());
+  });
+
+  /**
+   * THE `selfHostWeb`/`desktopSelfHost` ROW, DRIVEN. Those two cells read `absent` because the
+   * route answers 404 there, and that claim is only worth making if the nav really loses the
+   * entry — the pane used to render regardless and offer a checkout that could not open.
+   *
+   * Same engine, same session, one answer different, so nothing else can explain the difference.
+   */
+  it("a door whose server serves no manage page draws no Subscription entry", async () => {
+    manageLink = null;
+    const nav = await navFor(CLOUD_SERVING, true);
+    expect(nav, "the entry survived a 404").not.toContain(label("billing"));
+    // …and the rest of the nav is untouched, so this is a withheld pane and not a broken mount.
+    expect(nav.sort()).toEqual(drawnOn("desktopCloud").filter((p) => p !== "billing").map(label).sort());
   });
 
   /**

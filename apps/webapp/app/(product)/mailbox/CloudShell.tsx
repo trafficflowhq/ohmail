@@ -16,13 +16,12 @@ import { resolveOwnerOutcome } from "../session-outcome";
 import { AboutSection } from "./AboutSection";
 import { AccessLock } from "./AccessLock";
 import { AccountLocale } from "./AccountLocale";
-import { AiCreditNotice } from "./AiCreditNotice";
-import { BillingSection } from "./BillingSection";
 import { DevicesSection, useDevicePairing } from "./DevicesSection";
 import { InvitesSection, useUserInvites } from "./InvitesSection";
 import { SecuritySection } from "./SecuritySection";
 import { AccountSection } from "./AccountSection";
 import { MailboxSection } from "./MailboxSection";
+import { SubscriptionSection, useManageLink } from "./SubscriptionSection";
 import { beginOAuthReturn } from "./oauth-return";
 import { useCloudFirstRun } from "./useCloudFirstRun";
 
@@ -138,6 +137,15 @@ export function CloudShell({ demo }: { demo: boolean }) {
   }, [demo]);
 
   const userInvites = useUserInvites();
+
+  /**
+   * WHERE THIS ACCOUNT MANAGES ITS SUBSCRIPTION — `null` on every install that has nowhere.
+   *
+   * The same absence rule as `userInvites` and `devicePairing`: a node is built only when the
+   * answer is known to be a place, so a self-hosted or unmetered deployment structurally cannot
+   * grow a Subscription entry rather than growing one that opens an empty pane.
+   */
+  const manageUrl = useManageLink(demo);
 
   /**
    * Does this server pair devices? ONE gate, the server's runtime `features.pairing` word —
@@ -311,7 +319,10 @@ export function CloudShell({ demo }: { demo: boolean }) {
         accountSection={<AccountSection />}
         securitySection={<SecuritySection />}
         mailboxSection={<MailboxSection />}
-        billingSection={<BillingSection />}
+        /* ONE GENERIC ROW, and only where the service supplies a page for it. This app holds no
+           plan, no balance and no payment method, so it states none of them; the row is a link
+           out. Same absence rule as `invitesSection` below — see `manageUrl`. */
+        billingSection={manageUrl ? <SubscriptionSection url={manageUrl} /> : undefined}
         /* SELF-HOST ONLY — see `userInvites` above. `undefined` (managed, an old server, the
            answer still pending) means no nav entry, never an empty pane. */
         invitesSection={userInvites ? <InvitesSection /> : undefined}
@@ -319,10 +330,6 @@ export function CloudShell({ demo }: { demo: boolean }) {
            each mounts the device-pair ceremony. Same absence rule as the invites pane. */
         devicesSection={devicePairing ? <DevicesSection /> : undefined}
         aboutSection={<AboutSection />}
-        /* The Screener's AI-allowance line. The same seam again — it reads
-           `GET /billing/subscription`, which `app/shell` may not call — and a FUNCTION because
-           the shell binds the one thing the node cannot know: where "start a plan" lands. */
-        aiCredits={({ onStartPlan }) => <AiCreditNotice onStartPlan={onStartPlan} />}
         /* THE FIRST-RUN STAGE'S CALLS. Withheld on the demo — see `useCloudFirstRun`. */
         {...(firstRun ? { firstRun } : {})}
       />

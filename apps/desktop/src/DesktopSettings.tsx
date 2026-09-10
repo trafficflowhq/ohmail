@@ -417,7 +417,7 @@ export function DesktopSettings({
           in for. It was one row that named a password, an authenticator, recovery codes and a plan
           together, on the pane about this INSTALL, because Settings had no Security, Account or
           Subscription pane at all on the hosted door. Those panes exist now
-          (`DesktopWebSection`, `DesktopBilling`) and each carries its own door out, so keeping this
+          (`DesktopWebSection`, `DesktopSubscription`) and each carries its own door out, so keeping this
           row would be a second door to the same place under different words — on the one pane
           nobody looking for their password would think to open. Everything below this line is about
           the install: which mailbox, which door, and how to change either. */}

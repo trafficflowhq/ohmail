@@ -208,8 +208,8 @@ export function activeFormatLocale(): AppLocale {
 /* ══════════════════════════════════════════════════════════════════════════════════════════
    THE ZONE DIMENSION — one seam, beside the locale one, for the same reason.
 
-   The product showed TWO clocks at once. `AboutSection`, `MailboxSection` and `BillingSection`
-   render account dates through `toLocaleDateString`, which reads the reader's own zone; every MAIL
+   The product showed TWO clocks at once. `AboutSection` and `MailboxSection` render account
+   dates through `toLocaleDateString`, which reads the reader's own zone; every MAIL
    stamp — the row time, the hover title, the resurface label, the Screener's derived rows — was
    formatted with `timeZone: "UTC"`. A reader in Zurich saw a message that arrived at 16:32 stamped
    "14:32", two hours behind the account dates on the same screen.

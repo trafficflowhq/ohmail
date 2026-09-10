@@ -267,8 +267,9 @@ const OWNER_FREE_PREFIXES = [
  * whether this browser holds a session at all, which by definition happens before anybody could
  * be bound — that call passes `ceremony: true` and is exempt. Six ORDINARY SHELL READS ask it
  * for the signed-in person's email, account id and which factors they have enrolled
- * (`MailboxSection`, `BillingSection`, `AccountSection`, `LinkDesktopScreen`, `StepUpPrompt`,
- * `SecuritySection`), and a path-wide exemption handed all six the OTHER account's answer
+ * (`MailboxSection`, `AccountSection`, `LinkDesktopScreen`, `StepUpPrompt`, `SecuritySection`,
+ * and the subscription pane that has since left), and a path-wide exemption handed all six
+ * the OTHER account's answer
  * whenever the browser had become somebody else. Those are gated like every other account read.
  *
  * The flag is on the REQUEST rather than the path, so the exemption is something a caller has to
@@ -691,7 +692,7 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
  * It WAS on a screen: `LoginScreen` took the lock around each of its three factor calls, which
  * fixed the sign-in and nothing else. Review listed the rest — `JoinScreen`'s registration and
  * enrolment, `SetupScreen`'s first account, and the in-shell reauthentications in
- * `MailboxSection`, `BillingSection`, `AccountSection` and `LinkDesktopScreen` — every one of
+ * `MailboxSection`, `AccountSection` and `LinkDesktopScreen` — every one of
  * them a cookie writer, none of them wrapped, and nothing anywhere that could notice. A rule
  * every screen has to remember is a rule the next screen forgets.
  *
@@ -1298,8 +1299,10 @@ export interface SubscriptionStatus {
   /**
    * Whether an `invoice_grant` has EVER landed on this account — credits revenue paid for.
    *
-   * Read by exactly one decision (`ai-credit-state.ts`): whether a `trialing` subscription row
-   * may present `balance` as the trial's non-refilling pot. In the trial→paid window,
+   * NOTHING IN THIS APP READS IT ANY MORE — the one decision that did (whether a `trialing`
+   * row may present `balance` as the trial's non-refilling pot) left with the subscription
+   * pane. Kept because the field is still on the wire and the provenance argument below is
+   * what a reader of that DTO needs. In the trial→paid window,
    * `invoice.paid` grants the plan's allowance before `customer.subscription.updated` — a
    * separate delivery — moves the row off `trialing`, so the status alone would label PAID
    * credits a trial bounty: a provenance that is false while the number is real.
@@ -2004,28 +2007,9 @@ export const profileImport = {
 
 export const billing = {
   subscription: () => api<SubscriptionStatus>("/billing/subscription"),
-  /**
-   * Stripe's hosted Billing Portal. `stepUp`-gated — it exposes the payment method and the
-   * cancel control, so it demands a fresh second factor exactly as `DELETE /account` does.
-   *
-   * This is also the INVOICE surface, and deliberately not a thing we rebuild: the portal
-   * already lists every invoice with a downloadable PDF receipt, keeps them after
-   * cancellation, and is the record Stripe itself considers authoritative. Re-implementing
-   * receipts would mean holding a second copy of billing history that can disagree with the
-   * one the customer's accountant will ask for.
-   */
-  portal: () => api<{ url: string }>("/billing/portal", { method: "POST", body: {} }),
-  /** Answers a Stripe-hosted Checkout URL; the caller navigates. */
+  /** Answers a hosted Checkout URL; the caller navigates. Read by the sign-up funnel's plan step. */
   checkout: (plan: "solo" | "plus" | "pro", interval: "month" | "year" = "month") =>
     api<{ url: string }>("/billing/checkout", { method: "POST", body: { plan, interval } }),
-  /**
-   * SET an add-on's quantity — declarative, so a double-press sets the same number twice
-   * instead of buying twice. The new limits arrive via the webhook mirror; re-read
-   * `subscription()` after a short beat rather than trusting an invented echo.
-   */
-  setAddon: (addon: "storage" | "mailbox", quantity: number) =>
-    api<{ ok: true; addon: string; quantity: number }>(
-      "/billing/addons", { method: "POST", body: { addon, quantity } }),
 };
 
 // ── The account itself ───────────────────────────────────────────────────────────────────
@@ -2591,6 +2575,24 @@ export const account = {
    * operation rather than a stray sign-out.
    */
   erase: () => api<ErasureResult>("/account", { method: "DELETE" }),
+  /**
+   * `POST /account/manage-link` — where this account manages its subscription, or `null`.
+   *
+   * `null` ONLY for a 404, which is this deployment saying it operates no such page: an
+   * unmetered or self-hosted install, and the one refusal that is a fact about the server
+   * rather than about the caller. Every other status throws, `api()` having already turned an
+   * unreachable server into an `ApiError` too — so the decision to show no row for a refusal
+   * belongs to the caller (`useManageLink`), where it can be driven, and not to a client that
+   * would otherwise report a 500 as "there is nothing here".
+   */
+  manageLink: async (): Promise<{ url: string } | null> => {
+    try {
+      return await api<{ url: string }>("/account/manage-link", { method: "POST", body: {} });
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) return null;
+      throw err;
+    }
+  },
 };
 
 /**

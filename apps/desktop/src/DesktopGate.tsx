@@ -73,7 +73,7 @@ import { DesktopScreening } from "./DesktopScreening.js";
 import { GateNotice } from "./GateNotice.js";
 import { DOOR_COPY, machineWord } from "./door-copy.js";
 import { desktopPaneLabel, DesktopSettings } from "./DesktopSettings.js";
-import { DesktopBilling } from "./DesktopBilling.js";
+import { DesktopSubscription, useDesktopManageLink } from "./DesktopSubscription.js";
 import { DesktopWebSection } from "./DesktopWebSection.js";
 import {
   accountDoorFor, awayDoorFor, consentDoorFor, firstRunDoorFor, gateFor, hostLabelOf,
@@ -365,6 +365,19 @@ export function DesktopGate() {
         ? "out"
         : "live";
   const [signInAfterExpiry, setSignInAfterExpiry] = useState(false);
+
+  /**
+   * WHERE THIS ACCOUNT MANAGES ITS SUBSCRIPTION — `null` where no page is served.
+   *
+   * Read in the GATE, not inside the pane: `SettingsView` grows the nav entry from the prop's
+   * presence, so the only way to withhold the entry is to withhold the node.
+   *
+   * UP HERE with the other unconditional hooks, because everything from the mount switch down is
+   * behind an early return — a hook beside `accountDoor` renders on some paths and not others,
+   * which React answers with "Rendered more hooks than during the previous render" and every
+   * SET-C case red. `accountDoor` still gates the mount; this only gates the URL.
+   */
+  const manageUrl = useDesktopManageLink();
   useEffect(() => {
     // A new key is a new engine (or no cloud engine at all): the expiry flow's held step is
     // about an answer that no longer exists. The stored answer itself needs no reset — a stale
@@ -1274,12 +1287,14 @@ export function DesktopGate() {
            it reads as "this product does not have that", which for account deletion contradicts
            what the site promises.
 
-           Subscription carries real facts (the plan, the renewal, the actions left) and the one
-           control among the three that is an ordinary write — the managed-AI switch. The other two
-           are doors: every control behind them is step-up gated, and nothing this app can do
-           asserts a second factor, so a form here would collect a password and be refused. See
-           `DesktopWebSection`. */
-        {...(accountDoor ? { billingSection: <DesktopBilling /> } : {})}
+           All three are now doors and nothing else. Every control behind Security and Account is
+           step-up gated and nothing this app can do asserts a second factor; Subscription is the
+           service operator's own page, which this program does not hold the state for. See
+           `DesktopWebSection` and `DesktopSubscription` — the latter renders nothing at all where
+           no such page is served, so the nav entry follows the page. */
+        {...(accountDoor && manageUrl
+          ? { billingSection: <DesktopSubscription url={manageUrl} /> }
+          : {})}
         {...(accountDoor
           ? {
               securitySection: (
