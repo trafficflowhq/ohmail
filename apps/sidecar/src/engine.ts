@@ -51,7 +51,7 @@ import {
  * bundle's artifact census is the second line. */
 import { makeSessionLifecycle } from "@trafficflow/services/auth";
 import {
-  API_VERSION, ALLOW_ANY_PROBE_HOST, createApp, DEFAULT_SSE, localRoutes, makeImapProbe,
+  API_VERSION, ALLOW_ANY_PROBE_HOST, createApp, DEFAULT_SSE, errorResponse, localRoutes, makeImapProbe,
   makeSendAdapter, makeSmtpProbe, matchRoute,
   type ProbeDialer, type SmtpProbeOptions,
   type ApiDeps, type ApiServices, type App, type Route,
@@ -144,7 +144,7 @@ import { localAiRoutes } from "./ai-routes.js";
 import { localAutoSuggestRoutes } from "./auto-suggest-routes.js";
 import { openLocalDb, type LocalDb, type LocalDbOpenPhase, type OpenLocalDb } from "./db.js";
 import {
-  ensureLocalWorld, loadLocalRoster, mintLaunchSession,
+  ensureLocalWorld, loadLocalRoster, loadUnattachedLocalRoster, mintLaunchSession,
   type LocalRosterRow, type LocalWorld,
 } from "./identity.js";
 // ONE RUNTIME PER MAILBOX, held in a map. The record, the map and the seed decision live in
@@ -1299,6 +1299,12 @@ export function summarizeDrain(cycleMs: readonly number[]): { cycles: number; to
 export function withForcedRedial(
   routes: readonly Route[],
   runtimeFor: (mailboxId: string) => { syncUntilQuiet(maxCycles?: number, opts?: { force?: boolean }): Promise<number> } | undefined,
+  /**
+   * The engine's diagnostic seam, for the ONE line this wrapper writes: a press it refused
+   * because there is no runtime to hand it to. Optional so the wrapper stays drivable from a
+   * test with a stub route and nothing else — see the control that reaches its refusal arm.
+   */
+  log: (event: string, detail: Record<string, unknown>) => void = () => undefined,
 ): Route[] {
   return routes.map((r) => {
     if (r.method !== "POST" || r.pattern !== "/mailboxes/:id/resync") return r;
@@ -1308,10 +1314,35 @@ export function withForcedRedial(
         const res = await r.handler(req, deps, params);
         if (res.status !== 202) return res;
         const id = params.id;
-        if (id !== undefined) {
-          void runtimeFor(id)?.syncUntilQuiet(undefined, { force: true })
-            .catch(() => { /* the drain reports its own failures; a press must not crash the host */ });
+        if (id === undefined) return res;
+        const runtime = runtimeFor(id);
+        /* ── NO RUNTIME MEANS THE PRESS REACHES NOTHING, SO IT IS REFUSED RATHER THAN QUEUED ───
+         *
+         * This was `runtimeFor(id)?.syncUntilQuiet(...)`, and the optional chain is the whole
+         * defect: for a mailbox this install holds no runtime for, nothing was dialled and the
+         * shared handler's 202 was returned anyway. The pane turns that into "Sync queued" and
+         * ends its own queued mark on it, so a person is told the sync was accepted while the
+         * engine never hears of the mailbox — the failure-looks-like-healthy shape, on the one
+         * control that exists to make a stuck mailbox move.
+         *
+         * Reaching here with no runtime is not a race with a removal: the shared handler answered
+         * 202, so `ownedRow` found the row and `assertOrganizerRole` read `organizer`. The row is
+         * here, this install is its organizer by the row's own account, and it is not running it —
+         * the state this refusal makes unrepresentable. `DesktopMailboxes` renders the sentence.
+         */
+        if (runtime === undefined) {
+          log("local_mailbox_resync_unserved", {
+            mailboxId: id,
+            reason: "a resync was asked for a mailbox this install holds no runtime for; nothing "
+              + "was dialled and the press is refused rather than reported as queued",
+          });
+          return errorResponse(
+            "sync_engine_absent", 503,
+            "This install is not running this mailbox, so there is nothing to sync here.",
+          );
         }
+        void runtime.syncUntilQuiet(undefined, { force: true })
+          .catch(() => { /* the drain reports its own failures; a press must not crash the host */ });
         return res;
       },
     };
@@ -1501,7 +1532,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          the closure is only ever CALLED from a request handler, long after it exists. Local
          composition only — the hosted door proxies its resync to a worker and has no runtime
          here to force. */
-      ...withForcedRedial(localRoutes, (id) => runtimes.get(id)),
+      ...withForcedRedial(localRoutes, (id) => runtimes.get(id), log),
       ...localAiRoutes(ai),
       ...localAutoSuggestRoutes({ db, accountId: world.accountId, ai, now }),
       // Which addresses this machine could serve same-network access on — the LAN ceremony's
@@ -6265,6 +6296,27 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       reason: "every mailbox this install holds has a runtime: its own connection and its own poll "
         + "timer; whether it also organizes that mailbox is the lease's answer, logged per mailbox",
     });
+    /* ── AND THE ROWS THE ROSTER READ LEFT OUT, BY NAME ─────────────────────────────────────
+     *
+     * The count above says how many mailboxes this install RUNS and cannot say which ones, and
+     * `loadLocalRoster` leaves out every `disabled` row — a paused one (stood down, with a reason)
+     * and a tombstone (removed, reason NULL) alike. Neither had a line, so a mailbox this install
+     * holds and does not run was absent from the boot record entirely: no skip line, no row state,
+     * nothing. Worse, `ensureLocalWorld`'s lookup is WIDER than the roster's, so a paused row can
+     * be the seed — and the `serving` line then prints the id of the one mailbox with no runtime.
+     * An incident on that shape reads backwards from the log, which is how it was read.
+     *
+     * One line per left-out row, so the ordinary install (none) says nothing extra. The id and the
+     * reason, never the address. */
+    for (const row of await loadUnattachedLocalRoster(db, world.accountId)) {
+      log("local_mailbox_not_attached", {
+        mailboxId: row.id,
+        disabledReason: row.disabledReason,
+        reason: "this install holds this mailbox and is not running it: no connection, no poll "
+          + "timer and no organizer claim. A row with a reason is paused; one without is a "
+          + "mailbox that was removed here",
+      });
+    }
 
     /* THE REPAIRS RUN AFTER THE ATTACH, and the order is the whole of whether they ever fire.
        On a FIRST launch the seed's incoming credential does not exist when this function starts —
@@ -7580,12 +7632,24 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         return runs.reduce((n, r) => n + (r.status === "fulfilled" ? r.value : 0), 0);
       },
       /**
-       * Drain ONE mailbox. Answers 0 for an id this install does not run, which is the honest
-       * answer rather than a throw: the row may have been removed between a caller reading the
-       * list and asking, and that is a race, not a fault.
+       * Drain ONE mailbox.
+       *
+       * TWO ABSENCES, AND THEY ARE NOT THE SAME ANSWER. `?? 0` collapsed them: a row that is GONE
+       * (removed between a caller reading the list and asking — a race, not a fault) and a row
+       * that is HERE and deliberately not run reported the same "nothing happened", so the second
+       * was a success with no work in it. The row decides which one this is.
        */
       async syncMailbox(mailboxId: string, maxCycles = 100) {
-        return (await runtimes.get(mailboxId)?.syncUntilQuiet(maxCycles)) ?? 0;
+        const rt = runtimes.get(mailboxId);
+        if (rt !== undefined) return rt.syncUntilQuiet(maxCycles);
+        const [row] = await db.select({ id: mailboxes.id }).from(mailboxes)
+          .where(and(eq(mailboxes.accountId, world.accountId), eq(mailboxes.id, mailboxId)))
+          .limit(1);
+        // GONE: the honest 0 this method has always answered, and the race it was written for.
+        if (row === undefined) return 0;
+        // HERE AND NOT RUN. Named, because a caller that gets 0 cannot tell it from a settled
+        // mailbox — and the pane's own door (`withForcedRedial`) refuses the same state.
+        throw new Error(`this install is not running mailbox ${mailboxId}`);
       },
       /**
        * Every mailbox's organizer state, keyed by row id — the pane renders one line per entry.

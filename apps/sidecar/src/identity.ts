@@ -392,6 +392,45 @@ export async function loadLocalRoster(db: LocalDb, accountId: string): Promise<L
   }));
 }
 
+/** One mailbox this install HOLDS and does not RUN, as the boot reports it. */
+export interface UnattachedRosterRow {
+  id: string;
+  /** `organized_elsewhere:*` for a paused row; NULL for a tombstone the person removed. */
+  disabledReason: string | null;
+}
+
+/**
+ * EVERY MAILBOX THIS INSTALL HOLDS AND DOES NOT RUN — {@link loadLocalRoster}'s complement.
+ *
+ * ── WHY THE COMPLEMENT NEEDS A READER OF ITS OWN ──────────────────────────────────────────────
+ *
+ * The roster read is `status <> 'disabled'`, and its docblock is right that being FOUND and being
+ * ATTACHED are different questions. What nothing answered was the third one: WHICH rows the answer
+ * left out. The boot's only line about the roster is a COUNT of what it attached, so an install
+ * holding two mailboxes and running one logged `count: 1` and never named the other — and
+ * `ensureLocalWorld`'s own lookup is wider (`or disabled_reason is not null`), so the row it left
+ * out can be the SEED, whose id the `serving` line then prints. The log said `serving <id>` for the
+ * one mailbox this install was not running, which is how an incident on that shape gets read
+ * backwards.
+ *
+ * Separate from the roster read rather than a widening of it, deliberately: three call sites use
+ * `loadLocalRoster` to FIND a row by id, and a wider predicate would silently start finding paused
+ * rows there. This one has one caller and one purpose.
+ */
+export async function loadUnattachedLocalRoster(
+  db: LocalDb, accountId: string,
+): Promise<UnattachedRosterRow[]> {
+  const rows = await db
+    .select({ id: mailboxes.id, disabledReason: mailboxes.disabledReason })
+    .from(mailboxes)
+    .where(and(
+      eq(mailboxes.accountId, accountId),
+      eq(mailboxes.status, "disabled"),
+    ))
+    .orderBy(mailboxes.createdAt, mailboxes.id);
+  return rows.map((r) => ({ id: r.id, disabledReason: r.disabledReason ?? null }));
+}
+
 export interface LaunchSession {
   /** The bearer token. In memory only — the database holds its hash. */
   token: string;
