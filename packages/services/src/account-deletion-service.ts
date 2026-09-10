@@ -71,6 +71,7 @@ import {
   webauthnCredentials,
 } from "@trafficflow/db/cloud";
 import type { ServiceContext } from "./context.js";
+import { rowsAffected } from "./rows-affected.js";
 
 /**
  * Account deletion — Art. 17 erasure, implemented as ANONYMISATION.
@@ -159,19 +160,8 @@ export interface DeleteAccountResult {
   usersErased: number;
 }
 
-/**
- * Rows affected, across both drivers: postgres-js returns an array with `.count`,
- * PGlite returns `{ affectedRows }`, node-postgres returns `{ rowCount }`. Only the
- * audit line depends on this, never the deletion itself.
- */
-function n(r: unknown): number {
-  if (r == null) return 0;
-  const o = r as { rowCount?: unknown; affectedRows?: unknown; count?: unknown };
-  if (typeof o.rowCount === "number") return o.rowCount;
-  if (typeof o.affectedRows === "number") return o.affectedRows;
-  if (typeof o.count === "number") return o.count;
-  return Array.isArray(r) ? r.length : 0;
-}
+/** Rows affected across the three drivers — see `rows-affected.ts` for why there is one copy. */
+const n = rowsAffected;
 
 /**
  * Erase one account. Runs in ONE transaction: a half-deleted account is worse

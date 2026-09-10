@@ -9,10 +9,13 @@ import {
   standDownMemory,
   closeRemovedMailboxAppointments,
   filingDue, filingDeferred, ourOutstandingFiling, isFilingRefusalClass,
+  ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS,
   type AccessVerdict, type LedgerTx, type MailboxErrorCode, type Tx,
 } from "@trafficflow/db";
 import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
+import { fenceErasedAccount } from "./erasure-fence.js";
+import { sweepMailboxData, type MailboxSweepResult } from "./mailbox-erasure.js";
 /* The DEFAULT policy is registered rather than imported, so the paid gate is not an import edge
  * out of a module the desktop engine bundles — this one is mounted by the local API too. The
  * full `@trafficflow/services` barrel, which only a hosted process imports, registers the gate
@@ -42,6 +45,23 @@ const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 export interface ListMailboxesOptions {
   /** Compute {@link MailboxDTO.messageCount} — one grouped aggregate for the whole account. */
   counts?: boolean;
+}
+
+/**
+ * What {@link MailboxService.delete} was asked to do beyond disconnecting.
+ *
+ * `erase` ABSENT is the ordinary removal: a tombstone, the credentials deleted, the mail kept, and
+ * reconnecting restores the mailbox. Present, it also erases ohmail's copy of that mailbox's mail
+ * and is irreversible, so it carries its own confirmation rather than a flag.
+ */
+export interface MailboxDeleteOptions {
+  erase?: { confirmAddress: string | null };
+}
+
+/** What a removal did. `erased` is absent unless {@link MailboxDeleteOptions.erase} was given. */
+export interface MailboxDeleteResult {
+  seq: bigint | null;
+  erased?: MailboxSweepResult;
 }
 
 export type MailboxTakeoverResult =
@@ -1930,9 +1950,43 @@ export class MailboxService {
    * @returns the `change_log` seq this removal emitted, or null when it closed no appointment.
    *   The route echoes it as `X-Sync-Seq` — see the close below.
    */
-  async delete(ctx: ServiceContext, id: string): Promise<{ seq: bigint | null }> {
+  async delete(
+    ctx: ServiceContext, id: string, opts: MailboxDeleteOptions = {},
+  ): Promise<MailboxDeleteResult> {
     return asTx(ctx).transaction(async (tx) => {
-      await this.ownedRowOn(tx, ctx, id, { forUpdate: true }); // 404 if not owned
+      /* ── THE ERASURE FENCE, FIRST IN THE TRANSACTION ────────────────────────────────────
+       *
+       * This transaction writes `mailboxes` — a table the account sweep empties and that has no
+       * foreign key to any row erasure deletes — so a removal in flight across an Art. 17 erasure
+       * could otherwise commit a tombstone after the sweep counted zero. `erasure-fence.ts` holds
+       * the two-sided argument and states why the account row is read FIRST: it is the head of
+       * the global lock order, and a fence in the middle of a writer would be the deadlock pair.
+       */
+      await fenceErasedAccount(tx as unknown as Tx, ctx.accountId);
+      /* The account's thread-structure lock, BEFORE the mailbox row and only when erasing.
+       * `deleteAccount` takes it before `mailboxes` too, so both sweeps acquire in one order and
+       * neither can be the other's deadlock partner; the disconnect path touches no message or
+       * thread row and pays nothing. */
+      if (opts.erase) {
+        await tx.execute(
+          sql`select pg_advisory_xact_lock(${ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS}, hashtext(${ctx.accountId}))`,
+        );
+      }
+      const row = await this.ownedRowOn(tx, ctx, id, { forUpdate: true }); // 404 if not owned
+      /* ── THE SECOND CONFIRMATION, CHECKED AGAINST THE ROW AND NOT AGAINST A FLAG ────────
+       *
+       * An erase is irreversible: it removes ohmail's copy of the mailbox's mail. A boolean the
+       * caller sets is not a confirmation of anything, so the caller echoes the mailbox's own
+       * address and the server compares it to the row it is about to erase — which also refuses
+       * an erase aimed at the wrong id. Case and surrounding space are not part of the answer.
+       */
+      if (opts.erase) {
+        const given = (opts.erase.confirmAddress ?? "").trim().toLowerCase();
+        if (given === "" || given !== row.address.trim().toLowerCase()) {
+          throw new ServiceError("erase_not_confirmed", 400,
+            "confirm the erasure by repeating this mailbox's address");
+        }
+      }
       await tx.update(mailboxes).set({
         status: "disabled",
         // ── AND THE LEASE COLUMNS GO WITH IT (mail 0027) ──────────────────────────────────
@@ -2018,7 +2072,14 @@ export class MailboxService {
       const { seq } = await closeRemovedMailboxAppointments(tx, {
         accountId: ctx.accountId, mailboxId: id, now: ctx.now(),
       });
-      return { seq };
+      if (!opts.erase) return { seq };
+      /* The sweep runs LAST and inside this transaction: the tombstone above has to be visible to
+       * it, and both halves commit together — a mailbox whose mail is gone while its credentials
+       * remain is worse than an erasure that failed and can be retried. */
+      const erased = await sweepMailboxData(tx, { accountId: ctx.accountId, mailboxId: id });
+      /* The sweep's seq wins where it allocated one: it is the LATER change and the per-account
+       * seq is gap-free, so a mirror that waits for it has seen the appointment closures too. */
+      return { seq: erased.seq ?? seq, erased };
     });
   }
 
