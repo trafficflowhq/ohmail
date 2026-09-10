@@ -701,6 +701,13 @@
       "when": 1791601000011,
       "tag": "0099_folder_state_trashed_from",
       "breakpoints": true
+    },
+    {
+      "idx": 100,
+      "version": "7",
+      "when": 1791601200011,
+      "tag": "0100_reader_window_peer_restamp",
+      "breakpoints": true
     }
   ]
 }
