@@ -705,8 +705,17 @@ export const away: {
     save: (next: Omit<AwayResponderWire, "updatedAt">) => Promise<AwayResponderSaveWire>;
 } = absent;
 
+export type AccountAccess = {
+    metered: false;
+} | {
+    metered: true;
+    canAddMailbox: boolean;
+    mailboxes: number | null;
+};
+
 export const account: {
     erase: () => Promise<ErasureResult>;
+    access: () => Promise<AccountAccess>;
     manageLink: () => Promise<{
         url: string;
     } | null>;

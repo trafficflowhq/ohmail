@@ -15,11 +15,11 @@ import { publicSignupEnabled } from "../../signup-mode";
  * ignored, which is the safe direction — the worst outcome is a prefilled field the user
  * corrects, and the server refuses anything wrong regardless.
  *
- * `?billing=success|cancelled` is the OTHER way into this page: Stripe Checkout redirects
- * back here (`BillingService.createCheckout` builds `${appUrl}/join?billing=…`) because the
- * plan step now sits mid-wizard rather than at the end. Anything other than those two
- * literals is dropped — it is a value a stranger can put in a link, and the only thing it
- * is allowed to influence is whether the wizard waits for the subscription webhook.
+ * `?billing=success|cancelled` is the OTHER way into this page: the account page the plan step
+ * links out to redirects back here, because that step sits mid-wizard rather than at the end.
+ * Anything other than those two literals is dropped — it is a value a stranger can put in a
+ * link, and the only thing it is allowed to influence is whether the wizard WAITS for the
+ * account to become entitled, which it then reads from the server rather than believing.
  *
  * `publicSignup` decides where the wizard STARTS and nothing else — the server still
  * validates every code and still refuses a missing one when the deployment is gated. It is

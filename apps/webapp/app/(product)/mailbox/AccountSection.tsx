@@ -70,14 +70,13 @@ import {
   apiConfigured,
   assertPasskey,
   auth,
-  billing,
   codeOf,
   messageOf,
   webauthnAvailable,
   type ErasureResult,
-  type SubscriptionStatus,
   type TwofaChallenge,
 } from "../../api-client";
+import { useManageLink } from "./SubscriptionSection";
 
 type Stage = "facts" | "password" | "factor" | "erasing" | "done";
 type Factor = "webauthn" | "totp" | "recovery_code";
@@ -98,7 +97,15 @@ export function AccountSection() {
    * genuinely-signed-out one, which is what keeps the signed-out card meaning what it says.
    */
   const [sessionFailed, setSessionFailed] = useState<string | null>(null);
-  const [plan, setPlan] = useState<string | null>(null);
+  /**
+   * Where this account manages its subscription, or `null` for "nowhere".
+   *
+   * Read to decide whether the confirmation says anything about a subscription at all — a
+   * self-hosted or unmetered account has none, and a bullet about cancelling one would be a
+   * sentence about somebody else's deployment. The URL itself is not rendered here: this screen
+   * is the erasure ceremony, and its one control must stay the destructive one.
+   */
+  const manageUrl = useManageLink(false);
   const [stage, setStage] = useState<Stage>("facts");
   const [typed, setTyped] = useState("");
   const [password, setPassword] = useState("");
@@ -251,14 +258,6 @@ export function AccountSection() {
         }
       } finally {
         if (alive.current) setLoading(false);
-      }
-      try {
-        // Only to decide whether the subscription sentence is shown at all. A deployment with
-        // no Stripe configured answers 503, which is not an error worth reporting here.
-        const sub: SubscriptionStatus = await billing.subscription();
-        if (alive.current) setPlan(sub.subscription?.plan ?? null);
-      } catch {
-        /* no billing, no subscription sentence */
       }
     })();
   }, []);
@@ -544,7 +543,12 @@ export function AccountSection() {
           <h3 className="acct-sub">{t("keptTitle")}</h3>
           <ul className="acct-list">
             <li>{t("kept1")}</li>
-            {plan ? <li>{t("keptSub", { plan })}</li> : null}
+            {/* GENERIC, and shown only where there is a subscription to speak of. It used to name
+                the plan, which this app no longer knows — and does not need to: what the person
+                is being told is that the money stops with the account, which is true of every
+                plan. `releaseAccount` is what makes it true, and the response's own three words
+                are what the result screen reports. */}
+            {manageUrl ? <li>{t("keptSub")}</li> : null}
           </ul>
           {/* The retention SENTENCE is true on every deployment and stays; only the pointer is
               deployment-specific. `/privacy` describes the hosted service and is not served at

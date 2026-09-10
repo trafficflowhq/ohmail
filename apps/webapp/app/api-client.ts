@@ -2014,6 +2014,16 @@ export const billing = {
 
 // ── The account itself ───────────────────────────────────────────────────────────────────
 
+/**
+ * What `GET /account/access` answers.
+ *
+ * `mailboxes: null` is UNBOUNDED, never unknown — the port's own convention, and the reason an
+ * unmetered host answers `metered: false` rather than a number nobody set.
+ */
+export type AccountAccess =
+  | { metered: false }
+  | { metered: true; canAddMailbox: boolean; mailboxes: number | null };
+
 /** What `DELETE /account` answers. Every field is stated on the confirmation screen. */
 export interface ErasureResult {
   erased: true;
@@ -2585,6 +2595,15 @@ export const account = {
    * belongs to the caller (`useManageLink`), where it can be driven, and not to a client that
    * would otherwise report a 500 as "there is nothing here".
    */
+  /**
+   * `GET /account/access` — the limits the entitlements program states for this account.
+   *
+   * A REFUSAL never arrives here: a refused account is answered 402 at every `read` door and
+   * this module's own notifier swaps the surface for the lock screen, so the only thing to read
+   * back is "may you add another mailbox, and how many does the plan hold". `metered: false` is
+   * a host with no such program, where both answers are "no limit".
+   */
+  access: () => api<AccountAccess>("/account/access"),
   manageLink: async (): Promise<{ url: string } | null> => {
     try {
       return await api<{ url: string }>("/account/manage-link", { method: "POST", body: {} });

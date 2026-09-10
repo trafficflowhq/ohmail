@@ -2,7 +2,7 @@ import { deleteAccount, type ErasureBillingOutcome } from "@trafficflow/services
 import { ServiceError } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
 import { clearSessionCookies } from "../cookies.js";
-import { cookieSurface, entitlementsPort, json } from "./shared.js";
+import { accessFor, cookieSurface, entitlementsPort, json } from "./shared.js";
 import type { Route } from "../router.js";
 
 /**
@@ -142,6 +142,45 @@ export const accountRoutes: Route[] = [
         200,
         cookieSurface(deps) ? clearSessionCookies() : [],
       );
+    },
+  },
+  /**
+   * `GET /account/access` — what the entitlements program says this account may do.
+   *
+   * The one CLIENT-FACING read of the port's verdict, and the reason it exists: the mailbox pane
+   * refuses a connect it knows will be refused BEFORE walking somebody through a step-up
+   * ceremony, and `accessFor` is server-side only, so a browser had no way to ask.
+   *
+   * It answers LIMITS, never a refusal. A refused account cannot reach a `read` route at all —
+   * `withSpendGate` answers 402 first and the client swaps to the lock screen — so `ok: false`
+   * is unreachable from this door by construction, and the shape says so: what comes back is
+   * "may you add another, and how many does the plan hold". `metered: false` is a host with no
+   * entitlements program, where the answer to both is "no limit".
+   *
+   * `canAddMailbox` is NOT derivable from the numbers and is carried separately for the reason
+   * {@link AccessLimits} gives: an account may keep the mailboxes it has and be forbidden
+   * another. Collapsing them is how a refusal ends up offering a plan the customer already holds.
+   */
+  {
+    method: "GET",
+    pattern: "/account/access",
+    cost: "read",
+    handler: async (req, deps) => {
+      const ctx = serviceContext(deps, req);
+      const verdict = await accessFor(deps, ctx.accountId);
+      // `null` = this host declared no program. Not an error, and not a refusal.
+      if (verdict === null) return json({ metered: false }, 200);
+      if (!verdict.ok) {
+        // Unreachable through this route's own pipeline (see above). Answered rather than
+        // thrown so that a caller which somehow arrives here reads "no, and nowhere to go"
+        // instead of a 500 — the arm is watched by driving the rule through the middleware.
+        return json({ metered: true, canAddMailbox: false, mailboxes: 0 }, 200);
+      }
+      return json({
+        metered: true,
+        canAddMailbox: verdict.limits.canAddMailbox,
+        mailboxes: verdict.limits.mailboxes,
+      }, 200);
     },
   },
   /**

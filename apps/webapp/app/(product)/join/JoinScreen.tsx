@@ -63,9 +63,9 @@ import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { Button, Icon } from "@ohmail/ui";
 import {
-  ApiError, apiConfigured, auth, billing, codeOf, createPasskey, mailboxes,
+  ApiError, account, apiConfigured, auth, codeOf, createPasskey, mailboxes,
   messageOf, webauthnAvailable,
-  type MailboxDTO, type SubscriptionStatus,
+  type MailboxDTO,
 } from "../../api-client";
 import { hostsFor, providerById, type ProviderPreset } from "../../shell/providers";
 import { displayAddress } from "../../shell/idn";
@@ -73,9 +73,6 @@ import { ProviderPicker } from "../../shell/ProviderPicker";
 import { SELF_HOST_BUILD } from "../../hello";
 
 type Step = "invite" | "account" | "sent" | "factor" | "codes" | "verify" | "plan" | "mailbox" | "done";
-
-const PLANS = ["solo", "plus", "pro"] as const;
-type Plan = (typeof PLANS)[number];
 
 /**
  * The step order, for the progress rail AND for the wizard. `done` is not a step you stand
@@ -133,8 +130,9 @@ const RAIL_OPEN: Step[] = RAIL_BASE.filter((s) => s !== "invite");
  * Bounded and then given up on: if the webhook is genuinely late the user is told to reload,
  * which is true, rather than spun forever.
  */
-const BILLING_POLL_ATTEMPTS = 10;
-const BILLING_POLL_MS = 1_500;
+/** The bounded wait after a return, before the screen says "not yet". */
+const ACCESS_POLL_ATTEMPTS = 10;
+const ACCESS_POLL_MS = 1_500;
 
 export function JoinScreen({ initialCode, billingReturn, publicSignup = false }: {
   initialCode: string;
@@ -178,14 +176,6 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
 
   // ── The form state, kept across steps so a refusal never loses typed input ────────────
   const [code, setCode] = useState(initialCode);
-  // The billing cadence for the Checkout this wizard will start. MONTHLY PRESELECTED (the
-  // ratified default); `?interval=year` — the landing toggle's hint — preselects annual the
-  // same way `?plan=` preselects nothing binding: the press below is the decision, and the
-  // server prices it either way.
-  const [interval, setIntervalChoice] = useState<"month" | "year">(() => {
-    if (typeof window === "undefined") return "month";
-    return new URL(window.location.href).searchParams.get("interval") === "year" ? "year" : "month";
-  });
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -226,7 +216,6 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
   const [smtpHost, setSmtpHost] = useState("");
   const [connected, setConnected] = useState<MailboxDTO | null>(null);
 
-  const [sub, setSub] = useState<SubscriptionStatus | null>(null);
 
   const passkeyPossible = useRef(false);
   useEffect(() => { passkeyPossible.current = webauthnAvailable(); }, []);
@@ -312,12 +301,15 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
       // rule the codes step follows: a reload must land where the SERVER thinks you are.
       if (!s.user.emailVerified) { setStep("verify"); return; }
 
-      // PLAN BEFORE MAILBOX. `POST /mailboxes` is refused with 402 `no_subscription` until
-      // this account has a `billing_subscriptions` row, so asking for a mailbox first is
-      // asking for something the server will not give.
-      const status = await billing.subscription().catch(() => null);
-      setSub(status);
-      if (!status?.subscription) { setStep("plan"); return; }
+      // PLAN BEFORE MAILBOX. `POST /mailboxes` is refused until the account is entitled to
+      // one, so asking for a mailbox first is asking for something the server will not give.
+      // The port's own verdict is the question — `canAddMailbox`, not a row somewhere.
+      const may = await account.access().then((a) => !a.metered || a.canAddMailbox)
+        .catch(() => null);
+      /* UNREADABLE FAILS OPEN, like every other unknown in this funnel: sending somebody to an
+         account page they may not need is worse than letting the mailbox step's own refusal
+         speak. `false` is the only answer that routes to the plan step. */
+      if (may === false) { setStep("plan"); return; }
 
       const { items } = await mailboxes.list();
       if (items.length === 0) { setStep("mailbox"); return; }
@@ -332,13 +324,17 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
   useEffect(() => { void bootstrap(); }, [bootstrap]);
 
   /**
-   * Refresh the plan card whenever the plan step is on screen, and — when we have just come
-   * back from a successful Checkout — keep asking until the webhook has landed.
+   * MINT THE LINK to the page that takes the plan, and — while this step is on screen — keep
+   * asking whether the account has become entitled.
    *
-   * `checkout.session.completed` is what writes the subscription row, and it races the
-   * browser redirect. Polling here is the honest shape: the client cannot know the row exists
-   * until the server says so, and pretending otherwise would send the user to the mailbox
-   * step to be refused by the allowance gate.
+   * Whatever happens on that page happens at the service operator's end and races the
+   * browser's return, so polling is the honest shape: this client cannot know it landed until
+   * the port says the account may add a mailbox, and pretending otherwise would send somebody
+   * to the mailbox step to be refused by the allowance gate.
+   *
+   * The poll is BOUNDED and the bound is the whole of what it promises. When it expires the
+   * screen says the account is not entitled YET — never that something failed, because nothing
+   * here can know that, and never a plan word.
    */
   useEffect(() => {
     if (step !== "plan") return;
@@ -366,21 +362,47 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
        */
       if (!await sameAccount()) return;
       if (cancelled) return;
-      const status = await billing.subscription().catch(() => null);
+      const may = await account.access().then((a) => !a.metered || a.canAddMailbox)
+        .catch(() => null);
       if (cancelled) return;
-      setSub(status);
-      if (status?.subscription) { setStep("mailbox"); return; }
-      if (billingReturn !== "success" || ++attempts >= BILLING_POLL_ATTEMPTS) {
+      if (may === true) { setStep("mailbox"); return; }
+      /* KEEP POLLING ONLY ON A RETURN. On a first arrival there is nothing in flight to wait
+         for, so one read is the whole of it and the screen shows the link. */
+      if (billingReturn !== "success" || ++attempts >= ACCESS_POLL_ATTEMPTS) {
         if (billingReturn === "success") setError(t("planPending"));
         return;
       }
-      setTimeout(() => { void tick(); }, BILLING_POLL_MS);
+      setTimeout(() => { void tick(); }, ACCESS_POLL_MS);
     };
 
     void tick();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, billingReturn]);
+
+  /**
+   * The link to the account page, minted once the plan step is reached.
+   *
+   * `planLinkFailed` and a `null` link are two states and the screen says different things
+   * about them: not asked yet is a spinner, asked and answered nowhere is a sentence. A single
+   * nullable would have made "still minting" and "this deployment has no such page" the same
+   * screen, which is the one distinction a person on this step needs.
+   */
+  const [manageUrl, setManageUrl] = useState<string | null>(null);
+  const [planLinkFailed, setPlanLinkFailed] = useState(false);
+  useEffect(() => {
+    if (step !== "plan") return;
+    let cancelled = false;
+    void account.manageLink()
+      .then((link) => {
+        if (cancelled) return;
+        const u = link?.url;
+        if (typeof u === "string" && u.length > 0) setManageUrl(u);
+        else setPlanLinkFailed(true);
+      })
+      .catch(() => { if (!cancelled) setPlanLinkFailed(true); });
+    return () => { cancelled = true; };
+  }, [step]);
 
   const run = async (fn: () => Promise<void>): Promise<void> => {
     setBusy(true);
@@ -661,18 +683,6 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
       setStep("done");
     });
   };
-
-  const startCheckout = (plan: Plan) => void run(async () => {
-    /* NOT "a card is charged at the end of this", which is what this comment used to say and
-       what the public message repeated. The trial takes no card (`step_plan_lead`: "No card,
-       and it does not renew on its own"). What a checkout started under the wrong session does
-       is bind THAT account to a plan and a payment customer nobody there chose, and navigate
-       this browser into their checkout — which is enough to be worth refusing, and is not a
-       charge. */
-    if (!await sameAccount()) return;
-    const { url } = await billing.checkout(plan, interval);
-    window.location.assign(url);
-  });
 
   // ── Render ────────────────────────────────────────────────────────────────────────────
 
@@ -971,88 +981,34 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
       {step === "plan" && (
         <>
           <p className="sub">{t("step_plan_lead")}</p>
+          {/* ONE STEP, ONE CONTROL. The plan cards, the prices, the interval toggle and the
+              trial figure were all this app quoting a catalogue it does not own; they live on
+              the account page the service operator serves, which is also where the card is
+              taken. This screen's job is to get the person there and to notice when they come
+              back entitled — see `manageUrl` and the poll above.
 
-          {sub?.subscription ? (
-            // Transient: the effect above advances to the mailbox step as soon as it sees a
-            // subscription. Rendering the plan buttons again here would offer a second
-            // Checkout, which `createCheckout` answers with 409 `subscription_exists`.
-            <p className="join-hint">{t("planConfirmed")}</p>
-          ) : (
+              `planLoading` while the link is still being minted: a button that goes nowhere is
+              the one control a person on this screen will press. */}
+          {manageUrl ? (
+            <div className="join-actions">
+              <a className="btn primary" href={manageUrl}>{t("planContinue")}</a>
+              <Link className="join-alt" href="/">{t("later")}</Link>
+            </div>
+          ) : planLinkFailed ? (
+            /* NOWHERE TO SEND THEM, and two different deployments arrive here: one that operates
+               no entitlements program at all, and one whose program is reachable but has no
+               account page yet. Neither is something a person can act on, and the sentence
+               promises no remedy — this step is reached precisely because the account may NOT
+               add a mailbox, so telling them to go and connect one would be false. The door out
+               stays open. */
             <>
-              {/* The numbers come from the SERVER's plan card (`PLAN_LIMITS` in
-                  packages/db), never from copy. The tiers moved from 2/5/10 mailboxes to
-                  5/10/50 while this screen was being written, and a hard-coded string is
-                  exactly how a signup page ends up advertising a plan the database will
-                  not sell. No card yet ⇒ no buttons, rather than plausible wrong ones. */}
-              {sub ? (
-                <>
-                <div className="l-interval-toggle join-interval" role="group" aria-label={t("intervalLabel")}>
-                  <button
-                    type="button" className="l-interval-btn" aria-pressed={interval === "month"}
-                    onClick={() => setIntervalChoice("month")}
-                  >
-                    {t("intervalMonthly")}
-                  </button>
-                  <button
-                    type="button" className="l-interval-btn" aria-pressed={interval === "year"}
-                    onClick={() => setIntervalChoice("year")}
-                  >
-                    {t("intervalAnnual")}
-                  </button>
-                </div>
-                <div className="join-plans">
-                  {PLANS.map((p) => {
-                    const card = sub.plans[p];
-                    if (!card) return null;
-                    return (
-                      <button
-                        key={p} type="button" className="join-plan" disabled={busy}
-                        onClick={() => startCheckout(p)}
-                      >
-                        <b>{t(`plan_${p}`)}</b>
-                        {/* The price is CONTEXT, the trial is the ACTION. Owner feedback, from
-                            signing up for real: "stripe activates the trial, but … make it clear
-                            like 'Start Trial' (no creditcard)". A card whose largest text is
-                            "$9/mo" reads as a purchase, so the visitor arrives at a Checkout that
-                            does not charge them and cannot tell what just happened. `after` says
-                            what the number actually is; the action line says what the click does. */}
-                        <span className="num">
-                          {interval === "year"
-                            ? t("planPriceAnnual", { price: card.priceUsd * 10 })
-                            : t("planPrice", { price: card.priceUsd })}
-                        </span>
-                        <span className="join-plan-after">{t("planAfter")}</span>
-                        <span className="join-plan-sub">
-                          {t("planSub", {
-                            mailboxes: card.mailboxes,
-                            credits: card.monthlyCredits.toLocaleString("en-US"),
-                          })}
-                        </span>
-                        <span className="join-plan-go">{t("planStart")}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-                </>
-              ) : (
-                <p className="join-hint">{t("planLoading")}</p>
-              )}
-              {/* THE TRIAL CLAIM, and the number in it comes from the SERVER for the same
-                  reason the plan cards above do.
-                  The row is `status='trialing'` with `trial_period_days: 14`, and it now carries
-                  a fixed bounty of AI actions — so the sentence says what the trial can actually
-                  do, which is the whole product plus a real number of AI actions, and says that
-                  they run out. Typing the figure into copy here is how a signup page ends up
-                  advertising an allowance the ledger does not grant; `trialCredits` is that
-                  figure, straight from the policy module. Absent (an older server) ⇒ no
-                  sentence, rather than a sentence with a hole or a guess in it. */}
-              {sub?.trialCredits !== undefined ? (
-                <p className="join-note">{t("trialNote", { credits: sub.trialCredits })}</p>
-              ) : null}
+              <p className="join-hint">{t("planUnavailable")}</p>
               <div className="join-actions">
                 <Link className="join-alt" href="/">{t("later")}</Link>
               </div>
             </>
+          ) : (
+            <p className="join-hint">{t("planLoading")}</p>
           )}
         </>
       )}
