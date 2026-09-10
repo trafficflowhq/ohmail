@@ -122,7 +122,7 @@ export interface AttachmentStagingPort {
 
 /**
  * Builds the staging port over THIS REQUEST's database handle, exactly as
- * {@link AiCreditGateFactory} does over the same handle: the service bag is per cold instance and
+ * the retired `aiCredits` factory did over the same handle: the bag is per cold instance and
  * a database handle is not, so the bag holds the factory and the handler holds the port.
  */
 export type AttachmentStagingFactory = (db: Db) => AttachmentStagingPort;

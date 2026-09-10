@@ -220,8 +220,8 @@ export interface ScreenerAutoSuggestDeps {
    *
    * `true` is the standalone desktop engine and nothing else: that tier is free, its model is the
    * installer's own API key or a model server on their own machine, and there is no ledger for a
-   * gate to read — `apps/sidecar`'s service bag states the same thing about `aiCredits` in the same
-   * words ("an absent gate means unmetered, not ungated").
+   * gate to read — `apps/sidecar`'s service bag states the same thing by declaring its
+   * entitlements `UNMETERED` ("metering here is declared, never merely absent").
    *
    * It is a DECLARATION rather than an inference from `credits === undefined` for the reason
    * `sendSurfaceMaxTotalBytes: null` is one in that same bag: a host that said nothing must get the

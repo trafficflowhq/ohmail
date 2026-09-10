@@ -630,8 +630,9 @@ const REFUSING_RESOLVER: HostResolver = {
  * Present: the mail domain. Absent, deliberately, each one meaning something:
  *  · `billing` / `waitlist` — Cloud is what you pay for; the desktop tier is free and has no
  *    signup at all. Both answer 503 when absent, which is the truth about this host.
- *  · `aiCredits` — the ledger is Cloud's revenue-first spend gate. Desktop is BYO key or a local
- *    model, so there is no allowance to meter and an absent gate means unmetered, not ungated.
+ *  · AI METERING — not a member here: it is the spend half of `entitlementsPort`, which this bag
+ *    declares `UNMETERED`. Desktop is BYO key or a local model, so there is no allowance to
+ *    meter, and the declaration is what makes that a decision rather than an oversight.
  *  · `drafter` / `classifier` — PRESENT ONLY WHEN THIS INSTALL HAS A VERIFIED MODEL of its
  *    owner's own (`ai-provider.ts`), and absent the rest of the time. Absence rather than a port
  *    that refuses, deliberately: the route table already answers `503 drafter_unconfigured` for
@@ -676,8 +677,8 @@ const REFUSING_RESOLVER: HostResolver = {
  * there is no config value, no environment variable and no flag that reaches it — reaching it
  * requires an import of `apps/sidecar`, which nothing serverless does or could.
  *
- * It is the free tier stated once, in the same list as `billing`, `waitlist` and `aiCredits`
- * above, for the same reason: absent metering here means UNMETERED, not ungated. What still gates
+ * It is the free tier stated once, in the same list as `billing`, `waitlist` and the AI metering
+ * above, for the same reason: metering here is declared UNMETERED, never merely absent. What still gates
  * a local mailbox is everything that is not about money — the active-address unique index, the
  * IMAP probe, and the organizer lease that keeps exactly one organizer per mailbox.
  */
@@ -2040,8 +2041,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * ── WHAT DIFFERS ON THIS DOOR, AND WHAT DOES NOT ─────────────────────────────────────────
      *
      * `credits` is ABSENT and `unmetered: true` is DECLARED. This tier has no ledger: the model is
-     * the installer's own key or their own machine, which is exactly what `localServices` says
-     * about `aiCredits`. The declaration is required rather than inferred from the absence — see
+     * the installer's own key or their own machine, which is exactly what `localServices` says by
+     * declaring its entitlements UNMETERED. The declaration is required rather than inferred — see
      * that field's own note — so a wiring mistake here is a pass that does nothing rather than one
      * that spends unmetered.
      *

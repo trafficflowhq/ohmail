@@ -272,7 +272,7 @@ function buildServices(cfg: HostConfig): ApiServices {
     // the surface as explicitly uncapped for such a send and the sending mailbox's own announced
     // `SIZE` is the only ceiling left.
     //
-    // A FACTORY over the request's database handle, like `aiCredits` above: the bag is per cold
+    // A FACTORY over the request's database handle: the bag is per cold
     // instance and a handle is not. ABSENT on a deployment with no storage environment, and the
     // absence is load-bearing — the mint route answers 503, the client falls back to inline
     // bytes, and a send naming staged references is refused rather than sent without its files.

@@ -191,10 +191,10 @@ export interface ServerRuntime {
  * entitlements program, where an absent member says nobody finished the composition.
  *
  * WHAT IS ABSENT, against the managed bag, each on purpose (the bag-parity test freezes this
- * list): `billingPlane`/`entitlements` (nothing to buy), `waitlist` (no funnel), and `aiCredits`
- * (the operator supplies the model key and pays the model bill themselves — absent gate means
- * UNMETERED, the sidecar's grammar, never ungated-by-accident: the barrel default this bag
- * overrides is the mailbox allowance, and the credit gate is simply never constructed).
+ * list): `billingPlane`/`entitlements` (nothing to buy) and `waitlist` (no funnel). AI metering
+ * is not a member at all any more: it is the spend half of `entitlementsPort`, which this bag
+ * fills with `UNMETERED` above — the operator supplies the model key and pays the model bill
+ * themselves, and no spend is ever composed here.
  * `attachmentStaging` is conditional, not absent: armed from `cfg.storage` through the env-kind
  * factory when the operator configured object storage, and absent otherwise (absence ⇒ the mint
  * route answers 503 and sends carry inline bytes — load-bearing, `deps.ts` in packages/api
