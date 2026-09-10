@@ -17,8 +17,8 @@ See [Status](README.md#status--read-this-first).
 
 - Backspace, Delete and `d` move a message to Trash whether or not Use folders is on — Trash is your
   mail server's own folder. On the web already; in the desktop app with this release.
-- The line under a message being filed names which of four things is happening, brings the organizer
-  forward rather than waiting for its next pass, and names the machine holding the message up.
+- The line under a message being filed says what is happening — filing, waiting for the organizing machine,
+  or held up, and by which machine — and brings the organizer forward rather than waiting for its next pass.
 
 ### Reading
 
@@ -26,8 +26,8 @@ See [Status](README.md#status--read-this-first).
   "First message selected. Press again: Move it to Trash". The second press acts.
 - The count over Reads and Receipts reads "12 new since you were here", because it counts mail that
   arrived since you last left the stream; an unread figure keeps its own word, "3 unread".
-- The row of verbs under a message is centred in its measure, so folding a group behind More takes
-  room off both ends instead of shifting the capsule left.
+- The row of verbs under a message is centred under the message, so folding a group behind More
+  takes room off both ends instead of shifting the capsule left.
 - Reads and Receipts hold their place while you scroll: cards reserve their real height, a collapsed
   card no longer resizes when its message arrives, and the wheel no longer scrolls inside a card.
 - The tracking notice is a small (i) beside the date — "Tracker blocked", "Images blocked",
@@ -39,10 +39,10 @@ See [Status](README.md#status--read-this-first).
   arrived**, which records the send and takes the row out of Drafts, and **It didn't arrive**, which
   turns it back into an ordinary draft. A held draft could not be discarded at all before, nor
   could one whose send definitively failed.
-- Your signature is the editor you write messages in — bold, italic, strike, links, lists, quotes and
-  code — and the block below the message renders what ships. Saving plain text clears the formatting.
-- Every place text is typed draws one text field: a 1px edge on a recessed ground, present before you
-  type, one focus ring, and the same read-only and disabled states everywhere.
+- Your signature uses the same editor as your messages — bold, italic, strike, links, lists, quotes
+  and code — and the block under a message shows what ships. Saving plain text clears the formatting.
+- Text fields look the same everywhere: a visible edge before you type, one focus ring, and the same
+  read-only and disabled states.
 
 ### Away replies
 
@@ -64,9 +64,9 @@ set an out-of-office and no out-of-office would ever be sent.
 
 - All four travel now, as a request the organizing install carries out. Only the setting you changed
   travels, and one save covers an account whose mailboxes are organized in different places.
-- Moving a message, deleting one, approving a sender out of the Screener and editing a rule travel
-  the same way: the answer names the install being waited on, or which mailboxes took the rule and
-  which run a version too old. Amending a message's folder was writing the change down locally.
+- Moving a message, deleting one, approving a sender out of the Screener and editing a rule travel the same
+  way: the answer names the install being waited on, or which mailboxes took the rule and which run a
+  version too old. Changing a message's folder used to be recorded only on this device; it travels too now.
 - Changing what a rule MATCHES cannot travel and is refused with that reason; deleting one keeps it
   visible until it is gone there. Undoing a workflow run, and the re-route for rules brought over
   from Hey, refuse and name the mailbox and the install holding it.
