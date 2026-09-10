@@ -6,6 +6,7 @@ import { onNotice } from "./notices.js";
 import { runMigrations, JOURNALS } from "./migrate.js";
 import { ROLE_DEFAULT_TIMEOUTS } from "./client.js";
 import { ensureSearchExtensions, ensureWithheldProvenanceIndex } from "./search-setup.js";
+import { ensureHotPathIndexes, HOT_PATH_INDEXES } from "./hot-path-indexes.js";
 import { transactionPoolerReason, sessionUrlRejection } from "./session-url.js";
 import {
   applySupabaseLockdown, closeDataApiEndpoint, dataApiBindingProblems, dataApiBindingUnprovable,
@@ -109,6 +110,8 @@ export interface ProdSetupReport {
   pgTrgm: boolean;
   pgTrgmVersion: string | null;
   trigramIndexes: string[];
+  /** Which of {@link HOT_PATH_INDEXES} exist, sorted — verified fail-closed below. */
+  hotPathIndexes: string[];
   /** Index whose leading columns are `(account_id, seq)` — the `change_log` PK backs it. */
   changeLogCompositeIndex: string | null;
   /** A real fuzzy computation on the live server: a typo must match, noise must not. */
@@ -465,6 +468,12 @@ export async function setupProdDatabase(
     log("ensuring search extensions (pg_trgm + trigram GIN indexes)");
     await ensureSearchExtensions(db);
 
+    // AFTER the migrator, not before it: these index tables the journal creates, and unlike the
+    // provenance prebuild there is no journal statement to beat to the punch. Same session, so
+    // the concurrent build is still outside a transaction.
+    log("ensuring hot-path indexes (audit_log lookup, message eviction order)");
+    await ensureHotPathIndexes(db, { log: (m) => log(m) });
+
     // ── THE ROLE-LEVEL SERVER DEADLINES, APPLIED AND VERIFIED FAIL-CLOSED ─────────────────
     //
     // `client.ts#ROLE_DEFAULT_TIMEOUTS`' whole docblock is the "why": a client-side
@@ -682,6 +691,18 @@ export async function setupProdDatabase(
       sql`select indexname from pg_indexes where schemaname = 'public' and tablename = 'messages'
           and indexname in ('messages_subject_trgm_idx', 'messages_from_address_trgm_idx')`,
     );
+    // The two `ensureHotPathIndexes` builds, read back by name. `indisvalid` as well as
+    // existence: a failed CONCURRENTLY build leaves an index `pg_indexes` lists quite happily
+    // and the planner refuses to use, which is the one state that would otherwise report OK.
+    const hotIdx = await rows<{ indexname: string }>(
+      db,
+      sql`select c.relname as indexname
+            from pg_index x
+            join pg_class c on c.oid = x.indexrelid
+            join pg_namespace n on n.oid = c.relnamespace
+           where n.nspname = 'public' and x.indisvalid
+             and c.relname in ('audit_log_account_action_idx', 'messages_account_date_order_idx')`,
+    );
     // The composite the sync path depends on: an index on change_log whose FIRST TWO
     // key columns are (account_id, seq), in that order. Today it is the primary key's
     // backing index (`change_log_account_id_seq_pk`, migration 0002) — this asserts the
@@ -731,6 +752,7 @@ export async function setupProdDatabase(
       pgTrgm: ext.length > 0,
       pgTrgmVersion: ext[0]?.extversion ?? null,
       trigramIndexes: idx.map((r) => r.indexname).sort(),
+      hotPathIndexes: hotIdx.map((r) => r.indexname).sort(),
       changeLogCompositeIndex: composite[0]?.indexname ?? null,
       fuzzy,
       supabaseLockdown,
@@ -750,6 +772,11 @@ export async function setupProdDatabase(
     if (!report.pgTrgm) problems.push("pg_trgm extension is NOT installed (the fuzzy search arm would be dead)");
     for (const want of TRIGRAM_INDEXES) {
       if (!report.trigramIndexes.includes(want)) problems.push(`trigram GIN index missing: ${want}`);
+    }
+    for (const want of HOT_PATH_INDEXES) {
+      if (!report.hotPathIndexes.includes(want)) {
+        problems.push(`hot-path index missing or INVALID: ${want}`);
+      }
     }
     if (report.pgTrgm) {
       const f = report.fuzzy;

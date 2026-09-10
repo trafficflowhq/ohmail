@@ -15,6 +15,7 @@
  * `@trafficflow/db/admin`. If a runtime module ever needs something from here, that is the
  * signal to question the requirement, not to widen the root export.
  */
+export { ensureHotPathIndexes, HOT_PATH_INDEXES } from "./hot-path-indexes.js";
 export {
   runMigrations, PartialMigrationError,
   LEGACY_MIGRATIONS_DIR, MAIL_MIGRATIONS_DIR, CLOUD_MIGRATIONS_DIR,
