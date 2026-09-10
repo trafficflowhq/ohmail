@@ -396,6 +396,9 @@ export class SearchService {
      * body scan is a different cost argument; the query length is already bounded by
      * {@link SEARCH_QUERY_MAX_CHARS}, which is what keeps the `ILIKE` itself cheap per row.
      */
+    // Restored with main's spelling: the verbatim arm below is the only reader left, the seam
+    // having taken the fuzzy ILIKE degrade that used to share it.
+    const like = `%${q}%`;
     const verbatimPred = holdsPunctuation(q) ? sql`m.subject ilike ${like}` : null;
     const exactPred = verbatimPred === null ? lexPred : sql`(${lexPred} or ${verbatimPred})`;
     const exactRank = verbatimPred === null
@@ -551,19 +554,26 @@ export class SearchService {
     const pred = sql`lower(m.from_address) = lower(${address})`;
 
     const total = await this.count(ctx, d, where, pred);
-    const hitRows = rowsOf<{ id: string }>(await ctx.db.execute(sql`
+    /* THROUGH THE SEAM, AND THE ROWS COME BACK POSITIONAL.
+     *
+     * `d.exec` answers `unknown[][]` on both stores — its own contract says positional is the shape
+     * both can produce honestly — so this reads `r[0]` and not `.id`. A `db.execute` here would
+     * compile and run on the server and throw on the device, which is what the seam exists to stop.
+     * `search-address.pg.test.ts` pins the shape and the order this page comes back in. */
+    const hitRows = await d.exec(ctx.db, sql`
       select m.id
       ${this.from}
       where ${where} and ${pred}
       order by m.date desc nulls last, m.id desc
-      limit ${limit}`));
+      limit ${limit}`);
+    const hitIds = hitRows.map((r) => String(r[0]));
 
     // The batch form, for the reason {@link SearchService.search} gives at its own call site:
     // four statements for the page instead of four per hit on a `max: 1` pool.
-    const byId = await materializeMessages(ctx.db, ctx.accountId, hitRows.map((h) => h.id));
+    const byId = await materializeMessages(ctx.db, ctx.accountId, hitIds);
     const items: MessageDTO[] = [];
-    for (const h of hitRows) {
-      const dto = byId.get(h.id);
+    for (const id of hitIds) {
+      const dto = byId.get(id);
       if (dto) items.push(dto);
     }
     return { items, total, direction: opts.direction };
