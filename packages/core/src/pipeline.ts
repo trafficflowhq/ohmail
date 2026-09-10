@@ -14,14 +14,20 @@ import { classifyDedup, type DedupOutcome } from "./dedup.js";
 // is hand-rolled. `gone.ts` carries the rule this file's `move` arm implements.
 import { isMessageGone } from "./gone.js";
 import { reconcile, type ReconcileAction } from "./reconciler.js";
+// TYPE-ONLY, and that is what keeps the model layer's rule intact: `import type` is erased, so
+// this adds no module to any bundle (both files are already engine inputs in any case). The
+// conditional completion is declared on `WorkerRepo` and the apply path REQUIRES it — see
+// {@link ReconcileApplyDeps}.
+import type { WorkerRepo } from "./adapters/drizzle-repo.js";
 import { resolveThread } from "./threading.js";
 // The LEAF, not `/cloud` and not the root barrel: this module runs inside the desktop engine, and
 // `/cloud` is billing, the credit ledger, the staff handle and the whole hosted schema.
-// `classifyLedgerSource` is a pure template over its two arguments and lives on a leaf both halves
+// `classifyAttemptKey` is a pure template over its two arguments and lives on a leaf both halves
 // can name — this line used to say exactly that while naming the root BARREL, which only avoided
 // the hosted half for as long as the barrel happened not to reach it. Naming the leaf itself is
 // what makes that a property instead of a coincidence.
-import { classifyLedgerSource } from "@trafficflow/db/ledger-source";
+import { classifyAttemptKey } from "@trafficflow/db/ledger-source";
+import { aiSpendPermitted } from "./ports.js";
 import type {
   Change, CreditGate, MoveEvidence, PipelineDeps, RepoPort, RoutingPort, FolderStateRow,
   MessageBodyInput, NativeLocator, StoredMessage,
@@ -49,6 +55,19 @@ export interface ApplyContext {
   messageId: string;
   locator: NativeLocator;   // the message's current native location
   state: FolderStateRow;    // the folder state as of the reconcile decision
+}
+
+/**
+ * {@link applyReconcileAction}'s deps — {@link PipelineDeps} whose repo can complete a landed move
+ * CONDITIONALLY.
+ *
+ * Required, never optional-chained: an absent method would collapse "this repo predates the
+ * primitive" into "the blind write is fine", and the blind write is the defect this exists for.
+ * Every production caller passes a `DrizzleRepo`, so the requirement is checked where those three
+ * call sites compile rather than at run time.
+ */
+export interface ReconcileApplyDeps extends Omit<PipelineDeps, "repo"> {
+  repo: RepoPort & Pick<WorkerRepo, "completeFolderState">;
 }
 
 /**
@@ -87,7 +106,7 @@ export interface ApplyContext {
  * not moved yet.
  */
 export async function applyReconcileAction(
-  deps: PipelineDeps,
+  deps: ReconcileApplyDeps,
   ctx: ApplyContext,
   action: ReconcileAction,
 ): Promise<{ locator: NativeLocator; state: FolderStateRow; deferred?: boolean }> {
@@ -155,13 +174,56 @@ export async function applyReconcileAction(
         observedFolder: action.to,
         lastSetBy: "us",
       };
-      await repo.upsertFolderState(messageId, next);
+      // ── THE COMPLETION IS CONDITIONAL, AND `desired_folder` IS NOT IN ITS `SET` LIST ────────
+      //
+      // `action.to` is the desire this move was computed against, read before a network round
+      // trip that takes minutes on a slow host — and `desired_folder` has six other writers that
+      // take no mailbox row (the API's move, the Screener's apply, `rule-retro`, `ohbox-tidy`,
+      // `screener-auto`, the sensitive re-screen). Writing the pair back through
+      // `upsertFolderState` therefore REVERTED any decision that committed meanwhile: a lost
+      // update, nothing erroring, the mail ending where the older decision said. So the desire
+      // travels as the WITNESS and the landed folder as the fact. On a miss the newer desire
+      // stands, the row goes pending against it, and the locator this call just repointed is
+      // where the next cycle files from.
+      const matched = await repo.completeFolderState(messageId, {
+        expectDesiredFolder: action.to,
+        observedFolder: action.to,
+        lastSetBy: "us",
+        physicalObservation: true,
+      });
       await repo.recordAudit(
         accountId,
         "move",
         { messageId, from: locator.folder, to: action.to },
         { messageId, from: action.to, to: locator.folder },
       );
+      if (!matched) {
+        // `false` answers BOTH "a newer intent owns the row" and "there is no row", and the two
+        // want opposite writes — so they are told apart by a read, never by the flag. No row means
+        // no intent to preserve: every production caller commits one before the move, so this arm
+        // is a decision taken without persistence, and the landed folder is the only truth there
+        // is to record.
+        const live = await repo.getFolderState(messageId);
+        if (!live) {
+          await repo.upsertFolderState(messageId, next);
+          return { locator: newLocator, state: next };
+        }
+        // A superseded completion is owed to the log: silence is how this class stayed invisible
+        // at the worker's writer. No inverse — there is nothing for an operator to undo.
+        await repo.recordAudit(
+          accountId,
+          "move_superseded",
+          {
+            messageId, from: locator.folder, to: action.to,
+            reason: "a newer decision for this message committed while the move was in flight. "
+              + "The landed folder is recorded and the newer desire stands; the organizer applies "
+              + "it on its next cycle.",
+          },
+          null,
+        );
+        // The caller is told what STANDS, not what this call wanted.
+        return { locator: newLocator, state: live };
+      }
       return { locator: newLocator, state: next };
     }
     case "adopt_external": {
@@ -1231,9 +1293,12 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
         : decision.destination ?? change.locator.folder;
 
     let ai: AiPlan | undefined;
-    // The ledger identity of ONE classification of THIS mail. Computing it writes nothing —
-    // only `tryDebit` below can move money — so it is safe to build before the gate runs.
-    const creditSource = classifyLedgerSource(mailboxId, key);
+    // The identity of ONE classification of THIS mail — the mailbox and the hashed dedup key,
+    // which is what makes a reprocess of the same mail the same work. It is the BARE key: whoever
+    // answers composes the ledger source from it, and a key that already carries a namespace is
+    // refused there rather than doubled (see `sourceFor`). Computing it writes nothing — only the
+    // spend below can move money — so it is safe to build before the gate runs.
+    const attemptKey = classifyAttemptKey(mailboxId, key);
     // AI GATE: classify only on the unclear residue, NEVER for
     // sensitive/no_ai mail, and only when the account may spend. The classifier is not even
     // constructed here for sensitive messages, so the raw secret never leaves the process.
@@ -1258,11 +1323,15 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
       // correspondent into a table that cannot be rewritten, and closing the admin console's
       // render path did not remove one byte of it from disk or from backups.
       //
-      // Nothing needed it. Debit identity is `creditSource`, which sha256s the key already
-      // (`classifyLedgerSource`), so `meta.dedupKey` was redundant as well as unsafe — the same
+      // Nothing needed it. The spend identity is `attemptKey`, which sha256s the key already
+      // (`classifyAttemptKey`), so `meta.dedupKey` was redundant as well as unsafe — the same
       // finding as `mailboxes.error_detail`, one column over: the projection asked what TYPE the
       // value was and never asked WHO WROTE IT.
-      (credits == null || await credits.tryDebit(creditSource, { mailboxId }))
+      // `aiSpendPermitted` reads the six-verdict answer for THIS path: proceed on `ok` and on
+      // `duplicate` (already paid for), skip on everything else — including `inflight`, where
+      // another caller is running the model for this exact mail right now.
+      (credits == null || aiSpendPermitted(
+        await credits.spend(accountId, "classify_ingest", attemptKey, { mailboxId })))
     ) {
       let result: ClassifierResult;
       try {
@@ -1286,7 +1355,7 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
         // sync cursor unadvanced — the existing crash-safe behaviour — so `runSyncCycle`
         // re-plans this exact mail on its next pass.
         //
-        // The absent refund: that retry is FREE, because `creditSource` is already on record
+        // The absent refund: that retry is FREE, because `attemptKey` is already on record
         // and the gate answers `duplicate → proceed` for an open attempt. The charge is
         // therefore honoured by the retry, and refunding as well would hand the work over for
         // nothing — a model outage would have re-classified the entire backlog free (the
