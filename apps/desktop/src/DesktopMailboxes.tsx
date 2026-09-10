@@ -1164,6 +1164,17 @@ export function DesktopMailboxes(
           id,
           { outcome: takeoverOutcome(body.outcome), releasedAt },
         ));
+        /* ── AND A TAKEOVER IS A NEWER PRESS ABOUT THE SAME MAILBOX ────────────────────────
+         *
+         * The mirror of the delete in `release()`. Without it a stop's own note came back onto
+         * the row the moment a takeover restored the role and cleared the request stamp — the
+         * pane promising a stop the person had just withdrawn, until Settings was reopened. */
+        setReleased((m) => {
+          if (!m.has(id)) return m;
+          const next = new Map(m);
+          next.delete(id);
+          return next;
+        });
         // The row's own state moved (`disabled` → `connected` with the stamp), so the pane must
         // re-read rather than keep rendering the stand-down it was showing.
         refresh();
@@ -1756,7 +1767,14 @@ export function DesktopMailboxes(
        which clock it is on. The conditions are the note's and the description's, unchanged: the
        note's while the row has not yet answered (`released` says requested, the role is still
        organizer, no stamp on the row); the row's own once the stamp is there. */
-    const stopQueued = released.get(m.id) === "requested" && role === "organizer" && !m.releaseRequestedAt;
+    /* No `!takeoverStanding(m)` term here, and its absence is measured rather than assumed: a
+       `reclaimed` entry is written only by `reclaim()`, which now deletes this row's `released`
+       entry in the same statement, so "a stop note standing while a takeover made here stands" is
+       unreachable. Removing the term changed no answer in 113 rows — a condition no fixture can
+       make matter reads as a guarantee to the next author. The map delete is the whole fix; a
+       reopen clears the map, which is why nothing durable is needed. */
+    const stopQueued = released.get(m.id) === "requested" && role === "organizer"
+      && !m.releaseRequestedAt;
     const stopState: "queued" | "pending" | undefined =
       stopQueued ? "queued" : role === "organizer" && m.releaseRequestedAt ? "pending" : undefined;
     /* THE CHIP'S LABEL, computed once: it is the chip's caption AND the text of the live node

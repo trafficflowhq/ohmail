@@ -1567,6 +1567,67 @@ describe("a standing stop request is on the row, and the pane's notes end when t
       .not.toContain(mailboxCopy.organizeHereQueued!);
     expect(el.textContent ?? "").toContain(mailboxCopy.stateOrganizingHere!);
   });
+
+  /**
+   * A PRESS IS THE NEWEST WORD UNTIL ANOTHER PRESS IS MADE — IN BOTH DIRECTIONS.
+   *
+   * `release()` has always deleted the takeover's note on a stop. The mirror was missing, so a
+   * stop followed by a takeover brought the STOP's note back the moment the takeover restored the
+   * role and cleared the request stamp — the pane going on promising a stop that was withdrawn.
+   *
+   * The map delete is the whole fix. A durable `!takeoverStanding(m)` term was written beside it
+   * and REMOVED after measurement: `reclaim()` writes the `reclaimed` entry and deletes the
+   * `released` one together, so the state that term guarded is unreachable and its removal
+   * changed no answer here. The case below moves `organizerReleasedAt` so nothing but the delete
+   * can answer it.
+   */
+  it("a stop then a takeover leaves no stop note — the map's half, stamp moved", async () => {
+    FACTS = [ORGANIZING];
+    bridgeReply = () => new Response(JSON.stringify({ outcome: "requested" }), {
+      status: 202, headers: { "content-type": "application/json" },
+    });
+    const el = await render("local");
+    await act(async () => { buttonSaying(el, "Stop organizing")!.click(); });
+    await act(async () => { buttonExactly(el, "Stop organizing")!.click(); });
+    expect(el.textContent ?? "", "the stop press left no note of its own")
+      .toContain(mailboxCopy.stopOrganizingQueued!);
+
+    // The release completed, so the row is a released reader and offers the takeover.
+    FACTS = [{
+      ...MAILBOX,
+      organizerRole: "reader",
+      organizeConsentedAt: "2026-08-01T09:00:00.000Z",
+      organizerReleasedAt: "2026-09-07T08:00:00.000Z",
+      releaseRequestedAt: null,
+    }];
+    await repaint("local");
+    bridgeReply = () => new Response(JSON.stringify({ outcome: "authorized" }), {
+      status: 200, headers: { "content-type": "application/json" },
+    });
+    await act(async () => { buttonSaying(el, "Organize here")!.click(); });
+    await act(async () => { buttonExactly(el, "Organize here")!.click(); });
+
+    // The gate promoted. `organizerReleasedAt` has MOVED since the press, so the standing-takeover
+    // stamp cannot answer here and the map delete is the only thing that can.
+    FACTS = [{ ...ORGANIZING, organizerReleasedAt: "2026-09-07T10:30:00.000Z" }];
+    await repaint("local");
+    const said = el.textContent ?? "";
+    expect(said, "the withdrawn stop's note came back over a row that is organizing again")
+      .not.toContain(mailboxCopy.stopOrganizingQueued!);
+    expect(said, "the promoted row lost its own description").toContain(mailboxCopy.stateOrganizingHere!);
+  });
+
+  it("a stop with no takeover after it still shows its note — the positive control", async () => {
+    FACTS = [ORGANIZING];
+    bridgeReply = () => new Response(JSON.stringify({ outcome: "requested" }), {
+      status: 202, headers: { "content-type": "application/json" },
+    });
+    const el = await render("local");
+    await act(async () => { buttonSaying(el, "Stop organizing")!.click(); });
+    await act(async () => { buttonExactly(el, "Stop organizing")!.click(); });
+    expect(el.textContent ?? "", "the rule suppressed a stop note nothing had withdrawn")
+      .toContain(mailboxCopy.stopOrganizingQueued!);
+  });
 });
 
 /**
