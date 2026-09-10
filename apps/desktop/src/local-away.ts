@@ -49,7 +49,7 @@
 
 import { bridgeFetch } from "./bridge-fetch.js";
 import type { AwayTransport } from "../../webapp/app/shell/AwayResponderRow";
-import type { AwayResponderWire } from "../../webapp/app/api-client";
+import type { AwayResponderSaveWire, AwayResponderWire } from "../../webapp/app/api-client";
 
 /**
  * The hosted route, addressed root-relative like every path in this window.
@@ -83,6 +83,17 @@ async function wireOf(res: Response): Promise<AwayResponderWire> {
 }
 
 /**
+ * The SAVE's answer, which carries one field the READ never does: `pending`, the 202 the engine
+ * forwards when the mailboxes belong to an install that organizes them elsewhere. Typed here
+ * rather than cast away, because the shared control decides its sentence on it — dropped, the pane
+ * says "Saved." over the values it just put back.
+ */
+async function saveWireOf(res: Response): Promise<AwayResponderSaveWire> {
+  if (!res.ok) throw await refusal(res);
+  return (await res.json()) as AwayResponderSaveWire;
+}
+
+/**
  * The two calls the shared control makes, over the bridge.
  *
  * A constant rather than a factory: it holds no state, and one object per module means the shell's
@@ -91,7 +102,7 @@ async function wireOf(res: Response): Promise<AwayResponderWire> {
 export const awayOverBridge: AwayTransport = {
   state: async () => wireOf(await bridgeFetch(AWAY_PATH)),
   save: async (next) =>
-    wireOf(
+    saveWireOf(
       await bridgeFetch(AWAY_PATH, {
         method: "PUT",
         headers: { "content-type": "application/json" },

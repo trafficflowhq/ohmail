@@ -694,9 +694,18 @@ export interface AwayResponderWire {
     updatedAt: string | null;
 }
 
+/**
+ * The SAVE's answer: the row plus the 202 discriminator. Mirrored here because the shared
+ * settings control imports it by name and this module stands in for the real one in both
+ * desktop artifacts — see this file's header on keeping the surface in step.
+ */
+export interface AwayResponderSaveWire extends AwayResponderWire {
+    pending?: boolean;
+}
+
 export const away: {
     state: () => Promise<AwayResponderWire>;
-    save: (next: Omit<AwayResponderWire, "updatedAt">) => Promise<AwayResponderWire>;
+    save: (next: Omit<AwayResponderWire, "updatedAt">) => Promise<AwayResponderSaveWire>;
 } = absent;
 
 export const account: {
