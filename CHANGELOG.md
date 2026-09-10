@@ -19,6 +19,8 @@ See [Status](README.md#status--read-this-first).
   mail server's own folder. On the web already; in the desktop app with this release.
 - The line under a message being filed says what is happening — filing, waiting for the organizing machine,
   or held up, and by which machine — and brings the organizer forward rather than waiting for its next pass.
+- Trash: see and restore deleted mail from ⌘K (Ctrl+K), or `g` then `t`. Restore puts a message back
+  where it was, with Undo, and Shift+Backspace restores the open one. ohmail still never erases mail.
 
 ### Reading
 
@@ -52,9 +54,10 @@ See [Status](README.md#status--read-this-first).
 - Which piles get a reply is its own setting now — your Ohbox alone by default, with Reads available;
   Receipts, the Screener and Spam are never answered. **This narrows a responder already switched
   on**: from this release it stops answering Reads and Receipts.
-- The Away pane and the Ohbox banner name those piles, the banner scrolls with the list on a phone,
-  and what is never answered is an (i) beside the setting.
-- A bounce stops the automatic replies to that correspondent.
+- The Away pane and the Ohbox banner name those piles, the banner scrolls with the list on a phone, and
+  what is never answered is an (i) beside the setting. A bounce stops the automatic replies to that sender.
+- A message the responder answered carries one line under the recipients — "Answered by the away
+  responder", with the time — and never counts as mail you have dealt with. On the web already.
 
 ### Settings, rules and mail on a mailbox another machine organizes
 
@@ -110,59 +113,19 @@ editor report themselves as text boxes, and four small controls take a full pres
 
 ### RPM packages for Fedora and openSUSE
 
-Every release attaches an `.rpm` per architecture — `ohmail-linux-x86_64.rpm` and
-`ohmail-linux-aarch64.rpm` — beside the two `.deb` packages and the two AppImages. Like the `.deb`,
-it updates by installing the next one rather than through the app's own updater.
+Every release attaches an `.rpm` per architecture, beside the two `.deb` packages and the two
+AppImages. Like the `.deb`, it updates by installing the next one, not through the app's own updater.
 
-```bash
-sudo dnf install ./ohmail-linux-x86_64.rpm      # Fedora, RHEL, CentOS Stream
-sudo zypper install ./ohmail-linux-x86_64.rpm   # openSUSE
-```
+    sudo dnf install ./ohmail-linux-x86_64.rpm      # Fedora, RHEL, CentOS Stream
+    sudo zypper install ./ohmail-linux-x86_64.rpm   # openSUSE
 
 ### Sentences that say what the product does
 
 Eight sentences described software that does not exist, and each is the plain fact now. Settings →
-About no longer says the publisher signs this app, because the builds are not signed. The composer's
-footnote no longer says a message is kept in this browser until you send it — it is not a browser in
-the desktop app, and drafts are saved to your account after a moment. The privacy notice and the
-subprocessor page name all three platforms as the real mail clients they have been since 0.7.0.
-
-### A message the away responder answered says so
-
-The away responder answers mail that arrives while you are away, and its reply goes to your Sent
-folder — which is not where you look when you come back. So there was nothing on the mail itself to
-tell you a correspondent had already heard from you: you read it as if nobody had.
-
-A message the responder answered now carries one quiet line under the recipients — "Answered by the
-away responder", with the time it was answered. It is a fact, not a badge: no colour, nothing to
-press, and it never counts as mail you have dealt with. On a phone the line reads as the sentence
-alone and the time drops away; a screen reader is given the exact date and time at every width.
-
-Only messages the responder actually answered are marked. A reply it decided to hold back, one the
-per-sender limit refused, and one still waiting to be sent leave the message unmarked, because
-saying somebody was answered when they were not is worse than saying nothing. The reply in Sent is
-untouched — the line is about the message that was answered, never about the copy of the answer.
-
-On the web from the day this landed; in the desktop app with this release.
-
-### Deleted mail can be seen and restored
-
-Press ⌘K (Ctrl+K) and choose Trash, or press `g` then `t`. Trash appears in the sidebar while you
-are in it and is gone when you leave. Restore puts a message back where it was, with Undo — and it
-names the place it went, worked out on the server, because the folder a message came from can be
-deleted while the message sits in Trash. Shift+Backspace restores the open message.
-
-ohmail still never erases mail. Backspace and Delete are listed in Trash and do nothing there,
-with the reason on the row: to remove a message for good, use your own mail client.
-
-The list holds mail you deleted in ohmail. Mail trashed in other apps stays in your mail server's
-Trash, and your mail server decides how long Trash keeps it — the screen says so under the last
-row.
-
-A restored message reappears in the list it came from once your mail server has moved it back,
-which is seconds later; until then the sidebar says a message is being filed. The app waits for
-the mail server rather than guessing, so it never shows mail in a place your mail server does not
-have it.
+About no longer says the publisher signs this app, because the builds are not signed, and the privacy
+notice names all three platforms as the real mail clients they have been since 0.7.0. The composer's
+footnote no longer says a message is kept in this browser until you send it: it is not a browser in
+the desktop app, and drafts are saved to your account after a moment.
 
 ### Still to come
 
