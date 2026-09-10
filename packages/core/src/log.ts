@@ -257,6 +257,15 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // ── counts and roster arithmetic (the worker's roster pass, kickstart, thread backfill) ──
   "accounts", "accountsAffected", "mailboxes", "maxMailboxes", "selected", "serving",
   "dropped", "unexplained", "examined", "resolved", "rerouted", "pruned", "count", "more",
+  // ── THE STAND-DOWN'S HANDOVER, three counts of OUR OWN bookkeeping ──
+  //
+  // `organizer_stand_down_moves_handed_over` (both hosts) reports how many pending local moves
+  // left for the install that holds the mailbox now, how many were already travelling, and how
+  // many named a folder no destination word covers. `more` is one shelf up already. Without these
+  // the one line that makes a handover countable was emitted with three of its four numbers
+  // stripped — the sidecar's census read `exported: expected 'dropped' to be 'keep'`, which is
+  // the same shape that caught `closed` above.
+  "exported", "already", "unmappable",
   // ── the organizer's request drain, added WITH its call sites (0.14.1) ──
   //
   // Three integers counting RECORDS a drain handled: how many decisions it applied, how many it
