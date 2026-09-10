@@ -1,7 +1,8 @@
 /**
  * THE LOGGER THE MAIL CLIENT LOADS WHETHER OR NOT IT LOGS — and the reason this file is CommonJS.
  *
- * `imapflow/lib/logger.js` calls `require('pino')()` AT MODULE LOAD, before anything has decided
+ * `imapflow/lib/logger.js` loads this module and CALLS the export AT MODULE LOAD, before anything
+ * has decided
  * whether logging is on. The adapter passes `logger: false` and the client then never uses the
  * result, but the call has already happened — and the real package needs worker threads and a
  * filesystem sink, neither of which exists here.
@@ -9,7 +10,7 @@
  * ── THIS FILE IS COMMONJS ON PURPOSE, AND IT IS THE MEASURED CASE ─────────────────────────
  *
  * A stub consumed by `require` must itself be CommonJS. An ES module handed to `require` arrives as
- * a NAMESPACE OBJECT, so `require('pino')()` throws "pino is not a function" — inside the client's
+ * a NAMESPACE OBJECT, so calling the loaded value throws "pino is not a function" — inside the client's
  * own module initialisation, with a stack that names the logger and nothing that names a polyfill.
  * `module.exports = fn` is what makes the call work.
  *
@@ -45,7 +46,7 @@ function makeLogger() {
   return logger;
 }
 
-/** Callable, because `require('pino')()` is how it is used. */
+/** Callable, because the loader calls the value it gets straight back. */
 function pino() {
   return makeLogger();
 }

@@ -109,7 +109,10 @@ const PACKAGE_ALIASES = {
   /* `imapflow` requires this at module scope for its proxy connector and calls it only for a
      configured proxy, which nothing here can configure. */
   socks: path.join(SHIMS, "socks.js"),
-  /* `imapflow/lib/logger.js` calls `require('pino')()` AT LOAD whether or not logging is on. */
+  /* `imapflow/lib/logger.js` loads the pino factory and CALLS it at module load, whether or not
+     logging is on. Written without the call's own syntax on purpose: the publish manifest
+     generator reads specifiers with a scanner that does not skip comments, so spelling it out
+     here made two packages nothing imports look like declared dependencies. */
   pino: path.join(SHIMS, "pino.js"),
 };
 
