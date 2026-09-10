@@ -1489,10 +1489,16 @@ export async function syncProfileMirror(deps: MirrorDeps): Promise<MirrorOutcome
   try {
     read = await readOrganizerProfile(deps.io);
   } catch (err) {
+    /* THE THROWN VALUE IS PASSED WHOLE — {@link OrganizerProfileSync.noteFailure}'s rule, and
+     * this site was the one that did not follow it. Pre-stringifying it gave the logger a string
+     * to classify, so every line read `errorClass: "String"` with no code and no cause, and the
+     * `Error`'s driver-written message was published as `errorText` — the one thing the `err`
+     * slot exists to discard. Measured on a reader: 47 lines over nine hours, none of which named
+     * the refusal. Handed the value, the logger derives class, `code` and one wrapper of cause. */
     deps.log("profile_mirror_read_failed", {
       mailboxId: deps.mailboxId, accountId: deps.accountId,
       ...(err instanceof ProfileUnavailableError ? { op: err.op } : {}),
-      err: err instanceof Error ? err.message : String(err),
+      err,
       reason: "could not read the organizer's settings document; the cached copy is left as it is",
     });
     return { state: "kept", reason: "read_failed" };

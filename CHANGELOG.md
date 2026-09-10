@@ -13,6 +13,14 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Your piles travel again between your computers
+
+A computer that reads a mailbox another of your computers organizes gets its settings — your rules,
+your screener, your away notice — from a document in the mailbox itself. On a mailbox that has been
+organized for a while, that document could no longer be found, so a computer that only reads it
+showed nothing and a message you parked on one machine did not appear on the other. It is found
+again, however long the mailbox has been in use.
+
 ### A message you move back into the Ohbox stays there
 
 The pass that clears automated mail out of the Ohbox could file a message you had just moved back

@@ -685,14 +685,35 @@ function generationOf(client: { readonly mailbox?: { uidValidity?: number | bigi
 
 export type ProfileUidAsk =
   | { readonly kind: "uids"; readonly uids: number[] }
-  | { readonly kind: "unknown"; readonly why: string };
+  /**
+   * `code` is the SAME FACT as `why`, in the alphabet a log line can carry.
+   *
+   * `why` is prose and a log line never carries prose: measured on a reader for nine hours,
+   * `profile_mirror_read_failed` fired 47 times and named neither which refusal it was nor its
+   * cause, because the only diagnosis was inside a message. The code rides to the emitted line as
+   * `errorCode` through {@link ProfileUnavailableError}.
+   */
+  | { readonly kind: "unknown"; readonly why: string; readonly code: ProfileAskCode };
+
+/** The named refusals {@link ProfileUidAsk} can answer with. An `errorCode`, so identifier-shaped. */
+export type ProfileAskCode =
+  | "profile_search_unsupported"
+  | "profile_no_uidnext"
+  | "profile_search_refused"
+  | "profile_gap_too_deep";
 
 export class ProfileUnavailableError extends Error {
   readonly op: ProfileOp;
-  constructor(message: string, options: { op: ProfileOp; cause?: unknown }) {
+  /**
+   * The refusal's name, published to the log as `errorCode` — `log.ts#describeError` reads `code`
+   * off the thrown value, so a code set here needs no call site to remember to extract it.
+   */
+  readonly code?: string;
+  constructor(message: string, options: { op: ProfileOp; cause?: unknown; code?: string }) {
     super(message, options);
     this.name = "ProfileUnavailableError";
     this.op = options.op;
+    if (options.code !== undefined) this.code = options.code;
   }
 }
 
@@ -1056,7 +1077,10 @@ export function makeProfileIo(
          */
         const profileUids = async (c: ProfileImapClient): Promise<ProfileUidAsk> => {
           if (typeof c.search !== "function" || typeof c.status !== "function") {
-            return { kind: "unknown", why: "this server offers no way to search the folder" };
+            return {
+              kind: "unknown", code: "profile_search_unsupported",
+              why: "this server offers no way to search the folder",
+            };
           }
 
           const top = await (async (): Promise<number | null> => {
@@ -1069,7 +1093,10 @@ export function makeProfileIo(
             }
           })();
           if (top === null) {
-            return { kind: "unknown", why: "the folder reported no usable UIDNEXT to walk down from" };
+            return {
+              kind: "unknown", code: "profile_no_uidnext",
+              why: "the folder reported no usable UIDNEXT to walk down from",
+            };
           }
 
           const out: number[] = [];
@@ -1084,6 +1111,7 @@ export function makeProfileIo(
             ? remembered.memo.profileUid
             : null;
           const bottomFor = (): number => (anchor !== null && anchor >= 1 ? anchor : 1);
+          const bottom = bottomFor();
           let hi = top;
           for (let w = 0; w < PROFILE_SEARCH_WINDOW_BUDGET; w++) {
             const lo = Math.max(1, hi - PROFILE_SEARCH_UID_WINDOW + 1);
@@ -1091,7 +1119,10 @@ export function makeProfileIo(
               { header: { [H.profile]: true }, uid: `${lo}:${hi}` }, { uid: true },
             );
             if (!Array.isArray(found)) {
-              return { kind: "unknown", why: `the search of UIDs ${lo}:${hi} was refused` };
+              return {
+                kind: "unknown", code: "profile_search_refused",
+                why: `the search of UIDs ${lo}:${hi} was refused`,
+              };
             }
             out.push(...found);
             if (lo === 1) return { kind: "uids", uids: out.sort((a, b) => a - b) };
@@ -1100,14 +1131,20 @@ export function makeProfileIo(
             }
             hi = lo - 1;
           }
-          /* ── THE BUDGET RAN OUT — READ THE GAP DOWN TO OUR OWN DOCUMENT ────────────────────
+          /* ── THE BUDGET RAN OUT, AND A RECORD IN HAND IS ALREADY THE ANSWER ────────────────
            *
-           * Everything at or above `hi + 1` has been covered. If our own document lies below that,
-           * the stretch between is what the budget could not reach, and reading it is what stops
-           * depth alone making a mailbox's settings unavailable for good. */
+           * The question is "what is the NEWEST document", and a walk from the top answers it the
+           * moment it holds a profile record: everything above was searched. Refusing here threw
+           * that answer away — and `ohmail/_meta` also carries the lease's claims, so its uid
+           * space climbs per heartbeat while the folder stays small, and past 10 000 uids every
+           * read of a readable document refused with the document in `out`. An EMPTY `out` is
+           * still a refusal: nothing was found and something may lie below.
+           *
+           * The gap walk below covers what the budget could not reach, down to `bottom` — uid 1
+           * when there is no memo, which was unreachable while it also required an anchor. */
+          if (out.length > 0) return { kind: "uids", uids: out.sort((a, b) => a - b) };
           const floor = hi + 1;
-          const bottom = bottomFor();
-          if (anchor !== null && bottom < floor) {
+          if (bottom < floor) {
             let gapHi = floor - 1;
             for (let w = 0; w < PROFILE_SEARCH_WINDOW_BUDGET; w++) {
               const lo = Math.max(bottom, gapHi - PROFILE_SEARCH_UID_WINDOW + 1);
@@ -1115,7 +1152,10 @@ export function makeProfileIo(
                 { header: { [H.profile]: true }, uid: `${lo}:${gapHi}` }, { uid: true },
               );
               if (!Array.isArray(found)) {
-                return { kind: "unknown", why: `the search of UIDs ${lo}:${gapHi} was refused` };
+                return {
+                  kind: "unknown", code: "profile_search_refused",
+                  why: `the search of UIDs ${lo}:${gapHi} was refused`,
+                };
               }
               out.push(...found);
               if (lo === bottom) return { kind: "uids", uids: out.sort((a, b) => a - b) };
@@ -1124,10 +1164,10 @@ export function makeProfileIo(
           }
           // Deeper than two budgets: still a refusal, but a named one.
           return {
-            kind: "unknown",
-            why: "profile_gap_too_deep: the settings document lies further below the top of the "
-              + `uid space than ${2 * PROFILE_SEARCH_WINDOW_BUDGET * PROFILE_SEARCH_UID_WINDOW} `
-              + "uids, so no bounded read of this folder can reach it",
+            kind: "unknown", code: "profile_gap_too_deep",
+            why: "the settings document lies further below the top of the uid space than "
+              + `${2 * PROFILE_SEARCH_WINDOW_BUDGET * PROFILE_SEARCH_UID_WINDOW} uids, so no `
+              + "bounded read of this folder can reach it",
           };
         };
 
@@ -1315,7 +1355,7 @@ export function makeProfileIo(
         if (searched.kind === "unknown") {
           throw new ProfileUnavailableError(
             `the profile records in ${META_FOLDER} could not be enumerated: ${searched.why}`,
-            { op: "list_profiles" },
+            { op: "list_profiles", code: searched.code },
           );
         }
         const read = await readByUid(searched.uids);
@@ -1538,6 +1578,18 @@ export const PROFILE_MESSAGES_MAX_PER_FETCH = 500;
  */
 export const PROFILE_BYTES_MAX_PER_FETCH = 128 * 1024 * 1024;
 
+/**
+ * THE REFUSAL'S NAME, CARRIED THROUGH THE WRAPPER.
+ *
+ * `describeCause` walks a BOUNDED chain, so a code two wrappers down reaches no line at all —
+ * measured on a reader, where the write path's line read `causeClass: "ProfileUnavailableError",
+ * causeCode: null` while the root refusal had a name. Forwarding it means one field names the
+ * refusal whatever wrapped it.
+ */
+function askCodeOf(err: unknown): string | undefined {
+  return err instanceof ProfileUnavailableError ? err.code : undefined;
+}
+
 /** A `MalformedProfile`, with `ref` omitted rather than set to `undefined` (the parser's rule). */
 function malformedProfile(reason: string, ref: unknown): MalformedProfile {
   return ref === undefined ? { malformed: true, reason } : { malformed: true, reason, ref };
@@ -1550,7 +1602,7 @@ export async function readOrganizerProfile(io: ProfileIo): Promise<ProfileReadRe
   } catch (err) {
     throw new ProfileUnavailableError(
       `the organizer profile in ${META_FOLDER} could not be read`,
-      { op: "list_profiles", cause: err },
+      { op: "list_profiles", cause: err, code: askCodeOf(err) },
     );
   }
   const records = messages
@@ -1734,7 +1786,7 @@ export async function writeOrganizerProfile(input: WriteProfileInput): Promise<W
   } catch (err) {
     throw new ProfileUnavailableError(
       `the organizer profile in ${META_FOLDER} could not be read before writing`,
-      { op: "list_profiles", cause: err },
+      { op: "list_profiles", cause: err, code: askCodeOf(err) },
     );
   }
   const records = messages
