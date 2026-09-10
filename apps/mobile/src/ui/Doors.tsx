@@ -54,7 +54,7 @@ import { Copy } from "../copy";
 import { useConnection } from "../net/connection";
 import type { Negotiation, PickerStep } from "../net/pairing";
 import { MANAGED_ORIGIN, nextStep, stashPairOrigin } from "../net/pairing";
-import { canPin } from "../net/host-pinning";
+import { canPin, isNotTls } from "../net/host-pinning";
 import { addressProblem, parseServerAddress } from "../net/server-base";
 import { useTheme } from "../theme";
 import { Button, Panel, Rule, Section, TapRow, Txt } from "./base";
@@ -74,7 +74,13 @@ type Probe =
 
 /** One sentence per non-pairing outcome — the honest end of a flow, never a dead control. */
 export function sentenceFor(n: Negotiation, step?: PickerStep): Refusal {
-  if (n.kind === "unreachable") return refuse("unreachable", n.detail);
+  /* AN ADDRESS THAT ANSWERED WITHOUT TLS IS NOT AN ADDRESS THAT COULD NOT BE REACHED, and this
+     door is where a self-hoster typing an https address at a plain-http port arrives. Left
+     unclassified the reason renders as the platform's own `SSLException` text after a full stop
+     that already said the wrong thing — `isNotTls` decides, and its sentence names the cause. */
+  if (n.kind === "unreachable") {
+    return isNotTls(n.detail) ? refuse("notEncrypted") : refuse("unreachable", n.detail);
+  }
   if (n.kind === "not-ohmail") return refuse("notOhmail");
   if (step?.kind === "managed-signin-later") return refuse("managedDeferred");
   return refuse("noPairing");

@@ -153,6 +153,10 @@ export const DE: Deck = {
   noPairing: "Dieser Server bietet keine Gerätekopplung an.",
   notOhmail: "Diese Adresse antwortet, aber nicht als ohmail-Server.",
   unreachable: (detail: string) => `Diese Adresse war nicht erreichbar. ${detail}`,
+  notEncrypted:
+    "ohmail konnte zu dieser Adresse keine verschlüsselte Verbindung aufbauen und hat "
+    + "deshalb nichts gesendet. Meist antwortet der Server auf dem angegebenen Port "
+    + "unverschlüsselt über http — ohmail koppelt nur über https.",
 
   scanTitle: "Kopplungs-QR scannen",
   scanHint: "Richte die Kamera auf den QR-Code, den dein Computer oder Server zeigt.",

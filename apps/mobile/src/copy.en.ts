@@ -324,6 +324,18 @@ const TABLE = {
   noPairing: "This server does not offer device pairing.",
   notOhmail: "That address answers, but not as an ohmail server.",
   unreachable: (detail: string) => `Could not reach that address. ${detail}`,
+  /**
+   * AN ADDRESS THAT ANSWERED, AND NOT WITH TLS — see `isNotTls`, which decides it.
+   *
+   * "Could not reach that address" followed by `javax.net.ssl.SSLException: Unable to parse TLS
+   * packet header` is two wrong things at once: the address WAS reached, and the words after the
+   * full stop are the platform's, not anybody's. The usual cause is named and not asserted,
+   * because iOS's own wording for this does not distinguish it from a cipher mismatch.
+   */
+  notEncrypted:
+    "ohmail could not open an encrypted connection to that address, so it sent nothing. The "
+    + "usual reason is a server answering plain http on the port you typed — ohmail only "
+    + "pairs over https.",
 
   scanTitle: "Scan the pairing QR",
   scanHint: "Point the camera at the QR your computer or server shows.",

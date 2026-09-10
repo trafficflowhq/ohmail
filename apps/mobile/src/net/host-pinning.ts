@@ -168,6 +168,28 @@ export function isPinFailure(error: unknown): boolean {
   return HANDSHAKE.test(String(error));
 }
 
+/**
+ * AN ADDRESS THAT ANSWERS WITHOUT TLS — the failed dial {@link isPinFailure} does not recognise.
+ *
+ * A server serving plain http on the port somebody typed is the likeliest self-hosting mistake, and
+ * its first bytes are not a TLS record at all: Android says `SSLException: Unable to parse TLS
+ * packet header`, which no alternative in `HANDSHAKE` matches, so the raw exception reached a
+ * screen. The two sets are disjoint, and `test/host-pinning.test.ts` asserts it rather than
+ * trusting the reading.
+ *
+ * Android's wording names the cause; iOS's does not. `NSURLErrorSecureConnectionFailed` (-1200) is
+ * "no encrypted connection could be established", which a cipher or version mismatch produces too,
+ * and it is taken from the platform's documented constants rather than from a device — the same
+ * honesty the iOS pinning half above is written with. So `Copy.notEncrypted` names the usual cause
+ * without asserting it.
+ */
+const NOT_TLS =
+  /Unable to parse TLS packet|NSURLErrorSecureConnectionFailed|Code=-1200|An SSL error has occurred/i;
+
+export function isNotTls(error: unknown): boolean {
+  return NOT_TLS.test(String(error));
+}
+
 /*
  * THE SENTENCE THAT USED TO STAND HERE IS NOW `Copy.pinChanged`.
  *

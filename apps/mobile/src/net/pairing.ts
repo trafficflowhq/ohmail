@@ -67,7 +67,7 @@ import {
 import { ServerProfileStore, type ServerProfile } from "../state/servers";
 import { BearerManagerRN, type FetchLike, type RefreshVault } from "./bearer";
 import {
-  canPin, isPinFailure, pin as installPin, unpin,
+  canPin, isNotTls, isPinFailure, pin as installPin, unpin,
 } from "./host-pinning";
 /* Every sentence this module hands back reaches a screen, so they live in the copy deck and are
    translated with everything else. The `throw new Error(…)` messages below do not: they are
@@ -419,6 +419,13 @@ export async function pairWithServer(
     // and the sentence says what happened and what to do (`host-pinning.ts`).
     if (pin !== null && isPinFailure(negotiated.detail)) {
       return { kind: "refused", reason: refuse("pinChanged") };
+    }
+    // AND THE SAME DIAL FAILS THE OTHER WAY: a peer whose first bytes are not a TLS record at
+    // all — plain http on the port that was typed or scanned. `isNotTls` recognises that shape,
+    // which `HANDSHAKE` deliberately does not, so it gets a sentence instead of the platform's
+    // exception nested inside "could not reach that server".
+    if (isNotTls(negotiated.detail)) {
+      return { kind: "refused", reason: refuse("notEncrypted") };
     }
     return { kind: "refused", reason: refuse("pairUnreachable", negotiated.detail) };
   }
