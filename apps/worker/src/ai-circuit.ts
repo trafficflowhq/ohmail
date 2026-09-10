@@ -49,9 +49,22 @@ import type { ClassifierPort, ClassifierInput, ClassifierResult, Logger } from "
  * for exactly that message, and the charge must come back. It cannot come back through
  * `gate.refund(source)`: by trip time the second attempt's `duplicate` outcome has already
  * CLEARED that source's marker, so `refund` finds nothing and silently does nothing.
- * The gate therefore exposes {@link AiCreditGate.refundAttempt}, and this module records the
- * `attempt` string `spend()` returned when it actually charged. At most one refund per trip per
- * mailbox; a success clears the record, so delivered work is never refunded.
+ * The port therefore answers `attempt` for a charged spend, and this module records it. At most
+ * one refund per trip per mailbox.
+ *
+ * ## Which mailbox's record a success clears — the part that was wrong
+ *
+ * A success used to clear EVERY mailbox's open charge, because the counting wrapper did not know
+ * which mailbox it was classifying for. That is reachable in the ordinary serial rotation: a
+ * fault below the threshold leaves mailbox A's charge on record, the next mailbox B classifies
+ * successfully, and A's record is dropped — so the later trip refunds nothing for A and A's
+ * customer has paid for a classification that was abandoned and will never be re-run. Nothing
+ * fails; the money is simply gone.
+ *
+ * So the wrapper is bound to a mailbox ({@link ClassifierCircuit.port}) and a success clears
+ * that mailbox's record and no other. The TRIP stays deliberately unscoped: when the circuit
+ * opens, the AI branch is abandoned for every message in flight, so every open charge is owed
+ * back — that one is a property of the outage, not of a mailbox.
  */
 
 /** Consecutive model faults before the circuit opens. */
@@ -123,11 +136,16 @@ export interface ClassifierCircuit {
    * half-open, `undefined` while it is open.
    *
    * Resolve it ONCE per cycle and pass the result in — never hold a wrapper across the open
-   * transition. A present-but-open classifier would let `pipeline.ts`'s `&&` chain reach
-   * `tryDebit`, charge, and only then fail: one orphaned charge per message per cycle, for the
-   * whole outage.
+   * transition. A present-but-open classifier would let `pipeline.ts`'s `&&` chain reach the
+   * spend, charge, and only then fail: one orphaned charge per message per cycle, for the whole
+   * outage.
+   *
+   * `mailboxId` names whose charge record a success clears, and it is the SAME id passed to
+   * {@link meter}. Omitted by a caller that took no metered port and so recorded nothing — the
+   * account-scoped auto-suggest pass; a wrapper with no mailbox clears nobody's record, which
+   * is what it means for a caller that has none of its own.
    */
-  port(): ClassifierPort | undefined;
+  port(mailboxId?: string): ClassifierPort | undefined;
   /**
    * Wrap this mailbox's spend port so the circuit learns which ledger attempt it charged.
    *
@@ -168,9 +186,15 @@ export function makeClassifierCircuit(
   /** mailboxId → the attempt this process charged and has not seen delivered or refunded. */
   const openCharges = new Map<string, OpenCharge>();
 
-  /** Refund every charge that the abandonment of the AI branch has just orphaned. */
-  function refundOpenCharges(reason: string): void {
+  /**
+   * Refund the charges the abandonment of the AI branch has just orphaned.
+   *
+   * `only` names one mailbox; absent means every one of them. A refusal is one mailbox's
+   * message and a trip is the whole provider, so the two callers below want different scopes.
+   */
+  function refundOpenCharges(reason: string, only?: string): void {
     for (const [mailboxId, charge] of openCharges) {
+      if (only !== undefined && mailboxId !== only) continue;
       // Never awaited: this runs inside a classify failure path whose job is to rethrow, and a
       // reversal is best-effort by design (an un-refunded charge is recoverable while a delayed
       // rethrow is not). Exactly-once is enforced in the database, not by this call site.
@@ -179,8 +203,8 @@ export function makeClassifierCircuit(
         refund: true, attempt: charge.attempt, meta: { mailboxId, reason },
       });
       log?.warn("classify_charge_refunded", { mailboxId, attempt: charge.attempt, reason });
+      openCharges.delete(mailboxId);
     }
-    openCharges.clear();
   }
 
   function trip(): void {
@@ -236,6 +260,7 @@ export function makeClassifierCircuit(
    * real classifier does not have.
    */
   async function guard(
+    mailboxId: string | undefined,
     ask: (input: ClassifierInput) => Promise<ClassifierResult>, input: ClassifierInput,
   ): Promise<ClassifierResult> {
     let result: ClassifierResult;
@@ -312,7 +337,10 @@ export function makeClassifierCircuit(
         // the screen is deterministic in the bytes, so every retry refuses again and the charge
         // buys nothing, ever. Same call and same one-charge-in-flight assumption the success
         // path below already makes when it clears the map.
-        refundOpenCharges("classifier_sensitive_refusal");
+        // THIS mailbox's charge, not everybody's. The screen is deterministic in the bytes of
+        // ONE message, so it says nothing about any other mailbox's call — and another
+        // mailbox's classification may still be in flight and about to be delivered.
+        refundOpenCharges("classifier_sensitive_refusal", mailboxId);
         throw err;
       }
       consecutiveFaults++;
@@ -322,27 +350,38 @@ export function makeClassifierCircuit(
       if (retryAt !== null || consecutiveFaults >= threshold) trip();
       throw new ClassifierFaultError(err);
     }
-    // Delivered. The charge for this message bought what it paid for, so drop the record —
-    // this is what stops a later trip refunding work the customer actually received.
-    openCharges.clear();
+    // Delivered. THIS mailbox's charge bought what it paid for, so drop its record — which is
+    // what stops a later trip refunding work the customer actually received. Only its own: a
+    // success here is no evidence at all about a charge another mailbox has open, and clearing
+    // that one silently forfeits its refund.
+    if (mailboxId !== undefined) openCharges.delete(mailboxId);
     close();
     return result;
   }
 
-  const wrapper: ClassifierPort = {
-    classify: (input) => guard(inner.classify.bind(inner), input),
-    ...(inner.screen ? { screen: (input: ClassifierInput) => guard(inner.screen!.bind(inner), input) } : {}),
-  };
+  /**
+   * The counting wrapper for one mailbox. Built per `port()` call — once per cycle per mailbox —
+   * rather than held, for the reason `port()` documents: a wrapper kept across the open
+   * transition charges every message and then fails it.
+   */
+  function wrapperFor(mailboxId: string | undefined): ClassifierPort {
+    return {
+      classify: (input) => guard(mailboxId, inner.classify.bind(inner), input),
+      ...(inner.screen
+        ? { screen: (input: ClassifierInput) => guard(mailboxId, inner.screen!.bind(inner), input) }
+        : {}),
+    };
+  }
 
   return {
-    port(): ClassifierPort | undefined {
-      if (retryAt === null) return wrapper;
+    port(mailboxId?: string): ClassifierPort | undefined {
+      if (retryAt === null) return wrapperFor(mailboxId);
       if (now() < retryAt) return undefined;
       // Cooldown elapsed: HALF-OPEN. Hand back the live wrapper so the next classify is a probe.
       // `retryAt` stays set until a success clears it, so a failing probe re-opens (with the
       // doubled cooldown) instead of being counted as an ordinary fault.
       log?.info("classifier_circuit_half_open", { opens, reason: "cooldown elapsed — probing" });
-      return wrapper;
+      return wrapperFor(mailboxId);
     },
 
     meter(mailboxId: string, port: SpendPort): SpendPort {

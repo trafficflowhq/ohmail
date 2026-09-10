@@ -1292,7 +1292,10 @@ export async function startWorkerWithLock(
     function aiFor(mailboxId: string, accountId: string): Pick<SyncDeps, "classifier" | "credits"> {
       if (!classifierCircuit) return { ...(spend ? { credits: spend } : {}) };
       return {
-        classifier: classifierCircuit.port(),
+        // The SAME mailbox id both halves take: `meter` records this mailbox's charge and the
+        // wrapper clears this mailbox's record on a success. Two different ids there, or one
+        // omitted, is how a success for one mailbox forfeits another's refund.
+        classifier: classifierCircuit.port(mailboxId),
         // The metered port is what teaches the circuit which ledger attempt it charged, so a
         // trip can refund the message it just abandoned. See `ai-circuit.ts`.
         ...(spend ? { credits: classifierCircuit.meter(mailboxId, spend) } : {}),
