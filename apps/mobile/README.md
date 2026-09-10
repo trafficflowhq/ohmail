@@ -434,23 +434,41 @@ publication. What they hold:
 
 ---
 
-## The APK
+## The APK and the App Bundle
+
+Android ships in two formats. The APK is what a person sideloads; the `.aab`
+is what Google Play takes, and no device installs one directly. Both come out
+of a single Gradle invocation (`assembleRelease bundleRelease`), so they share
+one minification run and one deobfuscation mapping retraces either.
 
 `.github/workflows/android.yml` has two lanes:
 
-- **Build check** — every push builds the release APK (signed with the
-  generated debug keystore, installable for smoke-testing) and keeps it as a
-  short-lived workflow artifact. Pull requests build the same way and never
-  touch signing secrets.
-- **Release** — pushing an `android-v*` tag builds the same APK, signs it
-  with the project's release keystore (an Actions secret; forks cannot read
-  it), verifies the signature, and attaches `ohmail-android.apk` to the
-  GitHub release for that tag.
+- **Build check** — every push builds both. The bundle is read for its
+  structure and its code is compared to the APK's, dex for dex, so the scans
+  that clear the APK say something about the bundle too. The APK (signed with
+  the generated debug keystore, installable for smoke-testing) and its mapping
+  are kept as short-lived workflow artifacts. Pull requests build the same way
+  and never touch signing secrets.
+- **Release** — pushing an `android-v*` tag builds both and signs them with
+  the project's release keystore (an Actions secret; forks cannot read it):
+  `apksigner` for the APK, `jarsigner` for the bundle, whose debug signature
+  is stripped first so exactly one signer is left. Each signature is then
+  checked to be that key and no other, the bundle is read back by Google's
+  `bundletool`, and `ohmail-android.apk`, `ohmail-android.aab` and
+  `ohmail-android-mapping.txt.gz` are attached to the GitHub release for that
+  tag. The installable artifacts are withdrawn before they are replaced, so
+  the page never carries one whose mapping belongs to another build.
 
 The release signature is a developer signature, not a store listing: Android
 verifies updates against it, so an APK signed with a different key will not
 install over an existing one. If the key is ever lost, the recovery is
 uninstall/reinstall.
+
+Play App Signing adds a second key. The key that signs the first bundle
+uploaded becomes the *upload* key, and Play re-signs what it delivers with an
+*app signing* key it keeps. A Play install and a sideloaded APK therefore carry
+different signatures and cannot update over one another — one channel per
+device.
 
 iOS ships no artifact yet. There is no sideload path on that platform, and a
 store build needs an Apple Developer Program membership this project does not
