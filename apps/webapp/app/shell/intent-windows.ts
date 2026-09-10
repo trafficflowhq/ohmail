@@ -14,6 +14,8 @@
  * withholding a decision for ever.
  */
 
+import { storageOwner } from "./storage-owner";
+
 /** One open window: the row it holds, and the press it was opened by. */
 export interface OpenWindow {
   id: string;
@@ -52,6 +54,18 @@ export const INTENT_ASK_MS = 150;
 const CHANNEL = "ohmail.intent-windows";
 
 /**
+ * ONE CHANNEL PER ACCOUNT, in the shape the journal keys already use.
+ *
+ * A `BroadcastChannel` is per ORIGIN, exactly as `localStorage` is, so two tabs signed into
+ * different accounts would otherwise trade claims about each other's rows — and the journal this
+ * guards is owner-keyed for that very reason (`storage-owner.ts`). The `"local"` fallback is the
+ * same one the four key builders spell: a surface with genuinely no account.
+ */
+export function intentWindowsChannel(owner: string | null = storageOwner()): string {
+  return `${CHANNEL}.${owner ?? "local"}`;
+}
+
+/**
  * ONE COORDINATOR PER SURFACE, created by the hook rather than held in module scope.
  *
  * A `BroadcastChannel` does not deliver to the channel object that posted, so a module singleton
@@ -69,8 +83,9 @@ export function createIntentWindows(opts: {
   let mine: () => OpenWindow[] = () => [];
   let closed = false;
 
-  const bus: BroadcastChannel | null =
-    typeof BroadcastChannel === "undefined" ? null : new BroadcastChannel(opts.channel ?? CHANNEL);
+  const bus: BroadcastChannel | null = typeof BroadcastChannel === "undefined"
+    ? null
+    : new BroadcastChannel(opts.channel ?? intentWindowsChannel());
 
   const post = (m: Wire): void => { if (bus && !closed) bus.postMessage(m); };
   const changed = (): void => { opts.onChange?.(); };

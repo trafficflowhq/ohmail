@@ -1799,12 +1799,22 @@ export function useScreenerState(
        kept, which is what the journal is for. Only the state with nowhere to send it withholds
        the replay. */
     if (role.mode === "blocked") return;
-    /* NOT BEFORE THE OTHER TABS HAVE ANSWERED — see `asked` above. */
-    if (!asked.current) return;
+    /**
+     * THE READ HAPPENS AT MOUNT; ONLY THE DISPATCH WAITS FOR THE OTHER TABS.
+     *
+     * The order matters and getting it wrong dispatched twice. This effect re-runs on the local
+     * tick as well as on the mirror's version, so with the read behind the handshake's gate the
+     * FIRST journal read landed after a press — where the jar still holds this session's own
+     * intent while its commit is in flight (the disarm settles with the mutation, `s.pending` is
+     * already cleared), so the replay took it as stranded and sent it a second time. Measured as a
+     * duplicate `mark_seen` and a duplicate demote in the bulk paths. Read once at mount, before
+     * anything can be pressed, exactly as this effect always did.
+     */
     if (restoredIntents.current === null) {
       restoredIntents.current = takeScreenerIntents(Date.now())
         .filter((r) => !s.pending.has(r.id));
     }
+    if (!asked.current) return;
     /* A ROW ANOTHER TAB HAS RESOLVED LEAVES THIS SNAPSHOT FOR GOOD. The journal read is taken
        once, so an entry the owning tab has since committed or taken back is still in it here —
        and dispatching that is a second act on one press. */
