@@ -156,8 +156,9 @@ import {
 } from "./roster.js";
 // Removing a mailbox takes this install's copy of its mail with it. See `local-mirror.ts` for why
 // this is the sidecar's job and not `MailboxService.delete`'s.
-import { wipeLocalMirror } from "./local-mirror.js";
+import { mirroredMessageCount, wipeLocalMirror } from "./local-mirror.js";
 import { stampSynced } from "./sync-stamp.js";
+import { createFirstSyncReporter } from "./first-sync.js";
 import type { Diagnostic } from "./log.js";
 import { startEngineVitals } from "./vitals.js";
 
@@ -5056,7 +5057,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            complete with half of it still on its way — while outbound filing the reconciler still
            owes (the OTHER reason the loop keeps going) is not import and must not withhold the
            stamp. See `sync-stamp.ts`. */
-        if (cycles > 0) await stampSynced(db, mb.id, now(), inboundDrained);
+        if (cycles > 0) {
+          const stamps = await stampSynced(db, mb.id, now(), inboundDrained);
+          /* HOW LONG THE FIRST IMPORT TOOK, from the stamps that just decided it — the number
+             nobody could read off a log before. The count is a thunk so a settled mailbox's pass
+             pays nothing for it; see `first-sync.ts`. */
+          await firstSync.report(mb.id, stamps, () => mirroredMessageCount(db, mb.id));
+        }
         /* ── CHECKPOINT BEHIND EVERY DRAIN THAT WROTE, so the log never holds more than one drain. ──
 
            The periodic checkpointer (`db.ts`) bounds the write-ahead log to five MINUTES of churn,
@@ -6353,6 +6360,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
     const stopVitals = startEngineVitals(log, {
       ...(config.vitalsIntervalMs === undefined ? {} : { intervalMs: config.vitalsIntervalMs }),
     });
+    /* ONE PER PROCESS, because the "have I already said this import is running" half is per
+       launch — see `first-sync.ts`. Built here rather than inside the drain, which runs per pass. */
+    const firstSync = createFirstSyncReporter(log);
 
     return {
       app,

@@ -29,6 +29,8 @@ import type { LocalDb } from "./db.js";
 import type { LocalWorld } from "./identity.js";
 import type { CloudAuth } from "./cloud-auth.js";
 import { stampSynced } from "./sync-stamp.js";
+import { createFirstSyncReporter } from "./first-sync.js";
+import { mirroredMessageCount } from "./local-mirror.js";
 import type { Diagnostic } from "./log.js";
 
 /**
@@ -1839,6 +1841,10 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   let timer: ReturnType<typeof setTimeout> | null = null;
   /** Optimistic: a mirror is assumed reachable until a pull proves otherwise. */
   let reachable = true;
+  /* THE SAME INSTRUMENT AS THE STANDALONE DOOR'S, from the same stamps — one per mirror, because
+     the "already announced" half is per launch. `cfg.log` is optional here, so an install with no
+     logger reports nothing rather than needing a second code path. See `first-sync.ts`. */
+  const firstSync = createFirstSyncReporter(cfg.log ?? ((): void => {}));
   /** The single-flight pull: the poll timer and an echo-await share ONE drain. */
   let inflight: Promise<number> | null = null;
   /** Current reconnect delay; grows on failure, resets on success. See {@link scheduleAfter}. */
@@ -3194,7 +3200,8 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
          install. A retired row is excluded for the inverse reason: a mailbox that is gone has no
          import to report finishing. */
       for (const row of await activeMirroredMailboxes()) {
-        await stampSynced(cfg.db, row.id, now(), cursor.bodies.phase === "complete");
+        const stamps = await stampSynced(cfg.db, row.id, now(), cursor.bodies.phase === "complete");
+        await firstSync.report(row.id, stamps, () => mirroredMessageCount(cfg.db, row.id));
       }
       // THE PULL'S LAST WORD — this mirror drained the hosted feed to its horizon at this
       // moment, on this process's own clock. Written at COMPLETION and nowhere earlier, exactly
