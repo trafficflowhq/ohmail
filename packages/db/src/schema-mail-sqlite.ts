@@ -656,6 +656,8 @@ export const mailboxes = sqliteTable("mailboxes", {
   // (`stampInitialImportComplete`) and by nothing else. Clearing it back to NULL is the supported
   // way to make the client speak "still importing" again.
   initialImportCompletedAt: integer("initial_import_completed_at", { mode: "timestamp_ms" }),
+  // Mail 0098: the HTML signature beside the text one. Nullable, same as its twin.
+  signatureHtml: text("signature_html"),
 }, (t) => ({
   // ONE ACTIVE MAILBOX PER ADDRESS (mail 0021). PARTIAL, because `delete` is a soft delete to
   // `status='disabled'` and a plain unique would make reconnecting a disconnected address fail
@@ -1094,6 +1096,10 @@ export const folderState = sqliteTable("folder_state", {
   attempts: integer("attempts").notNull().default(0),
   /** NULL ⇒ due now. See the block above. */
   nextAttemptAt: integer("next_attempt_at", { mode: "timestamp_ms" }),
+  // Mail 0097: the class of the last refusal, closed to the same four words as the server.
+  lastErrorClass: text("last_error_class"),
+  // Mail 0099: the pile a trashed message came from, so an untrash knows where to put it back.
+  trashedFrom: text("trashed_from"),
 }, (t) => ({ uqMessage: unique().on(t.messageId) }));
 
 /**
@@ -1970,6 +1976,10 @@ export const awayResponders = sqliteTable("away_responders", {
    */
   enabledAt: integer("enabled_at", { mode: "timestamp_ms" }),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
+  /* Mail 0096/0101: a text[] on the server, a JSON array of strings here — the ruling for this
+     landing. The closed set lives in the migration on both stores (the server CHECKs it with
+     `<@`); nothing here reads a pile the phone writes, because the phone writes none today. */
+  piles: text("piles", { mode: "json" }).notNull().default(sql`'["INBOX"]'`),
 }, (t) => ({ uqAccount: unique().on(t.accountId) }));   // one row per account ⇒ PUT upserts
 
 /**
@@ -2131,6 +2141,8 @@ export const awaySenderState = sqliteTable("away_sender_state", {
   lastRepliedAt: integer("last_replied_at", { mode: "timestamp_ms" }).notNull(),
   /** The `awayTextHash` of what they were told — what `per_message` compares against. */
   lastTextHash: text("last_text_hash").notNull(),
+  // Mail 0096: the instant a reply came back undeliverable.
+  undeliverableAt: integer("undeliverable_at", { mode: "timestamp_ms" }),
 }, (t) => ({
   // THE SERIALISER. The upsert's conflict target, so it is the primary key rather than a unique
   // index beside one: there is no other identity for this row.
@@ -2376,12 +2388,17 @@ export const outboundSends = sqliteTable("outbound_sends", {
   id: text("id").default(UUID_V4).primaryKey(),
   accountId: text("account_id").notNull(),
   idempotencyKey: text("idempotency_key").notNull(),
-  draftId: text("draft_id").notNull().references(() => drafts.id),
+  /* Mail 0095: nullable, and the reference clears rather than blocks — a send outlives the draft
+     it came from, and the server made the same change in the same migration. */
+  draftId: text("draft_id").references(() => drafts.id, { onDelete: "set null" }),
   mintedMessageId: text("minted_message_id").notNull(),      // `<uuid@domain>` minted up front
   providerMessageId: text("provider_message_id"),            // the delivered Message-ID (null until sent)
   status: text("status").notNull().default("pending"),       // pending|sent|failed|unverified
   sentAt: integer("sent_at", { mode: "timestamp_ms" }),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
+  // Mail 0095: who resolved this send, and when.
+  resolvedBy: text("resolved_by"),
+  resolvedAt: integer("resolved_at", { mode: "timestamp_ms" }),
 }, (t) => ({
   uqKey: unique().on(t.accountId, t.idempotencyKey),         // the per-account idempotency reservation gate
 }));
@@ -2922,6 +2939,48 @@ export const accountSettings = sqliteTable("account_settings", {
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
 });
+
+/**
+ * Mail 0094: the organizer profile as last read from the mailbox, cached per mailbox.
+ *
+ * `uidvalidity` is a 64-bit counter for the reason every other one here is — it is compared, and a
+ * double loses the low bits. `doc` is the profile document, JSON text read through the JSON
+ * functions, exactly as its twin stores jsonb.
+ */
+export const mailboxProfileMirror = sqliteTable("mailbox_profile_mirror", {
+  mailboxId: text("mailbox_id").primaryKey(),
+  accountId: text("account_id").notNull(),
+  uidvalidity: int64("uidvalidity"),
+  uid: integer("uid"),
+  doc: text("doc", { mode: "json" }).notNull(),
+  readAt: integer("read_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
+}, (t) => ({
+  ixAccount: index("mailbox_profile_mirror_account_idx").on(t.accountId),
+}));
+
+/**
+ * Mail 0093: one row per reserved send content, so a retry cannot send twice.
+ *
+ * THE HEX CHECK IS SPELLED DIFFERENTLY AND MEANS THE SAME THING. The server writes a POSIX regex
+ * (`~ '^[0-9a-f]{64}$'`); this store has no regex operator, and the only door to one is a
+ * host-registered `REGEXP` function — a CHECK that depends on one makes the file unopenable by a
+ * host that lacks it, which is the failure this schema refuses elsewhere by capability. The pair
+ * is recorded in `schema-twin-parity.test.ts` so neither half can drift alone.
+ */
+export const outboundSendFingerprints = sqliteTable("outbound_send_fingerprints", {
+  id: text("id").default(UUID_V4).primaryKey(),
+  accountId: text("account_id").notNull(),
+  mailboxId: text("mailbox_id").notNull(),
+  fingerprint: text("fingerprint").notNull(),
+  sendId: text("send_id").notNull().references(() => outboundSends.id, { onDelete: "cascade" }),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
+}, (t) => ({
+  uqContent: unique("outbound_send_fingerprints_content_uq").on(t.accountId, t.mailboxId, t.fingerprint),
+  ckFingerprint: check(
+    "outbound_send_fingerprints_hex",
+    sql`length(${t.fingerprint}) = 64 and ${t.fingerprint} not glob '*[^0-9a-f]*'`,
+  ),
+}));
 
 /**
  * The mail-domain half as one object, for `drizzle(client, { schema })`.

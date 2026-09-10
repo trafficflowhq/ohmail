@@ -134,5 +134,22 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
       "CREATE TRIGGER kb_entries_fts_after_delete AFTER DELETE ON kb_entries BEGIN\n  INSERT INTO kb_entries_fts(kb_entries_fts, rowid, title, content) VALUES ('delete', old.rowid, old.title, old.content);\nEND;",
       "CREATE TRIGGER kb_entries_fts_after_update AFTER UPDATE ON kb_entries BEGIN\n  INSERT INTO kb_entries_fts(kb_entries_fts, rowid, title, content) VALUES ('delete', old.rowid, old.title, old.content);\n  INSERT INTO kb_entries_fts(rowid, title, content) VALUES (new.rowid, new.title, new.content);\nEND;"
     ]
+  },
+  {
+    "name": "0002_mail_0093_0101.sql",
+    "statements": [
+      "ALTER TABLE \"mailboxes\" ADD COLUMN \"signature_html\" text;",
+      "ALTER TABLE \"folder_state\" ADD COLUMN \"last_error_class\" text;",
+      "ALTER TABLE \"folder_state\" ADD COLUMN \"trashed_from\" text;",
+      "ALTER TABLE \"away_responders\" ADD COLUMN \"piles\" text NOT NULL DEFAULT '[\"INBOX\"]';",
+      "ALTER TABLE \"away_sender_state\" ADD COLUMN \"undeliverable_at\" integer;",
+      "CREATE TABLE \"outbound_sends__0002\" (\n  \"id\" text PRIMARY KEY NOT NULL DEFAULT (lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' ||\n  substr(lower(hex(randomblob(2))), 2) || '-' ||\n  substr('89ab', 1 + (abs(random()) % 4), 1) ||\n  substr(lower(hex(randomblob(2))), 2) || '-' || lower(hex(randomblob(6)))),\n  \"account_id\" text NOT NULL,\n  \"idempotency_key\" text NOT NULL,\n  \"draft_id\" text,\n  \"minted_message_id\" text NOT NULL,\n  \"provider_message_id\" text,\n  \"status\" text NOT NULL DEFAULT 'pending',\n  \"sent_at\" integer,\n  \"created_at\" integer NOT NULL DEFAULT (CAST(unixepoch('subsec') * 1000 AS INTEGER)),\n  \"resolved_by\" text,\n  \"resolved_at\" integer,\n  CONSTRAINT \"outbound_sends_account_id_idempotency_key_unique\" UNIQUE (\"account_id\", \"idempotency_key\"),\n  FOREIGN KEY (\"draft_id\") REFERENCES \"drafts\"(\"id\") ON DELETE SET NULL\n);",
+      "INSERT INTO \"outbound_sends__0002\"\n  (\"id\", \"account_id\", \"idempotency_key\", \"draft_id\", \"minted_message_id\",\n   \"provider_message_id\", \"status\", \"sent_at\", \"created_at\")\nSELECT \"id\", \"account_id\", \"idempotency_key\", \"draft_id\", \"minted_message_id\",\n       \"provider_message_id\", \"status\", \"sent_at\", \"created_at\"\n  FROM \"outbound_sends\";",
+      "DROP TABLE \"outbound_sends\";",
+      "ALTER TABLE \"outbound_sends__0002\" RENAME TO \"outbound_sends\";",
+      "CREATE TABLE \"mailbox_profile_mirror\" (\n  \"mailbox_id\" text PRIMARY KEY NOT NULL,\n  \"account_id\" text NOT NULL,\n  \"uidvalidity\" integer,\n  \"uid\" integer,\n  \"doc\" text NOT NULL,\n  \"read_at\" integer NOT NULL DEFAULT (CAST(unixepoch('subsec') * 1000 AS INTEGER))\n);",
+      "CREATE INDEX \"mailbox_profile_mirror_account_idx\" ON \"mailbox_profile_mirror\" (\"account_id\");",
+      "CREATE TABLE \"outbound_send_fingerprints\" (\n  \"id\" text PRIMARY KEY NOT NULL DEFAULT (lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' ||\n  substr(lower(hex(randomblob(2))), 2) || '-' ||\n  substr('89ab', 1 + (abs(random()) % 4), 1) ||\n  substr(lower(hex(randomblob(2))), 2) || '-' || lower(hex(randomblob(6)))),\n  \"account_id\" text NOT NULL,\n  \"mailbox_id\" text NOT NULL,\n  \"fingerprint\" text NOT NULL,\n  \"send_id\" text NOT NULL REFERENCES \"outbound_sends\"(\"id\") ON DELETE CASCADE,\n  \"created_at\" integer NOT NULL DEFAULT (CAST(unixepoch('subsec') * 1000 AS INTEGER)),\n  CONSTRAINT \"outbound_send_fingerprints_content_uq\" UNIQUE (\"account_id\", \"mailbox_id\", \"fingerprint\"),\n  CONSTRAINT \"outbound_send_fingerprints_hex\" CHECK (length(\"fingerprint\") = 64 AND \"fingerprint\" NOT GLOB '*[^0-9a-f]*')\n);"
+    ]
   }
 ] as const;
