@@ -58,6 +58,7 @@ import { displayAddress } from "./idn";
 import { canSend, sendStateFor, sendVerb, type SendState } from "./mail-send";
 import { parseRecipients, type MailSend } from "./compose";
 import { forwardEnvelopePlan, forwardSend } from "./forward-send";
+import { HeldSendResolve } from "../components/HeldSendResolve";
 import { RichEditor } from "./RichEditor";
 import type { RichValue } from "./rich-text";
 import type { DraftReplyControl, DraftedReply } from "./draft-reply";
@@ -179,6 +180,7 @@ export function InlineReply({
   onSig,
   subjectEdit = null,
   onSubject,
+  heldResolve = null,
 }: {
   message: EngineMessage;
   /**
@@ -309,6 +311,17 @@ export function InlineReply({
    * was rather than a control nothing is listening to.
    */
   onSubject?: (subject: string) => void;
+  /**
+   * THE HELD REPLY'S WAY OUT — the row the hold is about, and where the reader's answer goes.
+   *
+   * A reply whose send the server took and never confirmed leaves its row at `unverified`. Drafts
+   * listed it with the two verbs; this editor showed nothing, so the one surface the reader would
+   * reach for had no way to settle it. `null` for every editor that is not holding such a row.
+   */
+  heldResolve?: {
+    draftId: string;
+    onResolve: (draftId: string, outcome: "arrived" | "not_arrived") => void;
+  } | null;
 }) {
   const t = useTranslations("reply");
   /** `compose` owns the forwarding honesty line — one sentence, both surfaces. */
@@ -872,6 +885,12 @@ export function InlineReply({
       </div>
 
       <SendStatus send={sendStateFor(send, wouldSend)} scope="reply" />
+      {/* THE VERBS SIT WHERE THE SENTENCE IS, and off the SAME narrowed state: an unresolved send
+          on this lane that does not name this message puts no warning up, so it must offer no
+          answer either. The row is the shell's; this component dispatches nothing itself. */}
+      {heldResolve !== null && sendStateFor(send, wouldSend).phase === "unverified" ? (
+        <HeldSendResolve draftId={heldResolve.draftId} onResolve={heldResolve.onResolve} />
+      ) : null}
     </div>
   );
 }

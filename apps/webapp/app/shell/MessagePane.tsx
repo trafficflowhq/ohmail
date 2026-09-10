@@ -2066,6 +2066,12 @@ export function MessagePane({
       onChange={chrome.onReplyBody}
       onClose={chrome.closeReply}
       onSend={() => chrome.sendReply(replyTarget.id)}
+      /* THE HELD REPLY'S TWO VERBS — the row this message's unconfirmed reply left behind, and
+         where the reader's answer goes. Only for a reply: a forward has no such row, and the
+         editor renders the verbs only while its own sentence says the send is unconfirmed. */
+      heldResolve={(chrome.replyMode ?? "reply") === "forward"
+        ? null
+        : chrome.replyHeldResolve?.(replyTarget.id) ?? null}
       /* The audience, editable: the edit strings and their reporter live on the chrome
          beside the body (mounted-twice — `message-chrome.tsx`), and the book feeds the
          rows' suggestions. `onEnvelope` absent on the inert chrome keeps the head a

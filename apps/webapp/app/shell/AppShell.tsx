@@ -122,7 +122,7 @@ import { ProfileImportCard, useProfileImport, type ProfileImportTransport } from
 import {
   COMPOSE_SEND_KEY, heldRowUnverified, inlineForwardKey, SEND_IN_FLIGHT_PHASES,
   sendPendingInOutbox, useMailSend, readReplyDraft, writeReplyDraft,
-  readReplyMeta, writeReplyMeta,
+  readReplyMeta, writeReplyMeta, type SendState,
 } from "./mail-send";
 import { attachSendLockDraft, holdOf } from "./send-lock";
 import {
@@ -3852,7 +3852,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       // `In-Reply-To`/`References` from the parent row whatever the subject says.
       ...(replySubjectEdit !== null ? { subject: replySubjectEdit } : {}),
       ...replyEnvelopeOnWire(plan),
-    }, sigText, sigHtml));
+    }, sigText, sigHtml), { heldRow: heldReplyRow(messageId) });
   });
 
   /**
@@ -3984,6 +3984,18 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * was an oversight.
    */
   const drafts = useMemo(() => draftsList(reader), [reader, version]);
+  /**
+   * ── THE UNCONFIRMED REPLY ROW THIS MESSAGE ALREADY HAS ──────────────────────────────────
+   *
+   * The inline reply editor is a per-message scratch buffer and carries no row, so its press asked
+   * the hold about `null` and got `free` — while the row the previous press created sat at
+   * `unverified` and the Drafts list said so. This is the only name that surface has for it.
+   *
+   * `status !== "draft"` because an ordinary draft cannot be held, and `draftsList` is the same
+   * reading the Drafts door shows, so the two doors cannot disagree about which row is held.
+   */
+  const heldReplyRow = useStableCallback((messageId: string): string | null =>
+    drafts.find((d) => d.inReplyToMessageId === messageId && d.status !== "draft")?.id ?? null);
   const draftRepliesHere = useStableCallback(
     (d: EngineDraft): boolean =>
       d.inReplyToMessageId != null && reader.get<EngineMessage>("message", d.inReplyToMessageId) != null,
@@ -4257,6 +4269,24 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       });
     },
   );
+  /**
+   * ── WHERE A LANE'S REPLY HAS GOT TO, THE ROW INCLUDED ───────────────────────────────────
+   *
+   * `mailSend.stateOf` alone reads the durable RECORD, which a sweep, a seven-day TTL or another
+   * device can leave this browser without — and the reply reported in the field had been held for
+   * a month. The server's `unverified` on the row is the witness that outlives all three, so the
+   * same projection the compose form renders through is applied here.
+   *
+   * A forward's lane (`fwd:<id>`) names no reply row, so it passes through untouched.
+   */
+  const replySendState = useStableCallback((lane: string): SendState => {
+    const state = mailSend.stateOf(lane);
+    const row = heldReplyRow(lane);
+    if (row === null) return state;
+    return heldRowUnverified(
+      state, row, holdOf(engine, { lane, draftId: row, session: null }), null, lane,
+    );
+  });
   const discardDraft = useStableCallback(
     (draftId: string) => {
       /**
@@ -7150,7 +7180,16 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
        */
       openReply,
       forward: openForward,
-      replySendState: mailSend.stateOf,
+      /**
+       * WHERE THIS LANE'S REPLY HAS GOT TO, WITH THE ROW'S OWN WITNESS IN IT — see
+       * `replySendState`. One reading of the hold, two surfaces.
+       */
+      replySendState: replySendState,
+      /** The held reply's way out, on the door the reader actually opens — see `DraftsView`. */
+      replyHeldResolve: (messageId: string) => {
+        const row = heldReplyRow(messageId);
+        return row === null ? null : { draftId: row, onResolve: resolveHeldSend };
+      },
       // The offer and the draft waiting to be placed travel with the reply draft, and for the
       // same reason: `MessagePane` is mounted TWICE while the reader is open, and an offer
       // held per-pane would be two offers, each able to spend an AI action the other one

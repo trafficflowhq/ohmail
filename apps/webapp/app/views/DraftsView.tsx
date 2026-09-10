@@ -53,6 +53,7 @@ import type { EngineDraft } from "@ohmail/client-engine";
 import { Button, InfoNote, ListPane, ListRows } from "@ohmail/ui";
 import { displayTime, scheduleLabel } from "../shell/format";
 import { useZoneNav } from "../shell/zone-nav";
+import { HeldSendResolve } from "../components/HeldSendResolve";
 
 /** "you, and two others" — the recipients, as a line, or the empty-string for none. */
 function recipientLine(d: EngineDraft): string {
@@ -275,17 +276,7 @@ export function DraftsView({
                       hold and holds no send state; the shell's own predicate answers that on
                       the next render, once the mirror says the row is an ordinary draft. */}
                   {d.status === "unverified" ? (
-                    <div className="draft-resolve" role="group" aria-label={t("resolveWhat")}>
-                      <p className="set-note-inline">{t("resolveWhat")}</p>
-                      <div className="gate-actions">
-                        <Button variant="ghost" onClick={() => { onResolve(d.id, "arrived"); }}>
-                          {t("resolveArrived")}
-                        </Button>
-                        <Button variant="ghost" onClick={() => { onResolve(d.id, "not_arrived"); }}>
-                          {t("resolveNotArrived")}
-                        </Button>
-                      </div>
-                    </div>
+                    <HeldSendResolve draftId={d.id} onResolve={onResolve} />
                   ) : null}
                   {confirming === d.id ? (
                     <div

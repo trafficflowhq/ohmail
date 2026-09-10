@@ -239,8 +239,12 @@ export interface MailSendApi {
    * Press Send. A no-op while that surface's send is already in flight or queued.
    * `surface: "inline"` names the thread's dock as the sender — see {@link sendKeyOf} for why
    * a forward needs the surface said and a reply never does.
+   *
+   * `heldRow` is the draft row the hold should be asked about when the MUTATION cannot name one:
+   * an inline reply's row is the adapter's and its editor is a scratch buffer, so this door asked
+   * about `null` and got `free` while the row a previous press left sat unconfirmed.
    */
-  send: (m: MailSend, opts?: { surface?: "inline" }) => void;
+  send: (m: MailSend, opts?: { surface?: "inline"; heldRow?: string | null }) => void;
 }
 
 const IDLE: SendState = { phase: "idle" };
@@ -856,6 +860,14 @@ export function heldRowUnverified(
   heldRow: string | null,
   hold: Hold,
   session: string | null,
+  /**
+   * THE MESSAGE THIS REPLY SURFACE IS ANSWERING, when the surface is the inline reply editor.
+   *
+   * A reply is named `reply:<parent id>` and never by a row ({@link sendSubjects}), so an intent
+   * carrying the row alone matched no reply mutation and the warning was dropped over a reply
+   * whose own row sat unconfirmed. `null` on the compose surface, which has no such name.
+   */
+  replyTo: string | null = null,
 ): SendState {
   if (state.phase === "sending" || state.phase === "queued" || state.phase === "sent") return state;
   if (heldRow === null) return state;
@@ -887,7 +899,14 @@ export function heldRowUnverified(
    * `compose-autosave.ts`'s adoption drops the row and settles the record on the same evidence.
    */
   if (hold.by === "status" && hold.status === "sent") return state;
-  const subjects = session === null ? [`draft:${heldRow}`] : [`draft:${heldRow}`, `compose:${session}`];
+  /* EVERY NAME THE MESSAGE ON THIS SURFACE ANSWERS TO — the row, the compose session holding it,
+     and the message a reply is answering. `unresolvedNames` matches on the shared name, so a name
+     missing here is a surface the refusal cannot reach. */
+  const subjects = [
+    `draft:${heldRow}`,
+    ...(session === null ? [] : [`compose:${session}`]),
+    ...(replyTo === null ? [] : [`reply:${replyTo}`]),
+  ];
   return {
     ...state,
     phase: "unverified",
@@ -1757,7 +1776,7 @@ export function useMailSend(
   }
 
   const send = useCallback(
-    (m: MailSend, opts?: { surface?: "inline" }) => {
+    (m: MailSend, opts?: { surface?: "inline"; heldRow?: string | null }) => {
       const key = sendKeyOf(m, opts?.surface ?? "compose");
       // THE LOCK FIRST, off the ref, because it is the only check that is correct within one
       // tick. `canSend` then applies the SAME rule the button's `disabled` uses — through the
@@ -1778,9 +1797,14 @@ export function useMailSend(
        * S(4)). The row is written onto whatever record does exist on the way out, for the same
        * reason the `canSend` refusal below does it.
        */
+      /* `opts.heldRow` IS THE INLINE REPLY'S ONLY NAME FOR A ROW. Its mutation carries no
+         `draftId` — the reply's row is the adapter's — and its editor is a per-message scratch
+         buffer, so this door asked about `null` and got `free` while the row the previous press
+         created sat unconfirmed. The surface knows the row; it hands it in. */
       const hold = holdOf(engine, {
         lane: key,
-        draftId: m.draftId ?? (key === COMPOSE_SEND_KEY ? readComposeRow(owner.current) : null),
+        draftId: m.draftId ?? opts?.heldRow
+          ?? (key === COMPOSE_SEND_KEY ? readComposeRow(owner.current) : null),
         session: sessionOf(key),
       }, owner.current);
       if (hold.kind === "parked") {

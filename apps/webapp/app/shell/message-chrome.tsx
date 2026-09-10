@@ -267,6 +267,18 @@ export interface MessageChrome {
   /** Where that message's send has got to — see `mail-send.ts` for why it has four states. */
   replySendState: (messageId: string) => SendState;
   /**
+   * THE HELD REPLY'S WAY OUT, or `null` when this message has no unconfirmed reply row.
+   *
+   * A reply the server took and never confirmed leaves its row at `unverified`. The Drafts list
+   * offered the reader the two answers; the editor they actually open offered none, so the row was
+   * a dead end from the surface it is reached from. Absent on the inert chrome, which sends
+   * nothing and therefore holds nothing.
+   */
+  replyHeldResolve?: (messageId: string) => {
+    draftId: string;
+    onResolve: (draftId: string, outcome: "arrived" | "not_arrived") => void;
+  } | null;
+  /**
    * The AI drafter's offer and the draft waiting to be placed, or absent where there is no
    * drafter — the desktop shell and every harness that mounts a pane without the shell.
    *
