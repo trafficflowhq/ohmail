@@ -158,6 +158,18 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // those lines exist to name could not be named. A row-scoped test drives the REAL logger for this
   // name, so it cannot silently go missing again.
   "messageId",
+  /**
+   * ── THREE FOLDER-SHAPED NAMES, AND THE VALUES THEY MAY CARRY ARE NOT FOLDER NAMES ─────────
+   *
+   * `fromFolder` / `toFolder` / `folderLabel` are written ONLY through `sync.ts#folderLabel`,
+   * which answers one of the six folders ohmail organizes or the literal `"other"`. That is the
+   * whole reason they are new names rather than the `folder` the reconcile and message-retry
+   * lines already pass: `folder` carries a RAW path from the mail server, and a folder a person
+   * made is their own words, so admitting THAT name here would leak ten existing call sites'
+   * values in one edit. `ref` is a `uidvalidity:uid` pair — digits and a colon, minted by the
+   * server's own numbering.
+   */
+  "fromFolder", "toFolder", "folderLabel", "ref",
   // `threadId`/`candidateThreadId` are `threads.id` ROW UUIDs, the same non-secret shape and the
   // same justification as `messageId` one entry up: the thread-join heal's verdict line names
   // WHICH two threads it judged (survivor, examined sibling) or the fix cannot be audited —

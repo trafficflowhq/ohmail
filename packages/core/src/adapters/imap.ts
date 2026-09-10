@@ -819,6 +819,48 @@ export class MessageGoneError extends Error {
 }
 
 /**
+ * One folder's PERSISTED cursor as this build can use it, or `null` when the stored shape is
+ * foreign — written by another build, hand-edited, or truncated JSON. Every field is checked
+ * because the type is a claim about what SHOULD be there and this value comes off disk.
+ *
+ * A rejected cursor is not repaired field by field: a half-read cursor is a cursor nobody can
+ * reason about, and re-reading the folder from cold is bounded, correct and self-clearing.
+ */
+function usableFolderCursor(v: unknown): FolderCursor | null {
+  if (typeof v !== "object" || v === null) return null;
+  const c = v as Partial<FolderCursor>;
+  if (typeof c.uidValidity !== "string" || typeof c.highestModseq !== "string") return null;
+  if (typeof c.uidNext !== "number" || !Number.isFinite(c.uidNext) || c.uidNext < 0) return null;
+  if (!Array.isArray(c.known)) return null;
+  if (!c.known.every((k) => typeof k === "object" && k !== null && typeof k.uid === "number")) {
+    return null;
+  }
+  return c as FolderCursor;
+}
+
+/**
+ * THE SERVER DID NOT SAY WHICH UIDVALIDITY EPOCH THE SELECTED FOLDER IS AT — so no ref can be
+ * proved to name the message it was written for, and every locator-addressed command is refused.
+ *
+ * RFC 3501 REQUIRES `[UIDVALIDITY n]` on a successful SELECT, and a reported ZERO is invalid by
+ * the same text, so both are the same fact: the epoch is UNKNOWN. It is deliberately NOT
+ * {@link MessageGoneError} — `gone.ts` states the three readings of a gone locator, and one of
+ * them is terminal; a mailbox whose server is silent about epochs would hand that reading a
+ * message that is still there. This is the MAILBOX's condition, not the message's, which is why
+ * `classifyIngestFault` reads its `code` as infrastructure exactly as it reads `EIMAPBOUND`.
+ */
+export class EpochUnknownError extends Error {
+  readonly code = "EIMAPEPOCHUNKNOWN";
+  constructor(public locator: NativeLocator) {
+    super(
+      `the mail server did not report a UIDVALIDITY for ${locator.folder}, so the reference `
+      + `${locator.ref} cannot be proved to name this message and the command was refused`,
+    );
+    this.name = "EpochUnknownError";
+  }
+}
+
+/**
  * A part exceeded the byte ceiling {@link ImapAdapter.fetchPart} was given, and the download was
  * ABANDONED mid-stream rather than buffered to the end.
  *
@@ -2924,6 +2966,21 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
 
   private async changesSinceInner(cursor: ImapCursor): Promise<ChangeBatch> {
     const caps = await this.capabilities();
+    // ── THE PERSISTED CURSOR IS VALIDATED HERE, NEVER TRUSTED FROM ITS TYPE ─────────────────
+    //
+    // `ImapCursor` says `known` is always present; the STORED value is JSON written by another
+    // build, hand-edited, or partial, and `(p?.known.length ?? 0)` guarded the wrong dereference —
+    // it throws for a row that exists without the array, which core's src-only tsconfig cannot
+    // see. A folder whose stored shape this
+    // build cannot read is re-bootstrapped: no `prev` means cold, which is the one honest reading,
+    // and the names are reported on the batch so the caller can say so out loud.
+    const stored = new Map<string, FolderCursor>();
+    const unreadableCursors: string[] = [];
+    for (const [name, value] of Object.entries(cursor.folders ?? {})) {
+      const ok = usableFolderCursor(value);
+      if (ok) stored.set(name, ok);
+      else unreadableCursors.push(name);
+    }
     const {
       folders: scanFolders, sent: sentFolder, passive: passiveFolders, status: listStatus,
     } = await this.foldersToScan();
@@ -2994,9 +3051,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // fallback block below for both. A folder that never reaches the fetch must not have budget
     // reserved for it, which would be reserving it for nobody.
     const flagEligible = scanFolders.filter((f) => {
-      const p = cursor.folders[f];
+      const p = stored.get(f);
       if (caps.condstore) return !!p && p.highestModseq !== "0";
-      return f !== sentFolder && (p?.known.length ?? 0) > 0;
+      return f !== sentFolder && p !== undefined && p.known.length > 0;
     });
     // Claimants: the folders KNOWN to owe, which before the fetch means "has an in-flight drain".
     //
@@ -3022,7 +3079,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       const isSent = folder === sentFolder;
       const isPassive = passiveFolders.has(folder);
       const serverPath = this.toServerPath(folder);
-      const prev = cursor.folders[folder];
+      const prev = stored.get(folder);
       // PROVABLY UNCHANGED PASSIVE FOLDER — not even a SELECT. See {@link unchangedPassive} for the
       // three equalities and why each is required. This is what keeps a mailbox with a hundred
       // customer folders costing one LIST per cycle instead of a hundred SELECTs.
@@ -3441,9 +3498,28 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
           ? drain.advanceTo
           : String(mb.highestModseq ?? 0n);
         newFolders[folder] = {
-          uidValidity: truncated || flagsTruncated ? (prev?.uidValidity ?? "0") : String(curUidValidity),
-          uidNext: truncated ? (prev?.uidNext ?? 0) : mb.uidNext,
-          highestModseq: flagsTruncated || !caps.condstore ? (prev?.highestModseq ?? "0") : advanceTo,
+          // ── THE EPOCH IS NOT A PROGRESS CURSOR, AND HOLDING IT BACK IS A WEDGE ────────────
+          //
+          // A truncated page holds `uidNext` and `highestModseq` because a cursor that advances
+          // past unread work loses mail. UIDVALIDITY is not that kind of value: it names WHICH
+          // numbering the other two live in. Held back across a reset, the next cycle sees the
+          // change again, empties the known-set again, re-emits every prior UID as a delete
+          // again — the same slice for ever. Publishing it means the
+          // two epoch-scoped cursors must go cold with it: `prev.uidNext` counts UIDs that no
+          // longer exist, and the Sent watermark reads it, so carrying it into a new epoch would
+          // strand every message below it.
+          uidValidity: uidValidityChanged || !(truncated || flagsTruncated)
+            ? String(curUidValidity)
+            : (prev?.uidValidity ?? "0"),
+          uidNext: uidValidityChanged && truncated ? 0 : truncated ? (prev?.uidNext ?? 0) : mb.uidNext,
+          // …AND THE MODSEQ BASELINE IS EPOCH-SCOPED TOO, which the uidNext line above learned
+          // first. A modseq remembered under the old epoch names nothing in the new one, and it
+          // is the value `canFastPath` asks `changedSince` for — so it goes cold with the epoch
+          // exactly where `prev` would otherwise be carried. A value read from the SERVER THIS
+          // PASS is fine and is published unchanged.
+          highestModseq: flagsTruncated || !caps.condstore
+            ? (uidValidityChanged ? "0" : (prev?.highestModseq ?? "0"))
+            : advanceTo,
           // THE SERVER'S OWN COUNT, which this SELECT already answered and which was discarded
           // here for the whole life of the adapter . It is deliberately NOT held back
           // under truncation the way the three cursors above are: a cursor that advances past
@@ -3505,6 +3581,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       hasBacklog,
       unanswered,
       oversize,
+      ...(unreadableCursors.length > 0 ? { rebootstrapped: unreadableCursors } : {}),
     };
   }
 
@@ -3845,18 +3922,25 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * correct thing to assert here, because a sentence about every caller in the tree is a claim
    * that goes stale the next time somebody adds one.
    *
-   * ── THE TWO `"0"` ESCAPES ARE DELIBERATE AND ARE THE WHOLE COMPATIBILITY STORY ──────────────
+   * ── ONE `"0"` ESCAPE IS DELIBERATE; THE OTHER WAS FAIL-OPEN AND IS GONE ─────────────────────
    *
-   *  · **`refEpoch === "0"`** — the locator carries no epoch. That is the sentinel a cold or
-   *    truncated drain persists (`sync.ts#buildCursor` and `soleEpochOf` both name it), and it
+   *  · **`refEpoch === "0"` PASSES** — the locator carries no epoch. That is the sentinel a cold
+   *    or truncated drain persists (`sync.ts#buildCursor` and `soleEpochOf` both name it), and it
    *    is what hand-written fixtures carry. A ref that never claimed an epoch cannot contradict
-   *    one, so it passes; `changesSince`'s own known-set discipline is what protects those.
-   *  · **`current === "0"`** — the client cannot say what epoch it is at (`mailbox` is `false`,
-   *    or a driver that does not report `uidValidity`). Refusing everything on a server that
-   *    does not answer would break the adapter against nothing; this guard exists to catch a
-   *    CONTRADICTION, not to demand a proof.
+   *    one; `changesSince`'s own known-set discipline is what protects those.
+   *  · **AN UNREPORTED OR ZERO CURRENT EPOCH REFUSES.** This used to pass, on the argument that
+   *    the guard catches a CONTRADICTION rather than demanding a proof. The consequence is what
+   *    settles it: with no epoch to compare, the guard is DISABLED for every locator-addressed
+   *    command on that folder, so a move, a flag, an expunge or a body read lands on whatever
+   *    message now wears the UID. A reported ZERO is the worse half — an epoch IS given, and
+   *    `"0"` was this guard's own sentinel for "none", so the two were indistinguishable. RFC 3501
+   *    requires the field on a successful SELECT and forbids zero, so both mean UNKNOWN, and
+   *    unknown identity fails closed: {@link EpochUnknownError}, the MAILBOX's condition and not
+   *    the message's — never {@link MessageGoneError}, whose terminal reading would write off mail
+   *    that is still on the server.
    *
-   * This used to be an opt-in flag on `move` alone (`requireEpoch`), set by the Junk rescue and
+   *
+This used to be an opt-in flag on `move` alone (`requireEpoch`), set by the Junk rescue and
    * by nothing else, with a docblock arguing that the worker's reconciler "keeps its own epoch
    * machinery". It does — for the READ path: `buildCursor` hands the adapter only the remembered
    * UIDs of the epoch the cursor names, and `junk-restore.ts` compares epochs before it acts.
@@ -3868,7 +3952,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * asking for the defect.
    */
   private assertLocatorEpoch(locator: NativeLocator): void {
-    if (this.locatorEpochStale(locator)) throw new MessageGoneError(locator);
+    const verdict = this.locatorEpochVerdict(locator);
+    if (verdict === "unknown") throw new EpochUnknownError(locator);
+    if (verdict === "stale") throw new MessageGoneError(locator);
   }
 
   /**
@@ -3878,11 +3964,22 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * only meaningful under the lock for `locator.folder`.
    */
   private locatorEpochStale(locator: NativeLocator): boolean {
+    return this.locatorEpochVerdict(locator) !== "usable";
+  }
+
+  /**
+   * The three answers the comparison can have, kept apart because they want different refusals:
+   * `usable` (the ref's epoch matches, or the ref claims none), `stale` (a contradiction — the
+   * message is not at this locator), `unknown` (the server named no epoch, or named zero, so
+   * nothing can be proved). See {@link assertLocatorEpoch} for why the last is not the second.
+   */
+  private locatorEpochVerdict(locator: NativeLocator): "usable" | "stale" | "unknown" {
     const { uidValidity: refEpoch } = parseRef(locator.ref);
-    if (refEpoch === "0") return false;
+    if (refEpoch === "0") return "usable";
     const mb = this.client.mailbox as MailboxObject | false;
-    const current = mb && mb.uidValidity != null ? String(mb.uidValidity) : "0";
-    return current !== "0" && refEpoch !== current;
+    const reported = mb && mb.uidValidity != null ? String(mb.uidValidity) : null;
+    if (reported === null || reported === "0") return "unknown";
+    return refEpoch === reported ? "usable" : "stale";
   }
 
   /**

@@ -1,5 +1,5 @@
 import {
-  planChange, commitChange, MAX_RAW_MESSAGE_BYTES,
+  planChange, commitChange, isOrganizedFolder, MAX_RAW_MESSAGE_BYTES,
   type Change, type ClassifierPort, type CreditGate, type Logger, type OhboxPolicy,
   type StorageCap,
 } from "@trafficflow/core/mail";
@@ -807,6 +807,17 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
 
   const cursor = await buildCursor(repo, mailboxId, deadLetters);
   const batch = await adapter.changesSince(cursor);
+  // A folder whose STORED cursor this build could not read was scanned from cold — the adapter has
+  // no logger and reports the names instead, and a re-bootstrap that nobody records is the
+  // silent state the row is about. One line per folder, labelled: a folder a person made carries
+  // their own words.
+  for (const folder of batch.rebootstrapped ?? []) {
+    log?.warn("folder_cursor_unreadable", {
+      mailboxId, accountId, folderLabel: folderLabel(folder),
+      reason: "the stored cursor for this folder is not a shape this build can read, so the "
+        + "folder was scanned from cold and its cursor rewritten",
+    });
+  }
 
   /**
    * Folders holding a change that FAILED and was NOT consumed. Their cursor is not written and
@@ -960,11 +971,26 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
   // fallback. Neither available ⇒ no epoch can be named ⇒ skip, which loses evidence rather than
   // inventing it.
   const observedEpochs = epochsObserved(batch);
+  let deletesCapped = false;
+  let deletesRecorded = 0;
   for (const ch of batch.deletes) {
     const site = siteOf(ch);
     const live = observedEpochs.get(site.folder) ?? batch.newCursor.folders[site.folder]?.uidValidity;
     if (live === undefined || live === "0" || live !== site.uidValidity) continue;
+    // BOUNDED — see {@link DELETE_EVIDENCE_PER_CYCLE}. The cap is counted over the deletes this
+    // cycle BELIEVES, not over everything the adapter reported: a UIDVALIDITY reset's prior-epoch
+    // refs are skipped above and must not spend a budget meant for real disappearances.
+    if (deletesRecorded >= DELETE_EVIDENCE_PER_CYCLE) { deletesCapped = true; break; }
     await fencedWrite(deps, (r) => r.forgetInstanceAt(mailboxId, ch.locator));
+    deletesRecorded++;
+  }
+  if (deletesCapped) {
+    log?.info("sync_delete_evidence_capped", {
+      mailboxId, accountId, considered: deletesRecorded,
+      reason: "this cycle recorded its budget of disappearances and stopped; the rest are still "
+        + "in the known-set, are reported again next cycle, and the cycle re-kicks rather than "
+        + "waiting for the poll",
+    });
   }
 
   // ── THE REAPER (mail 0065): A MESSAGE WHOSE EVERY WATCHED INSTANCE IS GONE LEAVES THE MIRROR ─
@@ -1155,7 +1181,10 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
 
   const { owesMore } = await reconcileMailbox(deps);
   if (firstDeferredError !== null) throw firstDeferredError;
-  return { hasBacklog: batch.hasBacklog ?? false, owesFiling: owesMore || folderOpsOweMore || sweepOwesMore };
+  return {
+    hasBacklog: (batch.hasBacklog ?? false) || deletesCapped,
+    owesFiling: owesMore || folderOpsOweMore || sweepOwesMore,
+  };
 }
 
 /**
@@ -1416,6 +1445,14 @@ function epochsObserved(batch: { creates: Change[]; moves: Change[]; flagChanges
  * returns, so a sentinel epoch always arrives beside zeros) and `MailboxService.requestResync`
  * (which nulls `highestmodseq` and touches neither other column); account deletion drops the rows
  * outright. The columns are nullable, so a row written by hand could break that; no code path can.
+ *
+ * ── AND THE RESET ARM IS NO LONGER THE ORDINARY ROUTE ───────────────────────────────────────
+ *
+ * The IMAP adapter used to hold a truncated reset's cursor at the PREVIOUS epoch, so the
+ * disagreement below was how such a reset got zeroed at all. It publishes the new epoch itself
+ * now, with `uidNext` and `highestModseq` cold beside it, so a `V → V′` disagreement no longer
+ * arrives from that path: this arm defends the PERSISTENCE boundary against a writer whose cursor
+ * and whose locators disagree, which is where it belongs.
  */
 function epochAware(fc: PersistedFolderCursor, observed: string | undefined): PersistedFolderCursor {
   if (observed === undefined || observed === fc.uidValidity) return fc;
@@ -1478,6 +1515,30 @@ export async function reconcileMailbox(deps: SyncDeps): Promise<{ owesMore: bool
  * finishes in one pass and never touches the re-kick at all.
  */
 export const RECONCILE_MOVES_PER_CYCLE = 500;
+
+/**
+ * How many DISAPPEARANCES one cycle may record.
+ *
+ * Each one is its own fenced write, and a bulk expunge in the live epoch produces one per
+ * previously known UID — thousands of sequential writes ahead of the ingest loop, so a mailbox
+ * stops receiving new mail until the backlog drains. Nothing is lost by capping it: an instance
+ * this cycle did not forget is still in the next cursor's known-set and is reported again, and
+ * the cap raises `hasBacklog` so the caller re-kicks instead of waiting out the poll.
+ *
+ * 500, the filing budget's number for the filing budget's reason: a few seconds of database work,
+ * short enough that no other mailbox waits on it.
+ */
+export const DELETE_EVIDENCE_PER_CYCLE = 500;
+
+/**
+ * A folder name for a LOG LINE: ours as written, anyone else's as `"other"`.
+ *
+ * A folder a person made carries their own words, and the structured logger's field census exists
+ * to keep those out of a log. The six ohmail organizes are names this codebase chose, so they are
+ * the whole admissible set; a provider's special folder and a customer folder are both `"other"`,
+ * which is what a layer trace needs to distinguish a filing that happened from one that did not.
+ */
+const folderLabel = (folder: string): string => (isOrganizedFolder(folder) ? folder : "other");
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -1792,6 +1853,7 @@ async function fileChunk(
   // the source is gone. Nothing was written, every row is still pending and due, and the next
   // `changesSince` adopts what the server shows: the same convergence a crash here takes.
   let reopened = false;
+  let landed = 0;
   try {
     await fencedGroup(deps, async (r) => {
       const audits: Array<{ action: string; payload: unknown; inverse: unknown }> = [];
@@ -1810,6 +1872,7 @@ async function fileChunk(
         // converge, the junk filing's satisfied/parked/husked shape, and the delete's park.
         // Written ONLY here, after `moveMany` reported the batch whole: the claim follows the
         // move (see junk-filing.ts's header, and the guard that reddens the other ordering).
+        landed++;
         reopened = (await completeFiling(r, accountId, mailboxId, p, newLoc, special)) || reopened;
         // The audit rows are written together, AFTER the state they describe. One INSERT instead of
         // fifty, and the same rows a per-message pass would have written — the admin surface and the
@@ -1832,6 +1895,16 @@ async function fileChunk(
       mailboxId, accountId, size: chunk.length, to: toFolder, err,
       reason: "the batched IMAP move succeeded and its bookkeeping did not commit; every row " +
         "stays pending and due, and the next cycle adopts the completed moves",
+    });
+  }
+  // THE RECEIPT FOR AN APPLIED FILING — one line per IMAP command, not per message. A whole layer
+  // trace of a live move used to produce no apply-side event at all, so "never dispatched" and
+  // "moved silently" read identically. Folder names go through {@link folderLabel}; no address,
+  // subject or recipient exists on this path to leak.
+  if (landed > 0) {
+    log?.info("reconcile_move_batched", {
+      mailboxId, accountId, moved: landed,
+      fromFolder: folderLabel(srcFolder), toFolder: folderLabel(toFolder),
     });
   }
   return { reopened };
@@ -2033,6 +2106,10 @@ async function fileOne(deps: SyncDeps, p: PendingPhysical, special: SpecialFolde
       // Mail 0065: the shared completion writer — see junk-filing.ts and fileChunk's note. The
       // claim ("this message is in Junk") is written only here, after the move returned.
       reopened = await completeFiling(r, accountId, mailboxId, p, newLoc, special);
+      log?.info("reconcile_move", {
+        mailboxId, accountId, messageId: p.messageId, ref: newLoc.ref,
+        fromFolder: folderLabel(p.nativeLocator!.folder), toFolder: folderLabel(newLoc.folder),
+      });
       const junk = junkAuditCode(p.desiredFolder, newLoc.folder, special);
       await r.recordAudit(
         accountId, "reconcile.move",

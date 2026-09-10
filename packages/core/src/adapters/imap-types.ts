@@ -949,6 +949,12 @@ export interface ChangeBatch {
   deletes: Change[];
   newCursor: { folders: Record<string, PersistedFolderCursor> };
   /**
+   * Folders whose PERSISTED cursor this build could not read, and which were therefore scanned
+   * from cold. Reported rather than logged here because the adapter has no logger; the caller
+   * owes the fact a line (`FIX-SEAM-2-CHANGESSINCE-PERSISTED-CURSOR-CRASH`). Absent ⇒ none.
+   */
+  rebootstrapped?: readonly string[];
+  /**
    * At least one folder's backlog was TRUNCATED by the batch budget — another pass is owed.
    *
    * A truncated folder's cursor is deliberately held at its previous value (see

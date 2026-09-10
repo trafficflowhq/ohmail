@@ -289,6 +289,15 @@ export function classifyIngestFault(err: unknown): IngestFault {
     if (code === "EIMAPBOUND" && (err as { bound?: unknown }).bound !== "candidate_body_probes") {
       return { domain: "infrastructure" };
     }
+    // ── AN UNKNOWN UIDVALIDITY IS THE MAILBOX'S CONDITION, BY THE SAME ARGUMENT ─────────────
+    //
+    // `EIMAPEPOCHUNKNOWN` is the adapter refusing a locator-addressed command because the server
+    // named no UIDVALIDITY for the selected folder (or named zero, which RFC 3501 forbids). No
+    // message has been read and none is at fault: the mailbox's own host cannot answer the one
+    // question that makes a UID mean anything. Left to the catch-all it would be retried twice
+    // and then written off as a durable failure of mail that is still on the server, which is the
+    // lie this module exists to prevent. Duck-typed on the code, like the bound above.
+    if (code === "EIMAPEPOCHUNKNOWN") return { domain: "infrastructure" };
     // Both sets, because on the ingest path the only socket is the database's.
     if (PG_DRIVER_CODES.has(code) || TRANSPORT_ERRNOS.has(code)) return { domain: "infrastructure" };
     const cls = sqlStateClass(code);
