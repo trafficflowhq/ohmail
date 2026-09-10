@@ -1,7 +1,6 @@
 import {
   compareRanked,
   compoundForms,
-  type RankedRow,
   MIN_FUZZY_QUERY_LEN,
   MIN_FUZZY_TERM_LEN,
   showSimilar,
