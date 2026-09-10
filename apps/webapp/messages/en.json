@@ -2294,6 +2294,7 @@
     "stopOrganizingWhat": "This computer stops filing this mailbox and goes on reading it. Your folders and everything in them stay where they are. Any install can take it over afterwards, including this one.",
     "stopOrganizingConfirm": "Hand the mailbox back",
     "stopOrganizingQueued": "Asked for. This computer stops organizing on its next pass — within a minute.",
+    "stopOrganizingSiblingLapse": "Another copy of this computer keeps organizing this mailbox until its claim lapses.",
     "stopOrganizingPending": "Stopping on the next pass — waiting for the server to confirm.",
     "stopOrganizingNot": "This computer was not organizing this mailbox.",
     "stopOrganizingRefused": "Not possible right now: {reason}",

@@ -381,6 +381,13 @@ function byOf(verdict: Exclude<LeaseVerdict, { verdict: "organize" }>): Organize
  */
 export async function releaseMailboxClaim(
   adapter: MailboxAdapter, installId: string, mailboxId: string,
+  /**
+   * THE NONCE OF THE CLAIM THIS INSTALL HOLDS — the second half of the address, and required.
+   *
+   * `null` means this install cannot name its own claim (its store was wiped, or it has not
+   * gated since launch). It is NOT a licence to delete by id: see the refusal below.
+   */
+  nonce: string | null,
 ): Promise<number> {
   if (!hasLeaseIo(adapter)) return 0;
   const io = adapter.leaseIo({ installId, mailboxId });
@@ -446,8 +453,39 @@ export async function releaseMailboxClaim(
    * a claim, which is what keeps the mailbox's settings out of the expunge below. */
   const ownRefsIn = (messages: RawClaimMessage[]): unknown[] => messages
     .map((m) => ({ ref: m.ref, claim: parseClaim(m.raw, m.ref) }))
-    .filter((c) => c.claim !== null && !isMalformed(c.claim) && c.claim.installId === installId)
+    .filter((c) => c.claim !== null && !isMalformed(c.claim)
+      && c.claim.installId === installId && c.claim.nonce === nonce)
     .map((c) => c.ref);
+
+  /* ── A RELEASE IS ADDRESSED BY (INSTALL, NONCE), NOT BY INSTALL ALONE ──────────────────────
+   *
+   * The election has always been nonce-scoped, because a restored image carries our install id
+   * and a nonce we never generated: without the nonce it reads as ourselves, i.e. two organizers.
+   * The release was id-scoped, and the asymmetry showed — a second profile of the same lineage
+   * had its claim deleted by a sibling's stop. The clone defence is now symmetric on both paths.
+   *
+   * WITHOUT A NONCE THERE IS NO WIDER DELETE. An install that cannot name its claim refuses here
+   * rather than falling back to the id: the caller logs it, the request stands on the row, and the
+   * lapse bound in the worker's release arm records the release once the claim has been un-renewed
+   * for a whole staleness window — by which time it is residue whoever wrote it. That is the way
+   * out for the case this is most often reached in, and it costs one window rather than a
+   * sibling's mailbox.
+   *
+   * THE GATE'S OWN EXPUNGE STAYS ID-SCOPED, and that is not an inconsistency left behind. Its
+   * `ourRefs` is reused by the RENEW to clear our own superseded claims, which carry older nonces
+   * by design, so narrowing it there leaks one claim per cycle — the comment at that branch says
+   * so. A live sibling is caught one layer earlier anyway: the election reads a same-id foreign
+   * nonce as a clone and stands this install down before it renews anything.
+   */
+  if (nonce === null) {
+    throw new ClaimReleaseError(
+      "nonce_unknown",
+      `this install cannot name the claim it holds in ${META_FOLDER}, so the release is not `
+      + "addressed by install id alone — that would take a sibling lineage's claim. Nothing was "
+      + "removed. Another copy of this computer keeps organizing this mailbox until its claim "
+      + "lapses, and the standing request is honoured by the lapse bound then",
+    );
+  }
 
   const ours = ownRefsIn(await locate());
   if (ours.length === 0) return 0;

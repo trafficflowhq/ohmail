@@ -1572,7 +1572,10 @@ export async function startWorkerWithLock(
        */
       if (lease.releaseRequestedAt !== null) {
         const removed = await releaseOrganizerClaim(
-          { mailboxId: mb.mailboxId, accountId: mb.accountId, adapter },
+          // The nonce this gate's carrier holds. On the ATTACH path no gate has run yet, so it is
+          // `null` and the release refuses rather than deleting by id — the request stands and the
+          // lapse bound below records it once the claim stops being renewed.
+          { mailboxId: mb.mailboxId, accountId: mb.accountId, adapter, leaseNonce: nonce.leaseNonce },
           "the person asked this install to stop organizing this mailbox and keep reading it",
         );
         /* ══ ZERO CLAIMS REMOVED IS NOT A RELEASE ═════════════════════════════════════════════
@@ -1627,7 +1630,22 @@ export async function startWorkerWithLock(
          * "no peek on this adapter") are all forms of not knowing; this one is knowing.
          */
         let sawLiveHolder = false;
-        if (removed !== null) {
+        /* ── THE PEEK IS NOT GATED ON OUR REMOVAL, AND THAT MATTERS SINCE THE NONCE SCOPE ──────
+         *
+         * It used to sit inside `if (removed !== null)`, on the reading that a failed removal left
+         * nothing to certify. A release addressed by (install, nonce) added a THIRD outcome to
+         * that condition: an install that cannot name its claim refuses, `removed` is `null`, and
+         * the peek never ran — so `sawLiveHolder` stayed false and the lapse bound below stamped
+         * "nothing organizes this mailbox" while another install actively did. Measured, not
+         * reasoned: `release-stranded-claim.test.ts`'s holder case went red in exactly that
+         * direction the moment the refusal was introduced.
+         *
+         * The peek answers a different question from our removal — "is this mailbox free?", not
+         * "did our delete land" — so it is asked whenever the adapter can answer it. `mayMark`
+         * still requires our own removal to have happened, which is the part that was never the
+         * peek's to decide.
+         */
+        {
           const peek = (adapter as Partial<LeasePeekCapableAdapter>).leasePeekIo;
           if (typeof peek === "function") {
             try {
@@ -1651,7 +1669,7 @@ export async function startWorkerWithLock(
                  that; it is an unfinished release, and the next cycle removes it. */
               const live = seen.holders.find((h) => h.fresh);
               sawLiveHolder = live !== undefined;
-              mayMark = live === undefined && seen.unreadable === 0;
+              mayMark = removed !== null && live === undefined && seen.unreadable === 0;
               if (!mayMark) {
                 log.info("organizer_release_withheld", {
                   mailboxId: mb.mailboxId, accountId: mb.accountId,
@@ -2124,7 +2142,11 @@ export async function startWorkerWithLock(
        * the adapter and the two ids and nothing else, and building a runtime to satisfy a
        * parameter would be inventing state to describe a mailbox this process is giving up.
        */
-      rt: { mailboxId: string; accountId: string; adapter: MailboxAdapter },
+      rt: {
+        mailboxId: string; accountId: string; adapter: MailboxAdapter;
+        /** The nonce of the claim being given up — a release is addressed by (install, nonce). */
+        leaseNonce: string | null;
+      },
       why: string,
     ): Promise<number | null> {
       /* IT RETURNS THE COUNT NOW, and `null` for "could not look". This returned `void` and
@@ -2137,7 +2159,12 @@ export async function startWorkerWithLock(
            take the mailbox id; this lane changed the control flow so the COUNT is returned and a
            zero no longer returns early — the caller has to tell "removed our claim" from "our
            claim was not there". Keeping either alone silently loses the other. */
-        const released = await releaseMailboxClaim(rt.adapter, organizerInstallId, rt.mailboxId);
+        /* THE NONCE THIS RUNTIME WROTE, so the delete names the claim this process holds and not a
+           sibling lineage's. `null` — no gate has run on this runtime yet — refuses inside, and
+           the lapse bound above records the release when the claim stops being renewed. */
+        const released = await releaseMailboxClaim(
+          rt.adapter, organizerInstallId, rt.mailboxId, rt.leaseNonce,
+        );
         if (released > 0) {
           log.info("organizer_claim_released", {
             mailboxId: rt.mailboxId, accountId: rt.accountId, claims: released, reason: why,

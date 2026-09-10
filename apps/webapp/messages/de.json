@@ -2294,6 +2294,7 @@
     "stopOrganizingWhat": "Dieser Computer sortiert dieses Postfach nicht mehr ein und liest es weiter. Deine Ordner und alles darin bleiben, wo sie sind. Danach kann jede Installation übernehmen, auch diese.",
     "stopOrganizingConfirm": "Postfach zurückgeben",
     "stopOrganizingQueued": "Angefragt. Dieser Computer hört beim nächsten Durchlauf auf zu organisieren — innerhalb einer Minute.",
+    "stopOrganizingSiblingLapse": "Eine andere Kopie dieses Computers organisiert dieses Postfach weiter, bis ihr Anspruch verfällt.",
     "stopOrganizingPending": "Wird beendet beim nächsten Durchlauf — wartet auf die Bestätigung des Servers.",
     "stopOrganizingNot": "Dieser Computer hat dieses Postfach nicht organisiert.",
     "stopOrganizingRefused": "Zurzeit nicht möglich: {reason}",

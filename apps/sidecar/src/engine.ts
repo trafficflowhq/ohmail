@@ -756,11 +756,18 @@ async function releaseOwnClaim(
   adapter: MailboxAdapter,
   installId: string,
   mailboxId: string,
+  /**
+   * THE NONCE OF THE CLAIM THIS INSTALL HOLDS. A release is addressed by (install, nonce), so a
+   * restored image of this machine does not lose its own claim to a sibling's stop. `null` is
+   * refused inside rather than widened to the id — the request stands and the claim is released
+   * by lapse.
+   */
+  nonce: string | null,
   log: Diagnostic,
   reason: string,
 ): Promise<number | null> {
   try {
-    return await releaseMailboxClaim(adapter, installId, mailboxId);
+    return await releaseMailboxClaim(adapter, installId, mailboxId, nonce);
   } catch (err) {
     log("organizer_claim_release_failed", { err, mailboxId, reason });
     return null;
@@ -3975,7 +3982,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          */
         if (releaseRequested !== null) {
           const released = await releaseOwnClaim(
-            adapter, installId, mb.id, log,
+            adapter, installId, mb.id, leaseNonce, log,
             "the claim ages out of the mailbox on its own; until it does, another "
               + "install that tries to take this mailbox over stands itself down again",
           );
@@ -5716,7 +5723,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           if (stopped) {
             if (permitted) {
               const released = await releaseOwnClaim(
-                conn, installId, mb.id, log,
+                conn, installId, mb.id, leaseNonce, log,
                 "the claim this pass renewed could not be released; it ages out of " +
                   "ohmail/_meta on its own and another install takes the mailbox then",
               );
@@ -7323,7 +7330,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               let claimReleased = true;
               if (removed) {
                 const released = await releaseOwnClaim(
-                  removed.adapter, installId, mailboxId, log,
+                  removed.adapter, installId, mailboxId, removed.leaseNonce, log,
                   "the claim ages out of ohmail/_meta on its own; until it does, another "
                     + "install connecting this mailbox stands itself down against a claim "
                     + "nothing holds",

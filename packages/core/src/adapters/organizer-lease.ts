@@ -3039,7 +3039,17 @@ const OWN_RECORDS_MAX = 5_000;
  * reading any of these five as a count.
  */
 export type ClaimReleaseFailureCode =
-  "search_refused" | "over_ceiling" | "unreadable" | "renumbered" | "still_present";
+  "search_refused" | "over_ceiling" | "unreadable" | "renumbered" | "still_present"
+  /**
+   * THIS INSTALL CANNOT NAME THE CLAIM IT HOLDS, so it may not delete one by identity alone.
+   *
+   * A release is scoped to (install, nonce): under a shared install id — the restored-image
+   * lineage — an id-only delete takes a sibling's claim. An install whose local store was wiped
+   * has no nonce to name, and the way out is not a wider delete: the request stands and the
+   * caller's lapse bound records the release once the claim has been un-renewed for a whole
+   * staleness window, because by then it is residue whoever wrote it.
+   */
+  | "nonce_unknown";
 
 export class ClaimReleaseError extends Error {
   readonly code: ClaimReleaseFailureCode;
