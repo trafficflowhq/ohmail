@@ -1236,28 +1236,18 @@ export interface MailboxDTO {
   serverMessageCount?: number;
 }
 
+/**
+ * WHAT THE SERVER SAYS THIS ACCOUNT MAY DO — limits and stored bytes.
+ *
+ * Limits and AI metering belong to whoever operates the deployment: this client renders the
+ * verdict it is handed and keeps no figures of its own. A self-hosted or desktop install has no
+ * such program and is unmetered. The name is the older spelling of the same question.
+ */
 export interface SubscriptionStatus {
-  subscription: {
-    plan: "solo" | "plus" | "pro";
-    status: string;
-    mailboxLimit: number;
-    monthlyCredits: number;
-    /** The sold-at stored-body cap in bytes. Optional: an older server omits it. */
-    storageBytesLimit?: number;
-    /** 'year' ⇒ the cycle grants twelve months of credits at once. Optional: older server. */
-    billingInterval?: "month" | "year";
-    /** Add-on quantities riding the subscription. Optional: an older server omits them. */
-    addonStorageUnits?: number;
-    addonMailboxes?: number;
-    currentPeriodEnd: string | null;
-    cancelAtPeriodEnd: boolean;
-    graceUntil: string | null;
-  } | null;
-  balance: number;
   /**
    * The account's counted stored mail-body bytes, rendered against
-   * `entitlements.storageBytesLimit`. Optional like `trialCredits` and read the same way: an
-   * absent value means "say nothing about storage", never "0 of 0".
+   * `entitlements.storageBytesLimit`. Optional: an absent value means "say nothing about
+   * storage", never "0 of 0".
    */
   storageUsedBytes?: number;
   entitlements: {
@@ -1269,48 +1259,6 @@ export interface SubscriptionStatus {
     storageBytesLimit?: number;
     reason: string;
   };
-  /**
-   * The plan CARD, straight from `PLAN_LIMITS` in `packages/db`. The onboarding plan step
-   * renders these numbers rather than restating them: the tiers moved from 2/5/10 to
-   * 5/10/50 while this was being written, and hard-coded copy is how a signup page
-   * ends up advertising a plan the database will not sell.
-   */
-  plans: Record<string, { priceUsd: number; mailboxes: number; monthlyCredits: number }>;
-  /** The add-on card (+10 GB storage, +1 mailbox), shipped for the no-hardcoding reason `plans` is. */
-  addons?: {
-    storage: { priceUsd: number; unitBytes: number };
-    mailbox: { priceUsd: number; unitMailboxes: number };
-  };
-  /**
-   * The account's live SETUP pool — the screening-only credits each connected mailbox brings,
-   * spent by the Screener before the paid balance. Optional: an older server omits it, and an
-   * absent value means "say nothing", never 0.
-   */
-  setupCredits?: { remaining: number; expiresAt: string | null };
-  /**
-   * What a TRIAL is granted — the same constant for every account, straight from the policy
-   * module, for the same reason `plans` is shipped rather than restated.
-   *
-   * Optional: a bundle newer than the server it is talking to must not render `undefined` into a
-   * sentence, and every reader treats an absent value as "say nothing about the figure" rather
-   * than substituting one. It is NOT this account's remaining balance — that is `balance`.
-   */
-  trialCredits?: number;
-  /**
-   * Whether an `invoice_grant` has EVER landed on this account — credits revenue paid for.
-   *
-   * NOTHING IN THIS APP READS IT ANY MORE — the one decision that did (whether a `trialing`
-   * row may present `balance` as the trial's non-refilling pot) left with the subscription
-   * pane. Kept because the field is still on the wire and the provenance argument below is
-   * what a reader of that DTO needs. In the trial→paid window,
-   * `invoice.paid` grants the plan's allowance before `customer.subscription.updated` — a
-   * separate delivery — moves the row off `trialing`, so the status alone would label PAID
-   * credits a trial bounty: a provenance that is false while the number is real.
-   *
-   * Optional for the same reason `trialCredits` is: an older server omits it, and the reader
-   * accepts the brief mislabel window rather than suppressing every true trial label.
-   */
-  invoiceGranted?: boolean;
 }
 
 // ── Auth ─────────────────────────────────────────────────────────────────────────────────
@@ -2001,15 +1949,6 @@ export const profileImport = {
     api<{ dismissed: boolean }>(`/mailboxes/${mailboxId}/profile-import/decline`, {
       method: "POST", body: subject,
     }),
-};
-
-// ── Billing ──────────────────────────────────────────────────────────────────────────────
-
-export const billing = {
-  subscription: () => api<SubscriptionStatus>("/billing/subscription"),
-  /** Answers a hosted Checkout URL; the caller navigates. Read by the sign-up funnel's plan step. */
-  checkout: (plan: "solo" | "plus" | "pro", interval: "month" | "year" = "month") =>
-    api<{ url: string }>("/billing/checkout", { method: "POST", body: { plan, interval } }),
 };
 
 // ── The account itself ───────────────────────────────────────────────────────────────────

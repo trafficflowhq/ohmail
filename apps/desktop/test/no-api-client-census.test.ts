@@ -75,16 +75,15 @@ describe("the desktop's refusing api-client stub", () => {
    * the shipped desktop reads the wire's fields through the shared control's own types and the
    * bundler needs only the NAMES to resolve.
    *
-   * So the interfaces both files export are compared MEMBER BY MEMBER, and the four that differ
+   * So the interfaces both files export are compared MEMBER BY MEMBER, and the three that differ
    * today are pinned BY NAME with what they are missing. A ratchet, like every count in this
-   * repository: an entry may leave this list, and a fifth interface joining it is red.
+   * repository: an entry may leave this list, and a fourth interface joining it is red.
    */
   const KNOWN_MEMBER_DRIFT: Readonly<Record<string, readonly string[]>> = {
     /* The desktop stub predates these members; each was added to the real wire by a later lane
        and none is read by the shared shell on this tier. They are listed so the away wire's
        parity — the one this case was written for — is a checked claim rather than a hope. */
     MailboxDTO: ["organizedByThisInstall", "releaseRequestedAt", "takeoverAuthorizedAt"],
-    SubscriptionStatus: ["addons", "setupCredits", "storageUsedBytes"],
     ConsentStateWire: [
       "folderMailboxesOff", "foldersEnabledAt", "loadTrackingPixelsAt", "onboardingCompletedAt",
       "screeningScope", "signatures", "signaturesHtml", "themeFace",
@@ -107,7 +106,7 @@ describe("the desktop's refusing api-client stub", () => {
     return out;
   }
 
-  it("mirrors the MEMBERS of every interface it shares, but for the four pinned drifts", () => {
+  it("mirrors the MEMBERS of every interface it shares, but for the three pinned drifts", () => {
     const real = interfaceMembers("../../webapp/app/api-client.ts");
     const stub = interfaceMembers("../src/no-api-client.ts");
     // ANTI-VACUITY: a parse that found nothing would agree about everything.

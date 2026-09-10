@@ -222,30 +222,15 @@ export interface MailboxDTO {
 }
 
 export interface SubscriptionStatus {
-    subscription: {
-        plan: "solo" | "plus" | "pro";
-        status: string;
-        mailboxLimit: number;
-        monthlyCredits: number;
-        currentPeriodEnd: string | null;
-        cancelAtPeriodEnd: boolean;
-        graceUntil: string | null;
-    } | null;
-    balance: number;
+    storageUsedBytes?: number;
     entitlements: {
         mailboxLimit: number;
         canAddMailbox: boolean;
         aiEnabled: boolean;
         syncEnabled: boolean;
+        storageBytesLimit?: number;
         reason: string;
     };
-    plans: Record<string, {
-        priceUsd: number;
-        mailboxes: number;
-        monthlyCredits: number;
-    }>;
-    trialCredits?: number;
-    invoiceGranted?: boolean;
 }
 
 export const auth: {
@@ -469,13 +454,6 @@ export const profileImport: {
         v?: number;
     }) => Promise<{
         dismissed: boolean;
-    }>;
-} = absent;
-
-export const billing: {
-    subscription: () => Promise<SubscriptionStatus>;
-    checkout: (plan: "solo" | "plus" | "pro") => Promise<{
-        url: string;
     }>;
 } = absent;
 
