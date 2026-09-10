@@ -181,12 +181,9 @@ try {
   };
   const res = await junkSweepPass({
     db, repo, adapter, accountId: mb.accountId, mailboxId: mb.id, execute, ...(limit !== undefined ? { limit } : {}),
-    // The lease at the write boundary. The worker cycle wires its fresh LEADER read here
-    // (`fenceImapMutation`, worker-to-worker); this runner has no leader to lose and wires the
-    // ORGANIZER lease (install-to-install) — the two fences answer different questions and the
-    // cycle, which passes the leader one, is covered for the organizer one by the gate its
-    // attach/cycle already ran. Both abort the pass rather than skipping a member.
-    ...(permit ? { guard: () => permit!.check() } : {}),
+    // This runner has no shard leadership to lose, so it holds the LEASE half only. A dry run
+    // holds neither: it must not even read the lease, because a read renews our claim.
+    writeAuthority: { lease: permit ?? { noLease: "not_supplied" } },
   });
 
   console.log(`mailbox ${mb.address} (${mb.id})`);

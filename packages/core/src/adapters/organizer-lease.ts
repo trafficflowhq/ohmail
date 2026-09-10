@@ -25,6 +25,16 @@ export {
  * the only medium they share, so the claim lives **in the mailbox**: one message per organizer in
  * an unsubscribed `ohmail/_meta` folder.
  *
+ * ── THE INVARIANT, WRITTEN ONCE AND NOWHERE ELSE ─────────────────────────────────────────
+ *
+ * A destructive IMAP write — move, flag, folder op, claim removal; ohmail never expunges mail —
+ * happens only under a PERMIT that names (install, mailbox, uidvalidity, claim nonce, issued-at)
+ * and is younger than `DEFAULT_PERMIT_TTL_MS`. A permit is re-validated by a `_meta` peek at least
+ * every `PERMIT_WRITES_PER_RECHECK` writes AND every TTL; a stand-down invalidates every permit at
+ * once and none may be revived. The local clock is never the sole authority for believability: the
+ * server's own time, read from the newest claim's `INTERNALDATE`, bounds the skew. The permit and
+ * its one predicate live in `apps/worker/src/lease.ts`; this is the only statement of the rule.
+ *
  * ── IT IS A LEASE, NOT A MUTEX, AND THAT IS NOT A HEDGE ───────────────────────────────────
  *
  * IMAP has no compare-and-swap. Two installs can APPEND in the same instant and both succeed.
@@ -3601,6 +3611,15 @@ export interface LeaseGateResult {
   verdict: LeaseVerdict;
   /** The nonce written this cycle, to be held in memory as the next `self.lastNonce`. */
   nonce: string | null;
+  /**
+   * THE UID GENERATION THE ELECTION READ THIS VERDICT UNDER, where the server reports one.
+   *
+   * A verdict is a fact about the folder as it was numbered at that read. A caller that holds the
+   * answer past the read — the permit does — compares this against a later one, because every uid
+   * it remembers is void the moment the server renumbers. `null` is "the server did not say", which
+   * is unknown and never "the same generation".
+   */
+  uidValidity: number | bigint | null;
 }
 
 /**
@@ -3893,7 +3912,7 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
       }
     }
     log("lease_stand_down", { verdict: verdict.verdict });
-    return { verdict, nonce: null };
+    return { verdict, nonce: null, uidValidity: electionUidValidity };
   }
 
   // The incumbency clock. Renewing must NOT restart it, or two installs that both renew every
@@ -4103,7 +4122,7 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
           });
         }
       }
-      return { verdict: survivors, nonce: null };
+      return { verdict: survivors, nonce: null, uidValidity: electionUidValidity };
     }
     throw new LeaseUnavailableError(
       `the claim this gate just appended to ${META_FOLDER} is no longer there and no live rival ` +
@@ -4138,7 +4157,7 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
       }
     }
     log("lease_lost_race", { verdict: confirmed.verdict });
-    return { verdict: confirmed, nonce: null };
+    return { verdict: confirmed, nonce: null, uidValidity: electionUidValidity };
   }
 
   // WHAT THIS WIN DISPLACED, plus our own older copies. One expunge, so a takeover cannot land
@@ -4287,7 +4306,7 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
             .filter((c): c is OrganizerClaim => !isMalformed(c) && c.installId === self.installId)
             .map((c) => c.ref)
             .filter((r): r is unknown => r !== undefined));
-          return { verdict: survivors, nonce: null };
+          return { verdict: survivors, nonce: null, uidValidity: electionUidValidity };
         }
         throw new LeaseUnavailableError(
           `the claim this gate appended to ${META_FOLDER} did not survive the handover's ` +
@@ -4334,7 +4353,7 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
           .map((c) => c.ref)
           .filter((r): r is unknown => r !== undefined));
         log("lease_lost_race", { verdict: finalElection.verdict });
-        return { verdict: finalElection, nonce: null };
+        return { verdict: finalElection, nonce: null, uidValidity: electionUidValidity };
       }
 
       // Custody holds: the displaced are gone and our claim stands — the handover landed,
@@ -4348,7 +4367,7 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
       }
     }
   }
-  return { verdict, nonce };
+  return { verdict, nonce, uidValidity: electionUidValidity };
 }
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════

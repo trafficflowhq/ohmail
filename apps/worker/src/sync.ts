@@ -31,6 +31,10 @@ import {
 } from "./junk-filing.js";
 import { junkRestorePass } from "./junk-restore.js";
 import { folderOpsPass } from "./folder-ops.js";
+import {
+  assertMayWriteToMailbox,
+  type MailboxWriteAuthority, type OrganizerWriteAuthority,
+} from "./lease.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -257,6 +261,16 @@ export interface SyncDeps {
    * seam existed. The hosted worker is the one caller that passes it.
    */
   fence?: SyncWriteFence;
+  /**
+   * THE ORGANIZER LEASE THIS CYCLE WRITES UNDER — a permit, or the named reason there is none.
+   *
+   * The fence above answers worker-to-worker; this answers install-to-install, and only this one
+   * can stop a process writing to a mailbox its owner has moved to another machine. Both
+   * composition roots supply it (`apps/worker/src/index.ts`, `apps/sidecar/src/engine.ts`) and
+   * `lease-write-permit-census.test.ts` refuses a root that does not. ABSENT is a fixture, and
+   * reads as `not_supplied` at the write boundary rather than as silence.
+   */
+  writeAuthority?: OrganizerWriteAuthority;
   /** Structured log sink. Absent ⇒ a skip is still recorded in `audit_log`, just not logged. */
   log?: Logger;
   /**
@@ -282,11 +296,11 @@ export interface JunkSweepCommandPort {
   requested(): Promise<string | null>;
   /**
    * Run ONE BOUNDED SLICE of the sweep — `junkSweepPass` with `execute: true` and a per-cycle
-   * limit — under the cycle's fences: `guard` is the fresh leadership read before every chunk's
-   * IMAP mutation, `write` the fenced group every completion write rides.
+   * limit — under the cycle's fences: `writeAuthority` is what every IMAP mutation asks, `write`
+   * the fenced group every completion write rides.
    */
   run(hooks: {
-    guard: () => Promise<void>;
+    writeAuthority: MailboxWriteAuthority;
     write: <T>(fn: (repo: WorkerRepo) => Promise<T>) => Promise<T>;
     /**
      * THE OBSERVED PRESS TOKEN — the same text `requested()` answered.
@@ -559,8 +573,9 @@ async function underFence<T>(deps: FenceScope, fn: (repo: DrizzleRepo) => Promis
 }
 
 /**
- * The check before every IMAP mutation — see the fence block at the top of this file for what
- * its admission can and cannot promise, and why the residual it cannot close converges.
+ * The LEADERSHIP half — see the fence block at the top of this file for what its admission can and
+ * cannot promise, and why the residual it cannot close converges. Reached only through
+ * {@link writeAuthorityOf}, so no write site asks leadership without asking the lease.
  */
 async function fenceImapMutation(deps: Pick<SyncDeps, "fence">): Promise<void> {
   const { fence } = deps;
@@ -568,6 +583,20 @@ async function fenceImapMutation(deps: Pick<SyncDeps, "fence">): Promise<void> {
   if (fence.lost() || !(await fence.stillLeader())) {
     throw new LeaderFencedError("this instance no longer leads its shard — the IMAP mutation is not issued");
   }
+}
+
+/**
+ * THIS CYCLE'S WRITE AUTHORITY — the two halves assembled for {@link assertMayWriteToMailbox}.
+ *
+ * Built per ask rather than once per cycle: `deps.fence` and `deps.writeAuthority` are read off the
+ * deps object every time, so a re-dialled or re-gated cycle is served by what it now holds.
+ */
+function writeAuthorityOf(deps: Pick<SyncDeps, "fence" | "writeAuthority">): MailboxWriteAuthority {
+  const { fence } = deps;
+  return {
+    ...(fence ? { fence: (): Promise<void> => fenceImapMutation({ fence }) } : {}),
+    lease: deps.writeAuthority ?? { noLease: "not_supplied" },
+  };
 }
 
 /**
@@ -698,7 +727,7 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
       // every other mutation site in this file takes (see the fence block up top). The fenced
       // `write` covers only the database half; without this a stale worker could CREATE or
       // sweep a mailbox another worker has taken over.
-      guard: () => fenceImapMutation(deps),
+      writeAuthority: writeAuthorityOf(deps),
     });
     // A folder delete that ran out its per-cycle chunk budget still owes work: report it the
     // way the filing budget does, so the caller re-kicks and the mailbox rotates to the back
@@ -743,7 +772,7 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
       const observed = await deps.junkSweep.requested();
       if (observed !== null) {
         const res = await deps.junkSweep.run({
-          guard: () => fenceImapMutation(deps),
+          writeAuthority: writeAuthorityOf(deps),
           write: (fn) => fencedGroup(deps, fn),
           // The press this slice belongs to — see the port's own note. The same token the clear
           // below compares, so a press that lands mid-sweep is served by the next cycle with its
@@ -1830,9 +1859,9 @@ async function fileChunk(
   const refs = new Set(chunk.map((p) => p.nativeLocator!.ref));
   if (refs.size !== chunk.length) return null;
 
-  // The fence, BEFORE the IMAP command — the whole batch is one mutation. Outside the `try`
-  // below deliberately: its refusal must abort the cycle, never degrade to the per-message path.
-  await fenceImapMutation(deps);
+  // BEFORE the IMAP command — the whole batch is one mutation. Outside the `try` below
+  // deliberately: its refusal must abort the cycle, never degrade to the per-message path.
+  await assertMayWriteToMailbox(writeAuthorityOf(deps));
   let result;
   try {
     result = await adapter.moveMany(chunk.map((p) => p.nativeLocator!), toFolder);
@@ -2019,7 +2048,7 @@ async function fileOne(deps: SyncDeps, p: PendingPhysical, special: SpecialFolde
   // import block's note on what naming the bare barrel here would drag into the desktop engine.
   let newLoc: Awaited<ReturnType<MailboxAdapter["move"]>>;
   try {
-    await fenceImapMutation(deps);
+    await assertMayWriteToMailbox(writeAuthorityOf(deps));
     newLoc = await adapter.move(p.nativeLocator!, physical);
   } catch (err) {
     // A fence refusal must not be recorded as this message's failure — it is the process's.
@@ -2252,7 +2281,10 @@ async function reconcileFlags(deps: SyncDeps): Promise<void> {
     }
     if (!p.nativeLocator) { await retireLocatorlessFlag(deps, p); continue; }
     try {
-      await fenceImapMutation(deps);
+      // A READER pushes `\Seen` too and holds no lease, so its authority admits here by naming
+      // itself — see `OrganizerWriteAuthority`. An ORGANIZER's `\Seen` is permit-checked like any
+      // other write, which it was not before.
+      await assertMayWriteToMailbox(writeAuthorityOf(deps));
       await adapter.setFlags(p.nativeLocator, { seen: p.desiredSeen });
     } catch (err) {
       // A fence refusal is proof of lost leadership, never evidence about this message. It is the

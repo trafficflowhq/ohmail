@@ -31,6 +31,7 @@ import {
 import type { NativeLocator } from "@trafficflow/core";
 import type { WorkerRepo, PendingFolderState } from "@trafficflow/core/adapters/drizzle-repo";
 import { completeFiling, SPAM_PILE, type SpecialFolderMap } from "./junk-filing.js";
+import { assertMayWriteToMailbox, type MailboxWriteAuthority } from "./lease.js";
 
 /**
  * THE SCAN'S STATE ACROSS CYCLES — a pure decision, extracted so it can be pinned by test
@@ -254,24 +255,14 @@ export async function junkSweepPass(opts: {
    * MESSAGE on the per-message fallback. A throw here aborts the sweep: the members not yet moved
    * are left exactly where they were, and the stamp that requested the sweep is not consumed.
    *
-   * TWO DIFFERENT QUESTIONS ARRIVE THROUGH THIS ONE SEAM, and the contract used to name only one of
-   * them — *"the operator runner passes none"*, which stopped being true the moment the runner grew
-   * a lease:
-   *
-   *  · the WORKER cycle passes its fresh LEADERSHIP read (`fenceImapMutation`), worker-to-worker, so
-   *    a stale leader cannot move mail another worker has taken over;
-   *  · the OPERATOR runner (`run-junk-sweep.ts`, under `--execute`) passes `permit.check()`, the
-   *    ORGANIZER lease, install-to-install — which is what stops it writing to a mailbox whose owner
-   *    has moved it to their own machine.
-   *
-   * A maintainer reasoning from the old sentence would have concluded that only worker leadership
-   * reaches this seam and that weakening it costs nothing outside the fleet. It costs the
-   * exactly-one-organizer invariant. A dry run passes none, which is the case the old wording was
-   * probably remembering.
+   * TWO QUESTIONS, ONE OBJECT, asked by `assertMayWriteToMailbox` in one order. Leadership is
+   * worker-to-worker (a stale leader must not move mail another worker took over); the lease is
+   * install-to-install (this process must not write to a mailbox its owner has moved to their own
+   * machine). The caller states which halves it holds; a dry run holds neither.
    */
-  guard?: () => Promise<void>;
+  writeAuthority: MailboxWriteAuthority;
 }): Promise<JunkSweepResult> {
-  const { db, repo, adapter, accountId, mailboxId, execute, limit, afterId, guard } = opts;
+  const { db, repo, adapter, accountId, mailboxId, execute, limit, afterId, writeAuthority } = opts;
 
   // Physically in the pile, still alive in the mirror, still DESIRED there — the ONE predicate
   // the API's preview counts by too (`junkSweepCandidateWhere`, packages/db). `native_locator`
@@ -379,21 +370,12 @@ export async function junkSweepPass(opts: {
 
   for (let i = 0; i < pending.length; i += FILING_BATCH_MAX) {
     const wholeChunk = pending.slice(i, i + FILING_BATCH_MAX);
-    // The leadership check before this chunk's IMAP writes — a refusal propagates, never caught
-    // into `skipped`: it is proof of lost leadership (or, from the operator CLI, of a lost
-    // ORGANIZER LEASE), not evidence about a message.
-    // …and the decision check, in the same breath and for the same reason: both ask "may this
-    // write still happen?", one about the mailbox, one about the message.
-    //
-    // BOTH, AND THE LEADERSHIP ONE FIRST. This call went missing while the decision check was
-    // being added, and the loss is not visible by reading the block: the per-message fallback
-    // below still had its own `guard()`, so the only unguarded path was the BATCHED one — which is
-    // the path that issues a single `messageMove` for a whole chunk. A stale leader could
-    // therefore move up to `FILING_BATCH_MAX` of somebody's messages in one command with no fresh
-    // read, which is the same shape as the finding that made the epoch guard unconditional.
-    // Ordered before `stillDesired` deliberately: a process that has lost the lease must not spend
-    // a query on the mailbox either.
-    if (guard) await guard();
+    // Before this chunk's IMAP writes. A refusal propagates, never caught into `skipped`: it is
+    // proof of a lost lease or lost leadership, not evidence about a message. Ordered before
+    // `stillDesired` deliberately — a process that has lost the lease must not spend a query on
+    // the mailbox either. Only under `execute`: a dry run reads no lease, because a lease read
+    // RENEWS our claim, which is itself a write.
+    if (execute) await assertMayWriteToMailbox(writeAuthority);
     const desired = await stillDesired(wholeChunk);
     const chunk = wholeChunk.filter((p) => desired.has(p.messageId));
     for (const p of wholeChunk) {
@@ -411,20 +393,10 @@ export async function junkSweepPass(opts: {
     // sits in the try: its refusal is what selects the fallback.
     let batched: MoveManyResult | null = null;
     if (typeof adapter.moveMany === "function") {
-      // ── AND AGAIN HERE, BECAUSE `stillDesired` SITS BETWEEN THE GUARD AND THIS WRITE ────────
-      //
-      // The `guard()` above is ordered before `stillDesired` on purpose (a process that has lost
-      // the lease must not spend a query either), but that ordering is exactly what left an
-      // UNBOUNDED database wait between the last fresh read and a single command that moves up to
-      // `FILING_BATCH_MAX` of somebody's messages. A `stillDesired` that blocks on a busy pool or a
-      // stalled connection for longer than the permit's TTL meant the deadline did not bound this
-      // path at all — the receipt was checked, then spent after it had expired. Both calls stay:
-      // the first refuses to spend a query, this one refuses to spend the WRITE.
-      //
-      // Nearly free by construction: inside the TTL `LeasePermit.check()` is a comparison, and the
-      // worker's `fenceImapMutation` is the one read it already performs per chunk. The cost is
-      // paid only when the wait actually outlived the receipt, which is the case worth paying for.
-      if (guard) await guard();
+      // AGAIN, because `stillDesired` sits between the ask above and this write: an unbounded
+      // database wait there can outlive the permit's TTL, so the receipt would be checked and then
+      // spent after it expired. The first ask refuses to spend a query, this one the WRITE.
+      if (execute) await assertMayWriteToMailbox(writeAuthority);
       try {
         const res = await adapter.moveMany(chunk.map((p) => p.nativeLocator!), junk);
         if (res.batched) batched = res;
@@ -446,9 +418,9 @@ export async function junkSweepPass(opts: {
       }
       continue;
     }
-    // ── THE PER-MESSAGE FALLBACK GUARDS PER MESSAGE, NOT ONCE FOR THE RUN OF THEM ────────────
+    // ── THE PER-MESSAGE FALLBACK ASKS PER MESSAGE, NOT ONCE FOR THE RUN OF THEM ──────────────
     //
-    // This used to hold ONE `guard()` here and then issue up to `FILING_BATCH_MAX` separate
+    // This used to ask ONCE here and then issue up to `FILING_BATCH_MAX` separate
     // `adapter.move()` commands beneath it, under a comment claiming "the same fresh leadership read
     // before them as before the batch it replaces". It was one read before FIFTY writes: a takeover
     // (or a lost leadership, or an expired permit) landing after the third move let the remaining
@@ -465,14 +437,10 @@ export async function junkSweepPass(opts: {
     // check across writes.
     for (const p of chunk) {
       let newLoc: NativeLocator;
-      // OUTSIDE the `try`, and that placement is load-bearing rather than stylistic. The catch below
-      // ends in a generic arm that records the error against THIS MESSAGE in `result.skipped` and
-      // carries on to the next one. A `LeaderFencedError` or `OrganizerStandDownError` raised inside
-      // that `try` would therefore be filed as evidence about a message and the sweep would keep
-      // moving mail — turning the guard into its own opposite. The rule this module already states
-      // for the chunk-top call holds here for the same reason: "a refusal propagates, never caught
-      // into `skipped`".
-      if (guard) await guard();
+      // OUTSIDE the `try`, and the placement is load-bearing: the catch below ends in a generic arm
+      // that files the error against THIS MESSAGE and carries on, so a refusal raised inside it
+      // would be read as evidence about a message and the sweep would keep moving mail.
+      if (execute) await assertMayWriteToMailbox(writeAuthority);
       try {
         newLoc = await adapter.move(p.nativeLocator!, junk);
       } catch (err) {

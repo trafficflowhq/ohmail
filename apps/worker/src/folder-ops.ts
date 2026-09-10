@@ -1,6 +1,7 @@
 import type { FolderOpRow, WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import type { Logger } from "@trafficflow/core/mail";
+import { assertMayWriteToMailbox, type MailboxWriteAuthority } from "./lease.js";
 
 /**
  * ═══ THE FOLDER-OP PASS — user-commanded CREATE / RENAME / DELETE (FOLDERS-SPEC.md stage 2) ═══
@@ -68,14 +69,15 @@ export interface FolderOpsDeps {
   /** The cycle's fenced group — consequences and the leadership verdict commit together. */
   write: <T>(fn: (r: WorkerRepo) => Promise<T>) => Promise<T>;
   /**
-   * The check before EVERY IMAP mutation — the cycle wires `fenceImapMutation`, the fresh
-   * leadership read the fence block in sync.ts documents. An IMAP command cannot ride a
-   * database transaction, so the fenced `write` alone would let a stale worker CREATE, RENAME
-   * or sweep a mailbox another worker has taken over; this closes that gap to the same
-   * converging residual every other mutation site carries. Absent (a caller with no fence —
-   * the local engine's single process) means no check, which is that caller's own posture.
+   * WHAT AUTHORISES EVERY IMAP MUTATION THIS PASS ISSUES, asked by `assertMayWriteToMailbox`.
+   *
+   * An IMAP command cannot ride a database transaction, so the fenced `write` alone would let a
+   * stale worker CREATE, RENAME or sweep a mailbox another worker has taken over, and it says
+   * nothing at all about the ORGANIZER lease — which is what stops a desktop install executing
+   * queued folder verbs on a mailbox somebody else now organizes. REQUIRED: a caller that holds
+   * neither half says so in the object, because absent and "none here" are different facts.
    */
-  guard?: () => Promise<void>;
+  writeAuthority: MailboxWriteAuthority;
   log?: Logger;
 }
 
@@ -154,7 +156,7 @@ async function runCreate(deps: FolderOpsDeps, op: FolderOpRow): Promise<"done" |
     await deps.write((r) => r.failFolderOp(op, "bad_name"));
     return "failed";
   }
-  await deps.guard?.();
+  await assertMayWriteToMailbox(deps.writeAuthority);
   // Where the create LANDED — a personal-namespace server files a root-named create under
   // INBOX, and the completion records the real path (or defers to the row discovery already
   // adopted there) so the commanded row can never stand as a phantom.
@@ -178,7 +180,7 @@ async function runRename(deps: FolderOpsDeps, op: FolderOpRow): Promise<"done" |
     await deps.write((r) => r.failFolderOp(op, "bad_name"));
     return "failed";
   }
-  await deps.guard?.();
+  await assertMayWriteToMailbox(deps.writeAuthority);
   const res = await deps.adapter.renameFolder!(op.folder, to);
   if (res === "conflict") {
     await deps.write((r) => r.failFolderOp(op, "exists"));
@@ -242,7 +244,7 @@ async function runDelete(
   for (const f of subtree) {
     // Phase 1 — the server sweep. Folder-level, not per known message: the mailbox may hold
     // mail the mirror never ingested, and every message must reach Trash before DELETE.
-    await deps.guard?.();
+    await assertMayWriteToMailbox(deps.writeAuthority);
     await adapter.moveAll!(f.folder, trash);
     // Phase 2 — the mirror consequences, chunked (one tx per chunk, idempotent re-entry).
     if (!(await tombstoneWithin(f.folder))) return "paused";
@@ -251,13 +253,13 @@ async function runDelete(
     // with everything consistent: swept mail is honestly in Trash, the folder stands.
     // `unverified` — the server would not answer STATUS — is a transient, not a verdict:
     // deleting on an unverified count is the expunge this ceremony exists to forbid.
-    await deps.guard?.();
+    await assertMayWriteToMailbox(deps.writeAuthority);
     let res = await adapter.deleteFolder!(f.folder);
     if (res === "not_empty") {
-      await deps.guard?.();
+      await assertMayWriteToMailbox(deps.writeAuthority);
       await adapter.moveAll!(f.folder, trash);
       if (!(await tombstoneWithin(f.folder))) return "paused";
-      await deps.guard?.();
+      await assertMayWriteToMailbox(deps.writeAuthority);
       res = await adapter.deleteFolder!(f.folder);
     }
     if (res === "unverified") {

@@ -104,7 +104,8 @@ import { runSyncCycle, type SyncDeps } from "@trafficflow/worker/sync";
 // not doing it: a fresh claim nobody holds stands another install down for the whole staleness
 // window, at exactly the moment somebody has chosen to leave.
 import {
-  readMailboxLease, releaseMailboxClaim, LeaseUnavailableError, DEFAULT_STALE_AFTER_MS,
+  readMailboxLease, acquireLeasePermit, releaseMailboxClaim, LeaseUnavailableError,
+  DEFAULT_STALE_AFTER_MS, type OrganizerWriteAuthority,
 } from "@trafficflow/worker/lease";
 // The APPEND-LESS read, straight from core: an install that has not been asked to organize must
 // still be able to say who does, and `runLeaseGate` cannot answer that question without taking
@@ -3371,6 +3372,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        *  resumption work. See `LeaseSelf` in the engine. */
       let leaseNonce: string | null = null;
       /**
+       * WHAT THIS INSTALL'S WRITES RIDE ON. Written by every gate run and asked at every
+       * destructive write inside the cycle, so a takeover landing mid-drain stops the remaining
+       * moves instead of being noticed at the next gate.
+       */
+      let leasePermit: OrganizerWriteAuthority = { noLease: "not_supplied" };
+      /**
        * WHEN THIS PROCESS LAST RENEWED ITS CLAIM — the fact the release's LAPSE bound is computed
        * from, and in memory deliberately.
        *
@@ -4346,11 +4353,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            claim's heartbeat — the lapse bound below compares against what a reader of the folder
            can actually see, not against a second clock reading taken after the round trip. */
         const gateAskedAt = now();
-        const outcome = await readMailboxLease({
+        const leaseArgs = {
           adapter,
           mailboxId: mb.id,
-          self: { installId, kind: "local", displayName: machineName, lastNonce: leaseNonce },
-          now: gateAskedAt,
+          self: { installId, kind: "local" as const, displayName: machineName, lastNonce: leaseNonce },
           hasRequestKey: requestKey !== null,
           // An explicit human choice, and the ONLY thing that distinguishes "this mailbox's last
           // organizer went quiet" from "the user wants this machine to have it". Without it the
@@ -4367,9 +4373,16 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             : null,
           ...(config.leaseStaleAfterMs !== undefined ? { staleAfterMs: config.leaseStaleAfterMs } : {}),
           log,
-        });
+        };
+        const outcome = await readMailboxLease({ ...leaseArgs, now: gateAskedAt });
         if (outcome.organize) {
           leaseNonce = outcome.nonce;
+          // THE READ ABOVE IS THE PERMIT'S FIRST LOOK, adopted rather than repeated: the gate
+          // renews this install's claim, so a second run here is the same-millisecond
+          // self-stand-down `MIN_PERMIT_TTL_MS` refuses.
+          // No TTL knob: one value for the fleet (`DEFAULT_PERMIT_TTL_MS`). A configurable window
+          // beside a fixed believability cutoff is the truncation `LEASE-WINDOW` already names.
+          leasePermit = await acquireLeasePermit({ ...leaseArgs, adopt: { outcome, at: gateAskedAt }, now });
           // The gate renewed this install's claim with `gateAskedAt` as its heartbeat — the fact
           // the release's lapse bound reads. See `lastLeaseRenewalAt`.
           lastLeaseRenewalAt = gateAskedAt;
@@ -5029,6 +5042,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             // `organizer.organizing` is the gate's own answer, held on the engine and refreshed by
             // every gate run, so a demotion or a promotion applies to the very next cycle.
             role: organizer.organizing ? "organizer" : "reader",
+            // A demoted install keeps draining as a READER, and a reader holds no lease — its
+            // `\Seen` push is the one verb it may write. Naming that here rather than passing the
+            // spent permit is what keeps "no lease" and "not asked" apart at the write boundary.
+            writeAuthority: organizer.organizing ? leasePermit : { noLease: "reader" },
             // The routing half of the organizer-profile hold (TAKEOVER-RESCREEN), EVALUATED from
             // the current facts at every cycle edge — never cached; see the worker's cycle for
             // the argument (many arm/release orderings were tried, each with a

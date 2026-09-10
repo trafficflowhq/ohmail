@@ -244,7 +244,7 @@ export type LeaseOccupancyState = "held" | "stopped";
  * "I do not know", and `organized_elsewhere:unknown` is the honest name for that case anyway.
  */
 export type MailboxLeaseOutcome =
-  | { organize: true; nonce: string | null; by: null }
+  | { organize: true; nonce: string | null; by: null; uidValidity: number | bigint | null }
   | {
     organize: false;
     reason: MailboxDisabledReason;
@@ -317,7 +317,9 @@ export async function readMailboxLease(input: MailboxLeaseInput): Promise<Mailbo
     ...(input.log !== undefined ? { log: input.log } : {}),
   });
 
-  if (result.verdict.verdict === "organize") return { organize: true, nonce: result.nonce, by: null };
+  if (result.verdict.verdict === "organize") {
+    return { organize: true, nonce: result.nonce, by: null, uidValidity: result.uidValidity };
+  }
   return {
     organize: false,
     reason: standDownReason(result.verdict),
@@ -473,7 +475,7 @@ export async function releaseMailboxClaim(
  *
  * A pass that catches this and carries on has reopened the hole the permit exists to close. Every
  * `guard`/`check` seam in this repository is documented as ABORTING its pass — see
- * `junk-sweep.ts#junkSweepPass`'s `guard`, whose contract already reads "a throw here aborts the
+ * `junk-sweep.ts#junkSweepPass`'s write ask, whose contract already reads "a throw here aborts the
  * sweep — the members not yet moved are left exactly where they were" — so the honest stop was
  * designed for before there was anything to throw.
  */
@@ -764,10 +766,25 @@ export interface LeasePermit {
    * @throws {LeaseUnavailableError} the lease could not be read — NOT a stand-down.
    */
   check(): Promise<void>;
+  /** Who this permit is for, and under which claim — the five facts the invariant names. */
+  readonly names: PermitIdentity;
   /** When the lease was last actually read. Test-visible so a TTL claim can be watched to fail. */
   readonly verifiedAt: Date;
   /** How many times the lease was re-read (as against served from inside the TTL). */
   readonly reads: number;
+  /** Write boundaries passed since the last re-read — the second trigger beside the clock. */
+  readonly writesSinceRead: number;
+  /** TRUE once a stand-down has killed this permit. A dead permit is never revived. */
+  readonly revoked: boolean;
+}
+
+/** The five facts a permit names, so a write can say which claim it is riding. */
+export interface PermitIdentity {
+  readonly installId: string;
+  readonly mailboxId: string;
+  readonly uidValidity: number | bigint | null;
+  readonly nonce: string | null;
+  readonly issuedAt: Date;
 }
 
 export interface LeasePermitInput extends Omit<MailboxLeaseInput, "now"> {
@@ -778,6 +795,17 @@ export interface LeasePermitInput extends Omit<MailboxLeaseInput, "now"> {
    * is not "more careful", it is the same-instant re-entry that arm's docblock measures.
    */
   ttlMs?: number;
+  /** See {@link PERMIT_WRITES_PER_RECHECK}. Clamped UP to 1; 0 would mean "never re-read". */
+  writesPerRecheck?: number;
+  /**
+   * A GATE READ THIS CALLER HAS ALREADY TAKEN, adopted as the permit's first look.
+   *
+   * The gate is itself a WRITE — it renews our claim — so a caller that has just run it hands the
+   * result over rather than running it again: two gate runs inside one millisecond is exactly the
+   * self-stand-down {@link MIN_PERMIT_TTL_MS} refuses. `at` is the instant that read was taken,
+   * because the TTL is measured from the look, not from this call.
+   */
+  adopt?: { outcome: Extract<MailboxLeaseOutcome, { organize: true }>; at: Date };
 }
 
 /**
@@ -790,44 +818,169 @@ export interface LeasePermitInput extends Omit<MailboxLeaseInput, "now"> {
 export async function acquireLeasePermit(input: LeasePermitInput): Promise<LeasePermit> {
   const clock = input.now ?? ((): Date => new Date());
   const ttlMs = Math.max(input.ttlMs ?? DEFAULT_PERMIT_TTL_MS, MIN_PERMIT_TTL_MS);
+  const writesPerRecheck = Math.max(input.writesPerRecheck ?? PERMIT_WRITES_PER_RECHECK, 1);
   const base = { ...input };
   delete (base as Partial<LeasePermitInput>).now;
   delete (base as Partial<LeasePermitInput>).ttlMs;
+  delete (base as Partial<LeasePermitInput>).writesPerRecheck;
+  delete (base as Partial<LeasePermitInput>).adopt;
 
   // The nonce this permit has written, threaded into every later read — see the docblock.
   let lastNonce: string | null = input.self.lastNonce;
   let verifiedAt: Date;
+  let issuedAt: Date;
+  let uidValidity: number | bigint | null = null;
   let reads = 0;
+  let writesSinceRead = 0;
+  let revoked = false;
 
   const read = async (): Promise<void> => {
     const at = clock();
     reads++;
+    // A read that THROWS leaves every field below untouched, which is the wanted behaviour: an
+    // unreadable lease is not a stand-down (both call sites exempt `LeaseUnavailableError` by
+    // class), and recording it as a fresh look would serve the stale receipt for a whole new TTL
+    // on the strength of a read that failed.
     const outcome = await readMailboxLease({
       ...base,
       self: { ...input.self, lastNonce },
       now: at,
     } as MailboxLeaseInput);
-    if (!outcome.organize) throw new OrganizerStandDownError(outcome);
+    if (!outcome.organize) {
+      // ── A STAND-DOWN KILLS THE PERMIT, AND IT STAYS DEAD ──────────────────────────────────
+      //
+      // Without this latch the throw leaves `verifiedAt` stale, so the very next `check()` re-reads
+      // and can be re-admitted — a permit surviving the stand-down that revoked it. The mailbox may
+      // legitimately come back to this install later; it comes back through a NEW permit, taken by
+      // a gate that ran, never by reviving this receipt.
+      revoked = true;
+      throw new OrganizerStandDownError(outcome);
+    }
+    // ── THE GENERATION IS PART OF THE RECEIPT, NOT A DETAIL ──────────────────────────────────
+    //
+    // A uid remembered under one UIDVALIDITY names a different message or none at all under the
+    // next, so a renumbering between two reads voids every ref this permit's claim was addressed
+    // by. Recorded, and compared at `check()`: a CHANGED known generation forces a re-read whatever
+    // the clock says. Two `null`s are not a match — unknown is not "the same".
+    uidValidity = outcome.uidValidity;
     lastNonce = outcome.nonce;
     verifiedAt = at;
+    writesSinceRead = 0;
   };
 
-  await read();
+  if (input.adopt) {
+    uidValidity = input.adopt.outcome.uidValidity;
+    lastNonce = input.adopt.outcome.nonce;
+    verifiedAt = input.adopt.at;
+    reads = 1;
+  } else {
+    await read();
+  }
+  issuedAt = verifiedAt!;
 
   return {
+    get names(): PermitIdentity {
+      return {
+        installId: input.self.installId, mailboxId: input.mailboxId,
+        uidValidity, nonce: lastNonce, issuedAt,
+      };
+    },
     get verifiedAt(): Date { return verifiedAt; },
     get reads(): number { return reads; },
+    get writesSinceRead(): number { return writesSinceRead; },
+    get revoked(): boolean { return revoked; },
     async check(): Promise<void> {
-      // `>=` and not `>`: a permit is expired AT its deadline, not one tick after it. The
-      // difference is not academic on a host whose timer resolution is coarse — there, `>` means
-      // the deadline instant itself is served from the stale receipt, and a takeover that lands
-      // exactly on it is missed for another whole TTL. The boundary is where the answer changes,
-      // so the boundary is what the test pins: `lease-permit.test.ts` drives the clock to exactly
-      // `ttlMs` and asserts the lease is re-read, and it fails if this comparison is loosened
-      // to `>`.
-      if (clock().getTime() - verifiedAt.getTime() >= ttlMs) await read();
+      if (revoked) {
+        throw new OrganizerStandDownError({
+          organize: false,
+          // The reason this permit DIED is not re-derivable here — the claim that beat us was
+          // carried by the throw that revoked it. `unknown` is the honest name for "somebody else
+          // holds it and this receipt is spent", and it is what the row already holds.
+          reason: "organized_elsewhere:unknown", state: "held", by: null,
+        });
+      }
+      writesSinceRead++;
+      // `>=` and not `>` on both triggers: a permit is expired AT its deadline, not one tick after
+      // it. On a host with coarse timer resolution `>` serves the deadline instant itself from the
+      // stale receipt, and a takeover landing exactly on it is missed for another whole TTL.
+      // `lease-permit.test.ts` drives the clock to exactly `ttlMs` and to exactly the write count,
+      // and both cases fail if either comparison is loosened.
+      const stale = clock().getTime() - verifiedAt.getTime() >= ttlMs;
+      const worked = writesSinceRead >= writesPerRecheck;
+      if (stale || worked) await read();
     },
   };
+}
+
+/**
+ * HOW MANY WRITE BOUNDARIES A PERMIT MAY COVER BEFORE IT IS RE-READ — the clock's other half.
+ *
+ * The TTL bounds the overlap a takeover can produce IN TIME. It does not bound it in WRITES, and
+ * those are the units the person loses: a batch pass can file several hundred messages inside one
+ * minute, so a purely time-based permit lets a whole chunk of somebody else's mailbox move on one
+ * look. This is the second trigger, and either one alone is insufficient.
+ *
+ * 100 rather than 1: the re-read is an IMAP round trip that also RENEWS, and asking per message
+ * would cost more round trips than the filing itself. At a filing budget of 500 per cycle it is
+ * five extra reads for a whole pass.
+ */
+export const PERMIT_WRITES_PER_RECHECK = 100;
+
+/**
+ * MAY A DESTRUCTIVE IMAP WRITE BE ISSUED RIGHT NOW? — the ONE predicate every write site asks.
+ *
+ * Two questions, asked in this order and never merged into one answer. LEADERSHIP first
+ * (worker-to-worker: does this process still lead its shard?) because a re-read of the lease
+ * RENEWS our claim, which is itself a write — a fenced worker must not renew. Then the LEASE
+ * (install-to-install: does this install still hold the mailbox?).
+ *
+ * A census over both organizing roots asserts that every destructive verb there is preceded by
+ * this call and that there is exactly one definition of it, so a new write site cannot arrive
+ * without an author placing it.
+ */
+export async function assertMayWriteToMailbox(authority: MailboxWriteAuthority): Promise<void> {
+  if (authority.fence) await authority.fence();
+  if ("check" in authority.lease) await authority.lease.check();
+}
+
+/**
+ * WHAT AUTHORISES THIS PASS'S WRITES. Built once per cycle at a composition root.
+ *
+ * `lease` is a permit or a NAMED statement that this composition holds none — never an absent
+ * field, because "not answered yet" and "there is no such thing here" have to stay
+ * distinguishable at the write boundary.
+ */
+export interface MailboxWriteAuthority {
+  /**
+   * The leadership check, or absent for a composition with no shard leadership to lose (the
+   * desktop engine, the reconcile cron). Supplied as a closure so this module needs nothing from
+   * the sync pass, whose `LeaderFencedError` the closure throws.
+   */
+  readonly fence?: (() => Promise<void>) | undefined;
+  readonly lease: LeasePermit | NoOrganizerLease;
+}
+
+/**
+ * THE LEASE HALF, as a composition root supplies it — a permit, or the reason there is none.
+ *
+ * The root is where the role is known, so the root decides; `sync.ts` adds the leadership half it
+ * owns and never re-derives this one.
+ */
+export type OrganizerWriteAuthority = LeasePermit | NoOrganizerLease;
+
+/** Why a pass holds no organizer lease. Every arm is a state somebody can point at. */
+export interface NoOrganizerLease {
+  readonly noLease:
+    /** A READER: it holds no lease, and `\Seen` is the one verb it may write (`sync.ts`). */
+    | "reader"
+    /** The adapter cannot reach `ohmail/_meta`, so no lease is readable from this composition. */
+    | "adapter_cannot_reach_meta"
+    /**
+     * NOBODY SUPPLIED ONE. A fixture reaches this; a production root must not, and the write-permit
+     * census is what refuses it there — asserting both composition roots pass a `writeAuthority`.
+     * Named rather than silent so a diagnosis has something to read.
+     */
+    | "not_supplied";
 }
 
 /** Re-exported so the worker's `catch` arms name one class, imported from one place. */
