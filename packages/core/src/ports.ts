@@ -644,6 +644,37 @@ export interface RoutingPort {
    *  so a pattern that graduated for one account must NOT read as graduated for another. */
   isGraduated(accountId: string, patternKey: string, action: "route"): Promise<boolean>;
   enqueueApproval(a: ApprovalInput): Promise<{ id: string }>;
+  /**
+   * A person moved a message AWAY from where a graduated route filed it: record the override,
+   * and demote the route once enough of them stand inside the window.
+   *
+   * `null` ⇒ nothing to contradict (no graduated route filed it there — every ordinary
+   * adoption) or the move is a replay. OPTIONAL because a shell with no routing port never
+   * auto-applies and so can never produce an override: absent means "this install has no such
+   * thing", never "refuse".
+   */
+  recordExternalOverride?(input: ExternalOverrideInput): Promise<ExternalOverrideOutcome | null>;
+}
+
+/** One externally observed move, as the override seam sees it. */
+export interface ExternalOverrideInput {
+  accountId: string;
+  messageId: string;
+  /** The folder the message was filed INTO by the route now being contradicted. */
+  filedTo: string;
+  /** Where the person put it. Carried for the log line; never part of the pattern. */
+  movedTo: string;
+  /** The adoption's `change_log` seq — what makes a replay of THIS move count once. */
+  seq: bigint;
+}
+
+export interface ExternalOverrideOutcome {
+  patternKey: string;
+  /** Overrides standing inside the window, this one included. */
+  overrides: number;
+  demoted: boolean;
+  /** Promoted rules the demotion switched off. The caller owes each one a `rule` delta. */
+  ruleIds: readonly string[];
 }
 
 /**

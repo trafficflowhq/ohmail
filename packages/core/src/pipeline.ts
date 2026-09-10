@@ -2044,10 +2044,27 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
         { messageId: e.messageId, adopted: to, previousDesired: e.state.desiredFolder },
         { messageId: e.messageId, revertTo: e.state.desiredFolder },
       );
-      await repo.recordChange({
+      const adoptSeq = await repo.recordChange({
         accountId, entityType: "message", entityId: e.messageId, op: "move",
         meta: { from: e.state.desiredFolder, to },
       });
+      // ── THE OVERRIDE FEEDS THE ROUTE THAT FILED IT ──────────────────────────────────────
+      //
+      // The one seam where a graduated route is contradicted by the only evidence that settles
+      // it: the person moved the mail out of the folder we chose. `null` for every ordinary
+      // adoption, so the ingest path pays one indexed read here and nothing else.
+      const override = await routing?.recordExternalOverride?.({
+        accountId, messageId: e.messageId,
+        filedTo: e.state.desiredFolder, movedTo: to, seq: adoptSeq,
+      });
+      // The demotion switched a promoted rule off, and a client that is not told still shows it
+      // ON — the state would be a silent one, which is the failure this seam exists to make
+      // visible. This arm holds the ledger transaction, so the delta is owed here.
+      for (const ruleId of override?.ruleIds ?? []) {
+        await repo.recordChange({
+          accountId, entityType: "rule", entityId: ruleId, op: "update", meta: null,
+        });
+      }
       break;
     }
     case "move": {

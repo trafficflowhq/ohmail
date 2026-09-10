@@ -64,8 +64,13 @@ export { upsertDesiredSeen } from "./flag-intent.js";
 // reader's screener decision, which records a learning signal, and the worker may not import
 // `@trafficflow/services` at runtime. `LearningService.recordOn` is now a thin wrapper over this.
 export {
-  recordLearningSignal, patternKeyFor, GRADUATION_THRESHOLD, DEMOTION_THRESHOLD,
+  recordLearningSignal, patternKeyFor, parsePatternKey,
+  GRADUATION_THRESHOLD, DEMOTION_THRESHOLD,
+  // The override: one predicate, one effect, one action-id shape. See the module header.
+  recordRouteOverride, demoteGraduatedRoute, routeOverrideActionId,
+  OVERRIDE_DEMOTION_THRESHOLD, OVERRIDE_WINDOW_MS,
   type LearningKind, type LearningLabel, type LearningSignalInput,
+  type ParsedPattern, type RouteOverrideInput, type RouteOverrideOutcome,
 } from "./learning-signal.js";
 
 // The erasure fence's READ primitive — same argument again, one level down: the drain's applied

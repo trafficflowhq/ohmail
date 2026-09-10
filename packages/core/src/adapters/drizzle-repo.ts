@@ -1,8 +1,9 @@
 import { and, asc, desc, eq, inArray, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
-import { accountStorage, changeLog, messages, messageInstances, messageFailures, folderOps, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordChange as recordChangeTx, recordChanges as recordChangesTx, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass } from "@trafficflow/db";
+import { accountStorage, changeLog, messages, messageInstances, messageFailures, folderOps, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordRouteOverride, routeOverrideActionId, recordChange as recordChangeTx, recordChanges as recordChangesTx, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass } from "@trafficflow/db";
 import type {
-  RepoPort, RoutingPort, StoredMessage, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
+  RepoPort, RoutingPort, ExternalOverrideInput, ExternalOverrideOutcome,
+  StoredMessage, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
   FolderAttribution,
   Rule, NativeLocator, EmailAddress,
   MessageBodyInput, BodyStorageContext, BodyStorageOutcome, RepoChangeInput, RoutingDecisionInput, ApprovalInput, AttachmentMeta,
@@ -2151,6 +2152,33 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
         eq(graduations.graduated, true),
       )).limit(1);
     return rows.length > 0;
+  }
+
+  /**
+   * The override, resolved against the message's OWN sender rather than a sender the caller
+   * carries down: the pipeline's adopt arm holds the folder state and the id, and reading the
+   * two columns here is what keeps the seam from having to thread an address through it.
+   *
+   * The predicate itself is `@trafficflow/db#recordRouteOverride` — one definition, reachable
+   * from the worker, which may not import the services package.
+   */
+  async recordExternalOverride(
+    input: ExternalOverrideInput,
+  ): Promise<ExternalOverrideOutcome | null> {
+    const [msg] = await this.db
+      .select({ from: messages.fromAddress })
+      .from(messages)
+      .where(and(eq(messages.accountId, input.accountId), eq(messages.id, input.messageId)))
+      .limit(1);
+    const from = msg?.from ?? "";
+    const at = from.lastIndexOf("@");
+    const outcome = await recordRouteOverride(this.db as unknown as Tx, input.accountId, {
+      senderAddress: from || null,
+      senderDomain: at > 0 ? from.slice(at + 1) : null,
+      filedTo: input.filedTo,
+      triggeringActionId: routeOverrideActionId(input.messageId, input.seq),
+    });
+    return outcome;
   }
 
   async enqueueApproval(a: ApprovalInput): Promise<{ id: string }> {

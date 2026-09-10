@@ -1,9 +1,9 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import {
   graduations, rules as rulesTbl, type Tx,
-  recordLearningSignal, patternKeyFor,
+  recordLearningSignal, patternKeyFor, parsePatternKey, demoteGraduatedRoute,
   GRADUATION_THRESHOLD, DEMOTION_THRESHOLD,
-  type LearningSignalInput, type LearningKind, type LearningLabel,
+  type LearningSignalInput, type LearningKind, type LearningLabel, type ParsedPattern,
 } from "@trafficflow/db";
 import { dialect, type Dialect } from "@trafficflow/db/dialect";
 import type { ServiceContext } from "./context.js";
@@ -14,8 +14,8 @@ const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 // definition (see its own header for why — the worker's request drain needs the write and may
 // not import this package). Every existing importer of these five names from THIS module keeps
 // working unchanged.
-export { GRADUATION_THRESHOLD, DEMOTION_THRESHOLD, patternKeyFor };
-export type { LearningKind, LearningLabel, LearningSignalInput };
+export { GRADUATION_THRESHOLD, DEMOTION_THRESHOLD, patternKeyFor, parsePatternKey };
+export type { LearningKind, LearningLabel, LearningSignalInput, ParsedPattern };
 
 /**
  * LearningService. Captures every learning-relevant action as a
@@ -93,11 +93,10 @@ export class LearningService {
     if (g.graduated && net >= GRADUATION_THRESHOLD) {
       await this.ensurePromotedRule(tx, d, ctx.accountId, parsed);
     } else if (net <= -DEMOTION_THRESHOLD) {
-      await this.demotePromotedRule(tx, d, ctx.accountId, parsed);
-      await tx
-        .update(graduations)
-        .set({ graduated: false, updatedAt: d.now() })
-        .where(eq(graduations.id, g.id));
+      // The SHARED effect, not a second spelling of it. This arm is the LIFETIME-net trigger;
+      // `recordRouteOverride` is the recent-override one, and both have to disable the same rule
+      // and clear the same flag or a route can be demoted by one reading and not the other.
+      await demoteGraduatedRoute(tx, ctx.accountId, patternKey);
     }
   }
 
@@ -122,33 +121,6 @@ export class LearningService {
     });
   }
 
-  private async demotePromotedRule(tx: Tx, d: Dialect, accountId: string, p: ParsedPattern): Promise<void> {
-    await tx
-      .update(rulesTbl)
-      .set({ enabled: false, demotions: sql`${rulesTbl.demotions} + 1`, updatedAt: d.now() })
-      .where(and(
-        eq(rulesTbl.accountId, accountId),
-        eq(rulesTbl.kind, p.kind),
-        eq(rulesTbl.match, p.match),
-        eq(rulesTbl.destination, p.destination),
-        eq(rulesTbl.provenance, "promoted"),
-      ));
-  }
-}
-
-interface ParsedPattern { kind: "sender" | "domain"; match: string; destination: string; }
-
-function parsePatternKey(patternKey: string): ParsedPattern | null {
-  const arrow = patternKey.indexOf("→");
-  if (arrow < 0) return null;
-  const lhs = patternKey.slice(0, arrow);
-  const destination = patternKey.slice(arrow + 1);
-  const colon = lhs.indexOf(":");
-  if (colon < 0) return null;
-  const kind = lhs.slice(0, colon);
-  const match = lhs.slice(colon + 1);
-  if (kind !== "sender" && kind !== "domain") return null;
-  return { kind, match, destination };
 }
 
 export const learningService = new LearningService();
