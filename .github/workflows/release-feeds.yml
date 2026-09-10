@@ -563,9 +563,16 @@ jobs:
             # bytes, so the signature verifies against the published asset.
             local signed_as="signing/${VERSION}@$(basename "$1")"
             cp "$1" "$signed_as"
-            node "$TAURI_SIGNER" signer sign \
+            # THE PASSWORD GOES THROUGH THE ENVIRONMENT, NEVER ON THE ARGUMENT
+            # LIST. `--password <value>` puts key material in the process's argv,
+            # which every other process on the runner can read out of `ps` — the
+            # exact disclosure the key file exists to avoid. The pinned CLI reads
+            # `TAURI_PRIVATE_KEY_PASSWORD`, and it genuinely consumes it: with a
+            # password-protected key and nothing set it refuses with "incorrect
+            # updater private key password", and a wrong value exits non-zero.
+            TAURI_PRIVATE_KEY_PASSWORD="${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" \
+              node "$TAURI_SIGNER" signer sign \
               --private-key-path "$TAURI_KEY_FILE" \
-              --password "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" \
               "$signed_as" < /dev/null 1>&2
             # ── AND READ BACK WHAT WAS ACTUALLY SIGNED ──────────────────────
             #
