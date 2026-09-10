@@ -168,12 +168,6 @@ export const workflowsRoutesGroup: Route[] = workflowsRoutes;
 export const proposalsRoutesGroup: Route[] = proposalsRoutes;
 
 /**
- * Billing (4): `POST /billing/checkout` · `POST /billing/portal` (step-up) ·
- * `GET /billing/subscription` · `POST /billing/webhook` (public + raw). See `billing.ts` for
- * why each carries the options it does.
- */
-
-/**
  * Art. 17 erasure (1): `DELETE /account`, step-up gated. Blocking precondition for
  * the "delete your account anytime" sentence the landing page now makes.
  */
