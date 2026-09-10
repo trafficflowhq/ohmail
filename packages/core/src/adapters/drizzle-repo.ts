@@ -61,6 +61,17 @@ export interface PendingFolderState {
    * later — never a mutation dropped.
    */
   attempts?: number;
+  /**
+   * `messages.deleted_at` as the cycle read it, so a landed move can skip the un-delete when
+   * there is no tombstone to clear (`junk-filing.ts#completeFiling`).
+   *
+   * THREE STATES, and the third is why this is not a boolean: a `Date` is tombstoned, `null` is
+   * positively not, and ABSENT is a producer that does not report it (a fake, the sweep's
+   * synthesised rows). Absent must behave as today — attempt the clear — because skipping an
+   * un-delete that was owed leaves a live message missing from every mirror, while attempting one
+   * that is not owed costs a round trip. So only an explicit `null` skips.
+   */
+  deletedAt?: Date | null;
 }
 /**
  * ONE message the re-route pass may reconsider: still desired into `ohmail/Screener`, and
@@ -2654,6 +2665,9 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       messageId: folderState.messageId, desiredFolder: folderState.desiredFolder, observedFolder: folderState.observedFolder,
       lastSetBy: folderState.lastSetBy, nativeLocator: messages.nativeLocator,
       attempts: folderState.attempts,
+      // One more column on the join this select already makes — never a second query, which
+      // would spend the round trip it exists to save.
+      deletedAt: messages.deletedAt,
     }).from(folderState).innerJoin(messages, eq(messages.id, folderState.messageId))
       .where(and(
         eq(messages.mailboxId, mailboxId), eq(folderState.reconcileStatus, "pending"),
@@ -2667,6 +2681,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       messageId: r.messageId, desiredFolder: r.desiredFolder, observedFolder: r.observedFolder,
       lastSetBy: r.lastSetBy as FolderAttribution, nativeLocator: (r.nativeLocator as NativeLocator | null) ?? null,
       attempts: r.attempts,
+      deletedAt: r.deletedAt,
     }));
   }
 

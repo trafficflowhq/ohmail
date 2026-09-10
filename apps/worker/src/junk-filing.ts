@@ -326,7 +326,12 @@ export async function completeFiling(
        tombstone the newer delete had just written — no later completion re-stamps it, so the
        copy sat in Trash absent from the live mirror AND from the Trash list. A completion that
        lost its CAS writes nothing; the winner's own landing decides `deleted_at`. */
-    if (claimed) await unDeleteOnLandedMove(r, accountId, p.messageId);
+    /* AND ONLY WHEN THERE IS A TOMBSTONE TO CLEAR. The clear is conditional in SQL
+       (`deleted_at IS NOT NULL`), so on an ordinary move it matched nothing and cost a round
+       trip anyway — one per message of every first sync, which is what the ingest ratchet
+       measures. `deletedAt` is the row this cycle already read; ABSENT still attempts, so a
+       producer that does not report it keeps today's behaviour. */
+    if (claimed && p.deletedAt !== null) await unDeleteOnLandedMove(r, accountId, p.messageId);
     return false;
   }
   // ══════════════════════════════════════════════════════════════════════════════════════════
