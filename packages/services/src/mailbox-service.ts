@@ -8,7 +8,6 @@ import {
   standDownMemory,
   closeRemovedMailboxAppointments,
   filingDue, filingDeferred, ourOutstandingFiling, isFilingRefusalClass,
-  UNMETERED_ACCESS,
   type AccessVerdict, type LedgerTx, type MailboxErrorCode, type Tx,
 } from "@trafficflow/db";
 import type { ServiceContext } from "./context.js";
@@ -737,9 +736,10 @@ export type MailboxAllowancePolicy = (
   /**
    * The account's access verdict, read BEFORE the transaction opened, plus the re-enable
    * exclusion. Answering `access` may be a network hop, so it is never read inside this
-   * transaction — see `MailboxAllowanceInput`. An unmetered policy ignores it.
+   * transaction — see `MailboxAllowanceInput`. An unmetered policy ignores it; the paid gate
+   * refuses a `null`, which means this host wired no reader at all.
    */
-  input: { access: AccessVerdict; excludeMailboxId?: string },
+  input: { access: AccessVerdict | null; excludeMailboxId?: string },
 ) => Promise<unknown>;
 
 export interface MailboxServiceDeps {
@@ -781,8 +781,11 @@ export interface MailboxServiceDeps {
    *
    * Injected for the reason {@link MailboxServiceDeps.allowance} is: on the hosted tier the answer
    * comes from whoever operates the service and may be a network hop, and this module is inside the
-   * desktop engine's import graph. Absent ⇒ UNMETERED — the local tiers' own grammar, and the same
-   * verdict their allowance policy already implies.
+   * desktop engine's import graph.
+   *
+   * ABSENT IS NOT UNMETERED. A host that means unmetered supplies a reader answering
+   * `UNMETERED_ACCESS`; absent means nobody wired one, and the paid gate refuses rather than
+   * admitting an unbounded create. See {@link MailboxService.access}.
    */
   accessOf?: (accountId: string) => Promise<AccessVerdict>;
   /**
@@ -1064,10 +1067,16 @@ export class MailboxService {
 
   /**
    * The account's access verdict, read OUTSIDE any transaction — the allowance gate needs it and
-   * may not ask for it under a row lock. Absent dep ⇒ unmetered, the local tiers' grammar.
+   * may not ask for it under a row lock.
+   *
+   * `null` when this host declared no reader, and that is NOT unmetered: an unmetered host says so
+   * with a verdict carrying null limits. Defaulting to unmetered here would have silently removed
+   * the plan limit from any host that wired the paid gate and forgot this — the exact failure
+   * `mailbox-allowance-registry.ts` refuses by name one seam over, reintroduced one seam up. The
+   * paid gate refuses a `null`; the unmetered policy ignores it.
    */
-  private async access(accountId: string): Promise<AccessVerdict> {
-    return this.deps.accessOf ? this.deps.accessOf(accountId) : UNMETERED_ACCESS;
+  private async access(accountId: string): Promise<AccessVerdict | null> {
+    return this.deps.accessOf ? this.deps.accessOf(accountId) : null;
   }
 
   /**

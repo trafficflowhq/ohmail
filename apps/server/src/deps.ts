@@ -1,4 +1,4 @@
-import { users, providerFamily, UNMETERED, type Tx } from "@trafficflow/db";
+import { users, providerFamily, UNMETERED, UNMETERED_ACCESS, type Tx } from "@trafficflow/db";
 import {
   acquireImapSlot, releaseImapSlot, webhookAlertSink, makeAiUsageRecorder,
   resolveOAuthProviderConfig, rotateMailboxOAuthSecret, MICROSOFT_PROVIDER,
@@ -311,6 +311,8 @@ export function buildServerServices(cfg: ServerConfig, db: Db): ApiServices {
     // allowance is obligation 1; see SELF_HOST_MAILBOX_ALLOWANCE above.
     mailbox: makeMailboxService({
       keyProvider, allowance: SELF_HOST_MAILBOX_ALLOWANCE,
+      // Declared, not absent — see the sidecar's own line for why the two differ.
+      accessOf: async () => UNMETERED_ACCESS,
       // The same identity the organizer half writes — see `resolveCloudInstallId`.
       installId: resolveCloudInstallId(process.env),
       /* WHEN THE ORGANIZER'S LAST PASS FINISHED (mail 0097). Wired HERE too and not only on the

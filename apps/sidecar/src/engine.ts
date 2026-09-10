@@ -28,7 +28,7 @@ import {
   organizerDisplayName, isOrganizerRole, capabilitiesColumn,
   // The entitlements composition this host declares. From the MAIL barrel — the port is pure
   // types and one literal, and the halves that answer it stay on `@trafficflow/db/cloud`.
-  UNMETERED,
+  UNMETERED, UNMETERED_ACCESS,
   type MailboxDisabledReason, type OrganizerRole, type Tx,
 } from "@trafficflow/db";
 import {
@@ -854,7 +854,12 @@ function localServices(
      * is gated by whether this install has a model key of its owner's own and by nothing else.
      */
     entitlementsPort: UNMETERED,
-    mailbox: makeMailboxService({ keyProvider, allowance: UNMETERED_MAILBOX_ALLOWANCE, installId }),
+    mailbox: makeMailboxService({
+      keyProvider, allowance: UNMETERED_MAILBOX_ALLOWANCE, installId,
+      // Declared, not absent: `UNMETERED_MAILBOX_ALLOWANCE` ignores the verdict, and an ABSENT
+      // reader is what a host that forgot to wire one looks like. This says which this is.
+      accessOf: async () => UNMETERED_ACCESS,
+    }),
     rules: rulesService,
     message: messageService,
     thread: threadService,

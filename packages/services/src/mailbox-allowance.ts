@@ -331,9 +331,24 @@ export async function assertMayAddMailbox(
   tx: LedgerTx,
   accountId: string,
   now: Date,
-  input: MailboxAllowanceInput,
+  input: { access: AccessVerdict | null; excludeMailboxId?: string },
 ): Promise<MailboxAllowance> {
-  const allowance = await readMailboxAllowance(tx, accountId, now, input);
+  /**
+   * NO VERDICT AT ALL is a misconfigured host, not a free one — the same refusal
+   * `defaultMailboxAllowance()` makes one seam over, for the same reason. Defaulting an absent
+   * reader to "unmetered" would silently remove the plan limit from any host that wired THIS gate
+   * and forgot the reader, and a paid gate that quietly stopped applying is not a failure anyone
+   * notices from the outside. An unmetered host supplies a reader that says so.
+   */
+  if (input.access === null) {
+    throw new ServiceError(
+      "server_error", 500,
+      "no entitlements reader is configured for this host, so the mailbox limit cannot be read",
+    );
+  }
+  const allowance = await readMailboxAllowance(tx, accountId, now, {
+    access: input.access, ...(input.excludeMailboxId ? { excludeMailboxId: input.excludeMailboxId } : {}),
+  });
   const refusal = decideMailboxAllowance(allowance);
   if (refusal) throw new MailboxAllowanceError(refusal, allowance);
   return allowance;
