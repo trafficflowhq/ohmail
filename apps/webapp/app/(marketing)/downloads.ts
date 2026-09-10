@@ -56,43 +56,29 @@ export type PlatformId = "apple" | "linux" | "windows";
 export type MobileId = "android" | "ios";
 
 /**
- * ── THE ANDROID RELEASE — a page, not an asset, and it follows the newest tag ──────────
+ * ── THE ANDROID APK — the desktop row's mechanism, now that the APK is a release asset ──
  *
- * Android ships from this same repository under its own tag family (`android-v*`), as a
- * GitHub PRE-release with the APK attached. That rules out the desktop row's mechanism:
- * `/releases/latest` resolves to the newest STABLE release, which is always a desktop
- * `v*` tag, so there is no `latest/download/…` path that could ever hand out the APK. And
- * a link pinned to one `android-vX.Y.Z` tag is the exact thing the desktop card once did
- * and went four releases stale doing.
+ * This used to read the newest `android-v*` tag once per build and link that tag's page,
+ * on the premise that `latest` could never reach the APK: Android ships its own tag family
+ * as GitHub PRE-releases, and `/releases/latest` resolves only to a stable `v*`. That
+ * premise died when the release began attaching the signed APK to the stable release as
+ * well, and a tag baked at build time then went stale the way a pinned one does — the site
+ * is rebuilt when the site changes, the APK is published when the app ships, so the button
+ * sat on `android-v0.15.0` two releases after it was current.
  *
- * So the tag is read ONCE PER BUILD in `next.config.mjs` — the same build-time fetch, the
- * same failure posture as the nav's star count — and inlined as
- * {@link ANDROID_RELEASE_TAG_VAR}. The button links the tag's own release page (notes,
- * checksum, the APK), which is the honest destination for a sideloaded pre-release: a
- * person should read what they are about to install. When the build had no usable tag,
- * the link falls back to the releases index FILTERED to the Android family, which GitHub
- * lists newest first — never to a hard-coded version.
+ * So the phone uses the same indirection and the same asset contract as the three desktop
+ * buttons: one published name under {@link RELEASE_BASE}, asserted in
+ * `download-assets.test.ts` and allow-listed in `no-third-party.test.ts`. GitHub resolves
+ * `latest` per request, so this link cannot fall behind a release. The notes for the build
+ * it hands out are the current release's own, linked under the buttons already.
  */
-export const ANDROID_RELEASE_TAG_VAR = "NEXT_PUBLIC_ANDROID_RELEASE_TAG";
-
-/** The shape of an Android tag: `android-v` + a semver, optionally with a pre-release suffix. */
-const ANDROID_TAG = /^android-v\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/;
-
-/** The releases index, filtered to the Android family — GitHub sorts it newest first. */
-export const ANDROID_RELEASES_INDEX_URL = "https://github.com/trafficflowhq/ohmail/releases?q=android-v&expanded=true";
-
-/** The release page for one tag. Refuses anything that is not an Android tag. */
-export function androidReleaseUrl(tag: string | undefined): string {
-  const t = (tag ?? "").trim();
-  if (!ANDROID_TAG.test(t)) return ANDROID_RELEASES_INDEX_URL;
-  return `${"https://github.com/trafficflowhq/ohmail/releases/tag/"}${t}`;
-}
+export const ANDROID_APK_ASSET = "ohmail-android.apk";
 
 /**
- * Read as the full literal so Next inlines it at build time — a dynamic lookup would ship
- * `undefined` and silently send every visitor to the fallback index for ever.
+ * The full literal, like the desktop entries below: the off-origin scan reads string
+ * literals, and `download-assets.test.ts` asserts this is `RELEASE_BASE` + the asset name.
  */
-export const ANDROID_RELEASE_URL: string = androidReleaseUrl(process.env.NEXT_PUBLIC_ANDROID_RELEASE_TAG);
+export const ANDROID_RELEASE_URL = "https://github.com/trafficflowhq/ohmail/releases/latest/download/ohmail-android.apk";
 
 export interface DownloadFormat {
   /** The published asset filename. The release MUST attach exactly this. */

@@ -1782,7 +1782,7 @@
     "ios": "iOS",
     "mobileLead": "Und in der Tasche",
     "androidCta": "Android-Version holen",
-    "androidFormat": "APK von der Release-Seite · Vorabversion",
+    "androidFormat": "APK · nicht bei Google Play",
     "iosSoon": "kommt bald",
     "yours": "Sieht nach deinem System aus",
     "firstRun": "Die Builds für macOS und Windows sind noch nicht von Apple oder Microsoft signiert, beim ersten Start musst du das also einmal bestätigen. Nichts in der App telefoniert nach Hause außer einer signierten Update-Prüfung.",

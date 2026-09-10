@@ -1782,7 +1782,7 @@
     "ios": "iOS",
     "mobileLead": "And in your pocket",
     "androidCta": "Get the Android release",
-    "androidFormat": "APK from the release page · pre-release",
+    "androidFormat": "APK · not on Google Play",
     "iosSoon": "coming soon",
     "yours": "Looks like your system",
     "firstRun": "The macOS and Windows builds are not signed by Apple or Microsoft yet, so the first launch asks you to confirm it once. Nothing in the app phones home except one signed update check.",

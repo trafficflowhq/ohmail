@@ -197,6 +197,13 @@ A message you had scheduled from that mailbox before it changed hands is closed 
 could not be sent, instead of sitting in Drafts saying it will send. The mailbox pane says once
 that the mailbox changed hands.
 
+### The Android download points at the current release
+
+The Android button on the download page was built from a release tag read when the site was last
+built, so it could name an older release than the one the desktop buttons beside it handed out. It
+links the APK attached to the current release now, through the same address the desktop downloads
+use, and no build has to know a version for it to be right.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

@@ -43,13 +43,12 @@ import {
  *
  * ── THE MOBILE ROW ────────────────────────────────────────────────────────────────────
  *
- * A second row under the desktop three, in the same idiom: Android links the newest
- * `android-v*` release page (a pre-release with the APK attached — the link is a page
- * rather than the file because a sideloaded pre-release deserves its notes; how the tag
- * follows the newest release is `../downloads.ts`), and iOS is named with "coming soon"
- * and nothing more — the app is built, the App Store step is not done, and that is the
- * whole of what can be said truthfully. Two columns, same glyph size, same button size,
- * the iOS column carrying a tag where the Android column carries a button.
+ * A second row under the desktop three, in the same idiom: Android is a direct APK link
+ * through `latest`, the same indirection the desktop buttons use (`../downloads.ts` has
+ * why it stopped being a release-page link), and iOS is named with "coming soon" and
+ * nothing more — the app is built, the App Store step is not done, and that is the whole
+ * of what can be said truthfully. Two columns, same glyph size, same button size, the iOS
+ * column carrying a tag where the Android column carries a button.
  *
  * ── THE STAGE CAPTION ─────────────────────────────────────────────────────────────────
  *
@@ -128,7 +127,7 @@ export function Downloads() {
           ))}
         </ul>
 
-        {/* the phone row: one real release page, one honest "coming soon" */}
+        {/* the phone row: one real download, one honest "coming soon" */}
         <p className="l-dl-lead">{t("mobileLead")}</p>
         <ul className="l-dl-row l-dl-mobile">
           <li className="l-dl-col">
