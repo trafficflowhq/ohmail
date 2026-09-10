@@ -7,6 +7,7 @@ import { rulesRoutes } from "./rules.js";
 import { messageRoutes } from "./messages.js";
 import { threadRoutes } from "./threads.js";
 import { screenerRoutes } from "./screener.js";
+import { trashRoutes } from "./trash.js";
 import { screeningRoutes } from "./screening.js";
 // Mail 0083. See the mount below: THE STANDALONE DOOR HAD NO SCREENING WINDOW AT ALL.
 import { consentRoutes } from "./consent.js";
@@ -172,6 +173,7 @@ export const localRoutes: Route[] = [
   ...messageRoutes,
   ...threadRoutes,
   ...screenerRoutes,
+  ...trashRoutes,
   ...screeningRoutes,
   /* -- THE SCREENING WINDOW REACHES THE FREE DESKTOP (mail 0083) --------------------------
    *

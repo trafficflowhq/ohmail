@@ -10,6 +10,7 @@ import { rulesRoutes } from "./rules.js";
 import { messageRoutes } from "./messages.js";
 import { threadRoutes } from "./threads.js";
 import { screenerRoutes } from "./screener.js";
+import { trashRoutes } from "./trash.js";
 import { approvalRoutes } from "./approvals.js";
 import { triageRoutes } from "./triage.js";
 import { searchRoutes } from "./search.js";
@@ -243,6 +244,7 @@ export const apiRoutes: Route[] = [
   ...messageRoutes,
   ...threadRoutes,
   ...screenerRoutes,
+  ...trashRoutes,
   ...approvalRoutes,
   ...triageRoutes,
   ...searchRoutes,
