@@ -140,6 +140,13 @@ export const MAILBOX_SYNC_BLOCK_REASONS = [
   "awaiting_credentials",
   /** Dropped by this process's `maxMailboxes` cap: nothing in this deployment serves it. */
   "at_capacity",
+  /**
+   * A ceiling WE set ended the cycle (`ImapBoundExceeded` — a listing past its cap, a read past
+   * its clock, a body past its overrun factor). The mailbox authenticated and answered; it sent
+   * more than one pass takes. `status` stays `connected` and no error is recorded, because a cap
+   * hit is not a broken mailbox — the distinction `markMailboxFailed` could not make.
+   */
+  "read_limited",
 ] as const;
 
 export type MailboxSyncBlockReason = (typeof MAILBOX_SYNC_BLOCK_REASONS)[number];

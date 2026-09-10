@@ -190,6 +190,8 @@ async function apiHealthFor(req: Request, deps: ApiDeps): Promise<ApiHealth> {
   // the column list is: a hosted surface must measure against both journals — cloud 0011 is
   // invisible to every probe that reads only names, cloud 0013's index name cannot live in
   // `health.ts`, and cloud 0014 is a replaced function BODY that only the fifth class can see.
+  // The definition list is BOTH halves (`CHECK_DEFINITION_MARKERS`): mail 0100 widens a mail
+  // CHECK, and the console publishes the same `ApiHealth` `/health` does.
   const probe = await probeDatabase(
     deps.db, CLOUD_TIER_MARKERS, CHECK_DEFINITION_MARKERS, CLOUD_INDEX_MARKERS,
     CLOUD_FUNCTION_MARKERS,

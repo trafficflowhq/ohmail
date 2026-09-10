@@ -1591,6 +1591,45 @@ export async function markMailboxSyncBlocked(
 }
 
 /**
+ * A CEILING WE SET ENDED THE CYCLE — the soft block, with its backoff, and nothing else.
+ *
+ * `markMailboxFailed` was wrong here rather than merely imprecise: an `ImapBoundExceeded` means
+ * the mailbox authenticated, answered, and sent more than one pass takes, and `status='error'`
+ * tells its owner their mailbox failed. So this writes the mail-0029 pair — the honest "our own
+ * infrastructure is not serving this mailbox right now" — and leaves `status`, `error_code`,
+ * `error_detail`, `failed_at` and `retry_count` exactly as they were.
+ *
+ * ── WHY IT IS NOT `markMailboxSyncBlocked` WITH A THIRD COLUMN ────────────────────────────
+ *
+ * That function's docblock says "NOTHING ELSE … The absence is the design", and it is right: its
+ * three callers are roster-pass arms about mailboxes nobody is serving, and none of them has a
+ * next-attempt instant to record. This caller does — the bound breach happened inside a cycle and
+ * the quarantine ladder computed when to come back — and mail 0039 exists so that instant survives
+ * a restart. Widening the other function would put a column two thirds of its callers cannot fill
+ * behind a comment promising they do not.
+ *
+ * `retry_count` is deliberately NOT incremented. It counts FAILURES and `markMailboxConnected`
+ * resets it; a cap hit is not one, and inflating it would lengthen the ladder for a mailbox whose
+ * only problem is its size.
+ */
+export async function markMailboxReadLimited(
+  db: WorkerDb, mailboxId: string,
+  opts: { fence?: LeaderFence; now?: Date; retryAfter?: Date | null } = {},
+): Promise<boolean> {
+  const now = opts.now ?? new Date();
+  return applyFenced(db, mailboxId, opts.fence, (w) => w.update(mailboxes).set({
+    syncBlockedReason: "read_limited",
+    // `coalesce`, exactly as `markMailboxSyncBlocked` does it and for the same reason: the caller
+    // repeats this while the block lasts, and the column holds the START of the block. The
+    // `.toISOString()` cast is the idiom that module records as having bitten twice.
+    syncBlockedSince: sql`coalesce(${mailboxes.syncBlockedSince}, ${now.toISOString()}::timestamptz)`,
+    // `undefined` leaves the column alone; only an explicit `null` clears — `markMailboxFailed`'s
+    // rule, so a caller cannot release a mailbox by omission.
+    ...(opts.retryAfter !== undefined ? { retryAfter: opts.retryAfter } : {}),
+  }).where(lifecycleWhere(mailboxId, opts.fence)).returning({ id: mailboxes.id }));
+}
+
+/**
  * The mailbox is being served again (or is no longer ours to serve): drop the note.
  *
  * Called by `reconcileRoster` only when the row it just read ACTUALLY CARRIES a reason, so the

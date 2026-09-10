@@ -113,6 +113,7 @@ export const SYNC_BLOCK_REASONS = [
   "lease_unreadable",
   "awaiting_credentials",
   "at_capacity",
+  "read_limited",
 ] as const;
 export type SyncBlockReason = (typeof SYNC_BLOCK_REASONS)[number];
 

@@ -38,6 +38,7 @@ import {
 import { makeDrizzleRepo, mailboxProviderAuthservIds } from "@trafficflow/core/adapters/drizzle-repo";
 import {
   ImapAdapter, ImapConnectionClosedError, WORKER_NET_TIMEOUTS, learnSmtpMaxSize,
+  isImapBoundExceeded,
   type MailboxAdapter,
 } from "@trafficflow/core/adapters/imap";
 import {
@@ -98,7 +99,8 @@ import { recordSmtpMaxSize, smtpSizeDial } from "./smtp-size.js";
 import type { Tx, OrganizerRole, OrganizerState } from "@trafficflow/db";
 import {
   loadEnabledMailboxes, loadMailboxCreds, loadMailboxById, bootstrapEnvCreds,
-  markMailboxFailed, markMailboxConnected, markMailboxStoodDown, clearOrganizerStandDown,
+  markMailboxFailed, markMailboxReadLimited, markMailboxConnected, markMailboxStoodDown,
+  clearOrganizerStandDown,
   markMailboxReleased, refreshOrganizerHolder,
   markMailboxSyncBlocked, clearMailboxSyncBlock,
   classifyMailboxError, mailboxErrorDetail,
@@ -961,6 +963,16 @@ export async function startWorkerWithLock(
      * `expected`, so `degraded` stays false while nothing in this deployment serves them.
      */
     const capDropped = new Map<string, SyncBlock>();
+    /**
+     * Mailboxes whose last cycle ended on a ceiling WE set (`ImapBoundExceeded`) — the FOURTH
+     * arm, and the only one whose cause is the mailbox's SIZE rather than our roster.
+     *
+     * At closure scope for `capDropped`'s reason: the entry has to outlive the cycle that wrote
+     * it, or the grace could never elapse. It is dropped by the cycle that next completes, which
+     * is what makes `reconcileSyncBlocks` clear the row on the next healthy pass — the same
+     * mechanism the other three arms use, and the reason this needed no clearing code of its own.
+     */
+    const readLimited = new Map<string, SyncBlock>();
     /**
      * Record a block, PRESERVING `since` across passes.
      *
@@ -2226,14 +2238,31 @@ export async function startWorkerWithLock(
       // column that does not exist yet — a mailbox must never be un-quarantined by a
       // bookkeeping failure.
       const code = classifyMailboxError(reason, phase);
+      /**
+       * A CEILING WE SET IS NOT A BROKEN MAILBOX — the one arm that does not write `error`.
+       *
+       * `ImapBoundExceeded` is raised by this codebase, never by the server: the mailbox
+       * authenticated, answered, and sent more than one pass takes. `classifyMailboxError` has no
+       * way to see that (it reads response codes, errnos and a flag, and a bound breach carries
+       * none of them), so it answers `sync` and the row used to say the mailbox had failed.
+       *
+       * The backoff is UNCHANGED and deliberately so — the ladder above still runs, the in-memory
+       * entry is still written, and `retry_after` still persists it. Only the row's verdict moves.
+       * Keyed on the CLASS and not on a bound code, so a ceiling added later is covered without
+       * being enumerated here.
+       */
+      const bounded = isImapBoundExceeded(reason);
+      if (bounded) noteBlock(readLimited, mailboxId, "read_limited");
       try {
         // Mail migration 0039: the same statement now also records WHEN. That is what makes this backoff
         // survive a restart and — the point of the column — releasable by an operator, because
         // until now the only exits from quarantine were the ladder expiring and a redeploy.
-        const written = await markMailboxFailed(
-          db, mailboxId, { code, detail: mailboxErrorDetail(reason) },
-          { fence, retryAfter: new Date(retryAt) },
-        );
+        const written = bounded
+          ? await markMailboxReadLimited(db, mailboxId, { fence, retryAfter: new Date(retryAt) })
+          : await markMailboxFailed(
+            db, mailboxId, { code, detail: mailboxErrorDetail(reason) },
+            { fence, retryAfter: new Date(retryAt) },
+          );
         // Only a write that LANDED lets the column govern this mailbox. Re-read from the map
         // rather than closed over: the entry could have been dropped by a roster pass while this
         // write was in flight, and resurrecting it here would re-quarantine a mailbox that has
@@ -2258,8 +2287,13 @@ export async function startWorkerWithLock(
           reason: "the mailbox is quarantined in memory but its row could not record why",
         });
       }
+      // `errorCode` is the code that was WRITTEN, so a bounded refusal reports none: the row
+      // carries `sync_blocked_reason` instead, and naming `sync` here would send a reader looking
+      // for an `error_code` the row does not hold. The event and its level are unchanged — the
+      // backoff is real either way, and four suites read this line's `attempts`/`retryInMs`.
       log.error("mailbox_quarantined", {
-        mailboxId, accountId, attempts, retryInMs: wait, errorCode: code, err: reason,
+        mailboxId, accountId, attempts, retryInMs: wait, err: reason,
+        ...(bounded ? { syncBlockedReason: "read_limited" } : { errorCode: code }),
       });
     }
 
@@ -3479,7 +3513,8 @@ export async function startWorkerWithLock(
         if (stopped) return;
         const block = leaseBlocked.get(mb.mailboxId)
           ?? awaitingCreds.get(mb.mailboxId)
-          ?? capDropped.get(mb.mailboxId);
+          ?? capDropped.get(mb.mailboxId)
+          ?? readLimited.get(mb.mailboxId);
         try {
           // `>=`, so a grace of 0 writes on the first observation — which is what the roster guards
           // configure. The narrowing is written inline rather than hoisted into a `due` boolean
@@ -4277,6 +4312,11 @@ export async function startWorkerWithLock(
           // mailbox" about a mailbox that just completed a cycle — a row's claim is a contract,
           // broken here in the other direction.
           leaseBlocked.delete(rt.mailboxId);
+          // …and the read-ceiling bucket, on exactly the same evidence: a completed cycle read
+          // this mailbox inside every bound, so the soft block stops being true and the clear
+          // above falls out for it too. This is the whole of "it clears on the next healthy
+          // cycle" — there is no clearing statement anywhere else.
+          readLimited.delete(rt.mailboxId);
           /** Whether this is the FIRST cycle this runtime has completed — see the stamp below. */
           const firstSuccess = rt.lastSuccessAt === null;
           rt.lastSuccessAt = new Date();

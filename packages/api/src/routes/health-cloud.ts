@@ -244,15 +244,20 @@ export const SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
 ] as const;
 
 /* Both tiers' definition probes, in one list, because `probeDatabase`'s parameter REPLACES its
- * default: a hosted caller passing the cloud list alone would silently stop probing mail 0101. */
+ * default: a hosted caller passing the cloud list alone would silently stop probing the mail
+ * definitions — 0101's away-pile CHECK and 0102's `sync_blocked_reason` one. */
 export const CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker> = [
   ...MAIL_CHECK_DEFINITION_MARKERS,
   ...CLOUD_CHECK_DEFINITION_MARKERS,
 ];
 
 /**
- * Columns + indexes (both halves) + checks + check DEFINITIONS + function BODIES. What a hosted
- * `/health` measures against.
+ * Columns + indexes (both halves) + checks + check DEFINITIONS (both halves) + function BODIES.
+ * What a hosted `/health` measures against.
+ *
+ * The check-DEFINITION term is BOTH halves since mail 0100 — a hosted database ran the mail
+ * journal too, so a hosted probe that measured only the Cloud definitions would certify it
+ * through a mail tag whose one distinguishing object it never looked at.
  */
 export const EXPECTED_MARKERS =
   SCHEMA_MARKERS.length + SCHEMA_INDEX_MARKERS.length + CLOUD_INDEX_MARKERS.length +

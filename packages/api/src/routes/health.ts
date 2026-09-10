@@ -1133,10 +1133,11 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // and is probed by nothing here for the same reason nothing else pre-split is.
   ["mailboxes", "signature_html"],
   // mail 0099_folder_state_trashed_from — ONE column, because the migration adds one.
-  // **It is the newest entry, so it is also the tag below.** The 0098 paragraph above carried that
-  // sentence until this migration landed behind it; `MAIL_SCHEMA_MARKER_JOURNAL_TAG` is
-  // single-valued, so the sentence moves with the tag rather than standing in two places — the
-  // docblock's own rule, and leaving both would have shipped a false claim with every gate green.
+  // It was the newest entry until 0102 landed behind it, and 0102 adds no column at all: it
+  // widens a CHECK, so its prober is `MAIL_CHECK_DEFINITION_MARKERS` and the tag's "newest"
+  // sentence now sits there. `MAIL_SCHEMA_MARKER_JOURNAL_TAG` is single-valued, so the sentence
+  // moves with the tag rather than standing in two places — leaving both would have shipped a
+  // false claim with every gate green.
   //
   // `folder_state.trashed_from` is the folder a delete moved a message OUT of — the only durable
   // record of where a deleted message came from, and therefore the only thing a restore has to
@@ -1489,11 +1490,21 @@ export type FunctionDefinitionMarker = readonly [proname: string, bodySubstring:
  * `schemaOk: true` while the constraint refuses every scope the settings pane now offers — a save
  * the person is told succeeded, rejected by the database from inside the write's transaction.
  *
- * The needle is the VOCABULARY 0101 adds and 0096 cannot contain, for the reason
- * {@link CheckDefinitionMarker} gives about `pg_get_constraintdef`'s normalized form.
+ * `mailboxes_sync_blocked_reason_closed` is the SECOND, from mail 0102, and it is the same shape
+ * one migration later: the closed set on `mailboxes.sync_blocked_reason` gains a fourth member,
+ * so the constraint is dropped and re-added under its existing name. That name is already in
+ * {@link SCHEMA_CHECK_MARKERS} too, and satisfied by the three-member definition, so a
+ * name-presence probe cannot tell an 0101 database from an 0102 one. What a missing entry costs
+ * is the usual silent direction: against a three-member database the worker's soft-block write is
+ * refused by the CHECK at the one moment it exists to record, and the mailbox keeps reading as an
+ * ordinary connected one.
+ *
+ * The needle in both is the VOCABULARY the migration adds and its predecessor cannot contain, for
+ * the reason {@link CheckDefinitionMarker} gives about `pg_get_constraintdef`'s normalized form.
  */
 export const MAIL_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker> = [
   ["away_responders_piles_closed", "ohmail/Screener"],
+  ["mailboxes_sync_blocked_reason_closed", "read_limited"],
 ];
 
 export const MAIL_EXPECTED_MARKERS =
@@ -1957,9 +1968,17 @@ export const MAIL_EXPECTED_MARKERS =
  * additive nullable field.
  *
  * `0099_folder_state_trashed_from` is probed as `folder_state.trashed_from` — where a delete moved
- * a message out of, one additive nullable field, and the operand of both Trash doors. **It is the
- * newest PROBEABLE entry, so it is also the tag below** — and since mail 0100 landed it is no
- * longer the newest entry, which is a different thing.
+ * a message out of, one additive nullable field, and the operand of both Trash doors. It was
+ * the newest PROBEABLE entry, and the tag below, until this migration landed behind it; mail
+ * 0100 and 0101 landed between the two and moved neither.
+ *
+ * `0102_sync_blocked_reason_read_limited` is probed by CONSTRAINT DEFINITION and not by a column,
+ * because it adds none: it widens `mailboxes_sync_blocked_reason_closed` to a fourth member. That
+ * constraint's NAME is already probed by {@link SCHEMA_CHECK_MARKERS} and is satisfied by the old
+ * three-member definition, so the entry that distinguishes the two databases is the one in
+ * {@link MAIL_CHECK_DEFINITION_MARKERS}. **It is the newest entry, so it is also the tag below** —
+ * and it is the first mail tag whose prober is not a `(table, column)` pair, which is why the
+ * paragraph above no longer carries that sentence.
  *
  * `0100_reader_window_peer_restamp` gets NO marker and does NOT move the tag. It changes no
  * schema: one DML statement over `folder_state.last_set_by`, a column that has existed for many
@@ -1986,7 +2005,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0101_away_piles_wider";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0102_sync_blocked_reason_read_limited";
 
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
@@ -2291,9 +2310,11 @@ export const healthRoutes: Route[] = [
       const probe = await probeDatabase(
         deps.db,
         fullCensus ? fullCensus.markers : MAIL_SCHEMA_MARKERS,
-        // A mail-tier host passes none of any of them: every entry so far names a Cloud table or
-        // a Cloud function, and a local engine's database is complete without them.
-        fullCensus ? fullCensus.checkDefinitions : [],
+        // The check-DEFINITION list is the one class a mail-tier host DOES carry: mail 0102
+        // widens a mail CHECK, so `MAIL_CHECK_DEFINITION_MARKERS` names a mail table and a local
+        // engine's database is incomplete without it. The index and function lists stay empty —
+        // every entry there names a Cloud table or a Cloud function.
+        fullCensus ? fullCensus.checkDefinitions : MAIL_CHECK_DEFINITION_MARKERS,
         fullCensus ? fullCensus.indexMarkers : [],
         fullCensus ? fullCensus.functionDefinitions : [],
       );

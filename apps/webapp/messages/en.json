@@ -2600,6 +2600,7 @@
     "blocked_lease_unreadable": "Not syncing — ohmail cannot read its own folder on that server. It keeps trying.",
     "blocked_awaiting_credentials": "Not syncing — no mailbox password is stored for this mailbox.",
     "blocked_at_capacity": "Not syncing — ohmail did not pick this mailbox up. This one is on us.",
+    "blocked_read_limited": "ohmail read what it could; this mailbox's server sent more than one pass can take. It will try again.",
     "blocked_organized_elsewhere_local": "Not organized here — ohmail on your own machine has claimed this mailbox. Your mail still arrives and is readable and searchable here; nothing is filed from here. Settings → Mailboxes has the control that moves the organizing to this install, and the other one then reads the mailbox.",
     "blocked_organized_elsewhere_cloud": "Not organized here — another ohmail Cloud install has claimed this mailbox. Your mail still arrives and is readable and searchable here; nothing is filed from here. Settings → Mailboxes has the control that moves the organizing to this install, and the other one then reads the mailbox.",
     "blocked_organized_elsewhere_unknown": "Not organized here — another ohmail organizer has claimed this mailbox. Your mail still arrives and is readable and searchable here; nothing is filed from here. Settings → Mailboxes has the control that moves the organizing to this install, and the other one then reads the mailbox.",
