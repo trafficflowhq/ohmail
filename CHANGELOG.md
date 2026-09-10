@@ -13,21 +13,6 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
-### Still to come
-
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
-
-## [0.16.2] — 2026-09-11
-
-### A phone that organizes its own mailbox keeps it
-
-A phone can be the install that organizes a mailbox. Every install writes a record into the mailbox
-saying it holds it, and a phone could write the word for itself that no install could read back —
-so a phone read its own record as another organizer's, handed the mailbox back, and did it again
-every pass. It keeps it now. A computer or ohmail Cloud still takes a mailbox over from a phone when
-you ask, and the row that says so names a phone instead of "another organizer".
-
 ### Your piles travel again between your computers
 
 A computer that reads a mailbox another of your computers organizes gets its settings — your rules,
@@ -41,38 +26,6 @@ again, however long the mailbox has been in use.
 The pass that clears automated mail out of the Ohbox could file a message you had just moved back
 into it, if your move and the pass landed at the same moment. It now checks a second time, right
 before it files anything, whether you have moved the message — so your placement wins.
-### The Screener asks only about senders still worth a decision
-
-The Screener holds mail from people you have never agreed to hear from. How far back it asks about
-is measured from a fixed point — the window in Settings. The count in the sidebar respected that
-window; the list itself did not, so it read the folder instead of the question, and on a mailbox
-with years of history those are different by an order of magnitude. The queue offered senders whose
-newest mail was years old, beside a much smaller count.
-
-The list now asks the same question the count does, through the same code. Nothing moves on your
-mail server and nothing is deleted: the mail stays in the folder it is in, and those senders are in
-History, where old mail from people you never answered has always been. Set the window to all time
-and every one of them is back in the list.
-
-Deciding still works for a sender the queue no longer shows — reach them from History or from
-search, press a pile, and all of their held mail follows.
-
-### Connecting a mailbox sets the point the Screener counts from
-
-Connecting a mailbox without choosing a history window left the Screener with no cutoff, so every
-message from a sender you had not decided about waited for a decision whatever its date. A mailbox
-with years of mail arrived with years of it waiting. Agreeing to let ohmail organize a mailbox is
-now itself that point, so only mail that arrives afterwards is a question. Choosing a window still
-works the same way, and coming back to setup cannot move the point.
-
-Mail already waiting in the Screener is not moved by this. If yours holds old mail from before
-this release, it stays where it is until you decide on it.
-
-### A waiting sender says why no suggestion is coming
-
-When ohmail cannot ask for a suggestion — the AI budget is spent, or AI is switched off for the
-account — the senders it did not get to said "No suggestion yet", which reads as a promise. They
-say the reason instead.
 
 ### The app reports how much memory it is holding
 
@@ -80,10 +33,10 @@ The desktop app's engine now writes its own memory use to its log every five min
 database it keeps your mail in is a separate number on that line rather than part of one total. If
 the app ever feels heavy after a long day, the log says which half grew.
 
-Two things changed behind that. One copy of the mail window's view of the mailbox was being left
-alive after the view had moved on, and on a large mailbox it was not small; it is released now.
-And the app's store is a fixed cost measured at about 200 MB whatever the size of your mailbox, so
-it is now written down as one.
+Two things changed behind that. The mail window no longer keeps a copy of its view of the mailbox
+alive after the view has moved on — one such copy was left, and on a large mailbox it was not
+small. And the app's store is a fixed cost measured at about 200 MB whatever the size of your
+mailbox, so it is now written down as one.
 
 ### A long mail-server command is not cut off by the connection check
 
@@ -93,7 +46,7 @@ pressing Sync now during a big fetch leaves the fetch running. And a link that d
 check has already passed is picked up by the next check, instead of waiting out the connection's
 own timeout.
 
-### A mailbox that changes hands mid-pass stops the old computer within seconds
+### The organizer lease is checked at every write
 
 Exactly one install organizes a mailbox at a time, and which one is recorded in the mailbox itself.
 That record was read at the start of a sync pass and then trusted for the whole of it, so moving a
@@ -149,7 +102,7 @@ limit already said: your other installs are never shown as stopped, and no organ
 made from half a folder. A request that runs out of time says so and closes its connection at
 once, instead of queueing a polite goodbye behind whatever is stuck.
 
-### A sender cannot write their way into your threads, or to the top of your suggestions
+### A sender cannot write their way into your threads or your address book
 
 The headers on an incoming message are written by whoever sent it, and three places treated them as
 facts. A message reusing the Message-ID of one you already have could take its place in a
@@ -180,14 +133,6 @@ you do.
 - Away replies go only to the piles you chose, and never to a site's own notification mailbox —
   `wordpress@`, `root@` and the rest of a server's mail. Addresses that merely start with one of
   those names are people, and still get a reply.
-- A bounce for an away reply no longer lands in your Ohbox. It files to Receipts, and the responder
-  stops writing to that address. Bounces for mail you sent yourself still reach you.
-- An away setting you saved on another computer is reported as applied only when what came back is
-  what you asked for. A change made somewhere else is named as that instead, with the values the
-  setting now holds.
-- Which piles your away replies answer travels between your computers, with the rest of your away
-  settings. A computer taking the mailbox over fell back to the Ohbox and lost your choice; one
-  running an older ohmail leaves your choice alone instead of resetting it.
 
 ### Sync now says what it did
 
@@ -317,7 +262,7 @@ It now forwards only the routes the server's own route table marks as forwardabl
 to everything else. Signing in through a browser still tells you, on your own server, to use your
 password and authenticator code instead.
 
-### A release writes every self-host image's version tag before any latest tag moves
+### A release cannot leave a self-hosted install with a new API and an old organizer
 
 A release wrote each self-host image's version tag and its `latest` tag together, one image at a
 time, so a `docker compose pull` during a release could fetch a new server beside an old organizer.
@@ -349,6 +294,11 @@ The compose project name was fixed, so a second stack in a second directory was 
 and its first start took over the first install's containers and volumes. `OHMAIL_PROJECT` now
 names each stack, defaulting to the name existing installs already have. Changing it on a running
 install orphans that install's volumes, so choose it before first boot.
+
+### Still to come
+
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
 
 ## [0.16.1] — 2026-09-10
 
@@ -5815,8 +5765,7 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.16.2...HEAD
-[0.16.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.16.2
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.16.1...HEAD
 [0.16.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.16.1
 [0.16.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.16.0
 [0.15.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.15.0
