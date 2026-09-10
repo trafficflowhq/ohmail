@@ -1382,6 +1382,15 @@ export async function markMailboxStoodDown(
     //  · `disabled_reason` gains NO writer here. The column stays for the rows that carry it and
     //    for the clear; nothing new is written to it, ever.
     organizerRole: "reader",
+    /* ── THE ASK GOES WITH THE ROLE IT WAS MADE UNDER ──────────────────────────────────────
+     *
+     * `release_requested_at` outlived every role change but the release's own, so a takeover left
+     * the loser's standing "stop organizing" on a row that now names the WINNER — one row carrying
+     * one install's request while another organizes the mailbox. The read side already refuses to
+     * treat the stamp as an authority on who organizes, so nothing false renders today; the write
+     * side still let the two disagree, which a later reader can only be right about by accident.
+     * Every writer that makes the statement untrue clears it in the same statement. */
+    releaseRequestedAt: null,
     organizedByKind: kind,
     // Mail 0092 — WHICH install, beside WHAT kind. See `StandDownHolder.installId`.
     organizedByInstallId: opts.by?.installId ?? null,
@@ -1643,6 +1652,9 @@ export async function clearOrganizerStandDown(
       disabledReason: null,
       // The authorization is spent by this one becoming. See the header.
       takeoverAuthorizedAt: null,
+      /* And the OTHER one-shot: a promotion must not inherit a stop somebody asked of the role
+         this row used to hold. Same rule as the demotion's — see `markMailboxStoodDown`. */
+      releaseRequestedAt: null,
       // Mail 0088 — a mailbox organized here again is not a released one. The marker describes the
       // CURRENT state, so the promotion is what ends it; left standing it would make the next
       // claim-back report "you stopped organizing this" about a mailbox this install is organizing.

@@ -979,6 +979,65 @@ export function parseClaim(raw: string, ref?: unknown): ClaimRecord | null {
 
 // ── LAYER 2: THE DECISION ───────────────────────────────────────────────────────────────────
 
+/**
+ * THIS INSTALL'S OWN CLOCK SKEW, measured from a record IT wrote — or `null` when it wrote none.
+ *
+ * Every claim carries two stamps for one instant: `X-Ohmail-Heartbeat`, written by the install's
+ * clock, and IMAP INTERNALDATE, written by the server's when it took the append. Their difference
+ * IS that install's skew, and it depends on neither the reader's clock nor on how old the folder
+ * is. That independence is the whole reason this is the reading and a comparison against `now` is
+ * not: `now − INTERNALDATE` cannot tell "my clock is ahead" from "nothing has been appended here
+ * for a long time", and refusing to claim on the second is the seventy-three-year lockout from the
+ * writer's side. Measured while building this: every fixture with a fixed clock read as days of
+ * skew under the `now` form.
+ *
+ * The NEWEST of our own records by server time, because that is the most recent instant this
+ * install's clock is known to have been at.
+ */
+export function ownClockSkewMs(
+  records: readonly RawClaimMessage[], installId: string,
+): number | null {
+  let newestServer = -Infinity;
+  let skewMs: number | null = null;
+  for (const r of records) {
+    const at = r.internalDate instanceof Date ? r.internalDate.getTime() : NaN;
+    if (!Number.isFinite(at) || at <= newestServer) continue;
+    const c = parseClaim(r.raw, r.ref);
+    if (c === null || isMalformed(c) || c.installId !== installId) continue;
+    newestServer = at;
+    skewMs = c.heartbeat.getTime() - at;
+  }
+  return skewMs;
+}
+
+/**
+ * IS THIS INSTALL'S CLOCK FIT TO WRITE A CLAIM? — the WRITER-side check, and it has to be here.
+ *
+ * No reader-side rule can fix a wrong writer clock: a reader that believes an old-looking
+ * heartbeat is the seventy-three-year lockout, and one that disbelieves it lets a live organizer be
+ * displaced. They are one decision read from two sides. What breaks the tie is the SERVER's clock,
+ * which both machines can see.
+ *
+ * TWO BOUNDS, BECAUSE THE DIRECTIONS ARE NOT SYMMETRIC. A clock AHEAD is tolerated to
+ * {@link MAX_FUTURE_SKEW_MS} — past it every other reader excludes our heartbeat from the renewal
+ * evidence, so the folder reads as quiet and the mailbox is offered to somebody else while we go on
+ * organizing it. A clock BEHIND is tolerated only to `staleAfterMs`: at a one-minute window, 61
+ * seconds of lag is enough for a reader to find nothing renewing and take the mailbox with our live
+ * record in `displace`. So the effective tolerance is the SMALLER of the two, and the refusal names
+ * which bound fired.
+ *
+ * `null` skew — this install has written no record the server stamped — refuses nothing.
+ */
+export function clockSkewRefusal(input: {
+  skewMs: number | null; staleAfterMs: number;
+}): { skewMs: number; bound: "ahead" | "behind"; boundMs: number } | null {
+  const { skewMs, staleAfterMs } = input;
+  if (skewMs === null) return null;
+  if (skewMs > MAX_FUTURE_SKEW_MS) return { skewMs, bound: "ahead", boundMs: MAX_FUTURE_SKEW_MS };
+  if (-skewMs >= staleAfterMs) return { skewMs, bound: "behind", boundMs: staleAfterMs };
+  return null;
+}
+
 export interface DecideLeaseInput {
   self: LeaseSelf;
   claims: readonly ClaimRecord[];
@@ -2141,6 +2200,11 @@ export type LeaseOp =
    * than a free string.
    */
   | "no_lease_peek_io"
+  /**
+   * THIS INSTALL'S CLOCK DISAGREES WITH THE MAIL SERVER'S past what the lease can tolerate. Not a
+   * provider fault and not a folder fault: the machine is wrong, and no claim was written.
+   */
+  | "clock_skew"
   /* The folder is over the ceiling AND the claim set could not be read, or itself exceeds it.
    * Same CLASS as every other lease IO fault on purpose: the hosts' exemptions and the LOCAL/Cloud
    * exclusions are all by class, so a new class would fall into `maxSyncFailures` and quarantine a
@@ -2169,6 +2233,13 @@ export interface RawClaimMessage {
   ref: unknown;
   /** The headers (a full source is fine too — only the header block is read). */
   raw: string;
+  /**
+   * THE SERVER'S OWN CLOCK — IMAP INTERNALDATE, the instant this server took delivery of the
+   * record. It is the one time in this folder no install's clock can be wrong about, which is why
+   * the writer-side clock check reads it and never the `X-Ohmail-Heartbeat` header beside it.
+   * Absent where the IO layer does not fetch it, and absent is "unknown", never "no skew".
+   */
+  internalDate?: Date | null;
 }
 
 /**
@@ -2311,9 +2382,12 @@ export interface LeaseImapClient extends MetaFolderClient {
   getMailboxLock(path: string): Promise<{ release(): void }>;
   fetch(
     range: string,
-    query: { uid?: boolean; headers?: boolean | string[] },
+    /* `internalDate` is the SERVER's clock — the writer-side skew check's only source. Optional on
+       the query and on the reply: a client that does not report it leaves the skew unknown, which
+       refuses nothing. See `clockSkewRefusal`. */
+    query: { uid?: boolean; headers?: boolean | string[]; internalDate?: boolean },
     options?: { uid?: boolean },
-  ): AsyncIterableIterator<{ uid: number; seq?: number; headers?: Buffer }>;
+  ): AsyncIterableIterator<{ uid: number; seq?: number; headers?: Buffer; internalDate?: Date }>;
   append(path: string, content: string | Buffer, flags?: string[]): Promise<unknown>;
   messageDelete(range: number[], options?: { uid?: boolean }): Promise<unknown>;
 }
@@ -2703,9 +2777,15 @@ export async function readMetaFolderWindow(
   const range = beforeUid !== undefined ? `${pageLo}:${pageHi}` : `${start}:*`;
   const byUid = beforeUid !== undefined;
   if (beforeUid !== undefined && beforeUid <= 1) return { records, evicted };
-  for await (const m of client.fetch(range, { uid: true, headers: true }, { uid: byUid })) {
+  // `internalDate` beside the headers: one extra field on a FETCH already being issued, and the
+  // only reading of the server's clock this folder can give. See `RawClaimMessage.internalDate`.
+  // ONE LINE, because the fetch census matches `client.fetch(range,` as its structural pin.
+  for await (const m of client.fetch(range, { uid: true, headers: true, internalDate: true }, { uid: byUid })) {
     if (!m.headers) continue;
-    records.push({ ref: m.uid, raw: m.headers.toString("utf8") });
+    records.push({
+      ref: m.uid, raw: m.headers.toString("utf8"),
+      internalDate: m.internalDate instanceof Date ? m.internalDate : null,
+    });
     // ── PAST THE CEILING, DROP FROM THE FRONT — NEVER STOP AT IT ─────────────────────────────
     //
     // This used to `break`, and on the `1:*` path — an `exists` the client will not report — that
@@ -3833,6 +3913,40 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
     throw new LeaseUnavailableError(
       `the organizer lease in ${META_FOLDER} could not be read; this mailbox cannot be organized safely`,
       { op: "list_claims", cause: err },
+    );
+  }
+
+  /* ── THE WRITER'S OWN CLOCK, BEFORE ANY APPEND ────────────────────────────────────────────
+   *
+   * Read from the election's records — this install's OWN claim carries both stamps for one
+   * instant — so it costs no round trip and is judged before this gate can write anything. A
+   * refusal is a `LeaseUnavailableError`, deliberately NOT a stand-down verdict:
+   * both hosts exempt that class, so the mailbox does not sync and is not quarantined, our claim
+   * ages out un-renewed and whoever else wants the mailbox can have it — while a stand-down would
+   * void a one-shot press this pass could never have honoured.
+   *
+   * ONE-CYCLE RESIDUAL, stated rather than discovered: an install that has never written a claim
+   * here has no pair to measure, so its FIRST gate run is unchecked. Its own append supplies the
+   * pair, so the next cycle refuses — and the sequence this closes takes more than one cycle
+   * (claim, be displaced, keep organizing) in every direction.
+   */
+  const staleWindowMs = input.staleAfterMs ?? DEFAULT_STALE_AFTER_MS;
+  if (staleWindowMs > MAX_FUTURE_SKEW_MS) {
+    // `LEASE-WINDOW-ABOVE-SKEW-CUTOFF`'s honest interim: the believability cutoff is fixed, so a
+    // longer configured window is silently the smaller of the two. Said out loud, never widened.
+    log("lease_window_above_skew_cutoff", { staleAfterMs: staleWindowMs, effectiveMs: MAX_FUTURE_SKEW_MS });
+  }
+  const skew = clockSkewRefusal({
+    skewMs: ownClockSkewMs(messages, self.installId), staleAfterMs: staleWindowMs,
+  });
+  if (skew !== null) {
+    log("lease_clock_skew_refused", { skewMs: skew.skewMs, bound: skew.bound, boundMs: skew.boundMs });
+    throw new LeaseUnavailableError(
+      `this computer's clock is ${Math.round(Math.abs(skew.skewMs) / 1000)}s ` +
+      `${skew.bound === "ahead" ? "ahead of" : "behind"} the mail server's, which is more than the ` +
+      `${Math.round(skew.boundMs / 1000)}s the organizer lease can tolerate; no claim is written ` +
+      `until the clock is corrected`,
+      { op: "clock_skew" },
     );
   }
 
@@ -5306,6 +5420,8 @@ export class RequestUnavailableError extends Error {
 export interface RawMetaMessage {
   ref: unknown;
   raw: string;
+  /** See {@link RawClaimMessage.internalDate} — the server's own clock, where it reports one. */
+  internalDate?: Date | null;
 }
 
 /**
