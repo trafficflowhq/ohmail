@@ -253,11 +253,12 @@ describe("the standalone door offers the host the probe named", () => {
     root = createRoot(mount);
     await act(async () => {
       root!.render(
-        h(
-          NextIntlClientProvider,
-          { locale: "en", messages: en as never, timeZone: "Europe/Zurich" },
-          h(DoorChooser, { start: "local", onEntered: () => {} }),
-        ),
+        h(NextIntlClientProvider, {
+          locale: "en",
+          messages: en as never,
+          timeZone: "Europe/Zurich",
+          children: h(DoorChooser, { start: "local", onEntered: () => {} }),
+        }),
       );
     });
 
@@ -305,11 +306,12 @@ describe("the standalone door offers the host the probe named", () => {
     root = createRoot(mount);
     await act(async () => {
       root!.render(
-        h(
-          NextIntlClientProvider,
-          { locale: "en", messages: en as never, timeZone: "Europe/Zurich" },
-          h(DoorChooser, { start: "local", onEntered: () => {} }),
-        ),
+        h(NextIntlClientProvider, {
+          locale: "en",
+          messages: en as never,
+          timeZone: "Europe/Zurich",
+          children: h(DoorChooser, { start: "local", onEntered: () => {} }),
+        }),
       );
     });
 

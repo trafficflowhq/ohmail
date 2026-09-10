@@ -243,11 +243,12 @@ describe("the middle door on a fresh install, through the chooser", () => {
     root = createRoot(mount);
     await act(async () => {
       root!.render(
-        h(
-          NextIntlClientProvider,
-          { locale: "en", messages: en as never, timeZone: "Europe/Zurich" },
-          h(DoorChooser, { start: "server", onEntered: () => {} }),
-        ),
+        h(NextIntlClientProvider, {
+          locale: "en",
+          messages: en as never,
+          timeZone: "Europe/Zurich",
+          children: h(DoorChooser, { start: "server", onEntered: () => {} }),
+        }),
       );
     });
 
