@@ -28,10 +28,26 @@
  *
  * ── THE LAWS, KEPT ──────────────────────────────────────────────────────────────────────────
  *
- *  · ROW ORDER IS FOLD ORDER. Admission is a greedy PREFIX over the groups in row order
- *    (reply-all · forward · horizons · tag · filing): the walk stops at the first group that
- *    does not fit, so a later verb can never stand while an earlier one is folded. Pinned as a
- *    property over random rows in `bar-density.test.ts`.
+ *  · ROW ORDER IS FOLD ORDER, AND THE UNIT IS ONE VERB. Admission is a greedy PREFIX over the
+ *    verbs in row order (Reply all · Forward · Later · Park · Resurface · Tag · Screening ·
+ *    Move): the walk stops at the first verb that does not fit, so a later verb can never
+ *    stand while an earlier one is folded. Pinned as a property over random rows in
+ *    `bar-density.test.ts`.
+ *
+ *    IT USED TO BE ONE GROUP, and that is the defect this granularity closes. The horizons
+ *    were admitted as a block of three and filing as a block of two, so a row with room for
+ *    Later and Park folded both of them along with Resurface: measured on the shipped bar at
+ *    1440 in the widest reading column the product has, 150px of the pill's own room stood
+ *    empty while eight verbs sat behind More. Reported from real use — *"the pill shows Reply ·
+ *    Reply all · Forward · Mark unread · ▾ while the row has room for several more"*. A verb
+ *    that fits is seated; the reading that refuses the old rule is THE SLACK CANNOT SEAT THE
+ *    NEXT FOLDED VERB, held per width in `scripts/fit-render.mjs`.
+ *
+ *    A SEGMENT PAYS ITS ROW GAP ONCE. The horizons and filing are segmented controls with no
+ *    gap between their members, so a verb continuing the segment its predecessor opened costs
+ *    its own width and nothing more. Admission being a prefix is what makes the segment's
+ *    visible members a prefix too, which is what lets the stylesheet put the trailing cap on
+ *    the last one that stands.
  *  · NO OVERFLOW. The admitted row's width — base + every admitted group + the gaps between —
  *    is never allowed past the width the pill actually has. Folding too early is the benign
  *    direction; painting a control outside the pill is the defect this measurement exists to
