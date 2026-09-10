@@ -854,10 +854,53 @@ function fieldVerdict(key: string): "redact" | "keep" | "drop" {
   return ALLOWED_SET.has(n) ? "keep" : "drop";
 }
 
+/** One definition of the length bound, shared by the two string channels below. */
+function boundString(value: string): string {
+  return value.length > MAX_STRING ? `${value.slice(0, MAX_STRING)}…[+${value.length - MAX_STRING}]` : value;
+}
+
 /** A string that announces itself as a secret is not emitted whatever key carried it. */
 function scrubString(value: string): string {
   for (const pattern of SECRET_VALUE_PATTERNS) if (pattern.test(value)) return REDACTION;
-  return value.length > MAX_STRING ? `${value.slice(0, MAX_STRING)}…[+${value.length - MAX_STRING}]` : value;
+  return boundString(value);
+}
+
+/**
+ * AN ADDRESS INSIDE A FREE-TEXT STRING, replaced by its shape.
+ *
+ * `SECRET_VALUE_PATTERNS` redacts a whole string that ANNOUNCES a secret; this is the other case,
+ * where the sentence is the diagnosis and one token inside it is somebody's mailbox. Redacting
+ * the whole line would throw the diagnosis away, and that is the failure this pair exists between:
+ * a thrown string's text is its only evidence, and an address is not ours to write down.
+ *
+ * The domain must be dotted, so a `user:pass@host` inside a URL is left for the pattern above to
+ * refuse whole rather than half-masked into something that pattern no longer matches — which is
+ * why {@link redactThrownText} runs the patterns FIRST.
+ */
+const ADDRESS_IN_TEXT = /[^\s<>()[\]:;,"']+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+/g;
+/** What an address becomes. Not `[redacted]`: the reader is meant to see that one WAS there. */
+const ADDRESS_MASK = "[address]";
+
+/**
+ * THE ONE CHANNEL THAT CARRIES A STRANGER'S PROSE, AND WHAT IT IS PUT THROUGH.
+ *
+ * `err` reduces to a class and a code precisely so no driver message reaches a log. A thrown
+ * STRING is the exception: it has no `name` and no `code`, so reducing it discards the whole
+ * diagnosis — a throw and a line that never ran look identical from such a record. So the text
+ * is kept, and it is put through the same two readings an allowlisted string value gets:
+ *
+ *  1. the secret patterns, which refuse the WHOLE string — a driver message with `host=…&user=…`
+ *     or a `scheme://user:pass@host` is not partially safe;
+ *  2. the address mask, which keeps the sentence and takes the mailbox out of it;
+ *
+ * and only then the length bound, so a truncation cannot cut an address in half and leave the
+ * half in. The stated residual is anything ELSE a stranger's message might carry — a subject, a
+ * folder name — which is why this channel exists for a thrown string and never for an `Error`'s
+ * `message`, where the class and the code are the diagnosis.
+ */
+function redactThrownText(text: string): string {
+  for (const pattern of SECRET_VALUE_PATTERNS) if (pattern.test(text)) return REDACTION;
+  return boundString(text.replace(ADDRESS_IN_TEXT, ADDRESS_MASK));
 }
 
 /**
@@ -943,7 +986,7 @@ export function describeError(err: unknown): { errorClass: string; errorCode: st
  * bound as every allowlisted string.
  */
 function describeThrownText(err: unknown): string | null {
-  return typeof err === "string" && err.length > 0 ? scrubString(err) : null;
+  return typeof err === "string" && err.length > 0 ? redactThrownText(err) : null;
 }
 
 /**
