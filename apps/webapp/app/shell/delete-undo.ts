@@ -531,12 +531,16 @@ export function deleteKeyBindings(input: {
   const when = (e: KeyboardEvent) =>
     !e.repeat && !isModalOpen(e.view?.document ?? document);
   const run = () => { if (input.focused) input.run(input.focused); };
-  /* THE CALLER'S OWN REASON WINS over `no_cursor`. A key that cannot work in this view at all
-     must not claim the cursor is what is missing: `"no_cursor"` places one and promises a second
-     press, and in Trash no press works. Both chords carry the same answer. */
-  const reason = disabled && input.disabledReason
-    ? ({ disabledReason: input.disabledReason } as const)
-    : parked;
+  /* `no_cursor` FIRST, THE CALLER'S REASON SECOND, and the order is the whole of it.
+     With no cursor the cursor IS what is missing, whatever the gates would then say about the row
+     one lands on — the rule `parked` is declared under, and the rule the dispatcher acts on. Only
+     once a row is focused does the caller's own reason become the operative one, which is the case
+     a reader in Trash meets: a row selected, the key inert, and the `?` sheet saying why. Reversing
+     these two took `no_cursor` off every cursorless list the moment a caller supplied a reason —
+     the first press stopped placing a cursor and the sheet printed the wrong sentence. */
+  const reason = noCursor
+    ? parked
+    : (disabled && input.disabledReason ? ({ disabledReason: input.disabledReason } as const) : {});
   return [
     { chord: "Backspace", group: "message", label: input.label, disabled, ...reason, when, run },
     { chord: "Delete", group: "message", label: input.label, disabled, ...reason, when, run },
