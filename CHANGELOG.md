@@ -193,6 +193,10 @@ instead” takes effect on the following pass. Versions up to 0.13 recorded that
 switching the mailbox off, and it stayed off. A mailbox you removed from this computer is
 untouched.
 
+A message you had scheduled from that mailbox before it changed hands is closed with the reason it
+could not be sent, instead of sitting in Drafts saying it will send. The mailbox pane says once
+that the mailbox changed hands.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

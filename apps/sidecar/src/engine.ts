@@ -6412,21 +6412,27 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * never the address.
      */
     try {
-      for (const ended of await endLegacyOrganizerPauses(db, world.accountId)) {
+      for (const ended of await endLegacyOrganizerPauses(db, world.accountId, now())) {
         log("local_mailbox_pause_ended", {
           mailboxId: ended.id,
           disabledReason: ended.keptReason,
+          /* Appointments the row could not keep, closed with the stand-down's own sentence — a
+             send scheduled before the handover, which a reader's drain never reaches. */
+          closed: ended.closedSends,
           reason: "a build older than this one recorded that another organizer had taken this "
             + "mailbox by switching the mailbox off; this launch rewrote the row to what it means "
             + "— a READER of that mailbox, mirror growing, organizing nothing — so it runs again "
-            + "and can be asked to organize it. Nothing was claimed by the rewrite",
+            + "and can be asked to organize it. Nothing was claimed by the rewrite, and any "
+            + "scheduled send it could no longer make was closed with a sentence",
         });
       }
     } catch (err) {
       log("local_mailbox_pause_end_failed", {
         err,
-        reason: "a mailbox this install paused under an older version stays paused: it gets no "
-          + "connection and no poll timer this launch, and the next launch tries the rewrite again",
+        reason: "a mailbox this install paused under an older version was not fully re-attached: "
+          + "either the row still says paused — no connection and no poll timer this launch, and "
+          + "the next launch tries again — or it is a reader whose scheduled send is still to be "
+          + "closed, which this mailbox's own launch catch-up does on the next start",
       });
     }
 

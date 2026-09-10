@@ -1,8 +1,8 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import {
   accounts, mailboxes, sessions, users,
-  isMailboxDisabledReason, isOrganizerKind, standDownMemory,
-  type MailboxDisabledReason,
+  closeStoodDownAppointments, isMailboxDisabledReason, isOrganizerKind, standDownMemory,
+  type MailboxDisabledReason, type Tx,
 } from "@trafficflow/db";
 import { generateToken, hashToken } from "@trafficflow/services/mail";
 import type { LocalDb } from "./db.js";
@@ -449,6 +449,8 @@ export interface EndedOrganizerPause {
   id: string;
   /** The `organized_elsewhere:*` the row carried — now recorded as `organized_by_kind`. */
   keptReason: MailboxDisabledReason;
+  /** Appointments closed with the stand-down's sentence, because a reader cannot keep them. */
+  closedSends: number;
 }
 
 /**
@@ -485,7 +487,7 @@ export interface EndedOrganizerPause {
  * marker, no journal entry, and the second boot writes nothing.
  */
 export async function endLegacyOrganizerPauses(
-  db: LocalDb, accountId: string,
+  db: LocalDb, accountId: string, now: Date,
 ): Promise<EndedOrganizerPause[]> {
   const rows = await db
     .select({
@@ -527,10 +529,43 @@ export async function endLegacyOrganizerPauses(
         // and the row comes back as a mailbox nobody ever organized.
         organizerReleasedAt: null,
         disabledReason: null,
+        /* ── THE EVENT IS STAMPED HERE, OR THE ROW CHANGES STATE WITH NOBODY TOLD ────────────
+         *
+         * The notice is derived (`organizer_event_at > coalesce(organizer_event_seen_at, …)`), so
+         * every writer of the (role, state, holder) triple stamps it in the SAME statement —
+         * and the same invariant closes the mailbox's pending sends. This is such a write, not
+         * a birth: a birth INSERTs a mailbox nobody has organized, and those are the exemptions.
+         * What the person sees changes on this launch — a mailbox that was off and offered
+         * "Organize here instead" comes up reading, with a banner naming who holds it — so being
+         * told once is the honest answer, and the row's own pre-0083 state carried no stamp at
+         * all (the column post-dates it), so nothing is re-shown. */
+        organizerEventAt: now,
       })
       .where(and(eq(mailboxes.id, row.id), eq(mailboxes.status, "disabled")));
     live.add(address);
-    ended.push({ id: row.id, keptReason: row.disabledReason });
+    /* ── AND THE APPOINTMENTS THIS ROW CAN NO LONGER KEEP ARE CLOSED, AFTER THE REWRITE ──────
+     *
+     * A pause left by ≤0.13.x can carry a scheduled send from before the handover, and the
+     * rewrite is what makes that dangerous: the row goes back to `connected`, where
+     * `ScheduleService` and `SendService` accept work — while the scheduled-send pass lives
+     * inside the organizer drain a READER never runs. So the appointment would sit saying
+     * "Sends Tue 14:50" for a time that has gone, for ever — the orphan a handover's own
+     * close exists to prevent, reached by another door, and the census beside that close
+     * refuses this site without it.
+     *
+     * AFTER the update, not before: the close's own precondition is `organizer_role = 'reader'`
+     * read `FOR UPDATE` inside its transaction, and the common ≤0.13.x row still says
+     * `organizer` — so called first it would refuse and close nothing.
+     *
+     * NOT in one transaction with the rewrite, which is the shipped stand-down's own ruling
+     * ("a stand-down must never be contingent on closing an appointment. A failed close is
+     * retried by the launch catch-up while the row still says stood down") — and it holds here
+     * for the same reason: the row is attached from this launch on, so its own launch catch-up
+     * closes anything a failure here leaves. */
+    const closed = await closeStoodDownAppointments(db as unknown as Tx, {
+      accountId, mailboxId: row.id, reason: row.disabledReason, now,
+    });
+    ended.push({ id: row.id, keptReason: row.disabledReason, closedSends: closed.closed });
   }
   return ended;
 }
