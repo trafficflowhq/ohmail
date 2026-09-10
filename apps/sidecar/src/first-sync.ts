@@ -4,24 +4,15 @@ import type { SyncStamps } from "./sync-stamp.js";
 /**
  * ═══ HOW LONG A FIRST SYNC TOOK ════════════════════════════════════════════════════════════
  *
- * Nothing in this engine marked the start or the end of a first import, so the question could
- * not be answered from a log by anybody. `sync_drain` is no substitute: it fires every poll
- * carrying `drained: true` throughout a backfill, because `drained` is per drain call and says
- * nothing about the import.
+ * Three invariants the code below depends on:
  *
- * ── THE FINISH IS THE DATABASE'S ANSWER, NOT A FLAG ───────────────────────────────────────
- *
- * `first_sync_finished` fires on {@link SyncStamps.importStamped}, the `RETURNING` of the
- * `IS NULL`-guarded write — so it is once ever, per mailbox, across relaunches. A process-local
- * "have I said this" flag would re-announce on every launch after a restart mid-import.
- *
- * ── THE START IS ONCE PER LAUNCH, AND SO IS THE CLOCK IT ANCHORS ──────────────────────────
- *
- * The import is open on every drain until it finishes, so a line per drain would be four a
- * minute for as long as it lasts. One per mailbox per launch instead, and a relaunch mid-import
- * legitimately says so again: a new launch is a new x-axis. Durations are `performance.now()`
- * deltas — a 38-minute import spans NTP steps and suspends, over which a wall-clock delta can
- * run backwards.
+ *  · the FINISH fires on {@link SyncStamps.importStamped} — the `IS NULL`-guarded write's own
+ *    `RETURNING` — so it is once ever per mailbox, across relaunches. A process flag would
+ *    re-announce on every launch after a restart mid-import.
+ *  · the START is once per mailbox per LAUNCH. The import is open on every drain until it ends,
+ *    so a line per drain is four a minute for as long as it lasts.
+ *  · durations are `performance.now()` deltas: a 38-minute import spans NTP steps and suspends,
+ *    over which a wall-clock delta can run backwards.
  */
 
 /** What the doors call once per pass, after that pass's stamps are written. */
@@ -47,7 +38,9 @@ export function createFirstSyncReporter(
   return {
     async report(mailboxId, stamps, countMessages): Promise<void> {
       // A settled mailbox — every pass of almost every install — costs one boolean and no read.
-      if (!stamps.importWasOpen && !stamps.importStamped) return;
+      /* `stampSynced` cannot report a stamp on a pass that found the import closed — it returns
+         before the second statement — so this is the whole of "nothing to say". */
+      if (!stamps.importWasOpen) return;
       const announcedAt = openSince.get(mailboxId);
       if (announcedAt !== undefined && !stamps.importStamped) return;
       try {

@@ -6531,13 +6531,61 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           || localSealMatch !== null
           || localProbeMatch
           || localAddMatch;
+        /* WHICH DOOR, as a pattern rather than a path — the shape `packages/api`'s own
+           middleware logs (`route: route.pattern`). Two of these share a pattern and differ by
+           method, which is why both fields ride every line. */
+        const localActionRoute = localOrganizeMatch !== null
+          ? "/local/mailboxes/:id/organize"
+          : localRemoveMatch !== null || localSealMatch !== null
+            ? "/local/mailboxes/:id"
+            : localProbeMatch
+              ? "/local/mailboxes/probe"
+              : localAddMatch
+                ? "/local/mailboxes"
+                : localConnectionsMatch
+                  ? "/local/mailboxes/connections"
+                  : url.pathname === "/local/stored-login"
+                    ? "/local/stored-login"
+                    : "/local/organizer/takeover";
+        /** The row id where the PATH carries one; "" where it does not. */
+        const localActionMailboxId =
+          (localRemoveMatch ?? localOrganizeMatch ?? localSealMatch)?.[1] ?? "";
         if (localAction) {
+          /* ── THE RECEIPT, BEFORE ANY BRANCH ─────────────────────────────────────────────
+           *
+           * With only a verdict logged, "the press never reached the door" and "the door took it
+           * and dropped it" leave identical evidence. It sits ABOVE the credential read because
+           * that read is this block's first branch, and the refusal under it is one of the two
+           * that answered in silence.
+           *
+           * The route PATTERN, never the request's path; `mailboxId` is empty where the path
+           * carries none, and for the takeover, whose id is in a body not read yet. The
+           * connections GET is excluded — it is a read Settings makes four times a minute, and
+           * what it needs is a rate floor rather than a receipt. */
+          if (!localConnectionsMatch) {
+            log("local_action_received", {
+              method: req.method,
+              route: localActionRoute,
+              mailboxId: localActionMailboxId,
+              reason: "a local action door was asked to do something; the verdict for it is a " +
+                "separate line, and its absence after this one means the door dropped the request",
+            });
+          }
           const header = req.headers.get("authorization");
           const token = header && /^Bearer\s+/i.test(header)
             ? header.replace(/^Bearer\s+/i, "").trim()
             : "";
           const core = token ? await resolveSession(db, token, now()) : null;
           if (!core) {
+            /* THE VERDICT FOR THE ONE REFUSAL EVERY DOOR HERE SHARES. Without it the receipt
+               above is followed by nothing, which is the state it was added to end. */
+            log("local_action_refused", {
+              method: req.method,
+              route: localActionRoute,
+              status: 401,
+              reason: "the request carried no launch bearer this install recognises, so nothing " +
+                "was read or written",
+            });
             return new Response(
               JSON.stringify({ error: { code: "unauthorized", message: "authentication required" } }),
               { status: 401, headers: { "content-type": "application/json" } },
@@ -7292,6 +7340,15 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           }
           const mailboxId = typeof body.mailboxId === "string" ? body.mailboxId.trim() : "";
           if (!mailboxId) {
+            /* THE SECOND SILENT REFUSAL, and the one the takeover cell needed: a press that
+               arrives without a mailbox is answered 400 and, before this line, recorded
+               nowhere — which is indistinguishable in the log from a press that never arrived. */
+            log("local_action_refused", {
+              method: req.method,
+              route: localActionRoute,
+              status: 400,
+              reason: "the request named no mailbox, so no takeover was recorded",
+            });
             return new Response(
               JSON.stringify({ error: { code: "invalid_request", message: "mailboxId is required" } }),
               { status: 400, headers: { "content-type": "application/json" } },
