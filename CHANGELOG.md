@@ -37,7 +37,8 @@ See [Status](README.md#status--read-this-first).
 
 - A send that finishes without a clear answer holds the draft, and the held row now carries **It
   arrived**, which records the send and takes the row out of Drafts, and **It didn't arrive**, which
-  turns it back into an ordinary draft. Neither could be discarded at all before.
+  turns it back into an ordinary draft. A held draft could not be discarded at all before, nor
+  could one whose send definitively failed.
 - Your signature is the editor you write messages in — bold, italic, strike, links, lists, quotes and
   code — and the block below the message renders what ships. Saving plain text clears the formatting.
 - Every place text is typed draws one text field: a 1px edge on a recessed ground, present before you
@@ -103,10 +104,9 @@ set an out-of-office and no out-of-office would ever be sent.
 
 ### Screen readers and small controls
 
-A settings banner read out as its label alone, and every settings row's value — including whether a
-mailbox's mail server can be reached — was on screen and out of reach; both are read now. The
-compose body and the inline reply editor report themselves as multi-line text boxes, and four small
-controls take a full press band on a window narrower than 640px.
+A settings banner and every settings row's value — including whether a mailbox's mail server can be
+reached — were on screen and out of reach; both are read now. The compose body and the inline reply
+editor report themselves as text boxes, and four small controls take a full press band under 640px.
 
 ### RPM packages for Fedora and openSUSE
 
