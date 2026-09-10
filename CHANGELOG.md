@@ -30,6 +30,12 @@ See [Status](README.md#status--read-this-first).
 
 - Saving away settings from a device that does not organize the mailbox says the change is
   waiting for the machine that does, instead of “Saved.” over the values it put back.
+- Receipts and the Screener can be answered too, if you tick them. Mailing lists, no-reply
+  addresses, bounces and anything a sender marked automatic are still never answered, whichever
+  piles you choose. The Screener follows “Who gets a reply”, so it can only be answered while
+  that is set to everyone who writes.
+- You can give the responder a date to switch itself off on. It answers until the end of that day
+  and then turns itself off, so the switch says what it is doing.
 
 ### A connection that stops answering is noticed in seconds
 
