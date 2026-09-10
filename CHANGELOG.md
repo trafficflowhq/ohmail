@@ -24,6 +24,11 @@ See [Status](README.md#status--read-this-first).
 - A restore whose answer never reached the app is finished on the next launch instead of saying
   it could not be restored.
 
+### Away replies
+
+- Saving away settings from a device that does not organize the mailbox says the change is
+  waiting for the machine that does, instead of “Saved.” over the values it put back.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

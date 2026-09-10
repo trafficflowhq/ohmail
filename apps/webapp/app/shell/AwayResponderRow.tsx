@@ -74,7 +74,7 @@ import { Button, Gloss, SegmentedControl, SettingsActions, SettingsField, Settin
 import {
   AWAY_ANSWERABLE_PILES, AWAY_PILE_VIEW, AWAY_PILES_DEFAULT, type AwayPile,
 } from "@trafficflow/core/away-scope";
-import { away as awayApi, type AwayResponderWire } from "../api-client";
+import { away as awayApi, type AwayResponderSaveWire, type AwayResponderWire } from "../api-client";
 
 /**
  * THE ENGLISH SENTENCES, KEPT — as the shape of the `away` namespace and nothing more.
@@ -126,6 +126,13 @@ export const AWAY_COPY = {
   save: "Save",
   saving: "Saving…",
   saved: "Saved.",
+  /**
+   * THE SAVE LEFT THIS INSTALL — 202 `pending`, on an account whose mailboxes another install
+   * organizes. Nothing was written here, the controls show what is still stored, and this is the
+   * sentence that says why. "Saved." over reverted values was the false state ruling 6 exists to
+   * end, arriving one layer above the write.
+   */
+  asked: "Not saved here — the machine that organizes this mailbox applies it on its next pass.",
   failed: "That did not save. Nothing changed.",
   incomplete: "Add a message before turning this on.",
   unreachable: "Your away settings could not be read just now. Nothing here has changed.",
@@ -155,7 +162,8 @@ type Audience = AwayResponderWire["audience"];
  */
 export interface AwayTransport {
   state: () => Promise<AwayResponderWire>;
-  save: (next: Omit<AwayResponderWire, "updatedAt">) => Promise<AwayResponderWire>;
+  /** Answers {@link AwayResponderSaveWire}: the row, plus `pending` when the edit had to travel. */
+  save: (next: Omit<AwayResponderWire, "updatedAt">) => Promise<AwayResponderSaveWire>;
 }
 
 /** The two audiences, in the order the control draws them. Labels are resolved at render. */
@@ -243,7 +251,11 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
    */
   const [draft, setDraft] = useState<Draft | null>(null);
   const [pending, setPending] = useState(false);
-  const [state, setState] = useState<"idle" | "saved" | "failed">("idle");
+  /**
+   * `asked` IS NOT `saved`, and it is the one distinction this row's answer has to carry: on an
+   * account another install organizes, the write did not happen here and a request is waiting.
+   */
+  const [state, setState] = useState<"idle" | "saved" | "asked" | "failed">("idle");
   /**
    * THE READ CAME BACK REFUSED — and this is a state rather than silence BECAUSE THE CONTROL HAS
    * ITS OWN PANE NOW.
@@ -344,7 +356,10 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
           enabled: stored.enabled, audience: stored.audience, throttle: stored.throttle,
           piles: stored.piles ?? [...AWAY_PILES_DEFAULT],
         });
-        setState("saved");
+        /* THE 202's DISCRIMINATOR DECIDES THE SENTENCE. `stored` is the row as it stands HERE —
+           the saved one when the write happened here, the UNCHANGED one when it travelled — so
+           without this the pane put the old values back and said "Saved." over them. */
+        setState(stored.pending === true ? "asked" : "saved");
       } catch {
         if (alive.current) setState("failed");
       } finally {
@@ -498,6 +513,9 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
         </Button>
         {state === "saved" ? (
           <span className="set-note-inline" role="status">{t("saved")}</span>
+        ) : null}
+        {state === "asked" ? (
+          <span className="set-note-inline" role="status">{t("asked")}</span>
         ) : null}
         {state === "failed" ? (
           <span className="set-note-inline" role="alert">{complete ? t("failed") : t("incomplete")}</span>

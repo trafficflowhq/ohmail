@@ -3096,6 +3096,7 @@
     "save": "Save",
     "saving": "Saving…",
     "saved": "Saved.",
+    "asked": "Not saved here \u2014 the machine that organizes this mailbox applies it on its next pass.",
     "failed": "That did not save. Nothing changed.",
     "incomplete": "Add a message before turning this on.",
     "unreachable": "Your away settings could not be read just now. Nothing here has changed.",

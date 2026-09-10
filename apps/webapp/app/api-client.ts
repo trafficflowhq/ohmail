@@ -2501,10 +2501,24 @@ export interface AwayResponderWire {
  * is why this client never retries the call automatically and why the row's control is a deliberate
  * press rather than a debounced autosave.
  */
+/**
+ * WHAT A SAVE ANSWERS — the row, plus the one discriminator a 202 carries.
+ *
+ * `PUT /away-responder` answers 202 with `pending: true` on an account whose mailboxes are
+ * organized by another install: nothing was written here and a request is waiting on the machine
+ * that organizes them. The wire type used to be the row alone, so that field was dropped and the
+ * pane announced "Saved." over the values it had just put back — a false state about a setting
+ * that decides what strangers are told. Separate from {@link AwayResponderWire} rather than a
+ * field on it, so the PUT BODY cannot grow a member the server never asked for.
+ */
+export interface AwayResponderSaveWire extends AwayResponderWire {
+  pending?: boolean;
+}
+
 export const away = {
   state: () => api<AwayResponderWire>("/away-responder"),
   save: (next: Omit<AwayResponderWire, "updatedAt">) =>
-    api<AwayResponderWire>("/away-responder", { method: "PUT", body: next }),
+    api<AwayResponderSaveWire>("/away-responder", { method: "PUT", body: next }),
 };
 
 export const account = {
