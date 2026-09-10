@@ -13,6 +13,12 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### A door with no account asks nothing about one
+
+A standalone install, and one paired to another computer, no longer asks where to manage a
+subscription each time the window opens. Neither door has an account behind it, so there was
+never an answer to that question; nothing on screen changes.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
