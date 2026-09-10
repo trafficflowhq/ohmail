@@ -705,8 +705,26 @@ interface BootstrapGen {
   flush(): void;
 }
 
-/** The generation file, beside the cursor. NDJSON-ish: one `<type> <id>` line per marked row. */
+/**
+ * The generation file, beside the cursor. NDJSON-ish: one `<type> <id>` line per marked row,
+ * under a `#keying <CURSOR_VERSION>` header.
+ *
+ * THE HEADER IS WHAT MAKES THE MARKS COMPARABLE. A mark is an entity's id, so a re-key that
+ * changes WHICH id an entity is marked by makes every earlier mark unreadable — and the sweep
+ * reads an unreadable mark as "the feed never sent this row", which deletes it. Version 2 moved
+ * `message_state` from the messageId to the row id, so a bootstrap interrupted under version 1
+ * and resumed under version 2 would have swept every triage state it had already applied: the
+ * defect this release fixes, reintroduced for the one population that was mid-replay.
+ *
+ * Refusing a mismatched file rather than refusing every re-key is deliberate. Resuming an
+ * interrupted replay is load-bearing — a restart on every interruption never finishes on a large
+ * mailbox — so the same-version resume is untouched and only the cross-version one starts over,
+ * once. A file with no header is a version-1 file and is refused for that reason; the parser
+ * skips any line whose first token is not an entity type, so an older build reads this header as
+ * a comment.
+ */
 const BOOTSTRAP_GEN_FILE = "cloud-bootstrap-gen.marks";
+const GEN_KEYING_PREFIX = "#keying ";
 
 function genPathFor(cursorPath: string): string {
   return join(dirname(cursorPath), BOOTSTRAP_GEN_FILE);
@@ -763,9 +781,9 @@ const emptyGenSets = (): Record<GenType, Set<string>> => ({
   draft: new Set(), approval: new Set(), routing_decision: new Set(), tag: new Set(),
 });
 
-/** A FRESH generation: truncate the file, start marking from nothing. */
+/** A FRESH generation: truncate the file, stamp the keying, start marking from nothing. */
 function newBootstrapGen(path: string): BootstrapGen {
-  writeFileSync(path, "");
+  writeFileSync(path, `${GEN_KEYING_PREFIX}${CURSOR_VERSION}\n`);
   return genOver(path, emptyGenSets());
 }
 
@@ -782,6 +800,9 @@ function loadBootstrapGen(path: string): BootstrapGen | null {
   } catch {
     return null;
   }
+  // The keying stamp, before a single mark is read: marks made under another keying name other
+  // ids and cannot be compared with this build's. Absent ⇒ a version-1 file ⇒ refused.
+  if (!raw.startsWith(`${GEN_KEYING_PREFIX}${CURSOR_VERSION}\n`)) return null;
   const sets = emptyGenSets();
   for (const line of raw.split("\n")) {
     if (!line) continue;
