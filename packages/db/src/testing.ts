@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle, type PgliteDatabase } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
@@ -30,11 +31,50 @@ export async function makeTestDb(): Promise<PgliteDatabase<typeof schema>> {
   return db;
 }
 
-/** The real-Postgres URL every `*.pg.test.ts` uses (docker compose service on :5433). */
-export const PG_TEST_URL = process.env.DATABASE_URL_PG_TEST
-  ?? process.env.DATABASE_URL_SESSION
-  ?? process.env.DATABASE_URL
-  ?? "postgres://tf:tf@localhost:5433/trafficflow_test";
+/** The database name in a URL — what a diagnostic may print, where the URL itself may not. */
+function databaseOf(url: string): string {
+  try { return new URL(url).pathname.replace(/^\//, ""); } catch { return "?"; }
+}
+
+/**
+ * THIS WORKTREE'S OWN DATABASE, when `scripts/lane-db.sh` has made one.
+ *
+ * `<repo root>/.lane-db.env` holds `PG_TEST_URL=` for a database only this checkout uses, and it
+ * WINS over the environment: box files in a worktree that has one run without the Postgres lock, so
+ * a stray `DATABASE_URL_*` redirecting them onto the shared `trafficflow_test` is exactly the
+ * unlocked-shared-write this removes. A worktree without the file resolves as it always has. The
+ * root is the directory holding `pnpm-workspace.yaml` — one walk up from `src` or `dist` alike.
+ */
+function laneDbUrl(): string | null {
+  let dir = dirname(fileURLToPath(import.meta.url));
+  for (let up = 0; up < 5; up++) {
+    if (existsSync(join(dir, "pnpm-workspace.yaml"))) {
+      try {
+        const line = readFileSync(join(dir, ".lane-db.env"), "utf8")
+          .split("\n").map((l) => l.trim()).find((l) => l.startsWith("PG_TEST_URL="));
+        return line ? line.slice("PG_TEST_URL=".length).trim() || null : null;
+      } catch { return null; }
+    }
+    dir = dirname(dir);
+  }
+  return null;
+}
+
+/** The lane database if there is one, else the environment, else the compose service on :5433. */
+export function pgTestUrlFrom(env: NodeJS.ProcessEnv, lane: string | null): string {
+  const envUrl = env.DATABASE_URL_PG_TEST ?? env.DATABASE_URL_SESSION ?? env.DATABASE_URL;
+  if (lane === null) return envUrl ?? "postgres://tf:tf@localhost:5433/trafficflow_test";
+  if (envUrl !== undefined && databaseOf(envUrl) !== databaseOf(lane)) {
+    process.stderr.write(
+      `[pg] this worktree has a lane database (${databaseOf(lane)}); ignoring the environment's ` +
+        `${databaseOf(envUrl)}. Remove it with scripts/lane-db.sh --drop to use the shared box.\n`,
+    );
+  }
+  return lane;
+}
+
+/** The real-Postgres URL every `*.pg.test.ts` uses: this worktree's lane database, or the box. */
+export const PG_TEST_URL = pgTestUrlFrom(process.env, laneDbUrl());
 
 /** Set this to `1` in CI so a missing Postgres FAILS the suite instead of skipping it. */
 export const REQUIRE_PG_ENV = "TF_REQUIRE_PG";
