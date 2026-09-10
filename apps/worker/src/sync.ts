@@ -1445,14 +1445,6 @@ function epochsObserved(batch: { creates: Change[]; moves: Change[]; flagChanges
  * returns, so a sentinel epoch always arrives beside zeros) and `MailboxService.requestResync`
  * (which nulls `highestmodseq` and touches neither other column); account deletion drops the rows
  * outright. The columns are nullable, so a row written by hand could break that; no code path can.
- *
- * ── AND THE RESET ARM IS NO LONGER THE ORDINARY ROUTE ───────────────────────────────────────
- *
- * The IMAP adapter used to hold a truncated reset's cursor at the PREVIOUS epoch, so the
- * disagreement below was how such a reset got zeroed at all. It publishes the new epoch itself
- * now, with `uidNext` and `highestModseq` cold beside it, so a `V → V′` disagreement no longer
- * arrives from that path: this arm defends the PERSISTENCE boundary against a writer whose cursor
- * and whose locators disagree, which is where it belongs.
  */
 function epochAware(fc: PersistedFolderCursor, observed: string | undefined): PersistedFolderCursor {
   if (observed === undefined || observed === fc.uidValidity) return fc;

@@ -951,7 +951,7 @@ export interface ChangeBatch {
   /**
    * Folders whose PERSISTED cursor this build could not read, and which were therefore scanned
    * from cold. Reported rather than logged here because the adapter has no logger; the caller
-   * owes the fact a line (`FIX-SEAM-2-CHANGESSINCE-PERSISTED-CURSOR-CRASH`). Absent ⇒ none.
+   * owes the fact a line. Absent ⇒ none.
    */
   rebootstrapped?: readonly string[];
   /**
