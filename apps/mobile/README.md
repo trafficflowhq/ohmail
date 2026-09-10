@@ -26,10 +26,13 @@ Honest edges, stated here and on the screens themselves:
   default; the switch in Settings reads and writes your account's consent on
   the paired server. On, the More screen lists the folders as the tree they
   already are on the server — first level by default, unread counts that roll
-  up into a collapsed branch — and each folder opens as its own list.
-  Read-only for now (no create, rename or move-to-folder), matching the web
-  client's foundation stage, and the folder screens say plainly that they show
-  what is on this phone's mirror rather than claiming a folder is empty.
+  up into a collapsed branch — and each folder opens as its own list. The tree
+  carries the web client's own folder commands: New folder and New subfolder,
+  Rename, and Delete… behind a confirm that first asks the server how much
+  moves to the Trash. What it has no verb for is moving a message into a folder
+  you pick, so a folder's own list is read-only, and the folder screens say
+  plainly that they show what is on this phone's mirror rather than claiming a
+  folder is empty.
 - **Compose from scratch, search and attachment-open are not built yet.** No
   control for them renders; the More screen and the About block say they
   arrive with later updates.
