@@ -122,6 +122,9 @@ you do.
 - When the machine that organizes the mailbox applies an away setting you saved somewhere else,
   the pane says so and shows the settings it applied, instead of leaving the old values under a
   note about a request that has already landed.
+- Away replies go only to the piles you chose, and never to a site's own notification mailbox —
+  `wordpress@`, `root@` and the rest of a server's mail. Addresses that merely start with one of
+  those names are people, and still get a reply.
 
 ### Sync now says what it did
 

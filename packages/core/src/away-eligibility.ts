@@ -86,6 +86,25 @@ export {
 } from "./away-scope.js";
 
 /**
+ * MAILBOXES A SITE OR A SERVER OWNS, never a person — matched WHOLE, punctuation stripped, so
+ * `www-data`, `www_data` and `wwwdata` are one entry.
+ *
+ * RFC 3834 §2: a responder must not be triggered by mail that appears to be from a mail system
+ * or a robot. `SERVICE_LOCAL_PREFIXES` in `rules.ts` already refuses the `no-reply@` family, and
+ * this set is the CMS/system half it deliberately omits — that list also decides where mail is
+ * FILED, and `wordpress@` is mail somebody may well want in their Ohbox. It just must not be
+ * written back to.
+ *
+ * WHOLE-NAME equality and not a prefix, which is the half a prefix rule gets wrong: measured
+ * against a real mailbox, `startsWith("wp")` refuses `wpe@` and `wpeteam@` (a hosting company's
+ * people) and `startsWith("www")` refuses a sender whose local part is a domain. `webmaster@` and
+ * `abuse@` are human roles and are deliberately absent.
+ */
+export const AWAY_MACHINE_LOCALS: ReadonlySet<string> = new Set([
+  "wordpress", "root", "wwwdata", "daemon", "cron", "nobody",
+]);
+
+/**
  * The piles a responder is configured to answer, as stored. `readonly string[]` and not
  * `readonly AwayPile[]`: the value arrives from a database column, so a member this build does
  * not know is representable in the type — and it is then refused by the `includes` test, which
@@ -136,6 +155,15 @@ export type AwaySuppression =
    */
   | "bounce_report"
   /**
+   * THE AUTHOR IS A SITE OR SYSTEM MAILBOX — `wordpress@`, `root@`, `www-data@` and the rest of
+   * {@link AWAY_MACHINE_LOCALS}. RFC 3834 §2's rule, which no pile setting may override.
+   *
+   * Its own member rather than `service_sender` because that verdict is `rules.ts`'s, and that
+   * list also decides where mail is FILED (`machineSent` → the Receipts conjunction). These names
+   * must not move a message's pile; they must only stop an automatic reply.
+   */
+  | "site_notification"
+  /**
    * THIS CORRESPONDENT'S ADDRESS DOES NOT ACCEPT MAIL — a bounce for an earlier away reply came
    * back, so `away_sender_state.undeliverable_at` is stamped and no further reply is ever sent.
    *
@@ -165,7 +193,8 @@ export type AwayNeverReason =
   | AutoReplySuppression
   | "auto_reply_suppressed"
   | "null_return_path"
-  | "bounce_report";
+  | "bounce_report"
+  | "site_notification";
 
 /** The audiences, as the closed set the service validator and this module share. */
 export type AwayAudience = "screened_in" | "everyone";
@@ -322,6 +351,15 @@ export function neverAutoReply(
   // drift. This call is unchanged from when it sat inline in `awayEligibility`.
   const headerVerdict = autoReplySuppression(headers, sender);
   if (headerVerdict !== null) return headerVerdict;
+
+  // A SITE OR SYSTEM MAILBOX — {@link AWAY_MACHINE_LOCALS}, matched whole, and it is checked
+  // because the headers do not carry the fact: a WordPress install's notification has no
+  // `Auto-Submitted`, no `Precedence`, no `List-*` and a present `Return-Path`, so every test
+  // below reads clean and the message earns a reply on its author alone.
+  const at = sender.indexOf("@");
+  if (at > 0 && AWAY_MACHINE_LOCALS.has(sender.slice(0, at).replace(/[^a-z0-9]/gi, "").toLowerCase())) {
+    return "site_notification";
+  }
 
   // ── THE AWAY-ONLY HEADER TESTS ────────────────────────────────────────────────────────────
   //
