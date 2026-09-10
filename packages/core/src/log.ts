@@ -822,6 +822,11 @@ export const RESERVED_KEYS: readonly string[] = [
   // `err.cause`, so a payload supplying one could only ever be overwriting a fact with a claim.
   // Reserved ⇒ removed before the census runs ⇒ unspoofable, and unforgettable at the call site.
   "causeClass", "causeCode",
+  // `errorText` is here on `causeClass`'s reading: it exists only as a derivation from a thrown
+  // primitive ({@link describeThrownText}), so a payload supplying one could only dress a message
+  // up as the throw. Redundant with the census while it stays off ALLOWED_FIELDS, which is the
+  // disjointness the log suite asserts for every name on this list.
+  "errorText",
 ] as const;
 
 /** Collects what a single line refused, so the line can say so. */
@@ -918,6 +923,20 @@ export function describeError(err: unknown): { errorClass: string; errorCode: st
     errorClass: ERROR_CLASS_RE.test(rawClass) ? rawClass : INVALID,
     errorCode: rawCode === null ? null : ERROR_CODE_RE.test(rawCode) ? rawCode : INVALID,
   };
+}
+
+/**
+ * THE TEXT OF A THROWN STRING — the one thrown value whose whole diagnosis is its text.
+ *
+ * `throw "…"` reduces to `errorClass: "String", errorCode: null`, a line saying a string was
+ * thrown and nothing about which one. This is NOT the `errorDetail` this file removed: an
+ * `Error`'s `message` is driver-written and quotes connection strings and credentials, and stays
+ * discarded. A thrown primitive has no `message` — the value IS the diagnosis, it is unreachable
+ * from a payload key ({@link RESERVED_KEYS}), and it takes the same value scrubber and length
+ * bound as every allowlisted string.
+ */
+function describeThrownText(err: unknown): string | null {
+  return typeof err === "string" && err.length > 0 ? scrubString(err) : null;
 }
 
 /**
@@ -1070,6 +1089,9 @@ export function createLogger(opts: LoggerOptions): Logger {
       // one line that mattered. It goes into the line below the `RESERVED_KEYS` sweep, so a payload
       // field of the same name is dropped rather than able to overwrite it.
       const fromCause = thrown === undefined ? null : describeCause(thrown);
+      // A thrown STRING's own text, derived here for the reason the cause is: a fact a call site
+      // has to remember to extract is the fact missing from the one line that mattered.
+      const thrownText = thrown === undefined ? null : describeThrownText(thrown);
       // The payload's own error taxonomy WINS over the thrown value's — see RESERVED_KEYS.
       const payloadClass = takeIdentifier(merged, "errorClass", ERROR_CLASS_RE);
       const payloadCode = takeIdentifier(merged, "errorCode", ERROR_CODE_RE);
@@ -1089,6 +1111,7 @@ export function createLogger(opts: LoggerOptions): Logger {
         ...describeEvent(event),
         ...(errorClass === undefined ? {} : { errorClass }),
         ...(errorCode === undefined ? {} : { errorCode }),
+        ...(thrownText === null ? {} : { errorText: thrownText }),
         ...(fromCause === null ? {} : { causeClass: fromCause.causeClass }),
         ...(fromCause?.causeCode == null ? {} : { causeCode: fromCause.causeCode }),
         ...payload,

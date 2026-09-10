@@ -227,23 +227,20 @@ export class OrganizerProfileSync {
   /**
    * REPORT A FAILURE, ONCE PER STATE — the one place either arm records one.
    *
-   * ── THE THROWN VALUE IS NORMALIZED HERE, AND ONLY FOR THE VALUES THAT CARRY NOTHING ──────
-   *
-   * `describeError` reduces a thrown value to `name`/`constructor.name` and `code`. An object
-   * has both, so it is passed through untouched — wrapping one would DISCARD the `code` the
-   * logger reads. A PRIMITIVE has neither: a thrown string arrives as `errorClass: "String",
-   * errorCode: null` and nothing else, so the one diagnosis it carries — its text — is destroyed
-   * at the point of recording it (measured on the Omarchy guest, 2026-09-07, on this very
-   * event). For those, and only those, the value is wrapped so the text survives.
+   * THE THROWN VALUE IS PASSED WHOLE. It used to be wrapped in an `Error` when it was a
+   * primitive, under the claim that this made a thrown string's text survive; measured on the
+   * emitted line, it did the opposite — the logger discards an `Error`'s message, so the wrap
+   * cost the text AND the `String` class that at least said what shape had been thrown. The
+   * logger derives a thrown primitive's text itself (`errorText`), and it can only do that if it
+   * is handed the primitive.
    */
   private noteFailure(
     err: unknown,
     log: (event: string, detail: Record<string, unknown>) => void,
   ): void {
     const { deps } = this;
-    const thrown = typeof err === "object" && err !== null ? err : new Error(String(err));
     const op = err instanceof ProfileUnavailableError ? err.op : null;
-    const errorClass = describeError(thrown).errorClass;
+    const errorClass = describeError(err).errorClass;
     const previous = this.lastFailure;
     this.lastFailure = { op, errorClass };
     this.failuresNoted += 1;
@@ -251,7 +248,7 @@ export class OrganizerProfileSync {
     log("organizer_profile_write_failed", {
       mailboxId: deps.mailboxId, accountId: deps.accountId,
       ...(op === null ? {} : { op }),
-      err: thrown,
+      err,
     });
   }
 
