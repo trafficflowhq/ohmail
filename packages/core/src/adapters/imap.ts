@@ -3512,7 +3512,14 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
             ? String(curUidValidity)
             : (prev?.uidValidity ?? "0"),
           uidNext: uidValidityChanged && truncated ? 0 : truncated ? (prev?.uidNext ?? 0) : mb.uidNext,
-          highestModseq: flagsTruncated || !caps.condstore ? (prev?.highestModseq ?? "0") : advanceTo,
+          // …AND THE MODSEQ BASELINE IS EPOCH-SCOPED TOO, which the uidNext line above learned
+          // first. A modseq remembered under the old epoch names nothing in the new one, and it
+          // is the value `canFastPath` asks `changedSince` for — so it goes cold with the epoch
+          // exactly where `prev` would otherwise be carried. A value read from the SERVER THIS
+          // PASS is fine and is published unchanged.
+          highestModseq: flagsTruncated || !caps.condstore
+            ? (uidValidityChanged ? "0" : (prev?.highestModseq ?? "0"))
+            : advanceTo,
           // THE SERVER'S OWN COUNT, which this SELECT already answered and which was discarded
           // here for the whole life of the adapter . It is deliberately NOT held back
           // under truncation the way the three cursors above are: a cursor that advances past
