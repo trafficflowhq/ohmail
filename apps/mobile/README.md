@@ -384,7 +384,7 @@ edge — the desktop dock's shape, at thumb height.
 | `/more` | The desktop rail's lower half: piles, the Folders group while "Use folders" is on, settings, the pairing door — and one honest sentence about search arriving later. |
 | `/folder/[id]` | One of the mailbox's own folders: New / Earlier over the mirror's rows, with a tail that states what is on this phone rather than claiming the folder is empty. |
 | `/triage` **Piles** | Answer Later · Parked · Resurface, counts derived from the items. |
-| `/settings` | Appearance, the Use-folders switch (the server-confirmed answer, never an optimistic one), and an About block that names the build — `Version 0.16.0 (4)`, read from the app config the artifact embeds — then states what is live on this build and what is not. |
+| `/settings` | Appearance, the Use-folders switch (the server-confirmed answer, never an optimistic one), and an About block that names the build — `Version 0.16.1 (5)`, read from the app config the artifact embeds — then states what is live on this build and what is not. |
 
 Light and dark throughout; reduced motion honoured; 44/48 pt touch targets;
 every row and control carries an accessibility label.
