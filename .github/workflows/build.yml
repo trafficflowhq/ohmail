@@ -713,7 +713,8 @@ jobs:
             libayatana-appindicator3-dev \
             libssl-dev \
             build-essential curl wget file patchelf desktop-file-utils \
-            xdg-utils rpm cpio
+            xdg-utils rpm cpio \
+            xvfb x11-utils
 
       - name: Toolchain
         run: |
@@ -1322,6 +1323,43 @@ jobs:
           fi
           echo "unique URL strings (reconcile with the README enumeration): $(grep -c . <<< "$ALL_URLS" || true)"
 
+      # ── THE PACKAGED APP IS LAUNCHED, AND ITS WINDOW HAS TO RENDER ───────
+      #
+      # Every other job here is a build or a static read, so a panic that only
+      # exists at runtime ships. 0.9.7 aborted on every platform on every launch
+      # and passed a green five-job matrix; 0.13.7 opened its window and threw
+      # on the FIRST render, which no liveness check can tell from a working
+      # app. The verdict is therefore a captured frame with content in it — a
+      # window with real geometry AND a band across it carrying distinct
+      # colours and ink. `xwd -root`, because an app-window capture is black
+      # here: the compositor draws elsewhere.
+      - name: The packaged app opens a window that renders
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1400x900x24 &
+          XVFB=$!
+          # Waited for, not slept on: a capture against a server that is not up
+          # yet fails for a reason that is not the app.
+          for _ in $(seq 30); do xwininfo -display :99 -root > /dev/null 2>&1 && break; sleep 1; done
+          # `set +e` around it on purpose: under `set -e` a red check would exit
+          # the step here and the two lines below — the status this step reports
+          # — would never run at all.
+          set +e
+          DISPLAY=:99 node scripts/verify-desktop-launch.mjs build/ohmail-linux-x86_64.AppImage \
+            --out launch-check --timeout 120
+          RC=$?
+          set -e
+          kill "$XVFB" 2>/dev/null || true
+          exit "$RC"
+
+      - name: Keep the launch captures when it fails
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: launch-check-linux-x86_64-${{ github.run_number }}
+          path: launch-check
+          if-no-files-found: ignore
+
       - name: Upload the AppImage
         uses: actions/upload-artifact@v7
         with:
@@ -1454,7 +1492,8 @@ jobs:
             libayatana-appindicator3-dev \
             libssl-dev \
             build-essential curl wget file patchelf desktop-file-utils \
-            xdg-utils rpm cpio
+            xdg-utils rpm cpio \
+            xvfb x11-utils
 
       - name: Toolchain
         run: |
@@ -2052,6 +2091,43 @@ jobs:
             exit 1
           fi
           echo "the packaged engine served on aarch64, using only the runtime inside the AppImage"
+
+      # ── THE PACKAGED APP IS LAUNCHED, AND ITS WINDOW HAS TO RENDER ───────
+      #
+      # Every other job here is a build or a static read, so a panic that only
+      # exists at runtime ships. 0.9.7 aborted on every platform on every launch
+      # and passed a green five-job matrix; 0.13.7 opened its window and threw
+      # on the FIRST render, which no liveness check can tell from a working
+      # app. The verdict is therefore a captured frame with content in it — a
+      # window with real geometry AND a band across it carrying distinct
+      # colours and ink. `xwd -root`, because an app-window capture is black
+      # here: the compositor draws elsewhere.
+      - name: The packaged app opens a window that renders
+        run: |
+          set -euo pipefail
+          Xvfb :99 -screen 0 1400x900x24 &
+          XVFB=$!
+          # Waited for, not slept on: a capture against a server that is not up
+          # yet fails for a reason that is not the app.
+          for _ in $(seq 30); do xwininfo -display :99 -root > /dev/null 2>&1 && break; sleep 1; done
+          # `set +e` around it on purpose: under `set -e` a red check would exit
+          # the step here and the two lines below — the status this step reports
+          # — would never run at all.
+          set +e
+          DISPLAY=:99 node scripts/verify-desktop-launch.mjs build/ohmail-linux-aarch64.AppImage \
+            --out launch-check --timeout 120
+          RC=$?
+          set -e
+          kill "$XVFB" 2>/dev/null || true
+          exit "$RC"
+
+      - name: Keep the launch captures when it fails
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: launch-check-linux-aarch64-${{ github.run_number }}
+          path: launch-check
+          if-no-files-found: ignore
 
       - name: Upload the arm64 AppImage
         uses: actions/upload-artifact@v7
