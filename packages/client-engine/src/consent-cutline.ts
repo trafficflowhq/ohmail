@@ -1,5 +1,8 @@
+import {
+  counterpartyEvidence, type CounterpartyEvidence, type CounterpartyMessage,
+} from "@trafficflow/core/sender-headers";
 import type { EntityReader } from "./store.js";
-import { isResurfaced, messagesByDateDesc, rulesList, senderKey } from "./selectors.js";
+import { isOwnSent, isResurfaced, messagesByDateDesc, rulesList, senderKey } from "./selectors.js";
 import type { EngineMessage, Folder, RuleDTO } from "./types.js";
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
@@ -597,12 +600,44 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
    * per-sender decision queue rather than a place, and pulling a sender out of it because they
    * once replied on a consented thread would silently skip the decision the queue exists to
    * ask for. That sender keeps their own row; only their History mail follows the thread.
+   *
+   * ── AND THE JOIN ITSELF HAS TO BE CORROBORATED ────────────────────────────────────────────
+   *
+   * `threadId` is the header chain, and In-Reply-To/References are the sender's own writing: a
+   * stranger who names a Message-ID this mailbox holds joins that conversation, and the rescue
+   * would then carry their first message into the consented pile — a first-contact decision
+   * skipped by a header. So the account's OWN outbound on that thread has to name the sender.
+   * `we_wrote` is the only class that can corroborate the row being placed, because the row is
+   * the sender's own writing and "they wrote to us" would corroborate itself
+   * (`@trafficflow/core/sender-headers`). The cost is stated: a stranger's reply on a consented
+   * thread the user has not answered stays in History until they do, which is the recoverable
+   * direction — an unrescued row is in a list, an admitted one skipped the queue.
    */
   if (consentedByThread.size > 0) {
+    const onThread = new Map<string, CounterpartyMessage[]>();
+    for (const m of messages) {
+      if (!m.threadId || !consentedByThread.has(m.threadId)) continue;
+      const list = onThread.get(m.threadId) ?? [];
+      if (list.length === 0) onThread.set(m.threadId, list);
+      list.push({
+        ownAuthored: isOwnSent(m),
+        from: m.from?.address,
+        recipients: [...(m.to ?? []), ...(m.cc ?? [])].map((w) => w?.address),
+      });
+    }
+    const ourRecordOn = new Map<string, Map<string, CounterpartyEvidence>>();
+    for (const [threadId, list] of onThread) ourRecordOn.set(threadId, counterpartyEvidence(list));
+
     for (const m of messages) {
       if (!historyIds.has(m.id) || !m.threadId) continue;
       const anchor = consentedByThread.get(m.threadId);
       if (!anchor) continue;
+      /* The account's OWN mail is not an admission of anybody: this rescue keeps the user's own
+         half of a conversation out of History, and it is our own writing by construction. Only a
+         stranger's row needs the corroboration. */
+      const key = senderKey(m.from.address);
+      const ours = isOwnSent(m) || own.has(key);
+      if (!ours && ourRecordOn.get(m.threadId)?.get(key) !== "we_wrote") continue;
       const anchorPlace = placeOf.get(anchor.id);
       if (anchorPlace === null || anchorPlace === undefined) continue;
       /* AN OWN-SENT ROW IS RESCUED TO ITS OWN FOLDER, NEVER TO THE ANCHOR'S.

@@ -1001,6 +1001,7 @@
     "fromMatched": "Switched to match the recipient's domain",
     "to": "To",
     "toSuggestions": "Address suggestions",
+    "toWroteToYou": "wrote to you",
     "toPlaceholder": "name@example.com, separated by commas",
     "toInvalid": "Not an address: {entries}",
     "chipListAria": "Recipients",

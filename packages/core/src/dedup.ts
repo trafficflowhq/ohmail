@@ -1,3 +1,9 @@
+/**
+ * IDENTITY IS `(account, mailbox, uidvalidity, uid)` OR THE CONTENT HASH. A header the sender
+ * writes — Message-ID, In-Reply-To, References, To, Cc — may GROUP or RANK only when corroborated
+ * by something the sender does not control: our own sent record, the person's own reply, or the
+ * server's locator. The rule and its four consumers are `sender-headers.ts`.
+ */
 import { permitsAdoption, type Change, type MoveEvidence, type StoredMessage } from "./ports.js";
 
 export type DedupOutcome =

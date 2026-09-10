@@ -1,4 +1,5 @@
 import { normalizeMessageId } from "./identity.js";
+import { isCorroboratedCounterparty, type CounterpartyEvidence } from "./sender-headers.js";
 import type { RepoPort } from "./ports.js";
 import type { EmailAddress } from "./types.js";
 
@@ -407,7 +408,11 @@ export function baseSubject(subject: string): string {
 
    "Re: invoice" from two unrelated senders is the canonical false merge. It fails guard 4:
    the only address the two threads share is the account's own, and the account's own addresses
-   are subtracted before the overlap is tested. Two unprefixed "Weekly report" mails from the
+   are subtracted before the overlap is tested. A stranger naming a trusted colleague in `Cc`
+   fails it too, and that is the second half of guard 4: the `To` and `Cc` of somebody else's
+   mail are that sender's claim about who else is involved, so they are not counterparty
+   evidence — without that rule one message could graft its thread onto any conversation whose
+   participant the sender could name (`sender-headers.ts` carries the rule and its limits). Two unprefixed "Weekly report" mails from the
    same sender fail guard 3: neither thread's first message CLAIMS to continue anything. A
    reply to a genuinely old conversation fails guard 5's window. Every guard must pass; any
    failure keeps the threads apart, and an unmerged split remains the recoverable direction —
@@ -468,13 +473,20 @@ export interface ConversationJoinFacts {
   lastMessageAt: Date | null;
   /** Earliest message's subject AS SENT — prefixes intact, they are guard 3's evidence. */
   firstMessageSubject: string;
-  /** Every address seen on the thread's messages (from ∪ to ∪ cc), lowercased, self included. */
-  correspondents: ReadonlySet<string>;
+  /**
+   * Every address the thread's messages mention, lowercased and self included, WITH who put it
+   * there ({@link counterpartyEvidence}).
+   *
+   * A Map and not a Set, so a producer cannot hand this verdict a `To`/`Cc` a stranger wrote
+   * without saying so: guard 4 admits only the corroborated classes, and the shape is what makes
+   * the omission a compile error in every producer rather than a silent readmission.
+   */
+  correspondents: ReadonlyMap<string, CounterpartyEvidence>;
 }
 
 export type ConversationJoinVerdict =
   | { join: true; /** The non-self addresses both threads share — the evidence, for the log. */ overlap: string[] }
-  | { join: false; reason: "undated" | "order" | "no-base-subject" | "subject-differs" | "later-not-a-continuation" | "outside-window" | "no-counterparty-overlap" };
+  | { join: false; reason: "undated" | "order" | "no-base-subject" | "subject-differs" | "later-not-a-continuation" | "outside-window" | "no-counterparty-overlap" | "uncorroborated-overlap" };
 
 /**
  * Decide whether two threads of ONE account are the same conversation. Pure — the heal derives
@@ -521,13 +533,24 @@ export function conversationJoinVerdict(
   const gap = later.firstMessageAt.getTime() - earlier.lastMessageAt.getTime();
   if (gap > CONVERSATION_JOIN_WINDOW_MS) return { join: false, reason: "outside-window" };
 
-  // 4 — the same non-self correspondent on both sides. Tested LAST only because it is the one
-  //     guard with output worth logging; the numbering above matches the module comment.
+  // 4 — the same non-self correspondent on both sides, CORROBORATED on both sides. Tested LAST
+  //     only because it is the one guard with output worth logging; the numbering above matches
+  //     the module comment. A shared address that only ever appeared in a To/Cc somebody else
+  //     wrote is refused under its own reason, so the heal can count what it turned away.
   const overlap: string[] = [];
-  for (const addr of earlier.correspondents) {
-    if (later.correspondents.has(addr) && !selfAddresses.has(addr)) overlap.push(addr);
+  let uncorroborated = 0;
+  for (const [addr, mine] of earlier.correspondents) {
+    const theirs = later.correspondents.get(addr);
+    if (theirs === undefined || selfAddresses.has(addr)) continue;
+    if (isCorroboratedCounterparty(mine) && isCorroboratedCounterparty(theirs)) overlap.push(addr);
+    else uncorroborated += 1;
   }
-  if (overlap.length === 0) return { join: false, reason: "no-counterparty-overlap" };
+  if (overlap.length === 0) {
+    return {
+      join: false,
+      reason: uncorroborated > 0 ? "uncorroborated-overlap" : "no-counterparty-overlap",
+    };
+  }
 
   return { join: true, overlap: overlap.sort() };
 }

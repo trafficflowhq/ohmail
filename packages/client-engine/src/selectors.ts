@@ -1,4 +1,5 @@
 import { isSentFolderPath } from "@trafficflow/core/folder-name";
+import { mayGroupByMessageId } from "@trafficflow/core/sender-headers";
 import type { EntityReader } from "./store.js";
 import { zonedFields } from "./zone.js";
 import { daysAgo, messageStamp, named } from "./stamp.js";
@@ -232,18 +233,35 @@ function preferTwin(a: EngineMessage, b: EngineMessage, openId: string): EngineM
  *
  * `members` arrives in reading order and leaves in reading order — the survivor keeps its
  * place; nothing is re-sorted.
+ *
+ * ── ONLY OUR OWN OUTBOUND COPIES COLLAPSE ───────────────────────────────────────────────────
+ *
+ * The Message-ID is the sender's own writing, so keying identity on it alone let a stranger who
+ * reuses a Message-ID the mailbox already holds take the survivor's place: the real message was
+ * not deleted, it was not rendered, which for the reader is the same thing. Both twins this
+ * function exists for are OURS — the provisional Sent copy and the provider's re-filed
+ * submission — and {@link mayGroupByMessageId} is where that rule lives. Two inbound rows
+ * sharing a Message-ID are two messages and both stand.
  */
+/** This row's collapse key, or `null` where its Message-ID may not stand for identity. */
+function twinKeyOf(m: EngineMessage): string | null {
+  // The engine's own send record, or the server's Sent locator. Neither is a sender's claim.
+  const row = { messageIdHeader: m.messageIdHeader, ownOutbound: m.local === true || isOwnSent(m) };
+  return mayGroupByMessageId(row) ? messageIdKey(row.messageIdHeader) : null;
+}
+
 function collapseTwins(members: EngineMessage[], openId: string): EngineMessage[] {
   const keeper = new Map<string, EngineMessage>();
   for (const m of members) {
-    if (!m.messageIdHeader) continue;
-    const key = messageIdKey(m.messageIdHeader);
+    const key = twinKeyOf(m);
+    if (key === null) continue;
     const held = keeper.get(key);
     keeper.set(key, held ? preferTwin(held, m, openId) : m);
   }
-  return members.filter(
-    (m) => !m.messageIdHeader || keeper.get(messageIdKey(m.messageIdHeader)) === m,
-  );
+  return members.filter((m) => {
+    const key = twinKeyOf(m);
+    return key === null || keeper.get(key) === m;
+  });
 }
 
 /**

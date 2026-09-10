@@ -702,6 +702,13 @@ export function RecipientField({
                   </span>
                 );
               })()}
+              {/* Somebody who has written to you but whom you have not written to. Two people
+                  can share a display name, and the one you chose to write to ranks first
+                  (`address-book.ts`); this says which kind the row is rather than leaving the
+                  order to carry that on its own. */}
+              {entry.evidence === "they_wrote"
+                ? <span className="rcp-ev">{t("toWroteToYou")}</span>
+                : null}
             </li>
           ))}
         </ul>

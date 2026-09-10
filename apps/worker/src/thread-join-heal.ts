@@ -1,9 +1,10 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { drafts, mailboxes, messages, recordChanges, threadNotes, threads, type LedgerTx, type Tx } from "@trafficflow/db";
 import {
-  conversationJoinVerdict, silentLogger,
-  type ConversationJoinFacts, type EmailAddress, type Logger,
+  conversationJoinVerdict, counterpartyEvidence, mergeCounterpartyEvidence, silentLogger,
+  type ConversationJoinFacts, type CounterpartyEvidence, type EmailAddress, type Logger,
 } from "@trafficflow/core/mail";
+import { isSentFolderPath } from "@trafficflow/core/folder-name";
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
    THE THREAD-JOIN HEAL — the deferred merge for conversations a forward split
@@ -132,6 +133,12 @@ export interface ThreadJoinHealResult {
    * in-run retry covers transients and the wrap-around retries the rest.
    */
   failed: number;
+  /**
+   * Pairs refused because the only address they shared was one a SENDER named in a `To`/`Cc`.
+   * Counted apart from the other refusals: this is the graft attempt, and a rising count on one
+   * account is worth reading.
+   */
+  refusedUncorroborated: number;
   /** True ⇒ the group budget ran out before the candidate set did; resume from `cursor`. */
   capped: boolean;
   /** The last group examined — the resume point for a follow-on invocation. */
@@ -149,7 +156,7 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
   const now = deps.now ?? (() => new Date());
   const maxGroups = Math.min(deps.maxGroups ?? THREAD_JOIN_HEAL_MAX_GROUPS, THREAD_JOIN_HEAL_MAX_GROUPS);
 
-  const result: ThreadJoinHealResult = { groupsScanned: 0, merged: 0, messagesMoved: 0, skipped: 0, failed: 0, capped: false, cursor: null };
+  const result: ThreadJoinHealResult = { groupsScanned: 0, merged: 0, messagesMoved: 0, skipped: 0, failed: 0, refusedUncorroborated: 0, capped: false, cursor: null };
   const selfByAccount = new Map<string, Set<string>>();
   let cursor: ThreadJoinHealCursor | null = deps.cursor ?? null;
 
@@ -262,7 +269,7 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
       // union of what has (or would have) merged so far, because after B joins A, C's overlap
       // with the conversation includes what B brought.
       const target = facts[0]!;
-      const running: ThreadFacts = { ...target, correspondents: new Set(target.correspondents) };
+      const running: ThreadFacts = { ...target, correspondents: new Map(target.correspondents) };
       const absorb: ThreadFacts[] = [];
       for (const candidate of facts.slice(1)) {
         const verdict = conversationJoinVerdict(running, candidate, self);
@@ -272,9 +279,14 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
           accountId: group.account_id, threadId: target.id, candidateThreadId: candidate.id,
           verdict: verdict.join ? "join" : verdict.reason,
         });
-        if (!verdict.join) continue;
+        if (!verdict.join) {
+          if (verdict.reason === "uncorroborated-overlap") result.refusedUncorroborated += 1;
+          continue;
+        }
         absorb.push(candidate);
-        for (const addr of candidate.correspondents) (running.correspondents as Set<string>).add(addr);
+        mergeCounterpartyEvidence(
+          running.correspondents as Map<string, CounterpartyEvidence>, candidate.correspondents,
+        );
         if (candidate.lastMessageAt && (!running.lastMessageAt
           || candidate.lastMessageAt.getTime() > running.lastMessageAt.getTime())) {
           running.lastMessageAt = candidate.lastMessageAt;
@@ -453,7 +465,8 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
   log.info(apply ? "thread_join_heal_complete" : "thread_join_heal_dry_complete", {
     ...(deps.accountId ? { accountId: deps.accountId } : {}),
     scanned: result.groupsScanned, merged: result.merged, moved: result.messagesMoved,
-    skipped: result.skipped, failed: result.failed, capped: result.capped,
+    skipped: result.skipped, failed: result.failed,
+    refusedUncorroborated: result.refusedUncorroborated, capped: result.capped,
   });
   return result;
 }
@@ -488,20 +501,24 @@ async function threadFactsOf(db: Tx, threadId: string): Promise<ConversationJoin
 
   const page = await db.select({
     from: messages.fromAddress, to: messages.toAddresses, cc: messages.ccAddresses,
+    locator: messages.nativeLocator,
   }).from(messages)
     .where(living)
     .orderBy(sql`${messages.date} asc nulls last`, asc(messages.createdAt))
     .limit(THREAD_JOIN_HEAL_MAX_MESSAGES_PER_THREAD);
 
-  const correspondents = new Set<string>();
-  for (const m of page) {
-    if (m.from) correspondents.add(m.from.toLowerCase());
-    for (const list of [m.to, m.cc]) {
-      for (const p of (list as EmailAddress[] | null) ?? []) {
-        if (p.address) correspondents.add(p.address.toLowerCase());
-      }
-    }
-  }
+  // WHO put each address on this conversation, not merely that it appears — `sender-headers.ts`
+  // carries the rule. `ownAuthored` reads the SERVER's own locator: a message the mailbox filed
+  // in Sent is one we wrote, so its recipients are our record of who we write to. The `From`
+  // header is never asked, because a sender writes it.
+  const correspondents = counterpartyEvidence(page.map((m) => ({
+    ownAuthored: isSentFolderPath((m.locator as { folder?: string } | null)?.folder ?? ""),
+    from: m.from,
+    recipients: [
+      ...((m.to as EmailAddress[] | null) ?? []),
+      ...((m.cc as EmailAddress[] | null) ?? []),
+    ].map((p) => p.address),
+  })));
 
   return {
     firstMessageAt: first[0]!.date,

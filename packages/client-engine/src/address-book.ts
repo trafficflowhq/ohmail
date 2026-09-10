@@ -89,6 +89,8 @@
  * the `drafts` row behind it, and rewriting either would be inventing history. Those rows are
  * `observed`, so they stop influencing what is shown from here on.
  */
+import { counterpartyEvidence, type CounterpartyEvidence } from "@trafficflow/core/sender-headers";
+import { isOwnSent } from "./selectors.js";
 import type { EntityReader } from "./store.js";
 import type { EmailAddress, EngineDraft, EngineMessage } from "./types.js";
 
@@ -109,6 +111,17 @@ export interface AddressBookEntry {
   count: number;
   /** The most recent appearance as epoch ms; `0` when nothing carrying it was dated. */
   lastAt: number;
+  /**
+   * WHO PUT THIS ADDRESS IN THE BOOK — `we_wrote` (our own sent mail or a sent draft names them),
+   * `they_wrote` (they have written to us), or `sender_named` (they have only ever appeared in a
+   * `To`/`Cc` somebody else wrote).
+   *
+   * The first key {@link byRank} sorts on, because a count alone is a lever: twenty messages from a
+   * stranger outranked the colleague written to twice, and a `From` display name the stranger chose
+   * put their address under that colleague's name at the top of the suggestions. REQUIRED, so a
+   * caller building an entry has to say which it is.
+   */
+  evidence: CounterpartyEvidence;
 }
 
 /** Local parts that no reply can reach. Compared after stripping non-letters. */
@@ -162,6 +175,13 @@ interface Acc extends AddressBookEntry {
   nameTier: number;
   nameAt: number;
 }
+
+/** Corroborated first, and within a class the score below decides. */
+const EVIDENCE_ORDER: Record<CounterpartyEvidence, number> = {
+  we_wrote: 0,
+  they_wrote: 1,
+  sender_named: 2,
+};
 
 /**
  * A message's date, AS EVIDENCE OF RECENCY — or {@link NO_EVIDENCE}.
@@ -237,7 +257,7 @@ function addTo(
   if (!prev) {
     // An empty name claims nothing, so it holds no tier either — see {@link NONE}.
     into.set(address, {
-      address, name, count: 1, lastAt: at,
+      address, name, count: 1, lastAt: at, evidence: "sender_named",
       nameTier: name === "" ? NONE : tier,
       nameAt: name === "" ? NO_EVIDENCE : nameAt,
     });
@@ -298,7 +318,26 @@ export function addressBook(
   // from its last, which is a result that depends on how long it took to compute.
   const now = Date.now();
 
-  for (const m of reader.list<EngineMessage>("message")) {
+  const rows = reader.list<EngineMessage>("message");
+  const sentDrafts = reader.list<EngineDraft>("draft").filter((d) => d.status === "sent");
+  /* WHO PUT EACH ADDRESS HERE, by the one rule (`@trafficflow/core/sender-headers`). A message we
+     wrote contributes its recipients as our own record; anybody else's mail contributes its author
+     and NOT its `To`/`Cc`, which is that sender's claim about who else is involved. A sent draft is
+     the same record from the other side, whatever folder its delivered copy landed in. */
+  const evidence = counterpartyEvidence([
+    ...rows.map((m) => ({
+      ownAuthored: isOwnSent(m),
+      from: m.from?.address,
+      recipients: [...(m.to ?? []), ...(m.cc ?? [])].map((w) => w?.address),
+    })),
+    ...sentDrafts.map((d) => ({
+      ownAuthored: true,
+      from: null,
+      recipients: [...(d.to ?? []), ...(d.cc ?? [])].map((w) => w?.address),
+    })),
+  ]);
+
+  for (const m of rows) {
     const at = stamp(m.date);
     // The From is the only SELF-declared name in the whole walk — see the header.
     addTo(into, m.from, at, SELF, now);
@@ -322,7 +361,10 @@ export function addressBook(
   return [...into.values()]
     .filter((e) => !blocked.has(e.address))
     // The working fields go no further than this function — see {@link Acc}.
-    .map(({ nameTier: _t, nameAt: _a, ...entry }) => entry)
+    .map(({ nameTier: _t, nameAt: _a, ...entry }) => ({
+      ...entry,
+      evidence: evidence.get(entry.address) ?? "sender_named",
+    }))
     .sort(byRank);
 }
 
@@ -340,6 +382,11 @@ export function addressBook(
  * return 0 for two different entries gives an order that depends on the engine's sort
  * stability, which is how a suggestion list flickers between two candidates as unrelated mail
  * arrives.
+ *
+ * EVIDENCE OUTRANKS BOTH, and it has to: count and recency are things a sender can produce on
+ * demand, so with the score alone the top suggestion for a name belongs to whoever sent the most
+ * mail most recently. People the account has WRITTEN to come first, then people who have written
+ * to it, then addresses only a sender ever named ({@link AddressBookEntry.evidence}).
  */
 const DAY = 86_400_000;
 
@@ -351,6 +398,8 @@ export function rankOf(entry: AddressBookEntry, now: number): number {
 
 function byRank(a: AddressBookEntry, b: AddressBookEntry): number {
   const now = Date.now();
+  const tier = EVIDENCE_ORDER[a.evidence] - EVIDENCE_ORDER[b.evidence];
+  if (tier !== 0) return tier;
   const d = rankOf(b, now) - rankOf(a, now);
   if (d !== 0) return d;
   if (b.lastAt !== a.lastAt) return b.lastAt - a.lastAt;

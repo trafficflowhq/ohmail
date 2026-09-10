@@ -2580,6 +2580,17 @@ textarea.c-input:read-only {
   flex: 0 0 auto;
   white-space: nowrap;
 }
+/* "wrote to you" — a correspondent the account has never written to. It rides at the END of the
+   row and never shrinks the address: the two things that tell two same-named people apart are the
+   address and this, so neither may give up space to the other. */
+.rcp-opt .rcp-ev {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding-left: 8px;
+  color: var(--ink3);
+  font-size: calc(10.5px + var(--type-up));
+  white-space: nowrap;
+}
 .rcp-opt.sel {
   background: var(--tint);
 }

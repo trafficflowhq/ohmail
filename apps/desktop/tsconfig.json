@@ -107,7 +107,8 @@
          link printed by another machine's desktop and which may not link the client-engine
          barrel. `packages/client-engine/src/pair-link.ts` re-exports it, and that file is in this
          bundle, so the specifier has to resolve here. */
-      "@trafficflow/core/pair-link": ["../../packages/core/src/pair-link.ts"]
+      "@trafficflow/core/pair-link": ["../../packages/core/src/pair-link.ts"],
+      "@trafficflow/core/sender-headers": ["../../packages/core/src/sender-headers.ts"]
     }
   },
   "include": ["src", "vite.config.ts"]

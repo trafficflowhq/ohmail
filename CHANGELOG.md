@@ -88,6 +88,21 @@ limit already said: your other installs are never shown as stopped, and no organ
 made from half a folder. A request that runs out of time says so and closes its connection at
 once, instead of queueing a polite goodbye behind whatever is stuck.
 
+### A sender cannot write their way into your threads or your address book
+
+The headers on an incoming message are written by whoever sent it, and three places treated them as
+facts. A message reusing the Message-ID of one you already have could take its place in a
+conversation and in the Ohbox — the mail was still there, and it was no longer shown. A stranger
+who put a colleague's address in `Cc` could have their conversation merged into yours. And compose
+suggestions were ranked by how much mail an address had sent you, so anyone could become the first
+suggestion under a colleague's name.
+
+Now a message groups or ranks on something the sender does not control: mail you sent, mail they
+actually sent you, or the folder your mail server filed it in. Compose suggestions put the people
+you have written to first, and label someone who has only written to you. Nothing is hidden and
+nothing moves: a conversation you have not replied to keeps a new sender's reply in History until
+you do.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

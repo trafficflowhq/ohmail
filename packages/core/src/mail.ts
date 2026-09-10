@@ -38,6 +38,9 @@ export * from "./dedup.js";
 export * from "./gone.js";
 export * from "./reconciler.js";
 export * from "./threading.js";
+// The one rule for reading a sender-written header as identity or as rank. Mail-half by the
+// same test as the modules above: no model, no store, no clock.
+export * from "./sender-headers.js";
 export * from "./pipeline.js";
 // The junk-husk verify/rewrite BOTH restore doors share — the API's "Not junk" rescue and the
 // worker's convergence pass. Mail-half by the same test as `pipeline.js` beside it: it names no
