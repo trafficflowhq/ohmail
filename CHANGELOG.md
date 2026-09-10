@@ -732,6 +732,7 @@ with the reason on the row: to remove a message for good, use your own mail clie
 The list holds mail you deleted in ohmail. Mail trashed in other apps stays in your mail server's
 Trash, and your mail server decides how long Trash keeps it — the screen says so under the last
 row.
+
 A restored message reappears in the list it came from once your mail server has moved it back,
 which is seconds later; until then the sidebar says a message is being filed. The app waits for
 the mail server rather than guessing, so it never shows mail in a place your mail server does not
