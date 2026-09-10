@@ -13,6 +13,17 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### The app reports how much memory it is holding
+
+The desktop app's engine now writes its own memory use to its log every five minutes, and the
+database it keeps your mail in is a separate number on that line rather than part of one total. If
+the app ever feels heavy after a long day, the log says which half grew.
+
+Two things changed behind that. The mail window no longer keeps a copy of its view of the mailbox
+alive after the view has moved on — one such copy was left, and on a large mailbox it was not
+small. And the app's store is a fixed cost measured at about 200 MB whatever the size of your
+mailbox, so it is now written down as one.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
