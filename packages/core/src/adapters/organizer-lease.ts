@@ -4,6 +4,9 @@ import {
 } from "@trafficflow/db";
 import { WATCHED_FOLDERS, type ImapAuth } from "./imap-types.js";
 import {
+  boundedFetch, ImapDeadline, IMAP_META_BYTES_MAX, IMAP_META_DEADLINE_MS,
+} from "./imap-bounds.js";
+import {
   assertMetaIdentity, readMemo, writeMemo, forgetMemo,
   type MetaIdentity, type Generation,
 } from "./meta-memo.js";
@@ -2703,6 +2706,11 @@ export async function readMetaFolderWindow(
    * renumbers everything above it without saying so.
    */
   beforeUid?: number,
+  /**
+   * The clock the read's deadline reads. Injectable so a case can drive the SHIPPING ceiling
+   * instead of a lowered one — a test that has to shorten the bound is not testing the bound.
+   */
+  now: () => number = Date.now,
 ): Promise<MetaFolderRead> {
   // AN EMPTY `_meta` IS THE NORMAL STATE OF A FRESH MAILBOX, AND `1:*` IS NOT A VALID MESSAGESET
   // WHEN A MAILBOX HOLDS NOTHING.
@@ -2761,8 +2769,6 @@ export async function readMetaFolderWindow(
   // A function rather than a loop in place, because the shift check below has to be able to run it
   // AGAIN with a wider range.
   const readFrom = async (start: number): Promise<{ records: RawMetaMessage[]; evicted: boolean }> => {
-  const records: RawMetaMessage[] = [];
-  let evicted = false;
   /* ── A PAGE ASKS FOR ITS OWN WINDOW, NOT FOR EVERYTHING BELOW THE CURSOR ──────────────────
    *
    * This asked for `1:<cursor-1>` and let the eviction keep the newest ceiling's worth. Bounded in
@@ -2777,38 +2783,42 @@ export async function readMetaFolderWindow(
   const { lo: pageLo, hi: pageHi } = metaPageBounds(beforeUid ?? 1);
   const range = beforeUid !== undefined ? `${pageLo}:${pageHi}` : `${start}:*`;
   const byUid = beforeUid !== undefined;
-  if (beforeUid !== undefined && beforeUid <= 1) return { records, evicted };
-  // `internalDate` beside the headers: one extra field on a FETCH already being issued, and the
-  // only reading of the server's clock this folder can give. See `RawClaimMessage.internalDate`.
-  // ONE LINE, because the fetch census matches `client.fetch(range,` as its structural pin.
-  for await (const m of client.fetch(range, { uid: true, headers: true, internalDate: true }, { uid: byUid })) {
-    if (!m.headers) continue;
-    records.push({
-      ref: m.uid, raw: m.headers.toString("utf8"),
-      internalDate: m.internalDate instanceof Date ? m.internalDate : null,
-    });
-    // ── PAST THE CEILING, DROP FROM THE FRONT — NEVER STOP AT IT ─────────────────────────────
-    //
-    // This used to `break`, and on the `1:*` path — an `exists` the client will not report — that
-    // silently INVERTED the newest-first guarantee this whole read is built on: the range starts at
-    // the oldest record, so stopping at the ceiling keeps the OLDEST window, which is the defect
-    // being fixed wearing the fix's own clothes. Nothing announced it, because the count that would
-    // have revealed it is exactly the count that was missing.
-    //
-    // Shifting keeps memory bounded at the ceiling either way. It does read the whole folder over
-    // the wire on that path, and that is the honest cost of a server that will not say how many
-    // messages it holds — a real connection reports `exists`, so the range is computed and this
-    // branch never runs. Correctness first: a bound that quietly returns the wrong half is worse
-    // than a bound that costs a round trip.
-    //
-    // Nothing is deleted on the way past. This folder is the customer's, and a message this build
-    // does not recognise is not its to destroy.
-    if (records.length > META_RECORDS_MAX_PER_FETCH) {
-      records.shift();
-      evicted = true;
-    }
-  }
-    return { records, evicted };
+  if (beforeUid !== undefined && beforeUid <= 1) return { records: [], evicted: false };
+  /*
+   * Three ceilings, all three on the READ. COUNT evicts from the FRONT rather than stopping: a
+   * sequence range arrives oldest first, so stopping keeps the superseded half. BYTES, because
+   * the count says nothing about how large one header block is and the server chooses that. TIME,
+   * because a server answering glacially resets the socket's inactivity timer for ever.
+   *
+   * A `map` yielding `null` keeps a header-less reply COUNTED — the ceiling bounds what the
+   * server SENDS, not what survives the filter. Nothing is deleted on the way past: the folder is
+   * the customer's.
+   *
+   * `internalDate` beside the headers: one extra field on a FETCH already being issued, and the
+   * only reading of the server's clock this folder can give. See `RawClaimMessage.internalDate`.
+   * The `client.fetch(range,` call stays ONE LINE — the fetch census pins that form structurally.
+   */
+  const read = await boundedFetch(
+    client.fetch(range, { uid: true, headers: true, internalDate: true }, { uid: byUid }),
+    {
+      max: META_RECORDS_MAX_PER_FETCH,
+      bytes: { max: IMAP_META_BYTES_MAX, of: (m) => m.headers?.byteLength ?? 0 },
+      deadline: ImapDeadline.in(IMAP_META_DEADLINE_MS, "read_deadline", now),
+      onOverflow: "evict",
+      ...(path === undefined ? {} : { folder: path }),
+      map: (m): RawMetaMessage | null =>
+        m.headers
+          ? {
+              ref: m.uid, raw: m.headers.toString("utf8"),
+              internalDate: m.internalDate instanceof Date ? m.internalDate : null,
+            }
+          : null,
+    },
+  );
+  return {
+    records: read.items.filter((r): r is RawMetaMessage => r !== null),
+    evicted: read.evicted,
+  };
   };
 
   const first = await readFrom(from);

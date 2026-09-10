@@ -92,6 +92,7 @@ export type ImapBoundKind =
   | "sample_rows"
   | "page_rows"
   | "body_overrun"
+  | "read_bytes"
   | "read_deadline"
   | "cycle_deadline";
 
@@ -149,6 +150,39 @@ export class ImapBoundExceeded extends Error {
 export function isImapBoundExceeded(err: unknown): err is ImapBoundExceeded {
   return typeof err === "object" && err !== null
     && (err as { code?: unknown }).code === "EIMAPBOUND";
+}
+
+/**
+ * An operator's override of a ceiling was not a number, so nothing booted.
+ *
+ * Its own class carrying the VARIABLE NAME, because a ceiling silently falling back to its
+ * default on a typo is the failure this refusal exists to prevent: `Number("2 000")` is `NaN`,
+ * and a `NaN` ceiling compares false against every count, which is an uncapped read wearing a
+ * configured one's clothes. The value is never quoted — the name is what an operator needs.
+ */
+export class ImapBoundConfigError extends Error {
+  readonly code = "EIMAPBOUNDCONFIG";
+  constructor(readonly configVar: string, message: string) {
+    super(message);
+    this.name = "ImapBoundConfigError";
+  }
+}
+
+/**
+ * A ceiling's default, overridable by environment and REFUSED BY NAME when the override is not a
+ * positive integer. Read at module load, so a typo stops the process at boot rather than
+ * uncapping a read at the first hostile mailbox.
+ */
+export function boundFromEnv(
+  key: string, fallback: number, env: Record<string, string | undefined> = process.env,
+): number {
+  const raw = env[key];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n <= 0) {
+    throw new ImapBoundConfigError(key, `${key} must be a positive integer`);
+  }
+  return n;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -337,6 +371,20 @@ export function bodyOverrunCeiling(declared: number | undefined): number {
   return Math.max(Math.ceil(base * IMAP_BODY_OVERRUN_FACTOR), IMAP_BODY_OVERRUN_FLOOR_BYTES);
 }
 
+/**
+ * Bytes one read of `ohmail/_meta` may accept across the whole window.
+ *
+ * The count ceiling on that folder bounds how MANY records come back and says nothing about how
+ * large one of them is: the fold keeps each record's raw headers, and a single header block the
+ * server chose the size of satisfies a count ceiling of 500 on its own. Whoever can append to
+ * the folder picks which axis to spend, so both have to exist.
+ *
+ * 8 MiB against a legitimate population of a handful of records whose own payload ceiling is
+ * 4 KiB — roughly four times the largest honest window, and far below where retaining it
+ * registers against the shared worker's memory.
+ */
+export const IMAP_META_BYTES_MAX = boundFromEnv("TF_IMAP_META_MAX_BYTES", 8 * 1024 * 1024);
+
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // TIME CEILINGS — the slow-loris arm
 // ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -356,6 +404,17 @@ export function bodyOverrunCeiling(declared: number | undefined): number {
  * finds out in.
  */
 export const IMAP_READ_DEADLINE_MS = 180_000;
+
+/**
+ * Wall-clock ceiling on ONE read of `ohmail/_meta` — the lease fold and the settings documents
+ * alike, because it is one folder and one legitimate population.
+ *
+ * That folder had no clock at all, and it is the read a stalling server profits most from: it
+ * runs on every cycle, it holds the folder's lock, and both a peek and an authenticated API door
+ * reach it. 60 s is far above any honest read of a handful of small records and well inside the
+ * general per-read ceiling, which it composes with rather than replaces.
+ */
+export const IMAP_META_DEADLINE_MS = boundFromEnv("TF_IMAP_META_DEADLINE_MS", 60_000);
 
 /**
  * Wall-clock ceiling on ONE WHOLE `changesSince` pass.
@@ -479,6 +538,57 @@ export class ImapDeadline {
 // THE BOUNDED READS
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
+interface BoundedFetchBase<T, R> {
+  /** Messages this read may take. */
+  max: number;
+  /**
+   * The byte arm, for a read whose items carry a payload the SERVER sizes. Omitted where an item
+   * is a fixed-width value the server cannot inflate (a UID), which is the only honest reason to
+   * leave an axis unbounded: there is nothing on it to bound.
+   */
+  bytes?: { max: number; of: (item: T) => number };
+  /** The wall clock, composed by the caller with any outer budget. */
+  deadline?: ImapDeadline;
+  folder?: string;
+  /**
+   * Retire the connection — the stream is being abandoned mid-command.
+   *
+   * `because` is the breach — the refusal the caller is about to see, or, for a truncating
+   * stop that raises nothing, the same object describing the ceiling that fired. It is always
+   * supplied: a retirement is reported, and a report naming the wrong condition is worse than
+   * no report at all.
+   *
+   * The argument is `notify`: TRUE when this function will NOT throw, so nothing else is going
+   * to report the retirement and the connection's owner has to be told directly. FALSE when it
+   * is about to throw, because then the throw IS the report — and a second, synthetic one
+   * would reset the caller's failure accounting instead of adding to it.
+   */
+  onAbandon?: (notify: boolean, because: ImapBoundExceeded) => void;
+  map: (item: T) => R;
+}
+
+/**
+ * What a ceiling DOES, and whether the breach therefore has a NAME.
+ *
+ * `throw` refuses and `stop` keeps a smaller sample; both abandon a running command and report
+ * the ceiling, so both need a {@link ImapBoundKind}. `evict` reads the range to its end and keeps
+ * the NEWEST items that fit — for a folder whose live records are appended last, where stopping
+ * early would keep exactly the wrong half — so it abandons nothing, raises nothing, and has no
+ * bound to name; it reports `evicted` instead, which its callers turn into their own UNKNOWN.
+ */
+export type BoundedFetchOptions<T, R> = BoundedFetchBase<T, R> & (
+  | { onOverflow?: "throw" | "stop"; bound: ImapBoundKind }
+  | { onOverflow: "evict" }
+);
+
+export interface BoundedFetchResult<R> {
+  items: R[];
+  /** A ceiling fired under `evict` and older items were dropped — the caller's UNKNOWN. */
+  evicted: boolean;
+  /** Bytes retained, where the caller measures them; `0` with no byte arm. */
+  bytes: number;
+}
+
 /**
  * Consume at most `max` items from a server-driven async iterable, checking the clock as it goes.
  *
@@ -510,35 +620,27 @@ export class ImapDeadline {
  * next command on that connection queues behind a command nobody is reading. Truncation that
  * leaves the read running is not truncation.
  */
-export async function boundedCollect<T, R>(
-  src: AsyncIterable<T>,
-  opts: {
-    max: number;
-    bound: ImapBoundKind;
-    deadline?: ImapDeadline;
-    folder?: string;
-    onOverflow?: "throw" | "stop";
-    /**
-     * Retire the connection — the stream is being abandoned mid-command.
-     *
-     * `because` is the breach — the refusal the caller is about to see, or, for a truncating
-     * stop that raises nothing, the same object describing the ceiling that fired. It is always
-     * supplied: a retirement is reported, and a report naming the wrong condition is worse than
-     * no report at all.
-     *
-     * The argument is `notify`: TRUE when this function will NOT throw, so nothing else is going
-     * to report the retirement and the connection's owner has to be told directly. FALSE when it
-     * is about to throw, because then the throw IS the report — and a second, synthetic one
-     * would reset the caller's failure accounting instead of adding to it.
-     */
-    onAbandon?: (notify: boolean, because: ImapBoundExceeded) => void;
-    map: (item: T) => R;
-  },
-): Promise<R[]> {
-  const out: R[] = [];
-  const overflow = opts.onOverflow ?? "throw";
+/**
+ * THE ONE BOUNDED READ: count, bytes and wall clock on a server-driven stream.
+ *
+ * Both axes take the SAME disposition, because whoever can fill the folder chooses which one to
+ * spend and a read that refuses on one while truncating on the other answers two different
+ * questions about one window.
+ */
+export async function boundedFetch<T, R>(
+  src: AsyncIterable<T>, opts: BoundedFetchOptions<T, R>,
+): Promise<BoundedFetchResult<R>> {
+  const items: R[] = [];
+  const costs: number[] = [];
+  const evict = opts.onOverflow === "evict";
+  const stop = opts.onOverflow === "stop";
+  // `undefined` exactly when nothing can be raised, so the throwing arms below are unreachable
+  // without a name rather than reachable with a wrong one.
+  const countBound = evict ? undefined : opts.bound;
   const it = src[Symbol.asyncIterator]();
   let seen = 0;
+  let bytes = 0;
+  let evicted = false;
   for (;;) {
     const step = opts.deadline === undefined
       ? await it.next()
@@ -547,18 +649,46 @@ export async function boundedCollect<T, R>(
       );
     if (step.done === true) break;
     seen++;
-    if (seen > opts.max) {
+    if (seen > opts.max && countBound !== undefined) {
       // Thrown BEFORE the item is mapped or pushed: the ceiling is the size of the container,
       // not one past it.
-      const because = new ImapBoundExceeded(opts.bound, opts.max, seen, opts.folder);
+      const because = new ImapBoundExceeded(countBound, opts.max, seen, opts.folder);
       // `stop` returns a value; `throw` does not. That is exactly the distinction.
-      opts.onAbandon?.(overflow === "stop", because);
-      if (overflow === "stop") break;
+      opts.onAbandon?.(stop, because);
+      if (stop) break;
       throw because;
     }
-    out.push(opts.map(step.value));
+    const cost = opts.bytes === undefined ? 0 : opts.bytes.of(step.value);
+    if (opts.bytes !== undefined && bytes + cost > opts.bytes.max && !evict) {
+      const because = new ImapBoundExceeded(
+        "read_bytes", opts.bytes.max, bytes + cost, opts.folder,
+      );
+      opts.onAbandon?.(stop, because);
+      if (stop) break;
+      throw because;
+    }
+    items.push(opts.map(step.value));
+    costs.push(cost);
+    bytes += cost;
+    // A single item larger than the whole byte ceiling is evicted too: it cannot be kept, and
+    // saying so is what `evicted` is for.
+    while (evict && items.length > 0
+      && (items.length > opts.max || (opts.bytes !== undefined && bytes > opts.bytes.max))) {
+      items.shift();
+      bytes -= costs.shift() ?? 0;
+      evicted = true;
+    }
   }
-  return out;
+  return { items, evicted, bytes };
+}
+
+/** {@link boundedFetch} for a read with nothing on its byte axis — the adapter's UID streams. */
+export async function boundedCollect<T, R>(
+  src: AsyncIterable<T>,
+  opts: Omit<BoundedFetchBase<T, R>, "bytes">
+    & { bound: ImapBoundKind; onOverflow?: "throw" | "stop" },
+): Promise<R[]> {
+  return (await boundedFetch(src, opts)).items;
 }
 
 /**

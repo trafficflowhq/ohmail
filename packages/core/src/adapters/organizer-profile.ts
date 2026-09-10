@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { META_FOLDER, makeMetaFolderRef, lastSequence, type MetaFolderClient } from "./organizer-lease.js";
+import { ImapDeadline, IMAP_META_DEADLINE_MS } from "./imap-bounds.js";
 import {
   assertMetaIdentity, readMemo, writeMemo, forgetMemo,
   type MetaIdentity, type Generation,
@@ -833,16 +834,17 @@ export function makeProfileIo(
   client: ProfileImapClient,
   toServerPath: (canonical: string) => string,
   identity: MetaIdentity,
-  limits?: { maxBytes?: number },
+  limits?: { maxBytes?: number; now?: () => number },
 ): ProfileIo {
   assertMetaIdentity("makeProfileIo", identity);
   const maxBytes = limits?.maxBytes ?? PROFILE_BYTES_MAX_PER_FETCH;
+  const now = limits?.now ?? Date.now;
   // The lease's resolution, not a second one. The profile and the claim share a folder, so a
   // second spelling of where that folder is would put the settings document and the lease in
   // different places on exactly the servers where it matters.
   const meta = makeMetaFolderRef(client, toServerPath);
 
-  return {
+  const io: ProfileIo = {
     async ensureMetaFolder(): Promise<void> {
       const at = await meta.locate();
       const found = at.row;
@@ -1396,6 +1398,25 @@ export function makeProfileIo(
         lock.release();
       }
     },
+  };
+
+  /*
+   * ── THE READ GETS A WALL CLOCK; THE WRITES DELIBERATELY DO NOT ──────────────────────────────
+   *
+   * One budget for the whole read rather than one per round trip, because this read is a walk —
+   * a STATUS, a windowed SEARCH and a source fetch per record — and per-command clocks compose
+   * into a total nobody bounded. Nothing else here sees a slow server: the socket's timer is an
+   * inactivity timer, and a reply arriving a byte at a time resets it for ever.
+   *
+   * A breach abandons a command the driver is still running, so the connection is finished. Both
+   * callers close it — the worker's per-mailbox catch arm, and the API door's force-close — and
+   * an abandoned APPEND could still land, which is why the writes are not raced.
+   */
+  return {
+    ...io,
+    listProfileMessages: async (opts?: { complete?: boolean }): Promise<RawProfileMessage[]> =>
+      ImapDeadline.in(IMAP_META_DEADLINE_MS, "read_deadline", now)
+        .race(io.listProfileMessages(opts), META_FOLDER),
   };
 }
 
