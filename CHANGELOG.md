@@ -75,6 +75,19 @@ could; this mailbox's server sent more than one pass can take. It will try again
 clears by itself as soon as a sync cycle finishes. A real failure — a refused password, a server
 that cannot be reached, a broken secure connection — still shows as an error.
 
+### An oversized or slow folder no longer stalls the app
+
+ohmail keeps a little bookkeeping in a hidden folder in your mailbox, and some requests read your
+mail server while you wait. Those reads were limited in how many messages they would take and in
+nothing else, so one enormous message — or a server answering a byte at a time — could hold the
+connection, one of the mailbox's two connection slots and the request itself for as long as the
+server liked. A size limit and a time limit now apply as the reply arrives.
+
+Past any of the three limits the answer is "this could not be read", which is what the message
+limit already said: your other installs are never shown as stopped, and no organizing decision is
+made from half a folder. A request that runs out of time says so and closes its connection at
+once, instead of queueing a polite goodbye behind whatever is stuck.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
