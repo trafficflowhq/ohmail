@@ -59,7 +59,7 @@ export const AWAY_NEVER_ANSWERED_FOLDERS: Readonly<Record<string, AwaySuppressio
   "ohmail/Screened": "screened_out",
   "ohmail/Quarantine": "screened_out",
   /*
-   * RECEIPTS IS NOT HERE ANY MORE (owner feedback, 2026-09-10). It was, for one release, on the
+   * RECEIPTS IS NOT HERE ANY MORE. It was, for one release, on the
    * reasoning that a receipt is machine mail about a transaction the account started — which is
    * true of most receipts and is enforced per HEADER by `neverAutoReply`, for every pile. What
    * this entry additionally refused was a receipt somebody typed, in a pile its owner had ticked,

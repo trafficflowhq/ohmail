@@ -3,7 +3,7 @@
 -- ═══════════════════════════════════════════════════════════════════════════════════════════════
 --
 -- 0096 closed `piles` over `{INBOX, ohmail/Reads}` and argued the other four out. Two of those
--- arguments are answered rather than dropped (owner feedback, 2026-09-10):
+-- arguments are answered rather than dropped:
 --
 --   ohmail/Receipts   most receipts are machine mail, and `neverAutoReply` refuses those by
 --                     HEADER for every pile whether or not this member is stored. What the
