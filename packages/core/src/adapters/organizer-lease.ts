@@ -2776,7 +2776,10 @@ export async function readMetaFolderWindow(
   // up in this folder.
   //
   // A function rather than a loop in place, because the shift check below has to be able to run it
-  // AGAIN with a wider range.
+  // AGAIN with a wider range — and the two attempts SHARE one clock. A budget per attempt would
+  // make the constant's own claim ("one read of the folder") false in exactly the case the
+  // re-read fires, and per-read ceilings compose into a total nobody bounded.
+  const budget = ImapDeadline.in(IMAP_META_DEADLINE_MS, "read_deadline", now);
   const readFrom = async (start: number): Promise<{ records: RawMetaMessage[]; evicted: boolean }> => {
   /* ── A PAGE ASKS FOR ITS OWN WINDOW, NOT FOR EVERYTHING BELOW THE CURSOR ──────────────────
    *
@@ -2812,7 +2815,7 @@ export async function readMetaFolderWindow(
     {
       max: META_RECORDS_MAX_PER_FETCH,
       bytes: { max: IMAP_META_BYTES_MAX, of: (m) => m.headers?.byteLength ?? 0 },
-      deadline: ImapDeadline.in(IMAP_META_DEADLINE_MS, "read_deadline", now),
+      deadline: budget,
       onOverflow: "evict",
       ...(path === undefined ? {} : { folder: path }),
       map: (m): RawMetaMessage | null =>
