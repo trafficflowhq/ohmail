@@ -18,6 +18,7 @@
 import { SettingsNote, SettingsRow, SettingsSection, SettingsSubhead } from "@ohmail/ui";
 
 import type { EngineStatus } from "./bridge-fetch.js";
+import { BUILD_LABEL } from "./build-id.js";
 import { DOOR_COPY, machineWord } from "./door-copy.js";
 import { hostLabelOf, isDesktopHost } from "./doors.js";
 import { DesktopUpdate } from "./DesktopUpdate.js";
@@ -50,7 +51,7 @@ export function DesktopAbout({ status }: { status: EngineStatus }) {
       <SettingsRow
         label={DOOR_COPY.aboutAppLabel}
         description={DOOR_COPY.aboutAppWhy}
-        value={__OHMAIL_VERSION__}
+        value={BUILD_LABEL}
       />
       <SettingsRow
         label={DOOR_COPY.aboutPublisher}

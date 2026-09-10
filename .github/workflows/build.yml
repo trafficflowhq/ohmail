@@ -119,6 +119,16 @@ on:
 permissions:
   contents: read
 
+# WHICH COMMIT PRODUCED THE ARTIFACT, readable from the app that ships.
+#
+# Workflow-level so it reaches every job on every platform: the window's About pane shows it, and
+# a release pass can then assert that the binary it exercised is the binary the tag ships. Before
+# this, a candidate, the tag build and any later rebuild reported one version string and were
+# indistinguishable from the outside. `apps/desktop/vite.config.ts` folds it into the bundle; a
+# build with nothing set reports the version alone.
+env:
+  OHMAIL_BUILD_SHA: ${{ github.sha }}
+
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true

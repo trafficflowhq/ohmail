@@ -14,6 +14,13 @@
 declare const __OHMAIL_VERSION__: string;
 
 /**
+ * The COMMIT this artifact was built from, folded to a literal at build time from
+ * `OHMAIL_BUILD_SHA`, or the literal `dev` where nothing set it. `build-id.ts` is the only
+ * consumer and owns the rule that a value which is not 40 hex names no commit.
+ */
+declare const __OHMAIL_BUILD_SHA__: string;
+
+/**
  * The platform this bundle was BUILT ON — `process.platform` folded to a literal at build time,
  * which is also the platform it ships to: the release workflow runs `tauri build` on a macOS,
  * Windows and Linux runner respectively, one artifact each. `src/platform.ts` is the only

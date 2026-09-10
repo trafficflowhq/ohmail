@@ -629,6 +629,11 @@ export default defineConfig({
     __OHMAIL_VERSION__: JSON.stringify(
       (JSON.parse(fs.readFileSync(r("./package.json"), "utf8")) as { version: string }).version,
     ),
+    /* The COMMIT the artifact was built from, for Settings → About. From the environment and not
+       from git: the release workflow knows its own commit and a packaged build has no checkout to
+       ask. A build with nothing set reports `dev`, and `build-id.ts` shows the version alone for
+       any value that is not 40 hex — a partial identifier names no commit. */
+    __OHMAIL_BUILD_SHA__: JSON.stringify((process.env.OHMAIL_BUILD_SHA ?? "").trim() || "dev"),
     /* The platform this bundle ships to — which is the platform it is BUILT on: the release
        workflow runs `tauri build` per platform (macos-15 / windows-latest / ubuntu-latest), one
        artifact each, and `ui:dev` runs on the machine in front of you. `src/platform.ts` maps it
