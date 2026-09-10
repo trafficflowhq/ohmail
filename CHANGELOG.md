@@ -166,6 +166,19 @@ message's hold off. Text typed into a held message, and a file attached to it, a
 written over when you reopen it from Drafts. And in a browser that will not let the app keep its
 own records, reopening a draft no longer creates a second one beside it.
 
+### Releases are checked more before they reach you
+
+Two things about how a release is built, both of which affect what you download.
+
+The build now starts the packaged Linux app and requires its window to render before the artifact
+is kept. A crash that only happens at launch used to reach people who downloaded a release — it
+has twice — because every check was a build or a static read. The macOS build also reads the
+binary it produced for its content-security policy and for any address it should not contact,
+which the Windows and Linux builds already did.
+
+The workflow that signs updates no longer holds the signing keys while it downloads anything, and
+both signers are checked against a fixed hash before they run.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
