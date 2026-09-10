@@ -32,6 +32,37 @@ pressing Sync now during a big fetch leaves the fetch running. And a link that d
 check has already passed is picked up by the next check, instead of waiting out the connection's
 own timeout.
 
+### The organizer lease is checked at every write
+
+Exactly one install organizes a mailbox at a time, and which one is recorded in the mailbox itself.
+That record was read at the start of a sync pass and then trusted for the whole of it, so moving a
+mailbox to another computer mid-pass left the old one filing mail for up to a minute afterwards.
+Every move, read-state write and folder operation now asks again, through one check, and the answer
+carries a deadline and a write count.
+
+### A computer whose clock is wrong stops claiming mailboxes
+
+A machine whose clock is badly wrong writes timestamps every other install disbelieves, so the
+mailbox looks unattended, another computer takes it, and the wrong-clock machine goes on filing —
+two installs organizing one mailbox. Each claim now carries the mail server's own timestamp beside
+the writing computer's, and an install too far out of step writes no claim until its clock is
+corrected.
+
+### A pending stop can be changed your mind about
+
+After pressing "Stop organizing here" the row offered no button at all until the stop landed. The
+engine already treats a later "Organize here" as the newer word and cancels the stop, so "Organize
+here" now stands in that slot while the stop is being carried out. A takeover also ends the stop's
+own "Asked for" note, which used to come back onto the row and stay there.
+
+### A stop that cannot be confirmed no longer says "stopping" for ever
+
+Confirming that a mailbox has been given up needs its record folder read. When that folder is too
+full to read, Settings said "Stopping on the next pass" indefinitely. After the window in which a
+claim ages out of the folder on its own, the stop is recorded as done — unless another install is
+visibly holding the mailbox, in which case the request keeps waiting rather than reporting the
+mailbox free.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
