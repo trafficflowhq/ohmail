@@ -23,6 +23,8 @@ See [Status](README.md#status--read-this-first).
   back in the folder it came from, rather than in your Ohbox.
 - A restore whose answer never reached the app is finished on the next launch instead of saying
   it could not be restored.
+- A move or delete made from a paired device just as another machine took over organizing the
+  mailbox is handed to that machine, instead of being recorded on the old one and never sent.
 
 ### Away replies
 

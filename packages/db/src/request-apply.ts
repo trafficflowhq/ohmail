@@ -1,8 +1,10 @@
 import { and, asc, eq, isNull } from "drizzle-orm";
 import {
-  accountSettings, awayResponders, folderState, mailboxes, messages, rules as rulesTbl,
+  accountSettings, awayResponders, folderState, mailboxes, messages, organizerRequests,
+  rules as rulesTbl,
 } from "./schema-mail.js";
 import { recordChange, type LedgerTx, type Tx } from "./change-log.js";
+import { insertOrganizerRequest } from "./organizer-requests.js";
 
 /**
  * `recordChange` wants `LedgerTx` (`PgTransaction`, narrower than `Tx`/`PgDatabase`) because it is
@@ -947,4 +949,132 @@ export async function applyRuleRequest(
     accountId, entityType: "rule", entityId: found.id, op: "update", meta: null,
   });
   return { applied: true, op: "update", ruleId: found.id, lastSeq };
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  THE OTHER DIRECTION — AN INTENT THIS INSTALL MAY NO LONGER CARRY OUT
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Everything above is the ORGANIZER receiving a request. This is the moment a host STOPS being
+ * the organizer, and it is the same wire format read from the other end.
+ *
+ * ── THE SEQUENCE, AND WHY NEITHER GATE CATCHES IT ──────────────────────────────────────────
+ *
+ * Another install takes the mailbox. Between that takeover and this host's next lease poll its
+ * `organizer_role` still reads `organizer`, so a paired device's forwarded move passes
+ * `assertOrganizerRole`, is recorded as a local `folder_state` intent and answered 200. The
+ * drain's own live lease check then stands the mailbox down — correctly, exactly one organizer per
+ * mailbox — and the intent is left behind: this install may not perform it (a reader's
+ * `reconcileFolders` skips), and the install that CAN has never heard of it. The near side shows a
+ * move that never reaches the mail server.
+ *
+ * The database role cannot close that window: it is a cached answer to a question only the mailbox
+ * can settle, and refusing a paired device's write whenever the poll is merely late would break
+ * an ordinary sleeping host. So the intent TRAVELS at the stand-down instead — as the
+ * `message.move` request the door would have written had the role been current.
+ */
+
+/** The word for a canonical folder — {@link MOVE_DESTINATIONS} inverted, so the two cannot drift. */
+const DESTINATION_WORD: ReadonlyMap<string, string> = new Map(
+  [...MOVE_DESTINATIONS].flatMap(([word, path]) => (path === null ? [] : [[path, word] as [string, string]])),
+);
+
+/**
+ * How many intents one stand-down hands over. The ingest batch's number: a mailbox with more
+ * pending moves than this at the instant it changes hands is a state nobody has produced, and the
+ * remainder is REPORTED rather than silently dropped.
+ */
+export const STAND_DOWN_EXPORT_MAX = 200;
+
+/** What one stand-down handed over, so the caller can log a number rather than a hope. */
+export interface StandDownExport {
+  /** Intents written out as `message.move` requests for the install that holds the mailbox now. */
+  exported: number;
+  /** Intents already travelling — a repeated stand-down on the same row mints nothing. */
+  already: number;
+  /**
+   * Intents whose desired folder no destination WORD covers — a user folder. A request may not
+   * carry a raw IMAP path (see {@link MOVE_DESTINATIONS}), so these stay where they are and are
+   * counted: a number in a log is a thing somebody can select, an absence is not.
+   */
+  unmappable: number;
+  /** Intents past {@link STAND_DOWN_EXPORT_MAX} this pass. */
+  deferred: number;
+}
+
+/**
+ * HAND EVERY PENDING LOCAL MOVE TO THE INSTALL THAT HOLDS THE MAILBOX NOW.
+ *
+ * Called from the stand-down arm of both hosts' lease gates, in the same decision as the role
+ * write. Best-effort by contract: standing down is a decision this process has already made and
+ * may not be made contingent on a second write.
+ *
+ * `deleted_at` is deliberately NOT a filter, for the reason {@link applyMessageMove}'s own lookup
+ * gives: a delete IS a move to Trash, its tombstone is local to this install, and leaving it
+ * behind loses exactly the gesture that is hardest to notice.
+ *
+ * Idempotent on TWO independent terms, because one of them is not enough: the caller exports only
+ * on the stand-down TRANSITION (a gate that answers `stand_down` every cycle would otherwise mint
+ * a request per cycle), and a message already carrying a non-terminal `message.move` request is
+ * skipped here — which covers two instances standing the same row down.
+ */
+export async function exportPendingMovesOnStandDown(
+  tx: Tx,
+  input: { accountId: string; mailboxId: string; now: Date; mintId: () => string; limit?: number },
+): Promise<StandDownExport> {
+  const limit = input.limit ?? STAND_DOWN_EXPORT_MAX;
+  const [mb] = await tx.select({ trashFolder: mailboxes.trashFolder }).from(mailboxes)
+    .where(and(eq(mailboxes.id, input.mailboxId), eq(mailboxes.accountId, input.accountId))).limit(1);
+  const trash = mb?.trashFolder ?? null;
+
+  const pending = await tx.select({
+    dedupKey: messages.dedupKey, desiredFolder: folderState.desiredFolder,
+  })
+    .from(folderState)
+    .innerJoin(messages, eq(messages.id, folderState.messageId))
+    .where(and(
+      eq(messages.accountId, input.accountId),
+      eq(messages.mailboxId, input.mailboxId),
+      eq(folderState.reconcileStatus, "pending"),
+      // OUR OWN intents only. A row the worker left pending from its own reconcile bookkeeping is
+      // not somebody's decision to hand over.
+      eq(folderState.lastSetBy, "us"),
+    ))
+    .orderBy(asc(folderState.updatedAt), asc(messages.id))
+    .limit(limit + 1);
+
+  // Everything already travelling for this mailbox, by the name both installs share.
+  const inFlight = await tx.select({ payload: organizerRequests.payload })
+    .from(organizerRequests)
+    .where(and(
+      eq(organizerRequests.mailboxId, input.mailboxId),
+      eq(organizerRequests.kind, "message.move"),
+    ));
+  const travelling = new Set<string>();
+  for (const r of inFlight) {
+    const p = r.payload as { dedupKey?: unknown } | null;
+    if (p && typeof p.dedupKey === "string") travelling.add(p.dedupKey);
+  }
+
+  const out: StandDownExport = { exported: 0, already: 0, unmappable: 0, deferred: 0 };
+  for (const row of pending.slice(0, limit)) {
+    if (row.dedupKey === null || row.dedupKey === "") { out.unmappable += 1; continue; }
+    if (travelling.has(row.dedupKey)) { out.already += 1; continue; }
+    const destination = row.desiredFolder === trash && trash !== null
+      ? "trash"
+      : DESTINATION_WORD.get(row.desiredFolder);
+    if (destination === undefined) { out.unmappable += 1; continue; }
+    await insertOrganizerRequest(tx, {
+      id: input.mintId(),
+      accountId: input.accountId,
+      mailboxId: input.mailboxId,
+      kind: "message.move",
+      payload: { dedupKey: row.dedupKey, destination },
+      decidedAt: input.now,
+    });
+    travelling.add(row.dedupKey);
+    out.exported += 1;
+  }
+  out.deferred = Math.max(0, pending.length - limit);
+  return out;
 }

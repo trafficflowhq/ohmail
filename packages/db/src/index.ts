@@ -165,6 +165,9 @@ export {
    one action. Reaches `schema-mail.js` and `change-log.js` alone. */
 export {
   MOVE_DESTINATIONS, MOVE_DEDUP_KEY_MAX, validateMovePayload, applyMessageMove,
+  /* The same wire format read from the other end: a host that has lost the lease hands its
+     pending local moves to the install that holds the mailbox now. */
+  STAND_DOWN_EXPORT_MAX, exportPendingMovesOnStandDown, type StandDownExport,
   PROFILE_SIGNATURE_MAX, TRAVELLING_SIGNATURE_HTML_MAX_BYTES,
   validateProfileUpdatePayload, applyProfileUpdate,
   RULE_TERM_MAX, RULE_MATCH_MAX, validateRulePayload, applyRuleRequest,

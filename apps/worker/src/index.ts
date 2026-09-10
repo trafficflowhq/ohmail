@@ -1,8 +1,9 @@
 import { and, eq, sql } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
 import {
   pruneIdempotencyKeys, pruneSendFingerprints, noticeSinkFor, setNoticeSink, accountSettings, mailboxCredentials, mailboxes,
   messages, folderState, junkSweepCandidateWhere, closeStoodDownAppointments,
-  RELEASED_ORGANIZER_SEND_SENTENCE, capabilitiesColumn,
+  RELEASED_ORGANIZER_SEND_SENTENCE, capabilitiesColumn, exportPendingMovesOnStandDown,
 } from "@trafficflow/db";
 import { makeOwnedDb, makeChangeWakeHub, type OwnedDb, type ChangeWakeFanout } from "@trafficflow/db/cloud";
 import {
@@ -1935,6 +1936,19 @@ export async function startWorkerWithLock(
         return true;
       }
 
+      /* ── THE INTENTS THIS PROCESS RECORDED AND MAY NO LONGER CARRY OUT ─────────────────────
+       *
+       * Between the takeover and this poll the row still read `organizer`, so a paired device's
+       * forwarded move passed `assertOrganizerRole` and was recorded as a local `folder_state`
+       * intent. A reader's `reconcileFolders` skips it and the install that CAN perform it has
+       * never heard of it, so the near side would show a move that never reaches the mail server.
+       * It travels now, as the `message.move` request the door would have written.
+       *
+       * ON THE TRANSITION ONLY — `lease.organizerRole` still holds what the row says, and this
+       * gate answers `stand_down` every cycle while a foreign claim stands, so an ungated export
+       * would mint a request per cycle. Best-effort like the appointment close below it and for
+       * the same reason: this process has already stopped organizing the mailbox. */
+      if (lease.organizerRole === "organizer") await standDownExport(mb);
       /* THE ROW'S MIRROR, AS `markMailboxStoodDown` IS ABOUT TO LEAVE IT . This line
          was `lease.disabledReason = outcome.reason`, which had been true of the write below and
          stopped being true when the demotion moved onto the role: the column gains no writer
@@ -2018,6 +2032,36 @@ export async function startWorkerWithLock(
       // population the fix is for.
       await standDownAppointments(mb, outcome.reason);
       return false;
+    }
+
+    /**
+     * The stand-down's HANDOVER of pending local moves — see the call site for the window that
+     * produces them. Its own function for `standDownAppointments`' reason, and it never throws
+     * for the same one: the mailbox has changed hands whatever this write does.
+     */
+    async function standDownExport(mb: { mailboxId: string; accountId: string }): Promise<void> {
+      try {
+        const r = await db.transaction((tx) => exportPendingMovesOnStandDown(tx as unknown as Tx, {
+          accountId: mb.accountId, mailboxId: mb.mailboxId, now: new Date(), mintId: randomUUID,
+        }));
+        // Only when there was something to hand over: the overwhelming majority of stand-downs
+        // have no pending intent and must stay silent.
+        if (r.exported > 0 || r.unmappable > 0 || r.deferred > 0) {
+          log.warn("organizer_stand_down_moves_handed_over", {
+            mailboxId: mb.mailboxId, accountId: mb.accountId,
+            exported: r.exported, already: r.already, unmappable: r.unmappable, deferred: r.deferred,
+            reason: "these moves were recorded here before the lease was read again; each is now a "
+              + "request for the install that holds the mailbox. `unmappable` are desired folders "
+              + "no destination word covers (a user folder) and stay where they are",
+          });
+        }
+      } catch (err) {
+        log.error("organizer_stand_down_moves_handover_failed", {
+          mailboxId: mb.mailboxId, accountId: mb.accountId, err,
+          reason: "a move recorded here will not reach the install that organizes the mailbox now; "
+            + "the row stays pending and this install performs nothing",
+        });
+      }
     }
 
     /**

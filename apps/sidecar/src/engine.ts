@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import { and, eq, sql } from "drizzle-orm";
 import {
@@ -19,7 +20,8 @@ import {
 // `classifyLedgerSource`, `drizzle-repo.ts` imports the tables), so this file should not be the
 // module that enters that graph.
 import {
-  accountSettings, closeStoodDownAppointments, RELEASED_ORGANIZER_SEND_SENTENCE,
+  accountSettings, closeStoodDownAppointments, exportPendingMovesOnStandDown,
+  RELEASED_ORGANIZER_SEND_SENTENCE,
   mailboxCredentials, mailboxes,
   // Mail 0083 — the role vocabulary and the machine-name bound. One spelling for the sidecar's
   // gate, the worker's gate and the eleven service write doors; see `db/src/organizer-role.ts`.
@@ -3339,6 +3341,39 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       };
 
       /**
+       * THE INTENTS THIS INSTALL RECORDED AND MAY NO LONGER CARRY OUT — handed to whoever holds
+       * the mailbox now. See `exportPendingMovesOnStandDown` for the window that produces them:
+       * between another install's takeover and this poll the row still read `organizer`, so a
+       * paired device's forwarded move was recorded here and nothing would ever perform it.
+       *
+       * Never throws, for `standDownAppointments`' reason. DELIBERATELY NOT a launch catch-up
+       * like the one below: a pending row on a long-stood-down install is a decision from an
+       * unknown time ago, and moving somebody's mail on the strength of it is the guess the
+       * held-intent journal's own day-long horizon refuses to make.
+       */
+      const standDownExport = async (): Promise<void> => {
+        try {
+          const r = await exportPendingMovesOnStandDown(db as unknown as Tx, {
+            accountId: world.accountId, mailboxId: mb.id, now: now(), mintId: randomUUID,
+          });
+          if (r.exported > 0 || r.unmappable > 0 || r.deferred > 0) {
+            log("organizer_stand_down_moves_handed_over", {
+              exported: r.exported, already: r.already, unmappable: r.unmappable, deferred: r.deferred,
+              reason: "these moves were recorded here before the lease was read again; each is now "
+                + "a request for the install that holds the mailbox. `unmappable` are desired "
+                + "folders no destination word covers (a user folder) and stay where they are",
+            });
+          }
+        } catch (err) {
+          log("organizer_stand_down_moves_handover_failed", {
+            err,
+            reason: "a move recorded here will not reach the install that organizes the mailbox "
+              + "now; the row stays pending and this install performs nothing",
+          });
+        }
+      };
+
+      /**
        * THE LAUNCH CATCH-UP — a stood-down install closes its own appointments on every start.
        *
        * The stand-down hook above covers the transition. This covers the STATE, and it is needed
@@ -4279,6 +4314,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         // Standing down voids any unspent authorization, in memory and on the row below. We are not
         // the organizer, so becoming one again is a new becoming and needs a new explicit request.
         takeoverAuthorized = false;
+        /* ON THE TRANSITION ONLY. `priorStandDown` still holds what this process knew BEFORE this
+           cycle — the row's own memory at assembly — and this gate answers `stand_down` every
+           cycle while a foreign claim stands, so an ungated export would mint a request per poll. */
+        if (priorStandDown === null) await standDownExport();
         // …AND IT IS REMEMBERED FOR THE REST OF THIS PROCESS, not only on the row. A reader keeps
         // polling, so without this line the next cycle would ask the lease again and take the
         // mailbox back the moment the other organizer released it. See {@link priorStandDown}.
