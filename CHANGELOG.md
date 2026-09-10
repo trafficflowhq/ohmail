@@ -222,6 +222,18 @@ else, that move now counts against the rule. Move two of them inside a fortnight
 stops filing on its own: it goes back to asking you first, and the rule shows as off in your
 rules list. Confirming its suggestions again brings it back.
 
+### A large mailbox's first sync no longer pulls everything at once
+
+The first sync used to ask for one page of mail and, alongside it, every triage state, every held
+sender and every pending suggestion in the account — with no limit on any of them. On a mailbox
+with years of mail that first response was the largest one the app ever made, and it grew with the
+mailbox rather than with the page.
+
+Those now arrive with the mail they belong to, a page at a time. The first screenful comes back
+sooner on a big mailbox, and mail the app has not fetched yet no longer arrives with triage state
+attached — which is what put occasional rows with no subject or sender in Reply later and Set
+aside.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

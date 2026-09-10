@@ -482,6 +482,69 @@ export async function materializeApprovals(
   return out;
 }
 
+/**
+ * ONE CHANGE PER CHILD ROW OF THE MESSAGES ON A PAGE — three queries, whatever the page holds.
+ *
+ * `message_state`, a pending `routing_decision` and an `approval` all describe a message, so the
+ * snapshot reads them BY PARENT rather than by account: at most `limit` parents is at most
+ * `limit` children, and a child can never be delivered without the row it describes. Keyed on
+ * `messageId` and not on the child's own id, which is what separates this from the three readers
+ * above — those re-materialize a `change_log` row by its entity id.
+ *
+ * A DECIDED routing decision is history and stays out, exactly as the page-1 read had it: the
+ * delta is what carries a decision's outcome.
+ *
+ * `accountId` is on every predicate beside the `messageId` filter, belt-and-braces with the
+ * caller's own scoping: a bug that ever let a page name another account's message must fail
+ * closed rather than assemble that account's child state.
+ */
+export interface MessageChildChange {
+  type: "message_state" | "routing_decision" | "approval";
+  id: string;
+  entity: MessageStateDTO | RoutingDecisionDTO | ApprovalDTO;
+  updatedAt: string;
+}
+
+export async function materializeMessageChildren(
+  db: Db, accountId: string, messageIds: readonly string[],
+): Promise<MessageChildChange[]> {
+  const out: MessageChildChange[] = [];
+  if (messageIds.length === 0) return out;
+  const ids = [...new Set(messageIds)];
+
+  const stateRows = await db.select().from(messageStates)
+    .where(and(eq(messageStates.accountId, accountId), inArray(messageStates.messageId, ids)));
+  for (const s of stateRows) {
+    out.push({
+      type: "message_state", id: s.id, entity: messageStateRowToDTO(s),
+      updatedAt: s.updatedAt.toISOString(),
+    });
+  }
+
+  const decisionRows = await db.select().from(routingDecisions).where(and(
+    eq(routingDecisions.accountId, accountId),
+    eq(routingDecisions.status, "pending_approval"),
+    inArray(routingDecisions.messageId, ids),
+  ));
+  for (const d of decisionRows) {
+    out.push({
+      type: "routing_decision", id: d.id, entity: routingDecisionRowToDTO(d),
+      updatedAt: d.updatedAt.toISOString(),
+    });
+  }
+
+  const approvalRows = await db.select().from(approvals)
+    .where(and(eq(approvals.accountId, accountId), inArray(approvals.messageId, ids)));
+  for (const a of approvalRows) {
+    out.push({
+      type: "approval", id: a.id, entity: approvalRowToDTO(a),
+      updatedAt: a.updatedAt.toISOString(),
+    });
+  }
+
+  return out;
+}
+
 export async function materializeRules(
   db: Db, accountId: string, ids: readonly string[],
 ): Promise<Map<string, RuleDTO>> {

@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, exists, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import {
-  approvals, changeLog, drafts, messageStates, messages, messageTags, seqBounds,
-  routingDecisions, rules, tags, type EntityType,
+  approvals, changeLog, drafts, messages, messageTags, seqBounds,
+  rules, tags, type EntityType,
 } from "@trafficflow/db";
 import type { Db, ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
@@ -58,10 +58,10 @@ const MAX_BIGSERIAL = 9_223_372_036_854_775_807n;
 const MAX_EMITTED = 10_000_000;
 import {
   approvalRowToDTO, draftRowToDTO, folderRowToDTO, materialize, materializeApprovals,
-  materializeDrafts, materializeMessages,
+  materializeDrafts, materializeMessageChildren, materializeMessages,
   materializeMessagesInOrder, materializeMessageStates, materializeRoutingDecisions,
   materializeRules, materializeSettings,
-  materializeTags, materializeThreads, messageStateRowToDTO, routingDecisionRowToDTO,
+  materializeTags, materializeThreads,
   ruleRowToDTO, tagRowToDTO,
 } from "./dto/materialize.js";
 import { foldersEnabled, listUserFolders, userFoldersByIds, type UserFolderRow } from "./folders.js";
@@ -671,18 +671,20 @@ export class SyncService {
    *
    * ── WHAT EACH PAGE CARRIES ───────────────────────────────────────────────────────────────
    *
-   * Page 1 carries ALL of the account's live small state — every rule, every message_state,
-   * every PENDING routing decision, every approval, every draft, every tag — plus the newest
-   * page of messages. The small state is not paged because paging it would mean a client that
-   * stopped after page 1 holds a partial rule set, and a partial rule set is worse than none:
-   * the UI would show routing that does not match what the server does. Tags are there for the
-   * same reason read one step further on — messages carry tag ids, so a late tag list is a rail
-   * that boots empty beside mail already pointing into it.
+   * Page 1 carries the account's live small state — every rule, every draft, every tag — plus
+   * the newest page of messages. That state is not paged because paging it would mean a client
+   * that stopped after page 1 holds a partial rule set, and a partial rule set is worse than
+   * none: the UI would show routing that does not match what the server does. Tags are there for
+   * the same reason read one step further on — messages carry tag ids, so a late tag list is a
+   * rail that boots empty beside mail already pointing into it. Each of these is bounded by what
+   * a person typed.
    *
-   * EVERY page — page 1 included — additionally carries the THREADS its own messages name. That
-   * is a different rule from the one above and deliberately so: threads are keyed to the message
-   * window rather than to the account, so the two cannot disagree about what the client holds.
-   * See the emit site for why cross-page duplicates are accepted rather than tracked.
+   * EVERY page — page 1 included — additionally carries the THREADS its own messages name, and
+   * the `message_state`, pending `routing_decision` and `approval` rows that describe them. That
+   * is a different rule from the one above and deliberately so: all four are keyed to the message
+   * window rather than to the account, so page 1 cannot exceed its row limit on them and the
+   * client is never handed child state for a message it was not sent. See the emit sites for the
+   * argument and for why cross-page duplicates are accepted rather than tracked.
    *
    * `folder` joined the reads with the folders foundation (FOLDERS-SPEC.md §4): while the
    * account's "Use folders" flag is on, page 1 carries the mailbox's own folders — small state
@@ -741,25 +743,17 @@ export class SyncService {
       const ruleRows = await db.select().from(rules).where(eq(rules.accountId, accountId));
       for (const r of ruleRows) emit("rule", r.id, ruleRowToDTO(r), r.updatedAt.toISOString());
 
-      const stateRows = await db.select().from(messageStates)
-        .where(eq(messageStates.accountId, accountId));
-      for (const s of stateRows) {
-        emit("message_state", s.id, messageStateRowToDTO(s), s.updatedAt.toISOString());
+      // AN APPROVAL WITH NO MESSAGE has no page to ride with, so it stays here — under the page
+      // limit, which is the whole point. `kind` admits later message-less kinds (`draft_send`,
+      // `workflow_action`); `routing` is the only one that exists and it always names a message,
+      // so this read is dormant rather than dead.
+      const orphanApprovals = await db.select().from(approvals).where(and(
+        eq(approvals.accountId, accountId),
+        isNull(approvals.messageId),
+      )).limit(limit);
+      for (const a of orphanApprovals) {
+        emit("approval", a.id, approvalRowToDTO(a), a.updatedAt.toISOString());
       }
-
-      // PENDING decisions only. A decided one is history — it is what `change_log` is for — and
-      // an account that has been ingesting for months holds one row per message, which would
-      // make "the live state" unbounded and page 1 unservable.
-      const decisionRows = await db.select().from(routingDecisions).where(and(
-        eq(routingDecisions.accountId, accountId),
-        eq(routingDecisions.status, "pending_approval"),
-      ));
-      for (const d of decisionRows) {
-        emit("routing_decision", d.id, routingDecisionRowToDTO(d), d.updatedAt.toISOString());
-      }
-
-      const approvalRows = await db.select().from(approvals).where(eq(approvals.accountId, accountId));
-      for (const a of approvalRows) emit("approval", a.id, approvalRowToDTO(a), a.updatedAt.toISOString());
 
       const draftRows = await db.select().from(drafts).where(eq(drafts.accountId, accountId));
       for (const d of draftRows) emit("draft", d.id, draftRowToDTO(d), d.updatedAt.toISOString());
@@ -873,6 +867,22 @@ export class SyncService {
     )];
     for (const dto of (await materializeThreads(db, accountId, threadIds)).values()) {
       emit("thread", dto.id, dto, dto.updatedAt);
+    }
+
+    // ── A MESSAGE'S CHILD STATE RIDES WITH THE MESSAGE, NEVER WITH THE ACCOUNT ───────────────
+    //
+    // `message_state`, a pending `routing_decision` and an `approval` are each keyed to a message,
+    // and reading them per ACCOUNT made page 1 two things it must not be. Unbounded: one
+    // `message_state` per triaged message and one `approval` per held sender, with the page limit
+    // applied to neither. And window-INCOHERENT: a windowed snapshot handed the client actionable
+    // state for a message it never sent, then moved the cursor past that change for ever, so the
+    // row sat in the mirror unreachable — a pile entry titled with a bare id.
+    //
+    // Keyed to the page instead, both close at once: at most `limit` parents is at most `limit`
+    // children, and a child cannot arrive without the row it describes. Same rule the threads
+    // above follow, and for the same reason.
+    for (const c of await materializeMessageChildren(db, accountId, rows.map((r) => r.id))) {
+      emit(c.type, c.id, c.entity, c.updatedAt);
     }
 
     const emitted = (cursor?.emitted ?? 0) + rows.length;
