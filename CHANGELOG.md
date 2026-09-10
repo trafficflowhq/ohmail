@@ -13,6 +13,12 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### A message you move back into the Ohbox stays there
+
+The pass that clears automated mail out of the Ohbox could file a message you had just moved back
+into it, if your move and the pass landed at the same moment. It now checks a second time, right
+before it files anything, whether you have moved the message — so your placement wins.
+
 ### The app reports how much memory it is holding
 
 The desktop app's engine now writes its own memory use to its log every five minutes, and the

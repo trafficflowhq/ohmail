@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import {
   accountSettings, approvals, auditLog, autoReplyByUsWhere, drafts, folderState, mailboxes,
   messageBodies, messageStates, messages, recordChange, type Tx,
@@ -81,11 +81,16 @@ import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
    user placed, and the measured backlog arrived in the Ohbox with no such row. Mail moved into the
    Ohbox by a rule-retro pass is likewise left behind, for the same safe reason.
 
-   The concurrent race (a user drag committing WHILE the pass pages) is closed by the lock, not by a
-   predicate: `selectCandidates` takes `FOR UPDATE OF folder_state`. A drag that commits before the
-   SELECT is visible to the `NOT EXISTS`; one that commits after blocks on the row lock, wakes after
-   this pass commits, and re-writes `desired = 'INBOX'` on top — the user's placement is the last
-   word. That claim is only true on real Postgres, so it lives in `ohbox-tidy.pg.test.ts`.
+   The concurrent race (a user drag committing WHILE the pass pages) takes BOTH the lock and a second
+   ask, and WHICH of them carries it depends on the ordering. A drag that commits BEFORE the SELECT is
+   visible to the `NOT EXISTS`. One that commits while the USER waits behind us re-writes
+   `desired = 'INBOX'` on top, so their placement is still the last word. But when the PASS is the one
+   waiting — `FOR UPDATE OF folder_state` parked on the row the user's move holds — the woken SELECT
+   admits the row anyway: its sub-selects are re-checked under the statement's ORIGINAL snapshot and
+   cannot see the `change_log` row that commit just wrote. This pass demoted mail the user had put
+   back for exactly that reason, so the exclusions are re-asked in a statement of their own
+   ({@link stillCandidates}). All three orderings live in `ohbox-tidy.pg.test.ts`; the third is held
+   until the pass is provably parked, because otherwise the timing picks which one runs.
 
    ── IT WRITES AN INTENT. IT NEVER OPENS IMAP. ──────────────────────────────────────────────
 
@@ -457,6 +462,9 @@ export async function ohboxTidyPass(
         const known: ReadonlySet<string> = await pageRepo.knownSenders(accountId);
 
         const candidates = await selectCandidates(tx, { accountId, ownAddresses, limit: batch, afterId });
+        // Asked again, in a statement of its own, over exactly the rows now locked — see
+        // {@link stillCandidates} for why the lock alone does not close the user-drag race.
+        const stillOurs = await stillCandidates(tx, candidates.map((c) => c.messageId), { accountId, ownAddresses });
 
         let moved = 0;
         let kept = 0;
@@ -470,6 +478,10 @@ export async function ohboxTidyPass(
           // Budget enforced PER ROW, so the cap is exact and the cursor resumes at the last row this
           // pass actually decided about — never past one it skipped.
           if (result.moved + moved >= budget) { capped = true; break; }
+
+          // USER ALWAYS WINS, even when their drag committed while this page waited on the lock.
+          // Counted KEPT and the cursor still advances: the row was examined and decided about.
+          if (!stillOurs.has(c.messageId)) { lastId = c.messageId; kept++; continue; }
 
           const msg = asRuleInput(c);
           const decision = evaluateRules({
@@ -697,6 +709,52 @@ async function selectCandidates(
   t: Tx,
   opts: { accountId: string; ownAddresses: readonly string[]; limit: number; afterId: string | null },
 ): Promise<TidyRow[]> {
+  const filters = candidateFilters(opts);
+  if (opts.afterId) filters.push(gt(messages.id, sql`${opts.afterId}::uuid`));
+
+  const rows = await t.select({
+    messageId: messages.id,
+    mailboxId: messages.mailboxId,
+    fromAddress: messages.fromAddress,
+    subject: messages.subject,
+    observedFolder: folderState.observedFolder,
+    desiredFolder: folderState.desiredFolder,
+    headers: messageBodies.headers,
+    // Rides the join `headers` already pays for — see `TidyRow.bodyText` (mail 0052).
+    bodyText: messageBodies.text,
+    sensitivityCategory: messages.sensitivityCategory,
+    noAi: messages.noAi,
+  }).from(folderState)
+    .innerJoin(messages, eq(messages.id, folderState.messageId))
+    .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
+    .where(and(...filters))
+    .orderBy(asc(messages.id))
+    .limit(opts.limit)
+    .for("update", { of: folderState });
+
+  return rows.map((r) => ({
+    messageId: r.messageId,
+    mailboxId: r.mailboxId,
+    fromAddress: r.fromAddress,
+    subject: r.subject,
+    bodyText: r.bodyText ?? "",
+    headers: (r.headers as Record<string, string[]> | null) ?? {},
+    observedFolder: r.observedFolder,
+    desiredFolder: r.desiredFolder,
+    sensitivityCategory: r.sensitivityCategory,
+    noAi: r.noAi,
+  }));
+}
+
+/**
+ * THE CANDIDATE PREDICATE, OWNED IN ONE PLACE — because it is now asked TWICE per page.
+ *
+ * {@link selectCandidates} asks it under the lock; {@link stillCandidates} re-asks it after the lock
+ * in a statement of its own. Two copies of these clauses would drift, and the drift would be a user's
+ * placement being overridden, so the exclusions live here and nowhere else. `afterId` is deliberately
+ * NOT part of it: the cursor bounds the walk, it is not a statement about a message.
+ */
+function candidateFilters(opts: { accountId: string; ownAddresses: readonly string[] }) {
   const filters = [
     eq(messages.accountId, opts.accountId),
     eq(folderState.desiredFolder, OHBOX),
@@ -766,40 +824,36 @@ async function selectCandidates(
          })}
     )`);
   }
-  if (opts.afterId) filters.push(gt(messages.id, sql`${opts.afterId}::uuid`));
+  return filters;
+}
 
-  const rows = await t.select({
-    messageId: messages.id,
-    mailboxId: messages.mailboxId,
-    fromAddress: messages.fromAddress,
-    subject: messages.subject,
-    observedFolder: folderState.observedFolder,
-    desiredFolder: folderState.desiredFolder,
-    headers: messageBodies.headers,
-    // Rides the join `headers` already pays for — see `TidyRow.bodyText` (mail 0052).
-    bodyText: messageBodies.text,
-    sensitivityCategory: messages.sensitivityCategory,
-    noAi: messages.noAi,
-  }).from(folderState)
+/**
+ * WHICH OF THE ROWS WE NOW HOLD LOCKED ARE STILL OURS TO MOVE — RE-ASKED IN A NEW STATEMENT.
+ *
+ * `FOR UPDATE OF folder_state` serializes the user's in-app drag against this pass, but it does NOT
+ * make the drag VISIBLE to the SELECT that waited on it: the row lock is released by the user's
+ * COMMIT, and the re-check that admits the woken row evaluates the sub-selects under the statement's
+ * original snapshot — so the `change_log` move-to-INBOX row the user just wrote is not seen, the row
+ * stays a candidate, and this pass demotes mail the user had put back. Measured on real Postgres: the
+ * pass parked on the lock for six seconds (`wait_event_type = 'Lock'`) and then moved the message.
+ *
+ * A SEPARATE statement takes a NEW snapshot under READ COMMITTED, which does see the commit that
+ * freed the lock. It needs no lock of its own — we already hold these rows, so nobody else can change
+ * them before this transaction ends, and its answer therefore holds for the rest of the page. Rows it
+ * no longer admits are counted KEPT rather than dropped, so the walk, the cursor and `examined` are
+ * exactly what they were.
+ */
+async function stillCandidates(
+  t: Tx,
+  ids: readonly string[],
+  opts: { accountId: string; ownAddresses: readonly string[] },
+): Promise<ReadonlySet<string>> {
+  if (ids.length === 0) return new Set<string>();
+  const rows = await t.select({ messageId: messages.id })
+    .from(folderState)
     .innerJoin(messages, eq(messages.id, folderState.messageId))
-    .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
-    .where(and(...filters))
-    .orderBy(asc(messages.id))
-    .limit(opts.limit)
-    .for("update", { of: folderState });
-
-  return rows.map((r) => ({
-    messageId: r.messageId,
-    mailboxId: r.mailboxId,
-    fromAddress: r.fromAddress,
-    subject: r.subject,
-    bodyText: r.bodyText ?? "",
-    headers: (r.headers as Record<string, string[]> | null) ?? {},
-    observedFolder: r.observedFolder,
-    desiredFolder: r.desiredFolder,
-    sensitivityCategory: r.sensitivityCategory,
-    noAi: r.noAi,
-  }));
+    .where(and(...candidateFilters(opts), inArray(messages.id, [...ids])));
+  return new Set(rows.map((r) => r.messageId));
 }
 
 /**
