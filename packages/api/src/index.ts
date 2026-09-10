@@ -101,6 +101,10 @@ export {
   // these two by NAME rather than importing the classes (the closure rule), so a test has to be
   // able to hand the real ones to the matcher and check the spelling has not drifted.
   isOrganizerRefusal,
+  // How long a fault record may delay the answer it describes. Exported because the HOSTED
+  // composition puts the same number on its recording handle's acquire ceiling: the middleware
+  // bounds the delay, the handle bounds the abandoned write, and two literals would drift.
+  API_FAULT_RECORD_BUDGET_MS,
   withCsrf, withIdempotency,
   type Middleware,
 } from "./middleware.js";

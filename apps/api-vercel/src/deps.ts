@@ -36,7 +36,9 @@ import {
   type ServiceContext,
   makePlatformSignalPort,
 } from "@trafficflow/services";
-import { makeProbeHostGuard, apiAlertSinkSummary } from "@trafficflow/api";
+import {
+  makeProbeHostGuard, apiAlertSinkSummary, API_FAULT_RECORD_BUDGET_MS,
+} from "@trafficflow/api";
 import type { ApiDeps, ApiServices, ChangeWakeHub } from "@trafficflow/api";
 import { allowCookieAuthForRequest, type HostConfig } from "./config.js";
 import { makeChangeWakeHub } from "./wake-hub.js";
@@ -785,9 +787,21 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
      */
     faultLog: {
       record: async (fault) => {
-        await recordApiFault(makePooledDb(cfg.databaseUrlPooled) as unknown as Tx, {
-          ...fault, arm: "api",
-        });
+        await recordApiFault(
+          // A SHORT ACQUIRE CEILING ON THIS HANDLE, which is the other half of
+          // `API_FAULT_RECORD_BUDGET_MS`. The middleware bounds how long the write may delay the
+          // answer; this bounds how long the abandoned write goes on waiting afterwards. Without
+          // it a refused insert sits on `POOLED_ACQUIRE_TIMEOUT_MS` (15 s) holding a queue slot
+          // in front of the next request's own query, on the one pool a starved instance has.
+          //
+          // `makePooledDb`'s `acquireTimeoutMs` exists for exactly this: the ceiling is a
+          // property of the HANDLE, not the pool, so this costs no connection and changes
+          // nothing for any other caller of the same module-cached pool.
+          makePooledDb(cfg.databaseUrlPooled, {
+            acquireTimeoutMs: API_FAULT_RECORD_BUDGET_MS,
+          }) as unknown as Tx,
+          { ...fault, arm: "api" },
+        );
       },
     },
     cronSecret: cfg.cronSecret,

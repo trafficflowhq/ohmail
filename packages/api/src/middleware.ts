@@ -401,6 +401,23 @@ function faultClassOf(err: unknown): string {
 }
 
 /**
+ * HOW LONG A FAULT RECORD MAY DELAY THE ANSWER IT DESCRIBES. One second.
+ *
+ * The 503 branch below is documented "503, FAST", and the acquire ceiling exists so a starved
+ * instance answers in ~15 s with a cause instead of dying at the platform's 60 s knife. Recording
+ * through the same pool would inherit that ceiling exactly when it bites: the insert waits for a
+ * connection nothing is going to release, and a fast refusal becomes a slow one. That is the
+ * defect this budget closes, and it is the middleware's to close rather than the port's — this is
+ * where the response budget lives, so no implementation can cost more than a bound stated here.
+ *
+ * The write is not cancelled, only abandoned: it may still land, and on a serverless host it may
+ * be frozen instead. Both are fine — the record is best-effort by contract, and a fault this rule
+ * never sees is one the pool was too busy to record. The platform poller's own 5xx count is the
+ * arm that stays truthful there.
+ */
+export const API_FAULT_RECORD_BUDGET_MS = 1_000;
+
+/**
  * Count one 5xx, if this host counts them at all.
  *
  * The port's absence is the local shell's normal state and says nothing; a present port that
@@ -411,17 +428,31 @@ async function countFault(
 ): Promise<void> {
   const port = deps.faultLog;
   if (!port) return;
+  const log = deps.logger ?? silentLogger;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    await port.record({
+    const write = port.record({
       route: route.pattern, method: req.method, status,
       errorClass: faultClassOf(err),
       requestId: deps.requestId || null,
       at: deps.now(),
     });
-  } catch (recordErr) {
-    (deps.logger ?? silentLogger).warn("api_fault_record_failed", {
-      route: route.pattern, status, err: recordErr,
+    // A rejection AFTER the budget wins the race against nothing, so it must be absorbed here or
+    // it becomes an unhandled rejection with no request left to attribute it to.
+    write.catch(() => {});
+    const budget = new Promise<"budget">((resolve) => {
+      timer = setTimeout(() => resolve("budget"), API_FAULT_RECORD_BUDGET_MS);
+      (timer as unknown as { unref?: () => void }).unref?.();
     });
+    if (await Promise.race([write.then(() => "wrote" as const), budget]) === "budget") {
+      log.warn("api_fault_record_slow", {
+        route: route.pattern, status, budgetMs: API_FAULT_RECORD_BUDGET_MS,
+      });
+    }
+  } catch (recordErr) {
+    log.warn("api_fault_record_failed", { route: route.pattern, status, err: recordErr });
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
 }
 
