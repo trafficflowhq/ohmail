@@ -147,6 +147,15 @@ vi.mock("../src/bridge-fetch.js", () => ({
     bridged.push({ url, method: init?.method ?? "GET" });
     return bridgeReply();
   },
+  /* THE RETRYING READ, which is what the pane's two roster polls take. Recorded on the SAME
+     list as the bare bridge, so every case below counts the polls exactly as it did — the
+     wrapper is transparent for every answer this file produces, and the wait it takes on a 503
+     is `retrying-read.test.ts`'s subject, not this file's. A partial mock would leave the
+     export `undefined` and fail 82 cases with a mock error rather than an assertion. */
+  retryingBridgeFetch: async (url: string, init?: { method?: string }) => {
+    bridged.push({ url, method: init?.method ?? "GET" });
+    return bridgeReply();
+  },
   /* THE SHELL'S OWN SIGN-OUT, which the pane runs after removing the LAST mailbox. Mocked here
      rather than through `__TAURI_INTERNALS__` because that is where the real one lives — the
      module is already replaced for `bridgeFetch`, and a partial mock would leave this export
