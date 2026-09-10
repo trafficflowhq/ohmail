@@ -8558,6 +8558,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             </>
           )
         }
+        /* REFUSED FOR THE WINDOW THE EDITOR IS ALREADY READ-ONLY IN — `frPhase`, one derivation
+           for both. The run and this message's inline editor are one lane on purpose, so the
+           lock that keeps one press to one delivery would otherwise leave Done inert under a
+           label reading "Sending…". Never a lane of its own: two keys for one message are two
+           reservations and two copies at the recipient. */
+        donePending={frPhase === "sending" || frPhase === "queued"}
         skipLabel={t("triage.frSkip")}
         copy={frCopy}
       />

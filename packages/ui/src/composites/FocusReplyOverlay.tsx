@@ -39,6 +39,15 @@ export interface FocusReplyOverlayProps {
   onClose: () => void;
   /** ReactNode so the host can put the verb's keycap ON the button (the always-on-caps law). */
   doneLabel: ReactNode;
+  /**
+   * The verb's own send is already out there, so Done is refused rather than inert.
+   *
+   * The host holds one send lane per message and the run shares it with the message's inline
+   * editor — the same reply either way — so the lock that keeps one press to one delivery also
+   * made a second press do nothing at all, under a label that read "Sending…". A control that
+   * looks live and is not is worse than a disabled one.
+   */
+  donePending?: boolean;
   skipLabel: string;
   /** Rendered when the pile is exhausted (step >= total). */
   emptyState?: ReactNode;
@@ -89,6 +98,7 @@ export function FocusReplyOverlay({
   onSkip,
   onClose,
   doneLabel,
+  donePending = false,
   skipLabel,
   emptyState,
   copy,
@@ -156,7 +166,7 @@ export function FocusReplyOverlay({
               />
             )}
             <div className="fr-foot">
-              <Button variant="primary" onClick={onDone}>
+              <Button variant="primary" onClick={onDone} disabled={donePending}>
                 {doneLabel}
               </Button>
               <Button onClick={onSkip}>{skipLabel}</Button>
