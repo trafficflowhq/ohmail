@@ -127,6 +127,29 @@
 .msg-actions {
   container: abar / inline-size;
 }
+
+/* ── THE BAR ESCAPES THE READING COLUMN AND STAYS ON ITS CENTRE ──────────────────────────
+ *
+ * Ruled 2026-09-10: the body keeps its 640px column, the bar uses the width the reading PANE
+ * has. `--abar-room` is that width, published by `bar-density.ts` (which explains why it comes
+ * from script rather than from a container query: making the pane a query container would make
+ * it a containing block for `position: fixed` and place the resurface picker against the pane
+ * instead of the window).
+ *
+ * CENTRED BY CONSTRUCTION, not by a second rule: `50%` is half this row's containing block —
+ * `.msg`'s content box — and half the room comes off each side, so the row grows symmetrically
+ * about its own centre. That centre is the pane's centre too, because `.msg` is `margin: 0 auto`
+ * inside the pane. The pill keeps `fit-content` + `margin-inline: auto` untouched: it still hugs
+ * its verbs and still sits at its row's centre, on a wider row whose centre has not moved.
+ *
+ * Without the variable the row is its container's width, which is today's behaviour and the
+ * behaviour of every mount that is not the message pane's (a selection's pill, a stream card).
+ */
+.msg > .msg-actions {
+  width: var(--abar-room, 100%);
+  max-width: none;
+  margin-inline: calc(50% - var(--abar-room, 100%) / 2);
+}
 .msg-actions > .abar {
   container-type: normal;
   width: fit-content;

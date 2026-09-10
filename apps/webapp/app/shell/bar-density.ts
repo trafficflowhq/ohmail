@@ -83,6 +83,27 @@ import { useCallback, useEffect, useRef, useState } from "react";
  *  live value is read off the pill itself in `measure()`. */
 export const PILL_PADDING_PX = 12;
 
+/**
+ * THE ROW'S ROOM IS THE READING PANE, NOT THE READING COLUMN.
+ *
+ * Ruled 2026-09-10: the body keeps its 640px column; the bar uses the width the pane has. The
+ * pane's centre and the column's centre are the SAME POINT — `.msg` is `margin: 0 auto` inside
+ * `.read-col` (measured at 1440: column box 640 at left 56, content centre 376; pane centre 376)
+ * — so widening the row symmetrically cannot move the pill off the text's centre.
+ *
+ * WHY THE WIDTH IS PUBLISHED FROM HERE rather than written in CSS: reaching an ancestor's width
+ * from a stylesheet needs a container query, and `container-type: inline-size` makes that
+ * ancestor a containing block for `position: fixed` descendants — which would place the
+ * resurface date picker against the pane instead of the window, the exact defect the reads
+ * slice had to undo for `content-visibility: auto`. This hook already measures and already
+ * publishes an attribute, so the room rides beside it as a custom property.
+ *
+ * `.read-col` ONLY, never `.reader`: the phone/overlay mount is already the full pane, so a
+ * phone-width row admits exactly what it admits today.
+ */
+export const ROOM_VAR = "--abar-room";
+const PANE_SELECTOR = ".read-col";
+
 /** The row's gap between row groups, when the computed style cannot be read (jsdom). */
 export const FALLBACK_GAP_PX = 6;
 
@@ -173,6 +194,22 @@ export function admitVerbs(
   return admitted;
 }
 
+/**
+ * A MEASURED WIDTH, AS A FLOAT.
+ *
+ * `offsetWidth` rounds to the nearest integer, so a walk that sums ten of them lands up to ~5px
+ * away from the width the layout actually uses. That was harmless while the row sat inside a
+ * column wider than the row could ever need; it stopped being harmless when the row became
+ * exactly the room it is given, where one pixel of understatement is one pixel of clipping — the
+ * overflow direction this measurement exists to prevent. Measured: a German 1600px reply-all bar
+ * admitted a set summing to 912 whose real width was 913.1, and the row clipped by 1px.
+ *
+ * The rect is the same number the layout used, so the walk and the row cannot disagree.
+ */
+function widthOf(el: Element): number {
+  return el.getBoundingClientRect().width;
+}
+
 /** Read an element's verb token off its class list, or null when it carries none. */
 function verbNameOf(el: Element): BarVerb | null {
   for (const { verb } of BAR_VERB_ORDER) if (el.classList.contains(`abar-${verb}`)) return verb;
@@ -237,11 +274,38 @@ export function useBarDensity(): {
     // admission walk — the overflow direction, the one this measurement exists to prevent.
     const pillPad =
       Number.isFinite(padL) && Number.isFinite(padR) ? padL + padR : PILL_PADDING_PX;
-    const avail =
-      rect.width -
-      (parseFloat(style.paddingLeft) || 0) -
-      (parseFloat(style.paddingRight) || 0) -
-      pillPad;
+    /* THE ROOM. The reading pane's content box when this bar is the message pane's — see
+       `ROOM_VAR` — and the container's own box everywhere else (the selection pill in the list
+       column's foot, a stream card's bar), which is what those mounts have always measured. */
+    const pane = container.closest(".msg") ? container.closest(PANE_SELECTOR) : null;
+    let room = rect.width
+      - (parseFloat(style.paddingLeft) || 0)
+      - (parseFloat(style.paddingRight) || 0);
+    let fromPane = false;
+    if (pane) {
+      const ps = getComputedStyle(pane);
+      const inner = pane.getBoundingClientRect().width
+        - (parseFloat(ps.paddingLeft) || 0) - (parseFloat(ps.paddingRight) || 0);
+      if (inner > 0) { room = inner; fromPane = true; }
+    }
+    /* PUBLISH THE PANE'S ROOM, AND NOTHING ELSE — because the property SETS this row's width,
+       and a number taken from the row's own box and written back onto it is a feedback loop.
+       Measured when it was: `width: <the row's own 310px>` with `margin-inline: calc(50% - 155px)`
+       resolves 50% against `.msg`'s 322px content box, so the row lost 12px on every pass and the
+       phone cells drifted (390 room 310 → 292, and the 640 reply-all bar dropped a verb). Where
+       there is no pane the property is REMOVED, which leaves `width: 100%` and zero margins —
+       today's behaviour, for the phone overlay and for every mount that is not this one. */
+    if (container instanceof HTMLElement) {
+      if (fromPane) {
+        const px = `${Math.round(room)}px`;
+        if (container.style.getPropertyValue(ROOM_VAR) !== px) {
+          container.style.setProperty(ROOM_VAR, px);
+        }
+      } else if (container.style.getPropertyValue(ROOM_VAR) !== "") {
+        container.style.removeProperty(ROOM_VAR);
+      }
+    }
+    const avail = room - pillPad;
     const gap = parseFloat(getComputedStyle(row).columnGap) || FALLBACK_GAP_PX;
     /* THE WALK, AND WHY IT READS BUTTONS AND NOT GROUPS. `.abar-v` marks an element that is
        admitted or folded on its own: for a group that is one verb it is the group itself, and
@@ -255,20 +319,20 @@ export function useBarDensity(): {
       const seg = segNameOf(child);
       if (child.classList.contains("abar-v")) {
         const name = verbNameOf(child);
-        const w = child.offsetWidth;
+        const w = widthOf(child);
         if (w <= 0) return; // the copy has no layout yet; a wrong zero must not admit the world
         if (name === null) return; // marked admissible and unnamed: refuse rather than guess
         verbs.push({ name, width: w, seg: null });
       } else if (seg !== null) {
         for (const member of child.querySelectorAll<HTMLElement>(":scope > .abar-v")) {
           const name = verbNameOf(member);
-          const w = member.offsetWidth;
+          const w = widthOf(member);
           if (w <= 0) return;
           if (name === null) return;
           verbs.push({ name, width: w, seg });
         }
       } else {
-        const w = child.offsetWidth;
+        const w = widthOf(child);
         if (w <= 0) return;
         base += base === 0 ? w : gap + w;
       }
@@ -389,6 +453,11 @@ export function useBarDensity(): {
       roRef.current.observe(el);
       const container = el.closest(".msg-actions");
       if (container) roRef.current.observe(container); // observing twice de-duplicates
+      /* AND THE PANE, because since the room is the pane's the row's own box no longer changes
+         when the room does: the split column is user-resizable, so dragging it wider is exactly
+         the moment a verb should come out of the menu and the container's box may not move. */
+      const pane = container?.closest(".msg") ? container.closest(PANE_SELECTOR) : null;
+      if (pane) roRef.current.observe(pane);
       /**
        * AND EVERY GROUP IN THE COPY, because the widths this hook reads are the CHILDREN's and
        * those can change while neither the row's box nor the container's does.

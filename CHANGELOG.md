@@ -15,11 +15,12 @@ See [Status](README.md#status--read-this-first).
 
 ### The message actions use the width they have
 
-On a wide window the actions under a message showed Reply, Reply all, Forward and Mark unread and
-folded everything else behind the More chevron, with room to spare on the row. The row now fills
-that room a verb at a time — Later, Park and Resurface come out of the menu as the window widens,
-then Tag, Screening and Move — in one order, whether the message is part of a thread or on its
-own. Anything still folded keeps its place in the menu and its keyboard shortcut.
+On a wide window the actions under a message stopped at Reply, Reply all, Forward and Mark unread
+and folded the rest behind the More chevron. The row is no longer held to the width of the text
+column: it spans the reading pane, stays centred under the message, and fills that room one action
+at a time — Later, Park and Resurface first, then Tag, Screening and Move — in one order, whether
+the message is part of a thread or on its own. Anything still folded keeps its place in the menu
+and its keyboard shortcut.
 
 ### Trash and filing
 
