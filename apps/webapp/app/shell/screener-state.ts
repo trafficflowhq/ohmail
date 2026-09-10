@@ -70,6 +70,7 @@ import {
   takeScreenerIntents,
   type ScreenerIntent,
 } from "./screener-intents";
+import { createIntentWindows } from "./intent-windows";
 import {
   dispatchScreeningChange,
   holdingRules,
@@ -536,7 +537,18 @@ export function useScreenerState(
   /* "No undo — this browser cannot keep one." ONE sentence for the Screener and the delete key,
      so it lives in the namespace the durability notice uses rather than twice in two piles'. */
   const tSession = useTranslations("session");
-  const [, bump] = useReducer((c: number) => c + 1, 0);
+  /* `tick` IS READ, and by one effect only. The boot replay below waits for the cross-tab
+     handshake, which settles on a timer rather than on a mirror change — so keying that effect on
+     `version` alone would leave a stranded decision sitting until the next drain. */
+  const [tick, bump] = useReducer((c: number) => c + 1, 0);
+  /**
+   * WHOSE UNDO WINDOW IS WHOSE, ACROSS TABS — see `intent-windows.ts`.
+   *
+   * One per hook instance rather than in module scope, which is what a TAB is and is also the
+   * only shape a pair of them can be driven in. `bump` is a reducer dispatch and therefore
+   * stable, so the coordinator is built once.
+   */
+  const windows = useMemo(() => createIntentWindows({ onChange: bump }), []);
   const store = useRef({
     pending: new Map<string, PendingEntry>(),
     out: new Set<string>(),
@@ -846,6 +858,10 @@ export function useScreenerState(
     if (!entry) return;
     clearTimeout(entry.commitTimer);
     clearTimeout(entry.outTimer);
+    /* THE WINDOW IS CLOSED, so no other tab may replay it: from here the engine's outbox is the
+       durable record. Told before the dispatch for the same reason the journal is written before
+       the timer — the other tab is not waiting for this one to finish. */
+    windows.release([id]);
     s.pending.delete(id);
     s.out.delete(id);
     if (entry.dest === "spam") {
@@ -1048,6 +1064,9 @@ export function useScreenerState(
       // journal would have turned "user always wins" upside down at the one control that exists
       // to honour it.
       disarmScreenerIntent(id);
+      /* AND NO OTHER TAB MAY REPLAY IT EITHER — a reversal the reader made in this tab is a
+         reversal, whichever tab happens to boot next. */
+      windows.release([id]);
       restored++;
     }
     // NOTHING RESTORED IS NOT AN UNDO, so it does not get the undo sentence. Every id
@@ -1125,6 +1144,9 @@ export function useScreenerState(
     if (holds) {
       s.pending.set(id, entry);
       s.out.add(id);
+      /* THIS TAB OWNS THE WINDOW. Another tab's boot read finds the same journal entry and would
+         otherwise commit it while the countdown here is still running. */
+      windows.claim([{ id, at: entry.at }]);
     } else {
       clearTimeout(entry.outTimer);
       clearTimeout(entry.commitTimer);
@@ -1231,8 +1253,16 @@ export function useScreenerState(
   };
   const notDecided = (x: ScreenerSenderDTO): boolean => outstandingFor(x.from.address) === undefined;
 
-  const visibleWaiting = waiting.filter((x) => (!s.pending.has(x.id) || s.out.has(x.id)) && notDecided(x));
-  const undecided = waiting.filter((x) => !s.pending.has(x.id) && notDecided(x));
+  /* A ROW WHOSE WINDOW ANOTHER TAB OWNS IS NOT THIS TAB'S TO DECIDE — it is being decided, in a
+     window that is counting down somewhere else, and offering it here would put one sender in two
+     presses. It is withheld exactly as this tab's own pending rows are, and comes back the moment
+     the holding tab releases it: filed (the projection drops the sender) or taken back (undecided
+     again). See `intent-windows.ts`. */
+  const decidedElsewhere = windows.elsewhere(Date.now(), COMMIT_MS);
+  const visibleWaiting = waiting.filter((x) => (!s.pending.has(x.id) || s.out.has(x.id))
+    && !decidedElsewhere.has(x.id) && notDecided(x));
+  const undecided = waiting.filter((x) => !s.pending.has(x.id)
+    && !decidedElsewhere.has(x.id) && notDecided(x));
   /**
    * THE DECIDED SENDERS, AS ROWS — the same rows the queue would have shown, on the other side
    * of the line.
@@ -1733,6 +1763,29 @@ export function useScreenerState(
    * whole slice closes), and the journal already has a bound that needs neither.
    */
   const restoredIntents = useRef<ScreenerIntent[] | null>(null);
+  /**
+   * THE HANDSHAKE, AND WHY THE REPLAY WAITS FOR IT.
+   *
+   * A claim broadcast at the press cannot reach a tab that was not open yet, so a booting tab has
+   * to ASK — and a replay that fired before the answer came back would be the very sequence the
+   * handshake exists to refuse. `asked` is what the restore effect below waits on; it is set once
+   * and the wait is a no-op on a surface with no bus (see `intent-windows.ts#ask`).
+   */
+  const asked = useRef(false);
+  useEffect(() => {
+    windows.serve(() => [...s.pending].map(([id, e]) => ({ id, at: e.at })));
+    let alive = true;
+    void windows.ask().then(() => {
+      if (!alive) return;
+      asked.current = true;
+      bump();
+    });
+    return () => {
+      alive = false;
+      windows.close();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => {
     /* AND NOT ON A MAILBOX THIS INSTALL NO LONGER ORGANIZES. The journal outlives the session
        that wrote it, so an install that organized yesterday and is a reader today would replay
@@ -1746,19 +1799,30 @@ export function useScreenerState(
        kept, which is what the journal is for. Only the state with nowhere to send it withholds
        the replay. */
     if (role.mode === "blocked") return;
+    /* NOT BEFORE THE OTHER TABS HAVE ANSWERED — see `asked` above. */
+    if (!asked.current) return;
     if (restoredIntents.current === null) {
       restoredIntents.current = takeScreenerIntents(Date.now())
         .filter((r) => !s.pending.has(r.id));
     }
-    const queue = restoredIntents.current;
+    /* A ROW ANOTHER TAB HAS RESOLVED LEAVES THIS SNAPSHOT FOR GOOD. The journal read is taken
+       once, so an entry the owning tab has since committed or taken back is still in it here —
+       and dispatching that is a second act on one press. */
+    const resolvedElsewhere = windows.resolved();
+    const queue = restoredIntents.current.filter((r) => !resolvedElsewhere.has(r.id));
+    restoredIntents.current = queue;
     if (queue.length === 0) return;
     const raw = engine.read();
-    const ready = queue.filter((r) => !r.derived || raw.get<EngineMessage>("message", r.id) != null);
+    /* AND NOT A ROW WHOSE WINDOW IS STILL OPEN IN ANOTHER TAB. It stays in the journal and in this
+       snapshot: whichever way that tab resolves it, this one learns from the release. */
+    const owned = windows.elsewhere(Date.now(), COMMIT_MS);
+    const ready = queue.filter((r) => !owned.has(r.id)
+      && (!r.derived || raw.get<EngineMessage>("message", r.id) != null));
     if (ready.length === 0) return;
     restoredIntents.current = queue.filter((r) => !ready.includes(r));
     for (const r of ready) dispatchDecision(r);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [version]);
+  }, [version, tick]);
 
   /**
    * See {@link HeldBodyStall}. The RAW reader, deliberately: the projection answers where a
