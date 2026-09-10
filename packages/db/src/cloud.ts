@@ -268,7 +268,7 @@ export {
  * two answers from meaning different things by one key.
  */
 export {
-  SPEND_ACTIONS, DRAFT_RETRY_WINDOW_MS, ATTEMPT_KEY_MAX, ledgerSources,
+  SPEND_ACTIONS, DRAFT_RETRY_WINDOW_MS, ATTEMPT_KEY_MAX, AI_CLAIM_TTL_MS, ledgerSources,
   sourceFor, assertAttemptKey, isSpendAction, clientIdempotencyKey,
   classifyAttemptKey, screenerAttemptKey, draftAttemptKey, workflowAttemptKey,
   classifyLedgerSource, screenerLedgerSource,

@@ -132,6 +132,17 @@ export function isSpendAction(value: unknown): value is SpendAction {
  * characters, so a longer key would raise from inside the caller's transaction instead of being
  * refused where it was built.
  */
+/**
+ * HOW LONG AN EXCLUSIVE WORK CLAIM LIVES — 150 s, and the number is a CEILING the organizer's
+ * model timeout has to fit under.
+ *
+ * The claim itself is the entitlements program's (`CLAIM_TTL_MS` on its port); this copy is here
+ * because the thing that must be sized against it is the classifier timeout in `apps/worker`,
+ * which is open code and has no other way to name the bound. A call that outlives the claim
+ * releases the work to the next caller mid-flight, and both then pay for it.
+ */
+export const AI_CLAIM_TTL_MS = 150_000;
+
 export const ATTEMPT_KEY_MAX = 160;
 
 const ATTEMPT_KEY_SHAPE = /^[A-Za-z0-9:_.~@+-]+$/;

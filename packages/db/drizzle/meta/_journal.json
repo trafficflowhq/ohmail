@@ -131,40 +131,33 @@
     {
       "idx": 18,
       "version": "7",
-      "when": 1785574486206,
-      "tag": "0018_billing",
-      "breakpoints": true
-    },
-    {
-      "idx": 19,
-      "version": "7",
       "when": 1785660886206,
       "tag": "0019_observability",
       "breakpoints": true
     },
     {
-      "idx": 20,
+      "idx": 19,
       "version": "7",
       "when": 1785747286206,
       "tag": "0020_waitlist_invites",
       "breakpoints": true
     },
     {
-      "idx": 21,
+      "idx": 20,
       "version": "7",
       "when": 1785833686206,
       "tag": "0021_login_identity_and_invite_revocation",
       "breakpoints": true
     },
     {
-      "idx": 22,
+      "idx": 21,
       "version": "7",
       "when": 1785920086206,
       "tag": "0022_ai_switch",
       "breakpoints": true
     },
     {
-      "idx": 23,
+      "idx": 22,
       "version": "7",
       "when": 1786006486206,
       "tag": "0023_email_verification",

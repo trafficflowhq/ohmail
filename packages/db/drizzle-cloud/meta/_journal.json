@@ -19,211 +19,113 @@
     {
       "idx": 2,
       "version": "7",
-      "when": 1785574486206,
-      "tag": "0002_billing",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
       "when": 1785660886206,
       "tag": "0003_observability",
       "breakpoints": true
     },
     {
-      "idx": 4,
+      "idx": 3,
       "version": "7",
       "when": 1785747286206,
       "tag": "0004_waitlist_invites",
       "breakpoints": true
     },
     {
-      "idx": 5,
+      "idx": 4,
       "version": "7",
       "when": 1785833686206,
       "tag": "0005_invite_revocation",
       "breakpoints": true
     },
     {
-      "idx": 6,
+      "idx": 5,
       "version": "7",
       "when": 1786006486206,
       "tag": "0006_email_verified_backfill",
       "breakpoints": true
     },
     {
-      "idx": 7,
+      "idx": 6,
       "version": "7",
       "when": 1787389086206,
       "tag": "0007_staff_users",
       "breakpoints": true
     },
     {
-      "idx": 8,
-      "version": "7",
-      "when": 1787648086206,
-      "tag": "0008_account_suspension",
-      "breakpoints": true
-    },
-    {
-      "idx": 9,
+      "idx": 7,
       "version": "7",
       "when": 1787734486206,
       "tag": "0009_mailbox_oauth",
       "breakpoints": true
     },
     {
-      "idx": 10,
+      "idx": 8,
       "version": "7",
       "when": 1789167740527,
       "tag": "0010_desktop_link_pkce",
       "breakpoints": true
     },
     {
-      "idx": 11,
-      "version": "7",
-      "when": 1789254140527,
-      "tag": "0011_trial_credits",
-      "breakpoints": true
-    },
-    {
-      "idx": 12,
-      "version": "7",
-      "when": 1789599740527,
-      "tag": "0012_billing_suspension",
-      "breakpoints": true
-    },
-    {
-      "idx": 13,
-      "version": "7",
-      "when": 1789686140527,
-      "tag": "0013_ledger_integrity",
-      "breakpoints": true
-    },
-    {
-      "idx": 14,
-      "version": "7",
-      "when": 1789772540527,
-      "tag": "0014_ledger_trial_source",
-      "breakpoints": true
-    },
-    {
-      "idx": 15,
+      "idx": 9,
       "version": "7",
       "when": 1789858940527,
       "tag": "0015_attachment_staging",
       "breakpoints": true
     },
     {
-      "idx": 16,
-      "version": "7",
-      "when": 1790031740527,
-      "tag": "0016_ai_attempt_claims",
-      "breakpoints": true
-    },
-    {
-      "idx": 17,
+      "idx": 10,
       "version": "7",
       "when": 1790118140527,
       "tag": "0017_oauth_code_twofa_provenance",
       "breakpoints": true
     },
     {
-      "idx": 18,
+      "idx": 11,
       "version": "7",
       "when": 1790290940527,
       "tag": "0018_invites_confers_verified",
       "breakpoints": true
     },
     {
-      "idx": 19,
-      "version": "7",
-      "when": 1790636540527,
-      "tag": "0019_storage_bytes_limit",
-      "breakpoints": true
-    },
-    {
-      "idx": 20,
-      "version": "7",
-      "when": 1790722940527,
-      "tag": "0020_replan_2026_08_21",
-      "breakpoints": true
-    },
-    {
-      "idx": 21,
-      "version": "7",
-      "when": 1790809340527,
-      "tag": "0021_setup_grants",
-      "breakpoints": true
-    },
-    {
-      "idx": 22,
-      "version": "7",
-      "when": 1790895740527,
-      "tag": "0022_subscription_addons",
-      "breakpoints": true
-    },
-    {
-      "idx": 23,
-      "version": "7",
-      "when": 1791068540527,
-      "tag": "0023_billing_reconciliation",
-      "breakpoints": true
-    },
-    {
-      "idx": 24,
+      "idx": 12,
       "version": "7",
       "when": 1791327740527,
       "tag": "0024_auth_events_reuse_index",
       "breakpoints": true
     },
     {
-      "idx": 25,
+      "idx": 13,
       "version": "7",
       "when": 1791327800527,
       "tag": "0025_alert_renotify_signature",
       "breakpoints": true
     },
     {
-      "idx": 26,
+      "idx": 14,
       "version": "7",
       "when": 1791327860527,
       "tag": "0026_alert_claim_lease",
       "breakpoints": true
     },
     {
-      "idx": 27,
+      "idx": 15,
       "version": "7",
       "when": 1791327921054,
       "tag": "0027_oauth_device_ceremonies",
       "breakpoints": true
     },
     {
-      "idx": 28,
-      "version": "7",
-      "when": 1791327982108,
-      "tag": "0028_credit_rollup_and_account_setup_grant",
-      "breakpoints": true
-    },
-    {
-      "idx": 29,
-      "version": "7",
-      "when": 1791328043162,
-      "tag": "0029_billing_invoices_platform_costs_ai_usage",
-      "breakpoints": true
-    },
-    {
-      "idx": 30,
+      "idx": 16,
       "version": "7",
       "when": 1791328104216,
       "tag": "0030_heartbeat_signals_alert_runs",
       "breakpoints": true
     },
     {
-      "idx": 31,
+      "idx": 17,
       "version": "7",
-      "when": 1791328164216,
-      "tag": "0031_credit_rollup_sweep_backlog",
+      "when": 1791328164217,
+      "tag": "0032_retire_billing_tables",
       "breakpoints": true
     }
   ]
