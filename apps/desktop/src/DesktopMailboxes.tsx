@@ -229,6 +229,15 @@ export interface MailboxReach {
 export interface MailboxReachSlice {
   /** What the engine said, per mailbox id. Empty when it said nothing. */
   rows: Record<string, MailboxReach>;
+  /**
+   * WHEN THIS PANE LEARNED THIS — `Date.now()` at the answer, or at the moment the wait for the
+   * first one began; `null` on a door that never asks, where nothing ages.
+   *
+   * An answer's AGE is what makes silence visible. A poll that never resolves writes no slice at
+   * all, so with nothing stamped the last thing on screen — `unasked` at a mount, or a healthy
+   * verdict — stands for the life of the pane. See {@link reachStale}.
+   */
+  at: number | null;
   /** WHERE THIS POLL LANDED — see {@link MailboxReachPollState}. */
   state: MailboxReachPollState;
   /** WHICH silence or fault it was; `null` for a verdict and for a poll that has not landed. */
@@ -298,9 +307,40 @@ export type MailboxReachPollReason =
   /** A body that parsed and is not a roster. */
   | "not-a-roster";
 
-/** A poll that has not landed. A fresh object per call, on {@link readMailboxReachVia}'s rule. */
+/**
+ * A DOOR THAT DOES NOT ASK: nothing has been asked and nothing will be, so `at` is null and this
+ * never goes stale. A fresh object per call, on {@link readMailboxReachVia}'s rule.
+ */
 export const unaskedReach = (): MailboxReachSlice =>
-  ({ rows: {}, state: "unasked", reason: null, status: null, detail: null });
+  ({ rows: {}, state: "unasked", reason: null, status: null, detail: null, at: null });
+
+/**
+ * THE SAME STATE ON A DOOR THAT IS ASKING — no answer yet, and the wait has a clock. One `state`,
+ * two facts: a door with no poll coming can never go stale, and a first poll that hangs must.
+ */
+export const waitingReach = (at: number): MailboxReachSlice => ({ ...unaskedReach(), at });
+
+/**
+ * THE PANE'S REACH CADENCE, AND HOW OLD AN ANSWER MAY BE.
+ *
+ * Fifteen seconds is the engine's own poll interval. The bound is that plus two of grace: a read
+ * takes longer than the interval whenever the engine is mid-reconnect, and the sentence must not
+ * flash on a healthy pane that missed one tick — while a silence outlasting three of them is not
+ * a tick any more.
+ */
+export const REACH_POLL_MS = 15_000;
+export const REACH_STALE_MS = REACH_POLL_MS * 3;
+
+/**
+ * WHETHER THE PANE'S LAST ANSWER IS TOO OLD TO BE SPOKEN FOR — one stamp, one comparison.
+ *
+ * `at: null` is a door that never asks and it never ages: a slice going stale there would put
+ * "Can't check the mail server right now" on every hosted row, whose connection belongs to a
+ * worker on a shard and was never this machine's to report.
+ */
+export function reachStale(slice: Pick<MailboxReachSlice, "at">, now: number): boolean {
+  return slice.at !== null && now - slice.at > REACH_STALE_MS;
+}
 
 /**
  * WHAT THE TRANSPORT THREW, as one bounded line — see {@link MailboxReachSlice.detail}.
@@ -324,14 +364,23 @@ function describeThrown(err: unknown): string {
  * watched by a case in `desktop-mailboxes.test.ts` that reddens when that arm alone is flipped.
  */
 export function reachUnknownForRow(
-  slice: Pick<MailboxReachSlice, "state" | "reason">,
+  slice: Pick<MailboxReachSlice, "state" | "reason" | "at">,
   organizedHere: boolean,
+  now: number,
 ): boolean {
+  /* THE BOUND, and it is gated on the row's own claim for the reason the `verdict` arm below is:
+     with no roster in hand nothing says this install holds a connection for a row it does not
+     file, and a row reading "Organized by ohmail Cloud" must not start saying "Can't check". */
+  const overdue = organizedHere && reachStale(slice, now);
   switch (slice.state) {
     /* NOTHING HAS BEEN ASKED YET — the mount before the first answer, or another door. A pane
        that read this as "cannot check" would print the sentence for a tick every time somebody
-       opened Settings, which is a false alarm with a true one's words. */
-    case "unasked": return false;
+       opened Settings, which is a false alarm with a true one's words.
+
+       BOUNDED, because a first poll that never RESOLVES is not a tick: nothing writes a slice,
+       so `unasked` used to stand for the life of the mount and the ladder fell through to "Up to
+       date" over an install whose own log held the outage. Past the bound that wait is news. */
+    case "unasked": return overdue;
     /* THE ENGINE ANSWERED SOMETHING THAT IS NOT A VERDICT. Unchanged: this arm is what the pane
        already did, and it is the one silence that was already news. */
     case "faulted": return true;
@@ -339,7 +388,7 @@ export function reachUnknownForRow(
        An engine older than the route cannot answer and is not broken; the desktop's own frame
        door, by contrast, serves this route in the same build as the window, so a throw there is
        the question failing to arrive at an engine that would have answered it. */
-    case "silent": return slice.reason === "transport-threw";
+    case "silent": return slice.reason === "transport-threw" || overdue;
     /* A ROSTER THAT DOES NOT NAME THIS ROW. For a mailbox this computer does not file, that is
        the ordinary and correct answer — ohmail Cloud organizes it, this process holds no
        connection for it, and a row reading "Organized by ohmail Cloud" must not start saying
@@ -387,9 +436,10 @@ export async function readMailboxReachVia(
      module-level literal would be one object shared by every poll of every pane. */
   const silent = (
     reason: MailboxReachPollReason, over: Partial<MailboxReachSlice> = {},
-  ): MailboxReachSlice => ({ rows: {}, state: "silent", reason, status: null, detail: null, ...over });
+  ): MailboxReachSlice =>
+    ({ rows: {}, state: "silent", reason, status: null, detail: null, at: Date.now(), ...over });
   const faulted = (reason: MailboxReachPollReason, status: number): MailboxReachSlice =>
-    ({ rows: {}, state: "faulted", reason, status, detail: null });
+    ({ rows: {}, state: "faulted", reason, status, detail: null, at: Date.now() });
   let res: Response;
   try {
     res = await fetchImpl("/local/mailboxes/connections");
@@ -465,7 +515,10 @@ export async function readMailboxReachVia(
       signInRefused: it.signInRefused === true,
     };
   }
-  return { rows: out, state: "verdict", reason: null, status: res.status, detail: null };
+  /* STAMPED WHERE THE ANSWER IS MADE, not where it is stored: the sequence guard discards a read
+     that landed out of order, and a stamp taken at the setter would make that stale answer look
+     like the newest thing this pane knows. */
+  return { rows: out, state: "verdict", reason: null, status: res.status, detail: null, at: Date.now() };
 }
 
 /**
@@ -848,6 +901,14 @@ export function DesktopMailboxes(
    * exactly who this line is for.
    */
   const [reach, setReach] = useState<MailboxReachSlice>(unaskedReach);
+  /**
+   * THE RENDER'S CLOCK, advanced by the poll's own interval — see {@link reachStale}.
+   *
+   * A poll that never answers writes no state, so nothing re-renders and an answer's age would
+   * never be read. This ticks whether or not the engine replies, and it is the only thing here
+   * that does. Between ticks it lags, which can make the bound fire late and never early.
+   */
+  const [now, setNow] = useState(() => Date.now());
   /* THE ROWS THIS PANE IS SHOWING, for the poll's log line and for nothing else — through a REF
      because the poll must not RESTART when the facts poller lands. `facts` in the dependency list
      would tear the interval down and re-issue a read twice a minute, and a callback that outlives
@@ -928,8 +989,12 @@ export function DesktopMailboxes(
         setReach(r);
       });
     };
+    /* THE WAIT IS STAMPED WHERE IT STARTS. A door that comes back to local holds the not-asking
+       slice, whose `at` is null and never ages; without this the first poll's silence on that
+       path is unbounded again. */
+    setReach((prev) => (prev.state === "unasked" ? waitingReach(Date.now()) : prev));
     read();
-    const id = setInterval(read, 15_000);
+    const id = setInterval(() => { setNow(Date.now()); read(); }, REACH_POLL_MS);
     return () => { live = false; clearInterval(id); };
   }, [door]);
   /** Mailboxes whose resync this pane has queued — a press the engine has not been given yet.
@@ -1544,7 +1609,9 @@ export function DesktopMailboxes(
      * next good answer replaces it, rather than asserting an outage and then withdrawing it. No
      * debounce for that reason — a delay would hold a true outage back by as long as it holds a
      * false one, and this arm no longer claims anything that needs holding back. */
-    if (!r && reachUnknownForRow(reach, organizesHere(m))) return say(t("desktopStateUnknown"));
+    if (!r && reachUnknownForRow(reach, organizesHere(m), now)) {
+      return say(t("desktopStateUnknown"));
+    }
     if (r && !r.reachable) {
       /* `agoStamp(...).rel` AND NOT `day(...)`: an outage is a DURATION, and the neighbouring
          `day` stamp is deliberately date-only because the sentences it serves are standing facts
@@ -1560,6 +1627,14 @@ export function DesktopMailboxes(
           }
         : say(t("desktopStateUnreachable"));
     }
+    /* ── AN ANSWER HAS AN AGE, AND AN OLD ONE IS NOT AN ANSWER ──────────────────────
+     *
+     * BELOW the outage arm, so a detected outage keeps its own sentence however old the roster
+     * is, and above the role and progress arms for the reason those sit under the outage: all of
+     * them describe mail MOVING and this pane can no longer say that it is. No `organizesHere`
+     * gate, unlike the absence rule above: a roster that NAMED this row proves the engine holds a
+     * connection for it, so the silence since is this row's own news. */
+    if (r && reachStale(reach, now)) return say(t("desktopStateUnknown"));
     if (m.organizerRole === "reader") return say(t("stateReading"));
     if (m.syncBlockedSince) return say(t("desktopStatePaused"));
     if (m.lastSyncAt === null) return say(t("desktopStateFirstOpen"));

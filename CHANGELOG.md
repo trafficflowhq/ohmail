@@ -55,6 +55,9 @@ thirty seconds as gone: it opens a fresh one and re-reads which install is organ
 before moving any mail. Pressing Sync now does the same check. Settings → Mailboxes says the
 server cannot be reached, and for how long, while this is going on.
 
+And when the check behind that row is itself the thing that stops answering, the row says it
+cannot check the mail server rather than reading Up to date.
+
 ### Sync now can be pressed again
 
 The button is disabled only until a press you made has been answered. It used to stay greyed out

@@ -2588,6 +2588,165 @@ describe("the pane says it cannot check, rather than that the mailbox is up to d
   });
 
   /**
+   * ═══ A WAIT HAS A BOUND, AND AN ANSWER HAS AN AGE ══════════════════════════════════════
+   *
+   * MEASURED on BOTH desktop surfaces in the 0.16.0 pass. With the network cut and the engine's
+   * own log holding `mailbox_connection_unavailable` and five failed re-dials, the connection row
+   * read "Up to date": 151 s under the cut plus 152 s after the link came back on Windows, and
+   * for the life of a mount on Linux, in two of four measured cuts. Nothing measurable separated
+   * the failing runs from the passing ones — and the fix needs no such condition, because two
+   * arms of the ladder produce that reading and neither depends on the cause of the silence.
+   *
+   *  · `unasked` — the mount's wait — had nothing that ended it. A first poll that never
+   *    RESOLVES is not the same as one that fails: it writes no slice at all, so the ladder fell
+   *    through to "Up to date" for as long as the pane stayed open.
+   *  · A verdict had no age. Once a healthy roster landed, polls that stopped landing left that
+   *    answer standing, and a stopped roster is what an outage looks like from here.
+   *
+   * ── WHY EVERY ARM BELOW SITS A WHOLE CADENCE EITHER SIDE OF THE BOUND ────────────────────
+   *
+   * The render's clock advances on the poll's interval and nowhere else, so the sentence can only
+   * appear AT a tick — a case pinned to the exact millisecond of the bound would be measuring the
+   * test's own elapsed time (`shouldAdvanceTime` moves the fake clock with the real one). Two
+   * cadences is inside the bound with 15 s to spare; four is outside it with 15 s to spare.
+   *
+   * ── THE MUTATIONS THESE CASES WERE WATCHED AGAINST ───────────────────────────────────────
+   *
+   *  · `case "unasked": return overdue` → `return false`, the shipped line, reddens the bounded
+   *    wait and nothing else;
+   *  · deleting `if (r && reachStale(reach, now))` reddens the aged verdict and nothing else;
+   *  · dropping `setNow(Date.now())` from the interval reddens BOTH — the clock is the only thing
+   *    that ticks when no answer is arriving, and without it the bound can never be reached;
+   *  · dropping the `organizedHere &&` gate on `overdue` reddens the reader control, which is
+   *    the row this install holds no connection for and must not speak about.
+   */
+  it("A FIRST POLL THAT NEVER ANSWERS is news at the bound, and ordinary before it", async () => {
+    const { REACH_POLL_MS, REACH_STALE_MS } = await import("../src/DesktopMailboxes.js");
+    FACTS = [FILED];
+    /* THE HUNG READ, which is the state the pane is in between mounting and its first answer —
+       and, when the question stops arriving, for the life of the mount. */
+    bridgeReply = () => new Promise<Response>(() => { /* never settles */ });
+
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const el = await render("local");
+      const said = (): string => el.textContent ?? "";
+      expect(REACH_STALE_MS, "the bound is the cadence plus its grace").toBe(REACH_POLL_MS * 3);
+
+      /* WITHIN THE BOUND — a wait of two cadences is still a wait, and the sentence must not
+         appear for it: this is the arm that keeps a healthy first paint quiet. */
+      await act(async () => { vi.advanceTimersByTime(2 * REACH_POLL_MS); });
+      expect(said(), "the pane announced it could not check while the wait was ordinary")
+        .not.toContain(copy.desktopStateUnknown!);
+      expect(said()).toContain(copy.desktopStateUpToDate!);
+
+      /* PAST IT — the first poll has not resolved in four cadences, and that is news. */
+      await act(async () => { vi.advanceTimersByTime(2 * REACH_POLL_MS); });
+      expect(said(), "a first poll that never answered still read as a healthy mailbox")
+        .not.toContain(copy.desktopStateUpToDate!);
+      expect(said()).toContain(copy.desktopStateUnknown!);
+      /* AND IT IS NOT AN OUTAGE. Nothing has been learned about the person's mail server: the
+         question never came back, which is this install's fact and not their provider's. */
+      expect(said(), "a question that never came back was reported as the person's server down")
+        .not.toContain(copy.desktopStateUnreachable!);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("A HEALTHY VERDICT STOPS BEING ONE once nothing refreshes it", async () => {
+    const { REACH_POLL_MS } = await import("../src/DesktopMailboxes.js");
+    FACTS = [FILED];
+    bridgeReply = () => roster([{ mailboxId: "mbx-1", reachable: true, unreachableSince: null }]);
+
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const el = await render("local");
+      const said = (): string => el.textContent ?? "";
+      expect(said(), "a fresh answered verdict is the positive control — it says the state")
+        .toContain(copy.desktopStateUpToDate!);
+
+      /* AND NOW THE ANSWERS STOP ARRIVING while the last one says everything is fine. This is the
+         Windows reading: five minutes of "Up to date" over a connection the engine had given up
+         on, with the row's own poll no longer landing. */
+      bridgeReply = () => new Promise<Response>(() => { /* never settles */ });
+      await act(async () => { vi.advanceTimersByTime(2 * REACH_POLL_MS); });
+      expect(said(), "one missed cadence withdrew an answer that is still current")
+        .toContain(copy.desktopStateUpToDate!);
+
+      await act(async () => { vi.advanceTimersByTime(2 * REACH_POLL_MS); });
+      expect(said(), "a verdict nothing has refreshed for four cadences still read as healthy")
+        .not.toContain(copy.desktopStateUpToDate!);
+      expect(said()).toContain(copy.desktopStateUnknown!);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /**
+   * AN OUTAGE THE ENGINE REPORTED OUTRANKS ITS OWN AGE — the row learns it as `reachable: false`,
+   * which is the roster's spelling of the engine's `mailbox_connection_unavailable`. "Can't
+   * check" would be a WEAKER sentence than the one already earned, and the stamp beside it says
+   * how old it is, so nothing is being claimed that the row does not date.
+   */
+  it("CONTROL — an answered outage keeps its own sentence at any age", async () => {
+    const { REACH_POLL_MS } = await import("../src/DesktopMailboxes.js");
+    FACTS = [FILED];
+    bridgeReply = () => roster([{
+      mailboxId: "mbx-1",
+      reachable: false,
+      unreachableSince: new Date(Date.now() - 20 * 60_000).toISOString(),
+    }]);
+
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const el = await render("local");
+      const said = (): string => el.textContent ?? "";
+      expect(said()).toContain(copy.desktopStateUnreachable!);
+
+      bridgeReply = () => new Promise<Response>(() => { /* never settles */ });
+      await act(async () => { vi.advanceTimersByTime(4 * REACH_POLL_MS); });
+      expect(said(), "an answered outage was downgraded to an unanswerable question by its age")
+        .toContain(copy.desktopStateUnreachable!);
+      expect(said()).not.toContain(copy.desktopStateUnknown!);
+      expect(said()).not.toContain(copy.desktopStateUpToDate!);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /**
+   * AND THE ROW THAT MUST NOT MOVE, AGAIN — a mailbox ohmail Cloud organizes. This install holds
+   * no connection for it, so its own poll going quiet says nothing about that mailbox at all.
+   * The bound is gated on the row's claim for exactly this reason; ungated it would put "Can't
+   * check the mail server right now" on every hosted row a minute after the pane opened.
+   */
+  it("CONTROL — a row this install does not file keeps its sentence past the bound", async () => {
+    const { REACH_POLL_MS } = await import("../src/DesktopMailboxes.js");
+    FACTS = [{
+      ...MAILBOX,
+      organizerRole: "reader",
+      organizedBy: { kind: "cloud", name: "ohmail Cloud", since: "2026-08-30T09:00:00.000Z" },
+      organizerState: "held",
+      organizeConsentedAt: null,
+    }];
+    bridgeReply = () => new Promise<Response>(() => { /* never settles */ });
+
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const el = await render("local");
+      await act(async () => { vi.advanceTimersByTime(4 * REACH_POLL_MS); });
+      const said = el.textContent ?? "";
+      expect(said, "a row this install does not organize was told this install could not check it")
+        .not.toContain(copy.desktopStateUnknown!);
+      expect(said, "the reader sentence was replaced by a fact about somebody else's connection")
+        .toContain(copy.stateReading!);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /**
    * THE POLL SAYS WHERE IT LANDED — the instrument, and the reason it exists: before it, a
    * silence and a healthy verdict produced the same screen AND the same nothing anywhere else.
    * It is the web inspector's line and not the engine's log (the window has no route into that),
@@ -2639,28 +2798,37 @@ describe("the pane says it cannot check, rather than that the mailbox is up to d
    * status it was reached by. The pane's sentence is derived from these three, so they are pinned
    * here rather than inferred from the screen.
    */
-  it("every landing carries its state, its reason and the status it came from", async () => {
+  it("every landing carries its state, its reason, its status AND WHEN IT LANDED", async () => {
     const { readMailboxReachVia } = await import("../src/DesktopMailboxes.js");
     const answers = (res: () => Response | Promise<Response>) =>
       readMailboxReachVia(async () => res());
+    /* THE CLOCK IS PINNED, because every landing now carries the instant it was made — the age
+       the row's sentence is derived from. Unpinned these five equalities could not name it, and
+       an `expect.any(Number)` would stop asserting the stamp at all. */
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-10T12:00:00.000Z"));
+    const at = Date.now();
 
     expect(await answers(() => new Response(JSON.stringify({ items: [] }), {
       status: 200, headers: { "content-type": "application/json" },
-    }))).toEqual({ rows: {}, state: "verdict", reason: null, status: 200, detail: null });
+    }))).toEqual({ rows: {}, state: "verdict", reason: null, status: 200, detail: null, at });
 
     expect(await answers(() => new Response(null, { status: 404 })))
-      .toEqual({ rows: {}, state: "silent", reason: "route-absent", status: 404, detail: null });
+      .toEqual({ rows: {}, state: "silent", reason: "route-absent", status: 404, detail: null, at });
 
     expect(await answers(() => new Response(null, { status: 401 })))
-      .toEqual({ rows: {}, state: "faulted", reason: "refused", status: 401, detail: null });
+      .toEqual({ rows: {}, state: "faulted", reason: "refused", status: 401, detail: null, at });
 
     expect(await answers(() => new Response("not json", {
       status: 200, headers: { "content-type": "application/json" },
-    }))).toEqual({ rows: {}, state: "faulted", reason: "unparseable-body", status: 200, detail: null });
+    }))).toEqual({
+      rows: {}, state: "faulted", reason: "unparseable-body", status: 200, detail: null, at,
+    });
 
     expect(await answers(() => new Response("{}", {
       status: 200, headers: { "content-type": "application/json" },
-    }))).toEqual({ rows: {}, state: "faulted", reason: "not-a-roster", status: 200, detail: null });
+    }))).toEqual({ rows: {}, state: "faulted", reason: "not-a-roster", status: 200, detail: null, at });
+    vi.useRealTimers();
 
     const threw = await readMailboxReachVia(() => { throw new Error("the engine has stopped"); });
     expect(threw.state).toBe("silent");
