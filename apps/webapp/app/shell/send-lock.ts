@@ -918,6 +918,14 @@ export interface SendIntent {
   subjects: ReadonlyArray<string>;
   /** {@link sendFingerprint} of the message the key was minted for. */
   fp: string;
+  /**
+   * {@link SendLock.bfp} — the COMPOSE BUFFER's fingerprint at the press, when the record carries
+   * one. It is the only name that survives a reload, so it is what a restored surface compares
+   * against to ask whether an unresolved intent is about the message on screen. Absent on a record
+   * the shipped previous build wrote, and a caller that cannot show the intent names its message
+   * must fail closed rather than treat "no evidence" as "not mine".
+   */
+  bfp?: string;
 }
 
 /**
@@ -1034,7 +1042,10 @@ export function unverifiedSendIntents(lane: string, owner: string | null = stora
      * is upgraded back. A downgrade in the window shows no park for that one message.
      */
     .filter((r) => r.lane === lane && r.unverified === true && r.v <= SEND_LOCK_FORMAT)
-    .map((r) => ({ subjects: lockSubjects(r), fp: r.fp }));
+    .map((r) => ({
+      subjects: lockSubjects(r), fp: r.fp,
+      ...(r.bfp === undefined ? {} : { bfp: r.bfp }),
+    }));
 }
 
 /**

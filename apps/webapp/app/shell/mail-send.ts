@@ -279,6 +279,24 @@ export const SEND_IN_FLIGHT_PHASES: ReadonlySet<SendPhase> = new Set<SendPhase>(
  * Lane-scoped through `sendKeyOf`, the same derivation the press uses, so a reply's pending send
  * cannot refuse the compose surface's first save.
  */
+/**
+ * ── DOES THIS UNRESOLVED INTENT NAME THE MESSAGE THE LATCH WAS TAKEN FOR? ────────────────────
+ *
+ * Two witnesses, because a record is written at one moment in a message's life and read at
+ * another. `bfp` is the compose buffer's fingerprint at the press — the only name that survives a
+ * reload — and the compose SESSION is the name {@link parkedComposeRecord} parks by, so the two
+ * agree with the park by construction instead of drifting from it.
+ *
+ * `false` on a record carrying neither, which is the fail-closed direction: "no evidence" is not
+ * "not mine".
+ */
+function intentNamesLatched(
+  intent: SendIntent, latch: { fp: string | null; session: string | null },
+): boolean {
+  if (latch.fp !== null && intent.bfp === latch.fp) return true;
+  return latch.session !== null && intent.subjects.includes(`compose:${latch.session}`);
+}
+
 export function sendUnsettledFromLastSession(
   lane: string,
   /** The identity latched at mount, with the compose session it was taken under. See the hook. */
@@ -306,10 +324,21 @@ export function sendUnsettledFromLastSession(
    *
    * ── FOUR ARMS, IN THIS ORDER, AND THE ORDER IS THE RULE ─────────────────────────────────────
    */
-  /* 1. AN UNVERIFIED SEND OUTRANKS THIS. `unverified` IS an answer — the worst one: the key is
-        spent and nobody knows whether the mail left. The message parks by its record with the
-        sentence that names THAT state. Holding it under "still being sent" would be false. */
-  if (unverifiedSendIntents(lane, owner).length !== 0) return false;
+  /* 1. AN UNVERIFIED SEND *OF THIS MESSAGE* OUTRANKS THIS. `unverified` IS an answer — the worst
+        one: the key is spent and nobody knows whether the mail left. THAT message parks by its
+        record with the sentence naming that state, and holding it under "still being sent" would
+        be false.
+
+        PER MESSAGE, NOT PER LANE, and the difference was a second delivery. The lane is
+        `"compose"` — the name of every message this browser will ever write — so ANY unverified
+        record on it switched the restored hold off for a DIFFERENT message whose own send was
+        still replaying: the fields stayed editable, an edit changed the fingerprint, and the press
+        minted a fresh key for mail already on its way. Same correction `canSend`'s
+        `unresolvedNames` carries, for the same reason.
+
+        A record that cannot be SHOWN to name this message does not yield here — it falls through
+        to arms 2 and 3, which hold it while its send is pending. */
+  if (unverifiedSendIntents(lane, owner).some((i) => intentNamesLatched(i, latch))) return false;
 
   /* The lane's records, with the outbox exempting a pending one from the age limit — and from
      this read's own pruning, which would otherwise delete the answer before anybody read it. */
