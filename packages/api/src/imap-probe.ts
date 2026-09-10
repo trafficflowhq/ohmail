@@ -696,6 +696,12 @@ export interface ProbeDialer {
    * ImapProbeOptions.countFolders} never counts either).
    */
   listFolders?(): Promise<string[]>;
+  /**
+   * DESTROY the socket now — no LOGOUT, which would queue behind the command being abandoned.
+   * Optional for the reason above, and synchronous because that is what lets the slot release
+   * wait for it: the real `ImapAdapter` has it, and a double's `close()` resolves anyway.
+   */
+  forceClose?(): void;
 }
 
 export interface ImapProbeOptions {
@@ -775,11 +781,18 @@ export function makeImapProbe(deps: ApiDeps, opts: ImapProbeOptions = {}): (i: I
     /**
      * One rung: dial, then put the socket down before the next rung may start.
      *
-     * The close is awaited on every path EXCEPT a deadline expiry — the socket we gave up on is
-     * by definition one that is not answering, so awaiting its close would reintroduce exactly
-     * the unbounded wait the deadline exists to remove. That abandoned close finishes (or the
-     * admission window's 90 s reclaim covers it), and no further rung is dialled after a
-     * deadline, so the one-login-at-a-time property survives the asymmetry.
+     * ── THE SLOT MAY NOT GO BACK WHILE THE SOCKET MAY STILL BE LIVE ─────────────────────────
+     *
+     * The close used to be skipped on a deadline expiry, on the ground that awaiting a graceful
+     * close of a connection that is not answering reintroduces the wait the deadline removed.
+     * That is true of the POLITE close and it left the abandoned socket outliving the slot
+     * release below: the counter said one login and the provider still had two, which is how a
+     * probe ladder ends up refused for a mailbox nobody is dialling.
+     *
+     * Destroying it is what makes waiting affordable — `forceClose` is synchronous, so the
+     * socket is DOWN by the time the release runs, and the polite close after it can no longer
+     * queue behind anything. A dialer with no `forceClose` is a test double, whose close
+     * resolves by construction.
      */
     const dialOnce = async (
       attempt: ProbeAttempt, allowInsecure: boolean,
@@ -795,13 +808,16 @@ export function makeImapProbe(deps: ApiDeps, opts: ImapProbeOptions = {}): (i: I
         auth,
         timeouts: PROBE_TIMEOUTS,
       });
+      /** Every failing ending: destroy, then close, then the caller may release the slot. */
+      const putDown = async (): Promise<void> => {
+        try { adapter.forceClose?.(); } catch { /* the socket is going away regardless */ }
+        await adapter.close().catch(() => { /* never came up, or already destroyed */ });
+      };
       try {
         await withDeadline(adapter.connect(), Math.max(1, budgetLeft()));
       } catch (err) {
-        const timedOut = err instanceof ProbeDeadlineExceeded;
-        const close = adapter.close().catch(() => { /* a connection that never came up has nothing to close */ });
-        if (!timedOut) await close;
-        return { ok: false, err, timedOut };
+        await putDown();
+        return { ok: false, err, timedOut: err instanceof ProbeDeadlineExceeded };
       }
       /**
        * THE FOLDER COUNT, INSIDE THE SAME CONNECTION AND THE SAME DEADLINE.
@@ -821,10 +837,8 @@ export function makeImapProbe(deps: ApiDeps, opts: ImapProbeOptions = {}): (i: I
           await adapter.close().catch(() => { /* the count is in hand; a noisy logout is not */ });
           return { ok: true, folders: names.length };
         } catch (err) {
-          const timedOut = err instanceof ProbeDeadlineExceeded;
-          const close = adapter.close().catch(() => { /* already failing; the close is best-effort */ });
-          if (!timedOut) await close;
-          return { ok: false, err, timedOut };
+          await putDown();
+          return { ok: false, err, timedOut: err instanceof ProbeDeadlineExceeded };
         }
       }
       await adapter.close().catch(() => { /* the greeting was the evidence; a noisy logout is not */ });
@@ -934,8 +948,8 @@ export function makeImapProbe(deps: ApiDeps, opts: ImapProbeOptions = {}): (i: I
       if (sawTimeout) return { verdict: "refuse", code: "timeout" };
       return fallback ?? { verdict: "refuse", code: "connect" };
     } finally {
-      // Give the slot back exactly once, after the last rung's socket is down (see `dialOnce`
-      // for the deadline asymmetry). Best-effort by necessity, never silent: a lost release
+      // Give the slot back exactly once, after the last rung's socket is down — every ending in
+      // `dialOnce` now waits for that. Best-effort by necessity, never silent: a lost release
       // leaves the counter one high until the 90 s stale window reclaims it, which is the
       // bounded direction. `err` is a DATABASE error and carries no credential; the probe's
       // own throw is never logged.

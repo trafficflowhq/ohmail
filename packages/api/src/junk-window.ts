@@ -17,7 +17,7 @@ import {
   ServiceError, foldersEnabled, isUuid, requireImapUint32, requireUuid, IMAP_UINT32_MAX,
   type ServiceContext,
 } from "@trafficflow/services/mail";
-import { openMailboxImap } from "./attachments-adapter.js";
+import { IMAP_DOOR_DEADLINE_MS, withinDoorBudget } from "./imap-door.js";
 import type { ApiDeps } from "./deps.js";
 
 /**
@@ -41,10 +41,10 @@ import type { ApiDeps } from "./deps.js";
  * nothing stored. The API↔worker seam is a database stamp polled every ~3 s (`sync-kick.ts`) —
  * routing an interactive read through it would add seconds of latency per page AND a result
  * channel that marshals junk headers/bodies through the database, which is precisely the
- * storage the window exists to avoid. So the reads go through {@link openMailboxImap}, the SAME
- * admission-capped, budget-counted door every other API dial uses (`MAX_IMAP_PER_MAILBOX` — the
- * worker's own connection is priced into that budget), and the connection is closed before the
- * response leaves. The window also serves only mailboxes whose `status` is `connected`: a
+ * storage the window exists to avoid. So the reads go through `withinDoorBudget`, the SAME
+ * admission-capped, budget-counted, force-closing door every other API dial uses
+ * (`MAX_IMAP_PER_MAILBOX` — the worker's own connection is priced into that budget), and the
+ * connection is down before the response leaves. The window also serves only mailboxes whose `status` is `connected`: a
  * stood-down mailbox is another organizer's (a local install holds the lease), and this module
  * never dials — much less writes into — a mailbox Cloud does not organize. The rescue itself is
  * a single-UID move in a folder no ohmail pass ever enumerates, so it contends with no
@@ -130,10 +130,13 @@ export const JUNK_BODY_MAX_BYTES = 2_000_000;
 /**
  * How long one mailbox's window read may take before it is reported `unreachable`. Reads run in
  * PARALLEL across the account's mailboxes and each is raced against this, so a slow provider
- * costs the response one stated degrade — never the whole invocation's budget (the serverless
- * host's ceiling is 60 s; serial unbounded dials could exhaust it before answering anything).
+ * costs the response one stated degrade — never the whole invocation's budget.
+ *
+ * The BUDGET is {@link IMAP_DOOR_DEADLINE_MS} and this is the name the junk window's callers
+ * know it by: one literal for every API-side dial, so a change here cannot leave one door on an
+ * older number.
  */
-export const JUNK_READ_TIMEOUT_MS = 20_000;
+export const JUNK_READ_TIMEOUT_MS = IMAP_DOOR_DEADLINE_MS;
 
 /** One row of the merged window list, origin attributed. */
 export interface JunkItem extends Omit<FolderPageItem, "seq"> {
@@ -281,20 +284,6 @@ async function junkMailboxesOf(
   return rows;
 }
 
-/** Race a step against the mailbox read's REMAINING budget; a timeout is an ordinary failure. */
-async function withDeadline<T>(work: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error("junk window read timed out")), ms);
-    (timer as unknown as { unref?: () => void }).unref?.();
-  });
-  try {
-    return await Promise.race([work, deadline]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 /**
  * The LIST page: each mailbox's next window read IN PARALLEL (deadline-raced), merged into ONE
  * account-level page of at most {@link FOLDER_PAGE_MAX} rows, origin-attributed against the
@@ -321,42 +310,17 @@ export async function listJunk(
       return null;
     }
     try {
-      /**
-       * The deadline CANCELS, it does not merely abandon — and it is ONE budget for the whole
-       * mailbox read, dial included (two fresh 20 s timers were a 40 s read; a review counted).
-       * A race that walked away would leave the admitted IMAP slot and the socket held by a
-       * hung operation until the provider relented, and a couple of those turn every later
-       * junk/body/attachment request into `mailbox_busy`. So: the dial's own promise is
-       * FORCE-closed if it resolves after its slice of the budget, and a read that outlives
-       * the deadline has `forceClose()` run under it — the socket is destroyed (a graceful
-       * LOGOUT would queue exactly behind the hung command, which round 3 caught) and both
-       * admission slots return, independent of anything the provider still owes.
-       */
-      const startedAt = Date.now();
-      const remaining = (): number => Math.max(1, JUNK_READ_TIMEOUT_MS - (Date.now() - startedAt));
-      const openedP = openMailboxImap(deps, box.id);
-      let opened: Awaited<typeof openedP>;
-      try {
-        opened = await withDeadline(openedP, remaining());
-      } catch (err) {
-        void openedP.then((o) => o.forceClose()).catch(() => { /* never came up */ });
-        throw err;
-      }
-      const page = await (async () => {
-        try {
-          const held = before[box.id];
-          const got = await withDeadline(opened.adapter.listFolderPage(box.junkFolder!, {
-            limit: FOLDER_PAGE_MAX,
-            ...(held !== undefined ? { beforeSeq: held.s, expectUidValidity: held.v } : {}),
-          }), remaining());
-          await opened.close().catch(() => { /* socket gone; the slot release has its own guard */ });
-          return got;
-        } catch (err) {
-          // The abandon path — never the graceful close, which waits behind the hang.
-          await opened.forceClose().catch(() => { /* already down */ });
-          throw err;
-        }
-      })();
+      // ONE budget for the whole mailbox read, dial included, and a breach DESTROYS the socket
+      // rather than queueing a LOGOUT behind the hang — see `imap-door.ts`. A slot left held by
+      // a hung operation turns every later junk, body and attachment request for this mailbox
+      // into `mailbox_busy` until the admission window rolls.
+      const page = await withinDoorBudget(deps, box.id, (adapter) => {
+        const held = before[box.id];
+        return adapter.listFolderPage(box.junkFolder!, {
+          limit: FOLDER_PAGE_MAX,
+          ...(held !== undefined ? { beforeSeq: held.s, expectUidValidity: held.v } : {}),
+        });
+      }, { budgetMs: JUNK_READ_TIMEOUT_MS });
       if (page === null) {
         // The recorded junk path no longer opens on a LIVE connection — the same honest
         // degrade as no folder (transport failures threw and land in the catch below).
@@ -513,37 +477,6 @@ async function attributeOrigin(
 }
 
 /**
- * ONE deadline-raced, force-closed dial of one mailbox, running `work` on the opened adapter —
- * the list read's connection discipline (see the comment inside {@link listJunk}) lifted out so
- * the search shares it verbatim rather than restating it. ONE budget for dial and read together;
- * a read that outlives the deadline has its socket destroyed, never a graceful LOGOUT queued
- * behind the hang.
- */
-async function dialWithinBudget<T>(
-  deps: ApiDeps, mailboxId: string, budgetMs: number,
-  work: (adapter: Awaited<ReturnType<typeof openMailboxImap>>["adapter"]) => Promise<T>,
-): Promise<T> {
-  const startedAt = Date.now();
-  const remaining = (): number => Math.max(1, budgetMs - (Date.now() - startedAt));
-  const openedP = openMailboxImap(deps, mailboxId);
-  let opened: Awaited<typeof openedP>;
-  try {
-    opened = await withDeadline(openedP, remaining());
-  } catch (err) {
-    void openedP.then((o) => o.forceClose()).catch(() => { /* never came up */ });
-    throw err;
-  }
-  try {
-    const got = await withDeadline(work(opened.adapter), remaining());
-    await opened.close().catch(() => { /* socket gone; the slot release has its own guard */ });
-    return got;
-  } catch (err) {
-    await opened.forceClose().catch(() => { /* already down */ });
-    throw err;
-  }
-}
-
-/**
  * THE SEARCH-APPEND: every mailbox's junk folder searched IN PARALLEL behind the read budget,
  * the newest hits merged into ONE bounded, origin-attributed answer. Reads only; writes nothing.
  * A mailbox that fails or times out is stated `unreachable` — "Junk could not be searched" — so
@@ -567,8 +500,11 @@ export async function searchJunk(
       return null;
     }
     try {
-      const page = await dialWithinBudget(deps, box.id, JUNK_READ_TIMEOUT_MS, (adapter) =>
-        adapter.searchFolderPage(box.junkFolder!, term, { limit: FOLDER_PAGE_MAX }));
+      const page = await withinDoorBudget(
+        deps, box.id,
+        (adapter) => adapter.searchFolderPage(box.junkFolder!, term, { limit: FOLDER_PAGE_MAX }),
+        { budgetMs: JUNK_READ_TIMEOUT_MS },
+      );
       if (page === null) {
         states.push({ id: box.id, address: box.address, window: "no_junk_folder" });
         return null;
@@ -659,26 +595,25 @@ export async function junkBody(
   if (!box || box.junkFolder === null) {
     throw new ServiceError("no_junk_folder", 404, "this mailbox has no Junk folder");
   }
-  const opened = await openMailboxImap(deps, args.mailboxId);
-  try {
-    const fetched = await opened.adapter.fetchByUid(box.junkFolder, [args.uid], {
-      maxBytes: JUNK_BODY_MAX_BYTES,
-    });
-    if (fetched.uidValidity !== args.uidValidity) {
-      throw new ServiceError("junk_message_gone", 410, "the Junk folder changed under this row — reload the list");
-    }
-    if (fetched.oversize.includes(args.uid)) {
-      throw new ServiceError("junk_body_too_large", 413, "this message is too large to preview here — read it in your own mail client");
-    }
-    const create = fetched.creates.find((c) => c.raw !== undefined);
-    if (!create || !create.raw) {
-      throw new ServiceError("junk_message_gone", 410, "this message is no longer in the Junk folder");
-    }
-    const parsed = await normalizeMime(create.raw);
-    return { subject: parsed.subject, text: parsed.textBody };
-  } finally {
-    await opened.close().catch(() => { /* socket gone; the slot release has its own guard */ });
+  // Under the door budget, like every other dial here: a body read has no ceiling of its own on
+  // how long the server may take, and a `finally { close() }` queues its LOGOUT behind the hang.
+  const fetched = await withinDoorBudget(
+    deps, args.mailboxId,
+    (adapter) => adapter.fetchByUid(box.junkFolder!, [args.uid], { maxBytes: JUNK_BODY_MAX_BYTES }),
+    { budgetMs: JUNK_READ_TIMEOUT_MS },
+  );
+  if (fetched.uidValidity !== args.uidValidity) {
+    throw new ServiceError("junk_message_gone", 410, "the Junk folder changed under this row — reload the list");
   }
+  if (fetched.oversize.includes(args.uid)) {
+    throw new ServiceError("junk_body_too_large", 413, "this message is too large to preview here — read it in your own mail client");
+  }
+  const create = fetched.creates.find((c) => c.raw !== undefined);
+  if (!create || !create.raw) {
+    throw new ServiceError("junk_message_gone", 410, "this message is no longer in the Junk folder");
+  }
+  const parsed = await normalizeMime(create.raw);
+  return { subject: parsed.subject, text: parsed.textBody };
 }
 
 /** The spam-promoting destination a verdict's rule carries — the one the second verb disables. */
@@ -832,39 +767,43 @@ export async function rescueJunk(
     ))
     .limit(1);
 
-  const opened = await openMailboxImap(deps, args.mailboxId);
   let raw: Buffer | null = null;
+  // Under the door budget, and every ending destroys the socket rather than queueing a LOGOUT
+  // behind a hung command — `imap-door.ts` carries the argument. The pre-fetch and the move are
+  // one door: one dial, one budget, one slot.
   try {
-    if (husk !== undefined) {
-      const [body] = await deps.db
-        .select({ withheld: messageBodies.withheldReason, text: messageBodies.text, html: messageBodies.html })
-        .from(messageBodies)
-        .where(eq(messageBodies.messageId, husk.id))
-        .limit(1);
-      if (body?.withheld === "junk_filed") {
-        try {
-          const fetched = await opened.adapter.fetchByUid(box.junkFolder, [args.uid], {
-            maxBytes: JUNK_BODY_MAX_BYTES,
-          });
-          const c = fetched.uidValidity === args.uidValidity
-            ? fetched.creates.find((x) => x.raw !== undefined)
-            : undefined;
-          raw = (c?.raw as Buffer | undefined) ?? null;
-        } catch (err) {
-          // Best-effort: an oversize or failed pre-fetch narrows the rescue to the move; the
-          // body stays husked and the marker stays TRUE until the move lands (it still names
-          // where the bytes live). Logged, never fatal — the user pressed "move", not "fetch".
-          deps.logger?.warn?.("junk_rescue_prefetch_failed", { mailboxId: args.mailboxId, err: String(err) });
+    await withinDoorBudget(deps, args.mailboxId, async (adapter) => {
+      if (husk !== undefined) {
+        const [body] = await deps.db
+          .select({ withheld: messageBodies.withheldReason, text: messageBodies.text, html: messageBodies.html })
+          .from(messageBodies)
+          .where(eq(messageBodies.messageId, husk.id))
+          .limit(1);
+        if (body?.withheld === "junk_filed") {
+          try {
+            const fetched = await adapter.fetchByUid(box.junkFolder!, [args.uid], {
+              maxBytes: JUNK_BODY_MAX_BYTES,
+            });
+            const c = fetched.uidValidity === args.uidValidity
+              ? fetched.creates.find((x) => x.raw !== undefined)
+              : undefined;
+            raw = (c?.raw as Buffer | undefined) ?? null;
+          } catch (err) {
+            // Best-effort: an oversize or failed pre-fetch narrows the rescue to the move; the
+            // body stays husked and the marker stays TRUE until the move lands (it still names
+            // where the bytes live). Logged, never fatal — the user pressed "move", not "fetch".
+            deps.logger?.warn?.("junk_rescue_prefetch_failed", { mailboxId: args.mailboxId, err: String(err) });
+          }
         }
       }
-    }
 
-    // The move itself. Epoch-guarded, so a recreated folder's reused UID can never send a
-    // STRANGER to the inbox under a stale press — the guard is `ImapAdapter#assertLocatorEpoch`
-    // and it is unconditional now. It used to be this call site's `{ requireEpoch: true }`, and
-    // the flag was the bug: this was the only caller that set it, so the organizer's own move,
-    // batch-move and flag mutations ran without it.
-    await opened.adapter.move({ folder: box.junkFolder, ref }, "INBOX");
+      // The move itself. Epoch-guarded, so a recreated folder's reused UID can never send a
+      // STRANGER to the inbox under a stale press — the guard is `ImapAdapter#assertLocatorEpoch`
+      // and it is unconditional now. It used to be this call site's `{ requireEpoch: true }`, and
+      // the flag was the bug: this was the only caller that set it, so the organizer's own move,
+      // batch-move and flag mutations ran without it.
+      await adapter.move({ folder: box.junkFolder!, ref }, "INBOX");
+    }, { budgetMs: JUNK_READ_TIMEOUT_MS });
   } catch (err) {
     if (err instanceof MessageGoneError) {
       // The provider (or another client) took it first — or the folder was renumbered. The
@@ -888,20 +827,11 @@ export async function rescueJunk(
         allowed !== undefined ? { allowed } : undefined,
       );
     }
-    if (allowed !== undefined) {
-      // A move that failed for any OTHER reason (a timeout, a provider refusal) after the allow
-      // committed is a PARTIAL outcome, and the client must be able to report it as one: the
-      // message is still in Junk, but the sender's rules changed. A bare rethrow would read as
-      // "nothing happened".
-      throw new ServiceError(
-        "junk_rescue_move_failed", 502,
-        "the move could not be made just now — the sender is allowed from now on regardless",
-        { allowed },
-      );
-    }
+    // Everything else — a provider refusal, our own door budget, a failed dial — is a PARTIAL
+    // outcome when the allow committed, and the OUTER catch below is the one place that says so:
+    // it names the cause where the failure carried a code. A second copy of that arm here was
+    // what dropped the cause from a typed dial refusal.
     throw err;
-  } finally {
-    await opened.close().catch(() => { /* socket gone; the slot release has its own guard */ });
   }
 
   // ── The verdict's reversal made whole: put the husked body back through the ONE shared

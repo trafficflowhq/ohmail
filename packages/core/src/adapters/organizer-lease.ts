@@ -4,7 +4,7 @@ import {
 } from "@trafficflow/db";
 import { WATCHED_FOLDERS, type ImapAuth } from "./imap-types.js";
 import {
-  boundedFetch, ImapDeadline, IMAP_META_BYTES_MAX, IMAP_META_DEADLINE_MS,
+  boundListResponse, boundedFetch, ImapDeadline, IMAP_META_BYTES_MAX, IMAP_META_DEADLINE_MS,
 } from "./imap-bounds.js";
 import {
   assertMetaIdentity, readMemo, writeMemo, forgetMemo,
@@ -516,7 +516,16 @@ export function makeMetaFolderRef(
 
   const locate = async (): Promise<MetaFolderLocation> => {
     const at = resolveMetaFolder({
-      list: await client.list(),
+      /*
+       * THE ONE LIST THIS MODULE ISSUES, AND IT IS THE SERVER'S ARRAY.
+       *
+       * The adapter funnels its own LIST sites through one bounded helper; this one is reached
+       * with the RAW client, so it was outside that guarantee — a server naming a million folders
+       * cost a million strings through the resolution below, on every cycle, in a process every
+       * other mailbox shares. Same ceilings, same helper: a count on the response and a length on
+       * each path.
+       */
+      list: boundListResponse(await client.list()),
       bare: toServerPath(META_FOLDER),
       namespaces: personalNamespacesOf(client),
     });

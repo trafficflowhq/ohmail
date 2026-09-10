@@ -1,6 +1,7 @@
 import { LeaseUnavailableError, readLeasePeek } from "@trafficflow/core/adapters/organizer-lease";
 import { ServiceError } from "@trafficflow/services/mail";
-import { openMailboxImap, type OpenAdapterOptions } from "./attachments-adapter.js";
+import type { OpenAdapterOptions } from "./attachments-adapter.js";
+import { isImapDoorTimeout, withinDoorBudget } from "./imap-door.js";
 import type { ApiDeps } from "./deps.js";
 
 /**
@@ -91,12 +92,20 @@ export type OrganizerPeek = (mailboxId: string) => Promise<OrganizerPeekDTO>;
  */
 export function makeOrganizerPeek(deps: ApiDeps, opts: OpenAdapterOptions = {}): OrganizerPeek {
   return async (mailboxId: string): Promise<OrganizerPeekDTO> => {
-    const opened = await openMailboxImap(deps, mailboxId, opts);
     try {
-      const peek = await readLeasePeek({
-        io: opened.adapter.leasePeekIo(),
-        now: deps.now?.() ?? new Date(),
-      });
+      // UNDER THE DOOR BUDGET. This read had no wall clock: a server that accepted the FETCH and
+      // answered a byte a minute held the socket and this mailbox's admission slot for as long as
+      // it liked, and the `finally` written to release them queued its LOGOUT behind the same
+      // hung command. A breach destroys the socket and reads as "could not check", never as
+      // "nobody holds it" — the one answer this surface must never give wrongly.
+      const peek = await withinDoorBudget(
+        deps, mailboxId,
+        (adapter) => readLeasePeek({
+          io: adapter.leasePeekIo(),
+          now: deps.now?.() ?? new Date(),
+        }),
+        { open: opts },
+      );
       return {
         state: peek.state,
         holders: peek.holders.map((h) => ({
@@ -113,12 +122,10 @@ export function makeOrganizerPeek(deps: ApiDeps, opts: OpenAdapterOptions = {}):
     } catch (err) {
       // BY CLASS, exactly as the worker exempts it by class. `LeaseUnavailableError` is the one
       // error that means "could not look", and it must not be reachable from "nobody is there".
-      if (err instanceof LeaseUnavailableError) throw leaseUnreadable();
+      // OUR clock running out is the same fact from the other side, so it gets the same answer:
+      // a 504 here would be a second spelling of "could not check" for one caller to learn.
+      if (err instanceof LeaseUnavailableError || isImapDoorTimeout(err)) throw leaseUnreadable();
       throw err;
-    } finally {
-      // ALWAYS. The connection cap is a shared counter, and a peek that leaked its slot would
-      // shrink the mailbox's budget until the admission window rolled.
-      await opened.close().catch(() => { /* the socket is already gone; the slot is released */ });
     }
   };
 }

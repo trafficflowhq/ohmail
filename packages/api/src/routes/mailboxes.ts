@@ -6,7 +6,7 @@ import { readMailboxProfile } from "@trafficflow/services/mail";
 import {
   ProfileUnavailableError, readOrganizerProfile, type ProfileReadResult,
 } from "@trafficflow/core/adapters/organizer-profile";
-import { openMailboxImap } from "../attachments-adapter.js";
+import { isImapDoorTimeout, withinDoorBudget } from "../imap-door.js";
 import { serviceContext } from "../context.js";
 import { makeImapProbe, makeSmtpProbe } from "../imap-probe.js";
 import { makeOrganizerPeek } from "../organizer-peek.js";
@@ -113,34 +113,39 @@ function probeInputOf(body: Record<string, unknown>): {
  * exactly as the organizer peek reads the lease without ever renewing one.
  */
 const profileReader = (deps: ApiDeps, mailboxId: string) => async (): Promise<ProfileReadResult> => {
-  let opened: Awaited<ReturnType<typeof openMailboxImap>>;
-  try {
-    opened = await openMailboxImap(deps, mailboxId);
-  } catch (err) {
-    // A `ServiceError` already carries its own honest answer (the connection cap's 429, the
-    // missing-credential 502) and passes through. Everything else — a decrypt fault, a refused
-    // LOGIN, a dead host — is "could not look", and it must reach the caller as the same 502
-    // the read path's own failures do, never as a raw 500 whose text says nothing anyone can
-    // act on. `ServiceError` is matched by NAME rather than by class for the middleware's
-    // reason: two copies of the services package must not make the same error unrecognisable.
-    if (err instanceof Error && err.name === "ServiceError") throw err;
-    throw new ProfileUnavailableError(
-      "the mailbox could not be dialled to read its saved settings",
-      { op: "list_profiles", cause: err },
-    );
-  }
   try {
     /* A NAMED READER RATHER THAN AN ORGANIZER'S IDENTITY. This route only reads: it never
      * appends a settings document, so it records no position and its memory stays empty. The
      * identity is still explicit and still its own, because borrowing an organizer's would let
-     * an API read and an organizer's write share one remembered position. */
-    return await readOrganizerProfile(
-      opened.adapter.profileIo({ installId: "api-profile-reader", mailboxId }),
+     * an API read and an organizer's write share one remembered position.
+     *
+     * UNDER THE DOOR BUDGET, dial and read together, with the socket DESTROYED on a breach. This
+     * is the repeatable door on the unbounded read: a signed-in caller could ask for it as often
+     * as they liked, and neither the dial nor the walk had a clock. */
+    return await withinDoorBudget(
+      deps, mailboxId,
+      (adapter) => readOrganizerProfile(
+        adapter.profileIo({ installId: "api-profile-reader", mailboxId }),
+      ),
     );
-  } finally {
-    // ALWAYS — the peek's rule: a reader that leaked its slot would shrink the mailbox's
-    // connection budget until the admission window rolled.
-    await opened.close().catch(() => { /* the socket is already gone; the slot is released */ });
+  } catch (err) {
+    // A `ServiceError` already carries its own honest answer (the connection cap's 429, the
+    // missing-credential 502) and passes through. Everything else — a decrypt fault, a refused
+    // LOGIN, a dead host, our own clock running out — is "could not look", and it must reach the
+    // caller as the same 502 the read path's own failures do, never as a raw 500 whose text says
+    // nothing anyone can act on. `ServiceError` is matched by NAME rather than by class for the
+    // middleware's reason: two copies of the services package must not make the same error
+    // unrecognisable.
+    if (err instanceof ProfileUnavailableError) throw err;
+    // BEFORE the ServiceError passthrough, deliberately: the door's timeout IS a ServiceError,
+    // and letting it through would answer 504 where this layer already has "could not look".
+    if (!isImapDoorTimeout(err) && err instanceof Error && err.name === "ServiceError") throw err;
+    throw new ProfileUnavailableError(
+      isImapDoorTimeout(err)
+        ? "the mailbox did not answer in time while its saved settings were being read"
+        : "the mailbox could not be dialled to read its saved settings",
+      { op: "list_profiles", cause: err },
+    );
   }
 };
 
