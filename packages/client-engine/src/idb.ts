@@ -642,7 +642,7 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
     return generationOf(raw);
   }
 
-  async load(): Promise<void> {
+  protected async readPersisted(): Promise<void> {
     if (readEpoch() !== this.bornEpoch) this.fenced = true;
     // A FENCED STORE READS AS EMPTY, and does not throw. A page that lingers after a wipe (ours
     // shows a confirmation before navigating) must not die on an `InvalidStateError`, and the

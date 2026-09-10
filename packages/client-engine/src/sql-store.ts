@@ -240,7 +240,7 @@ export class SqlMirrorStore extends BaseMirrorStore {
     await db.batch(statements);
   }
 
-  async load(): Promise<void> {
+  protected async readPersisted(): Promise<void> {
     const db = await this.open();
     // ONE statement, so both tables are read at ONE point — the sqlite twin of idb.ts reading
     // its two object stores in a single readonly transaction. Two separate SELECTs are two

@@ -226,7 +226,26 @@ export abstract class BaseMirrorStore implements MirrorStore {
   /** The seq-0 rows an owed wipe must carry back through — see {@link resetForBootstrap}. */
   private wipeKeep: MirrorRecord[] = [];
 
-  abstract load(): Promise<void>;
+  /**
+   * HYDRATE FROM STORAGE, AND DROP THE CARRY THE OLD MEMORY OWED.
+   *
+   * A TEMPLATE METHOD, and the clearing is the whole of it. The carry-forward contract above
+   * keeps a failed page's rows in `unflushed` so the next flush takes them with the cursor —
+   * correct while memory holds those rows. `readPersisted()` REPLACES memory from disk, so the
+   * carried cursor now names a page this store no longer has: the identity sweep in `flush`
+   * drops the rows (memory has disowned them) and would then write the cursor alone, past a page
+   * disk never received. Unreachable today — the engine's single-flight hydrates once, before
+   * its first drain — and the clearing is what keeps it so if that ever changes.
+   */
+  async load(): Promise<void> {
+    await this.readPersisted();
+    this.unflushed.clear();
+    this.unflushedMeta.clear();
+    this.unflushedCursor = null;
+  }
+
+  /** Read persisted state into `records`/`meta`/`cursor`. Reached only through {@link load}. */
+  protected abstract readPersisted(): Promise<void>;
   /** Flush a dirty set + (optionally) the new cursor + meta entries atomically. */
   protected abstract persist(
     dirty: MirrorRecord[],
@@ -833,7 +852,7 @@ export abstract class BaseMirrorStore implements MirrorStore {
  * unavailable. Identical semantics to the IndexedDB store minus persistence.
  */
 export class MemoryMirrorStore extends BaseMirrorStore {
-  async load(): Promise<void> {
+  protected async readPersisted(): Promise<void> {
     /* nothing to hydrate */
   }
   protected async persist(): Promise<void> {
