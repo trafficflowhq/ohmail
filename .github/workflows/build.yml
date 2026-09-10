@@ -965,7 +965,10 @@ jobs:
           # The package name is the one word this project spells everywhere —
           # `dnf remove ohmail` works, and it matches /usr/bin/ohmail, the .deb
           # and the AppImage.
-          test "$(rpm -qp --qf '%{NAME}' "$RPM")" = "ohmail"
+          # Each reading is PRINTED and refused BY NAME. The 0.16.0 build died here silently: a bare `test`
+          # and an unread pipeline exit both leave a step with "exit code 1" and nothing before it.
+          NAME_READ="$(rpm -qp --qf '%{NAME}' "$RPM")"; echo "rpm name: $NAME_READ"
+          [ "$NAME_READ" = "ohmail" ] || { echo "the .rpm is named '$NAME_READ', not ohmail" >&2; exit 1; }
           # ── THE ARCHITECTURE THE FILENAME CLAIMS ──────────────────────────
           # The same assertion the .deb makes, and it is the reason the .rpm is
           # worth querying at all: a misconfigured `runs-on` produces a complete,
@@ -973,7 +976,8 @@ jobs:
           # above this line passes. rpm names the architecture itself. Note the
           # spelling is the MACHINE's (`x86_64`), not Debian's — see the
           # artifact-name contract in the header.
-          test "$(rpm -qp --qf '%{ARCH}' "$RPM")" = "x86_64"
+          ARCH_READ="$(rpm -qp --qf '%{ARCH}' "$RPM")"; echo "rpm arch: $ARCH_READ"
+          [ "$ARCH_READ" = "x86_64" ] || { echo "the .rpm architecture is '$ARCH_READ', not x86_64" >&2; exit 1; }
           # THE .rpm INSTALLS THE SAME DESKTOP ENTRY. It is configured from the
           # same template as the .deb's (bundle.linux.rpm.desktopTemplate), and
           # that identity is asserted in the tree by `desktop-linux-recipe.test.ts`
@@ -982,7 +986,14 @@ jobs:
           # everyone who installs this package if the field code is missing.
           # Extracted with rpm2cpio into a variable; `--to-stdout` writes the one
           # member named.
-          RPM_ENTRY="$(rpm2cpio "$RPM" | cpio -i --quiet --to-stdout ./usr/share/applications/ohmail.desktop)"
+          # The payload's member names may or may not carry a leading `./` — that depends on the writer, not
+          # on the package — so the entry is found by SUFFIX in the listing, and an empty listing or a
+          # failed extraction prints cpio's own words instead of exiting in silence.
+          MEMBERS="$(rpm2cpio "$RPM" | cpio -it --quiet 2>&1)" || { echo "listing the .rpm payload failed: $MEMBERS" >&2; exit 1; }
+          ENTRY_MEMBER="$(grep -E '(^|/)usr/share/applications/ohmail\.desktop$' <<< "$MEMBERS" | head -n 1 || true)"
+          echo "desktop entry member: ${ENTRY_MEMBER:-<none>}"
+          [ -n "$ENTRY_MEMBER" ] || { echo "the .rpm payload lists no usr/share/applications/ohmail.desktop member" >&2; exit 1; }
+          RPM_ENTRY="$(rpm2cpio "$RPM" | cpio -i --quiet --to-stdout "$ENTRY_MEMBER" 2>&1)" || { echo "extracting $ENTRY_MEMBER failed: $RPM_ENTRY" >&2; exit 1; }
           printf '%s\n' "$RPM_ENTRY"
           printf '%s\n' "$RPM_ENTRY" | grep -qx 'Exec=ohmail %U' || {
             echo "the .rpm's desktop entry does not hand the URL to the app" >&2; exit 1; }
@@ -1651,7 +1662,10 @@ jobs:
           # The package name is the one word this project spells everywhere —
           # `dnf remove ohmail` works, and it matches /usr/bin/ohmail, the .deb
           # and the AppImage.
-          test "$(rpm -qp --qf '%{NAME}' "$RPM")" = "ohmail"
+          # Each reading is PRINTED and refused BY NAME. The 0.16.0 build died here silently: a bare `test`
+          # and an unread pipeline exit both leave a step with "exit code 1" and nothing before it.
+          NAME_READ="$(rpm -qp --qf '%{NAME}' "$RPM")"; echo "rpm name: $NAME_READ"
+          [ "$NAME_READ" = "ohmail" ] || { echo "the .rpm is named '$NAME_READ', not ohmail" >&2; exit 1; }
           # ── THE ARCHITECTURE THE FILENAME CLAIMS ──────────────────────────
           # The same assertion the .deb makes, and it is the reason the .rpm is
           # worth querying at all: a misconfigured `runs-on` produces a complete,
@@ -1659,7 +1673,8 @@ jobs:
           # above this line passes. rpm names the architecture itself. Note the
           # spelling is the MACHINE's (`aarch64`), not Debian's — see the
           # artifact-name contract in the header.
-          test "$(rpm -qp --qf '%{ARCH}' "$RPM")" = "aarch64"
+          ARCH_READ="$(rpm -qp --qf '%{ARCH}' "$RPM")"; echo "rpm arch: $ARCH_READ"
+          [ "$ARCH_READ" = "aarch64" ] || { echo "the .rpm architecture is '$ARCH_READ', not aarch64" >&2; exit 1; }
           # THE .rpm INSTALLS THE SAME DESKTOP ENTRY. It is configured from the
           # same template as the .deb's (bundle.linux.rpm.desktopTemplate), and
           # that identity is asserted in the tree by `desktop-linux-recipe.test.ts`
@@ -1668,7 +1683,14 @@ jobs:
           # everyone who installs this package if the field code is missing.
           # Extracted with rpm2cpio into a variable; `--to-stdout` writes the one
           # member named.
-          RPM_ENTRY="$(rpm2cpio "$RPM" | cpio -i --quiet --to-stdout ./usr/share/applications/ohmail.desktop)"
+          # The payload's member names may or may not carry a leading `./` — that depends on the writer, not
+          # on the package — so the entry is found by SUFFIX in the listing, and an empty listing or a
+          # failed extraction prints cpio's own words instead of exiting in silence.
+          MEMBERS="$(rpm2cpio "$RPM" | cpio -it --quiet 2>&1)" || { echo "listing the .rpm payload failed: $MEMBERS" >&2; exit 1; }
+          ENTRY_MEMBER="$(grep -E '(^|/)usr/share/applications/ohmail\.desktop$' <<< "$MEMBERS" | head -n 1 || true)"
+          echo "desktop entry member: ${ENTRY_MEMBER:-<none>}"
+          [ -n "$ENTRY_MEMBER" ] || { echo "the .rpm payload lists no usr/share/applications/ohmail.desktop member" >&2; exit 1; }
+          RPM_ENTRY="$(rpm2cpio "$RPM" | cpio -i --quiet --to-stdout "$ENTRY_MEMBER" 2>&1)" || { echo "extracting $ENTRY_MEMBER failed: $RPM_ENTRY" >&2; exit 1; }
           printf '%s\n' "$RPM_ENTRY"
           printf '%s\n' "$RPM_ENTRY" | grep -qx 'Exec=ohmail %U' || {
             echo "the .rpm's desktop entry does not hand the URL to the app" >&2; exit 1; }
