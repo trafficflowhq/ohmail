@@ -140,6 +140,18 @@ reloads.
 
 The desktop app and a normal browser window are unaffected.
 
+### A Screener decision is decided in one window, not two
+
+With ohmail open in two browser tabs, a decision made in one of them could be carried out by the
+other before its few seconds of undo had run out — the mail filed and the sender unsubscribed while
+the first tab still offered to take it back. Pressing that button then reported success over
+something that had already happened.
+
+A tab that opens one of those windows now says so, and a tab starting up asks before it finishes
+anything it finds waiting. A sender being decided in another tab is not offered in this one, and
+comes back the moment the other tab files it or takes it back. A decision left behind by a tab that
+is gone is still carried out.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
