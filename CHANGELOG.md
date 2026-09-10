@@ -152,6 +152,20 @@ anything it finds waiting. A sender being decided in another tab is not offered 
 comes back the moment the other tab files it or takes it back. A decision left behind by a tab that
 is gone is still carried out.
 
+### A send nobody could confirm can always be answered for
+
+A message whose send the server took and never confirmed is held in Drafts: it may already have
+arrived, so sending it again could deliver it twice. The two answers you are in a position to give
+— it arrived, or it didn't — are now offered everywhere such a message appears, including in a
+conversation's own reply editor. That editor used to show nothing about the held row and left Send
+live, so a press there started a second reply from a new draft.
+
+Three other ways a second copy could go out are closed with it. A message still on its way stays
+held even while an OLDER unconfirmed send is waiting — that older one used to switch the newer
+message's hold off. Text typed into a held message, and a file attached to it, are no longer
+written over when you reopen it from Drafts. And in a browser that will not let the app keep its
+own records, reopening a draft no longer creates a second one beside it.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
