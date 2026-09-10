@@ -312,7 +312,8 @@ const AWAY_AUDIENCES: ReadonlySet<string> = new Set(["screened_in", "everyone"])
 /** `away_responders.throttle` — the closed four `away_responders_throttle_closed` enforces. */
 const AWAY_THROTTLES: ReadonlySet<string> = new Set(["always", "per_message", "per_day", "per_week"]);
 /**
- * `away_responders.piles` — the closed pair `away_responders_piles_closed` (mail 0096) enforces.
+ * `away_responders.piles` — the closed set `away_responders_piles_closed` enforces (mail 0096,
+ * widened to four members by mail 0101).
  *
  * ── WHY THIS IS A SECOND SPELLING OF `AWAY_ANSWERABLE_PILES` AND NOT AN IMPORT ──────────────
  *
@@ -332,7 +333,16 @@ const AWAY_THROTTLES: ReadonlySet<string> = new Set(["always", "per_message", "p
  * have no such guard, which is a gap in their favour rather than a precedent: both are closed by
  * a CHECK as well, and widening either is a ruling that would come through this file anyway.
  */
-export const AWAY_PILES: ReadonlySet<string> = new Set(["INBOX", "ohmail/Reads"]);
+export const AWAY_PILES: ReadonlySet<string> = new Set([
+  "INBOX", "ohmail/Reads", "ohmail/Receipts", "ohmail/Screener",
+]);
+/**
+ * The one member that needs the wider audience — `AWAY_SCREENER_FOLDER`, restated for the import
+ * direction {@link AWAY_PILES} explains and held equal to it by `request-apply.test.ts`. A
+ * `screened_in` responder never answers a waiting stranger, so a record asking for both states a
+ * scope no pass can act on.
+ */
+export const AWAY_SCREENER_PILE = "ohmail/Screener";
 /** `account_settings.ohbox_policy` — the closed pair, or `null` for "the product default". */
 const OHBOX_POLICY_VALUES: ReadonlySet<string> = new Set(["people_only", "people_and_replied"]);
 
@@ -483,6 +493,11 @@ export function validateProfileUpdatePayload(payload: unknown): ValidatedProfile
            two write paths producing different rows for the same ask is a diff nobody can read. */
         if (!piles.includes(member)) piles.push(member);
       }
+      /* THE SCREENER PILE NEEDS `everyone` (mail 0101), and this door checks the pair because it
+         has both halves in one record. Refused rather than filtered, for the same reason a
+         non-member is: a narrower scope acked `applied` is a save that appears to travel and
+         changes something else. */
+      if (!(r.audience === "everyone" || !piles.includes(AWAY_SCREENER_PILE))) return null;
       out.awayResponder.piles = piles;
     }
   }

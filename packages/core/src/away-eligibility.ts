@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { autoReplySuppression, type AutoReplySuppression } from "./rules.js";
+import { AWAY_SCREENER_FOLDER } from "./away-scope.js";
 
 /**
  * MAY THE AWAY RESPONDER ANSWER THIS MESSAGE? — the whole suppression set, as one pure function
@@ -35,9 +36,6 @@ import { autoReplySuppression, type AutoReplySuppression } from "./rules.js";
  * would be a function a table test could not drive.
  */
 
-/** Where a first-contact stranger waits — `audience='screened_in'` does not answer mail held here. */
-export const AWAY_SCREENER_FOLDER = "ohmail/Screener";
-
 /**
  * The folders whose contents are NEVER answered, whatever the audience.
  *
@@ -60,28 +58,21 @@ export const AWAY_SCREENER_FOLDER = "ohmail/Screener";
 export const AWAY_NEVER_ANSWERED_FOLDERS: Readonly<Record<string, AwaySuppression>> = {
   "ohmail/Screened": "screened_out",
   "ohmail/Quarantine": "screened_out",
-  /**
-   * RECEIPTS (0.16 owner feedback item 4) — never answered, and it carries its OWN reason rather
-   * than borrowing `screened_out`.
-   *
-   * A receipt is machine mail about a transaction the account itself started. It is not somebody
-   * the account turned away, so reporting `screened_out` for it would be false in the log an
-   * operator reads to answer "why was this not answered" — the same "two reasons rather than one"
-   * rule the header verdicts follow one screen down.
-   *
-   * WHY IT IS HERE AND NOT MERELY ABSENT FROM {@link AWAY_ANSWERABLE_PILES}: absent from the
-   * offered piles it would be refused only for as long as the column's CHECK keeps it out of the
-   * stored array, and that is a property of a migration rather than of this module. In the map it
-   * is refused HERE, where a table test can delete the entry and watch a receipt be answered.
+  /*
+   * RECEIPTS IS NOT HERE ANY MORE (owner feedback, 2026-09-10). It was, for one release, on the
+   * reasoning that a receipt is machine mail about a transaction the account started — which is
+   * true of most receipts and is enforced per HEADER by `neverAutoReply`, for every pile. What
+   * this entry additionally refused was a receipt somebody typed, in a pile its owner had ticked,
+   * and that is their choice to make. `ohmail/Receipts` is now an answerable pile, so the box has
+   * an effect; the never-answered map keeps the two folders no setting may reach.
    */
-  "ohmail/Receipts": "receipts_pile",
 };
 
 /**
  * THE PILE VOCABULARY, RE-EXPORTED FROM THE LEAF THAT OWNS IT.
  *
  * It lives in `away-scope.ts` and not here because the settings control and the Ohbox banner need
- * the same two members this rule refuses by, and they cannot load THIS file: {@link awayTextHash}
+ * the same members this rule refuses by, and they cannot load THIS file: {@link awayTextHash}
  * below imports `node:crypto`. Two lists that agree today is the shape the brief's own hard stop
  * names ("the designer's control offers a pile the engine refuses"), so there is one list and
  * both sides import it.
@@ -90,8 +81,8 @@ export const AWAY_NEVER_ANSWERED_FOLDERS: Readonly<Record<string, AwaySuppressio
  * module's vocabulary — the pass, the service validator, the table test — keeps one import.
  */
 export {
-  AWAY_ANSWERABLE_PILES, AWAY_PILES_DEFAULT, AWAY_PILE_VIEW, awayScopeKey, isAwayPile,
-  type AwayPile, type AwayScope,
+  AWAY_ANSWERABLE_PILES, AWAY_PILES_DEFAULT, AWAY_PILE_VIEW, AWAY_SCREENER_FOLDER,
+  awayEffectivePiles, awayScopeFitsAudience, isAwayPile, type AwayPile,
 } from "./away-scope.js";
 
 /**
@@ -153,8 +144,9 @@ export type AwaySuppression =
    */
   | "undeliverable"
   /**
-   * THE MESSAGE IS IN A PILE THIS RESPONDER WAS NOT ASKED TO ANSWER — Reads under the defaults,
-   * and any folder outside {@link AWAY_ANSWERABLE_PILES}.
+   * THE MESSAGE IS IN A PILE THIS RESPONDER WAS NOT ASKED TO ANSWER — anything but the Ohbox
+   * under the defaults, including a stranger held in the Screener under `audience: 'everyone'`
+   * when that pile is not ticked, and any folder outside {@link AWAY_ANSWERABLE_PILES}.
    *
    * The audience is a fact about a SENDER (let in once, past the Screener for ever); this is a
    * fact about WHERE their mail landed. A shop let in to send one order confirmation is still
@@ -162,8 +154,6 @@ export type AwaySuppression =
    * audience could not prevent the eight replies this member exists to stop.
    */
   | "wrong_pile"
-  /** A receipt — never offered as a pile. See {@link AWAY_NEVER_ANSWERED_FOLDERS}. */
-  | "receipts_pile"
   | AutoReplySuppression;
 
 /**
@@ -267,31 +257,18 @@ export function awayEligibility(
     return "not_screened_in";
   }
 
-  // ── THE PILE SCOPE (0.16 owner feedback item 4) ───────────────────────────────────────────
+  // ── THE PILE SCOPE ────────────────────────────────────────────────────────────────────────
   //
-  // AFTER the audience, and that order is the whole of how the two settings stay independent.
-  // `ohmail/Screener` is not an answerable pile, so asking this question first would refuse every
-  // stranger waiting there — silently switching off `audience: 'everyone'`, which is the entire
-  // population that setting exists for. The audience decides the Screener; this decides the rest.
+  // AFTER the audience, and that order is what keeps the two settings from contradicting: a
+  // stranger still held in the Screener is refused by the audience unless it is `everyone`, and
+  // only then does this rule ask whether `ohmail/Screener` is a pile its owner ticked. The write
+  // doors refuse that pile beside `screened_in` (`awayScopeFitsAudience`), so the row where the
+  // two disagree is not representable.
   //
-  // A row with NO placement reaches here only under `everyone` (the audience refuses it
-  // otherwise) and is refused: mail whose pile nobody has decided yet is not mail known to be in
-  // an answered pile, and absent evidence may not select the branch that sends mail. An EMPTY
-  // `piles` therefore answers nobody, which is the fail-closed reading and not "no filter" —
-  // the same distinction `AwayResponderPassDeps.mailboxIds` draws between `undefined` and `[]`,
-  // except that here there is no "no filter" reading to have.
-  // The Screener is the AUDIENCE's decision and it was already taken, one branch up. A message
-  // actually HELD there is what `everyone` exists to answer, so this rule must not re-judge it —
-  // the first version of this line did (`!piles.includes(placed ?? "")` with no exemption) and it
-  // refused every waiting stranger under the wider audience, which is this module's own
-  // Screened/Screener failure arriving from a new direction. The pre-existing control
-  // ("`everyone` answers a stranger still held in the Screener") is what caught it.
-  //
-  // A row with NO placement is deliberately NOT exempt: `null` reads as "not admitted" for the
-  // audience, and here it reads as "not known to be in an answered pile". Both fail toward
-  // silence, and they are separate readings of the same absent value rather than one shared
-  // default — which is why this tests `placed` itself rather than the audience's `??` expression.
-  if (placed !== AWAY_SCREENER_FOLDER && !piles.includes(placed ?? "")) return "wrong_pile";
+  // A row with NO placement is refused: mail whose pile nobody has decided yet is not mail known
+  // to be in an answered pile, and absent evidence may not select the branch that sends mail. An
+  // EMPTY `piles` therefore answers nobody, which is the fail-closed reading and not "no filter".
+  if (!piles.includes(placed ?? "")) return "wrong_pile";
 
   // ── WHAT MAY NEVER EARN A REPLY, WHATEVER THE SETTINGS ────────────────────────────────────
   //

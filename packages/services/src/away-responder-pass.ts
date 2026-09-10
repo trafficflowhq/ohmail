@@ -209,6 +209,12 @@ export interface AwayResponderPassResult {
    * signal that a responder has been writing to a dead address.
    */
   undeliverableMarked: number;
+  /**
+   * RESPONDERS THIS RUN SWITCHED OFF because their chosen end date had passed — see
+   * {@link expireEndedResponders}. Its own counter and not folded into `accounts`: those are
+   * responders that were LIVE, and this one is the number that just stopped being.
+   */
+  expired: number;
 }
 
 /** One live responder, as the probe reads it. */
@@ -264,13 +270,16 @@ export async function runAwayResponderPass(
   const result: AwayResponderPassResult = {
     accounts: 0, examined: 0, sent: 0, unverified: 0, throttled: 0, suppressed: 0,
     deferredAccounts: 0, deferredCandidates: 0, capped: false, undeliverableMarked: 0,
+    expired: 0,
   };
 
   /* NONE MEANS NONE, decided before a single row is read. See the field's own note. */
   if (deps.mailboxIds !== undefined && deps.mailboxIds.length === 0) return result;
 
-  /* Before the probe: a responder enabled by an older API build carries no enablement instant and
-     would be invisible to it for ever. See {@link healMissingEnabledAt}. */
+  /* Before the probe, in this order: a responder whose end date has passed is switched OFF (so the
+     probe cannot consider it and the heal below cannot stamp it), then a responder enabled by an
+     older API build is given the enablement instant the probe requires. */
+  result.expired = await expireEndedResponders(db, now(), deps.mailboxIds, log);
   await healMissingEnabledAt(db, now());
   const live = await liveResponders(db, now(), deps.mailboxIds);
 
@@ -339,6 +348,51 @@ export async function runAwayResponderPass(
  * feature takes — an unanswered correspondent is recoverable, a stranger answered from a window
  * nobody chose is not.
  */
+/**
+ * SWITCH OFF EVERY RESPONDER WHOSE END DATE HAS PASSED — one guarded UPDATE per run, matching
+ * nothing once it has run.
+ *
+ * `ends_at` already ends the answering window (the probe's `endsAt >= now`), so this changes no
+ * mail. What it changes is the STATE somebody reads and what a later re-enable does: without it the
+ * row stays `enabled` for ever with a window nobody is in, so the switch says "On" while nothing is
+ * sent, and extending the date months later would answer everything that arrived in between —
+ * `enabled_at` only moves on OFF → ON.
+ *
+ * So the write is the same one `put` makes when a person switches the responder off: `enabled`
+ * false, `enabled_at` null (its invariant), and `ends_at` cleared so a later "on" is an open-ended
+ * responder rather than one that is instantly expired again. Idempotent by the WHERE: the second
+ * pass matches nothing, which is what makes "exactly once" a property of the statement rather than
+ * of a flag. Narrowed by the caller's mailboxes exactly as the probe is — turning somebody's
+ * responder off is a product state change, and a drain that named its own mailbox must not make it
+ * for an account it was not asked about.
+ */
+async function expireEndedResponders(
+  db: Db, at: Date, mailboxIds: readonly string[] | undefined, log: Logger,
+): Promise<number> {
+  const rows = await (db as unknown as Tx).update(awayResponders)
+    .set({ enabled: false, enabledAt: null, endsAt: null, updatedAt: at })
+    .where(and(
+      eq(awayResponders.enabled, true),
+      isNotNull(awayResponders.endsAt),
+      sql`${awayResponders.endsAt} < ${at.toISOString()}::timestamptz`,
+      ...(mailboxIds === undefined ? [] : [exists(
+        (db as unknown as Tx).select({ one: sql`1` }).from(mailboxes).where(and(
+          eq(mailboxes.accountId, awayResponders.accountId),
+          inArray(mailboxes.id, [...mailboxIds]),
+        )),
+      )]),
+    ))
+    .returning({ accountId: awayResponders.accountId });
+  for (const row of rows) {
+    log.info("away_responder_expired", {
+      accountId: row.accountId,
+      reason: "the end date this responder was given has passed; it is switched off and the date " +
+        "cleared, so nothing further is sent until somebody turns it on again",
+    });
+  }
+  return rows.length;
+}
+
 async function healMissingEnabledAt(db: Db, at: Date): Promise<void> {
   await (db as unknown as Tx).update(awayResponders)
     .set({ enabledAt: at })

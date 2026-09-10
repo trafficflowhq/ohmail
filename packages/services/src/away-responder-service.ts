@@ -1,7 +1,10 @@
 import { eq } from "drizzle-orm";
 import { awayResponders } from "@trafficflow/db";
 import { createLogger } from "@trafficflow/core/mail";
-import { AWAY_ANSWERABLE_PILES, AWAY_PILES_DEFAULT, type AwayPile } from "@trafficflow/core/mail";
+import {
+  AWAY_ANSWERABLE_PILES, AWAY_PILES_DEFAULT, AWAY_SCREENER_FOLDER, awayScopeFitsAudience,
+  type AwayPile,
+} from "@trafficflow/core/mail";
 import { AWAY_THROTTLES, type AwayThrottle } from "./away-responder-pass.js";
 import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
@@ -153,6 +156,27 @@ export class AwayResponderService {
     if (startsAt && endsAt && startsAt.getTime() > endsAt.getTime()) {
       throw new ServiceError("validation_failed", 400, "startsAt must be before or equal to endsAt");
     }
+    const now = ctx.now();
+    /* THE SCREENER PILE NEEDS THE WIDER AUDIENCE (mail 0101). `awayScopeFitsAudience` is the leaf's
+       one statement of the rule, shared with the settings control. Refused rather than filtered: a
+       filter would store a narrower scope than the request asked for and answer 200, which is the
+       endpoint quietly declining to save what it was sent. */
+    if (!awayScopeFitsAudience(piles, audience)) {
+      throw new ServiceError(
+        "validation_failed", 400,
+        `${AWAY_SCREENER_FOLDER} may only be answered when audience is everyone`,
+      );
+    }
+    /* AN END DATE ALREADY PAST, WITH THE RESPONDER ON, is a responder that answers nobody while the
+       pane says it is on. The pass turns such a row off on its next cycle, so this refusal exists to
+       say so at the moment somebody asks for it rather than one cycle later; the settings control
+       refuses first, with its own sentence. `enabled: false` is unaffected — the save that turns the
+       responder OFF is the one save nobody may be prevented from making. */
+    if (enabled && endsAt !== null && endsAt.getTime() < now.getTime()) {
+      throw new ServiceError(
+        "validation_failed", 400, "endsAt must be in the future while the responder is enabled",
+      );
+    }
     // A client that still sends a subject is a client one release behind. Counted, not refused —
     // see `AwayResponderBody.subject`. The VALUE is never logged: it is the user's own prose.
     if (body.subject !== undefined && body.subject !== null) {
@@ -162,7 +186,6 @@ export class AwayResponderService {
       });
     }
 
-    const now = ctx.now();
     /**
      * THE ENABLEMENT INSTANT NEEDS THE PREVIOUS ROW, so it is read here rather than derived from
      * the upsert. One extra indexed read on the one write in this feature that starts mail going
