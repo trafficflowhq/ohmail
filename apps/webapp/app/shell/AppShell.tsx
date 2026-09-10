@@ -1534,6 +1534,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       undo: t("screener.toastUndo"),
       undone: t("trash.toastRestoreUndone"),
       failed: t("trash.toastRestoreFailed"),
+      /* THE SAME SENTENCE THE DELETE WINDOW SAYS: a refused jar takes the undo away, not the
+         restore. Required by `DeleteUndoCopy` so no window can offer an undo it cannot honour. */
+      noUndo: t("session.noUndoHere"),
     },
     refusal: (mailboxIds) => readerMoveRefusal(
       rosterRef.current,
