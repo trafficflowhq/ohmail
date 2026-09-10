@@ -94,8 +94,8 @@ export type TriagePileId = (typeof TRIAGE_PILES)[number];
  * clamp; this list is only "what may a URL say".
  */
 export const PANE_IDS = [
-  "general", "notifications", "mailboxes", "screener", "away", "billing", "invites", "tags", "rules",
-  "folders", "signatures", "about", "security", "account", "desktop", "devices",
+  "general", "notifications", "mailboxes", "screener", "ai", "away", "billing", "invites", "tags",
+  "rules", "folders", "signatures", "about", "security", "account", "desktop", "devices",
 ] as const;
 export type PaneId = (typeof PANE_IDS)[number];
 

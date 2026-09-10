@@ -759,6 +759,7 @@ export function AppShell({
   sendSurfaceMaxTotalBytes,
   accountSection,
   mailboxSection,
+  aiSection,
   billingSection,
   invitesSection,
   securitySection,
@@ -887,6 +888,7 @@ export function AppShell({
    * nothing to bill, supplied on the desktop's hosted door, where the plan and the AI switch are
    * ordinary forwarded calls and only checkout and the portal are a door out.
    */
+  aiSection?: ReactNode;
   billingSection?: ReactNode;
   /**
    * The host's Settings → Invites pane — who else may join a self-host server. Same seam as
@@ -1227,6 +1229,7 @@ export function AppShell({
             sendSurfaceMaxTotalBytes={sendSurfaceMaxTotalBytes}
             accountSection={accountSection}
             mailboxSection={mailboxSection}
+            aiSection={aiSection}
             billingSection={billingSection}
             invitesSection={invitesSection}
             securitySection={securitySection}
@@ -1292,7 +1295,7 @@ function MailStateHost({ probe, freshnessProbe, children }: { probe?: MailboxPro
   );
 }
 
-function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, billingSection, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, notificationHost, screeningSection, screenerSuggest, awayTransport, awayIsLocal, awayOnHost, profileImportTransport, consentTransport, olderBodyWire, junkWire, suggestWire, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
+function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, aiSection, billingSection, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, notificationHost, screeningSection, screenerSuggest, awayTransport, awayIsLocal, awayOnHost, profileImportTransport, consentTransport, olderBodyWire, junkWire, suggestWire, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
   /** The pull settle watch's read — the same probe `MailStateHost` above provides the strip. */
   mailboxFacts?: MailboxProbe;
   /** See `AppShell`'s prop of this name — absent withholds the organizer notice. */
@@ -1303,6 +1306,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   sendSurfaceMaxTotalBytes?: number | null;
   accountSection?: ReactNode;
   mailboxSection?: ReactNode;
+  aiSection?: ReactNode;
   billingSection?: ReactNode;
   invitesSection?: ReactNode;
   securitySection?: ReactNode;
@@ -8295,6 +8299,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                 awaySection={demo || !awaySupported ? undefined : (
                   <AwayResponderRow onChanged={awayNotice.update} transport={awayTransport} local={awayIsLocal ?? false} host={awayOnHost ?? null} />
                 )}
+                aiSection={demo ? undefined : aiSection}
                 billingSection={demo ? undefined : billingSection}
                 /* ABOUT — the one injected pane the demo also gets, because the demo has
                    something true to say here and no API to say it with. The live body comes

@@ -417,6 +417,7 @@ export function SettingsView({
   accountSection,
   mailboxSection,
   seedSection,
+  aiSection,
   billingSection,
   invitesSection,
   securitySection,
@@ -532,6 +533,17 @@ export function SettingsView({
    */
   seedSection?: { label: string; node: ReactNode };
   /** The Cloud client's Subscription pane — plan, the AI switch, and Stripe's portal. */
+  /**
+   * THE ACCOUNT'S AI SWITCH — present wherever there is an account, and nowhere else.
+   *
+   * A pane of its own rather than a row on another, because the account's AI is not the same
+   * subject as its subscription (a funded account may have AI off, and a self-hosted one has no
+   * subscription and still has the switch) and not the same as the desktop pane's local model
+   * (that is a key you supply; this is a flag on the account). `DesktopAiSettings` already made
+   * this argument from the other side: it shows nothing on the hosted door because "the
+   * account's AI belongs to the account, and the panes that are about the account say so".
+   */
+  aiSection?: ReactNode;
   billingSection?: ReactNode;
   /**
    * THE INVITES PANE — invite a user onto the server, list the open invites, revoke one.
@@ -939,6 +951,9 @@ export function SettingsView({
     // its one live decision is about the senders the Screener is holding. Present IFF the shell
     // wired the node, which is the whole of the Cloud-only rule: a standalone install has no hosted
     // worker to send the reply, so there is no entry rather than an entry onto a dead control.
+    /* AI after the Screener and before the responder: all three are about what happens to mail
+       without the reader pressing anything. Present IFF the host wired it — see {@link aiSection}. */
+    ...(aiSection ? [["ai", t("ai")] as [PaneId, string]] : []),
     ...(awaySection ? [["away", t("away")] as [PaneId, string]] : []),
     // BEFORE Tags. A tag is something the user chose to make; a rule is something the
     // product made on their behalf while they were deciding about a sender, and that is the
@@ -1309,6 +1324,8 @@ export function SettingsView({
               account (the built-tested-unreachable branch). The node names its own mode; the nav
               entry above is present only when it is wired. See {@link mailboxSection}. */}
           {shown === "mailboxes" ? mailboxSection : null}
+
+          {shown === "ai" ? aiSection : null}
 
           {shown === "billing" ? billingSection : null}
 

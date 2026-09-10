@@ -6,6 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 
 import { DesktopGate } from "../src/DesktopGate.js";
+import { ACCOUNT_AI_PATH } from "../src/DesktopAiAccount.js";
 import { MANAGE_LINK_PATH } from "../src/DesktopSubscription.js";
 import { desktopPaneLabel } from "../src/DesktopSettings.js";
 import messages from "../../webapp/messages/en.json";
@@ -226,6 +227,36 @@ const MATRIX: Record<PaneId, Record<Door, Cell>> = {
       why:
         "the pass lives in the engine's own bundle and the sidecar drain sends through this " +
         "machine's SMTP; the pane says replies go out while the window is open",
+    },
+  },
+  /**
+   * THE ACCOUNT'S AI SWITCH. Present on every door that HAS an account, and that is the whole
+   * shape of it: `GET/PATCH /account/ai` is mounted by the managed table AND by
+   * `selfHostRoutes` (the operator supplies the key and pays the model bill, so the switch is
+   * more meaningful there, not less). The standalone door has no account; its local-model form
+   * lives on the Desktop pane instead, which is a different setting.
+   */
+  ai: {
+    managedWeb: { state: "present", why: "`AiSection` over the two routes on the hosted table" },
+    selfHostWeb: {
+      state: "present",
+      why:
+        "the same pane over the same two routes — `selfHostRoutes` mounts `aiSettingsRoutes`, so "
+        + "this is one of the panes that is NOT a managed-client leftover here",
+    },
+    desktopCloud: {
+      state: "present",
+      why: "`DesktopAiAccount` over the forwarded `/account/ai`; a write, not a door out",
+    },
+    desktopSelfHost: {
+      state: "present",
+      why: "the same forwarded routes; this door's server mounts them for the same reason the tab's does",
+    },
+    desktopStandalone: {
+      state: "absent",
+      why:
+        "no account to hold the flag. The local model is configured on the Desktop pane through "
+        + "`/local/ai`, which is a provider key rather than an account setting",
     },
   },
   billing: {
@@ -503,6 +534,9 @@ function fakeShell(status: EngineStatus, signedIn: boolean): void {
         if (url.startsWith("/away-responder")) return encode(200, AWAY);
         // The Subscription pane's one read. A URL here is the managed answer; `MANAGE_ABSENT`
         // below drives the other arm, where the pane draws nothing at all.
+        // The AI pane's read. A boolean either way; the pane draws regardless, because the
+        // account HAS the flag — only an unread value makes the switch unpressable.
+        if (url === ACCOUNT_AI_PATH) return encode(200, JSON.stringify({ aiEnabled: true }));
         if (url === MANAGE_LINK_PATH) {
           return manageLink === null
             ? encode(404, JSON.stringify({ error: { code: "no_manage_surface" } }))

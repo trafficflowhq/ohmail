@@ -73,6 +73,7 @@ import { DesktopScreening } from "./DesktopScreening.js";
 import { GateNotice } from "./GateNotice.js";
 import { DOOR_COPY, machineWord } from "./door-copy.js";
 import { desktopPaneLabel, DesktopSettings } from "./DesktopSettings.js";
+import { DesktopAiAccount } from "./DesktopAiAccount.js";
 import { DesktopSubscription, useDesktopManageLink } from "./DesktopSubscription.js";
 import { DesktopWebSection } from "./DesktopWebSection.js";
 import {
@@ -1292,6 +1293,10 @@ export function DesktopGate() {
            service operator's own page, which this program does not hold the state for. See
            `DesktopWebSection` and `DesktopSubscription` — the latter renders nothing at all where
            no such page is served, so the nav entry follows the page. */
+        /* THE ACCOUNT'S AI SWITCH — behind `accountDoor` like the three panes below, and
+           unconditional within it: the flag exists for every hosted account. The standalone door
+           has no account and keeps its own local-model form on the Desktop pane instead. */
+        {...(accountDoor ? { aiSection: <DesktopAiAccount /> } : {})}
         {...(accountDoor && manageUrl
           ? { billingSection: <DesktopSubscription url={manageUrl} /> }
           : {})}

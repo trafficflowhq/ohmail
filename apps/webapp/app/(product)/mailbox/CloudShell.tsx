@@ -16,6 +16,7 @@ import { resolveOwnerOutcome } from "../session-outcome";
 import { AboutSection } from "./AboutSection";
 import { AccessLock } from "./AccessLock";
 import { AccountLocale } from "./AccountLocale";
+import { AiSection } from "./AiSection";
 import { DevicesSection, useDevicePairing } from "./DevicesSection";
 import { InvitesSection, useUserInvites } from "./InvitesSection";
 import { SecuritySection } from "./SecuritySection";
@@ -319,6 +320,10 @@ export function CloudShell({ demo }: { demo: boolean }) {
         accountSection={<AccountSection />}
         securitySection={<SecuritySection />}
         mailboxSection={<MailboxSection />}
+        /* UNCONDITIONAL, unlike the row below it: every host this shell runs on has an account
+           and mounts `GET/PATCH /account/ai`, including a self-hosted server whose operator pays
+           the model bill themselves. `AppShell` withholds it on the demo. */
+        aiSection={<AiSection />}
         /* ONE GENERIC ROW, and only where the service supplies a page for it. This app holds no
            plan, no balance and no payment method, so it states none of them; the row is a link
            out. Same absence rule as `invitesSection` below — see `manageUrl`. */
