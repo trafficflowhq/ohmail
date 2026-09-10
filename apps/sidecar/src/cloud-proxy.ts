@@ -124,10 +124,13 @@ export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThro
     const verdict = relayVerdict(method, url.pathname);
     if (verdict !== "forward") {
       /* Logged: a route added without a verdict would otherwise be a 404 indistinguishable from a
-         server that does not have the route. */
+         server that does not have the route. The FIRST SEGMENT only, and only when it is
+         id-shaped — a whole pathname carries message ids, and the logger drops `path` for that
+         reason. `other` when it is anything else, so no caller-chosen text reaches the line. */
+      const head = url.pathname.split("/").filter((x) => x.length > 0)[0] ?? "";
       cfg.log?.("cloud_relay_refused", {
         method,
-        path: url.pathname,
+        route: /^[A-Za-z0-9._~-]{1,32}$/.test(head) ? head : "other",
         reason: "this route is not in the relay allowlist",
       });
       const handoff = verdict === "handoff" && cfg.handoffForeign === true;
