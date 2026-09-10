@@ -22,12 +22,19 @@
 .scast.cur{box-shadow:var(--lift-2)}
 .sc-head{padding:20px 26px 0}
 .sc-line{display:flex;align-items:baseline;gap:8px;font-size:calc(12.5px + var(--type-up))}
-.sc-line b{font-weight:600;flex:none}
+/* THE NAME YIELDS LAST — after the address has given up everything, and never before.
+   A Receipts head at 360px on the larger face carries a sender, an amount, the notice glyph
+   and a German relative time: the address is already at zero and the fixed items still
+   overflow. The amount and the time may not ellipsise (half a number or half a date is a
+   false statement) and the glyph is 13px, so the name is what gives. The shrink WEIGHT
+   orders the pair — the address (100) takes the whole deficit and freezes at `min-width:0`
+   before the name (1) loses a pixel. Same treatment as `row.css` `.row-top .who`. */
+.sc-line b{font-weight:600;flex:0 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* The address is the handle on the SENDER — clicking it opens the screening sheet, the same
-   gesture the lists carry (the shell's one capture handler owns both). `flex:1 1 auto` on a
-   nowrap ellipsis means the hit area is the visible text and no more, so it does not quietly
-   eat clicks meant for the card. */
-.sc-line .addr{flex:1 1 auto;min-width:0;font-size:calc(11.5px + var(--type-up));color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+   gesture the lists carry (the shell's one capture handler owns both). A grown, nowrap
+   ellipsis means the hit area is the visible text and no more, so it does not quietly eat
+   clicks meant for the card; the shrink weight is the block above. */
+.sc-line .addr{flex:1 100 auto;min-width:0;font-size:calc(11.5px + var(--type-up));color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
   cursor:pointer;transition:color .15s}
 .sc-line .addr:hover{color:var(--ink2);text-decoration:underline;text-underline-offset:2px}
 .sc-line .amt{flex:none;font-variant-numeric:tabular-nums;font-size:calc(12px + var(--type-up));font-weight:550}
