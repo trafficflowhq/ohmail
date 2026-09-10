@@ -144,7 +144,8 @@ import { localAiRoutes } from "./ai-routes.js";
 import { localAutoSuggestRoutes } from "./auto-suggest-routes.js";
 import { openLocalDb, type LocalDb, type LocalDbOpenPhase, type OpenLocalDb } from "./db.js";
 import {
-  ensureLocalWorld, loadLocalRoster, loadUnattachedLocalRoster, mintLaunchSession,
+  endLegacyOrganizerPauses, ensureLocalWorld, loadLocalRoster, loadUnattachedLocalRoster,
+  mintLaunchSession,
   type LocalRosterRow, type LocalWorld,
 } from "./identity.js";
 // ONE RUNTIME PER MAILBOX, held in a map. The record, the map and the seed decision live in
@@ -6259,6 +6260,38 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
     };
 
     /**
+     * ══ A PAUSE AN OLDER BUILD LEFT IS ENDED BEFORE THE ROSTER IS READ ═══════════════════════
+     *
+     * The FOURTH write of the in-place upgrade below, and the one that cannot sit with the other
+     * three: they repair a credential the ATTACH seals, so they run after it, and this one decides
+     * WHICH ROWS THE ATTACH SEES. Placed after the loop it would attach nothing this launch and the
+     * mailbox would come back one restart later — a person pressing "Organize here instead" twice
+     * and being answered by neither press.
+     *
+     * {@link endLegacyOrganizerPauses} carries what the shape is and why the rewrite is a reader.
+     * One line per row, so an install with no such row says nothing extra; the id and the reason,
+     * never the address.
+     */
+    try {
+      for (const ended of await endLegacyOrganizerPauses(db, world.accountId)) {
+        log("local_mailbox_pause_ended", {
+          mailboxId: ended.id,
+          disabledReason: ended.keptReason,
+          reason: "a build older than this one recorded that another organizer had taken this "
+            + "mailbox by switching the mailbox off; this launch rewrote the row to what it means "
+            + "— a READER of that mailbox, mirror growing, organizing nothing — so it runs again "
+            + "and can be asked to organize it. Nothing was claimed by the rewrite",
+        });
+      }
+    } catch (err) {
+      log("local_mailbox_pause_end_failed", {
+        err,
+        reason: "a mailbox this install paused under an older version stays paused: it gets no "
+          + "connection and no poll timer this launch, and the next launch tries the rewrite again",
+      });
+    }
+
+    /**
      * ATTACH EVERY LIVE MAILBOX.
      *
      * Read once, here, and never on a timer — the only writers of this table are this engine's own
@@ -6332,8 +6365,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * `ohmail/_meta` are byte-identical across this change; what is different is the READER. An
      * install that ran one mailbox comes up running a roster that happens to hold one.
      *
-     * Three writes make that true, and each is keyed on a predicate that is false once it has
+     * Four writes make that true, and each is keyed on a predicate that is false once it has
      * been done — no marker, no journal entry, nothing to migrate. A third launch writes nothing.
+     * The FOURTH is above the attach loop rather than here, and its block says why: it decides
+     * which rows the attach sees, where these three repair what the attach sealed.
      *
      *  1. THE SEED ROW, which `ensureLocalWorld` has already decided about above: it exists on a
      *     fresh install and is found on every later one. Its predicate is the one that stops a

@@ -1,5 +1,9 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
-import { accounts, mailboxes, sessions, users, standDownMemory } from "@trafficflow/db";
+import {
+  accounts, mailboxes, sessions, users,
+  isMailboxDisabledReason, isOrganizerKind, standDownMemory,
+  type MailboxDisabledReason,
+} from "@trafficflow/db";
 import { generateToken, hashToken } from "@trafficflow/services/mail";
 import type { LocalDb } from "./db.js";
 
@@ -346,6 +350,15 @@ export interface LocalRosterRow {
  * but it is not RUNNING and must not be given a login, a claim or a poll timer. Being found and
  * being attached are different questions about the same row.
  *
+ * ── AND THE STATE THAT ARGUMENT WAS WRITTEN ABOUT NO LONGER SURVIVES THE BOOT ─────────────────
+ *
+ * It was written about the ≤0.13.x PAUSED row, and for that row it was a one-way door: excluded
+ * here means no runtime, so no lease read, so a takeover authorized on it could never be spent.
+ * {@link endLegacyOrganizerPauses} ends that state before this read runs, so the exclusion now
+ * covers exactly the rows the CURRENT build leaves `disabled` — a tombstone, a row superseded by a
+ * live sibling on its address, and whatever a later build pauses. The rule is unchanged; the
+ * population it applies to is the one it was always right about.
+ *
  * ── READ ONCE, AT BOOT, AND NEVER ON A TIMER ──────────────────────────────────────────────────
  *
  * The hosted worker re-reads its roster periodically because other processes write its
@@ -429,6 +442,97 @@ export async function loadUnattachedLocalRoster(
     ))
     .orderBy(mailboxes.createdAt, mailboxes.id);
   return rows.map((r) => ({ id: r.id, disabledReason: r.disabledReason ?? null }));
+}
+
+/** A pause this boot ended: the row's id and the memory the rewrite kept for it. */
+export interface EndedOrganizerPause {
+  id: string;
+  /** The `organized_elsewhere:*` the row carried — now recorded as `organized_by_kind`. */
+  keptReason: MailboxDisabledReason;
+}
+
+/**
+ * END A PAUSE A BUILD OLDER THAN MAIL 0083 LEFT — migration 0083's backfill, run again at boot.
+ *
+ * `disabled` + an `organized_elsewhere:*` reason is the PRE-0083 SPELLING of a reader: the
+ * stand-down had nowhere else to write, so it encoded the ROLE in the CONNECTION. A row in that
+ * shape is excluded by {@link loadLocalRoster} for ever, which means no runtime, so no lease read,
+ * so a takeover authorized on it can never be spent — the pane offers "Organize here instead" and
+ * nothing acts on it. 0083's backfill fixed the population once; the 0.13.x stand-down went on
+ * writing the shape afterwards, so the predicate has to stay rather than be a migration.
+ *
+ * THE ROLE IS NOT A TERM OF THE PREDICATE, and reading it as one would leave the ordinary case
+ * paused: the 0.13.x write was `{ status: 'disabled', disabledReason, takeoverAuthorizedAt: null }`
+ * and named no role at all, so a mailbox this install ORGANIZED keeps `organizer` (the column's
+ * default) and only a row that had already been through 0083's backfill says `reader`. Both are
+ * the same paused mailbox. 0083's own statement tests the status and the reason and nothing else.
+ *
+ * IT MAKES A READER, NEVER AN ORGANIZER. One organizer per mailbox is the lease's to enforce and
+ * this write claims nothing: the row joins the roster as a reader, with the reason it was paused
+ * for kept as `organized_by_kind` so {@link standDownMemory} still answers `organized_elsewhere:*`
+ * for it. `disabled_reason` is cleared because a `connected` row carrying one is a row saying two
+ * different things about itself, and that column has had no writer since 0083. Becoming an
+ * organizer again needs the press, the stamp and the lease, exactly as it does for every reader.
+ *
+ * THE SIBLING GUARD IS NOT HYPOTHETICAL — it is 0083's, in its words: `mailboxes_active_address_uq`
+ * is UNIQUE on `(account_id, lower(address)) WHERE status <> 'disabled'`, and nothing stopped the
+ * same address being connected again beside a paused row, so promoting one with a live sibling
+ * violates the index and takes the BOOT down. Such a row is genuinely superseded and stays paused.
+ * The set of live addresses grows as rows are promoted, so two paused rows on one address promote
+ * the OLDEST and leave the rest — the same refusal, one statement later.
+ *
+ * Keyed on a predicate that is false once it has been done, like the three writes it joins: no
+ * marker, no journal entry, and the second boot writes nothing.
+ */
+export async function endLegacyOrganizerPauses(
+  db: LocalDb, accountId: string,
+): Promise<EndedOrganizerPause[]> {
+  const rows = await db
+    .select({
+      id: mailboxes.id,
+      address: mailboxes.address,
+      status: mailboxes.status,
+      disabledReason: mailboxes.disabledReason,
+    })
+    .from(mailboxes)
+    .where(eq(mailboxes.accountId, accountId))
+    .orderBy(mailboxes.createdAt, mailboxes.id);
+
+  const live = new Set(
+    rows.filter((r) => r.status !== "disabled").map((r) => r.address.trim().toLowerCase()),
+  );
+  const ended: EndedOrganizerPause[] = [];
+  for (const row of rows) {
+    if (row.status !== "disabled") continue;
+    // A TOMBSTONE HAS NO REASON, and that is the whole discriminator this file already turns on:
+    // `disabled` with a reason is a pause, `disabled` without one is a mailbox somebody removed
+    // here. A removal is not resumed, and a value outside the closed set is not one either.
+    if (!isMailboxDisabledReason(row.disabledReason)) continue;
+    const address = row.address.trim().toLowerCase();
+    if (live.has(address)) continue;
+    /* `isOrganizerKind` for `standDownMemory`'s reason at the same derivation: the reason's suffix
+       and the kind column carry the same closed three today, so this narrows by construction and
+       is the guard for the day they stop being equal — an unrankable kind reads `unknown`, which
+       the column's CHECK admits and which fails closed at every reader downstream. */
+    const suffix = row.disabledReason.slice("organized_elsewhere:".length);
+    const kind = isOrganizerKind(suffix) ? suffix : "unknown";
+    await db
+      .update(mailboxes)
+      .set({
+        status: "connected",
+        organizerRole: "reader",
+        organizedByKind: kind,
+        // BEING BEATEN IS NOT RELEASING (mail 0088). The reason says another organizer holds this
+        // mailbox, so the release marker must be absent or `standDownMemory` answers null for it
+        // and the row comes back as a mailbox nobody ever organized.
+        organizerReleasedAt: null,
+        disabledReason: null,
+      })
+      .where(and(eq(mailboxes.id, row.id), eq(mailboxes.status, "disabled")));
+    live.add(address);
+    ended.push({ id: row.id, keptReason: row.disabledReason });
+  }
+  return ended;
 }
 
 export interface LaunchSession {

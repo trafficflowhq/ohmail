@@ -185,6 +185,14 @@ which the Windows and Linux builds already did.
 The workflow that signs updates no longer holds the signing keys while it downloads anything, and
 both signers are checked against a fixed hash before they run.
 
+### A mailbox an older version paused
+
+A mailbox that stopped syncing here because another computer took over organizing it can be
+organized from this computer again: it syncs as a reader on the next launch, and “Organize here
+instead” takes effect on the following pass. Versions up to 0.13 recorded that handover by
+switching the mailbox off, and it stayed off. A mailbox you removed from this computer is
+untouched.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
