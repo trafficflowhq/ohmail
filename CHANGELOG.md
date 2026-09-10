@@ -63,6 +63,18 @@ claim ages out of the folder on its own, the stop is recorded as done — unless
 visibly holding the mailbox, in which case the request keeps waiting rather than reporting the
 mailbox free.
 
+### A mailbox that sends more than one pass can take is no longer called broken
+
+ohmail sets ceilings on what it reads from a mail server in one go — how many folders it lists,
+how long a read may take, how large a message body may turn out to be. A mailbox that crossed one
+of them ended up marked with an error in Settings → Mailboxes, next to a mailbox that had
+connected and answered perfectly well.
+
+Such a mailbox now stays connected and says what is actually happening: "ohmail read what it
+could; this mailbox's server sent more than one pass can take. It will try again." The note
+clears by itself as soon as a sync cycle finishes. A real failure — a refused password, a server
+that cannot be reached, a broken secure connection — still shows as an error.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
