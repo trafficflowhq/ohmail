@@ -67,20 +67,15 @@ export function worthSaving(f: ComposeFields): boolean {
 }
 
 /**
- * ── WOULD REOPENING A ROW WRITE OVER WHAT IS ON SCREEN? ─────────────────────────────────────
+ * WOULD REOPENING A ROW WRITE OVER WHAT IS ON SCREEN?
  *
- * The reopen puts the row's stored fields into the form and into the scratch buffer, and for a
- * PARKED message that buffer is the only copy of anything typed since: a parked message's saves
- * are refused, so autosave has stored none of it.
+ * The reopen writes the row's stored fields over the form and the scratch buffer, and for a PARKED
+ * message that buffer is the only copy of anything typed since — its saves are refused. The old
+ * question was "is a DIFFERENT row on screen", which the held message's own row answers no to, so
+ * its text went. This asks about the buffer's DRIFT from the row instead.
  *
- * The question used to be "is a DIFFERENT row on screen", which the held message's OWN row
- * answers no to — that binding is exactly what an unconfirmed send leaves in place — so its text
- * was replaced by the row's pre-send text with nothing asking. So it asks about the buffer's
- * DRIFT from the row: something worth keeping, and a value the reopen would change.
- *
- * Recipients are compared as ADDRESSES and not as chip text. The row stores parsed addresses and
- * the buffer holds what somebody typed, so a formatting round-trip would otherwise read as an
- * edit and refuse a reopen nobody had changed anything before.
+ * Recipients compare as ADDRESSES, never as chip text: the row stores parsed addresses and the
+ * buffer holds what somebody typed, so a formatting round-trip must not read as an edit.
  */
 export function reopenWouldOverwrite(buffer: ComposeFields, seeded: ComposeFields): boolean {
   const files = buffer.attachments?.length ?? 0;

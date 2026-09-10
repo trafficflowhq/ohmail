@@ -353,20 +353,15 @@ export function composeRowKey(owner: string | null = storageOwner()): string {
 }
 
 /**
- * ── AND FOR A BROWSER THAT REFUSES THIS APP ITS STORAGE, THE TAB'S OWN MEMORY ───────────────
+ * THE TAB'S OWN MEMORY OF THE ROW, for a browser that refuses this app its storage.
  *
- * In such a browser nothing can be written, so `readComposeRow` answered `null` BY CONSTRUCTION
- * and the surface had no witness that it was holding a row at all: `holdOf` answered `unknown`,
- * the adoption waited, and the autosave's timer created a SECOND row for the one the reopen had
- * just opened. Two rows for one message.
+ * There nothing can be written, so `readComposeRow` answered `null` BY CONSTRUCTION: `holdOf` said
+ * `unknown`, the adoption waited, and the timer created a SECOND row for the one just opened.
  *
- * So the row the door opened is remembered here for the life of the tab, which is what such a
- * browser can have. Keyed by the same storage key, so it is account-scoped exactly as the jar is,
- * and swept by {@link forgetComposeRows} at sign-out for the reason the key itself is swept: an id
- * on the departed account must not survive into the next sign-in.
- *
- * It answers ONLY when the jar throws. A jar that works and says `null` is authoritative — that is
- * another tab having cleared the row, and preferring a remembered value there would resurrect it.
+ * Keyed by the same storage key, so it is account-scoped as the jar is, and swept by
+ * {@link forgetComposeRows} at sign-out — an id on the departed account must not reach the next
+ * sign-in. It answers ONLY when the jar throws: a jar that works and says `null` is another tab
+ * having cleared the row, and a remembered value would resurrect it.
  */
 const composeRowInMemory = new Map<string, string>();
 

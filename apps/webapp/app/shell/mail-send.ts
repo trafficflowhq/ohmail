@@ -284,15 +284,12 @@ export const SEND_IN_FLIGHT_PHASES: ReadonlySet<SendPhase> = new Set<SendPhase>(
  * cannot refuse the compose surface's first save.
  */
 /**
- * ── DOES THIS UNRESOLVED INTENT NAME THE MESSAGE THE LATCH WAS TAKEN FOR? ────────────────────
+ * DOES THIS UNRESOLVED INTENT NAME THE MESSAGE THE LATCH WAS TAKEN FOR?
  *
  * Two witnesses, because a record is written at one moment in a message's life and read at
  * another. `bfp` is the compose buffer's fingerprint at the press — the only name that survives a
- * reload — and the compose SESSION is the name {@link parkedComposeRecord} parks by, so the two
- * agree with the park by construction instead of drifting from it.
- *
- * `false` on a record carrying neither, which is the fail-closed direction: "no evidence" is not
- * "not mine".
+ * reload — and the SESSION is the name {@link parkedComposeRecord} parks by, so the two agree with
+ * the park by construction. `false` on a record carrying neither: "no evidence" is not "not mine".
  */
 function intentNamesLatched(
   intent: SendIntent, latch: { fp: string | null; session: string | null },
