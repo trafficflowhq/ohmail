@@ -108,6 +108,12 @@ Fresh installs never create the billing tables. An install that already has them
 ones when it migrates; a table that still holds rows is left in place and named in the migration
 log, so nothing is removed without you deciding to.
 
+### The engine's log
+
+- A failure the mail server reported as plain text was written to the app's log with the mailbox
+  address still in it. The address is replaced before the line is written, and the message itself
+  is kept — it is often the only account of what the server refused.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
