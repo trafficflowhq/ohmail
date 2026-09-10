@@ -232,14 +232,6 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // credentials rotated mid-dial is left unstamped so it stays due.
   "considered", "learned", "silent", "skipped", "failed", "announcedBytes", "stamped",
   "disabledReason", "stoppedBy", "heldBy",
-  // ── `ownClaimTerm`: HOW A MAILBOX'S HOLDER RELATES TO THE INSTALL THAT STOOD DOWN ─────────
-  //
-  // A closed five-member literal the call site holds, `op`'s reason one shelf down: install id,
-  // then the nonce that install last armed. A stand-down says `organized_elsewhere:*` and nothing
-  // about whether the holder is a stranger, a restored copy, or a claim the install wrote itself —
-  // and those want opposite answers. The comparison, never its operands: no install id and no
-  // nonce reaches the line.
-  "ownClaimTerm",
   // `syncBlockedReason` is mail 0029's `MAILBOX_SYNC_BLOCK_REASONS` member — one of three literals
   // this repository wrote, beside `disabledReason` for the same reason.
   //
@@ -562,13 +554,6 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // it is a FLOOR — measured constant from an empty mirror to a large one — so the reading
   // worth acting on is one that grows with the mailbox.
   "rss", "heapUsed", "external", "uptimeMs", "storeBytes",
-  // WHERE THAT READING CAME FROM, added WITH the line that emits it. `engine_vitals` runs on every
-  // door, and one of them — the engine running inside a phone app rather than in a Node process —
-  // has no memory reading at all. The three numbers above are then null, and a run of nulls is
-  // indistinguishable from a sampler that is broken unless the line says which it is. Two literals
-  // chosen by the emitter (`process` / `unavailable_in_this_runtime`); it names no mailbox, no
-  // address, no path and nothing a person wrote.
-  "memoryReading",
   // ── retry, failure and circuit accounting ──
   "attempt", "attempts", "consecutiveFailures", "maxSyncFailures", "consecutiveFaults",
   "opens", "open", "threshold", "circuit", "cooldownMs", "retryAt", "retryInMs",
