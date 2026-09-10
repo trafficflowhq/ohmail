@@ -13,693 +13,119 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
-### Backspace, Delete and `d` no longer need "Use folders"
-
-Backspace, Delete and `d` move a message to Trash whether or not Use folders is on. On the web
-from the day this landed; in the desktop app with this release.
-
-Trash is your mail server's own Trash folder — a folder every account already has, not one you
-made — so the switch that turns on user folders was never a fact about whether a message can be
-moved there. The same delete over a selection has never asked for it: you could pick a pile of
-messages and file it to Trash, and then not file the one message under the cursor. Both now ask
-the same question, which is whether the app is holding that message and whether this install is
-the one organizing the mailbox.
-
-Use folders itself is unchanged, and still decides the Folders list, the folder views and
-Move-to-folder.
-
-### The away responder's replies stay out of the Ohbox
-
-The away responder answers mail that arrives while you are away. Its replies were then filed into
-your Ohbox alongside the mail you had read — one row for every message it had answered, carrying
-that message's subject as a reply. With the responder on for a few days, that could mean an Ohbox
-filling up with answers to newsletters and receipts.
-
-An automatic reply is not you dealing with something, and the product now treats it that way. Those
-replies no longer appear in the Ohbox; they stay in your mail server's Sent folder, where the mail
-you send lives. Mail the responder answered also stops counting as mail you have already handled,
-so your rules and the tidying pass can file it as they would anything else.
-
-Fixed on ohmail Cloud on 2026-09-09; in the desktop app with this release.
-
-### Text fields show their edge before you type
-
-Every place text is typed — the settings fields, the screening note, the signature editors, the
-Junk window's search, the rules search, the folder filter, the link popover — now draws one text
-field: a 1px edge on a slightly recessed ground that is present while the field is empty, one focus
-ring, and read-only and disabled states that look the same everywhere, in light and dark. Several
-of these fields had no edge until they held text, so an empty one was a placeholder and a resize
-handle and nothing that said "type here"; the Junk window's search had no edge at all, because its
-rule named a colour that was never defined. A field standing inside a compose header row, a
-floating card or the folder rail keeps the row or the card as its boundary, as before.
-
-### The away responder's line scrolls with the list on a phone
-
-The Ohbox line saying the away responder is on stood above the list at every width and stayed
-there while the list scrolled. It is the list's first block now: on a desktop it stays pinned at
-the top while the rows pass under it; on a phone it is read at the top and scrolls away with the
-list. The sentence and its "Away settings" link are unchanged.
-
-### Your signature is part of what moves between your devices
-
-One install organizes a mailbox at a time; your other devices read it. What the organizing install
-publishes about a mailbox — screened senders, rules, notification choices, the away reply, tag
-names — now carries the mailbox's signature too, so a device that only reads that mailbox has the
-sign-off for the address instead of nothing. One signature per mailbox, as before. A settings
-message written by an older ohmail simply has no signature in it, which reads as "no signature"
-rather than as somebody else's, and an older ohmail reading a newer message ignores the field and
-applies the rest.
-
-The install doing the organizing also learns to carry out three more kinds of request on behalf of
-the others: moving a message, changing a per-mailbox setting, and writing, changing or removing a
-rule. It publishes which of them it is able to do, one by one, so another device can tell before it
-asks rather than leaving you watching a request that was never going to be picked up. A request it
-does not recognise is left where it is rather than thrown away — it happens as soon as that install
-updates.
-
-### Approving a sender, on a mailbox another machine organizes
-
-Approving somebody out of the screener files their mail. On a mailbox this install only reads, it
-filed that mail here and then went to the mail server itself — from the machine that is not the one
-holding the mailbox. It now becomes a request the organizing install carries out, the same way
-moving a message by hand does, and this machine no longer touches the mail server for it. What you
-see afterwards is the message where it still is, marked as pending, rather than where it is going to
-be.
-
-### Two actions that move a lot of mail at once now say which mailbox is holding them up
-
-Undoing a workflow run, and the opt-in re-route offered when you bring rules over from Hey, both
-move many messages from a single press. On a mailbox another install organizes, they wrote those
-moves down here and no mail ever moved. They now refuse, and name the mailbox and the install
-holding it, instead of reporting work that was never going to happen. On an account with some
-mailboxes organized here and some elsewhere, the whole action refuses rather than doing the half it
-can — half of an undo is worse than none of it.
-
-Sending that many moves across to another install is a piece of work in its own right, and it is not
-in this release. Refusing plainly is the part that could not wait.
-
-### A machine that reads a mailbox now knows what settings are in force on it
-
-The install that organizes a mailbox publishes its settings into the mailbox itself. An install that
-only reads that mailbox now keeps a copy of that as it goes, so its settings screens can show what
-is actually being applied rather than its own inert copies.
-
-It refreshes every few minutes rather than on every sync pass, and costs nothing extra to look at
-afterwards. If the machine holding the mailbox has published nothing yet, that is said plainly
-rather than shown as empty settings.
-
-A cached copy is remembered together with which generation of the folder it was read from — mail
-servers renumber messages when a folder is deleted and recreated, and a remembered position from
-before a renumber points at the wrong message. If the folder has been renumbered, or the settings
-have been removed, the stale copy is discarded rather than shown. If the copy simply could not be
-read this time, it is left alone: a moment's connection trouble is not the same as somebody clearing
-their settings, and the two must not look alike.
-
-### Settings that only worked on the machine you typed them into
-
-Your out-of-office, your screening posture, how far back screening looks, and the sign-off appended
-to your outgoing mail are all applied by the install that ORGANIZES a mailbox — it is the one that
-sends the replies, files the new mail and adds the signature, and it reads them from what the
-organizing install publishes.
-
-None of those four asked which install that was. On a mailbox you read rather than organize, each
-edit was written into this machine's own copy and reported as saved, and the machine actually doing
-the work never saw it. So you could set an out-of-office and no out-of-office would ever be sent.
-Nothing failed and nothing said anything, which is why this is the most serious thing in this
-release.
-
-All four now travel. On a mailbox another install organizes, the edit becomes a request that install
-carries out, and this machine's copy is deliberately left alone until it has — so what you are
-looking at is what is true here, not what you typed. On an account where some mailboxes are
-organized here and some elsewhere, one save does both: written where this install organizes, sent as
-a request to each install holding one of the others.
-
-Only the setting you changed travels. Editing your screening bar does not send your posture along
-with it, so it cannot overwrite something you never touched on the machine that applies it.
-
-The sign-off is per mailbox rather than per account — a person with two addresses has two of them —
-so it goes to the install holding THAT mailbox and to no other. A sign-off that has to travel is
-limited to 2 000 characters; one this install stores and appends itself is unchanged at 10 000.
-
-Choosing any of this before you have connected a mailbox still works, exactly as before.
-
-### Rules on an account whose mailboxes are organized in different places
-
-Rules belong to your account, not to one mailbox, and the install that organizes a mailbox is the
-one that carries them out. If you have two mailboxes and a different install organizes each, a rule
-used to be written on whichever machine you typed it into and go no further — it was reported as
-saved, and the install actually filing that mailbox's mail never heard about it. The same edit on an
-account where every mailbox is organized elsewhere was refused outright instead.
-
-A rule edit now goes to all of them. It is written where this install organizes, and it travels as a
-request to each install holding one of the others, from one press. The answer says which mailboxes
-took it, which are waiting, and which are running a version too old to accept it — rather than one
-"saved" that is only partly true.
-
-On a mailbox you only read, the rule is not written locally and the row you are looking at does not
-change until the other install has applied it. Deleting works the same way: the rule stays visible
-until it is actually gone there, because removing it here would hide a rule that is still filing
-your mail.
-
-Changing what a rule MATCHES — the sender, the domain, or a subject or body term that narrows it —
-cannot travel as an edit, and is refused with that reason. Two rules for one sender that differ only
-by a narrowing term are different rules going to different places, so "find the rule that matches
-this and change what it matches" has no single answer on the other machine. Remove the rule and add
-the one you want. On an account this install organizes, changing the match is an ordinary edit and
-is unaffected.
-
-Writing a rule before you have connected a mailbox still works, as it always did.
-
-### Moving and deleting mail on a mailbox another install organizes
-
-Exactly one install organizes a mailbox at a time; the others read it. Moving or deleting a message
-on a mailbox you only read used to be refused outright — the message stayed where it was, and the
-answer said only that something else was organizing it. The press now travels instead: it becomes a
-request the organizing install carries out on its next pass, and the answer names the install it is
-waiting on.
-
-Nothing moves on this machine, deliberately. The install holding the mailbox is the one connected to
-the mail server, so a move recorded here would either do nothing or fire later — moving mail on a
-decision taken when this install had no right to take it. The message therefore stays exactly where
-it is until the other install has actually moved it, rather than appearing to move and then coming
-back.
-
-Deleting works the same way, and it has stopped asking a question only the other machine can answer.
-Every provider spells its Trash folder differently and the app learns the real name when it
-connects; an install that merely reads a mailbox has usually never learned it, and the delete used
-to be refused for that reason — a true sentence about the wrong computer. The request now says
-"trash" and the connected install works out what that means there.
-
-An install running an older version cannot carry any of this out, and is no longer asked to. The
-answer says so and names the machine, rather than leaving you waiting for something that was never
-going to happen.
-
-**One way of re-filing a message was not covered by any of this, and moved mail it should not
-have.** The app can re-file a message either by asking to move it or by amending it, and the two do
-exactly the same thing underneath. Only the first was checked. On a mailbox you read rather than
-organize, amending a message's folder wrote the change down and reported success — the message
-appeared in its new place, and the mailbox itself was never told. Two things were wrong with that:
-what you were shown was not true, and the change sat waiting to be carried out if this install ever
-became the one organizing that mailbox, moving mail on a decision made when it had no business
-making it. Both ways of re-filing now go down the same path. Marking mail read is untouched — that
-is something an install that reads a mailbox is genuinely allowed to do, and it still happens
-immediately.
-
-### A message we couldn't confirm no longer stays in Drafts for ever
-
-When a send finishes without a clear answer — the mail server closed the connection at the wrong
-moment, and the message was not in the Sent folder when we looked — the draft is held and the row
-says so, pointing you at your Sent folder. That was a question with nowhere to put the answer.
-Discard refused the row, because a send was on record for it, and nothing anywhere could change
-that. A held message stayed held permanently.
-
-The held row now carries the two answers you are actually in a position to give: **It arrived** or
-**It didn't arrive**. "It arrived" records the send and the row leaves Drafts, with your account's
-record of it intact. "It didn't arrive" turns the row back into an ordinary draft — you can edit it,
-send it again, or discard it, and sending again is a genuinely new send rather than a retry of the
-old one.
-
-Two related fixes came with it. A draft whose send **definitively failed** could not be discarded
-either, for the same reason and with less excuse: nothing was in flight and nothing was unknown, and
-the row still refused to go. It discards now, and the record of the failed attempt is kept. And a
-held message that was a **reply** opened in the inline reply editor with Send live, because the
-reply path did not ask whether the row was held before opening it — so the one message that must not
-be sent twice was the one that opened ready to send. It opens as the held message it is.
-
-### The away responder answers the piles you choose
-
-"Who gets a reply" is a fact about a SENDER: somebody you let past the Screener once, and true of
-them from then on. It said nothing about where their later mail lands, and that gap is what people
-actually met. A shop let in to send one order confirmation is still somebody you let in when its
-newsletter files itself to Reads six months later — so the responder answered it, along with
-notification and developer senders nobody meant to be writing to.
-
-There is a second setting now: which piles get a reply. It defaults to your Ohbox alone, with Reads
-available if you want it. Receipts, the Screener and Spam are never answered.
-
-The choice travels like the rest of your settings: change it on a machine that only reads the
-mailbox and it reaches the one organizing it, which is the machine that sends the replies.
-
-**This narrows what a responder already switched on will do.** From this release it stops answering
-mail that files itself to Reads or Receipts. That is deliberate: a reply already sent to somebody
-you did not mean cannot be recalled, so the setting nobody chose is the one that reaches fewest
-people. If you want the wider reach, Reads is one press.
-
-The Ohbox banner says the scope now. "People you've let in get a reply at most once a day" was true
-over a responder answering eight shops, because it named who and the surprise was which mail.
-
-### A bounce stops the replies to that address
-
-If an away reply went to an address that does not accept mail, the bounce came back into your own
-Ohbox — and nothing recorded what it meant. The next message from the same correspondent produced
-another reply and another bounce, once a day for the length of the trip.
-
-A bounce is now remembered against that correspondent, and no further automatic reply is sent to
-them. Somebody who simply REPLIES to an away reply is unaffected: their message looks similar in
-the one place that matters, so the check requires the message to actually be a delivery report
-before anybody's address is written off.
-
-### "Filing 1 message on your mail server…" now says which of four things is happening
-
-Between filing a message and the mail server holding it where you put it, ohmail showed one
-sentence: *Filing 1 message on your mail server… your decisions are already applied here; the
-server is catching up.* The count was right. The rest of it covered four different situations, and
-in two of them it was not true.
-
-There are four, and they now have four sentences:
-
-- **The organizer has not reached your mailbox yet.** One pass runs over every mailbox in turn, so
-  a wait of a minute or two is ordinary. The line now says when the last pass finished, which is
-  the difference between "mine is next" and "nothing is running", and it says when it last looked
-  rather than running a clock over a figure it has not re-read.
-- **Your mail server refused the move.** The retry is scheduled, and until then nothing is trying —
-  so "catching up" described work that was not happening. The line now says the try was refused,
-  what the server refused it for, and when the next one is due.
-- **It has not been filed for a while.** Refused more than once, or outstanding longer than a pass
-  can account for. That is the one case worth a warning, and it is the only one that gets one.
-- **Another install organizes this mailbox.** Exactly one install organizes a mailbox at a time and
-  it performs the moves; the others read. So on a mailbox your own computer organizes, your mail
-  server was never the thing that was behind — and if that computer is asleep, nothing is coming at
-  all. The line now names the machine that files this mailbox, and says when it is not running.
-
-Two things behind the sentences changed as well. A filing decision now asks the organizer to come
-sooner instead of waiting for its next turn, so the ordinary case is seconds rather than minutes.
-And the decision you just made re-reads the mailbox afterwards, so the line is about what you did
-rather than about what was true up to half a minute earlier.
-
-### A signature can carry basic formatting
-
-The signature field in Settings is now the same editor you write messages in, with the same set:
-bold, italic, strike, links, lists, quotes and code. The block below the message renders the
-formatting, so what is on screen is what ships. A signature with no formatting in it is stored and
-sent exactly as before.
-
-Saving plain text clears the formatting — saving text is saving the whole value — and a save cannot
-carry both shapes at once. A recipient whose mail client shows plain text only reads the same words:
-the plain version is worked out from the formatting when the signature is saved.
-
-On a mailbox one of your other devices organizes, the formatting travels with the words, so the
-sign-off that device appends for the address is the one you saved.
-
-### Search results show the address, and an address opens everything from and to that person
-
-A search result printed its sender's name and, where the sender had one, nothing else: the address
-was invisible whenever a display name existed. Every result now carries the name on its first line
-and the address under it, in the small type the list rows already use for an address; a result with
-no name shows the address in the name's place. The address is a link. Pressing it opens a view of
-one correspondent, listing what that address sent and what was sent to it, newest first, with a
-toggle — All, From them, To them — that narrows the list to either direction and shows how many rows
-each would hold. Pressing anywhere else on a result still opens the message, as before.
-
-The same view is reachable from every other place an address is printed, through the control each
-place already has. On a list row and on a Reads or Receipts card the address is the handle that
-opens the screening popover; that popover gains one row, "Everything from and to this address". A
-recipient chip in an open message gains the same entry in its own popover, and the reader's From
-block, which opens the screening popover, reaches the view through that row.
-
-Underneath, the copy of your mail on this device could not be searched for an ADDRESS at all. It
-indexes words, and an address is chopped into words on the way in — `anna@example.com` became
-`anna`, `example` and `com`, three fragments other people's addresses share — so asking for one
-matched everybody called Anna and everybody at any example. It now keeps the whole address as well,
-so mail from and to one person can be listed exactly, in either direction or both, counted without
-double-counting anybody who appears on both sides of the same message.
-
-The view states what it can and cannot see. This device answers all three directions from the mail
-it holds; the archive on the server can be searched by sender only, because of how recipients are
-stored — extending that needs a change to the database rather than to a query. So the count line
-reads, for example, "3 on this device · 40 in the archive (by sender)", and under To them the
-archive's half is the sentence "the archive cannot be searched by recipient yet" rather than a
-number — a small (i) beside either carries the reason in one sentence. The archive is never asked a
-question it cannot answer and never returns an empty page in place of one: it answers the half it
-can and refuses the other by name. Its rows appear under All and under From them, and never under
-To them, where they would be mail the address sent listed as mail sent to it. A refused search
-offers "Try again". A message the archive returned that this device does not hold is marked "from
-the archive", as in Search, and where the archive holds more than it returned the line says how many
-are shown. With no archive behind the client the line says so.
-
-Mail you have sent turns out to be on this device already, and to belong to no pile — so nothing has
-ever listed it, and until now it was reachable only through a conversation. A copy you sent is
-listed here with "Sent" in its meta line. A note in the code claiming sent mail never reached the
-device at all has been corrected; it had been wrong since it was written, and the check that keeps
-it true is now part of the suite.
-
-Escape leaves the view the way the browser's Back does — to the list the address was followed from,
-or to your Ohbox when the link was opened in a fresh window. `/` still opens Search from it.
-
-Also here: the shared interface package's unused search-result component is removed. Nothing drew
-it, and the row this release ships carries two controls rather than one, so it could not have become
-the real one. The stylesheet the real row stands on is untouched.
-
-### The Away pane shows which mail gets a reply
-
-Under "Who gets a reply" there is now "Which mail gets a reply": the two piles the responder can
-answer, in the order the Ohbox banner reads them — who, which mail, how often. Ohbox stays ticked
-and cannot be switched off there; Reads is one press. Saving writes the choice, and the banner's
-sentence names the same piles the next time it renders.
-
-The list of what is never answered — mailing lists, no-reply addresses, security mail, receipts,
-spam, senders you've screened out, your own addresses, and an address that bounced — used to stand
-as a line under the rate. It is an (i) beside "Which mail gets a reply" now: the whole sentence
-opens on hover, on focus or on a press, and it is the one place the list is stated.
-
-### Each mailbox says who organizes it in one chip
-
-On the desktop's Settings → Mailboxes pane every mailbox carried a boxed paragraph under its row —
-"Organizing", the sentence about what this computer does to the mailbox, and a button — and the
-box repeated for every mailbox. The row now carries a chip: "Organizing", "Organized by …" naming
-the install, or "Nothing organizes this mailbox". The chip is a button; hovering it, focusing it or
-pressing it opens the sentence beside it, and a screen reader hears the sentence as the chip's
-description. While a stop is asked for, the chip reads "Stopping" and its sentence says whether the
-server has confirmed yet.
-
-The verb under a mailbox this computer organizes is "Hand the mailbox back — the mail stays where
-it is.", and the browser's Settings → Mailboxes pane now uses the same words for the same act. It
-has its own (i) saying what follows: from its next pass this computer only reads the mailbox — it moves
-nothing, screens nothing and applies none of your rules — and nothing takes the mailbox over by
-itself; another install has to press "Organize here", or you add the mailbox to ohmail Cloud.
-Pressing the verb asks the same question it always did, with the same confirmation.
-
-The cell saying whether the mail server can be reached is announced to a screen reader when it
-changes, and only then: the "Last answered … ago" clause beside it keeps counting without being
-read out again each minute. The chip's change — to "Stopping" at the press, and to the role the
-mailbox settles into afterwards — is announced as well. The text on screen is unchanged.
-
-### Reads and Receipts hold their place while you scroll
-
-Scrolling either reading stream while messages loaded moved the list under you, and the wheel
-sometimes landed inside a message you had not opened instead of on the list.
-
-Three things were moving the list. A card the browser had not laid out yet reserved a fixed guess
-at its height, and cards whose real height was two or three times that guess pushed everything
-below them when they were finally measured; the guess is now computed from each card's own sender,
-subject and preview. A collapsed card reserved room for "at most" the preview it clamps to, so its
-height changed twice when its message arrived — once when the message replaced the preview and
-again when the message's own content filled the clamp; a collapsed card now reserves exactly the
-room it clamps to and never changes size until you open it. And where something above you does
-still change height, the stream now absorbs it: the message at the top of the window stays where
-it is instead of the whole list sliding past. The fade-out at the foot of a collapsed card now
-appears only where the message runs past the card's fixed height; a shorter message ends where
-it ends, with the card's own surface below it and Expand in the same place as on every other card.
-
-The wheel had a second owner. A message wider than the column is laid out at its own width and
-then shrunk to fit, and shrinking is a drawing operation — the message's own document still
-believes it is the taller, wider thing it was written as. That left the message a scrollable area
-containing nothing, and a wheel over a collapsed card scrolled that instead of the list: the mail
-slid up inside the card and left blank space behind it. A shrunk-to-fit message no longer takes the
-wheel. A message too tall to shrink into its frame at all still scrolls inside it, because that is
-the only way to reach the end of it. The wide tables and code blocks inside a message keep their
-sideways scrolling and no longer take a vertical wheel with it.
-
-### The tracking notice moves into the message's head
-
-"A tracking pixel was blocked." — and its siblings, "N remote images blocked." and "A remote
-stylesheet was blocked, so this message may look plain." — no longer stands as a full-width boxed
-line above an open message. In Reads and Receipts the card's meta line carries a small (i) beside
-the date with a two-word caption instead: "Tracker blocked", "Images blocked" or "Stylesheet
-blocked". The reading pane, the panels of an open conversation and the Screener's preview carry
-the same (i) and caption in their own header line, beside the date. Hovering, focusing or pressing
-it opens the whole sentence in a small card; Escape or a press elsewhere closes it. The glyph is a
-button whose description is the sentence, so a screen reader hears the caption and then the
-sentence. In the reading pane and on a conversation panel, "details" prints the sentence as well,
-under the exact date. "Show images" keeps its place above the message, without the box around it.
-On a phone the caption yields to the glyph so the sender's address keeps its room. Nothing about
-the blocking itself changes.
-
-### A desktop can read and act through another computer of yours
-
-Set up on one computer, then let your other computers work through it. The setup chooser has a
-fourth door — **Another computer** — that takes the pairing link the first machine hands out under
-Settings → Devices. Your mail is organized in one place, on hardware you own, and every other
-machine of yours reads and acts through it over your own network or your Tailscale.
-
-The link is checked before it is used, because a pairing link works once. A link that is not a
-pairing link, one on a plain unencrypted address, and one with no key for an address no certificate
-authority can vouch for are all refused without opening a connection. A key that has changed since
-the link was made, something answering that is not ohmail, and a link already spent are all found
-out before the setup is changed — so a wrong link costs nothing. Where the connection is pinned to
-a key, the card shows twelve characters of it and says where the same twelve appear on the other
-computer.
-
-**When that computer is not answering, the app says so and keeps saying so.** The mail on screen is
-real and readable; nothing can be changed until it is back. That line does not look like a sync in
-progress and does not clear itself, and it cannot be dismissed — it is a fact about what the window
-can do, not a process that will finish.
-
-Settings → Desktop names the computer you are connected through, whether the pairing still stands,
-whether it is reachable and when it last answered, and offers to set this machine up on its own if
-it will not be coming back — in every state, not only while something is wrong. Settings → About
-names it too, Settings → Mailboxes points at that computer instead of at a browser, and the panes
-that belong to a hosted account are not shown on this door, because there is no hosted account
-behind it.
-
-The computer doing the organizing shows its own key under Settings → Devices, as the twelve
-characters a joining machine displays before it pairs. Comparing them is what tells "we reached
-something" apart from "we reached the machine you meant" on a network where no certificate
-authority vouches for anybody.
-
-Pairing again after a pairing has ended signs out and redeems in place rather than setting the app
-up afresh, so the copy of your mail on this machine is kept. A computer reinstalled at the same
-address is a different account behind a familiar name, and that is refused rather than merged.
-
-If a pairing finishes but needs the app reopened — which is what happens when it replaces mail
-already held here, since that copy cannot be thrown away while the app is running — the app says
-the pairing worked and asks you to quit and open it again. It used to show a sign-in form for a
-hosted account you do not have.
-
-Trying to pair while that restart is still pending says so plainly — nothing was paired, reopen
-ohmail first — and tells you your pairing link has not been used, so you do not go back to the
-other computer for one you do not need.
-
-Pairing with a computer that was reinstalled at the same address is no longer a dead end. It is a
-different account behind a familiar name, so it is refused; the refusal now says what starting over
-costs — the mail held here for that other account is discarded, the mail on your server is not
-touched — and that you will need a fresh pairing link, because the one you just used has been
-spent. Starting over is a button you press, never something the refusal does for you.
-
-A pairing link pasted into the self-hosted door's address field opens the right door instead,
-without dialling anything. It used to be answered with advice about installing a root certificate.
-
-If the pairing is removed from the other computer's Devices list, this one says so and offers both
-ways forward — pair again, or set this machine up on its own. Choosing the second states what it
-costs first: the copy here is discarded, the mailbox is read again from the server, and this
-computer takes over the organizing. Nothing on the mail server changes until you agree to organize,
-one mailbox at a time. It also lists which mailboxes the other computer was holding, read before
-anything moves — that list only exists until it does.
+### Trash and filing
+
+- Backspace, Delete and `d` move a message to Trash whether or not Use folders is on — Trash is your
+  mail server's own folder. On the web already; in the desktop app with this release.
+- The line under a message being filed names which of four things is happening, brings the organizer
+  forward rather than waiting for its next pass, and names the machine holding the message up.
+
+### Reading
+
+- The first press of a key that acts on a message selects the first message and names the key:
+  "First message selected. Press again: Move it to Trash". The second press acts.
+- The count over Reads and Receipts reads "12 new since you were here", because it counts mail that
+  arrived since you last left the stream; an unread figure keeps its own word, "3 unread".
+- The row of verbs under a message is centred in its measure, so folding a group behind More takes
+  room off both ends instead of shifting the capsule left.
+- Reads and Receipts hold their place while you scroll: cards reserve their real height, a collapsed
+  card no longer resizes when its message arrives, and the wheel no longer scrolls inside a card.
+- The tracking notice is a small (i) beside the date — "Tracker blocked", "Images blocked",
+  "Stylesheet blocked" — rather than a boxed line above the message.
+
+### Writing and sending
+
+- A send that finishes without a clear answer holds the draft, and the held row now carries **It
+  arrived**, which records the send and takes the row out of Drafts, and **It didn't arrive**, which
+  turns it back into an ordinary draft. Neither could be discarded at all before.
+- Your signature is the editor you write messages in — bold, italic, strike, links, lists, quotes and
+  code — and the block below the message renders what ships. Saving plain text clears the formatting.
+- Every place text is typed draws one text field: a 1px edge on a recessed ground, present before you
+  type, one focus ring, and the same read-only and disabled states everywhere.
+
+### Away replies
+
+- The responder's replies stay in your mail server's Sent folder instead of filling your Ohbox, and
+  mail it answered no longer counts as mail you have handled. Fixed on ohmail Cloud on 2026-09-09;
+  in the desktop app with this release.
+- Which piles get a reply is its own setting now — your Ohbox alone by default, with Reads available;
+  Receipts, the Screener and Spam are never answered. **This narrows a responder already switched
+  on**: from this release it stops answering Reads and Receipts.
+- The Away pane and the Ohbox banner name those piles, the banner scrolls with the list on a phone,
+  and what is never answered is an (i) beside the setting.
+- A bounce stops the automatic replies to that correspondent.
+
+### Settings, rules and mail on a mailbox another machine organizes
+
+Your out-of-office, screening posture, screening reach and sign-off are applied by the install that
+organizes a mailbox, and an edit made on a device that only reads it never arrived there: you could
+set an out-of-office and no out-of-office would ever be sent.
+
+- All four travel now, as a request the organizing install carries out. Only the setting you changed
+  travels, and one save covers an account whose mailboxes are organized in different places.
+- Moving a message, deleting one, approving a sender out of the Screener and editing a rule travel
+  the same way: the answer names the install being waited on, or which mailboxes took the rule and
+  which run a version too old. Amending a message's folder was writing the change down locally.
+- Changing what a rule MATCHES cannot travel and is refused with that reason; deleting one keeps it
+  visible until it is gone there. Undoing a workflow run, and the re-route for rules brought over
+  from Hey, refuse and name the mailbox and the install holding it.
+- An install that only reads a mailbox keeps a copy of the settings in force on it, refreshed every
+  few minutes, with the mailbox's signature and the requests the organizer can carry out. Settings →
+  Mailboxes gives each mailbox one chip instead of a boxed paragraph under every row.
+
+### Search
+
+- Every result carries the sender's name and the address under it, and the address is a link that
+  opens one correspondent: what that address sent and what was sent to it, either direction or both.
+- That view says what it can see — this device answers all three directions, the archive by sender
+  only — and mail you have sent is listed for the first time, marked "Sent".
+- A hyphenated or dotted run is three terms now — itself, its joined form and its parts — so
+  `D-U-N-S`, `d-u-n-s` and `DUNS` all reach a message none of them found before.
+- A search of the whole archive that never comes back now ends: "The archive did not answer."
+
+### Doors: a laptop through your desktop, and a server you run
+
+- Set one computer up, then let your others work through it. The setup chooser has a fourth door,
+  **Another computer**, which takes the pairing link the first machine hands out under Settings →
+  Devices; your mail stays organized in one place, on hardware you own.
+- A pairing link works once and is checked before it is used, so a link that is not one, a plain
+  unencrypted address, a changed key, something that is not ohmail and a spent link are refused
+  before the setup is touched.
+- When that computer is not answering, the app says so and keeps saying so: the mail on screen is
+  real and readable, nothing can be changed until it is back, and the line cannot be dismissed.
+- An install with no mailbox connected can finish the "Your own server" door: it points itself at
+  the address, asks that server whether it is there, and puts itself back if the answer is no.
+- The address you type is dialled by a connection made for it, so a server you run that was
+  answering is no longer reported unreachable because another computer of yours was off.
+- When a mail server's certificate is for a different name than the one you typed, ohmail stops
+  before sending your password, says which name the certificate covers, and offers it as a press:
+  `Use <host> as the IMAP server`, or SMTP where the outgoing server did not match.
+
+### Screen readers and small controls
+
+A settings banner read out as its label alone, and every settings row's value — including whether a
+mailbox's mail server can be reached — was on screen and out of reach; both are read now. The
+compose body and the inline reply editor report themselves as multi-line text boxes, and four small
+controls take a full press band on a window narrower than 640px.
 
 ### RPM packages for Fedora and openSUSE
 
-Linux had two ways to install ohmail — an AppImage and a `.deb` — which left every Fedora, RHEL
-and openSUSE desktop installing outside its own package manager. Every release now attaches an
-`.rpm` as well, one per architecture: `ohmail-linux-x86_64.rpm` and `ohmail-linux-aarch64.rpm`,
-beside the two `.deb` packages and the two AppImages.
+Every release attaches an `.rpm` per architecture — `ohmail-linux-x86_64.rpm` and
+`ohmail-linux-aarch64.rpm` — beside the two `.deb` packages and the two AppImages. Like the `.deb`,
+it updates by installing the next one rather than through the app's own updater.
 
 ```bash
 sudo dnf install ./ohmail-linux-x86_64.rpm      # Fedora, RHEL, CentOS Stream
 sudo zypper install ./ohmail-linux-x86_64.rpm   # openSUSE
 ```
 
-It is the same application in a different wrapper: the mail engine and its own Node runtime are
-inside the package, it installs the same desktop entry — so ohmail is selectable as the system
-mail app and a clicked `mailto:` address reaches it — and `dnf remove ohmail` takes it away again.
-Like the `.deb`, an `.rpm` install updates by installing the next `.rpm` rather than through the
-app's own updater; the Install section of the README says why.
+### Sentences that say what the product does
 
-CI installs the x86_64 package in a clean Fedora container on every build, starts the mail engine
-from the installed layout, and uninstalls it, so "it installs" is measured rather than assumed.
-
-### Searching for a hyphenated reference finds it
-
-A search for `D-U-N-S` answered "nothing" with those very characters sitting in a subject line on
-screen. The search index split text into runs of letters and digits and dropped anything shorter
-than two characters, so the query and the subject lost the same four single letters and there was
-nothing left on either side to compare. Any hyphenated code reads that way: a part number, a
-reference, a date written `2026-09-08`.
-
-A hyphenated or dotted run of letters and digits is now three terms rather than a handful of
-discarded ones: itself, its joined form, and its parts. The query is read by the same rule, so
-`D-U-N-S`, `d-u-n-s` and `DUNS` all reach the message. The hyphenated spelling is the narrower
-question of the two — it asks for the hyphens as well — and the joined one reaches both spellings.
-
-A query that comes out of that with no terms at all is no longer answered with silence. `x`, `#4`,
-a fragment of an address: those are matched as plain text, case-insensitively, against subjects and
-senders. They name something, and the answer to a one-character question is not "nothing".
-
-The whole-archive search gained the matching arm. Postgres reads `Alpha/Beta` as a single word, so
-a search for `pha/Bet` could not match it however plainly the letters are there — a punctuated
-query is now also compared as text against subject lines, ranked below the ordinary matches and
-never instead of them. It runs only for a query that holds punctuation, so an ordinary word search
-is unchanged.
-
-### "Searching the whole archive…" now ends
-
-That sentence could stay on screen for the rest of a session. Only an answer replaced it, so a
-request that never came back — a dropped connection, a laptop that slept mid-search — left the line
-standing with nothing behind it, and there is no way to tell that from an archive that is merely
-slow. After fifteen seconds the pane says the archive did not answer, and offers the same retry it
-already offered when the archive refuses. An answer that arrives late still replaces it.
-
-### A key pressed on a list with nothing selected selects the first message and says so
-
-A list you have just opened has nothing selected, and every key that acts on a message needs
-something to act on. So Backspace on a fresh Ohbox did nothing at all — no message moved, no
-sentence appeared, and nothing on screen said why. The same was true of Reply, Park, Resurface,
-Tag, Screening, Move, the read marks and Enter: eighteen keys, on every list, and the only place
-their state showed was the `?` shortcut list, where they stood greyed out.
-
-The first press of any of those keys now selects the first message in the list and says which key
-you pressed: "First message selected. Press again: Move it to Trash". It does nothing else. The
-second press does the thing. On a list with no messages in it, nothing happens.
-
-A list still never selects anything on its own. That is deliberate: a Backspace that files the top
-message because a list happened to be open is the mistake this is meant to make impossible, and
-the same rule is why arriving at your Ohbox no longer opens the newest message for you.
-
-In the `?` shortcut list, a greyed key that is only waiting for a selection now says so:
-"Select a message first — ↑/↓ or click a row". English and German.
-
-### The reading streams say what their count counts
-
-The number over Reads and Receipts, and the one on the rail beside them, counts the mail that
-arrived since you last left that stream. It read "12 new" — which is also how this app writes an
-unread count, so the same two words stood for two different facts. Someone who had read nothing
-saw "0 new" over a stream full of unread mail, because the line sits at the top until you leave
-it; someone who had read everything there saw a number still asking for attention.
-
-The count keeps its meaning and the sentence now names it: "12 new since you were here", in the
-pile header, in the rail's tooltip, and in the label the mark-all-read control carries when the
-line stands over nothing unread. An unread figure keeps its own word — "3 unread" — so the two
-numbers can appear on one screen without either being mistaken for the other. German reads
-"12 neue seit deinem letzten Besuch".
-
-The Ohbox header counts unread mail and now says which word that is as well. It read "12 new" —
-the same two words, for the other fact, on the pile right next to the two above — and reads
-"12 unread". Its hover tooltip, which also gives the total, is unchanged.
-
-Nothing about how either count is worked out changes.
-
-### The action pill stays centred when it folds
-
-The row of verbs under a message — Reply, the forwarding and deferring groups, the read switch and
-More — is a floating capsule as wide as the verbs it is standing. It sat against the left edge of
-the message's text, so each time the row was too narrow for a group and folded it behind More the
-capsule lost that room from its right-hand end only and its middle moved left. In the widest
-reading column that is 121px of travel, and it happened on the way into and out of every fold: the
-pill stood in a different place depending on how much room it had.
-
-The capsule is centred in the message's measure now, so a fold takes room off both ends and its
-middle does not move. Which verbs stand in the row is unchanged — that is decided by measuring the
-row, and the measurement has never read the capsule. The same rule covers the capsule carrying a
-selection's verbs at the foot of a list and the one at the foot of a card in Reads and Receipts.
-While a reply editor is open the row stands down to a plain full-width row of verbs, as before.
-
-### Screen readers reach what the settings pane shows
-
-A settings banner — the standing fact at the top of a pane, "Organizing" or "Organized by ohmail
-Cloud", with the sentence under it saying since when and from where — read out as its label alone.
-The sentence beside it was on screen and not in what a screen reader could reach. It is now the
-banner's description: the label names the block, the sentence describes it, and the words on screen
-are the same words, unmoved and unchanged.
-
-The same was true of every settings row's value — the "English" beside Language, and the sentence
-saying whether a mailbox's mail server can be reached, which is the one thing on that row a person
-most needs. A value is now a node a screen reader reads. It is deliberately not announced when it
-changes: several of these sentences carry a "last answered … ago" clause that ticks on its own, and
-a reader should not be told the same thing again every minute. This is the browser's panes; the
-desktop's Mailboxes pane already had both.
-
-### Small controls are easier to press on a phone-sized window
-
-Four controls drew smaller than a thumb's target and did not gain the invisible strip the rest of
-the app's small controls use: the open-reader glyph in a message's from-line, which appears on every
-message; the folder row's twisty; the folder row's ⋯; and the line of a compact (i) note. On a
-window narrower than 640px each now takes a press over the full 44px band, and none of them changed
-size, moved, or takes a press meant for the control beside it. On a wider window nothing changes at
-all. The (i) note takes the band while it is closed — the press that opens it — and keeps its own
-line once open, so the explanation underneath stays reachable to the pixel.
-
-### The message body announces itself as a text box
-
-The compose body and the inline reply editor are typed into, and to a screen reader they were named
-blocks rather than editors: nothing said they take text, and nothing said the Return key inserts a
-line rather than sending. Both now report themselves as multi-line text boxes, keeping the names
-they already had — "Message body" and "Reply body". Nothing about typing, sending or formatting
-changes.
-
-### Sentences in the app and on the site say what the product does
-
-Eight sentences were saying something the software does not do, and each is now the plain fact:
-
-- Settings → About said the publisher "writes and signs this app". The builds are not signed —
-  there is no Apple Developer ID and no Authenticode certificate, which is the item in
-  "Still to come" below — so the line claims only what is true.
-- The composer's footnote said a message you are writing is "kept in this browser until you send
-  it". It is not a browser in the desktop app, and drafts are saved to your account after a
-  moment, which is what puts them in Drafts on your other devices. The footnote now says that,
-  the way the Drafts pile already did.
-- The inline editor invited you to "write your reply" while forwarding. Forwarding gets the
-  composer's own placeholder.
-- Settings → Mailboxes headed itself "Cloud mailboxes" on a server you run yourself. That build
-  says "Mailboxes on this server".
-- Picture quality said attachments are compressed "in this browser". The compression is local
-  either way; the row now says "on this device", which is true in the desktop window too.
-- The local mailbox form pointed at a password note "above your provider". It is under it.
-- The privacy notice and the subprocessor page still described the Windows and Linux builds as an
-  interface running on a fictional mailbox with the engine still landing. Every build has been a
-  real mail client since 0.7.0. Both pages name all three platforms.
-
-German moved with all of them. Two checks came with the work, so the same drift cannot happen
-quietly: the four Settings → General rows every surface shares may no longer describe a browser,
-and the two disclosure pages are now held to the same constant the download page reads — in both
-directions, so a page can neither over-claim a build nor keep hedging about one after it ships.
-
-### Connecting to a server you run works on a new install
-
-Choosing "Your own server" on an install that had not yet connected to anything answered with a
-sentence about this app's own mail engine not being configured — on the screen whose whole job is
-to configure it — and went no further. The address step asks the engine what is at the address you
-typed, and a new install has no engine running yet, so the question could not be asked at all. That
-was the main way into this door, on exactly the installs most likely to use it.
-
-The order now depends on what there is to lose. An install with no mailbox connected has no copy of
-your mail and no saved sign-in, so nothing a mistyped address could cost: it points itself at the
-address first and then asks that server whether it is there, and reports the server's own answer if
-it is not — and then puts itself back the way it was, so a wrong address still leaves you on the
-screen that offers the four doors rather than on a mail client with nothing behind it. An install that already has a mailbox keeps asking first and is not touched until the
-server has answered — a wrong address there would discard the copy it holds, which is why that
-order exists.
-
-Asking first also means the server that is being LEFT does the asking, and on a new install that
-matters twice: if you run your own certificate authority, its certificate reaches the engine only
-when the engine is configured for your server, so the address could fail its own check on a
-certificate that is perfectly good. On this path the engine doing the checking is your server's.
-
-### The address you type is dialled by a connection made for it
-
-When this app is paired with another computer of yours, every connection it makes is verified
-against that computer's identity. The question "is there an ohmail server at this address?" was
-going out over that same connection — so if that computer was off, a server you run that was up and
-answering was reported as unreachable, with a sentence telling you to check that the other computer
-was switched on. The address you type is now dialled by a connection made for it. Asking about the
-computer this install is actually paired with still goes over that computer's own verified
-connection.
-
-### The host a certificate names is offered as a press
-
-When a mail server's certificate is for a different name than the one you typed, ohmail stops
-before sending your password and says which name the certificate covers — and, when it can work
-out the host that would have answered, names that too. Until now you had to read it off the
-sentence and type it back into the field two lines below. There is a control beside the sentence
-now: `Use <host> as the IMAP server`, or SMTP when the outgoing server is the one that did not
-match. Pressing it fills that field and does nothing else — the next attempt dials that host and
-checks its certificate against it exactly as any address you type is checked. It appears only where
-there is a field to fill: behind a named provider the host is ohmail's own and there is nothing to
-correct.
-
-The door for a server you run was discarding the same answer entirely. It showed the server's
-general sentence and dropped the detail beside it, while the standalone door — shown the same
-answer by the same engine — sharpened it. Both doors read one answer through one reader and draw it
-with one component now, so a refusal cannot read two ways depending on which door you came in
-through.
+Eight sentences described software that does not exist, and each is the plain fact now. Settings →
+About no longer says the publisher signs this app, because the builds are not signed. The composer's
+footnote no longer says a message is kept in this browser until you send it — it is not a browser in
+the desktop app, and drafts are saved to your account after a moment. The privacy notice and the
+subprocessor page name all three platforms as the real mail clients they have been since 0.7.0.
 
 ### A message the away responder answered says so
 
