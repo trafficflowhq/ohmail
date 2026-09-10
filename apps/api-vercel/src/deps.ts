@@ -355,11 +355,21 @@ function buildServices(cfg: HostConfig): ApiServices {
   lazily(bag, "mailbox", () => makeMailboxService({
     keyProvider, onCreated: grantSetupCreditsLogged,
     /* THE ACCESS VERDICT the allowance gate decides the LIMIT from, read before the create
-       transaction opens. It reads the bag's own port member, so the gate and everything else that
-       asks about this account's standing cannot answer differently. */
-    accessOf: (accountId) => accessOf(
-      (bag.entitlementsPort as EntitlementsComposition | undefined) ?? UNMETERED, accountId,
-    ),
+       transaction opens. It reads the bag's OWN port member, so the gate and everything else that
+       asks about this account's standing cannot answer differently.
+
+       No `?? UNMETERED` fallback, deliberately: this host arms the member unconditionally below,
+       so a fallback would be a branch nobody can reach and every later reader would take for a
+       guarantee — while quietly being the unbounded-limit default the paid gate exists to refuse.
+       An absent member here is a composition bug and says so. */
+    accessOf: (accountId) => {
+      const composed = bag.entitlementsPort as EntitlementsComposition | undefined;
+      if (composed === undefined) {
+        throw new Error("api-vercel: `entitlementsPort` is not on the service bag — the mailbox "
+          + "allowance gate has no limit to read. It is armed unconditionally; this is a bug.");
+      }
+      return accessOf(composed, accountId);
+    },
     /* WHO THIS DEPLOYMENT IS TO A MAILBOX, resolved through the SAME function the worker
        resolves it with. The release asks whether a claim is ours, which is an identity
        question; answering it with the holder's KIND accepted another Cloud deployment's claim.
