@@ -90,6 +90,16 @@ export interface ProfileAwayResponderPatch {
 export interface ProfileUpdatePayload {
   awayResponder?: ProfileAwayResponderPatch;
   signature?: string | null;
+  /**
+   * THE SIGNATURE'S MARKUP (mail 0098) — the authority half, sent beside the text derived from it.
+   *
+   * Added by the ruling "a signature's formatting travels to the install that organizes the
+   * mailbox" (2026-09-10). Before it this payload had one signature slot and it was the plain
+   * half, so a formatted sign-off arrived at the holder as words with the bold, the italic and
+   * the links stripped, and nothing reported a partial result. `null` is part of the value: a
+   * plain save clears the markup locally and must clear it on the holder too.
+   */
+  signatureHtml?: string | null;
   dormancyDays?: number | null;
   screeningPreference?: {
     ohboxPolicy?: string | null;
@@ -106,11 +116,12 @@ export interface ProfileUpdatePayload {
  * shape is defined by ruling 6 and the drain that applies these requests, and a new member is a
  * ruling, not a commit.
  *
- * ONE MEMBER HAS BEEN ADDED THAT WAY, and it is named here because this docblock is the rule it
- * had to satisfy: `piles` inside {@link ProfileAwayResponderPatch}, by the ruling "the away
- * responder's pile scope travels in the profile fan-out" (2026-09-10). Cited by date and subject
- * rather than by commit, because a sha in a source comment is a pointer that a rebase turns into
- * a survivor no sweep can clear.
+ * TWO MEMBERS HAVE BEEN ADDED THAT WAY, and they are named here because this docblock is the rule
+ * they had to satisfy: `piles` inside {@link ProfileAwayResponderPatch}, by the ruling "the away
+ * responder's pile scope travels in the profile fan-out", and {@link ProfileUpdatePayload.signatureHtml}
+ * by "a signature's formatting travels to the install that organizes the mailbox" (both
+ * 2026-09-10). Cited by date and subject rather than by commit, because a sha in a source comment
+ * is a pointer that a rebase turns into a survivor no sweep can clear.
  *
  * Note that the copy is per TOP-LEVEL field: `awayResponder` is assigned whole, so a member added
  * to that interface travels the moment the type admits it. That is precisely why the interface —
@@ -120,6 +131,7 @@ export function profileRequestPayload(p: ProfileUpdatePayload): Record<string, u
   const out: Record<string, unknown> = {};
   if (p.awayResponder !== undefined) out.awayResponder = p.awayResponder;
   if (p.signature !== undefined) out.signature = p.signature;
+  if (p.signatureHtml !== undefined) out.signatureHtml = p.signatureHtml;
   if (p.dormancyDays !== undefined) out.dormancyDays = p.dormancyDays;
   if (p.screeningPreference !== undefined) out.screeningPreference = p.screeningPreference;
   if (Object.keys(out).length === 0) {

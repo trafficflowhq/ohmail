@@ -1233,9 +1233,15 @@ export async function setMailboxSignature(
           + `${TRAVELLING_SIGNATURE_MAX_CHARS} characters`,
         );
       }
+      /* BOTH SHAPES TRAVEL (ruling of 2026-09-10) — the SAME pair written above, so the holder
+         stores what a local save would have stored. Sending the text alone left the holder's
+         markup as it was: a formatted sign-off arrived with the formatting stripped, and a plain
+         save left stale markup for the holder's composer to ship in place of the words just
+         saved. `storedHtml` is `null` in the plain branch, and that null is the instruction to
+         clear it. The record's own byte ceiling is asked at the door by `writeReaderRequest`. */
       const sent = await writeReaderRequest(tx, ctx, {
         mailboxId, kind: "profile.update", holder: route.holder,
-        payload: profileRequestPayload({ signature: stored }),
+        payload: profileRequestPayload({ signature: stored, signatureHtml: storedHtml }),
       });
       travel = { pending: true, holder: route.holder, requestId: sent.requestId };
       return;

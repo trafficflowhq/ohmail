@@ -279,6 +279,20 @@ export async function applyMessageMove(
 /** The longest signature a request may carry. See {@link validateProfileUpdatePayload}. */
 export const PROFILE_SIGNATURE_MAX = 2_000;
 
+/**
+ * The longest MARKUP a request may carry, in {@link PROFILE_SIGNATURE_MAX}'s unit.
+ *
+ * Sized from the column's own local cap the way the text half is: a local save is bounded at
+ * 10 000 characters for whichever shape it carried (mail 0098), the travelling text takes a fifth
+ * of that, and the markup takes the same fifth. An INDEPENDENT bound that happens to equal the
+ * text's — the two govern different columns, so neither moves by editing the other.
+ *
+ * Both halves at their bounds exceed the record's own 3 072-byte JSON ceiling, which is the text
+ * half's documented arrangement rather than an oversight: this bound is the sentence a person
+ * reads, and the wire ceiling behind it refuses at the reader's door instead of truncating.
+ */
+export const TRAVELLING_SIGNATURE_HTML_MAX_BYTES = 2_000;
+
 /** `away_responders.audience` — the closed pair the column's own CHECK enforces. */
 const AWAY_AUDIENCES: ReadonlySet<string> = new Set(["screened_in", "everyone"]);
 /** `away_responders.throttle` — the closed four `away_responders_throttle_closed` enforces. */
@@ -337,6 +351,14 @@ export interface ProfileAwayUpdate {
 export interface ValidatedProfileUpdate {
   awayResponder?: ProfileAwayUpdate;
   signature?: string | null;
+  /**
+   * THE SIGNATURE'S MARKUP (mail 0098), or ABSENT from an install one release older.
+   *
+   * Three states, all reachable and all different: absent leaves the column alone, `null` is "this
+   * signature has no formatting" — what a plain save means, and it has to be able to say so across
+   * the wire or the holder keeps markup the words no longer match — and a string replaces.
+   */
+  signatureHtml?: string | null;
   dormancyDays?: number | null;
   screeningPreference?: string | null;
 }
@@ -374,6 +396,20 @@ export function validateProfileUpdatePayload(payload: unknown): ValidatedProfile
        this one has to sit under rather than duplicate. */
     if (typeof sig === "string" && Buffer.byteLength(sig, "utf8") > PROFILE_SIGNATURE_MAX) return null;
     out.signature = sig;
+  }
+
+  /* THE MARKUP HALF, WHEN THE SENDER IS NEW ENOUGH TO HAVE ONE (ruling of 2026-09-10).
+   *
+   * `in` and not truthiness, for the text half's reason one field over: the three states above are
+   * distinguishable and mean different things. Bytes for {@link PROFILE_SIGNATURE_MAX}'s reason —
+   * markup is the longer shape of the same value, and a UTF-16 count would let a multi-byte
+   * document past a byte ceiling the record is measured against. */
+  if ("signatureHtml" in o) {
+    const html = o.signatureHtml;
+    if (html !== null && typeof html !== "string") return null;
+    if (typeof html === "string"
+      && Buffer.byteLength(html, "utf8") > TRAVELLING_SIGNATURE_HTML_MAX_BYTES) return null;
+    out.signatureHtml = html;
   }
 
   if ("dormancyDays" in o) {
@@ -482,6 +518,9 @@ export interface ApplyProfileUpdateResult {
  * client mirrors — the organizer's own doors do not log them either, and a second answer here
  * would put rows in the feed that no client apply knows what to do with. `signature` is the
  * exception in shape only: it belongs to a mailbox, and the mailbox is not a synced entity either.
+ * `signature_html` (mail 0098) owes this block the same answer and takes it: no client mirrors a
+ * mailbox row, so the new column needs no client apply either, and it appears in `wrote` for the
+ * drain's log line and nowhere else.
  * The profile document is how this configuration reaches other installs, and the write-behind
  * republishes it on its own dirty check — which is a FINGERPRINT over the serializer's output, so
  * writing these rows IS what makes it notice.
@@ -492,10 +531,24 @@ export async function applyProfileUpdate(
   const { accountId, mailboxId, payload, now } = input;
   const wrote: string[] = [];
 
+  /* BOTH COLUMNS IN ONE STATEMENT, each named ONLY when the payload carried it (ruling of
+     2026-09-10). One statement because the two halves are one value in two shapes: a row holding
+     the text of one signature and the markup of another is the drift the local door refuses
+     outright, and two statements is where it would come from. Named conditionally because an
+     install a release older sends no markup at all — writing NULL for it would strip formatting
+     that install's own pane never showed and never offered. */
+  const mailboxSet: Partial<typeof mailboxes.$inferInsert> = {};
   if (payload.signature !== undefined) {
-    await tx.update(mailboxes).set({ signature: payload.signature })
-      .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, accountId)));
+    mailboxSet.signature = payload.signature;
     wrote.push("signature");
+  }
+  if (payload.signatureHtml !== undefined) {
+    mailboxSet.signatureHtml = payload.signatureHtml;
+    wrote.push("signature_html");
+  }
+  if (Object.keys(mailboxSet).length > 0) {
+    await tx.update(mailboxes).set(mailboxSet)
+      .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, accountId)));
   }
 
   if (payload.awayResponder !== undefined) {
