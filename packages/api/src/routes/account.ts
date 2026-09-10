@@ -90,7 +90,7 @@ export const accountRoutes: Route[] = [
        * is bounded, never throws, and answers this response's own three words.
        *
        * Preferring the port while the local service is armed would report `none` for every erasure
-       * on a host whose port has no manage surface yet — a customer deleted and still charged,
+       * on a host whose port composes no `releaseAccount` — a customer deleted and still charged,
        * which is the exact defect this ordering was written for.
        *
        * The try/catch stays for the reason it was written: the thing it guards is a RIGHT, and a
@@ -145,7 +145,11 @@ export const accountRoutes: Route[] = [
     },
   },
   /**
-   * `POST /account/manage-link` — where this customer manages their subscription.
+   * `POST /account/manage-link` — the one door to the managed service's own page.
+   *
+   * Not only "manage": an account with no subscription gets a plan CHOICE there, so this is the
+   * route to a FIRST subscription as well as to an existing one. Both callers read it — the
+   * settings row and the onboarding step — and both render nothing when no URL comes back.
    *
    * `paid`, because the port's answer is a network hop to a third party on this account's behalf;
    * and because a verified address is the right floor for a door that mints a link to a page
@@ -154,9 +158,11 @@ export const accountRoutes: Route[] = [
    *
    * The account comes from the SESSION, never the body. There is no body.
    *
-   * 404 on a host that operates no such program, or whose program answers no URL — the honest
-   * answer for a surface that does not exist here, and the one the settings row reads to decide
-   * not to render itself.
+   * 404 has TWO causes and they are not equally innocent: this host operates no such program (the
+   * ordinary state, and what a self-host answers for ever), or a program that does not know an
+   * account we have just authenticated — which is a real inconsistency rather than an absence. The
+   * status cannot tell them apart; the client's contract-fault report is where the second one is
+   * named, because only that path meets a body.
    */
   {
     method: "POST",

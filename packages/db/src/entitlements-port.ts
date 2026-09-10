@@ -98,8 +98,14 @@ export interface EntitlementsPort {
   spend(accountId: string, action: SpendAction, attemptKey: string): Promise<SpendOutcome>;
   /** The work is over, whichever way it ended. Never throws; replay-safe. */
   release(accountId: string, r: SpendRelease): Promise<void>;
-  /** Where this account manages its subscription, or `null` when there is nowhere to send them.
-   *  The settings row renders only when a URL comes back. */
+  /**
+   * The one customer-facing door the managed service has: plan choice for an account with no
+   * subscription, and plan status for one that has. A KNOWN account always gets a URL, so this is
+   * also the only route to a FIRST subscription — which is why `null` means one thing, that the
+   * program does not know this account, and not "nothing to manage".
+   *
+   * Render the row, or the onboarding link, only when a URL comes back; never store one.
+   */
   manageLink(accountId: string): Promise<{ url: string } | null>;
   /** The person is being erased: stop the money. Bounded and never throwing, because Article 17
    *  may not be withheld because a payment processor is unreachable. */

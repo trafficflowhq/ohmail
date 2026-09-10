@@ -270,8 +270,9 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
       const res = await post("/v1/manage-link", { accountId });
       if (!res || res.status !== 200 || !res.bodyIsJson) return null;
       const b = obj(res.body);
-      // `{url: null}` is an ANSWER — the account has nothing to manage. Only a body that is
-      // neither a string nor null is drift.
+      // `{url: null}` is an ANSWER — the program does not know this account. Only a body that
+      // is neither a string nor null is drift. (It used to mean "nothing to manage"; a known
+      // account now always gets a URL, because this page is the only door to a first plan.)
       if (b && b.url === null) return null;
       const url = b?.url;
       if (typeof url === "string" && url.length > 0) return { url };
