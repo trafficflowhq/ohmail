@@ -2464,7 +2464,6 @@ export const healthRoutes: Route[] = [
           cookieAuth: deps.allowCookieAuth !== false,
           kek,
           dbProvider,
-          billing,
           ...pager,
           ...staffFaults,
           ...(liveFault ?? {}),
