@@ -13,6 +13,14 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### The message actions use the width they have
+
+On a wide window the actions under a message showed Reply, Reply all, Forward and Mark unread and
+folded everything else behind the More chevron, with room to spare on the row. The row now fills
+that room a verb at a time — Later, Park and Resurface come out of the menu as the window widens,
+then Tag, Screening and Move — in one order, whether the message is part of a thread or on its
+own. Anything still folded keeps its place in the menu and its keyboard shortcut.
+
 ### Trash and filing
 
 - Deleting a message again while a restore of it was still travelling to your mail server no
