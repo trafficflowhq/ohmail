@@ -348,18 +348,14 @@ export interface AlertThresholds {
    */
   apiFaultWindowMs: number;
   /**
-   * How many faults ON ONE ROUTE inside the window make an incident.
+   * How many faults ON ONE ROUTE inside the window make an incident. A COUNT and no rate —
+   * this table holds no successes, so there is no denominator (see `apiFaultWindow`).
    *
-   * A COUNT and no rate, because this table holds no successes — see `apiFaultWindow`. Ten,
-   * from the platform's own 5xx distribution over 2026-09-07..09-10 (654 complete five-minute
-   * buckets, 17 274 requests, 59 5xx): the median bucket had 0, p99 had 1, and the p95 of a
-   * fifteen-minute sum was 1. Ten on ONE route is five times the worst quiet fifteen minutes
-   * deployment-wide, and below the 26-error window that span's real burst produced.
-   *
-   * The platform's counts are a SUPERSET of this table's (they include a killed invocation,
-   * which writes nothing here), so a threshold a quiet week never crosses in the superset is
-   * one the subset never crosses either. It is calibrated on that bound and not on `api_faults`
-   * itself, which had no rows anywhere when the number was chosen.
+   * TEN, calibrated on the platform poller's own 5xx distribution, which is a SUPERSET of what
+   * this table can hold: a floor a quiet day never crosses there cannot be crossed here. On a
+   * full quiet day the worst ten-minute sum deployment-wide was 0, and on the one bad day in
+   * that span it was 17 — so the floor sits above every quiet reading and below the real burst.
+   * The measurement is in the landing record; `api_faults` had no rows when it was chosen.
    */
   apiFaultMinPerRoute: number;
   /**
@@ -692,10 +688,9 @@ export function humanAge(seconds: number | null): string {
  * interrupted between the two passed both this check and the matching `/health` marker. Adding a
  * statement to 0030 means moving this constant and that marker together, every time.
  *
- * It now names cloud 0033's last column rather than 0030's, and the obligation above is why: two
- * of this pass's rules read `api_faults`, so a database at 0031 would satisfy a marker on 0030
- * and then throw 42P01 inside the evaluation — the pass dying before it could deliver the
- * finding that explains it, which is the exact failure this preflight removes.
+ * It names cloud 0033's last column now: two of this pass's rules read `api_faults`, so a
+ * database at 0031 would satisfy a marker on 0030 and then throw 42P01 inside the evaluation —
+ * the pass dying before it could deliver the finding that explains it.
  */
 const SCHEMA_BEHIND_MARKER = { table: "api_faults", column: "arm" } as const;
 
@@ -1750,25 +1745,14 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
 
   // ── 11b. THE API'S OWN FAULTS, PER ROUTE — first-party, no vendor involved ──────────────
   //
-  // `api_faults` (cloud 0033) is written by the error envelope on the request that failed, so
-  // unlike the rule above it names the route and the error class, and it needs no platform
-  // token. What it CANNOT see is a killed invocation: a 504 leaves no row, which is exactly the
-  // population the platform poller covers. Two rules, two blind spots, neither redundant.
+  // Written by the envelope on the request that failed, so it names the route and the error
+  // class and needs no platform token; it cannot see a killed invocation, which is the poller's
+  // population. PER ROUTE is the whole gain — ten faults over forty routes is a bad hour, ten
+  // on `/auth/session` is readers who cannot open their mail.
   //
-  // A COUNT and no rate. The table holds only faults, so there is no denominator — the ratio
-  // question belongs to the rule above, which has both counts. Inventing a rate from one of them
-  // would be a quotient over a population nobody measured, which is the mistake the sampled
-  // buckets paragraph above exists to refuse, one table over.
-  //
-  // PER ROUTE, because that is the whole gain over the platform view: ten faults spread across
-  // forty routes is a deployment having a bad hour, and ten on `/auth/session` is readers who
-  // cannot open their mail. Keyed per route AND arm so the two hosts' findings stay separable.
-  //
-  // NOT in SCOPED_ALERT_KINDS, deliberately: both arms read the same table through grants that
-  // both hold (`staff-grants.ts` names it), so absence from a firing set means the condition
-  // cleared. That is a claim about a GRANT, and it is the claim `imap_admission_refused` got
-  // wrong — so `alerts-reliability.test.ts` drives both arms over one database and asserts
-  // neither deletes the other's row.
+  // NOT in SCOPED_ALERT_KINDS: both arms read this table through grants both hold, so absence
+  // means the condition cleared. That is a claim about a GRANT — the one
+  // `imap_admission_refused` got wrong — and `api-faults.pg.test.ts` drives both arms to check it.
   const faultWindow = await apiFaultWindow(db, now, t.apiFaultWindowMs);
   for (const r of faultWindow) {
     if (r.faults < t.apiFaultMinPerRoute) continue;
@@ -1795,19 +1779,12 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
 
   // ── 11c. THE POOLER IS REFUSING WORK ───────────────────────────────────────────────────
   //
-  // A `DbAcquireTimeoutError` means the connection did not begin this statement inside the
-  // acquire ceiling, so the API declined the request with a 503. ONE of those is the ceiling
-  // WORKING — `middleware.ts` says so at the branch that answers it — and the incident is the
-  // RATE, which is why this is a count over a window and not a presence check.
+  // A `DbAcquireTimeoutError` means the connection never began this statement, so the API
+  // declined with a 503. ONE of those is the ceiling WORKING; the incident is the RATE.
   //
-  // Deployment-wide, not per route: a saturated pooler refuses whichever request asked next, so
-  // the route it landed on carries no information. The number of DISTINCT routes affected is in
-  // the sentence instead, because one route refusing is a hot path and eleven is the pool.
-  //
-  // IT IS NOT A WAIT PERCENTILE, and the difference is worth naming: nothing in this deployment
-  // records how long an acquire waited, so a p95 here would be a statistic over a population
-  // that does not exist. What the ceiling leaves behind is a refusal at a known bound, and this
-  // rule counts those.
+  // Deployment-wide, not per route — a saturated pool refuses whoever asked next, so the route
+  // carries no information; the DISTINCT route count is in the sentence instead. And it is not a
+  // wait percentile: nothing records how long an acquire waited, so a p95 would be invented.
   const pooler = await poolerRefusalsInWindow(db, now, t.apiFaultWindowMs);
   if (pooler.refusals >= t.poolerRefusalThreshold) {
     alerts.push({

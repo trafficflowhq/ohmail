@@ -403,17 +403,12 @@ function faultClassOf(err: unknown): string {
 /**
  * HOW LONG A FAULT RECORD MAY DELAY THE ANSWER IT DESCRIBES. One second.
  *
- * The 503 branch below is documented "503, FAST", and the acquire ceiling exists so a starved
- * instance answers in ~15 s with a cause instead of dying at the platform's 60 s knife. Recording
- * through the same pool would inherit that ceiling exactly when it bites: the insert waits for a
- * connection nothing is going to release, and a fast refusal becomes a slow one. That is the
- * defect this budget closes, and it is the middleware's to close rather than the port's — this is
- * where the response budget lives, so no implementation can cost more than a bound stated here.
+ * The 503 branch below is "503, FAST". Recording through the same pool inherits the 15 s acquire
+ * ceiling exactly when it bites, turning a fast refusal into a slow one — so the bound lives
+ * here, where the response budget lives, and no port implementation can exceed it.
  *
- * The write is not cancelled, only abandoned: it may still land, and on a serverless host it may
- * be frozen instead. Both are fine — the record is best-effort by contract, and a fault this rule
- * never sees is one the pool was too busy to record. The platform poller's own 5xx count is the
- * arm that stays truthful there.
+ * The write is abandoned rather than cancelled: it may land, or be frozen on a serverless host.
+ * Best-effort by contract, and the platform poller stays truthful when this arm cannot write.
  */
 export const API_FAULT_RECORD_BUDGET_MS = 1_000;
 

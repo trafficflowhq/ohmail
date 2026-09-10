@@ -545,18 +545,12 @@ export function buildDeps(req: Request, rt: ServerRuntime): ApiDeps {
     },
     logger: rt.logger,
     /**
-     * WHERE THIS SERVER'S 5xx GO TO BE COUNTED (cloud 0033) — `arm: "api"`, because that is what
-     * this process is; a self-hosted box runs one API and one worker exactly as the managed
-     * deployment does, and the closed set means the same thing on both.
+     * WHERE THIS SERVER'S 5xx GO TO BE COUNTED (cloud 0033). `arm: "api"` — a self-hosted box
+     * runs one API and one worker exactly as the managed deployment does.
      *
-     * `rt.db` and not a new handle: this server holds one session-capable pool for the process,
-     * so there is nothing to re-acquire. The hosted arm builds a fresh pooled handle for a reason
-     * that does not apply here — it is the branch answering `db_busy` whose handle just refused.
-     *
-     * Wired UNCONDITIONALLY, unlike `alerts` below. The table is in the cloud journal, which this
-     * server's database carries whole, so it always exists; and the operator's observability on a
-     * box with no pager is `/health` plus this table, which is exactly when a first-party fault
-     * record is worth the most.
+     * `rt.db`, not a fresh handle: one session-capable pool per process, nothing to re-acquire.
+     * Wired UNCONDITIONALLY, unlike `alerts` below — this server's database carries the cloud
+     * journal whole, and on a box with no pager `/health` plus this table IS the observability.
      */
     faultLog: {
       record: async (fault) => {

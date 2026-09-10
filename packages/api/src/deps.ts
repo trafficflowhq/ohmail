@@ -886,22 +886,13 @@ export interface ApiDeps {
 }
 
 /**
- * WHERE A 5xx GOES TO BE COUNTED — a port, because this file is inside the desktop engine's
- * import closure and may never name a Cloud table.
+ * WHERE A 5xx GOES TO BE COUNTED — a port, because this file ships inside the desktop engine
+ * and may never name a Cloud table (`DB_ACQUIRE_TIMEOUT_ERROR`'s reason, one file over).
  *
- * `withErrorEnvelope` calls it once per 5xx it answers. The implementation writes `api_faults`
- * (cloud 0033) and is wired by the hosted and self-host composition roots; `packages/api` names
- * neither the table nor `@trafficflow/db`'s cloud entry point, for the reason
- * `DB_ACQUIRE_TIMEOUT_ERROR` in `middleware.ts` is a string.
- *
- * ── ABSENT AND FAILING ARE TWO STATES AND BOTH ARE NAMED ───────────────────────────────────
- *
- * ABSENT means this shell has no fault log at all — the desktop engine and a local install,
- * where there is no such table and nothing to record. The envelope records nothing and says
- * nothing: that is not a degradation, it is the correct behaviour for a host with one user.
- * PRESENT AND THROWING is a hosted deployment whose write failed, which IS worth a line, and
- * the envelope logs one. Collapsing the two would either spam a desktop log or hide a broken
- * board.
+ * ABSENT and FAILING are two states and both are named. Absent is the desktop and every local
+ * install: no such table, nothing recorded, nothing said. Present-and-throwing is a hosted
+ * board going dark, and the envelope logs it once. Collapsing them would either spam a desktop
+ * log or hide a broken board.
  */
 export interface ApiFaultLogPort {
   /**

@@ -770,20 +770,12 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
     // per request; the underlying sink is `console.log`, so this costs three closures.
     logger: hostLogger(cfg),
     /**
-     * WHERE THIS HOST'S 5xx GO TO BE COUNTED (cloud 0033) — `arm: "api"`, a literal for
-     * `aiUsage`'s reason one screen up: the arm is in what a reader groups by, and two processes
-     * writing under one name makes "which host is failing" unanswerable.
+     * WHERE THIS HOST'S 5xx GO TO BE COUNTED (cloud 0033). `arm: "api"` is a literal for
+     * `aiUsage`'s reason above — two processes under one name make "which host" unanswerable.
      *
-     * A FRESH pooled handle rather than the request's `db`, and this is the load-bearing choice:
-     * the branch that answers `503 db_busy` is the one whose handle just refused an acquire, and
-     * recording through it would be a second refusal by construction. It is the same module-cached
-     * pool, so this costs no connection.
-     *
-     * The write NEVER throws out of here. `recordApiFault` can fail for two reasons an operator
-     * cannot act on mid-request — the pool is saturated, or this host is deployed ahead of the
-     * migration — and a request that already failed must still be answered. `withErrorEnvelope`
-     * logs the swallow; the platform poller's own 5xx count is the arm that stays truthful when
-     * this one cannot write.
+     * A FRESH pooled handle, not the request's `db`: the branch answering `503 db_busy` is the
+     * one whose handle just refused an acquire, so recording through it would be a second
+     * refusal by construction. Same module-cached pool, so no extra connection.
      */
     faultLog: {
       record: async (fault) => {

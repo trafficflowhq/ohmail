@@ -5,13 +5,10 @@ import type { Logger } from "@trafficflow/core/mail";
 /**
  * `api_faults`' RETENTION (cloud 0033) — seven days, deleted by the arm that reads the table.
  *
- * It rides the alert cadence rather than a timer of its own: the alert pass is already the only
- * reader, already holds the leader lock, and a `DELETE` on an indexed `at` with nothing due is an
- * empty range scan. `platform_signals` makes the same choice inside its own poller.
- *
- * NEVER THROWS. It runs beside a pass whose whole job is to notice things, and an unhandled
- * rejection here would take down a worker that is syncing mail perfectly well; a retention sweep
- * that missed one cycle is repaired by the next one.
+ * It rides the alert cadence rather than its own timer: that pass is the table's only reader and
+ * already holds the leader lock, and a DELETE on an indexed `at` with nothing due is an empty
+ * range scan. NEVER THROWS — a retention sweep must not take down a worker that is syncing mail,
+ * and a missed cycle is repaired by the next one.
  */
 export async function apiFaultPrunePass(
   db: Tx, now: Date, log: Logger, retentionMs: number = API_FAULT_RETENTION_MS,
