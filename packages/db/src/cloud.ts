@@ -362,3 +362,18 @@ export {
  * nothing and the field is null, which the client renders as silence.
  */
 export { readLastOrganizerCycleAt, organizerCycleReader } from "./organizer-cycle.js";
+
+/**
+ * THE TWO ANSWERS to the entitlements port (`@trafficflow/db#EntitlementsPort`): the LOCAL
+ * adapter over this database's own tables, and the HTTP client of an entitlements program.
+ *
+ * On this entry point and not the root barrel because both reach the hosted half — one the
+ * billing and ledger tables, the other the network — and the engine census refuses either in the
+ * desktop artifact. The port TYPE is on the root barrel, which is what lets a local host name the
+ * member it fills with `UNMETERED`.
+ */
+export { makeLocalEntitlements, type LocalEntitlementsConfig } from "./entitlements-local.js";
+export {
+  makeEntitlementsClient, ENTITLEMENTS_CALL_TIMEOUT_MS, ACCESS_TTL_MS,
+  type EntitlementsClientConfig, type EntitlementsFetch,
+} from "./entitlements-client.js";

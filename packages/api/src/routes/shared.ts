@@ -10,6 +10,10 @@ import {
   type ProfileImportService, type SendService, type WorkflowsService,
 } from "@trafficflow/services/mail";
 import type { DraftPort } from "@trafficflow/core/mail";
+import {
+  accessOf, isMetered,
+  type AccessVerdict, type EntitlementsComposition, type EntitlementsPort,
+} from "@trafficflow/db";
 import type { ImapAdmissionPort, ApiDeps } from "../deps.js";
 
 /* THE MAIL-HALF ACCESSORS ONLY. The hosted ones — the identity ceremony, the two paid surfaces,
@@ -20,6 +24,37 @@ import type { ImapAdmissionPort, ApiDeps } from "../deps.js";
  * from the full service barrel. That is true about the ARTIFACT and false about everything else: a
  * type import is plainly readable in the source, and a checkout that does not contain the module
  * cannot compile the file that names it. Erasure answers the bundling question only. */
+
+/**
+ * WHAT THIS HOST DECLARED ABOUT ENTITLEMENTS — three states, told apart here and nowhere else.
+ *
+ *  · a port      — a program answers; `access` may refuse and a manage link may exist;
+ *  · `UNMETERED` — this deployment operates no such program. Every limit is off, by decision;
+ *  · absent      — nobody finished the composition. Gates nothing, offers no link, and is a
+ *    configuration error rather than a free tier: it is NOT the same fact as `UNMETERED`, which
+ *    is exactly why the member is filled out loud by every host that means it.
+ */
+export function entitlementsOf(deps: ApiDeps): EntitlementsComposition | null {
+  return deps.services?.entitlementsPort ?? null;
+}
+
+/** The port, or `null` on an unmetered or unfinished host — the two that answer no manage link. */
+export function entitlementsPort(deps: ApiDeps): EntitlementsPort | null {
+  const e = entitlementsOf(deps);
+  return e !== null && isMetered(e) ? e : null;
+}
+
+/**
+ * This account's access verdict, or `null` when there is no declaration to read one from.
+ *
+ * `null` and a refusal are different answers and the caller must not collapse them: `null` means
+ * the question was never armed on this host, and refusing on it would lock every account out of
+ * an install whose operator simply has no entitlements program.
+ */
+export async function accessFor(deps: ApiDeps, accountId: string): Promise<AccessVerdict | null> {
+  const e = entitlementsOf(deps);
+  return e === null ? null : accessOf(e, accountId);
+}
 
 /** The SyncService — falls back to the stateless singleton when the bag omits it. */
 export function sync(deps: ApiDeps): SyncService {

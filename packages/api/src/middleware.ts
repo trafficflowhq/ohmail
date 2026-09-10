@@ -9,7 +9,8 @@ import { csrfTokenFor } from "./csrf.js";
 import { errorResponse, jsonResponse } from "./responses.js";
 import { lookupIdempotent, type StoredIdempotent } from "./idempotency.js";
 import type { SessionVia } from "./deps.js";
-import { unverifiedMayReach } from "./router.js";
+import { accessRefusedMayReach, unverifiedMayReach } from "./router.js";
+import { accessFor } from "./routes/shared.js";
 import type { Handler, Route } from "./router.js";
 
 /**
@@ -621,6 +622,27 @@ export const withSpendGate: Middleware = (next, route) => async (req, deps, para
       "Confirm your email address first. We sent a link when you signed up — " +
       "open it, or ask for a new one, and then try again.",
     );
+  }
+  /**
+   * THE ACCESS ARM — one place, so a refused account meets the same answer at every door.
+   *
+   * 402 and not 403: the remedy is a payment, and the client renders the lock screen off this
+   * status alone. `details` carries the reason and, when the port supplies one, where to go —
+   * nothing else, because a refusal is not the place to project an account's billing state.
+   *
+   * `accessFor` answers `null` on a host that declared no entitlements program and never
+   * refuses on a fault (see the port's `access`), so this arm can only fire on a real verdict.
+   * Nothing is deleted and nothing is logged out; the doors in `accessRefusedMayReach` stay open.
+   */
+  if (deps.session && !accessRefusedMayReach(route)) {
+    const verdict = await accessFor(deps, deps.session.accountId);
+    if (verdict && !verdict.ok) {
+      return errorResponse(
+        "subscription_required", 402,
+        "This account is not active. Your mail and settings are kept — nothing has been deleted.",
+        { reason: verdict.reason, ...(verdict.manageUrl ? { manageUrl: verdict.manageUrl } : {}) },
+      );
+    }
   }
   return next(req, deps, params);
 };

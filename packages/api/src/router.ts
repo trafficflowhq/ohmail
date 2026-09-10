@@ -86,6 +86,35 @@ export const UNVERIFIED_MAY_REACH: ReadonlySet<CostClass> =
   new Set<CostClass>(["unauthenticated", "ceremony", "read"]);
 
 /**
+ * THE DOORS THAT STAY OPEN TO A REFUSED ACCOUNT — the classes, and the one route outside them.
+ *
+ * When the entitlements port refuses an account, the app renders a lock screen instead of mail.
+ * Three things must still work from inside that lock, or it is a trap rather than a control:
+ * signing out and every identity call (`ceremony`), leaving under Art. 17 (`DELETE /account`, also
+ * `ceremony`), and the way back to paying — which is `POST /account/manage-link`, a `paid` route
+ * and therefore the one door this set names explicitly rather than by class.
+ *
+ * `unauthenticated` is here because it serves no account at all, so there is no verdict to judge.
+ */
+export const ACCESS_REFUSED_MAY_REACH: ReadonlySet<CostClass> =
+  new Set<CostClass>(["unauthenticated", "ceremony"]);
+
+/** `<METHOD> <pattern>` of every route reachable while refused DESPITE its cost class. */
+export const ACCESS_REFUSED_MAY_REACH_ROUTES: ReadonlySet<string> =
+  new Set<string>(["POST /account/manage-link"]);
+
+/**
+ * True iff a refused account may still reach this route. Takes the route so the pattern
+ * exception is decided in one place; fails CLOSED on an unrecognised cost, exactly as
+ * {@link unverifiedMayReach} does — except that "closed" here means the lock screen, which is
+ * reachable and reversible, rather than anything destructive.
+ */
+export function accessRefusedMayReach(route: { method: string; pattern: string; cost: unknown }): boolean {
+  if (ACCESS_REFUSED_MAY_REACH_ROUTES.has(`${route.method.toUpperCase()} ${route.pattern}`)) return true;
+  return typeof route.cost === "string" && ACCESS_REFUSED_MAY_REACH.has(route.cost as CostClass);
+}
+
+/**
  * True iff `cost` is a class an unverified account may reach. Deliberately takes `unknown`:
  * the caller is a middleware reading a field that a JavaScript caller or an un-typechecked
  * test route can leave undefined, and the answer for "no declaration" must be `false`.

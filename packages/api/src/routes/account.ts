@@ -1,7 +1,8 @@
 import { deleteAccount, type ErasureBillingOutcome } from "@trafficflow/services";
+import { ServiceError } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
 import { clearSessionCookies } from "../cookies.js";
-import { cookieSurface, json } from "./shared.js";
+import { cookieSurface, entitlementsPort, json } from "./shared.js";
 import type { Route } from "../router.js";
 
 /**
@@ -81,10 +82,29 @@ export const accountRoutes: Route[] = [
     options: { stepUp: true },
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
+      let subscription: ErasureBillingOutcome = "none";
+      /**
+       * STOP THE MONEY THROUGH THE PORT. `releaseAccount` is bounded and documented never to
+       * throw, and the three outcomes map onto the three this response has always carried:
+       * nothing to stop, stopped, could not be stopped. A host with no entitlements program has
+       * nothing to stop and reports `none`.
+       *
+       * The try/catch stays for the reason it was written: the thing it guards is a RIGHT, and a
+       * bug in the money path may not become a 500 in front of an Art. 17 erasure.
+       */
+      const port = entitlementsPort(deps);
+      if (port) {
+        try {
+          const outcome = await port.releaseAccount(ctx.accountId);
+          subscription = outcome === "released" ? "cancelled"
+            : outcome === "failed" ? "cancel_failed" : "none";
+        } catch {
+          subscription = "cancel_failed";
+        }
+      }
       const plane = deps.services?.billingPlane;
       const billing = deps.services?.entitlements;
-      let subscription: ErasureBillingOutcome = "none";
-      if (plane && billing) {
+      if (!port && plane && billing) {
         // `cancelForErasure` is documented never to throw — and to answer inside a
         // hard bound even against a HANGING plane (the cancel is a network hop inside an
         // Art. 17 request now; see `ERASURE_CANCEL_TIMEOUT_MS`). The try/catch is here anyway,
@@ -118,6 +138,37 @@ export const accountRoutes: Route[] = [
         200,
         cookieSurface(deps) ? clearSessionCookies() : [],
       );
+    },
+  },
+  /**
+   * `POST /account/manage-link` — where this customer manages their subscription.
+   *
+   * `paid`, because the port's answer is a network hop to a third party on this account's behalf;
+   * and because a verified address is the right floor for a door that mints a link to a page
+   * holding payment details. It is also the ONE `paid` route a REFUSED account may still reach
+   * (`ACCESS_REFUSED_MAY_REACH_ROUTES`): the way back to paying cannot be behind the lock.
+   *
+   * The account comes from the SESSION, never the body. There is no body.
+   *
+   * 404 on a host that operates no such program, or whose program answers no URL — the honest
+   * answer for a surface that does not exist here, and the one the settings row reads to decide
+   * not to render itself.
+   */
+  {
+    method: "POST",
+    pattern: "/account/manage-link",
+    cost: "paid",
+    handler: async (req, deps) => {
+      const ctx = serviceContext(deps, req);
+      const port = entitlementsPort(deps);
+      const link = port ? await port.manageLink(ctx.accountId) : null;
+      if (!link) {
+        throw new ServiceError(
+          "no_manage_surface", 404,
+          "This deployment has no subscription management page.",
+        );
+      }
+      return json(link, 200);
     },
   },
 ];

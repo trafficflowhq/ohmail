@@ -33,7 +33,7 @@ import type { SmtpLoginProof } from "@trafficflow/core/adapters/imap";
 import type { ProbeHostGuard } from "./imap-probe.js";
 /* The spend gate's PORT, from the root barrel. `@trafficflow/db/cloud` is the half that answers,
  * and a route table must be able to say it may be handed a gate without depending on the ledger. */
-import type { AiCreditGate } from "@trafficflow/db";
+import type { AiCreditGate, EntitlementsComposition } from "@trafficflow/db";
 
 /**
  * Builds the per-request AI spend gate. `db` is the request's handle and `accountId`
@@ -260,6 +260,20 @@ export interface ApiServices {
    * an `Idempotency-Key`, so the two must be wired together (the hosted API does).
    */
   aiCredits?: AiCreditGateFactory;
+  /**
+   * WHO ANSWERS "may this account use the service, and within what limits" — an entitlements
+   * port, or the literal `UNMETERED` for a host that operates no such program.
+   *
+   * Declared here rather than in `deps-cloud.ts` because EVERY host fills it: the desktop engine
+   * and the self-host server say `UNMETERED` out loud, which is the distinction the member exists
+   * to keep (absent is a composition nobody finished; unmetered is a deployment that means it).
+   * Absent therefore gates nothing and offers no manage link — see `entitlementsOf` in
+   * `routes/shared.ts`, which is where the three states are told apart.
+   *
+   * `entitlementsPort` and not `entitlements`: the shorter name is the hosted billing SERVICE
+   * (`deps-cloud.ts`), which still exists while the state it holds has not moved.
+   */
+  entitlementsPort?: EntitlementsComposition;
   // Gated idempotent send. The route reads `Idempotency-Key` itself (400 if absent)
   // and is NOT idempotent-marked; SendService owns the `outbound_sends` reservation.
   // The API passes `openSendAdapter = makeSendAdapter` per-call; tests inject a

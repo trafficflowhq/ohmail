@@ -314,3 +314,19 @@ export {
   profileImportResolutionSince, recordProfileImportResolution,
   type ProfileFoundMarker, type ProfileImportDecision, type ProfileImportSubject,
 } from "./organizer-profile-import.js";
+
+/**
+ * THE ENTITLEMENTS PORT — what a host may be handed to answer "may this account use the service,
+ * and within what limits", and nothing that answers it.
+ *
+ * Here for the reason {@link AiCreditGate} is here one block up: the route table is compiled by
+ * every host, and a host with no entitlements program declares itself UNMETERED rather than
+ * leaving the member absent. The two implementations live on `@trafficflow/db/cloud` with the
+ * tables and the network capability they need.
+ */
+export {
+  UNMETERED, UNMETERED_ACCESS, accessOf, isMetered,
+  type EntitlementsPort, type EntitlementsComposition,
+  type AccessVerdict, type AccessLimits, type AccessRefusal,
+  type SpendVerdict, type ReleaseOutcome,
+} from "./entitlements-port.js";
