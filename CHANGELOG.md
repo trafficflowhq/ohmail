@@ -66,6 +66,13 @@ repaired once, on first run of this release: it was recorded as if you had filed
 is why it sat where it landed even when the sender already had a rule pointing elsewhere. Mail you
 moved yourself is left exactly where you put it.
 
+### About names the build this app was made from
+
+Settings → About showed the version and nothing else, so two builds of the same release looked
+identical from inside the app. The row now reads the version followed by the first nine characters
+of the commit it was built from, which is what a bug report needs to be answerable. A build made
+from a checkout shows the version alone.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
