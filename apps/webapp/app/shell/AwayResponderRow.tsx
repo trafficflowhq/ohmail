@@ -123,8 +123,9 @@ export const AWAY_COPY = {
    */
   pilesNote: "Spam is never answered. The Screener follows who gets a reply, above.",
   never:
-    "Never sent to mailing lists, no-reply addresses, security mail, spam, senders "
-    + "you've screened out, your own addresses, or an address that bounced.",
+    "Never sent to mailing lists, no-reply addresses, a site or server's own notification "
+    + "mailbox, security mail, spam, senders you've screened out, your own addresses, or an "
+    + "address that bounced.",
   /** The end date, and the two sentences the pane says about it. */
   untilLabel: "Turn off automatically on",
   untilNone: "No end date",

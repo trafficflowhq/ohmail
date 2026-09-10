@@ -2998,7 +2998,7 @@
     "per_message": "Einmal, bis du den Text änderst",
     "per_day": "Höchstens einmal am Tag",
     "per_week": "Höchstens einmal pro Woche",
-    "never": "Geht nie an Mailinglisten, No-Reply-Adressen, Sicherheitsmails, Spam, Absender, die du aussortiert hast, deine eigenen Adressen oder eine Adresse, die unzustellbar war.",
+    "never": "Geht nie an Mailinglisten, No-Reply-Adressen, das Benachrichtigungspostfach einer Website oder eines Servers, Sicherheitsmails, Spam, Absender, die du aussortiert hast, deine eigenen Adressen oder eine Adresse, die unzustellbar war.",
     "pilesLabel": "Welche Post eine Antwort bekommt",
     "pileOhbox": "Ohbox",
     "pileReads": "Reads",

@@ -2998,7 +2998,7 @@
     "per_message": "Once, until you change the text",
     "per_day": "At most once a day",
     "per_week": "At most once a week",
-    "never": "Never sent to mailing lists, no-reply addresses, security mail, spam, senders you've screened out, your own addresses, or an address that bounced.",
+    "never": "Never sent to mailing lists, no-reply addresses, a site or server's own notification mailbox, security mail, spam, senders you've screened out, your own addresses, or an address that bounced.",
     "pilesLabel": "Which mail gets a reply",
     "pileOhbox": "Ohbox",
     "pileReads": "Reads",
