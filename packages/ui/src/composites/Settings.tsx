@@ -205,15 +205,12 @@ export interface SettingsVerdictProps {
   /** What the endpoint said — its own sentence, rendered whole. */
   detail?: ReactNode;
   /**
-   * WHAT TO DO NEXT, as its OWN line rather than glued to {@link detail}.
-   *
-   * The two are written by different authors: `detail` is the endpoint's or the engine's sentence,
-   * `hint` is ours. Concatenating them into one string means guessing whether the first ends
-   * itself, and that guess cannot be made — a model identifier may legally end in `.`
-   * (`ai-provider.ts:242` accepts it), so `does not have "foo."` is a stop belonging to a NAME and
-   * `the server said "no such model."` is a stop belonging to a SENTENCE, and no regex separates
-   * them. Three review rounds narrowed that guess and the fourth found the case that breaks it.
-   * Two blocks need no separator at all.
+   * WHAT TO DO NEXT, as its OWN line rather than glued to {@link detail}. The two are written by different authors:
+   * `detail` is the endpoint's or the engine's sentence, `hint` is ours. Concatenating them into one string means
+   * guessing whether the first ends itself, and that guess cannot be made — a model identifier may legally end in `.`
+   * (`ai-provider.ts:242` accepts it), so `does not have "foo."` is a stop belonging to a NAME and `the server said
+   * "no such model."` is a stop belonging to a SENTENCE, and no regex separates them. Three review rounds narrowed
+   * that guess and the fourth found the case that breaks it. Two blocks need no separator at all.
    */
   hint?: ReactNode;
   /** "Checked 2 minutes ago" — the host formats it; absent while nothing has been asked. */

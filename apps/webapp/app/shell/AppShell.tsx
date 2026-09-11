@@ -3082,17 +3082,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     // question, because the AI action behind it has already been spent.
     setPendingDraft((p) => (p?.messageId === key ? null : p));
 
-    /*
-     * Guarded on the item the run is STANDING ON, not on "a run is open". A confirmation can
-     * arrive from a flush minutes after the press — by which time the user may have skipped
-     * past that message, or closed the run and started a second one over a fresh snapshot of
-     * a pile that has moved. Advancing on the key alone would step over a message nobody
-     * answered, which is the same lie in a rarer form. A late confirmation for a message the
-     * run is no longer on still discharges the debt (`settle` does that), and simply does not
-     * move a cursor that has gone elsewhere.
-     *
-     * `fr` is closed over rather than read from a ref because `useMailSend` re-points
-     * `settledRef` on every render, so what runs here is always the latest committed run.
+    /**
+     * Guarded on the item the run is STANDING ON, not on "a run is open". A confirmation can arrive from a flush
+     * minutes after the press — by which time the user may have skipped past that message, or closed the run and
+     * started a second one over a fresh snapshot of a pile that has moved. Advancing on the key alone would step over
+     * a message nobody answered, which is the same lie in a rarer form. A late confirmation for a message the run is
+     * no longer on still discharges the debt (`settle` does that), and simply does not move a cursor that has gone
+     * elsewhere. `fr` is closed over rather than read from a ref because `useMailSend` re-points `settledRef` on
+     * every render, so what runs here is always the latest committed run.
      */
     const item = fr ? fr.items[fr.step] : undefined;
     if (!fr || !item || item.messageId !== key) return;
@@ -3114,17 +3111,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * below is a belt on the same waistband.
    */
   /**
-   * WHICH ADDRESSES THIS ACCOUNT CAN SEND FROM. The rule is `compose-from.ts`; this
-   * is the one place the two sources of mailboxes are reconciled.
-   *
-   * `GET /mailboxes` when we have it — it is the only source that knows an address is
-   * `disabled`, and the only one with a `createdAt` to order by. The mirror's `"mailbox"`
-   * entities otherwise, which is the demo and the Desktop: `"mailbox"` is not an `EntityType`
-   * in the change log, so those rows exist only where the FixturesAdapter seeded them.
-   *
-   * An EMPTY list is "nothing can be named", and every consumer below renders no From line and
-   * puts nothing extra on the wire rather than guessing. That is the Desktop, and it is also a
-   * Cloud tab in the moment before its first poll lands.
+   * WHICH ADDRESSES THIS ACCOUNT CAN SEND FROM. The rule is `compose-from.ts`; this is the one place the two sources
+   * of mailboxes are reconciled. `GET /mailboxes` when we have it — it is the only source that knows an address is
+   * `disabled`, and the only one with a `createdAt` to order by. The mirror's `"mailbox"` entities otherwise, which
+   * is the demo and the Desktop: `"mailbox"` is not an `EntityType` in the change log, so those rows exist only where
+   * the FixturesAdapter seeded them. An EMPTY list is "nothing can be named", and every consumer below renders no
+   * From line and puts nothing extra on the wire rather than guessing. That is the Desktop, and it is also a Cloud
+   * tab in the moment before its first poll lands.
    */
   const fromOptions = useMemo(
     () => (facts ? optionsFromFacts(facts) : optionsFromMirror(mailboxes)),
@@ -3216,22 +3209,20 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       );
       return;
     }
-    // WHO IT IS ADDRESSED TO — `replyEnvelopePlan`, ONE derivation for the head, the lock
-    // and this wire. Untouched (`replyEnvelope === null`) it is exactly the old inline
-    // resolution: `replyAllRecipients` for a reply-all (the same call that let the button
-    // render), `replyRecipients` for the self-authored plain case, nothing otherwise so
-    // `Engine.enrich` keeps deriving `[parent.from]` — and never a Bcc, which no reply
-    // derives. EDITED, the user's strings are the envelope: To/Cc/Bcc parsed by the compose
-    // form's own parser, a typo emptying the whole set so `canSend` refuses it (the same
-    // rule `composePlan` enforces, arriving on the same predicate).
-    // `ownAddresses`, and NOT `fromOptions` — which is what this line used to pass, and the
-    // sentence above ("the same call that let the button render") was true of the call and
-    // false of its argument. `fromOptions` answers "what may this account send AS": it falls
-    // back to the MIRROR's mailbox rows where `GET /mailboxes` is absent, which is exactly the
-    // demo and the desktop shell. `ownAddresses` falls back to `[]` there. So on those two
-    // surfaces the bar's predicate computed with an unknown reader while this line computed
-    // with a known one, and a self-authored message could show Reply all over an envelope the
-    // send then resolved to the plain reply. One question, one source.
+    // WHO IT IS ADDRESSED TO — `replyEnvelopePlan`, ONE derivation for the head, the lock and this wire. Untouched
+    // (`replyEnvelope === null`) it is exactly the old inline resolution: `replyAllRecipients` for a reply-all (the
+    // same call that let the button render), `replyRecipients` for the self-authored plain case, nothing otherwise so
+    // `Engine.enrich` keeps deriving `[parent.from]` — and never a Bcc, which no reply derives. EDITED, the user's
+    // strings are the envelope: To/Cc/Bcc parsed by the compose form's own parser, a typo emptying the whole set so
+    // `canSend` refuses it (the same rule `composePlan` enforces, arriving on the same predicate). `ownAddresses`,
+    // and NOT `fromOptions` — which is what this line used to pass, and the sentence above ("the same call that let
+    // the button render") was true of the call and false of its argument.
+
+    // `fromOptions` answers "what may this account send AS": it falls back to the MIRROR's mailbox rows where `GET
+    // /mailboxes` is absent, which is exactly the demo and the desktop shell. `ownAddresses` falls back to `[]`
+    // there. So on those two surfaces the bar's predicate computed with an unknown reader while this line computed
+    // with a known one, and a self-authored message could show Reply all over an envelope the send then resolved to
+    // the plain reply. One question, one source.
     const plan = replyEnvelopePlan(parent, ownAddresses, replyAll, replyEnvelope);
     mailSend.send(withSignature({
       kind: "mail_send",
@@ -3645,15 +3636,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    */
   const scheduled = useMemo(() => scheduledSendsList(reader), [reader, version]);
   /**
-   * ONLY `confirmed` IS A CANCELLATION. `queued` means the wire refused retryably and the
-   * intent is parked — the appointment STILL EXISTS server-side and its clock is still
-   * running, so saying "cancelled" (or opening the editor over it) would be the row promising
-   * something the server has not done, on the one surface whose whole content is a promise
-   * about time. The queued sentence says exactly that state; `rolled_back` is the server's own
-   * refusal (the claim won — "already being sent"). The overlay follows the same truth: a
-   * queued mutation keeps its optimistic effect, so the row shows un-scheduled while the
-   * banner says the cancel has not landed — user-always-wins, with the sentence carrying the
-   * doubt.
+   * ONLY `confirmed` IS A CANCELLATION. `queued` means the wire refused retryably and the intent is parked — the
+   * appointment STILL EXISTS server-side and its clock is still running, so saying "cancelled" (or opening the editor
+   * over it) would be the row promising something the server has not done, on the one surface whose whole content is
+   * a promise about time. The queued sentence says exactly that state; `rolled_back` is the server's own refusal (the
+   * claim won — "already being sent"). The overlay follows the same truth: a queued mutation keeps its optimistic
+   * effect, so the row shows un-scheduled while the banner says the cancel has not landed — user-always-wins, with
+   * the sentence carrying the doubt.
    */
   const cancelOutcomeToast = useStableCallback((res: { status: string }) => {
     toast(res.status === "confirmed"
@@ -3795,38 +3784,38 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     writeComposeDraft(next);
   });
   /**
-   * A SECOND PRESS AFTER `unverified` IS A FRESH SEND, AND IT HAS TO BUILD A FRESH ROW.
-   *
-   * The warning's contract ("check your Sent folder before retrying") predates autosave, and
-   * autosave silently broke it for Compose: the plan still carried the row's id, the row is
-   * `unverified`, and `SendService` refuses any key on a row past `draft` — so the retry answered
-   * 409 "cannot be sent from status 'unverified'" forever. The press releases the stranded row
-   * (kept, as the record of the unconfirmed first attempt — it is in Drafts saying so) and sends
-   * WITHOUT a row id, so the adapter writes a fresh draft and a fresh reservation: exactly what
-   * the inline reply has always done. When this send confirms, `onSendSettled` discards the
-   * stranded copy.
-   *
-   * AND THIS PATH IS NOT REACHED FOR A MESSAGE THIS BROWSER IS STILL WAITING ON. "The next press
-   * is a deliberate fresh send" was the whole contract once and is no longer: while an unresolved
-   * record names the message, `canSend` refuses the press, so there is no second press to build a
-   * row for. What arrives here is a message with no such record — the stranded row above, or a
-   * record already resolved. A fresh send of a message whose outcome nobody knows is precisely
-   * the duplicate delivery, and it is refused rather than rebuilt.
+   * A SECOND PRESS AFTER `unverified` IS A FRESH SEND, AND IT HAS TO BUILD A FRESH ROW. The warning's contract
+   * ("check your Sent folder before retrying") predates autosave, and autosave silently broke it for Compose: the
+   * plan still carried the row's id, the row is `unverified`, and `SendService` refuses any key on a row past `draft`
+   * — so the retry answered 409 "cannot be sent from status 'unverified'" forever. The press releases the stranded
+   * row (kept, as the record of the unconfirmed first attempt — it is in Drafts saying so) and sends WITHOUT a row
+   * id, so the adapter writes a fresh draft and a fresh reservation: exactly what the inline reply has always done.
+   * When this send confirms, `onSendSettled` discards the stranded copy. AND THIS PATH IS NOT REACHED FOR A MESSAGE
+   * THIS BROWSER IS STILL WAITING ON.
+   */
+
+  /**
+   * "The next press is a deliberate fresh send" was the whole contract once and is no longer: while an unresolved
+   * record names the message, `canSend` refuses the press, so there is no second press to build a row for. What
+   * arrives here is a message with no such record — the stranded row above, or a record already resolved. A fresh
+   * send of a message whose outcome nobody knows is precisely the duplicate delivery, and it is refused rather than
+   * rebuilt.
    */
   const sendCompose = useStableCallback((sendAt?: string) => {
     /**
-     * THE SIGNATURE, DERIVED EXACTLY AS THE BLOCK RENDERS IT — the form's own state, the
-     * server-confirmed map, and the SAME `composeFrom.mailboxId` the block was handed — sealed
-     * at this press by `withSignature`, so a send mid-edit ships the block's current text and
-     * never a torn mix. `null` (struck, empty, sender stores none, signatures not yet
-     * confirmed) leaves the mutation byte-identical to one built before signatures existed.
-     * Deliberately NOT serialized into `plan.mutation` itself: `canSend` judges the TYPED body,
-     * and a signature must never light Send up over an empty message.
-     *
-     * SEND LATER (mail 0077) is the SAME press with `sendAt` on the mutation — the one send
-     * machine keeps its lock and its rules, the adapter turns the field into an appointment
-     * instead of a delivery, and the recovery branch below applies identically (a recovered
-     * unverified message may be scheduled as legitimately as it may be resent).
+     * THE SIGNATURE, DERIVED EXACTLY AS THE BLOCK RENDERS IT — the form's own state, the server-confirmed map, and
+     * the SAME `composeFrom.mailboxId` the block was handed — sealed at this press by `withSignature`, so a send
+     * mid-edit ships the block's current text and never a torn mix. `null` (struck, empty, sender stores none,
+     * signatures not yet confirmed) leaves the mutation byte-identical to one built before signatures existed.
+     * Deliberately NOT serialized into `plan.mutation` itself: `canSend` judges the TYPED body, and a signature must
+     * never light Send up over an empty message.
+     */
+
+    /**
+     * SEND LATER (mail 0077) is the SAME press with `sendAt` on the mutation — the one send machine keeps its lock
+     * and its rules, the adapter turns the field into an appointment instead of a delivery, and the recovery branch
+     * below applies identically (a recovered unverified message may be scheduled as legitimately as it may be
+     * resent).
      */
     const sigText = effectiveSignature(
       compose.sig ?? SIG_FOLLOWING,
@@ -3842,34 +3831,26 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     const withWhen = (m: MailSendMutation): MailSendMutation =>
       sendAt ? { ...m, sendAt } : m;
     /**
-     * NO FRESH-KEY RESEND AFTER AN UNVERIFIED SEND.
-     *
-     * This used to shed the draft id and send again. Every part of that was the duplicate: a send
-     * with no draft id creates a NEW draft, `useMailSend` mints a NEW key for it, and the server's
-     * uniqueness is `(account_id, idempotency_key)` — so the second reservation collides with
-     * nothing and both can deliver the same message.
-     *
-     * `unverified` is terminal-UNKNOWN, not failed. The reservation may already have gone. The
-     * send therefore parks: `canSend` refuses while the phase stands, the durable lock keeps the
-     * original key rather than releasing it, and the person is shown that it needs checking. A
-     * retry that reuses the key is safe; nothing here may invent a new one.
+     * NO FRESH-KEY RESEND AFTER AN UNVERIFIED SEND. This used to shed the draft id and send again. Every part of that
+     * was the duplicate: a send with no draft id creates a NEW draft, `useMailSend` mints a NEW key for it, and the
+     * server's uniqueness is `(account_id, idempotency_key)` — so the second reservation collides with nothing and
+     * both can deliver the same message. `unverified` is terminal-UNKNOWN, not failed. The reservation may already
+     * have gone. The send therefore parks: `canSend` refuses while the phase stands, the durable lock keeps the
+     * original key rather than releasing it, and the person is shown that it needs checking. A retry that reuses the
+     * key is safe; nothing here may invent a new one.
      */
     mailSend.send(withWhen(withSignature(plan.mutation, sigText, sigHtml)));
   });
 
   /**
-   * ABANDONING THE COMPOSE — the row, the buffer and the form, in that order.
-   *
-   * `ComposeView` decides whether to ask first (`worthSaving`); this is what happens once the
-   * answer is yes, and it has to be the shell's because the draft id is. All three copies of the
-   * message are named here on purpose — the account row (`autosave.discard`), the `localStorage`
-   * scratch buffer (`clearComposeDraft`) and the in-memory form — because leaving any one of them
-   * is a message the user threw away coming back: the row would sit in Drafts, and the buffer
-   * would refill the form the next time Compose opened.
-   *
-   * `discard` is not awaited. It is fire-and-forget for the same reason `discardDraft` above is:
-   * the delete is queued through the engine, which owns the retry, and holding the view open
-   * until the wire answers would make leaving a message feel like a network operation.
+   * ABANDONING THE COMPOSE — the row, the buffer and the form, in that order. `ComposeView` decides whether to ask
+   * first (`worthSaving`); this is what happens once the answer is yes, and it has to be the shell's because the
+   * draft id is. All three copies of the message are named here on purpose — the account row (`autosave.discard`),
+   * the `localStorage` scratch buffer (`clearComposeDraft`) and the in-memory form — because leaving any one of them
+   * is a message the user threw away coming back: the row would sit in Drafts, and the buffer would refill the form
+   * the next time Compose opened. `discard` is not awaited. It is fire-and-forget for the same reason `discardDraft`
+   * above is: the delete is queued through the engine, which owns the retry, and holding the view open until the wire
+   * answers would make leaving a message feel like a network operation.
    */
   const cancelCompose = useStableCallback(() => {
     if (autosave.draftId) writeReplyMeta(`draft:${autosave.draftId}`, {});
@@ -3934,18 +3915,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   );
 
   /**
-   * A MAILTO CLICK, DELIVERED — the host's `mailtoDraft` prop becoming the compose form.
-   *
-   * The same five steps as `writeTo`, for the same reasons, one field at a time: release first
-   * (or the plan still carries an unrelated draft's id and the send overwrites that row), drop
-   * any recovery, seed, persist, close an open inline reply, navigate. Recipients go through the
-   * chip formatter so a prefilled address opens settled rather than as raw text; the body is
-   * plain text and `html` stays empty, `openDraft`'s rule for a body with no stored HTML.
-   *
-   * An EFFECT rather than a handler because the trigger is a prop from outside this tree — the
-   * OS handed the host a link, the host handed the fields down. `onMailtoDraftSeeded` tells the
-   * host to drop its copy, so a remount cannot seed the same click twice over whatever the
-   * person typed since.
+   * A MAILTO CLICK, DELIVERED — the host's `mailtoDraft` prop becoming the compose form. The same five steps as
+   * `writeTo`, for the same reasons, one field at a time: release first (or the plan still carries an unrelated
+   * draft's id and the send overwrites that row), drop any recovery, seed, persist, close an open inline reply,
+   * navigate. Recipients go through the chip formatter so a prefilled address opens settled rather than as raw text;
+   * the body is plain text and `html` stays empty, `openDraft`'s rule for a body with no stored HTML. An EFFECT
+   * rather than a handler because the trigger is a prop from outside this tree — the OS handed the host a link, the
+   * host handed the fields down. `onMailtoDraftSeeded` tells the host to drop its copy, so a remount cannot seed the
+   * same click twice over whatever the person typed since.
    */
   useEffect(() => {
     if (!mailtoDraft) return;
@@ -4051,14 +4028,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
 
   /**
    * OPEN THE SUBJECT-RULE SHEET — from a message's title, and from the sender popover's last row.
-   *
-   * `chrome.openSubjectRule` has been a declared seam with nothing behind it since the reading
-   * surface landed; this fills it. The anchor is the pressed element where there is one — the title
-   * button dispatches `openSubjectRule(id)` with no element, so the sheet is placed by
-   * `placePicker(null)`, exactly as a keyboard-invoked tag picker is.
-   *
-   * It CLOSES the sender popover, because the subject sheet replaces it: they answer the same
-   * question about different halves of one message and two open sheets is two questions.
+   * `chrome.openSubjectRule` has been a declared seam with nothing behind it since the reading surface landed; this
+   * fills it. The anchor is the pressed element where there is one — the title button dispatches
+   * `openSubjectRule(id)` with no element, so the sheet is placed by `placePicker(null)`, exactly as a
+   * keyboard-invoked tag picker is. It CLOSES the sender popover, because the subject sheet replaces it: they answer
+   * the same question about different halves of one message and two open sheets is two questions.
    */
   const openSubjectRule = useStableCallback((messageId: string, anchor: HTMLElement | null = null) => {
     setSenderMenu(null);
@@ -4101,16 +4075,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   const canReplyAllTo = useStableCallback((m: EngineMessage): boolean => replyAllRecipients(m, ownAddresses) !== null);
 
   /**
-   * WRITE THE TWO-TERM RULE, AND SAY ONLY WHAT THE SERVER CONFIRMED.
-   *
-   * The plan comes from `subject-rule.ts`; this dispatches it. The RULE mutation is awaited and the
-   * moves are not — the same split `dispatchScreeningChange` documents at length, for the same
-   * reason: a `move` that fails rolls its own row back on screen, while "future mail files there
-   * too" is a claim about the server that a refusal falsifies. The fixtures adapter never refuses,
-   * so a toast fired on click would be green in every test and wrong on a live account.
-   *
-   * Dispatched here rather than inside the sheet so the sheet stays a pure render of a plan, and so
-   * the awaiting is testable without a DOM.
+   * WRITE THE TWO-TERM RULE, AND SAY ONLY WHAT THE SERVER CONFIRMED. The plan comes from `subject-rule.ts`; this
+   * dispatches it. The RULE mutation is awaited and the moves are not — the same split `dispatchScreeningChange`
+   * documents at length, for the same reason: a `move` that fails rolls its own row back on screen, while "future
+   * mail files there too" is a claim about the server that a refusal falsifies. The fixtures adapter never refuses,
+   * so a toast fired on click would be green in every test and wrong on a live account. Dispatched here rather than
+   * inside the sheet so the sheet stays a pure render of a plan, and so the awaiting is testable without a DOM.
    */
   const confirmSubjectRule = useStableCallback((messageId: string, term: string, dest: ScreeningDest, field: TermField = "subject") => {
     setSubjectRule(null);
@@ -4187,17 +4157,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   });
 
   /**
-   * The same verb over a SET — and it is `tag_assign` fanned out.
-   *
-   * No new bulk mutation kind: `tag_assign` is per-message on the wire, the round trips are
-   * one per message that actually CHANGES, and a selection is a handful of rows rather than
-   * a pile. Inventing a bulk kind would mean a second server route to keep honest for a cost
-   * nobody has measured — the brief asks for a measurement before that claim, and there is
-   * none, so the fan-out stands.
-   *
-   * Messages that already agree with the target state are skipped. `tag_assign` is
-   * idempotent, so this is not correctness — it is not asking a server to restate forty
-   * things it already holds.
+   * The same verb over a SET — and it is `tag_assign` fanned out. No new bulk mutation kind: `tag_assign` is
+   * per-message on the wire, the round trips are one per message that actually CHANGES, and a selection is a handful
+   * of rows rather than a pile. Inventing a bulk kind would mean a second server route to keep honest for a cost
+   * nobody has measured — the brief asks for a measurement before that claim, and there is none, so the fan-out
+   * stands. Messages that already agree with the target state are skipped. `tag_assign` is idempotent, so this is not
+   * correctness — it is not asking a server to restate forty things it already holds.
    */
   const bulkToggleTag = useStableCallback((ids: string[], tagId: string, assigned: boolean) => {
     const name = tags.find((x) => x.id === tagId)?.name ?? tagId;
@@ -4233,18 +4198,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   const dropTag = useStableCallback((ids: string[], tagId: string) => bulkToggleTag(ids, tagId, true));
 
   /**
-   * Mint a tag and put it on this message.
-   *
-   * ONE mutation, not two. The shell cannot call the API directly — `scripts/publish-desktop.mjs`
-   * DENYs `app/api-client` from this shared shell — so the engine is the only wire, and
-   * `tag_assign` carries the new name rather than a second `tag_create` verb: a create that
-   * succeeded followed by an assign that failed would leave an empty tag the user never asked
-   * for, and the two-request version has no transaction to undo it.
-   *
-   * The id is minted HERE so the optimistic effect paints the same tag the database stores. If
-   * the name already exists the server's row wins and this id is simply never seen — the chip
-   * then appears on the next drain under the real id, which is why nothing here asserts the
-   * tag is visible yet.
+   * Mint a tag and put it on this message. ONE mutation, not two. The shell cannot call the API directly —
+   * `scripts/publish-desktop.mjs` DENYs `app/api-client` from this shared shell — so the engine is the only wire, and
+   * `tag_assign` carries the new name rather than a second `tag_create` verb: a create that succeeded followed by an
+   * assign that failed would leave an empty tag the user never asked for, and the two-request version has no
+   * transaction to undo it. The id is minted HERE so the optimistic effect paints the same tag the database stores.
+   * If the name already exists the server's row wins and this id is simply never seen — the chip then appears on the
+   * next drain under the real id, which is why nothing here asserts the tag is visible yet.
    */
   const createTag = useStableCallback((messageId: string, name: string) => {
     void engine.mutate({
@@ -4483,36 +4443,31 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
         }
         case "resurface_now":
           /**
-           * "NOW" IS A STATE, NOT A DATE, and that is the only thing separating this arm from
-           * the one above it.
-           *
-           * `bubbled_up` with a past `bubbleUpAt` would pin nothing until a bubble-up pass ran,
-           * and the pass is not a promise this product can make at this latency — it is gated
-           * inside the worker's cycle, and a standalone desktop install runs no worker at all.
-           * So the mutation asks for the state the schedule exists to reach, the server writes
-           * it in one transaction, and `ohboxView.resurfaced` has the row on the next drain.
-           * No `bubbleUpAt`: there is no schedule to spend.
+           * "NOW" IS A STATE, NOT A DATE, and that is the only thing separating this arm from the one above it.
+           * `bubbled_up` with a past `bubbleUpAt` would pin nothing until a bubble-up pass ran, and the pass is not a
+           * promise this product can make at this latency — it is gated inside the worker's cycle, and a standalone
+           * desktop install runs no worker at all. So the mutation asks for the state the schedule exists to reach,
+           * the server writes it in one transaction, and `ohboxView.resurfaced` has the row on the next drain. No
+           * `bubbleUpAt`: there is no schedule to spend.
            */
           void engine.mutate({ kind: "triage_set", messageId: m.id, state: "resurfaced" });
           toast(t("ohbox.toastResurfaceNow"));
           break;
         case "resurface_done": {
           /**
-           * THE DELIBERATE RELEASE, NAMED — "Done" on a resurfaced or scheduled message.
-           *
-           * FOR A PINNED MESSAGE IT IS ONE MUTATION AND IT ALREADY EXISTED: a deliberate
-           * `mark_seen` (no `via`) spends the pin in the same act on both sides of the wire
-           * (`spentResurface` in the overlay, `MessageService.spendResurface` in the route's
-           * transaction), stamps `lastReadAt`, and the row files at the top of "Earlier" — the
-           * choreography `OhboxView.slideOut` already draws. Nothing new is dispatched for it,
-           * deliberately: a second wire verb for the same release would be two writers of one
-           * fact.
-           *
-           * FOR A SCHEDULED MESSAGE (`bubbled_up`, sitting in the Resurface pile) the release
-           * has an extra half: the booking is cleared FIRST (`triage_set: none` — the same
-           * un-triage the horizon toggles use), then the same deliberate read files it. Same end
-           * state, never a new one: unscheduled, read, top of "Earlier". Skipping the clear
-           * would leave the pile listing a message the reader just said they were done with.
+           * THE DELIBERATE RELEASE, NAMED — "Done" on a resurfaced or scheduled message. FOR A PINNED MESSAGE IT IS
+           * ONE MUTATION AND IT ALREADY EXISTED: a deliberate `mark_seen` (no `via`) spends the pin in the same act
+           * on both sides of the wire (`spentResurface` in the overlay, `MessageService.spendResurface` in the
+           * route's transaction), stamps `lastReadAt`, and the row files at the top of "Earlier" — the choreography
+           * `OhboxView.slideOut` already draws. Nothing new is dispatched for it, deliberately: a second wire verb
+           * for the same release would be two writers of one fact. FOR A SCHEDULED MESSAGE (`bubbled_up`, sitting in
+           * the Resurface pile) the release has an extra half: the booking is cleared FIRST (`triage_set: none` — the
+           * same un-triage the horizon toggles use), then the same deliberate read files it.
+           */
+
+          /**
+           * Same end state, never a new one: unscheduled, read, top of "Earlier". Skipping the clear would leave the
+           * pile listing a message the reader just said they were done with.
            */
           if (m.triage?.state === "bubbled_up") {
             void engine.mutate({ kind: "triage_set", messageId: m.id, state: "none" });
@@ -4544,17 +4499,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
           const folder = FOLDER_OF_VIEW[view];
           if (!folder || folder === m.folder) break;
           /**
-           * A READER MOVES NOTHING, AND HEARS SO BEFORE ANYTHING LEAVES.
-           *
-           * This arm used to dispatch and let the server refuse: the row left the list, the
-           * request was declined, the engine rolled the optimistic overlay back, and the
-           * message reappeared a beat later with no sentence explaining why. The rule was
-           * already written once and asked by three other callers — the Screener's own bar,
-           * the delete window, and the SELECTION's move — so it is asked here in the same
-           * words, from the same helper, at the same moment: at the press, before the wire.
-           *
-           * `roleRef` and not `screenerRole`: the refusal answers with the role at PRESS time,
-           * which is the whole reason that ref exists.
+           * A READER MOVES NOTHING, AND HEARS SO BEFORE ANYTHING LEAVES. This arm used to dispatch and let the server
+           * refuse: the row left the list, the request was declined, the engine rolled the optimistic overlay back,
+           * and the message reappeared a beat later with no sentence explaining why. The rule was already written
+           * once and asked by three other callers — the Screener's own bar, the delete window, and the SELECTION's
+           * move — so it is asked here in the same words, from the same helper, at the same moment: at the press,
+           * before the wire. `roleRef` and not `screenerRole`: the refusal answers with the role at PRESS time, which
+           * is the whole reason that ref exists.
            */
           const refusedMove = readerMoveRefusal(
             rosterRef.current,
@@ -4708,24 +4659,21 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   );
 
   /**
-   * THE BULK SCREENING PLAN — grouped by SENDER, because that is what screening is about.
-   *
-   * A screener decision is not a per-message action, and a selection routinely mixes the two
-   * cases the single-sender path already distinguishes: a sender still WAITING is decided
-   * through `POST /screener/:id`, which promotes a **rule that governs all their future
-   * mail**; a sender whose mail has left the Screener is a composition of `move`s with no
-   * lasting effect at all. Ten messages from six senders, two of them waiting, is two
-   * permanent consent records and four one-off moves — and a naive bulk apply would report
-   * "10 messages moved" and never mention the two.
-   *
-   * So this returns the counts SEPARATELY and the surface states them before committing.
-   * `planScreeningChange` per sender, never a bulk shortcut: forty senders decided through a
-   * path that skips `screener_decide` would fork the consent record from the one
-   * `screener-service.decide` writes.
-   *
-   * NOTE THE COUNT THIS DELIBERATELY REPORTS. The plan moves every message the mirror holds
-   * from that sender, not only the ones that were picked — that IS what screening a sender
-   * means, and it is precisely why the number has to be on screen before the button commits.
+   * THE BULK SCREENING PLAN — grouped by SENDER, because that is what screening is about. A screener decision is not
+   * a per-message action, and a selection routinely mixes the two cases the single-sender path already distinguishes:
+   * a sender still WAITING is decided through `POST /screener/:id`, which promotes a **rule that governs all their
+   * future mail**; a sender whose mail has left the Screener is a composition of `move`s with no lasting effect at
+   * all. Ten messages from six senders, two of them waiting, is two permanent consent records and four one-off moves
+   * — and a naive bulk apply would report "10 messages moved" and never mention the two. So this returns the counts
+   * SEPARATELY and the surface states them before committing.
+   */
+
+  /**
+   * `planScreeningChange` per sender, never a bulk shortcut: forty senders decided through a path that skips
+   * `screener_decide` would fork the consent record from the one `screener-service.decide` writes. NOTE THE COUNT
+   * THIS DELIBERATELY REPORTS. The plan moves every message the mirror holds from that sender, not only the ones that
+   * were picked — that IS what screening a sender means, and it is precisely why the number has to be on screen
+   * before the button commits.
    */
   const planBulkScreening = useStableCallback((ids: string[], dest: ScreeningDest) => {
     const seen = new Set<string>();
@@ -4826,18 +4774,18 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   );
 
   /**
-   * The per-card sweep writer for Reads — ids ONLY, never an anchor. The waterline is "new
-   * since last visit": it must hold still for the whole visit and move exactly once, on the
-   * way out ({@link commitFeedSeen}). This used to re-send the current anchor with every
-   * dwell-mark, which meant a first mark on a line-less pile MINTED a line mid-visit and the
-   * partition reshuffled under the reader.
-   *
-   * BATCHED — one mutation per pause, not per card. Every mutation bumps the mirror version
-   * and a bump re-derives the whole selector chain over the whole mirror, which `seen-batch.ts`
-   * measured as 8× the blocked main-thread time of the identical scroll on an all-read pile.
-   * The batchers live for the SHELL, not the view, so marks pending across a view switch still
-   * flush; the leave seams below (`commitFeedSeen`, `pagehide`) drain them first so a departing
-   * visit's glances are on the wire before — and never instead of — the anchored commit.
+   * The per-card sweep writer for Reads — ids ONLY, never an anchor. The waterline is "new since last visit": it must
+   * hold still for the whole visit and move exactly once, on the way out ({@link commitFeedSeen}). This used to
+   * re-send the current anchor with every dwell-mark, which meant a first mark on a line-less pile MINTED a line
+   * mid-visit and the partition reshuffled under the reader. BATCHED — one mutation per pause, not per card. Every
+   * mutation bumps the mirror version and a bump re-derives the whole selector chain over the whole mirror, which
+   * `seen-batch.ts` measured as 8× the blocked main-thread time of the identical scroll on an all-read pile.
+   */
+
+  /**
+   * The batchers live for the SHELL, not the view, so marks pending across a view switch still flush; the leave seams
+   * below (`commitFeedSeen`, `pagehide`) drain them first so a departing visit's glances are on the wire before — and
+   * never instead of — the anchored commit.
    */
   const readsSeenBatch = useMemo(
     () =>
@@ -4896,20 +4844,19 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       });
     });
   /**
-   * THE TWO VIEWS' COMMITS RE-APPLY `commitFeedSeen` ON EVERY CALL, and that is the whole point
-   * of them not being memos.
-   *
-   * `commitFeedSeen` is a factory: calling it returns an inner closure over THIS render's
-   * `engine` and glance batches. As `useMemo(() => commitFeedSeen("reads"), [commitFeedSeen])`
-   * these were computed once — and once `commitFeedSeen` has a stable identity, once is FOREVER,
-   * so both would have kept the first render's inner closure and marked mail seen against a dead
-   * engine and dead batches for the life of the tab. Nothing would have thrown; the marks would
-   * simply have stopped landing.
-   *
-   * Applying the factory inside the call is what keeps it current: the stable callback forwards
-   * to the newest body, which builds a fresh inner closure over the current engine, which is then
-   * invoked. Guarded by a test that re-renders with a second engine and asserts the mark reaches
-   * THAT one, with the memoised shape kept beside it as the control that tells the two apart.
+   * THE TWO VIEWS' COMMITS RE-APPLY `commitFeedSeen` ON EVERY CALL, and that is the whole point of them not being
+   * memos. `commitFeedSeen` is a factory: calling it returns an inner closure over THIS render's `engine` and glance
+   * batches. As `useMemo(() => commitFeedSeen("reads"), [commitFeedSeen])` these were computed once — and once
+   * `commitFeedSeen` has a stable identity, once is FOREVER, so both would have kept the first render's inner closure
+   * and marked mail seen against a dead engine and dead batches for the life of the tab. Nothing would have thrown;
+   * the marks would simply have stopped landing. Applying the factory inside the call is what keeps it current: the
+   * stable callback forwards to the newest body, which builds a fresh inner closure over the current engine, which is
+   * then invoked.
+   */
+
+  /**
+   * Guarded by a test that re-renders with a second engine and asserts the mark reaches THAT one, with the memoised
+   * shape kept beside it as the control that tells the two apart.
    */
   const commitReadsSeen = useStableCallback((commit: FeedSeenCommit) => commitFeedSeen("reads")(commit));
   const commitReceiptsSeen = useStableCallback((commit: FeedSeenCommit) => commitFeedSeen("receipts")(commit));
@@ -5036,17 +4983,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
         window.location.hash = `#/folder/${target.folderId}/m/${target.id}`;
         return;
       default:
-        // No navigation, so no `readerPending` is needed: nothing will clear this. This is the
-        // "folder no view owns" arm, the History arm and the PARKED arm — a message presented
-        // in History, or filed into a bottom pile, belongs to no list, so the reader opens over
-        // wherever you are, exactly as HistoryView's own row does — and now also the arm for a
-        // hit no pile holds at all (an archive-only search result), which must still open the
-        // message it named.
-        //
-        // The row travels with the open so the reader has something to show even when the
-        // mirror holds none — see `readerOffMirror`. Set unconditionally: the mirror's own row
-        // wins whenever there is one, so this is only ever consulted for a message there is no
-        // other copy of.
+        // No navigation, so no `readerPending` is needed: nothing will clear this. This is the "folder no view owns"
+        // arm, the History arm and the PARKED arm — a message presented in History, or filed into a bottom pile,
+        // belongs to no list, so the reader opens over wherever you are, exactly as HistoryView's own row does — and
+        // now also the arm for a hit no pile holds at all (an archive-only search result), which must still open the
+        // message it named. The row travels with the open so the reader has something to show even when the mirror
+        // holds none — see `readerOffMirror`. Set unconditionally: the mirror's own row wins whenever there is one,
+        // so this is only ever consulted for a message there is no other copy of.
         setReaderOffMirror(m);
         setReaderFor(target.id);
     }
@@ -5287,19 +5230,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    */
   const focused: EngineMessage | null =
     /**
-     * AN OPEN READER IS THE CURSOR, WHATEVER VIEW IT IS OVER.
-     *
-     * First, and deliberately: the reader is the innermost thing on screen, so a message
-     * verb pressed while it is open acts on the message being READ.
-     *
-     * NO GUARD FAILS IF THIS LINE IS DELETED, and that is stated rather than hidden — the
-     * same honesty `OhboxView.pinnedUnread` uses about its own key. Every path that opens
-     * the reader today also sets the pile's cursor to the same message (`OhboxView.open`,
-     * `openMessage`'s Ohbox arm, `openReply` on mobile), so the two cannot yet disagree.
-     * What makes the reader generalisable is precisely that it no longer has to be an Ohbox
-     * message; the first surface that opens it over a pile with its own cursor would make
-     * this load-bearing, and it is cheaper to be right now than to find out then. Coherence,
-     * not a fixed bug — nothing observable changes today.
+     * AN OPEN READER IS THE CURSOR, WHATEVER VIEW IT IS OVER. First, and deliberately: the reader is the innermost
+     * thing on screen, so a message verb pressed while it is open acts on the message being READ. NO GUARD FAILS IF
+     * THIS LINE IS DELETED, and that is stated rather than hidden — the same honesty `OhboxView.pinnedUnread` uses
+     * about its own key. Every path that opens the reader today also sets the pile's cursor to the same message
+     * (`OhboxView.open`, `openMessage`'s Ohbox arm, `openReply` on mobile), so the two cannot yet disagree. What
+     * makes the reader generalisable is precisely that it no longer has to be an Ohbox message; the first surface
+     * that opens it over a pile with its own cursor would make this load-bearing, and it is cheaper to be right now
+     * than to find out then. Coherence, not a fixed bug — nothing observable changes today.
      */
     readerMessage ??
     (route.view === "ohbox"
@@ -5311,17 +5249,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
           : null);
 
   /**
-   * DOES THE LOCAL MIRROR HOLD THIS ROW? — one definition, two consumers.
-   *
-   * The reader can show rows the mirror deliberately does not hold: an archive-only hit opened
-   * from Search reaches past it. A verb whose implementation reads the local row must then be
-   * withheld rather than offered and guaranteed to fail — Delete (`message_delete` acts on a
-   * local row) and Forward (`openForward` reads the message out of the engine and returns
-   * silently when it is absent) both need exactly this question answered.
-   *
-   * Declared here rather than inline in the chrome because `⇧F`'s binding needs it too, and two
-   * spellings of "is this row in the mirror" is how the key and the button come to disagree —
-   * the same one-derivation rule `canSend` and `replyAllRecipients` are held to.
+   * DOES THE LOCAL MIRROR HOLD THIS ROW? — one definition, two consumers. The reader can show rows the mirror
+   * deliberately does not hold: an archive-only hit opened from Search reaches past it. A verb whose implementation
+   * reads the local row must then be withheld rather than offered and guaranteed to fail — Delete (`message_delete`
+   * acts on a local row) and Forward (`openForward` reads the message out of the engine and returns silently when it
+   * is absent) both need exactly this question answered. Declared here rather than inline in the chrome because
+   * `⇧F`'s binding needs it too, and two spellings of "is this row in the mirror" is how the key and the button come
+   * to disagree — the same one-derivation rule `canSend` and `replyAllRecipients` are held to.
    */
   const mirrorHolds = useStableCallback((id: string): boolean => reader.get<EngineMessage>("message", id) != null);
 
@@ -5495,16 +5429,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   );
 
   /**
-   * THE LAYOUT CYCLE — `w` flips classic ⇄ Zero (OHMARCHY-PLAN §3b), registered like every
-   * other chord so the `?` sheet and the palette document it from the one registry.
-   *
-   * FACE-INDEPENDENT, BY DECISION (lane E close-out): layout is the contract's own second
-   * axis, orthogonal to the face by construction — the zero stylesheet speaks only in
-   * tokens, so paper resolves the same arrangement through its calm values — and §4's
-   * acceptance criterion runs the keyboard walkthrough in BOTH layouts, which would be a
-   * test of a hidden state under a face gate. The DEFAULT stays classic on every face and
-   * every platform; zero is only ever this device's explicit choice (`ohmail.layout` — the
-   * contract gives layout no account wire, and none is added here).
+   * THE LAYOUT CYCLE — `w` flips classic ⇄ Zero (OHMARCHY-PLAN §3b), registered like every other chord so the `?`
+   * sheet and the palette document it from the one registry. FACE-INDEPENDENT, BY DECISION (lane E close-out): layout
+   * is the contract's own second axis, orthogonal to the face by construction — the zero stylesheet speaks only in
+   * tokens, so paper resolves the same arrangement through its calm values — and §4's acceptance criterion runs the
+   * keyboard walkthrough in BOTH layouts, which would be a test of a hidden state under a face gate. The DEFAULT
+   * stays classic on every face and every platform; zero is only ever this device's explicit choice (`ohmail.layout`
+   * — the contract gives layout no account wire, and none is added here).
    */
   const cycleLayout = useStableCallback(() => {
     theme.setLayout(theme.layout === "zero" ? "classic" : "zero");
@@ -5600,17 +5531,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   const zeroSheetUp = pushTier && readerFor != null;
 
   /**
-   * NO CURSOR IS ITS OWN REASON — spread into every `message` binding below whose `disabled`
-   * begins `focused == null`. See `keymap.tsx#DisabledReason` and `placeCursor` above.
-   *
-   * EMPTY when a cursor exists, so a verb resting for its own reason keeps falling through: `⇧R`
-   * on a message with nobody else on it, `⇧F` on a `no_forward` one or a row the mirror does not
-   * hold, `d` with the folders foundation off. Placing a cursor for one of those would show a
-   * sentence promising a second press that cannot work.
-   *
-   * NOT on `f`, `mod+Enter` or the two Zero exits: none of them rests on a cursor (an empty Answer
-   * Later pile, no run in flight, no reply open, no sheet up), and `p` is an `app` verb — the
-   * dispatcher's rule is scoped to `message` for exactly that reason.
+   * NO CURSOR IS ITS OWN REASON — spread into every `message` binding below whose `disabled` begins `focused ==
+   * null`. See `keymap.tsx#DisabledReason` and `placeCursor` above. EMPTY when a cursor exists, so a verb resting for
+   * its own reason keeps falling through: `⇧R` on a message with nobody else on it, `⇧F` on a `no_forward` one or a
+   * row the mirror does not hold, `d` with the folders foundation off. Placing a cursor for one of those would show a
+   * sentence promising a second press that cannot work. NOT on `f`, `mod+Enter` or the two Zero exits: none of them
+   * rests on a cursor (an empty Answer Later pile, no run in flight, no reply open, no sheet up), and `p` is an `app`
+   * verb — the dispatcher's rule is scoped to `message` for exactly that reason.
    */
   const noCursor = focused == null ? ({ disabledReason: "no_cursor" } as const) : {};
 
@@ -5675,15 +5602,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       group: "message",
       label: t("shortcuts.reply"),
       /**
-       * LIVE WHEREVER THE PILL THAT ADVERTISES IT IS — which is `focused`'s whole contract.
-       *
-       * This was `route.view !== "ohbox" || selectedOhbox == null`, so a message opened out
-       * of Search rendered a Reply pill printing `r` (the pill reads this registry, and a
-       * disabled binding still owns its chord) over a key that did nothing. The reader sheet
-       * IS a message pane; a verb pressed while it is open acts on the message being read —
-       * the rule `focused` already states. On the two skim streams the key takes the card
-       * button's own path (`onStreamAction`), which raises the reader first so the editor
-       * has a pane to land in. A TOGGLE, as before: `r` on the open editor closes it.
+       * LIVE WHEREVER THE PILL THAT ADVERTISES IT IS — which is `focused`'s whole contract. This was `route.view !==
+       * "ohbox" || selectedOhbox == null`, so a message opened out of Search rendered a Reply pill printing `r` (the
+       * pill reads this registry, and a disabled binding still owns its chord) over a key that did nothing. The
+       * reader sheet IS a message pane; a verb pressed while it is open acts on the message being read — the rule
+       * `focused` already states. On the two skim streams the key takes the card button's own path
+       * (`onStreamAction`), which raises the reader first so the editor has a pane to land in. A TOGGLE, as before:
+       * `r` on the open editor closes it.
        */
       disabled: focused == null,
       ...noCursor,
@@ -5783,23 +5708,18 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       },
     },
     {
-      // SENDING FROM THE KEYBOARD. `inInput` is not optional: the editor takes
-      // focus the moment it opens, so without it the one place the shortcut is for is the one
-      // place it would not fire — the same reasoning Escape's binding already carries.
-      //
-      // `mod+Enter` and not bare `Enter`, because the field is a multi-line editor where
-      // Enter is a new paragraph. The four views bind bare `Enter` as "open the row" and none
-      // of them sets `inInput`, so the typing guard already keeps them out of this editor
-      // (`isTypingTarget` answers true for a `contenteditable` as it did for the textarea);
-      // this chord does not collide with any of them.
-      //
-      // The rich editor does not swallow it. ProseMirror's keymap handles `Enter` and
-      // `Shift-Enter` and has no `Mod-Enter` binding, so the event is not consumed and reaches
-      // the document listener this registry hangs on — which is why the chord stays here
-      // rather than being reimplemented inside the editor's own `onKeyDown`.
-      //
-      // It calls the same `sendReply` the button does, so the send lock, the empty-body guard
-      // and the whole failure surface apply identically — there is no second path to SMTP.
+      // SENDING FROM THE KEYBOARD. `inInput` is not optional: the editor takes focus the moment it opens, so without
+      // it the one place the shortcut is for is the one place it would not fire — the same reasoning Escape's binding
+      // already carries. `mod+Enter` and not bare `Enter`, because the field is a multi-line editor where Enter is a
+      // new paragraph. The four views bind bare `Enter` as "open the row" and none of them sets `inInput`, so the
+      // typing guard already keeps them out of this editor (`isTypingTarget` answers true for a `contenteditable` as
+      // it did for the textarea); this chord does not collide with any of them. The rich editor does not swallow it.
+
+      // ProseMirror's keymap handles `Enter` and `Shift-Enter` and has no `Mod-Enter` binding, so the event is not
+      // consumed and reaches the document listener this registry hangs on — which is why the chord stays here rather
+      // than being reimplemented inside the editor's own `onKeyDown`. It calls the same `sendReply` the button does,
+      // so the send lock, the empty-body guard and the whole failure surface apply identically — there is no second
+      // path to SMTP.
       chord: "mod+Enter",
       group: "message",
       label: t("shortcuts.sendReply"),
@@ -6292,17 +6212,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       {
         items: [
           /**
-           * HISTORY CARRIES NO COUNT, AND THAT IS A PROPERTY RATHER THAN A STYLE CHOICE.
-           *
-           * A sender with ANY unread mail is active whatever its age, so nothing unread can
-           * reach History — the engine's cutline guarantees it by construction. A place that
-           * cannot contain anything unread has nothing to demand, so a badge here would be a
-           * number that is always the size of the past and never a call to act.
-           *
-           * `count` is therefore ABSENT rather than zero: `RailNav` renders an absent count as
-           * nothing at all, and a literal `0` would draw a badge saying nothing is there.
-           * `rail-history.test.tsx` asserts the key is missing, because a future edit adding
-           * `count: history.length` would look like an improvement.
+           * HISTORY CARRIES NO COUNT, AND THAT IS A PROPERTY RATHER THAN A STYLE CHOICE. A sender with ANY unread
+           * mail is active whatever its age, so nothing unread can reach History — the engine's cutline guarantees it
+           * by construction. A place that cannot contain anything unread has nothing to demand, so a badge here would
+           * be a number that is always the size of the past and never a call to act. `count` is therefore ABSENT
+           * rather than zero: `RailNav` renders an absent count as nothing at all, and a literal `0` would draw a
+           * badge saying nothing is there. `rail-history.test.tsx` asserts the key is missing, because a future edit
+           * adding `count: history.length` would look like an improvement.
            */
           { id: "history", label: t("rail.history"), title: t("rail.historyTitle") },
           { id: "search", label: t("rail.search"), kbdHint: "/" },
@@ -6482,17 +6398,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   const frSend = frItem?.messageId ? mailSend.stateOf(frItem.messageId) : null;
 
   /**
-   * A REPLY BEGUN BEFORE A RELOAD IS STILL OWED.
-   *
-   * Seeded from the same per-message scratch buffer the inline editor uses, so a run resumed
-   * in a new tab finds the sentence that was already written. Read AFTER mount rather than in
-   * the state initializer, for the hydration reason `persisted-ui.ts` spells out: reading
-   * storage during render makes the server and the client produce different markup and React
-   * keeps the server's, so the saved text would be read and then silently discarded.
-   *
-   * Never overwrites what is already in memory. The map is the live editor; the buffer is only
-   * its backup, and a key present with an empty string means "this one has been opened", not
-   * "this one is unknown".
+   * A REPLY BEGUN BEFORE A RELOAD IS STILL OWED. Seeded from the same per-message scratch buffer the inline editor
+   * uses, so a run resumed in a new tab finds the sentence that was already written. Read AFTER mount rather than in
+   * the state initializer, for the hydration reason `persisted-ui.ts` spells out: reading storage during render makes
+   * the server and the client produce different markup and React keeps the server's, so the saved text would be read
+   * and then silently discarded. Never overwrites what is already in memory. The map is the live editor; the buffer
+   * is only its backup, and a key present with an empty string means "this one has been opened", not "this one is
+   * unknown".
    */
   useEffect(() => {
     const id = frItem?.messageId;
@@ -6501,17 +6413,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   }, [frItem?.messageId]);
 
   /**
-   * A SEND THE RUN MADE THAT DID NOT LAND MUST SAY SO.
-   *
-   * `FocusReplyOverlay` renders a card and two buttons and has no status line, so the run's
-   * only other feedback for a failure is the step NOT advancing — which is silence to somebody
-   * who pressed Done and is waiting. The inline editor's four status strings say exactly the
-   * same four things, so they are reused rather than re-worded, and none of them claims a
-   * delivery: `settle`'s toast is the only sentence in the app that does, and it fires only on
-   * a confirmation.
-   *
-   * Keyed on the PHASE moving, not on `t`/`toast` identity — a render-keyed effect here would
-   * re-announce the same failure on every keystroke.
+   * A SEND THE RUN MADE THAT DID NOT LAND MUST SAY SO. `FocusReplyOverlay` renders a card and two buttons and has no
+   * status line, so the run's only other feedback for a failure is the step NOT advancing — which is silence to
+   * somebody who pressed Done and is waiting. The inline editor's four status strings say exactly the same four
+   * things, so they are reused rather than re-worded, and none of them claims a delivery: `settle`'s toast is the
+   * only sentence in the app that does, and it fires only on a confirmation. Keyed on the PHASE moving, not on
+   * `t`/`toast` identity — a render-keyed effect here would re-announce the same failure on every keystroke.
    */
   const frPhase = frSend?.phase ?? "idle";
   const frCode = frSend?.code;
@@ -6602,18 +6509,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       sendSurfaceMaxTotalBytes,
       addressBook: replyBook,
       /**
-       * THE SIBLING VERBS, no longer dormant.
-       *
-       * `MessageCard` has rendered a Reply/Forward footer on every expanded conversation sibling
-       * since the thread surface landed, and both buttons were declared OPTIONAL on the chrome so
-       * the footer simply did not appear until a shell supplied them. Nothing did, so a reader
-       * looking back at an older message in a thread had no way to answer it without first making
-       * it the focused one — the exact detour the footer exists to remove.
-       *
-       * `openReply` is the SAME callback the focused message's action bar runs, passed straight
-       * through: one reply machine, retargeted by id, so the mobile rule it carries (under 900px
-       * the reading column is `display:none`, so open the reader) holds for a sibling too. Any
-       * second implementation here would be a copy of that rule waiting to drift.
+       * THE SIBLING VERBS, no longer dormant. `MessageCard` has rendered a Reply/Forward footer on every expanded
+       * conversation sibling since the thread surface landed, and both buttons were declared OPTIONAL on the chrome
+       * so the footer simply did not appear until a shell supplied them. Nothing did, so a reader looking back at an
+       * older message in a thread had no way to answer it without first making it the focused one — the exact detour
+       * the footer exists to remove. `openReply` is the SAME callback the focused message's action bar runs, passed
+       * straight through: one reply machine, retargeted by id, so the mobile rule it carries (under 900px the reading
+       * column is `display:none`, so open the reader) holds for a sibling too. Any second implementation here would
+       * be a copy of that rule waiting to drift.
        */
       openReply,
       forward: openForward,

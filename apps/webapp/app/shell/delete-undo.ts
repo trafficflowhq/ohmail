@@ -321,32 +321,26 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
 }
 
 /**
- * REPLAY WHAT A KILLED TAB LEFT BEHIND — every stranded intent, dispatched once.
- *
- * Called at mount, with the engine's own clock. It does NOT go through the queue: there is no
- * window to reopen and nothing to undo, because the person expressed this before the page went
- * away and the toast that offered to take it back is long gone. The row is already absent from
- * the mirror by then or will be on the next drain; either way the honest act is to finish the
- * request rather than to re-ask a question nobody is looking at.
- *
- * A refusal is silent here, deliberately: a toast about a message the person deleted in a
- * previous session, raised on a screen they have just opened, explains nothing and interrupts
- * something else. The intent is cleared either way, so a delete this account may no longer make
- * (the mailbox changed hands while the tab was closed) is dropped rather than retried for ever.
+ * REPLAY WHAT A KILLED TAB LEFT BEHIND — every stranded intent, dispatched once. Called at mount, with the engine's
+ * own clock. It does NOT go through the queue: there is no window to reopen and nothing to undo, because the person
+ * expressed this before the page went away and the toast that offered to take it back is long gone. The row is
+ * already absent from the mirror by then or will be on the next drain; either way the honest act is to finish the
+ * request rather than to re-ask a question nobody is looking at. A refusal is silent here, deliberately: a toast
+ * about a message the person deleted in a previous session, raised on a screen they have just opened, explains
+ * nothing and interrupts something else. The intent is cleared either way, so a delete this account may no longer
+ * make (the mailbox changed hands while the tab was closed) is dropped rather than retried for ever.
  */
 export function replayDeleteIntents(
   mutate: HeldDispatch,
   nowMs: number,
   /**
-   * THE RESTORE'S DISPATCH — and its ABSENCE is a real state, not a missing argument.
-   *
-   * A surface can have the delete key and no restore transport: the demo, a build talking to a
-   * server with no restore route, a shell that never mounts the Trash view. On such a surface a
-   * stranded `{kind: "restore"}` row must be DROPPED — cleared from the journal and never
-   * dispatched — and it must specifically NOT fall through to `mutate`, which would DELETE the
-   * message somebody asked to restore. That is the one outcome in this file that would be worse
-   * than losing the request, so it is a separate parameter rather than a branch inside `mutate`:
-   * a caller cannot accidentally satisfy it.
+   * THE RESTORE'S DISPATCH — and its ABSENCE is a real state, not a missing argument. A surface can have the delete
+   * key and no restore transport: the demo, a build talking to a server with no restore route, a shell that never
+   * mounts the Trash view. On such a surface a stranded `{kind: "restore"}` row must be DROPPED — cleared from the
+   * journal and never dispatched — and it must specifically NOT fall through to `mutate`, which would DELETE the
+   * message somebody asked to restore. That is the one outcome in this file that would be worse than losing the
+   * request, so it is a separate parameter rather than a branch inside `mutate`: a caller cannot accidentally satisfy
+   * it.
    */
   restore?: HeldDispatch,
 ): number {
@@ -380,40 +374,33 @@ export function replayDeleteIntents(
 
 /**
  * THE RESTORE, AS A {@link HeldDispatch} — one mapping, in the file that owns the vocabulary.
- *
- * `engine.restoreFromTrash` answers `{ state }` and this window branches on `{ status }`, so
- * something has to translate. It is HERE and not at each call site because there are two call
- * sites — the held window's commit and the boot replay — and two copies of a mapping whose
- * whole job is to decide "did that press take effect" is how one of them comes to read a
- * refusal as a success.
- *
- * `unavailable` maps to `rolled_back`, which is the honest answer rather than the literal one:
- * the surface only wires this when `trashAvailable()` is true, so reaching it means the
- * transport went away mid-flight — the press did not take effect, the row must come back, and
- * the failure sentence is the one to say. Mapping it to a success would leave a row missing
- * from the list with the message still in Trash.
+ * `engine.restoreFromTrash` answers `{ state }` and this window branches on `{ status }`, so something has to
+ * translate. It is HERE and not at each call site because there are two call sites — the held window's commit and the
+ * boot replay — and two copies of a mapping whose whole job is to decide "did that press take effect" is how one of
+ * them comes to read a refusal as a success. `unavailable` maps to `rolled_back`, which is the honest answer rather
+ * than the literal one: the surface only wires this when `trashAvailable()` is true, so reaching it means the
+ * transport went away mid-flight — the press did not take effect, the row must come back, and the failure sentence is
+ * the one to say. Mapping it to a success would leave a row missing from the list with the message still in Trash.
  */
 export function restoreDispatch(
   restoreFromTrash: (
     messageId: string, opts: { intentId: string },
   ) => Promise<{ state: string; restoreTo?: string }>,
   /**
-   * WHERE IT IS GOING, said when the SERVER has answered — and never at the press. The answer is
-   * a queued intent, so the sentence the caller raises says "Restoring", not "Restored".
-   *
-   * The window's own `deleted` sentence is raised the moment the row is hidden, seconds before
-   * anything reaches a server, so it cannot name a place: the row was rendered with the origin
-   * the LIST knew, and that folder can be deleted between the page and the press. The server
-   * resolves the destination and answers with it, and this is the one moment that answer exists.
-   *
-   * It has to be a callback ON THE DISPATCH rather than a second call at the press site, and
-   * that is not a style preference — a second `restoreFromTrash` at the press would ISSUE THE
-   * REQUEST THEN, which is precisely what the held window exists to postpone. The whole undo
-   * would be gone and the suite would still be green, because the request does go out and the
-   * row does leave the list.
-   *
-   * Only on a real restore. A refusal says nothing here; the window's own `failed` sentence is
-   * the one that lands, and it says the mail is still in Trash.
+   * WHERE IT IS GOING, said when the SERVER has answered — and never at the press. The answer is a queued intent, so
+   * the sentence the caller raises says "Restoring", not "Restored". The window's own `deleted` sentence is raised
+   * the moment the row is hidden, seconds before anything reaches a server, so it cannot name a place: the row was
+   * rendered with the origin the LIST knew, and that folder can be deleted between the page and the press. The server
+   * resolves the destination and answers with it, and this is the one moment that answer exists. It has to be a
+   * callback ON THE DISPATCH rather than a second call at the press site, and that is not a style preference — a
+   * second `restoreFromTrash` at the press would ISSUE THE REQUEST THEN, which is precisely what the held window
+   * exists to postpone.
+   */
+
+  /**
+   * The whole undo would be gone and the suite would still be green, because the request does go out and the row does
+   * leave the list. Only on a real restore. A refusal says nothing here; the window's own `failed` sentence is the
+   * one that lands, and it says the mail is still in Trash.
    */
   onRestored?: (restoreTo: string) => void,
 ): HeldDispatch {
@@ -428,23 +415,20 @@ export function restoreDispatch(
 }
 
 /**
- * THE TWO CHORDS, as the registry's own declarations — a factory so the shell spreads them and
- * a test can drive the real dispatcher over them without mounting the whole shell.
- *
- * ONE LABEL FOR BOTH, deliberately: `ShortcutSheet` folds rows on the label ("two chords that do
- * the same thing … are one instruction with two spellings"), so the sheet prints one row reading
- * `⌫ · ⌦` instead of the same sentence twice.
- *
- * NEITHER IS `inInput`, which is the whole of "never delete from a text field": the dispatcher
- * drops every binding without that flag while `isTypingTarget` holds, and INPUT, TEXTAREA,
- * SELECT and `contenteditable` are exactly what that predicate names. Stated because the guard
- * is an ABSENT field — the cheapest thing in this file to delete by accident, and
- * `test/delete-key.test.tsx` is what makes it fail loudly.
- *
- * ONE FACTORY, TWO CALLERS. The shell declares these over its own `focused`, and
- * `message-verbs.ts` declares them over a split view's `shown`; the chords, the label, the
- * repeat guard and the modal gate are therefore written once. Nine keycaps were dead in three
- * views for exactly the want of that, and `message-verbs.ts`'s own header is the record of it.
+ * THE TWO CHORDS, as the registry's own declarations — a factory so the shell spreads them and a test can drive the
+ * real dispatcher over them without mounting the whole shell. ONE LABEL FOR BOTH, deliberately: `ShortcutSheet` folds
+ * rows on the label ("two chords that do the same thing … are one instruction with two spellings"), so the sheet
+ * prints one row reading `⌫ · ⌦` instead of the same sentence twice. NEITHER IS `inInput`, which is the whole of
+ * "never delete from a text field": the dispatcher drops every binding without that flag while `isTypingTarget`
+ * holds, and INPUT, TEXTAREA, SELECT and `contenteditable` are exactly what that predicate names. Stated because the
+ * guard is an ABSENT field — the cheapest thing in this file to delete by accident, and `test/delete-key.test.tsx` is
+ * what makes it fail loudly. ONE FACTORY, TWO CALLERS.
+ */
+
+/**
+ * The shell declares these over its own `focused`, and `message-verbs.ts` declares them over a split view's `shown`;
+ * the chords, the label, the repeat guard and the modal gate are therefore written once. Nine keycaps were dead in
+ * three views for exactly the want of that, and `message-verbs.ts`'s own header is the record of it.
  */
 export function deleteKeyBindings(input: {
   focused: EngineMessage | null;
@@ -463,19 +447,18 @@ export function deleteKeyBindings(input: {
 }): KeyBinding[] {
   const disabled = input.focused == null || !input.canDelete;
   /**
-   * NO CURSOR IS ITS OWN REASON — see `keymap.tsx#DisabledReason`.
-   *
-   * The whole of the reported defect: a freshly opened list has no cursor, so both chords were
-   * `disabled`, and the dispatcher dropped them before the chord was matched. ⌫ on an Ohbox
-   * nobody had touched did nothing — no cursor, no sentence, no request. It now places the cursor
-   * on the first row and says which verb the next press runs.
-   *
-   * `focused == null` ALONE, never `disabled`. `canDelete` is the strip's own render gates
-   * resolved by the host, and a row it refuses is refused with a cursor on it too — claiming
-   * `"no_cursor"` there would place a cursor and promise a second press that cannot work. Where
-   * the two overlap (a caller whose `canDelete` folds in `focused != null`, as both callers'
-   * does) this is still the honest answer: the cursor is what is missing, and whatever the gates
-   * then say about the row the cursor lands on is the same answer a click would have got.
+   * NO CURSOR IS ITS OWN REASON — see `keymap.tsx#DisabledReason`. The whole of the reported defect: a freshly opened
+   * list has no cursor, so both chords were `disabled`, and the dispatcher dropped them before the chord was matched.
+   * ⌫ on an Ohbox nobody had touched did nothing — no cursor, no sentence, no request. It now places the cursor on
+   * the first row and says which verb the next press runs. `focused == null` ALONE, never `disabled`. `canDelete` is
+   * the strip's own render gates resolved by the host, and a row it refuses is refused with a cursor on it too —
+   * claiming `"no_cursor"` there would place a cursor and promise a second press that cannot work.
+   */
+
+  /**
+   * Where the two overlap (a caller whose `canDelete` folds in `focused != null`, as both callers' does) this is
+   * still the honest answer: the cursor is what is missing, and whatever the gates then say about the row the cursor
+   * lands on is the same answer a click would have got.
    */
   const noCursor = input.focused == null;
   const parked = noCursor ? ({ disabledReason: "no_cursor" } as const) : {};

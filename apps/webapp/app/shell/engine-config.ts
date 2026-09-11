@@ -191,24 +191,20 @@ export function createEngine(
     });
   }
   /**
-   * THE LIVE TRANSPORT IS GATED, and only the live one.
-   *
-   * `engine.syncOnce()` pages internally until `hasMore` is false, so the scheduler's
-   * visibility gate could decide whether a drain STARTED and never whether it continued — a
-   * hidden or closed tab kept issuing the remaining pages of a bootstrap. The gate wraps the
-   * adapter here because `adapter.sync()` IS the page boundary; the scheduler claims it and
-   * refuses the next page while its loop has been torn down. Read `sync-scheduler.ts` for why
-   * the association goes through a `WeakMap` rather than this function's return type.
-   *
-   * IT ALSO CARRIES THE MIRROR'S NAME, which is the second question it answers. `/sync` returns
-   * no account identity, and the engine writes what comes back straight into
-   * `ohmail-mirror:<owner>` — so a page fetched under a session belonging to somebody else
-   * lands in this account's mailbox and stays there. The gate is built CLOSED for a named
-   * mirror and opens only when the confirm names an account equal to `owner`; it re-reads
-   * `tf_owner` on every request, so a browser that signs into another account mid-session stops
-   * this loop instead of feeding it.
-   *
-   * The demo returns above, so it never gets one: it has no transport to gate.
+   * THE LIVE TRANSPORT IS GATED, and only the live one. `engine.syncOnce()` pages internally until `hasMore` is
+   * false, so the scheduler's visibility gate could decide whether a drain STARTED and never whether it continued — a
+   * hidden or closed tab kept issuing the remaining pages of a bootstrap. The gate wraps the adapter here because
+   * `adapter.sync()` IS the page boundary; the scheduler claims it and refuses the next page while its loop has been
+   * torn down. Read `sync-scheduler.ts` for why the association goes through a `WeakMap` rather than this function's
+   * return type. IT ALSO CARRIES THE MIRROR'S NAME, which is the second question it answers. `/sync` returns no
+   * account identity, and the engine writes what comes back straight into `ohmail-mirror:<owner>` — so a page fetched
+   * under a session belonging to somebody else lands in this account's mailbox and stays there.
+   */
+
+  /**
+   * The gate is built CLOSED for a named mirror and opens only when the confirm names an account equal to `owner`; it
+   * re-reads `tf_owner` on every request, so a browser that signs into another account mid-session stops this loop
+   * instead of feeding it. The demo returns above, so it never gets one: it has no transport to gate.
    */
   /*
    * THE MIRROR'S NAME, handed to the gate — this is the whole of the identity half.
@@ -223,18 +219,14 @@ export function createEngine(
   return registerSyncGate(
     new OhmailEngine({
       /**
-       * `stageAttachments: true` — THE HOSTED BROWSER CLIENT, and only it.
-       *
-       * A send whose attachment bytes exceed what the inline transport can carry mints an upload
-       * ticket per file, PUTs the bytes straight into storage, and sends references. That is what
-       * lets this window's compose form promise the sending mailbox's own announced limit rather
-       * than the ~4.5 MB serverless request cap expressed as 3 MB of raw bytes.
-       *
-       * It is set HERE and nowhere else. The desktop builds its adapter in
-       * `apps/desktop/src/bridge-fetch.ts` with no options beyond a base URL and a bridge fetch,
-       * so neither of its doors stages: the standalone door has no hosted storage behind it and no
-       * business writing into one, and the Cloud door forwards this request verbatim to the hosted
-       * API — a shipped build must keep sending the shape it has always sent.
+       * `stageAttachments: true` — THE HOSTED BROWSER CLIENT, and only it. A send whose attachment bytes exceed what
+       * the inline transport can carry mints an upload ticket per file, PUTs the bytes straight into storage, and
+       * sends references. That is what lets this window's compose form promise the sending mailbox's own announced
+       * limit rather than the ~4.5 MB serverless request cap expressed as 3 MB of raw bytes. It is set HERE and
+       * nowhere else. The desktop builds its adapter in `apps/desktop/src/bridge-fetch.ts` with no options beyond a
+       * base URL and a bridge fetch, so neither of its doors stages: the standalone door has no hosted storage behind
+       * it and no business writing into one, and the Cloud door forwards this request verbatim to the hosted API — a
+       * shipped build must keep sending the shape it has always sent.
        */
       adapter: gate.guard(new HttpAdapter({ baseUrl: apiBase, stageAttachments: true })),
       ...(persist ? { store: new IndexedDbMirrorStore({ owner: owner! }) } : {}),

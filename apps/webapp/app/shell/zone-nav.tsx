@@ -118,15 +118,12 @@ function railHidden(): boolean {
 }
 
 /**
- * THE ZERO LADDER'S DRAWER SUMMON — `h` keeps its one meaning (OHMARCHY-PLAN §12: "toward
- * the rail", which at ribbon widths means drawer-in). Under the Zero layout the rail below
- * 900px is a docked icon ribbon (or, under 392px, off canvas entirely), and the FULL rail is
- * a user-summoned drawer — so "step into the rail" where the full rail is not standing means
- * SUMMON it, not focus a translated button nobody can see.
- *
- * A module-level seam, not a layout read: the shell REGISTERS the summon only while the Zero
- * layout is active (`AppShell`'s effect — the one ledgered layout branch), so under classic
- * this is null and `enterRail` refuses exactly as it always has. Zone-nav itself never asks
+ * THE ZERO LADDER'S DRAWER SUMMON — `h` keeps its one meaning (OHMARCHY-PLAN §12: "toward the rail", which at ribbon
+ * widths means drawer-in). Under the Zero layout the rail below 900px is a docked icon ribbon (or, under 392px, off
+ * canvas entirely), and the FULL rail is a user-summoned drawer — so "step into the rail" where the full rail is not
+ * standing means SUMMON it, not focus a translated button nobody can see. A module-level seam, not a layout read: the
+ * shell REGISTERS the summon only while the Zero layout is active (`AppShell`'s effect — the one ledgered layout
+ * branch), so under classic this is null and `enterRail` refuses exactly as it always has. Zone-nav itself never asks
  * the appearance, which keeps the census's zone model appearance-free.
  */
 let railSummon: (() => void) | null = null;
@@ -156,23 +153,21 @@ export function useZone(): Zone {
 }
 
 /**
- * FOCUS-BORDER-AS-CURSOR, THE MECHANISM (ohmarchy Phase 1) — the derived zone, REFLECTED
- * ONTO THE DOCUMENT so CSS can paint which tile the keys land in. The deep prototype does
- * exactly this (`document.documentElement.dataset.tile`), and the shipping shell adopts the
- * same surface: `:root[data-zone="rail"|"list"|"reader"|"none"]`.
- *
- * `data-zone` is FOCUS STATE, not appearance — it names where the keys land, which is one
- * fact in every theme. How LOUDLY a theme paints it is the appearance side, and that rides
- * the contract's tokens alone (OHMARCHY-CONTRACT.md: teaching intensity is the `--teach`
- * token, focus loudness `--focus-w`/`--focus-offset`, all defined in the token stylesheet's
- * face blocks) — paper's quiet reading is `zone-cursor.css`; the ohmarchy face re-resolves
- * the same rules through its own token values. Tokens change, the mechanism does not (the
- * one-UI law: teaching intensity is a parameter, never a fork).
- *
- * A component rather than an effect in `AppShell` so the subscription re-renders NOTHING —
- * it returns null and writes the attribute imperatively, the way the store itself is
- * module-level: a focus crossing must not re-render a six-thousand-line shell to move one
- * attribute.
+ * FOCUS-BORDER-AS-CURSOR, THE MECHANISM (ohmarchy Phase 1) — the derived zone, REFLECTED ONTO THE DOCUMENT so CSS can
+ * paint which tile the keys land in. The deep prototype does exactly this (`document.documentElement.dataset.tile`),
+ * and the shipping shell adopts the same surface: `:root[data-zone="rail"|"list"|"reader"|"none"]`. `data-zone` is
+ * FOCUS STATE, not appearance — it names where the keys land, which is one fact in every theme. How LOUDLY a theme
+ * paints it is the appearance side, and that rides the contract's tokens alone (OHMARCHY-CONTRACT.md: teaching
+ * intensity is the `--teach` token, focus loudness `--focus-w`/`--focus-offset`, all defined in the token
+ * stylesheet's face blocks) — paper's quiet reading is `zone-cursor.css`; the ohmarchy face re-resolves the same
+ * rules through its own token values.
+ */
+
+/**
+ * Tokens change, the mechanism does not (the one-UI law: teaching intensity is a parameter, never a fork). A
+ * component rather than an effect in `AppShell` so the subscription re-renders NOTHING — it returns null and writes
+ * the attribute imperatively, the way the store itself is module-level: a focus crossing must not re-render a
+ * six-thousand-line shell to move one attribute.
  */
 export function ZoneCursor(): null {
   const zone = useZone();
@@ -284,17 +279,14 @@ export interface ZoneListStep {
 }
 
 /**
- * FOCUS FOLLOWS THE CURSOR WHILE A ROW OWNS FOCUS — and the defect this closes is concrete:
- * → from the rail lands real focus on the selected row; without this, the next ↓ moves the
- * VIEW's cursor and leaves focus standing on the old row, so Enter — the browser's own
- * button activation — presses the row the reader has visibly left. Focus and cursor must
- * not be allowed to name two different messages.
- *
- * Keyed on the view's selected id and gated on "a row button currently has focus": the
- * mouse-and-letters flow (focus on body, j/k walking the virtual cursor) is untouched, and
- * a reader who entered the list BY FOCUS gets the row announced on every step — the roving
- * walk over the real `<button>` rows the views already render as `role`-carrying options.
- * Runs after the render that moved the cursor, so the `.sel` row it focuses is the new one.
+ * FOCUS FOLLOWS THE CURSOR WHILE A ROW OWNS FOCUS — and the defect this closes is concrete: → from the rail lands
+ * real focus on the selected row; without this, the next ↓ moves the VIEW's cursor and leaves focus standing on the
+ * old row, so Enter — the browser's own button activation — presses the row the reader has visibly left. Focus and
+ * cursor must not be allowed to name two different messages. Keyed on the view's selected id and gated on "a row
+ * button currently has focus": the mouse-and-letters flow (focus on body, j/k walking the virtual cursor) is
+ * untouched, and a reader who entered the list BY FOCUS gets the row announced on every step — the roving walk over
+ * the real `<button>` rows the views already render as `role`-carrying options. Runs after the render that moved the
+ * cursor, so the `.sel` row it focuses is the new one.
  */
 function useListFocusFollow(followId: string | null | undefined, selector: string): void {
   useEffect(() => {

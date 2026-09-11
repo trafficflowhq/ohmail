@@ -158,23 +158,21 @@ export function useOlderMail(
   const scope = `${view}|${folderId ?? ""}|${scopeEpoch}`;
 
   /**
-   * THE PAGING POSITION — cursor, in-flight, exhaustion and the ban latch — as ONE ref object
-   * KEYED BY ITS SCOPE, and NEVER touched during render.
-   *
-   * A ref rather than state, for `loadMore`'s reasons: the callback is stable enough to hang on
-   * a button, two same-tick asks must see each other's `inFlight`, and a `setState` updater must
-   * stay pure. One OBJECT rather than parallel refs, because the object's identity is the
-   * response token: a page answered for one incarnation is recognized by `paging.current !== p`
-   * and dropped, which no counter can get wrong.
-   *
-   * NEVER MUTATED IN RENDER, and that is the review-earned part (three findings deep): React
-   * may discard a render pass — StrictMode's replay, a concurrent render preempted and thrown
-   * away — and a discarded pass keeps its ref mutations while losing its state updates. Any
-   * render-phase ref write therefore desyncs the two worlds: a speculative pass toward scope B
-   * that never commits must not clear scope A's cursor, kill A's in-flight response (a loader
-   * with no answer and no retry), or wipe A's latch. So the ref is reset LAZILY, by
-   * {@link pagingFor}, from event handlers and effects only — code that runs strictly after a
-   * commit, on behalf of the scope that actually committed.
+   * THE PAGING POSITION — cursor, in-flight, exhaustion and the ban latch — as ONE ref object KEYED BY ITS SCOPE, and
+   * NEVER touched during render. A ref rather than state, for `loadMore`'s reasons: the callback is stable enough to
+   * hang on a button, two same-tick asks must see each other's `inFlight`, and a `setState` updater must stay pure.
+   * One OBJECT rather than parallel refs, because the object's identity is the response token: a page answered for
+   * one incarnation is recognized by `paging.current !== p` and dropped, which no counter can get wrong. NEVER
+   * MUTATED IN RENDER, and that is the review-earned part (three findings deep): React may discard a render pass —
+   * StrictMode's replay, a concurrent render preempted and thrown away — and a discarded pass keeps its ref mutations
+   * while losing its state updates.
+   */
+
+  /**
+   * Any render-phase ref write therefore desyncs the two worlds: a speculative pass toward scope B that never commits
+   * must not clear scope A's cursor, kill A's in-flight response (a loader with no answer and no retry), or wipe A's
+   * latch. So the ref is reset LAZILY, by {@link pagingFor}, from event handlers and effects only — code that runs
+   * strictly after a commit, on behalf of the scope that actually committed.
    */
   const paging = useRef<Paging | null>(null);
   /** The committed scope — the response validator's second half. See the layout effect below. */

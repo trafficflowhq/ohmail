@@ -86,42 +86,34 @@ export type MessageAction =
    */
   | `resurface:${string}`
   /**
-   * RESURFACE NOW — the horizon chooser's fourth answer, and a different KIND of answer from the
-   * other three.
-   *
-   * Not `resurface:<a moment ago>`, and the distinction is the whole point. The three dated
-   * answers all write `bubbled_up` with a future instant and wait for a bubble-up pass to flip
-   * them; a past instant in that same variant would be a promise nobody keeps — the pass is gated
-   * behind the worker's cycle, and a standalone desktop install runs no worker. So "now" is its
-   * own member, dispatching the direct `resurfaced` transition the server accepts, and the row is
-   * pinned by the time the request returns.
+   * RESURFACE NOW — the horizon chooser's fourth answer, and a different KIND of answer from the other three. Not
+   * `resurface:<a moment ago>`, and the distinction is the whole point. The three dated answers all write
+   * `bubbled_up` with a future instant and wait for a bubble-up pass to flip them; a past instant in that same
+   * variant would be a promise nobody keeps — the pass is gated behind the worker's cycle, and a standalone desktop
+   * install runs no worker. So "now" is its own member, dispatching the direct `resurfaced` transition the server
+   * accepts, and the row is pinned by the time the request returns.
    */
   | "resurface_now"
   /**
-   * DONE WITH A RESURFACE — the deliberate release, named.
-   *
-   * The release has existed as long as the pin has: a deliberate `mark_seen` (no `via`) spends
-   * it, stamps `lastReadAt`, and the row files at the top of "Earlier". What it never had was a
-   * face — the only doors were "Mark as read", `⇧I` and the bulk verbs, none of which says
-   * "this resurface is finished". This action is that face, NOT a new mechanism: the shell
-   * answers it with the same `mark_seen` every deliberate read dispatches, plus a
-   * `triage_set: none` first when the message is merely SCHEDULED (`bubbled_up`) rather than
-   * pinned — cancelling the booking is the release's other half there, and it is the existing
-   * triage vocabulary, no new wire verb anywhere.
+   * DONE WITH A RESURFACE — the deliberate release, named. The release has existed as long as the pin has: a
+   * deliberate `mark_seen` (no `via`) spends it, stamps `lastReadAt`, and the row files at the top of "Earlier". What
+   * it never had was a face — the only doors were "Mark as read", `⇧I` and the bulk verbs, none of which says "this
+   * resurface is finished". This action is that face, NOT a new mechanism: the shell answers it with the same
+   * `mark_seen` every deliberate read dispatches, plus a `triage_set: none` first when the message is merely
+   * SCHEDULED (`bubbled_up`) rather than pinned — cancelling the booking is the release's other half there, and it is
+   * the existing triage vocabulary, no new wire verb anywhere.
    */
   | "resurface_done"
   | "draft"
   | "unread"
   /**
-   * DELETE — the one destructive verb, and it is a MOVE: the engine's `message_delete` files
-   * the message to the provider's own \Trash folder and NEVER expunges (FOLDERS-SPEC.md §16.3;
-   * the product rule lives at `packages/core/src/adapters/imap-types.ts`, the third
-   * user-commanded write). Gated on the mirror holding the row (`chrome.mirrorHolds`) — and NOT
-   * on the folders foundation flag, which files nothing and never did — and
-   * dispatched ONLY from the confirm strip the ⋯ menu opens — there is no un-delete on the
-   * wire, so the ceremony is a confirm, never an undo the product could not honour. The mobile
-   * reader ships the identical ceremony, and a parity test on its side pins the two surfaces'
-   * wording to this catalogue, word for word.
+   * DELETE — the one destructive verb, and it is a MOVE: the engine's `message_delete` files the message to the
+   * provider's own \Trash folder and NEVER expunges (FOLDERS-SPEC.md §16.3; the product rule lives at
+   * `packages/core/src/adapters/imap-types.ts`, the third user-commanded write). Gated on the mirror holding the row
+   * (`chrome.mirrorHolds`) — and NOT on the folders foundation flag, which files nothing and never did — and
+   * dispatched ONLY from the confirm strip the ⋯ menu opens — there is no un-delete on the wire, so the ceremony is a
+   * confirm, never an undo the product could not honour. The mobile reader ships the identical ceremony, and a parity
+   * test on its side pins the two surfaces' wording to this catalogue, word for word.
    */
   | "delete"
   | `move:${MoveTarget}`;
@@ -165,49 +157,41 @@ export type BulkAction =
   | `move:${MoveTarget}`;
 
 /**
- * Which sub-row has taken the bar's place, if any. `null` is the resting bar.
- *
- * It was a `moving` boolean. A second disclosure (More) made two booleans able to
- * be true at once, which is a state the bar has no rendering for — a union cannot express it.
- *
- * `"more"` is GONE from this union and that is the shape of the change, not a detail of it. A
- * disclosure and a question are different things: Move and Resurface each ask WHERE or WHEN, and
- * a strip that replaces the bar with the possible answers and a Cancel is the right ceremony for
- * a question. "More" asked nothing — it swapped the row for a different row in the same place,
- * with no visible connection to the press. That is a menu, and a menu is what it is now
- * ({@link MoreMenu}), anchored to the button that opened it. What is left here is exactly the
- * two ceremonies.
+ * Which sub-row has taken the bar's place, if any. `null` is the resting bar. It was a `moving` boolean. A second
+ * disclosure (More) made two booleans able to be true at once, which is a state the bar has no rendering for — a
+ * union cannot express it. `"more"` is GONE from this union and that is the shape of the change, not a detail of it.
+ * A disclosure and a question are different things: Move and Resurface each ask WHERE or WHEN, and a strip that
+ * replaces the bar with the possible answers and a Cancel is the right ceremony for a question. "More" asked nothing
+ * — it swapped the row for a different row in the same place, with no visible connection to the press. That is a
+ * menu, and a menu is what it is now ({@link MoreMenu}), anchored to the button that opened it. What is left here is
+ * exactly the two ceremonies.
  */
 type BarPanel = MessageBarPanel;
 
 /**
- * WHICH CONTROL A BAR PANEL WAS OPENED FROM, so cancelling puts the keyboard back on it.
- *
- * A KIND and not the element, and that is forced rather than chosen: the panel REPLACES the row,
- * so the button that was pressed is unmounted while the strip is up and the node the press came
- * from is detached by the time the cancel runs. `element.focus()` on a detached node does nothing
- * and reports nothing, which is the same silence the bug being fixed here already had. The row's
- * own refs are re-bound on the render that brings the row back, so the restore reads them from an
- * effect after that render rather than from the handler.
- *
- * `"more"` is the disclosure menu — Delete's only door, and where Resurface and Move stand once
- * the bar is narrow enough to fold them. No record at all means nothing in this bar opened the
- * panel: `m` and `d` open it from the shell's keymap, and a key press has no control to go back
- * to, so the keyboard stays where the person left it.
+ * WHICH CONTROL A BAR PANEL WAS OPENED FROM, so cancelling puts the keyboard back on it. A KIND and not the element,
+ * and that is forced rather than chosen: the panel REPLACES the row, so the button that was pressed is unmounted
+ * while the strip is up and the node the press came from is detached by the time the cancel runs. `element.focus()`
+ * on a detached node does nothing and reports nothing, which is the same silence the bug being fixed here already
+ * had. The row's own refs are re-bound on the render that brings the row back, so the restore reads them from an
+ * effect after that render rather than from the handler. `"more"` is the disclosure menu — Delete's only door, and
+ * where Resurface and Move stand once the bar is narrow enough to fold them.
+ */
+
+/**
+ * No record at all means nothing in this bar opened the panel: `m` and `d` open it from the shell's keymap, and a key
+ * press has no control to go back to, so the keyboard stays where the person left it.
  */
 type PanelTrigger = "resurface" | "move" | "more";
 
 /**
- * THE OPEN PANEL, RESOLVED THROUGH THE CHROME WHERE A SHELL PROVIDES ONE — the reply-draft
- * rule (`message-chrome.tsx` header) applied to the bar's strip: this bar is mounted in the
- * reading column AND the reader sheet (and on the open stream card), and a Move row opened
- * by key in one must be the row the reader is looking at in the other. The chrome keys the
- * panel by message id, so a different message's bar always renders at rest.
- *
- * The local `useState` is the PROVIDER-LESS fallback (the desktop shell, bare view tests):
- * no chrome setter means each mount keeps its own strip, exactly the pre-chrome behaviour,
- * which is honest where only one mount can exist. Both arms clear on a message change —
- * a half-open destination row must not carry over (the rule both hosts already stated).
+ * THE OPEN PANEL, RESOLVED THROUGH THE CHROME WHERE A SHELL PROVIDES ONE — the reply-draft rule (`message-chrome.tsx`
+ * header) applied to the bar's strip: this bar is mounted in the reading column AND the reader sheet (and on the open
+ * stream card), and a Move row opened by key in one must be the row the reader is looking at in the other. The chrome
+ * keys the panel by message id, so a different message's bar always renders at rest. The local `useState` is the
+ * PROVIDER-LESS fallback (the desktop shell, bare view tests): no chrome setter means each mount keeps its own strip,
+ * exactly the pre-chrome behaviour, which is honest where only one mount can exist. Both arms clear on a message
+ * change — a half-open destination row must not carry over (the rule both hosts already stated).
  */
 function useBarPanel(messageId: string): [BarPanel | null, (next: BarPanel | null) => void] {
   const chrome = useMessageChrome();
@@ -224,20 +208,14 @@ function useBarPanel(messageId: string): [BarPanel | null, (next: BarPanel | nul
 }
 
 /**
- * A verb's keycap, READ FROM THE LIVE REGISTRY.
- *
- * Renders nothing when nothing is bound to `chord` here, which is the whole point: the bar
- * cannot advertise a key that does not work, and it cannot go stale when a chord moves.
- * `chordKeys` is the same notation the `?` sheet prints, so `⌘`/`⇧`/`↵` would render
- * identically in both places if a bar verb ever took a modifier.
- *
- * This replaces `kbdHint="s"` — one hand-typed hint on one of eight buttons, which read as a
- * stray `s` in the label row.
- *
- * EXPORTED because the selection pill is this pill, mounted over a set in the list column's
- * foot, and its verbs carry their keys under the same law. Importing it is what keeps the two
- * mounts from growing two notions of a keycap; the phone rule that hides them is one CSS rule
- * over `.abar kbd`, so it covers both by construction.
+ * A verb's keycap, READ FROM THE LIVE REGISTRY. Renders nothing when nothing is bound to `chord` here, which is the
+ * whole point: the bar cannot advertise a key that does not work, and it cannot go stale when a chord moves.
+ * `chordKeys` is the same notation the `?` sheet prints, so `⌘`/`⇧`/`↵` would render identically in both places if a
+ * bar verb ever took a modifier. This replaces `kbdHint="s"` — one hand-typed hint on one of eight buttons, which
+ * read as a stray `s` in the label row. EXPORTED because the selection pill is this pill, mounted over a set in the
+ * list column's foot, and its verbs carry their keys under the same law. Importing it is what keeps the two mounts
+ * from growing two notions of a keycap; the phone rule that hides them is one CSS rule over `.abar kbd`, so it covers
+ * both by construction.
  */
 export function Key({ chord }: { chord: string }) {
   const binding = useBinding(chord);
@@ -309,20 +287,18 @@ function ActionBar({
 }: {
   message: EngineMessage;
   /**
-   * THE BAR OVER A MESSAGE THAT IS IN TRASH — one primary verb and the read switch, nothing
-   * else, decided by an EARLY RETURN below rather than by gating each of the eleven groups.
-   *
-   * Every other verb here is wrong over a trashed row and wrong in a different way: the filing
-   * segment would move mail out of Trash by a route that records no restore, the three horizons
-   * would schedule a return for a message that is not in a pile, Tag would label mail on its way
-   * out, and Delete would ask to delete something already deleted. Gating them one by one would
-   * be eleven predicates that all say the same thing, and the twelfth group somebody adds would
-   * arrive ungated — the "fix the path you are looking at and the one beside it" failure by
-   * construction.
-   *
-   * The read switch STAYS. Reading a message in Trash is reading, the flag is the mailbox's own
-   * and the write is `\Seen`, which is legitimate for a reader and unrelated to where the message
-   * sits.
+   * THE BAR OVER A MESSAGE THAT IS IN TRASH — one primary verb and the read switch, nothing else, decided by an EARLY
+   * RETURN below rather than by gating each of the eleven groups. Every other verb here is wrong over a trashed row
+   * and wrong in a different way: the filing segment would move mail out of Trash by a route that records no restore,
+   * the three horizons would schedule a return for a message that is not in a pile, Tag would label mail on its way
+   * out, and Delete would ask to delete something already deleted. Gating them one by one would be eleven predicates
+   * that all say the same thing, and the twelfth group somebody adds would arrive ungated — the "fix the path you are
+   * looking at and the one beside it" failure by construction. The read switch STAYS.
+   */
+
+  /**
+   * Reading a message in Trash is reading, the flag is the mailbox's own and the write is `\Seen`, which is
+   * legitimate for a reader and unrelated to where the message sits.
    */
   trash?: boolean;
   /** The clock the resurface presets are computed against — tomorrow/next week from here. */
@@ -581,16 +557,13 @@ function ActionBar({
   const compact = density.admit?.split(" ").includes("compact") ?? false;
 
   /**
-   * MARK UNREAD — the read-state verb of a message that IS read.
-   *
-   * It PRESSES `u` rather than dispatching its own `mark_seen`, and `press` NOT
-   * `useBinding("u")?.run()`: the memoised binding array holds closures from the last SHAPE change,
-   * and `u`'s shape does not change with read-state, so `run` would re-fire a stale handler — a bug
-   * a browser caught (two presses marked read twice). `press` resolves the handler at call time,
-   * exactly as the keydown dispatcher does, which is also what keeps `OhboxView`'s dwell pin in
-   * force — a button with its own mutation would be reverted two seconds later by that timer (see
-   * `test/ohbox-read-state.test.ts`). `onAction("unread")` is the fallback where `u` is not bound at all
-   * (the desktop shell, a pane mounted with no keymap provider).
+   * MARK UNREAD — the read-state verb of a message that IS read. It PRESSES `u` rather than dispatching its own
+   * `mark_seen`, and `press` NOT `useBinding("u")?.run()`: the memoised binding array holds closures from the last
+   * SHAPE change, and `u`'s shape does not change with read-state, so `run` would re-fire a stale handler — a bug a
+   * browser caught (two presses marked read twice). `press` resolves the handler at call time, exactly as the keydown
+   * dispatcher does, which is also what keeps `OhboxView`'s dwell pin in force — a button with its own mutation would
+   * be reverted two seconds later by that timer (see `test/ohbox-read-state.test.ts`). `onAction("unread")` is the
+   * fallback where `u` is not bound at all (the desktop shell, a pane mounted with no keymap provider).
    */
   const markUnread = () => {
     if (!press("u")) onAction("unread");
@@ -698,18 +671,18 @@ function ActionBar({
   }
 
   /**
-   * THE MESSAGE'S CURRENT PILE, REPORTED BY THE BUTTON THAT PUT IT THERE (TRI-F12).
-   *
-   * The list rows carry a state badge (`OhboxView.stateNoteOf`) and this bar did not: all
-   * three horizons rendered identically whatever the message's state, so `a` on something
-   * already queued was pressed in good faith, and the button that would UN-park a message
-   * looked exactly like the one that parks it — on a control that is a TOGGLE (the verb that
-   * filed a message takes it out again; see `AppShell`'s later/aside arms). `aria-pressed`
-   * is the toggle's own vocabulary, present in BOTH states so the role never changes with
-   * the message, and `action-bar.css` styles the pressed face from the same attribute — one
-   * source for the screen reader and the eye. `resurfaced` presses nothing: the pin is not
-   * a bottom pile (`triagePiles` ignores it by construction), and Resurface's own press
-   * opens the chooser rather than clearing the pin.
+   * THE MESSAGE'S CURRENT PILE, REPORTED BY THE BUTTON THAT PUT IT THERE (TRI-F12). The list rows carry a state badge
+   * (`OhboxView.stateNoteOf`) and this bar did not: all three horizons rendered identically whatever the message's
+   * state, so `a` on something already queued was pressed in good faith, and the button that would UN-park a message
+   * looked exactly like the one that parks it — on a control that is a TOGGLE (the verb that filed a message takes it
+   * out again; see `AppShell`'s later/aside arms). `aria-pressed` is the toggle's own vocabulary, present in BOTH
+   * states so the role never changes with the message, and `action-bar.css` styles the pressed face from the same
+   * attribute — one source for the screen reader and the eye.
+   */
+
+  /**
+   * `resurfaced` presses nothing: the pin is not a bottom pile (`triagePiles` ignores it by construction), and
+   * Resurface's own press opens the chooser rather than clearing the pin.
    */
   const pile = message.triage?.state;
   /**
@@ -822,18 +795,14 @@ function ActionBar({
 
   if (panel === "resurface") {
     /**
-     * THE HORIZON CHOOSER — three ways to say when, feeding a concrete instant into the action.
-     *
-     * Tomorrow and next week are computed from `now` at 09:00 UTC (the hour every stored
-     * `bubbleUpAt` uses, so the label reads back the same). "Pick a date" opens the product's own
-     * `DatePicker` (below), floored at tomorrow through its `min` so no horizon in the past can
-     * be chosen. Each choice closes the panel and dispatches `resurface:<iso>`; the shell mutates
-     * and states the day.
-     *
-     * FOUR NOW, and the fourth is first because it is the only one that costs nothing to change
-     * your mind about. "Now" dispatches `resurface_now` — a state, not a date; see
-     * {@link MessageAction}. It is separated from the three horizons by nothing but order: the
-     * question the strip asks is still "when?", and "now" is an answer to it.
+     * THE HORIZON CHOOSER — three ways to say when, feeding a concrete instant into the action. Tomorrow and next
+     * week are computed from `now` at 09:00 UTC (the hour every stored `bubbleUpAt` uses, so the label reads back the
+     * same). "Pick a date" opens the product's own `DatePicker` (below), floored at tomorrow through its `min` so no
+     * horizon in the past can be chosen. Each choice closes the panel and dispatches `resurface:<iso>`; the shell
+     * mutates and states the day. FOUR NOW, and the fourth is first because it is the only one that costs nothing to
+     * change your mind about. "Now" dispatches `resurface_now` — a state, not a date; see {@link MessageAction}. It
+     * is separated from the three horizons by nothing but order: the question the strip asks is still "when?", and
+     * "now" is an answer to it.
      */
     const tomorrow = tomorrowNine(now);
     const nextWeek = nextWeekNine(now);
@@ -975,16 +944,12 @@ function ActionBar({
   }
 
   /**
-   * WHAT IS BEHIND "MORE" — the same verbs, in the same order they stand in the row.
-   *
-   * `group` is what keeps the rule "a verb is in the row or in the menu, never both": the
-   * container queries at the foot of `action-bar.css` switch each group off HERE at exactly the
-   * width they switch it on THERE. One set of numbers, read from both sides.
-   *
-   * The two that ask a question — Resurface and Move — close the menu and open their panel,
-   * which is the same two-step the row's own buttons perform. Screening opens the sender sheet
-   * anchored on the item that was pressed, so the popover appears where the click was rather
-   * than under a bar that has just closed.
+   * WHAT IS BEHIND "MORE" — the same verbs, in the same order they stand in the row. `group` is what keeps the rule
+   * "a verb is in the row or in the menu, never both": the container queries at the foot of `action-bar.css` switch
+   * each group off HERE at exactly the width they switch it on THERE. One set of numbers, read from both sides. The
+   * two that ask a question — Resurface and Move — close the menu and open their panel, which is the same two-step
+   * the row's own buttons perform. Screening opens the sender sheet anchored on the item that was pressed, so the
+   * popover appears where the click was rather than under a bar that has just closed.
    */
   const menuItems: MoreMenuItem[] = [
     // Reply all mirrors its row position — first, beside the verb it varies. Present only when
@@ -1055,17 +1020,14 @@ function ActionBar({
       run: () => { closeMenu(); onAction("draft"); },
     },
     /**
-     * DELETE — last, menu-only, and flag-gated (FOLDERS-SPEC.md §16.3/§16.7): the verb ships
-     * behind "Use folders", and with the flag off this reader is the pre-verb reader. The item
-     * carries NO `group`, like Draft reply, so no admission rule can surface it as a row button —
-     * a destructive verb does not belong where a stray click can land. It opens the CONFIRM
-     * strip; only the strip dispatches (the one-dispatch-site rule the mobile parity test pins
-     * on its side).
-     *
-     * The predicate is the same NAME the strip's own conditional reads, not the same expression
-     * typed twice. The two conditionals stay independent — which is the point of the header at
-     * the strip: a stale strip must re-ask the live question rather than trust that this item was
-     * once offered — and there is now one place where the question is written down.
+     * DELETE — last, menu-only, and flag-gated (FOLDERS-SPEC.md §16.3/§16.7): the verb ships behind "Use folders",
+     * and with the flag off this reader is the pre-verb reader. The item carries NO `group`, like Draft reply, so no
+     * admission rule can surface it as a row button — a destructive verb does not belong where a stray click can
+     * land. It opens the CONFIRM strip; only the strip dispatches (the one-dispatch-site rule the mobile parity test
+     * pins on its side). The predicate is the same NAME the strip's own conditional reads, not the same expression
+     * typed twice. The two conditionals stay independent — which is the point of the header at the strip: a stale
+     * strip must re-ask the live question rather than trust that this item was once offered — and there is now one
+     * place where the question is written down.
      */
     ...(deleteConfirmAdmitted
       ? [{
@@ -1333,23 +1295,20 @@ function ProtectedPolicy({ text }: { text: string }) {
 const HANDOVER = ["wheel", "touchmove", "keydown", "pointerdown"] as const;
 
 /**
- * THE MESSAGE'S VERBS, FOR A SURFACE THAT IS NOT THE READING PANE.
- *
- * Reads and Receipts are skim streams: the mail is read in the card, in place, and there is no
- * `ReadingPane` anywhere in either view. So the message being read there had NO verbs at all —
- * no Later, no Set aside, no Reply, no Move — while the identical message in the Ohbox had all
- * of them a click away. Two answers were available and one of them is wrong: give those views
- * their own bar (a second set of verbs, drifting from the first by construction), or hand them
- * the bar that already exists.
- *
- * This is the second. `ActionBar` is unchanged and stays private; what is exported is the small
- * amount of state the reading pane was holding on its behalf — the open destination panel, and
- * the screening popover's anchor, which comes off the same chrome context the pane uses. So
- * "Later" means precisely what it means in the Ohbox, because it IS the Ohbox's button.
- *
- * The panel is cleared when the message changes, exactly as the pane clears it: a half-open
- * Move row belongs to the message it was opened on, and a stream re-pointing at the next card
- * must not carry it over.
+ * THE MESSAGE'S VERBS, FOR A SURFACE THAT IS NOT THE READING PANE. Reads and Receipts are skim streams: the mail is
+ * read in the card, in place, and there is no `ReadingPane` anywhere in either view. So the message being read there
+ * had NO verbs at all — no Later, no Set aside, no Reply, no Move — while the identical message in the Ohbox had all
+ * of them a click away. Two answers were available and one of them is wrong: give those views their own bar (a second
+ * set of verbs, drifting from the first by construction), or hand them the bar that already exists. This is the
+ * second. `ActionBar` is unchanged and stays private; what is exported is the small amount of state the reading pane
+ * was holding on its behalf — the open destination panel, and the screening popover's anchor, which comes off the
+ * same chrome context the pane uses.
+ */
+
+/**
+ * So "Later" means precisely what it means in the Ohbox, because it IS the Ohbox's button. The panel is cleared when
+ * the message changes, exactly as the pane clears it: a half-open Move row belongs to the message it was opened on,
+ * and a stream re-pointing at the next card must not carry it over.
  */
 export function MessageActionBar({
   message,
@@ -1427,15 +1386,13 @@ export function MessagePane({
    */
   const conversation = chrome.conversationOf(message.id);
   /**
-   * THE MESSAGE THE OPEN EDITOR ANSWERS (or forwards) — resolved against the WHOLE
-   * conversation, not the focused id alone. Every panel's ⋯ menu dispatches its OWN id
-   * (`MessageHeader`), and `chrome.replyTo` faithfully held it — but the dock below mounted
-   * only when the id was the FOCUSED message's, so Reply on any sibling set state that
-   * nothing anywhere rendered: the menu pressed, the editor absent, the dispatch swallowed
-   * (reported from real use as a dead menu). The dock is ONE editor at the thread's foot;
-   * which member it is bound to is this resolution, and every prop below — the head's
-   * audience, the send's id, the send-state lane — follows the TARGET, so answering an older
-   * message from its own panel is exactly answering it.
+   * THE MESSAGE THE OPEN EDITOR ANSWERS (or forwards) — resolved against the WHOLE conversation, not the focused id
+   * alone. Every panel's ⋯ menu dispatches its OWN id (`MessageHeader`), and `chrome.replyTo` faithfully held it —
+   * but the dock below mounted only when the id was the FOCUSED message's, so Reply on any sibling set state that
+   * nothing anywhere rendered: the menu pressed, the editor absent, the dispatch swallowed (reported from real use as
+   * a dead menu). The dock is ONE editor at the thread's foot; which member it is bound to is this resolution, and
+   * every prop below — the head's audience, the send's id, the send-state lane — follows the TARGET, so answering an
+   * older message from its own panel is exactly answering it.
    */
   const replyTarget = conversation.length > 0
     ? conversation.find((m) => m.id === chrome.replyTo) ?? null
@@ -1579,15 +1536,13 @@ export function MessagePane({
       }
       if (!scroller) return;
       /**
-       * SQUARE THE SCROLL GEOMETRY, so the flush bottom line is exact. Engines snap the
-       * maximum scroll offset to whole pixels, but the panel stack's height is fractional —
-       * so scrolled to the end, the last panel could rest a sub-pixel off the columns'
-       * shared baseline, or leave a hairline of canvas under itself. The last PANEL absorbs
-       * that fraction as ≤1px of inner bottom padding, making content height − viewport an
-       * integer; its own surface swallows the remainder and the flush edge stays exact.
-       * Reset first so the measurement is of the unpadded stack; only when the stack
-       * actually overflows, because a non-scrolling thread has no maximum offset to square
-       * (and jsdom, which reports zero-height rects, takes that branch and stays inert).
+       * SQUARE THE SCROLL GEOMETRY, so the flush bottom line is exact. Engines snap the maximum scroll offset to
+       * whole pixels, but the panel stack's height is fractional — so scrolled to the end, the last panel could rest
+       * a sub-pixel off the columns' shared baseline, or leave a hairline of canvas under itself. The last PANEL
+       * absorbs that fraction as ≤1px of inner bottom padding, making content height − viewport an integer; its own
+       * surface swallows the remainder and the flush edge stays exact. Reset first so the measurement is of the
+       * unpadded stack; only when the stack actually overflows, because a non-scrolling thread has no maximum offset
+       * to square (and jsdom, which reports zero-height rects, takes that branch and stays inert).
        */
       last.style.paddingBottom = "0px";
       const stackH = conv.getBoundingClientRect().height;
@@ -1653,21 +1608,20 @@ export function MessagePane({
   const body = chrome.bodyOf(message);
 
   /**
-   * A PROTECTED MESSAGE RENDERS NO TEXT, AND IT IS THIS BRANCH THAT MAKES IT TRUE.
-   *
-   * `isProtected` is checked FIRST and `body` is not consulted inside it: a protected
-   * message renders the block and no text at all, whatever the mirror or a hydration
-   * happens to hold for it. The endpoint's own text is already redacted server-side
-   * (`message-service.ts` `getBody`), so hydration cannot introduce a secret here — but
-   * "the text we were given is safe" and "this pane does not render a protected message's
-   * text" are two different guarantees, and the second is the one a reader can see.
-   *
-   * AND IT IS NOW THE ONLY EXPRESSION THAT RENDERS THE MAIL HERE. This pane used to hand
-   * `ReadingPane` a `body` STRING whenever there was no conversation — a third render path, and
-   * the one most messages took, which `ReadingPane` drew as its own `<p className="msg-body">`.
-   * A body fix that only reached `focusedBody` would have been invisible on exactly the common
-   * case. `children` replaces `body` in `ReadingPane`, so the pane composes that slot itself
-   * now, always, and the `body` prop is not passed in any case.
+   * A PROTECTED MESSAGE RENDERS NO TEXT, AND IT IS THIS BRANCH THAT MAKES IT TRUE. `isProtected` is checked FIRST and
+   * `body` is not consulted inside it: a protected message renders the block and no text at all, whatever the mirror
+   * or a hydration happens to hold for it. The endpoint's own text is already redacted server-side
+   * (`message-service.ts` `getBody`), so hydration cannot introduce a secret here — but "the text we were given is
+   * safe" and "this pane does not render a protected message's text" are two different guarantees, and the second is
+   * the one a reader can see. AND IT IS NOW THE ONLY EXPRESSION THAT RENDERS THE MAIL HERE. This pane used to hand
+   * `ReadingPane` a `body` STRING whenever there was no conversation — a third render path, and the one most messages
+   * took, which `ReadingPane` drew as its own `<p className="msg-body">`.
+   */
+
+  /**
+   * A body fix that only reached `focusedBody` would have been invisible on exactly the common case. `children`
+   * replaces `body` in `ReadingPane`, so the pane composes that slot itself now, always, and the `body` prop is not
+   * passed in any case.
    */
   /**
    * THE FIXTURE EXTRA IS OPTIONAL HERE, AND ON A LIVE ACCOUNT IT IS ALWAYS ABSENT.
@@ -1996,21 +1950,20 @@ export function MessagePane({
   );
 
   /**
-   * THE FOCUSED MESSAGE'S OWN HEADER — the same {@link MessageHeader} an expanded sibling wears,
-   * so the message you opened and the ones around it read identically: avatar, the names-first
-   * sender that is still the screening control, the ⋯ actions menu left of the stamp, the
-   * message's own quiet subject line (SUBJECT-D — the raw `m.subject`, and the subject-rule
-   * entry where the shell offers the sheet), and the recipients line whose "details" press
-   * reveals the full To/Cc, the exact date and where the message physically sits
-   * (`physicalFolder`). `onEnterReader` rides here now — the from-line it used to hang off is
-   * gone from `ReadingPane`. So does `notice`: what the body below had refused, worn in the
-   * header's right cluster as the stream card wears it (`onNotice`, above), and printed in full
-   * by the "details" press.
-   *
-   * NO LARGE `<h2>` AND NO THREAD LEDE ANY MORE: the 24px heading (and the one-time lede the
-   * thread wrapper opened with) is deleted with the viewer redesign — the subject is per
-   * message, in the header, uniformly, on a single message exactly as on every thread panel.
-   * `test/conversation.test.ts` holds the absence.
+   * THE FOCUSED MESSAGE'S OWN HEADER — the same {@link MessageHeader} an expanded sibling wears, so the message you
+   * opened and the ones around it read identically: avatar, the names-first sender that is still the screening
+   * control, the ⋯ actions menu left of the stamp, the message's own quiet subject line (SUBJECT-D — the raw
+   * `m.subject`, and the subject-rule entry where the shell offers the sheet), and the recipients line whose
+   * "details" press reveals the full To/Cc, the exact date and where the message physically sits (`physicalFolder`).
+   * `onEnterReader` rides here now — the from-line it used to hang off is gone from `ReadingPane`. So does `notice`:
+   * what the body below had refused, worn in the header's right cluster as the stream card wears it (`onNotice`,
+   * above), and printed in full by the "details" press.
+   */
+
+  /**
+   * NO LARGE `<h2>` AND NO THREAD LEDE ANY MORE: the 24px heading (and the one-time lede the thread wrapper opened
+   * with) is deleted with the viewer redesign — the subject is per message, in the header, uniformly, on a single
+   * message exactly as on every thread panel. `test/conversation.test.ts` holds the absence.
    */
   const focusedHeader = (
     <MessageHeader message={message} now={now} onEnterReader={onEnterReader} notice={notice} />

@@ -311,16 +311,12 @@ export function RailNav({
 }
 
 /**
- * CONTROLLED-OPTIONAL, deliberately.
- *
- * The collapse state has to SURVIVE A RELOAD — "saved if it's collapsed or not so ui stays as
- * one left it". But persistence is a host concern, not a design-system one: `packages/ui` is
- * shared with the desktop shell, which has no `localStorage` and no business inheriting the
- * web client's storage decisions. So the component takes `open`/`onOpenChange` when a host
- * wants to own the state, and falls back to its own `useState(defaultOpen)` when nobody does.
- *
- * That keeps the fallback honest too: an uncontrolled group still works, it just forgets — so
- * a host that forgets to wire persistence gets today's behaviour rather than a broken toggle.
+ * CONTROLLED-OPTIONAL, deliberately. The collapse state has to SURVIVE A RELOAD — "saved if it's collapsed or not so
+ * ui stays as one left it". But persistence is a host concern, not a design-system one: `packages/ui` is shared with
+ * the desktop shell, which has no `localStorage` and no business inheriting the web client's storage decisions. So
+ * the component takes `open`/`onOpenChange` when a host wants to own the state, and falls back to its own
+ * `useState(defaultOpen)` when nobody does. That keeps the fallback honest too: an uncontrolled group still works, it
+ * just forgets — so a host that forgets to wire persistence gets today's behaviour rather than a broken toggle.
  */
 function TagsGroup({
   label,
@@ -349,15 +345,12 @@ function TagsGroup({
   };
 
   /**
-   * MAKING A TAG HAPPENS IN THE GROUP, not in a dialog over it.
-   *
-   * The trigger row swaps itself for an input in place; the input owns Enter (submit) and
-   * Escape (cancel), and STOPS the Escape so the shell's overlay ladder does not also act on a
-   * key the innermost open thing already handled. A name that already exists cannot be
-   * submitted — the server's unique index is on `lower(name)` — and the reason is said rather
-   * than the button silently disabled, because the user typed it and is owed why. Focus moves
-   * to the input the moment it appears; a blur with nothing typed closes it, so clicking away
-   * from an empty field is not a half-open state.
+   * MAKING A TAG HAPPENS IN THE GROUP, not in a dialog over it. The trigger row swaps itself for an input in place;
+   * the input owns Enter (submit) and Escape (cancel), and STOPS the Escape so the shell's overlay ladder does not
+   * also act on a key the innermost open thing already handled. A name that already exists cannot be submitted — the
+   * server's unique index is on `lower(name)` — and the reason is said rather than the button silently disabled,
+   * because the user typed it and is owed why. Focus moves to the input the moment it appears; a blur with nothing
+   * typed closes it, so clicking away from an empty field is not a half-open state.
    */
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState("");

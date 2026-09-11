@@ -142,16 +142,13 @@ export function useDraftReply(opts: {
       } catch (err) {
         if (io.current.run !== run) return;
         /**
-         * BACK TO THE OFFER, AND NO RETRY LOOP.
-         *
-         * Every refusal on this path already has a true sentence written by the code that made
-         * the decision — "no AI actions remain on this account" (402), "cannot AI-draft a
-         * sensitive message" (422), "this deployment has no AI drafter connected" (503) — and
-         * a second taxonomy here is how somebody with an empty balance is told the model is
-         * down. The key is kept: if the user presses again it is the SAME purchase being
-         * retried, which is what stops a lost response from being charged twice. Nothing
-         * retries on its own, because a 402 retried in a loop is a person being asked to buy
-         * something they have already been told they cannot afford.
+         * BACK TO THE OFFER, AND NO RETRY LOOP. Every refusal on this path already has a true sentence written by the
+         * code that made the decision — "no AI actions remain on this account" (402), "cannot AI-draft a sensitive
+         * message" (422), "this deployment has no AI drafter connected" (503) — and a second taxonomy here is how
+         * somebody with an empty balance is told the model is down. The key is kept: if the user presses again it is
+         * the SAME purchase being retried, which is what stops a lost response from being charged twice. Nothing
+         * retries on its own, because a 402 retried in a loop is a person being asked to buy something they have
+         * already been told they cannot afford.
          */
         setPhase("offered");
         setNotice(messageFor(err, t("failed"), bought ? t("failedOpaque") : t("failedOpaqueEarly")));

@@ -190,17 +190,13 @@ export function RulesView({ rules, onRevoke, onRetarget }: RulesViewProps) {
   const toast = useToast();
 
   /**
-   * WHAT A RULE SAYS, IN ONE LINE — and for a subject rule that is TWO terms, not one.
-   *
-   * `what.sender` renders "mail from x@y.com". A rule carrying `subjectContains` says something
-   * strictly narrower, and rendering it with the same string is the defect this exists to close: two
-   * rules for one address — the broad one and the `[NinjaFirewall]` one — would appear as identical
-   * rows with identical Change and Revoke buttons, and revoking "the wrong one" would be a coin toss
-   * a person could not even see they were making.
-   *
-   * The conjunction is spelled out rather than abbreviated to a chip, because the term is the thing
-   * the reader has to check character by character: a rule that is one letter off looks right and
-   * files nothing.
+   * WHAT A RULE SAYS, IN ONE LINE — and for a subject rule that is TWO terms, not one. `what.sender` renders "mail
+   * from x@y.com". A rule carrying `subjectContains` says something strictly narrower, and rendering it with the same
+   * string is the defect this exists to close: two rules for one address — the broad one and the `[NinjaFirewall]`
+   * one — would appear as identical rows with identical Change and Revoke buttons, and revoking "the wrong one" would
+   * be a coin toss a person could not even see they were making. The conjunction is spelled out rather than
+   * abbreviated to a chip, because the term is the thing the reader has to check character by character: a rule that
+   * is one letter off looks right and files nothing.
    */
   const whatOf = (rule: RuleDTO): string => {
     const base = t(`what.${rule.kind}`, { match: displayRuleMatch(rule.match) });
@@ -246,16 +242,12 @@ export function RulesView({ rules, onRevoke, onRetarget }: RulesViewProps) {
   const win = useListWindow({ scrollerRef, count: filtered.length, estimate: RULE_ROW_PX });
 
   /**
-   * THE TOAST WAITS FOR THE OUTCOME, AND IT LIVES HERE RATHER THAN IN THE SHELL.
-   *
-   * It fired immediately in the first cut, so a server that answered `403` got *"Rule revoked.
-   * Your mail hasn't moved."* printed over the refusal — the optimistic tombstone rolled back,
-   * so the rule REAPPEARED underneath a message saying it was gone. Only a refusal surfaces
-   * this, and `FixturesAdapter` never refuses, so every test stayed green.
-   *
-   * `queued` is NOT folded into success. The engine keeps a retryable failure on its offline
-   * queue with the overlay standing, so the row is correctly gone from the screen — but the
-   * server has not been told yet, and "revoked" is a claim about the server.
+   * THE TOAST WAITS FOR THE OUTCOME, AND IT LIVES HERE RATHER THAN IN THE SHELL. It fired immediately in the first
+   * cut, so a server that answered `403` got *"Rule revoked. Your mail hasn't moved."* printed over the refusal — the
+   * optimistic tombstone rolled back, so the rule REAPPEARED underneath a message saying it was gone. Only a refusal
+   * surfaces this, and `FixturesAdapter` never refuses, so every test stayed green. `queued` is NOT folded into
+   * success. The engine keeps a retryable failure on its offline queue with the overlay standing, so the row is
+   * correctly gone from the screen — but the server has not been told yet, and "revoked" is a claim about the server.
    */
   const report = (status: MutationStatus, ok: string, queued: string, failed: string): void => {
     toast(status === "rolled_back" ? failed : status === "queued" ? queued : ok);

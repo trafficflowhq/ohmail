@@ -302,21 +302,18 @@ export function senderName(m: EngineMessage): string {
 }
 
 /**
- * THE SENDER CIRCLE — the same letter and the same colour for one person, in
- * every list, on every device, forever.
- *
- * The requirement: the small circle carrying the sender's or receiver's letter belongs on the
- * mail list too, not only in the Screener. The component already existed — it is what the Screener's
- * rows and the doorbell stack — so the only new thing is the derivation, and the only
- * requirement on the derivation is that it be a pure function of the ADDRESS. Not of the
- * display name, which the same person changes between messages, and not of a random seed,
- * which would repaint the list on every reload.
- *
- * The hues are eight fixed angles, not `hash % 360`: the free wheel produces the candy
- * greens and electric blues the Blanc system rules out, while these sit in the same
- * warm-adjacent band as the tag hues (rosewood 25 · terracotta 42 · ochre 78 · olive 112 ·
- * moss 150 · slate 196 · indigo 250 · mauve 318). Lightness and chroma are pinned in
- * `avatar.css` per theme, so legibility is not a property of this table.
+ * THE SENDER CIRCLE — the same letter and the same colour for one person, in every list, on every device, forever.
+ * The requirement: the small circle carrying the sender's or receiver's letter belongs on the mail list too, not only
+ * in the Screener. The component already existed — it is what the Screener's rows and the doorbell stack — so the
+ * only new thing is the derivation, and the only requirement on the derivation is that it be a pure function of the
+ * ADDRESS. Not of the display name, which the same person changes between messages, and not of a random seed, which
+ * would repaint the list on every reload. The hues are eight fixed angles, not `hash % 360`: the free wheel produces
+ * the candy greens and electric blues the Blanc system rules out, while these sit in the same warm-adjacent band as
+ * the tag hues (rosewood 25 · terracotta 42 · ochre 78 · olive 112 · moss 150 · slate 196 · indigo 250 · mauve 318).
+ */
+
+/**
+ * Lightness and chroma are pinned in `avatar.css` per theme, so legibility is not a property of this table.
  */
 const AVATAR_HUES = [25, 42, 78, 112, 150, 196, 250, 318];
 
@@ -413,18 +410,14 @@ export function firstName(m: EngineMessage): string {
 }
 
 /**
- * ABSOLUTE date and time, for the hover title on a message's relative stamp — "Tue 5 Aug 2026,
- * 14:32". The visible stamp is {@link displayTime} (relative: "09:12", "Mon"); this is what the
- * reader gets when they want the exact instant, so it carries the year and never abbreviates
- * to a weekday.
- *
- * The reader's zone, like every other formatter in this file (`clockOf`, `resurfaceLabel`,
- * `displayTime`) — this is the value a reader opens precisely to check an exact time against
- * their own clock, so it is the one place a UTC render would be most obviously wrong. Note the
- * DATE moves with it, not only the hour: 22:10 UTC on the 4th is 00:10 on the 5th in Zurich.
- * Empty string for a message with no `Date:` header — there is no instant to name, exactly as
- * `displayTime` answers "" — so a caller interpolating it prints nothing rather than
- * "Invalid Date".
+ * ABSOLUTE date and time, for the hover title on a message's relative stamp — "Tue 5 Aug 2026, 14:32". The visible
+ * stamp is {@link displayTime} (relative: "09:12", "Mon"); this is what the reader gets when they want the exact
+ * instant, so it carries the year and never abbreviates to a weekday. The reader's zone, like every other formatter
+ * in this file (`clockOf`, `resurfaceLabel`, `displayTime`) — this is the value a reader opens precisely to check an
+ * exact time against their own clock, so it is the one place a UTC render would be most obviously wrong. Note the
+ * DATE moves with it, not only the hour: 22:10 UTC on the 4th is 00:10 on the 5th in Zurich. Empty string for a
+ * message with no `Date:` header — there is no instant to name, exactly as `displayTime` answers "" — so a caller
+ * interpolating it prints nothing rather than "Invalid Date".
  */
 /*
  * `Pick<…, "date">` and not the whole message, because `date` is all it reads. The away-answer
@@ -486,16 +479,12 @@ export function rowStamp(
 }
 
 /**
- * One recipient, WRITTEN OUT — a chip under the header (viewer redesign).
- *
- * `me` marks the reader's own address so the card can swap the ACCOUNT's identity onto the
- * face; the flag is computed here, on the STORED form, and the name the account goes by is
- * deliberately not — that answer belongs to `GET /mailboxes` and reaches the card through the
- * chrome (`ownNameOf`), not through a pure function every mount shares.
- *
- * `address` is the wire form, untouched: every action a chip offers (copy, write, screening)
- * acts on it, and only the FACE decodes (`displayAddress`, at the render site). Carrying a
- * pre-decoded string here is exactly the leak `idn.ts`'s header forbids.
+ * One recipient, WRITTEN OUT — a chip under the header (viewer redesign). `me` marks the reader's own address so the
+ * card can swap the ACCOUNT's identity onto the face; the flag is computed here, on the STORED form, and the name the
+ * account goes by is deliberately not — that answer belongs to `GET /mailboxes` and reaches the card through the
+ * chrome (`ownNameOf`), not through a pure function every mount shares. `address` is the wire form, untouched: every
+ * action a chip offers (copy, write, screening) acts on it, and only the FACE decodes (`displayAddress`, at the
+ * render site). Carrying a pre-decoded string here is exactly the leak `idn.ts`'s header forbids.
  */
 export interface RecipientRowChip {
   /** True when this recipient IS the reader — fold on the stored, case-folded address. */

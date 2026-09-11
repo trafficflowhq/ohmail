@@ -96,33 +96,25 @@ export function escapeAsParagraphs(text: string): string {
 }
 
 /**
- * A value as the document to load — the markup when there is any, and the plain text as
- * escaped paragraphs when there is not.
- *
- * One helper for the editor's initial `content` AND for its sync effect, because both hand
- * their string to the same parser and therefore need the same escaping. They did not have it:
- * the effect escaped and the initial content did not, so a legacy plain buffer went in raw and
- * was silently corrected a tick later by the effect — which is exactly why the guard on the
- * escaping was green. The visible defect was one frame wide; the real one is that only one of
- * the two doors was locked.
+ * A value as the document to load — the markup when there is any, and the plain text as escaped paragraphs when there
+ * is not. One helper for the editor's initial `content` AND for its sync effect, because both hand their string to
+ * the same parser and therefore need the same escaping. They did not have it: the effect escaped and the initial
+ * content did not, so a legacy plain buffer went in raw and was silently corrected a tick later by the effect — which
+ * is exactly why the guard on the escaping was green. The visible defect was one frame wide; the real one is that
+ * only one of the two doors was locked.
  */
 export function richToHtml(v: RichValue): string {
   return v.html || (v.text ? escapeAsParagraphs(v.text) : "");
 }
 
 /**
- * `b` placed below `a` — what "Add below" means when a drafted reply lands on top of something
- * already written.
- *
- * THE MIXED CASE IS WHY THIS IS NOT A CONCATENATION. A generated draft arrives as plain text
- * and the editor may hold markup; joining `a.html` to `b.text` would hand the parser a string
- * whose second half was never escaped, so a draft mentioning `<script>` or an `a > b` would
- * become markup on the way in. {@link richToHtml} escapes whichever half needs it, which is
- * the same rule the editor loads a document by.
- *
- * The result is plain when BOTH sides are plain — appending must not invent formatting on a
- * message that had none, because `html` present is what puts the markup on the wire instead of
- * the text (`compose.ts`).
+ * `b` placed below `a` — what "Add below" means when a drafted reply lands on top of something already written. THE
+ * MIXED CASE IS WHY THIS IS NOT A CONCATENATION. A generated draft arrives as plain text and the editor may hold
+ * markup; joining `a.html` to `b.text` would hand the parser a string whose second half was never escaped, so a draft
+ * mentioning `<script>` or an `a > b` would become markup on the way in. {@link richToHtml} escapes whichever half
+ * needs it, which is the same rule the editor loads a document by. The result is plain when BOTH sides are plain —
+ * appending must not invent formatting on a message that had none, because `html` present is what puts the markup on
+ * the wire instead of the text (`compose.ts`).
  */
 export function appendRich(a: RichValue, b: RichValue): RichValue {
   if (isRichEmpty(a)) return b;

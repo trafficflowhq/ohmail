@@ -80,16 +80,13 @@ export function deleteIntentsKey(owner: string | null = storageOwner()): string 
 export const DELETE_INTENTS_MAX = 200;
 
 /**
- * READ, TOLERANTLY, AND ACCEPT THE SHAPE THE PREVIOUS BUILD WROTE.
- *
- * The first version of this journal stored `{ messageId, at }` — one row per message. A person
- * who closes the tab inside the window and then reloads onto a NEW build must not lose the delete
- * because the record changed shape between the two: that is the very failure the journal exists
- * to prevent, arriving through the upgrade instead of through the crash. A legacy row is read as
- * a one-message press and replayed exactly like one.
- *
- * Anything else is dropped rather than guessed at. A row that parses but is not either shape
- * names no message this build can act on, and inventing one would be a delete nobody asked for.
+ * READ, TOLERANTLY, AND ACCEPT THE SHAPE THE PREVIOUS BUILD WROTE. The first version of this journal stored `{
+ * messageId, at }` — one row per message. A person who closes the tab inside the window and then reloads onto a NEW
+ * build must not lose the delete because the record changed shape between the two: that is the very failure the
+ * journal exists to prevent, arriving through the upgrade instead of through the crash. A legacy row is read as a
+ * one-message press and replayed exactly like one. Anything else is dropped rather than guessed at. A row that parses
+ * but is not either shape names no message this build can act on, and inventing one would be a delete nobody asked
+ * for.
  */
 function read(): DeleteIntent[] {
   try {

@@ -198,39 +198,35 @@ export function purgeLegacyMirror(factory?: IDBFactory): Promise<void> {
 export const MIRROR_REGISTRY_PREFIX = "ohmail.mirror.";
 
 /**
- * THE ANCHOR — set once, on an origin observed to hold NO mirror before the registry did.
- *
- * Enumeration is trusted for what it SHOWS and not for what it OMITS: a name the browser lists
- * is there, a name it does not list is not evidence of absence. That asymmetry is already why
- * the read-back may only ADD — and it means a successful `databases()` cannot, by itself, prove
- * the inventory is COMPLETE. A database created before this build existed is exactly the one a
- * partial listing would leave out, and it is exactly the one an earlier account left behind.
- *
- * So completeness rests on the registry instead, and the registry can only be authoritative if
- * it has named every mirror this origin ever made. That is provable in one moment and only one:
- * the first time a mirror is opened on an origin the browser then reports as holding no OTHER
- * mirror. From there, every mirror is registry-named by construction.
- *
- * A browser that already held mirrors when this shipped never gets the anchor, and its wipes
- * report `partial` — honestly, because on that browser they are. The cost falls exactly where
- * the doubt is real.
+ * THE ANCHOR — set once, on an origin observed to hold NO mirror before the registry did. Enumeration is trusted for
+ * what it SHOWS and not for what it OMITS: a name the browser lists is there, a name it does not list is not evidence
+ * of absence. That asymmetry is already why the read-back may only ADD — and it means a successful `databases()`
+ * cannot, by itself, prove the inventory is COMPLETE. A database created before this build existed is exactly the one
+ * a partial listing would leave out, and it is exactly the one an earlier account left behind. So completeness rests
+ * on the registry instead, and the registry can only be authoritative if it has named every mirror this origin ever
+ * made. That is provable in one moment and only one: the first time a mirror is opened on an origin the browser then
+ * reports as holding no OTHER mirror. From there, every mirror is registry-named by construction.
+ */
+
+/**
+ * A browser that already held mirrors when this shipped never gets the anchor, and its wipes report `partial` —
+ * honestly, because on that browser they are. The cost falls exactly where the doubt is real.
  */
 const REGISTRY_SINCE = `${MIRROR_REGISTRY_PREFIX}__since`;
 
 /**
- * THE WIPE EPOCH — an origin-wide fence, because a per-database one has a hole.
- *
- * `versionchange` reaches CONNECTIONS. A store instance that exists but has not opened yet gets
- * nothing: tab B constructs its engine, tab A signs out and deletes everything it can see, and
- * then tab B's first `open()` — a moment later, after the final read-back — CREATES the database
- * again and starts writing mail into it, while tab A has already been told the browser is clean
- * and navigated away. Ordinary second-tab timing, and no amount of care inside the delete can
- * see it, because at delete time there is nothing to send an event to.
- *
- * So the fence is a value on the ORIGIN, not a property of a connection. Every store captures it
- * when it is CONSTRUCTED and refuses to open once it has moved: an instance that predates a wipe
- * is fenced whether or not its database existed when the wipe ran. A store built afterwards
- * captures the new value and works normally, which is what a fresh sign-in is.
+ * THE WIPE EPOCH — an origin-wide fence, because a per-database one has a hole. `versionchange` reaches CONNECTIONS.
+ * A store instance that exists but has not opened yet gets nothing: tab B constructs its engine, tab A signs out and
+ * deletes everything it can see, and then tab B's first `open()` — a moment later, after the final read-back —
+ * CREATES the database again and starts writing mail into it, while tab A has already been told the browser is clean
+ * and navigated away. Ordinary second-tab timing, and no amount of care inside the delete can see it, because at
+ * delete time there is nothing to send an event to. So the fence is a value on the ORIGIN, not a property of a
+ * connection. Every store captures it when it is CONSTRUCTED and refuses to open once it has moved: an instance that
+ * predates a wipe is fenced whether or not its database existed when the wipe ran.
+ */
+
+/**
+ * A store built afterwards captures the new value and works normally, which is what a fresh sign-in is.
  */
 const WIPE_EPOCH = `${MIRROR_REGISTRY_PREFIX}__epoch`;
 
@@ -269,18 +265,14 @@ export const MIRROR_FENCED =
   "this browser's copy of the mailbox was removed by a sign-out; reload the page";
 
 /**
- * CAN THIS BROWSER'S INVENTORY BE TRUSTED TO BE COMPLETE?
- *
- * Two independent sources answer "what mirrors are on this origin": `IDBFactory.databases()`,
- * and the registry the store writes as it opens one. Where NEITHER is available the delete set
- * is just the legacy name plus the caller's own mirror — and an empty survivor list then means
- * "the two names I know about are gone", not "this browser holds no mail". Reporting that as a
- * clean wipe is the precise shape this whole function was changed to stop.
- *
- * A registry write is best-effort by design (a private mode refuses storage), so an EMPTY
- * registry cannot be told apart from a registry that was never writable. This probes the store
- * instead: if a round trip works, an empty registry is evidence; if it does not, the inventory
- * is admitted as partial and the caller must not claim a clean browser.
+ * CAN THIS BROWSER'S INVENTORY BE TRUSTED TO BE COMPLETE? Two independent sources answer "what mirrors are on this
+ * origin": `IDBFactory.databases()`, and the registry the store writes as it opens one. Where NEITHER is available
+ * the delete set is just the legacy name plus the caller's own mirror — and an empty survivor list then means "the
+ * two names I know about are gone", not "this browser holds no mail". Reporting that as a clean wipe is the precise
+ * shape this whole function was changed to stop. A registry write is best-effort by design (a private mode refuses
+ * storage), so an EMPTY registry cannot be told apart from a registry that was never writable. This probes the store
+ * instead: if a round trip works, an empty registry is evidence; if it does not, the inventory is admitted as partial
+ * and the caller must not claim a clean browser.
  */
 function registryReadable(): boolean {
   // `durableProbe` and not `durableSet`: a probe's refusal IS the answer asked for, so it raises
@@ -290,17 +282,13 @@ function registryReadable(): boolean {
 }
 
 /**
- * ONE KEY PER MIRROR, NOT ONE ARRAY OF THEM — and the difference is a lost database.
- *
- * The registry was a single JSON array, read-modify-written on first open. `localStorage` is
- * shared across every tab of the origin and offers no atomic update, so two tabs first-opening
- * different mirrors at once both read the same list and the second write erases the first's
- * name. That is ordinary multi-tab use, and it defeated the registry's ONE purpose: on a browser
- * without `databases()` the lost name is a database nothing can enumerate and nothing can name,
- * so a later sign-out deletes what it knows about and reports a clean browser over it.
- *
- * One key per name has no read-modify-write at all: two tabs writing different names touch
- * different keys, and two tabs writing the SAME name write the same bytes.
+ * ONE KEY PER MIRROR, NOT ONE ARRAY OF THEM — and the difference is a lost database. The registry was a single JSON
+ * array, read-modify-written on first open. `localStorage` is shared across every tab of the origin and offers no
+ * atomic update, so two tabs first-opening different mirrors at once both read the same list and the second write
+ * erases the first's name. That is ordinary multi-tab use, and it defeated the registry's ONE purpose: on a browser
+ * without `databases()` the lost name is a database nothing can enumerate and nothing can name, so a later sign-out
+ * deletes what it knows about and reports a clean browser over it. One key per name has no read-modify-write at all:
+ * two tabs writing different names touch different keys, and two tabs writing the SAME name write the same bytes.
  */
 function registry(): string[] {
   const out: string[] = [];
@@ -577,18 +565,14 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
     // `wipe()` moves it.
     this.generation = await this.readGeneration(db);
     /**
-     * YIELD TO A DELETE. Measured, not theorised.
-     *
-     * `deleteDatabase` fires `versionchange` on every OPEN connection and is BLOCKED until
-     * they all close. `deleteDatabase` here resolves on `onblocked` deliberately — hygiene
-     * must not hang — so a connection that ignores `versionchange` turns "the local copy is
-     * wiped" into a silent no-op. And the connection that blocks it is normally OUR OWN: the
-     * sign-out and account-erasure paths both run in the page whose engine holds the mirror.
-     *
-     * Found by deleting a live account through the product's own screen and then asking the
-     * browser what databases it still had: `ohmail-mirror:<account>` was still there, and a
-     * subsequent `open()` hung behind the pending delete. Every existing test in
-     * `idb-owner.test.ts` called `close()` first, so none of them could see it.
+     * YIELD TO A DELETE. Measured, not theorised. `deleteDatabase` fires `versionchange` on every OPEN connection and
+     * is BLOCKED until they all close. `deleteDatabase` here resolves on `onblocked` deliberately — hygiene must not
+     * hang — so a connection that ignores `versionchange` turns "the local copy is wiped" into a silent no-op. And
+     * the connection that blocks it is normally OUR OWN: the sign-out and account-erasure paths both run in the page
+     * whose engine holds the mirror. Found by deleting a live account through the product's own screen and then
+     * asking the browser what databases it still had: `ohmail-mirror:<account>` was still there, and a subsequent
+     * `open()` hung behind the pending delete. Every existing test in `idb-owner.test.ts` called `close()` first, so
+     * none of them could see it.
      */
     db.onversionchange = (ev) => {
       db.close();
@@ -766,16 +750,13 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
   }
 
   /**
-   * ONE TRANSACTION for the outbox's puts and deletes together — see `MirrorStore.commitLocal`.
-   *
-   * The generation fence is read INSIDE the transaction for the same reason `persist` reads it
-   * there, and the same abort-on-mismatch makes the refusal atomic: nothing this call was asked to
-   * write reaches disk. `META` is in the transaction only to read that stamp — this method writes
-   * no cursor and no meta, which is the structural half of "it cannot move the sync cursor".
-   *
-   * "Died mid-transaction" and "aborted" are the same state to IndexedDB, which is exactly why
-   * this is the seam the fault-injection tests use: a transaction that never completes is
-   * indistinguishable from a process that stopped, and both leave disk untouched.
+   * ONE TRANSACTION for the outbox's puts and deletes together — see `MirrorStore.commitLocal`. The generation fence
+   * is read INSIDE the transaction for the same reason `persist` reads it there, and the same abort-on-mismatch makes
+   * the refusal atomic: nothing this call was asked to write reaches disk. `META` is in the transaction only to read
+   * that stamp — this method writes no cursor and no meta, which is the structural half of "it cannot move the sync
+   * cursor". "Died mid-transaction" and "aborted" are the same state to IndexedDB, which is exactly why this is the
+   * seam the fault-injection tests use: a transaction that never completes is indistinguishable from a process that
+   * stopped, and both leave disk untouched.
    */
   protected async transact(puts: MirrorRecord[], deletes: string[]): Promise<void> {
     if (puts.length === 0 && deletes.length === 0) return;

@@ -445,56 +445,50 @@ export function SettingsView({
     onRetarget: (ruleId: string, destination: Folder) => Promise<RuleOutcome>;
   };
   /**
-   * CREATE / RENAME / RECOLOUR / DELETE — one object, or a read-only list.
-   *
-   * The same rule as {@link rules} and for the same reason: four optional callbacks can be
-   * half-supplied, and a pane that renders a verb without its handler is exactly the shape this
-   * is fixing. What shipped originally was worse than half-supplied — Rename and Delete both
-   * called `toast("Renaming and deleting tags isn't wired up yet.")`, controls whose only
-   * function was to say they had none.
-   *
-   * All four are ordinary engine mutations on the same wire `tag_assign` uses (`tag_create`,
-   * `tag_rename`, `tag_recolor`, `tag_delete`), so the demo and the desktop shell get them too —
-   * `FixturesAdapter` serves whatever `mutationEffects` produces. Absent ⇒ the list renders with
-   * no verbs and no create row, which is right for a shell that has not wired them.
+   * CREATE / RENAME / RECOLOUR / DELETE — one object, or a read-only list. The same rule as {@link rules} and for the
+   * same reason: four optional callbacks can be half-supplied, and a pane that renders a verb without its handler is
+   * exactly the shape this is fixing. What shipped originally was worse than half-supplied — Rename and Delete both
+   * called `toast("Renaming and deleting tags isn't wired up yet.")`, controls whose only function was to say they
+   * had none. All four are ordinary engine mutations on the same wire `tag_assign` uses (`tag_create`, `tag_rename`,
+   * `tag_recolor`, `tag_delete`), so the demo and the desktop shell get them too — `FixturesAdapter` serves whatever
+   * `mutationEffects` produces. Absent ⇒ the list renders with no verbs and no create row, which is right for a shell
+   * that has not wired them.
    */
   tagAdmin?: TagAdminVerbs;
   /** The Cloud client's Account pane, or absent — see the header. */
   accountSection?: ReactNode;
   /**
-   * THE MAILBOXES PANE — HOST-SUPPLIED, ON EVERY SURFACE, and it names its own mode.
-   *
-   * There is no mirror fallback any more. This pane used to fall back to
-   * `reader.list<MailboxEntity>("mailbox")`, but `"mailbox"` is not one of the entity types the
-   * `/sync` change feed carries, so `/sync` never emits one and the list was empty for
-   * every real account — the built-tested-unreachable branch this change deletes rather than
-   * layers over. Both surfaces now bring the real list from `GET /mailboxes`: the Cloud client
-   * from `(product)/mailbox/MailboxSection` through `app/api-client`, the desktop shell from the
-   * sidecar's mounted API over its bridge. Each pane HEADS itself with the mode it is showing —
-   * "Cloud mailboxes" or "Local mailboxes on this computer" — because an install is one or the
-   * other, never both in parallel.
-   *
-   * Absent ⇒ NO pane and no nav entry (the demo, and a desktop window with no engine yet): a
-   * settings pane that connects a mailbox needs a server this surface is not talking to, so it is
-   * withheld structurally rather than offered dead. Same seam as {@link accountSection}, which
-   * `scripts/publish-desktop.mjs` keeps out of the shared file.
+   * THE MAILBOXES PANE — HOST-SUPPLIED, ON EVERY SURFACE, and it names its own mode. There is no mirror fallback any
+   * more. This pane used to fall back to `reader.list<MailboxEntity>("mailbox")`, but `"mailbox"` is not one of the
+   * entity types the `/sync` change feed carries, so `/sync` never emits one and the list was empty for every real
+   * account — the built-tested-unreachable branch this change deletes rather than layers over. Both surfaces now
+   * bring the real list from `GET /mailboxes`: the Cloud client from `(product)/mailbox/MailboxSection` through
+   * `app/api-client`, the desktop shell from the sidecar's mounted API over its bridge. Each pane HEADS itself with
+   * the mode it is showing — "Cloud mailboxes" or "Local mailboxes on this computer" — because an install is one or
+   * the other, never both in parallel.
+   */
+
+  /**
+   * Absent ⇒ NO pane and no nav entry (the demo, and a desktop window with no engine yet): a settings pane that
+   * connects a mailbox needs a server this surface is not talking to, so it is withheld structurally rather than
+   * offered dead. Same seam as {@link accountSection}, which `scripts/publish-desktop.mjs` keeps out of the shared
+   * file.
    */
   mailboxSection?: ReactNode;
   /**
-   * THE WAY BACK TO THE SENT-MAIL REVIEW — the bottom section of the Screener pane.
-   *
-   * The review is offered when an account has never answered it and takes the whole stage
-   * while it is owed, and "Not now" makes it go away. Without an entry here, "Not now" and
-   * "answered it once, two years ago" were both dead ends: a mailbox connected afterwards
-   * brings a whole second address book of people the user has written to, and there was no
-   * door back to the screen that consents to them.
-   *
-   * It carries its own `label` rather than reading one from the `settings` namespace because
-   * the words belong to the consent vocabulary, which this shared file does not own — the
-   * review's own screen has to say the same thing, and one wording in one place is how the two
-   * stay the same sentence. The `label` is rendered as a {@link SettingsSubhead} over the `node`
-   * at the foot of the Screener pane; the `node` carries the review's own copy and its button and
-   * must NOT wrap itself in a `SettingsSection`, because the pane already provides one.
+   * THE WAY BACK TO THE SENT-MAIL REVIEW — the bottom section of the Screener pane. The review is offered when an
+   * account has never answered it and takes the whole stage while it is owed, and "Not now" makes it go away. Without
+   * an entry here, "Not now" and "answered it once, two years ago" were both dead ends: a mailbox connected
+   * afterwards brings a whole second address book of people the user has written to, and there was no door back to
+   * the screen that consents to them. It carries its own `label` rather than reading one from the `settings`
+   * namespace because the words belong to the consent vocabulary, which this shared file does not own — the review's
+   * own screen has to say the same thing, and one wording in one place is how the two stay the same sentence.
+   */
+
+  /**
+   * The `label` is rendered as a {@link SettingsSubhead} over the `node` at the foot of the Screener pane; the `node`
+   * carries the review's own copy and its button and must NOT wrap itself in a `SettingsSection`, because the pane
+   * already provides one.
    */
   seedSection?: { label: string; node: ReactNode };
   /** The Cloud client's Subscription pane — plan, the AI switch, and Stripe's portal. */
@@ -529,33 +523,28 @@ export function SettingsView({
    */
   securitySection?: ReactNode;
   /**
-   * "About ohmail" — who publishes this, which build is running, where the privacy and
-   * subprocessor pages are.
-   *
-   * The same injected-node seam as the four above, and it has to be one for the same
-   * reason twice over. The live body reads `GET /mailboxes` through `app/api-client`, which
-   * `scripts/publish-desktop.mjs` DENYs from this shared file; and the publisher named in it
-   * is the operator of the HOSTED service, which is not who is running a standalone Desktop
-   * install. Absent ⇒ no pane, rather than a pane naming the wrong company.
-   *
-   * This is where the (i) dock panel's content went. It was an overlay over the mail holding
-   * three facts nobody can find anywhere else; facts belong in settings.
+   * "About ohmail" — who publishes this, which build is running, where the privacy and subprocessor pages are. The
+   * same injected-node seam as the four above, and it has to be one for the same reason twice over. The live body
+   * reads `GET /mailboxes` through `app/api-client`, which `scripts/publish-desktop.mjs` DENYs from this shared file;
+   * and the publisher named in it is the operator of the HOSTED service, which is not who is running a standalone
+   * Desktop install. Absent ⇒ no pane, rather than a pane naming the wrong company. This is where the (i) dock
+   * panel's content went. It was an overlay over the mail holding three facts nobody can find anywhere else; facts
+   * belong in settings.
    */
   aboutSection?: ReactNode;
   /**
-   * THE AUTO-WORK OPT-IN, injected — the Screener pane's one row that can spend money.
-   *
-   * The same seam as {@link accountSection} and for the same two reasons at once. It needs
-   * `app/api-client` (a `dryRun` quote and a consent write), which `scripts/publish-desktop.mjs`
-   * DENYs from this shared file; and there is nothing for it to buy on a standalone Desktop
-   * install, which has no account, no credits and a local model. Absent ⇒ the row does not
-   * exist, so the setting is structurally unreachable wherever it could not work — rather than
-   * present and refusing, which is a control that cost something to discover.
-   *
-   * It is a node and not a `{ label, node }` like {@link seedSection} because it belongs INSIDE the
-   * Screener pane's section rather than owning one. It renders LAST of the three Screener behaviour
-   * controls (posture, then the dormancy dial, then this), because it is the only one that spends —
-   * a control with a cost sits below the ones without.
+   * THE AUTO-WORK OPT-IN, injected — the Screener pane's one row that can spend money. The same seam as {@link
+   * accountSection} and for the same two reasons at once. It needs `app/api-client` (a `dryRun` quote and a consent
+   * write), which `scripts/publish-desktop.mjs` DENYs from this shared file; and there is nothing for it to buy on a
+   * standalone Desktop install, which has no account, no credits and a local model. Absent ⇒ the row does not exist,
+   * so the setting is structurally unreachable wherever it could not work — rather than present and refusing, which
+   * is a control that cost something to discover. It is a node and not a `{ label, node }` like {@link seedSection}
+   * because it belongs INSIDE the Screener pane's section rather than owning one.
+   */
+
+  /**
+   * It renders LAST of the three Screener behaviour controls (posture, then the dormancy dial, then this), because it
+   * is the only one that spends — a control with a cost sits below the ones without.
    */
   autoSuggestSection?: ReactNode;
   /**
@@ -570,31 +559,23 @@ export function SettingsView({
    */
   screeningSection?: ReactNode;
   /**
-   * THE DORMANCY DIAL, injected — the Screener pane's second control, between the posture
-   * ({@link screeningSection}) and the auto-suggest opt-in ({@link autoSuggestSection}).
-   *
-   * The same seam as {@link autoSuggestSection}: it writes `PATCH /consent/settings` through
-   * `app/api-client` AND through the shell's `useConsentState` hook (so the mirror re-partitions on
-   * the same render), neither of which this shared, desktop-mirrored file may name. It is pure
-   * VISIBILITY — it changes which undecided senders the Screener SHOWS, moves no mail and spends
-   * nothing — so it sits above the auto-suggest row. Absent ⇒ no dial (the demo, or a surface with
-   * no account).
+   * THE DORMANCY DIAL, injected — the Screener pane's second control, between the posture ({@link screeningSection})
+   * and the auto-suggest opt-in ({@link autoSuggestSection}). The same seam as {@link autoSuggestSection}: it writes
+   * `PATCH /consent/settings` through `app/api-client` AND through the shell's `useConsentState` hook (so the mirror
+   * re-partitions on the same render), neither of which this shared, desktop-mirrored file may name. It is pure
+   * VISIBILITY — it changes which undecided senders the Screener SHOWS, moves no mail and spends nothing — so it sits
+   * above the auto-suggest row. Absent ⇒ no dial (the demo, or a surface with no account).
    */
   dormancySection?: ReactNode;
   /**
-   * REMOTE IMAGES — the reading preference, injected, and it belongs to GENERAL rather than to any
-   * of the Screener's controls.
-   *
-   * Everything in the Screener pane is about which mail is SHOWN to you and when. This is about how
-   * a message you have already opened is drawn, which is the same class of question as the theme
-   * it sits under. Filing it with the Screener would put a reading preference behind a pane a
-   * reader only visits to deal with strangers.
-   *
-   * The same injection seam as {@link autoSuggestSection}: it writes `PATCH /consent/settings`
-   * through `app/api-client` and through the shell's `useConsentState` (so the open message
-   * re-renders in the new mode), neither of which this shared, desktop-mirrored file may name.
-   * Absent ⇒ no row — the demo, and a standalone install, which has no server to store the
-   * preference on and therefore keeps the per-message flow.
+   * REMOTE IMAGES — the reading preference, injected, and it belongs to GENERAL rather than to any of the Screener's
+   * controls. Everything in the Screener pane is about which mail is SHOWN to you and when. This is about how a
+   * message you have already opened is drawn, which is the same class of question as the theme it sits under. Filing
+   * it with the Screener would put a reading preference behind a pane a reader only visits to deal with strangers.
+   * The same injection seam as {@link autoSuggestSection}: it writes `PATCH /consent/settings` through
+   * `app/api-client` and through the shell's `useConsentState` (so the open message re-renders in the new mode),
+   * neither of which this shared, desktop-mirrored file may name. Absent ⇒ no row — the demo, and a standalone
+   * install, which has no server to store the preference on and therefore keeps the per-message flow.
    */
   remoteImagesSection?: ReactNode;
   /**
@@ -650,42 +631,33 @@ export function SettingsView({
    */
   awaySection?: ReactNode;
   /**
-   * THE FOLDERS PANE — "Use folders", the master toggle of the optional folders feature
-   * (FOLDERS-SPEC.md §6). This node IS the pane's content: absent ⇒ no pane and no nav entry.
-   *
-   * The same injection seam as {@link autoSuggestSection}: it writes `PATCH /consent/settings`
-   * through the shell's `useConsentState`, because the rail's Folders group and the folder
-   * views are gated on the SAME hook's answer — a pane with its own fetch would flip a switch
-   * the rail could not see. Listed on both surfaces the same way the neighbouring panes are: a
-   * LOCAL install organizes the same real IMAP folders, so wherever the shell can reach a
-   * consent row (the Cloud client, the desktop's hosted door) the pane exists; where it cannot
-   * (a standalone install, the demo) there is no entry rather than a dead switch.
+   * THE FOLDERS PANE — "Use folders", the master toggle of the optional folders feature (FOLDERS-SPEC.md §6). This
+   * node IS the pane's content: absent ⇒ no pane and no nav entry. The same injection seam as {@link
+   * autoSuggestSection}: it writes `PATCH /consent/settings` through the shell's `useConsentState`, because the
+   * rail's Folders group and the folder views are gated on the SAME hook's answer — a pane with its own fetch would
+   * flip a switch the rail could not see. Listed on both surfaces the same way the neighbouring panes are: a LOCAL
+   * install organizes the same real IMAP folders, so wherever the shell can reach a consent row (the Cloud client,
+   * the desktop's hosted door) the pane exists; where it cannot (a standalone install, the demo) there is no entry
+   * rather than a dead switch.
    */
   foldersSection?: ReactNode;
   /**
-   * THE SIGNATURES PANE — the per-mailbox signature editors (mail 0075). This node IS the
-   * pane's content: absent ⇒ no pane and no nav entry.
-   *
-   * The same injection seam as {@link foldersSection} and for the same reason: it writes
-   * `PATCH /consent/settings` through the shell's `useConsentState`, because every compose
-   * surface's signature block reads the SAME hook's map — a pane with its own fetch would save
-   * a signature an open composer could not see. Present wherever the shell can reach a consent
-   * row (the Cloud client, the desktop's hosted door); absent on the demo and on a standalone
-   * install, structurally, rather than as editors that cannot store.
+   * THE SIGNATURES PANE — the per-mailbox signature editors (mail 0075). This node IS the pane's content: absent ⇒ no
+   * pane and no nav entry. The same injection seam as {@link foldersSection} and for the same reason: it writes
+   * `PATCH /consent/settings` through the shell's `useConsentState`, because every compose surface's signature block
+   * reads the SAME hook's map — a pane with its own fetch would save a signature an open composer could not see.
+   * Present wherever the shell can reach a consent row (the Cloud client, the desktop's hosted door); absent on the
+   * demo and on a standalone install, structurally, rather than as editors that cannot store.
    */
   signaturesSection?: ReactNode;
   /**
-   * WHICH DOOR THIS INSTALL CAME IN BY — the desktop app's own pane, injected.
-   *
-   * The mirror image of {@link accountSection}. That one is absent on the desktop because a
-   * standalone install has no account; this one is absent everywhere else because a browser
-   * tab has no native shell to ask. Every control in it — sign out, switch door, sign in
-   * again — is a call to that shell, so the node is built where the shell is and this file
-   * names none of it.
-   *
-   * It carries its own `label`, like {@link seedSection}, and for the same reason: the words
-   * ("On this Mac", "ohmail Cloud") belong to the desktop's vocabulary, which the shared
-   * `settings` namespace does not own. Absent ⇒ no nav entry and no pane, structurally.
+   * WHICH DOOR THIS INSTALL CAME IN BY — the desktop app's own pane, injected. The mirror image of {@link
+   * accountSection}. That one is absent on the desktop because a standalone install has no account; this one is
+   * absent everywhere else because a browser tab has no native shell to ask. Every control in it — sign out, switch
+   * door, sign in again — is a call to that shell, so the node is built where the shell is and this file names none
+   * of it. It carries its own `label`, like {@link seedSection}, and for the same reason: the words ("On this Mac",
+   * "ohmail Cloud") belong to the desktop's vocabulary, which the shared `settings` namespace does not own. Absent ⇒
+   * no nav entry and no pane, structurally.
    */
   desktopSection?: { label: string; node: ReactNode };
   /**
@@ -698,31 +670,27 @@ export function SettingsView({
    */
   defaultMailSection?: ReactNode;
   /**
-   * THE DEVICES PANE — pairing this account's mail onto other devices, in whichever shape the
-   * surface behind it has: on the desktop it is host mode (serve THIS install's mail over the
-   * user's own network — tailscale probes, the arm/disarm ceremony, the stdio mint), and on the
-   * Cloud client it is the server-side ceremony (`POST /pair` device-pair mint → QR, the
-   * `GET /devices` list, the revoke).
-   *
-   * The same injected-node seam as {@link invitesSection}, and it has to be one from both
-   * directions: the desktop node's every verb is a call to the native shell, the Cloud node's
-   * every verb goes through `app/api-client` — and neither may be named by this shared file.
-   * Absent ⇒ no nav entry and no pane, structurally — a desktop install on the hosted door has
-   * nothing local to serve, a browser tab against a server whose `/hello` does not announce
-   * `features.pairing` has nothing to mint, and each is withheld rather than offered dead.
+   * THE DEVICES PANE — pairing this account's mail onto other devices, in whichever shape the surface behind it has:
+   * on the desktop it is host mode (serve THIS install's mail over the user's own network — tailscale probes, the
+   * arm/disarm ceremony, the stdio mint), and on the Cloud client it is the server-side ceremony (`POST /pair`
+   * device-pair mint → QR, the `GET /devices` list, the revoke). The same injected-node seam as {@link
+   * invitesSection}, and it has to be one from both directions: the desktop node's every verb is a call to the native
+   * shell, the Cloud node's every verb goes through `app/api-client` — and neither may be named by this shared file.
+   */
+
+  /**
+   * Absent ⇒ no nav entry and no pane, structurally — a desktop install on the hosted door has nothing local to
+   * serve, a browser tab against a server whose `/hello` does not announce `features.pairing` has nothing to mint,
+   * and each is withheld rather than offered dead.
    */
   devicesSection?: ReactNode;
   /**
-   * WHICH PANE TO OPEN ON, when the caller that sent the user here knows where they are going.
-   *
-   * The deep link ({@link initialPaneFromUrl}) answers the same question for a REDIRECT arriving
-   * from outside the app. This answers it for a link INSIDE it — the Screener's "start a plan"
-   * offer, which is a promise about a specific pane and would be a broken one if it landed on
-   * General and left the person to find Subscription themselves.
-   *
-   * Read once, as the initial state, exactly as the URL is, and for the same reason: this is where
-   * somebody STARTS, not where they are pinned. Clicking another pane must work, and a watched
-   * prop would drag them back.
+   * WHICH PANE TO OPEN ON, when the caller that sent the user here knows where they are going. The deep link ({@link
+   * initialPaneFromUrl}) answers the same question for a REDIRECT arriving from outside the app. This answers it for
+   * a link INSIDE it — the Screener's "start a plan" offer, which is a promise about a specific pane and would be a
+   * broken one if it landed on General and left the person to find Subscription themselves. Read once, as the initial
+   * state, exactly as the URL is, and for the same reason: this is where somebody STARTS, not where they are pinned.
+   * Clicking another pane must work, and a watched prop would drag them back.
    */
   /**
    * "Apply for all devices" for the FACE row — `useConsentState().setThemeFace` where the
@@ -791,20 +759,14 @@ export function SettingsView({
    */
   const [delivery, setDelivery] = useState<PushSyncOutcome | null>(null);
   /**
-   * THE DELIVERY SENTENCE, SET FROM THE OUTCOME AND ONLY WHEN IT CHANGES WHAT IS ON SCREEN.
-   *
-   * Two properties, both load-bearing.
-   *
-   * It CLEARS. The old form set state only for the three outcomes that carry a sentence, so a
-   * pane that once said "not registered" went on saying it after the next reconcile succeeded —
-   * a stale complaint about a browser that had since been registered. The stored value is now
-   * whatever the note derives from, `null` included, so a recovery erases the line.
-   *
-   * It does not write when nothing would change. An unconditional `setState` in a mount effect
-   * makes every test that renders this view without `act` print a React warning, and a suite that
-   * prints warnings is one where a real one is not noticed. The ref is what lets that comparison
-   * happen without putting `delivery` in the effect's deps and re-running the reconcile on its
-   * own result.
+   * THE DELIVERY SENTENCE, SET FROM THE OUTCOME AND ONLY WHEN IT CHANGES WHAT IS ON SCREEN. Two properties, both
+   * load-bearing. It CLEARS. The old form set state only for the three outcomes that carry a sentence, so a pane that
+   * once said "not registered" went on saying it after the next reconcile succeeded — a stale complaint about a
+   * browser that had since been registered. The stored value is now whatever the note derives from, `null` included,
+   * so a recovery erases the line. It does not write when nothing would change. An unconditional `setState` in a
+   * mount effect makes every test that renders this view without `act` print a React warning, and a suite that prints
+   * warnings is one where a real one is not noticed. The ref is what lets that comparison happen without putting
+   * `delivery` in the effect's deps and re-running the reconcile on its own result.
    */
   const deliveryRef = useRef<PushSyncOutcome | null>(null);
   const showDelivery = useCallback((o: PushSyncOutcome | null) => {

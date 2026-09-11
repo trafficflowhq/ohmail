@@ -187,16 +187,13 @@ export function DatePicker({
   }, [anchor, view.y, view.m]);
 
   /**
-   * Focus follows the cursor — into the grid once the card is placed (a hidden element cannot
-   * take focus, and the card is hidden until its first placement), then onto the new cell after
-   * every move.
-   *
-   * BUT ONLY WHILE THE GRID HAS FOCUS. A press on a month arrow moves the cursor too, and this
-   * effect would then yank focus off the arrow and into the new month's grid — so the arrow
-   * could be used exactly once from the keyboard and every further step needed a Shift+Tab back.
-   * The same applies to a re-place on resize, which changes `pos` and would otherwise pull focus
-   * out of whatever the reader had reached. So: if something inside this card already holds
-   * focus and it is not a day cell, leave it alone.
+   * Focus follows the cursor — into the grid once the card is placed (a hidden element cannot take focus, and the
+   * card is hidden until its first placement), then onto the new cell after every move. BUT ONLY WHILE THE GRID HAS
+   * FOCUS. A press on a month arrow moves the cursor too, and this effect would then yank focus off the arrow and
+   * into the new month's grid — so the arrow could be used exactly once from the keyboard and every further step
+   * needed a Shift+Tab back. The same applies to a re-place on resize, which changes `pos` and would otherwise pull
+   * focus out of whatever the reader had reached. So: if something inside this card already holds focus and it is not
+   * a day cell, leave it alone.
    */
   useEffect(() => {
     if (!pos) return;
@@ -319,19 +316,14 @@ export function DatePicker({
                   tabIndex={isCursor ? 0 : -1}
                   onClick={() => { if (ok) onPick(key); }}
                   /**
-                   * `setCursor`, NOT `move` — and this is the second time this line has been
-                   * wrong, in opposite directions.
-                   *
-                   * It cannot change the shown MONTH, because focus arrives before the press
-                   * completes: a real pointer press is `mousedown` → focus → `mouseup` → `click`.
-                   * Moving the view on focus unmounted the very cell being pressed, so a
-                   * neighbouring month's day could be focused and the month would change, but
-                   * `onPick` never ran — the day was unselectable by mouse, while a synthetic
-                   * `click` with no focus step passed happily.
-                   *
-                   * The tab-stop problem that made this `move` is instead solved where it
-                   * belongs, in `showMonth`: a cursor outside the shown month is clamped into it
-                   * when the month steps, so there is always exactly one cell with `tabIndex=0`.
+                   * `setCursor`, NOT `move` — and this is the second time this line has been wrong, in opposite
+                   * directions. It cannot change the shown MONTH, because focus arrives before the press completes: a
+                   * real pointer press is `mousedown` → focus → `mouseup` → `click`. Moving the view on focus
+                   * unmounted the very cell being pressed, so a neighbouring month's day could be focused and the
+                   * month would change, but `onPick` never ran — the day was unselectable by mouse, while a synthetic
+                   * `click` with no focus step passed happily. The tab-stop problem that made this `move` is instead
+                   * solved where it belongs, in `showMonth`: a cursor outside the shown month is clamped into it when
+                   * the month steps, so there is always exactly one cell with `tabIndex=0`.
                    */
                   onFocus={() => { if (!isCursor) setCursor(d); }}
                 >

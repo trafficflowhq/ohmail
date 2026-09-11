@@ -417,17 +417,13 @@ export function ComposeAttach({
       if (gen !== requalifyGen.current) return; // superseded — the newer move owns the list
       if (replacements.size === 0) return; // nothing compressible moved — the list stands
 
-      // THE COMMIT — one pass over the LATEST list, one `onChange`, through the LATEST closure
-      // and against the LATEST cap (see the refs above). Rows the user added or removed while
-      // the encodes ran are respected.
-      //
-      // The hand-off outranks a ref the renderer has not caught up with: a kicked pass starts in
-      // the same tick as the intake's own commit, so the ref can still hold the list that commit
-      // EXTENDED. Recognised EXPLICITLY — the intake marks its committed list pending and the
-      // render that receives it clears the mark — never inferred from shapes: a user clearing
-      // the list's tail mid-pass also leaves the ref a prefix of the hand-off, and a shape test
-      // read that removal as an unflushed render and resurrected the removed file (review
-      // finding).
+      // THE COMMIT — one pass over the LATEST list, one `onChange`, through the LATEST closure and against the LATEST
+      // cap (see the refs above). Rows the user added or removed while the encodes ran are respected. The hand-off
+      // outranks a ref the renderer has not caught up with: a kicked pass starts in the same tick as the intake's own
+      // commit, so the ref can still hold the list that commit EXTENDED. Recognised EXPLICITLY — the intake marks its
+      // committed list pending and the render that receives it clears the mark — never inferred from shapes: a user
+      // clearing the list's tail mid-pass also leaves the ref a prefix of the hand-off, and a shape test read that
+      // removal as an unflushed render and resurrected the removed file (review finding).
       const refList = attachmentsRef.current;
       const latest = over !== undefined && pendingFlush.current === over ? over : refList;
 
@@ -496,17 +492,19 @@ export function ComposeAttach({
     [t],
   );
 
-  /*
-   * CONVERGE WHAT NAVIGATION LEFT BEHIND — once, on mount. The list outlives this control (the
-   * shell keeps the form across views) while an unmount kills any in-flight re-encode pass — the
-   * discard guard, and deliberately so: a component cannot tell a navigation from a discard from
-   * the inside, and a stale pass resurrecting a thrown-away message is the worse failure. What
-   * navigation may therefore leave is rows encoded at a level the dial no longer shows. The
-   * source records carry the level each row's encode was made at, so this asks only when a row
-   * is actually behind, and the pass is the ordinary one — atomic, generation-guarded,
-   * identity-skipping rows already right. (A pick dropped mid-navigation is the accepted residue
-   * of the discard guard: the file never entered the list, the user watches it not appear, and
-   * re-picking costs one gesture — a resurrected discard costs a message they meant to destroy.)
+  /**
+   * CONVERGE WHAT NAVIGATION LEFT BEHIND — once, on mount. The list outlives this control (the shell keeps the form
+   * across views) while an unmount kills any in-flight re-encode pass — the discard guard, and deliberately so: a
+   * component cannot tell a navigation from a discard from the inside, and a stale pass resurrecting a thrown-away
+   * message is the worse failure. What navigation may therefore leave is rows encoded at a level the dial no longer
+   * shows. The source records carry the level each row's encode was made at, so this asks only when a row is actually
+   * behind, and the pass is the ordinary one — atomic, generation-guarded, identity-skipping rows already right.
+   */
+
+  /**
+   * (A pick dropped mid-navigation is the accepted residue of the discard guard: the file never entered the list, the
+   * user watches it not appear, and re-picking costs one gesture — a resurrected discard costs a message they meant
+   * to destroy.)
    */
   useEffect(() => {
     const stored = levelRef.current;
@@ -555,18 +553,17 @@ export function ComposeAttach({
           // and a cap judged against the list as it stood at pick time would admit or refuse
           // against sizes that no longer exist.
           const picture = await compressImage(file, level);
-          // REFUSE THE UNADMITTABLE BEFORE ENCODING IT. `readAsBase64` allocates ~4/3 of the
-          // file as a string, so what can never be admitted must be turned away on its SIZE —
-          // known right here — rather than after the tab has paid to encode it: a single file
-          // over the cap, and equally the tail of a batch whose accepted files already fill it
-          // (ten near-cap files would otherwise stage hundreds of MB of strings for a commit
-          // that admits one — review finding). The bound is REPROJECTED per file against the
-          // cap and the list AS THEY STAND NOW, never a running reservation: a reservation
-          // treats tentative staging as final admission, so a cap lowered (or a row removed)
-          // mid-batch kept charging for a staged file the commit was going to refuse and turned
-          // away a later file that fit (review finding). A staged candidate counts only while
-          // the current cap would still admit it; duplicates were skipped at their encode and
-          // never stage. The COMMIT below remains the authority on admission.
+          // REFUSE THE UNADMITTABLE BEFORE ENCODING IT. `readAsBase64` allocates ~4/3 of the file as a string, so
+          // what can never be admitted must be turned away on its SIZE — known right here — rather than after the tab
+          // has paid to encode it: a single file over the cap, and equally the tail of a batch whose accepted files
+          // already fill it (ten near-cap files would otherwise stage hundreds of MB of strings for a commit that
+          // admits one — review finding). The bound is REPROJECTED per file against the cap and the list AS THEY
+          // STAND NOW, never a running reservation: a reservation treats tentative staging as final admission, so a
+          // cap lowered (or a row removed) mid-batch kept charging for a staged file the commit was going to refuse
+          // and turned away a later file that fit (review finding).
+
+          // A staged candidate counts only while the current cap would still admit it; duplicates were skipped at
+          // their encode and never stage. The COMMIT below remains the authority on admission.
           const capNow = maxTotalBytesRef.current;
           let projected = totalBytes(attachmentsRef.current);
           for (let i = 0; i < picked.length; ) {

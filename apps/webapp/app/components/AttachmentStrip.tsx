@@ -190,15 +190,14 @@ export const COPY: typeof EN = liveCopy("attachments", EN, { count: ["count"], p
 
 
 /**
- * Is this list failure the SESSION's, not the content's? The engine carries the server's own
- * `code` through unmodified (`AttachmentsOutcome`), and these are the two the auth middleware
- * mints: `unauthorized` for a session it will not serve, `csrf_failed` for a live-looking
- * session whose double-submit token lapsed with it. Both mean "the mail is fine, the session is
- * not" — a different sentence AND a different remedy from every other failure here. Declared in
- * this file rather than the shell seam because the import may only run this way (the shell reads
- * components; a component reading the shell would drag session machinery into the strip's bare
- * test mounts), and `shell/attachments.ts` — which escalates the same codes to the session
- * probe — imports it from here so the two surfaces cannot drift.
+ * Is this list failure the SESSION's, not the content's? The engine carries the server's own `code` through
+ * unmodified (`AttachmentsOutcome`), and these are the two the auth middleware mints: `unauthorized` for a session it
+ * will not serve, `csrf_failed` for a live-looking session whose double-submit token lapsed with it. Both mean "the
+ * mail is fine, the session is not" — a different sentence AND a different remedy from every other failure here.
+ * Declared in this file rather than the shell seam because the import may only run this way (the shell reads
+ * components; a component reading the shell would drag session machinery into the strip's bare test mounts), and
+ * `shell/attachments.ts` — which escalates the same codes to the session probe — imports it from here so the two
+ * surfaces cannot drift.
  */
 export function isAuthListFailure(code: string | null): boolean {
   return code === "unauthorized" || code === "csrf_failed";
@@ -455,16 +454,13 @@ function Tile({
 /* ── the list's own state: one sentence, and at most one action ──────────────────────── */
 
 /**
- * The row that stands in for a strip nobody could build.
- *
- * ONE ACTION AT MOST, and only an honest one. A "Try again" over a 404 or a dead session is a
- * button whose first press proves it was a lie — the same argument that makes the `too_large`
- * TILE a `div` rather than a button. `onRetry` absent therefore means the sentence stands alone.
- *
- * Not a spinner: while the re-ask is in flight the row says what it is doing, in the strip's own
- * grammar (the tile's wait names its source too). The sweep beside it is `.mbx-wait`'s move —
- * it says "running" without asking to be watched, and the SENTENCE carries the meaning, which
- * is what keeps it legible with `prefers-reduced-motion` killing the animation.
+ * The row that stands in for a strip nobody could build. ONE ACTION AT MOST, and only an honest one. A "Try again"
+ * over a 404 or a dead session is a button whose first press proves it was a lie — the same argument that makes the
+ * `too_large` TILE a `div` rather than a button. `onRetry` absent therefore means the sentence stands alone. Not a
+ * spinner: while the re-ask is in flight the row says what it is doing, in the strip's own grammar (the tile's wait
+ * names its source too). The sweep beside it is `.mbx-wait`'s move — it says "running" without asking to be watched,
+ * and the SENTENCE carries the meaning, which is what keeps it legible with `prefers-reduced-motion` killing the
+ * animation.
  */
 function ListState({ sentence, title, working, onRetry }: {
   sentence: string;

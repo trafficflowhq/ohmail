@@ -965,16 +965,12 @@ export interface TriagePiles {
 }
 
 /**
- * The bottom piles: `message_state` entities joined to their messages, merged
- * with fixture-only `triage_item` entries (demo entries with no backing message).
- *
- * ONE MESSAGE, ONE CLAIM — the records are deduped by MESSAGE id first, in
- * {@link winningStates}, which states why (two record-id spellings of one fact, and a rail badge
- * measured at 6-vs-1 against the pile beside it).
- *
- * WHICH PILE a claim joins is {@link pileOfState}, and that indirection is load-bearing:
- * {@link parkedMessageIds} asks the same function which rows the Ohbox must hold out, so a
- * message this lists in a bottom pile cannot also be listed in an Ohbox group.
+ * The bottom piles: `message_state` entities joined to their messages, merged with fixture-only `triage_item` entries
+ * (demo entries with no backing message). ONE MESSAGE, ONE CLAIM — the records are deduped by MESSAGE id first, in
+ * {@link winningStates}, which states why (two record-id spellings of one fact, and a rail badge measured at 6-vs-1
+ * against the pile beside it). WHICH PILE a claim joins is {@link pileOfState}, and that indirection is load-bearing:
+ * {@link parkedMessageIds} asks the same function which rows the Ohbox must hold out, so a message this lists in a
+ * bottom pile cannot also be listed in an Ohbox group.
  */
 export function triagePiles(reader: EntityReader): TriagePiles {
   const piles: TriagePiles = { replyLater: [], setAside: [], resurface: [] };
@@ -1087,15 +1083,12 @@ export function rulesList(reader: EntityReader): RuleDTO[] {
 }
 
 /**
- * How old a `sending` row must be before this list treats it as STRANDED rather than in flight.
- *
- * The server's send path has the same ten-minute constant (`SEND_STALE_AFTER_MS`) for treating a
- * `pending` reservation as orphaned, and this value matches it on purpose: past this age no
- * invocation can still be alive, so a row still
- * `sending` is the wreckage of a send that died mid-flight — the same silent loss as `unverified`,
- * reached without the server ever getting to say so. Younger `sending` rows stay OFF the list:
- * they are the two seconds of an ordinary delivery, and a Drafts list that flashed every send
- * through itself would be noise wearing a warning's clothes.
+ * How old a `sending` row must be before this list treats it as STRANDED rather than in flight. The server's send
+ * path has the same ten-minute constant (`SEND_STALE_AFTER_MS`) for treating a `pending` reservation as orphaned, and
+ * this value matches it on purpose: past this age no invocation can still be alive, so a row still `sending` is the
+ * wreckage of a send that died mid-flight — the same silent loss as `unverified`, reached without the server ever
+ * getting to say so. Younger `sending` rows stay OFF the list: they are the two seconds of an ordinary delivery, and
+ * a Drafts list that flashed every send through itself would be noise wearing a warning's clothes.
  */
 export const SENDING_STALE_AFTER_MS = 10 * 60 * 1000;
 
@@ -1150,17 +1143,13 @@ export function draftsList(reader: EntityReader, now: Date = new Date()): Engine
 }
 
 /**
- * DOES THIS MIRROR HOLD THE DRAFT'S TEXT — the one rule, so no surface writes a second one.
- *
- * `false` for `null` and for a row from a page that carried no `body` key at all, which is the
- * same fact and reaches a reader as `undefined` past a type that promises otherwise
- * (`applyToRecords` stores the DTO verbatim). `true` for the empty string: a draft with nothing
- * typed in it is a known body, and treating it as unknown would refuse to save the one edit that
- * empties a message.
- *
- * Consulted before the text is seeded into an editor and before autosave writes it back. A row
- * whose body is unknown must not become a PUT — that PUT would replace what the person wrote
- * with the blank this client happens to be holding.
+ * DOES THIS MIRROR HOLD THE DRAFT'S TEXT — the one rule, so no surface writes a second one. `false` for `null` and
+ * for a row from a page that carried no `body` key at all, which is the same fact and reaches a reader as `undefined`
+ * past a type that promises otherwise (`applyToRecords` stores the DTO verbatim). `true` for the empty string: a
+ * draft with nothing typed in it is a known body, and treating it as unknown would refuse to save the one edit that
+ * empties a message. Consulted before the text is seeded into an editor and before autosave writes it back. A row
+ * whose body is unknown must not become a PUT — that PUT would replace what the person wrote with the blank this
+ * client happens to be holding.
  */
 export function draftBodyKnown(draft: { body?: string | null }): boolean {
   return typeof draft.body === "string";

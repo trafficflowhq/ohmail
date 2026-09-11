@@ -213,16 +213,12 @@ export interface ThemeProviderProps {
    */
   faces?: boolean;
   /**
-   * THE DOOR EVERY WRITE GOES THROUGH, handed in by the host — see {@link StorageDoor}.
-   *
-   * Omit it and this provider persists nothing ({@link ThemePersistence} `unpersisted`): the
-   * choice holds for the session, no jar is touched, and the host has not accidentally promised
-   * a memory. There is no `null` door, so "no host wired one" cannot be confused with "one was
-   * supplied and is empty".
-   *
-   * Hoist it out of the render — `const DOOR = localStorageDoor("theme")` at module scope. A door
-   * built inline is a new object every render; the provider reads it through a ref so that costs
-   * nothing, but the intent is one door per host, not one per frame.
+   * THE DOOR EVERY WRITE GOES THROUGH, handed in by the host — see {@link StorageDoor}. Omit it and this provider
+   * persists nothing ({@link ThemePersistence} `unpersisted`): the choice holds for the session, no jar is touched,
+   * and the host has not accidentally promised a memory. There is no `null` door, so "no host wired one" cannot be
+   * confused with "one was supplied and is empty". Hoist it out of the render — `const DOOR =
+   * localStorageDoor("theme")` at module scope. A door built inline is a new object every render; the provider reads
+   * it through a ref so that costs nothing, but the intent is one door per host, not one per frame.
    */
   storage?: StorageDoor;
 }

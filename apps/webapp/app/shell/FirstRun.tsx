@@ -1542,21 +1542,19 @@ function firstSentence(s: string): string {
 }
 
 /**
- * WHO ORGANIZES THIS MAILBOX, by name, or `null` when nobody is NAMED.
- *
- * `null` is not the same as "nobody organizes it", and THIS COMMENT USED TO ARGUE THAT IT WAS
- * SAFE TO TREAT THEM AS ONE — *"the mailbox has a holder (that is what put the elsewhere screen
- * on screen)"* — which is true of the elsewhere screen and false of every other caller. The
- * summary's reader row is reached on a consent-less reader whose mailbox nothing has ever
- * claimed, and it read this `null` as "a holder we cannot name": "Organized by another install ·
- * Since —", with no other install anywhere. A guarantee a function cannot make is worse than no
- * comment, because the next caller believes it.
- *
- * So `null` here means only what the name says: no NAME. Whether a holder exists at all is
- * {@link readerHolder}'s question, and the surfaces ask that one first.
- *
- * A `null` name is still not "another install" as a NAME: inventing one would read as a machine
- * called "another install". The copy has a legacy label for exactly that state.
+ * WHO ORGANIZES THIS MAILBOX, by name, or `null` when nobody is NAMED. `null` is not the same as "nobody organizes
+ * it", and THIS COMMENT USED TO ARGUE THAT IT WAS SAFE TO TREAT THEM AS ONE — *"the mailbox has a holder (that is
+ * what put the elsewhere screen on screen)"* — which is true of the elsewhere screen and false of every other caller.
+ * The summary's reader row is reached on a consent-less reader whose mailbox nothing has ever claimed, and it read
+ * this `null` as "a holder we cannot name": "Organized by another install · Since —", with no other install anywhere.
+ * A guarantee a function cannot make is worse than no comment, because the next caller believes it. So `null` here
+ * means only what the name says: no NAME. Whether a holder exists at all is {@link readerHolder}'s question, and the
+ * surfaces ask that one first.
+ */
+
+/**
+ * A `null` name is still not "another install" as a NAME: inventing one would read as a machine called "another
+ * install". The copy has a legacy label for exactly that state.
  */
 function holderName(facts: OnboardingFacts): string | null {
   const by = facts.mailbox?.organizedBy;

@@ -339,19 +339,18 @@ export class FixturesAdapter implements EngineAdapter {
     this.emit("view_meta", "reads_ai_chip", fx.readsAiChip);
     this.emit("view_meta", "account", fx.account);
     /**
-     * The Notifications screen's VIP list and its learned suggestion.
-     *
-     * They used to be imported into `SettingsView` straight from `@ohmail/fixtures` and
-     * rendered on every account, so a paying customer read a learned pattern about Petra Wyss
-     * — a person invented for the demo. They travel through the MIRROR now, exactly as the
-     * Reads waterline and the AI chip already do, which means the gate is structural: `/sync`
-     * has no `view_meta` entity type at all, so a Cloud account can never receive this row and
-     * the block simply does not render there. It is a stronger guarantee than a `demo` boolean
-     * a view has to remember to check, and it keeps Mila's people where they belong — in the
-     * fixtures package, not in the app's copy file.
-     *
-     * The channel LABELS deliberately do not travel with it: they are ordinary product copy
-     * that a live account legitimately sees, and they live in `messages/en.json`.
+     * The Notifications screen's VIP list and its learned suggestion. They used to be imported into `SettingsView`
+     * straight from `@ohmail/fixtures` and rendered on every account, so a paying customer read a learned pattern
+     * about Petra Wyss — a person invented for the demo. They travel through the MIRROR now, exactly as the Reads
+     * waterline and the AI chip already do, which means the gate is structural: `/sync` has no `view_meta` entity
+     * type at all, so a Cloud account can never receive this row and the block simply does not render there. It is a
+     * stronger guarantee than a `demo` boolean a view has to remember to check, and it keeps Mila's people where they
+     * belong — in the fixtures package, not in the app's copy file.
+     */
+
+    /**
+     * The channel LABELS deliberately do not travel with it: they are ordinary product copy that a live account
+     * legitimately sees, and they live in `messages/en.json`.
      */
     this.emit("view_meta", "notifications", fx.notificationSettings);
   }
@@ -384,19 +383,14 @@ export class FixturesAdapter implements EngineAdapter {
   }
 
   /**
-   * NO BODIES TO FETCH — and that is the demo's correct answer, not a missing feature.
-   *
-   * `toMessage` copies the fixture's `body` straight onto the mirror row, so every message
-   * in Mila's world already holds its full text and `bodyOf` answers `full` from the
-   * message itself, before the engine ever reaches an adapter. The one fixture message with
-   * no body is the protected verification code, which has none by design — sensitive mail is
-   * stored redacted — and
-   * whose surface renders `ProtectedBlock` rather than any text at all.
-   *
-   * `null` rather than `{text: ""}`: an empty string is a claim about the mail ("this
-   * message is blank"), and the engine writes no record for a `null`, so a demo tab holds
-   * no `message_body` rows and performs no requests at all, which is what a self-contained
-   * surface has to mean.
+   * NO BODIES TO FETCH — and that is the demo's correct answer, not a missing feature. `toMessage` copies the
+   * fixture's `body` straight onto the mirror row, so every message in Mila's world already holds its full text and
+   * `bodyOf` answers `full` from the message itself, before the engine ever reaches an adapter. The one fixture
+   * message with no body is the protected verification code, which has none by design — sensitive mail is stored
+   * redacted — and whose surface renders `ProtectedBlock` rather than any text at all. `null` rather than `{text:
+   * ""}`: an empty string is a claim about the mail ("this message is blank"), and the engine writes no record for a
+   * `null`, so a demo tab holds no `message_body` rows and performs no requests at all, which is what a
+   * self-contained surface has to mean.
    */
   async fetchBody(): Promise<null> {
     return null;
@@ -448,19 +442,14 @@ export class FixturesAdapter implements EngineAdapter {
         ? { entityId: effects[0].id }
         : {}),
       /**
-       * THE MINTED Message-ID OF A SEND, because a demo that cannot show sent mail is not
-       * showing the product.
-       *
-       * `POST /drafts/:id/send` answers `{status:"sent", providerMessageId}` and the engine
-       * turns that into the optimistic Sent copy that puts the message at the top of "Earlier"
-       * the instant it is sent (`OhmailEngine.materializeSentOverlay`). Answering nothing here
-       * meant the demo — and every UI test that runs on it — took a branch the live client never
-       * takes: press Send and the message went nowhere visible at all.
-       *
-       * The shape is the wire's, brackets included, so the reconcile in the demo exercises the
-       * same normalisation a live one does ({@link messageIdKey}). Nothing ingests a real Sent
-       * row here, so the copy stands until its ten-minute TTL, which is the honest demo of a
-       * mailbox whose Sent folder is never read back.
+       * THE MINTED Message-ID OF A SEND, because a demo that cannot show sent mail is not showing the product. `POST
+       * /drafts/:id/send` answers `{status:"sent", providerMessageId}` and the engine turns that into the optimistic
+       * Sent copy that puts the message at the top of "Earlier" the instant it is sent
+       * (`OhmailEngine.materializeSentOverlay`). Answering nothing here meant the demo — and every UI test that runs
+       * on it — took a branch the live client never takes: press Send and the message went nowhere visible at all.
+       * The shape is the wire's, brackets included, so the reconcile in the demo exercises the same normalisation a
+       * live one does ({@link messageIdKey}). Nothing ingests a real Sent row here, so the copy stands until its
+       * ten-minute TTL, which is the honest demo of a mailbox whose Sent folder is never read back.
        */
       // …and NOT for a Send-later press (`sendAt`, mail 0077): nothing left even in fiction, so
       // minting a provider id would make the demo materialise a Sent copy for mail whose whole

@@ -84,21 +84,18 @@ const ANNOS: Anno[] = [
   {
     id: "ohbox",
     side: "left",
-    // The rail entries carry `data-rail-id` (RailNav); the list's group labels carry
-    // `data-group` (ListGroupLabel). Both are stable hooks on the SHIPPED UI, so the
-    // leaders anchor to the real elements rather than to a guessed spot.
-    //
-    // THE FOUR CARDS ARE THE PRODUCT'S FOUR CLAIMS, anchored to the part of the app each
-    // is about: the Ohbox (only mail you said yes to — the hero's own lead, repeated
-    // verbatim), the
-    // Screener (one press decides; spam to the provider's native Junk, the sender rule
-    // remembers, the unsubscribe goes out where the list offers one click), and the two
-    // group labels the Ohbox model stands on (owner review 2026-08-31 — the right-side
-    // pair must point at what the demo VISIBLY does): unread mail waits in one group at
-    // the top, and everything read files itself under "Earlier". Each sentence is judged
-    // against the code by `landing-mailbox-truth.test.ts` — the group claims against
-    // `client-engine/selectors.ts#ohboxView`, whose `newForYou`/`previouslySeen` split is
-    // exactly what the two labels render.
+    // The rail entries carry `data-rail-id` (RailNav); the list's group labels carry `data-group` (ListGroupLabel).
+    // Both are stable hooks on the SHIPPED UI, so the leaders anchor to the real elements rather than to a guessed
+    // spot. THE FOUR CARDS ARE THE PRODUCT'S FOUR CLAIMS, anchored to the part of the app each is about: the Ohbox
+    // (only mail you said yes to — the hero's own lead, repeated verbatim), the Screener (one press decides; spam to
+    // the provider's native Junk, the sender rule remembers, the unsubscribe goes out where the list offers one
+    // click), and the two group labels the Ohbox model stands on (owner review 2026-08-31 — the right-side pair must
+    // point at what the demo VISIBLY does): unread mail waits in one group at the top, and everything read files
+    // itself under "Earlier".
+
+    // Each sentence is judged against the code by `landing-mailbox-truth.test.ts` — the group claims against
+    // `client-engine/selectors.ts#ohboxView`, whose `newForYou`/`previouslySeen` split is exactly what the two labels
+    // render.
     sel: '.rail [data-rail-id="ohbox"]',
     fallback: [0.13, 0.2],
     title: "calloutOhboxTitle",
@@ -204,18 +201,12 @@ function safeQuery(doc: Document, sel: string): Element | null {
 type Phase = "sketch" | "pending" | "assembling" | "settled" | "live";
 
 /**
- * The centerpiece: the real Blanc prototype, live. No poster, no press-play
- * — the iframe mounts as the section approaches (so the first paint of the
- * page never waits for it) and the app is immediately usable.
- *
- * What plays instead of a play button is a BUILD-UP: the three panes of the
- * app arrive as separate planes in a shallow 3D field — rail from the left,
- * list from below, reading pane from the right — and hand over to the real
- * iframe once both the choreography and the document are done. It runs once,
- * on first viewport entry. Reduced motion sees the assembled sketch and then
- * the app, with no travel.
- *
- * The annotations are measured, not guessed: see ANNOS above.
+ * The centerpiece: the real Blanc prototype, live. No poster, no press-play — the iframe mounts as the section
+ * approaches (so the first paint of the page never waits for it) and the app is immediately usable. What plays
+ * instead of a play button is a BUILD-UP: the three panes of the app arrive as separate planes in a shallow 3D field
+ * — rail from the left, list from below, reading pane from the right — and hand over to the real iframe once both the
+ * choreography and the document are done. It runs once, on first viewport entry. Reduced motion sees the assembled
+ * sketch and then the app, with no travel. The annotations are measured, not guessed: see ANNOS above.
  */
 export function DemoSection() {
   const t = useTranslations("demo");

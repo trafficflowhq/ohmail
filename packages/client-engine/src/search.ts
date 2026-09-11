@@ -208,18 +208,13 @@ export class SearchIndex {
   /** term → messageId → best field weight */
   private readonly postings = new Map<string, Map<string, Posting>>();
   /**
-   * EXACT ADDRESS → messageId → which sides — a SEPARATE map from {@link postings}, and the
-   * separation is the whole feature.
-   *
-   * {@link tokenize} splits on every non-alphanumeric character, so `anna@corp.com` enters
-   * `postings` as the three unrelated terms `anna`, `corp`, `com` — and `com` is a term that
-   * every address on the internet shares. There is therefore no way to ask `postings` for one
-   * ADDRESS: the query `anna@corp.com` matches `anna@other.com` and `bob@corp.com` on two of its
-   * three tokens each, and a prefix arm widens it further. That is right for searching and
-   * useless for identity.
-   *
-   * So an address is stored WHOLE and lowercased, and the only operation on this map is a map
-   * lookup — no prefix arm, no trigrams, no scoring. It costs one entry per distinct address per
+   * EXACT ADDRESS → messageId → which sides — a SEPARATE map from {@link postings}, and the separation is the whole
+   * feature. {@link tokenize} splits on every non-alphanumeric character, so `anna@corp.com` enters `postings` as the
+   * three unrelated terms `anna`, `corp`, `com` — and `com` is a term that every address on the internet shares.
+   * There is therefore no way to ask `postings` for one ADDRESS: the query `anna@corp.com` matches `anna@other.com`
+   * and `bob@corp.com` on two of its three tokens each, and a prefix arm widens it further. That is right for
+   * searching and useless for identity. So an address is stored WHOLE and lowercased, and the only operation on this
+   * map is a map lookup — no prefix arm, no trigrams, no scoring. It costs one entry per distinct address per
    * message, which is bounded by the recipients a message actually names.
    */
   private readonly addresses = new Map<string, Map<string, AddressSides>>();
@@ -390,15 +385,13 @@ export class SearchIndex {
   }
 
   /**
-   * One query token's hits WITH typo tolerance — the literal arms plus the padded-trigram arm.
-   *
-   * Two length floors, and they bound different strings. The QUERY token must be long enough to
-   * be worth guessing about at all; the INDEXED TERM must be long enough that a guess against it
-   * means something. The second one did not exist, and its absence was the loudest half of the
-   * complaint this tier model answers: on the demo corpus `invoce` matched the two-letter word
-   * `in` at a similarity over the threshold and dragged nineteen unrelated messages into a
-   * one-answer query, and `anna` reached twelve of them through `and`. Both floors live in
-   * `@trafficflow/core/search-rank` so the hosted door can be held to the same shape.
+   * One query token's hits WITH typo tolerance — the literal arms plus the padded-trigram arm. Two length floors, and
+   * they bound different strings. The QUERY token must be long enough to be worth guessing about at all; the INDEXED
+   * TERM must be long enough that a guess against it means something. The second one did not exist, and its absence
+   * was the loudest half of the complaint this tier model answers: on the demo corpus `invoce` matched the two-letter
+   * word `in` at a similarity over the threshold and dragged nineteen unrelated messages into a one-answer query, and
+   * `anna` reached twelve of them through `and`. Both floors live in `@trafficflow/core/search-rank` so the hosted
+   * door can be held to the same shape.
    */
   private fuzzyHits(q: string): Map<string, { score: number; match: SearchMatch }> {
     const hits = this.literalHits(q);
@@ -498,18 +491,15 @@ export class SearchIndex {
       return { items: [], similar: [], tier: "exact", facets: emptyFacets(), coverage: this.coverage() };
     }
     const match: SearchMatch = { token: needle, term: needle, fuzzy: false };
-    /*
-     * ORDERED ON A PRECOMPUTED KEY, and this is not a micro-optimisation — it is what keeps the
-     * scan inside a keystroke. `rank` calls `stampOf` (a `Date.parse`) on BOTH SIDES OF EVERY
-     * COMPARISON, which is right and free for a token arm's handful of candidates and about
-     * 285 000 parses for a single common character that matched a whole mirror: measured 25.7 ms
-     * on the twenty-thousand-row benchmark index, most of it there, against 12 ms for the scan
-     * and the sort themselves.
-     *
-     * So the date is parsed ONCE PER MESSAGE and the rows are ordered by {@link compareRanked} —
-     * the shared comparator, unchanged — before the surviving page is materialised. A top-of-list
-     * selection under the ordering rule, never a window ranked after the fact. There is no phrase
-     * bonus to apply: a query with no tokens has no token sequence to prefer.
+    /**
+     * ORDERED ON A PRECOMPUTED KEY, and this is not a micro-optimisation — it is what keeps the scan inside a
+     * keystroke. `rank` calls `stampOf` (a `Date.parse`) on BOTH SIDES OF EVERY COMPARISON, which is right and free
+     * for a token arm's handful of candidates and about 285 000 parses for a single common character that matched a
+     * whole mirror: measured 25.7 ms on the twenty-thousand-row benchmark index, most of it there, against 12 ms for
+     * the scan and the sort themselves. So the date is parsed ONCE PER MESSAGE and the rows are ordered by {@link
+     * compareRanked} — the shared comparator, unchanged — before the surviving page is materialised. A top-of-list
+     * selection under the ordering rule, never a window ranked after the fact. There is no phrase bonus to apply: a
+     * query with no tokens has no token sequence to prefer.
      */
     const rows: RankedRow[] = [];
     for (const [id, m] of this.messages) {

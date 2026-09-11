@@ -244,17 +244,17 @@ export function ComposeView({
   );
 
   /**
-   * Escape leaves. The complaint that Compose could not be left with the keyboard was
-   * literally true: this view had no key bindings at all. `inInput` because focus is inside the
-   * editor — a `contenteditable`, which `isTypingTarget` counts as typing exactly as it counted
-   * the textarea — and it is focused the moment a draft is accepted, so without it the one
-   * place you need the exit is the one place it would not work.
-   *
-   * ⌘↩ SENDS, and it is registered HERE rather than in the shell's global map because the
-   * global `mod+Enter` belongs to the open reply editor. A view-scope binding outranks a
-   * global one (`keymap.tsx`), so in Compose this one wins, and the `?` sheet — generated from
-   * the registry — shows "Send message" instead of the reply's disabled row. It calls the same
-   * `onSend` the button does, so the lock, the empty-body guard and the recipient rule apply
+   * Escape leaves. The complaint that Compose could not be left with the keyboard was literally true: this view had
+   * no key bindings at all. `inInput` because focus is inside the editor — a `contenteditable`, which
+   * `isTypingTarget` counts as typing exactly as it counted the textarea — and it is focused the moment a draft is
+   * accepted, so without it the one place you need the exit is the one place it would not work. ⌘↩ SENDS, and it is
+   * registered HERE rather than in the shell's global map because the global `mod+Enter` belongs to the open reply
+   * editor. A view-scope binding outranks a global one (`keymap.tsx`), so in Compose this one wins, and the `?` sheet
+   * — generated from the registry — shows "Send message" instead of the reply's disabled row.
+   */
+
+  /**
+   * It calls the same `onSend` the button does, so the lock, the empty-body guard and the recipient rule apply
    * identically; there is no second path to SMTP.
    */
   /**

@@ -52,19 +52,19 @@ export function forwardSubject(originalSubject: string): string {
 export { messageIdKey } from "./selectors.js";
 
 /**
- * THE MIRROR'S OWN RECORD ID for a message's triage state — the id every `message_state`
- * effect must land on.
- *
- * The live server keys this entity by the `message_states` ROW's uuid (`TriageService.setState`
- * emits `entityId: row.id`), so a mirror that has drained even once holds the settled record
- * under an id no mutation knows a priori. An effect written at the MESSAGE id then stands
- * BESIDE the settled record instead of replacing it: a parked message counted in two piles at
- * once, and a `state:"none"` tombstone that deletes nothing — the un-park invisible until the
- * drain, and the rail badge inflated against the pile it renders beside (TRI-F5, measured
- * 6-vs-1 on a live account). Resolving to the record the mirror actually holds makes the
- * optimistic delta retire the settled state through the transition. When no record exists yet,
- * the message id is the honest fallback — and exactly the key the demo's fixtures use, so the
- * FixturesAdapter's authoritative replay is unchanged.
+ * THE MIRROR'S OWN RECORD ID for a message's triage state — the id every `message_state` effect must land on. The
+ * live server keys this entity by the `message_states` ROW's uuid (`TriageService.setState` emits `entityId:
+ * row.id`), so a mirror that has drained even once holds the settled record under an id no mutation knows a priori.
+ * An effect written at the MESSAGE id then stands BESIDE the settled record instead of replacing it: a parked message
+ * counted in two piles at once, and a `state:"none"` tombstone that deletes nothing — the un-park invisible until the
+ * drain, and the rail badge inflated against the pile it renders beside (TRI-F5, measured 6-vs-1 on a live account).
+ * Resolving to the record the mirror actually holds makes the optimistic delta retire the settled state through the
+ * transition.
+ */
+
+/**
+ * When no record exists yet, the message id is the honest fallback — and exactly the key the demo's fixtures use, so
+ * the FixturesAdapter's authoritative replay is unchanged.
  */
 function stateRecordIdOf(reader: EntityReader, messageId: string): string {
   for (const { id, entity } of reader.entries<MessageStateDTO>("message_state")) {
@@ -199,19 +199,14 @@ const SEG_FOLDER: Record<string, Folder> = {
 };
 
 /**
- * WHERE A SCREENER DECISION FILES MAIL — **the one mapping, and there used to be three.**
- *
- * `mutations.ts` had two (this and `destFolderOf`'s fallback chain) and
- * `apps/webapp/app/shell/sender-screening.ts` had a third. While the wire took only
- * `{decision, scope}` they could not disagree about anything that mattered, because two of them
- * were describing a two-valued answer. `dest` now rides `POST /screener/:id` and each of the
- * five buttons files somewhere different, so three copies is three chances for the overlay to
- * paint a folder the server did not write — the delta-first contract's optimistic-parity rule,
- * and the exact shape of the `feed_mark_seen` divergence.
- *
- * The server computes the same answer from the same two fields
- * (`screener-service.ts` — `dest ?? (decision === "yes" ? YES_FOLDER : NO_FOLDER)`), so an
- * overlay built from this function and the row that arrives on the next drain agree.
+ * WHERE A SCREENER DECISION FILES MAIL — **the one mapping, and there used to be three.** `mutations.ts` had two
+ * (this and `destFolderOf`'s fallback chain) and `apps/webapp/app/shell/sender-screening.ts` had a third. While the
+ * wire took only `{decision, scope}` they could not disagree about anything that mattered, because two of them were
+ * describing a two-valued answer. `dest` now rides `POST /screener/:id` and each of the five buttons files somewhere
+ * different, so three copies is three chances for the overlay to paint a folder the server did not write — the
+ * delta-first contract's optimistic-parity rule, and the exact shape of the `feed_mark_seen` divergence. The server
+ * computes the same answer from the same two fields (`screener-service.ts` — `dest ?? (decision === "yes" ?
+ * YES_FOLDER : NO_FOLDER)`), so an overlay built from this function and the row that arrives on the next drain agree.
  */
 export function decideFolder(
   m: Pick<Extract<EngineMutation, { kind: "screener_decide" }>, "decision" | "dest">,
@@ -236,21 +231,19 @@ function destFolderOf(m: Extract<EngineMutation, { kind: "screener_decide" }>, s
 }
 
 /**
- * THE OVERLAY'S HALF OF "READING OR RE-FILING SPENDS THE RESURFACE".
- *
- * `MessageService.spendResurface` clears a `resurfaced` state back to `none` inside every
- * transaction that marks the row read or files it — `markSeen`, the single-message PATCH both
- * `feed_mark_seen` and the reply flow ride, and `move`. Wire parity (the rule stated on
- * `mark_seen` below) therefore REQUIRES the overlay to do the same: an overlay that flipped
- * `unread` and left the pin standing would hold a "Resurfaced" row at the top of the Ohbox for
- * exactly as long as the drain takes, then drop it — a row that jumps groups when the server
- * answers, which is the divergence the parity rule exists to forbid.
- *
- * Returns the `none` state row the server's UPDATE produces — state and `bubbleUpAt` cleared,
- * `setAt` preserved, `updatedAt` bumped — or `null` for a row that is not pinned. The CALLER
- * folds it into its own `message` entity (one effect per (type,id): a second message entity
- * here would silently overwrite the caller's `unread`/`folder` half) and pushes the
- * `message_state` effect beside it.
+ * THE OVERLAY'S HALF OF "READING OR RE-FILING SPENDS THE RESURFACE". `MessageService.spendResurface` clears a
+ * `resurfaced` state back to `none` inside every transaction that marks the row read or files it — `markSeen`, the
+ * single-message PATCH both `feed_mark_seen` and the reply flow ride, and `move`. Wire parity (the rule stated on
+ * `mark_seen` below) therefore REQUIRES the overlay to do the same: an overlay that flipped `unread` and left the pin
+ * standing would hold a "Resurfaced" row at the top of the Ohbox for exactly as long as the drain takes, then drop it
+ * — a row that jumps groups when the server answers, which is the divergence the parity rule exists to forbid.
+ * Returns the `none` state row the server's UPDATE produces — state and `bubbleUpAt` cleared, `setAt` preserved,
+ * `updatedAt` bumped — or `null` for a row that is not pinned.
+ */
+
+/**
+ * The CALLER folds it into its own `message` entity (one effect per (type,id): a second message entity here would
+ * silently overwrite the caller's `unread`/`folder` half) and pushes the `message_state` effect beside it.
  */
 function spentResurface(msg: EngineMessage, iso: string): MessageStateDTO | null {
   if ((msg.triage?.state as string | undefined) !== "resurfaced") return null;
@@ -285,15 +278,12 @@ function promotedRule(
 }
 
 /**
- * A DERIVED sender's decision: `m.senderId` is the REPRESENTATIVE MESSAGE id,
- * so the effect is per-message moves across everything that sender is holding, plus the
- * promoted rule the server will also create.
- *
- * The Screener-folder precondition is not a nicety: the server resolves `:id` against
- * rows whose DESIRED FOLDER is `ohmail/Screener` only (`screener-service.ts:257`), so a
- * representative outside that folder is a 404 on the wire. Producing no effect makes the
- * engine reject it locally with the same verdict instead of moving mail optimistically
- * and rolling it back a round-trip later.
+ * A DERIVED sender's decision: `m.senderId` is the REPRESENTATIVE MESSAGE id, so the effect is per-message moves
+ * across everything that sender is holding, plus the promoted rule the server will also create. The Screener-folder
+ * precondition is not a nicety: the server resolves `:id` against rows whose DESIRED FOLDER is `ohmail/Screener` only
+ * (`screener-service.ts:257`), so a representative outside that folder is a 404 on the wire. Producing no effect
+ * makes the engine reject it locally with the same verdict instead of moving mail optimistically and rolling it back
+ * a round-trip later.
  */
 function derivedScreenerEffects(
   reader: EntityReader,
@@ -310,17 +300,14 @@ function derivedScreenerEffects(
   // composed a follow-up `move`, which is the composition that lost a race against the decide's
   // own `folder_state` write and filed bulk mail to the Ohbox for senders admitted to Reads.
   const destination = decideFolder(m);
-  // THE DENY-SIDE READ-MARK IS THE SERVER'S OWN, SO THE OVERLAY CARRIES IT TOO. The decide
-  // transaction marks mail filed to the two demoting folders read — `MARK_READ_ON_DECIDE` in
-  // `screener-service.ts`, keyed on the APPLIED FOLDER, never the decision — so an overlay that
-  // preserved `unread` showed a bold row that silently unbolded one drain later (found by the
-  // verb-parity matrix's optimistic leg). Derived from the destination exactly as the server
-  // derives it, so a future deny-side folder inherits the flip with the filing.
-  //
-  // The ALLOW side stays unflipped, and that half of the old rule is still true: "&read" is not
-  // a field on `POST /screener/:id`; the seen half of a "file & read" admission is a separate
-  // `mark_seen` the surface composes, so the two halves of THIS mutation keep saying exactly
-  // what its own wire request says.
+  // THE DENY-SIDE READ-MARK IS THE SERVER'S OWN, SO THE OVERLAY CARRIES IT TOO. The decide transaction marks mail
+  // filed to the two demoting folders read — `MARK_READ_ON_DECIDE` in `screener-service.ts`, keyed on the APPLIED
+  // FOLDER, never the decision — so an overlay that preserved `unread` showed a bold row that silently unbolded one
+  // drain later (found by the verb-parity matrix's optimistic leg). Derived from the destination exactly as the
+  // server derives it, so a future deny-side folder inherits the flip with the filing. The ALLOW side stays
+  // unflipped, and that half of the old rule is still true: "&read" is not a field on `POST /screener/:id`; the seen
+  // half of a "file & read" admission is a separate `mark_seen` the surface composes, so the two halves of THIS
+  // mutation keep saying exactly what its own wire request says.
   const denyRead = destination === FOLDER_OF_VIEW.screened || destination === FOLDER_OF_VIEW.spam
     ? { unread: false, lastReadAt: iso }
     : {};
@@ -688,22 +675,18 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
     }
 
     case "mark_seen": {
-      // NO FOLDER FILTER, and that is the entire difference from `feed_mark_seen` above. The
-      // wire side PATCHes exactly `m.messageIds`; this flips exactly `m.messageIds`. Any
-      // predicate here that the wire does not also apply is a divergence between the optimistic
-      // view and the server — which is the bug that made `feed_mark_seen` unusable outside
-      // Reads, and it is the reason this branch looks boringly literal.
-      //
-      // An id the mirror does not know is dropped (there is no entity to produce), so a
-      // selection of entirely unknown ids yields [] and the engine reports it as a rejection
-      // rather than pretending to have applied something.
-      //
-      // `lastReadAt` travels with the flag in BOTH directions, and the second one is the half
-      // worth stating: marking unread clears it, because a message the user deliberately put back
-      // has no reading to be ordered by. Keeping the old instant would leave it stamped as
-      // recently finished with, and it would file itself at the top of "Earlier" the moment
-      // anything marked it read again. The server's own writer does exactly this, so the overlay
-      // and the answer that replaces it agree.
+      // NO FOLDER FILTER, and that is the entire difference from `feed_mark_seen` above. The wire side PATCHes
+      // exactly `m.messageIds`; this flips exactly `m.messageIds`. Any predicate here that the wire does not also
+      // apply is a divergence between the optimistic view and the server — which is the bug that made
+      // `feed_mark_seen` unusable outside Reads, and it is the reason this branch looks boringly literal. An id the
+      // mirror does not know is dropped (there is no entity to produce), so a selection of entirely unknown ids
+      // yields [] and the engine reports it as a rejection rather than pretending to have applied something.
+      // `lastReadAt` travels with the flag in BOTH directions, and the second one is the half worth stating: marking
+      // unread clears it, because a message the user deliberately put back has no reading to be ordered by.
+
+      // Keeping the old instant would leave it stamped as recently finished with, and it would file itself at the top
+      // of "Earlier" the moment anything marked it read again. The server's own writer does exactly this, so the
+      // overlay and the answer that replaces it agree.
       const effects: MutationEffect[] = [];
       for (const id of m.messageIds) {
         const msg = reader.get<EngineMessage>("message", id);
@@ -749,21 +732,18 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
       const to = m.to ?? (parent ? [parent.from] : []);
       if (to.length === 0) return [];
 
-      // ONE `draft` row at `sending`, complete in every field of `EngineDraft` so any future
-      // consumer that lists drafts gets a whole entity rather than a half one. It carries a
-      // CLIENT uuid; the server's row arrives under its own id on the next drain, and this
-      // overlay is dropped the moment the mutation resolves, so the two never coexist.
-      //
-      // A SEND-LATER press (`m.sendAt`, mail 0077) paints `scheduled` with the picked time
-      // instead: nothing is being delivered now, and the Scheduled surface must show the
-      // appointment the instant the press lands — the same one-source rule as the wire, since
-      // the adapter reads the same field to pick `POST /drafts/:id/schedule` over `/send`.
-      //
-      // NOTE for the demo world: `FixturesAdapter` replays this same effect AUTHORITATIVELY,
-      // so a demo send leaves a draft parked at `sending` forever — and a demo Send-later
-      // leaves a `scheduled` row the Scheduled group renders, which is the honest demo of the
-      // feature (nothing in the demo ever sends). Harmless; revisit if an Outbox ever renders
-      // `sending` rows.
+      // ONE `draft` row at `sending`, complete in every field of `EngineDraft` so any future consumer that lists
+      // drafts gets a whole entity rather than a half one. It carries a CLIENT uuid; the server's row arrives under
+      // its own id on the next drain, and this overlay is dropped the moment the mutation resolves, so the two never
+      // coexist. A SEND-LATER press (`m.sendAt`, mail 0077) paints `scheduled` with the picked time instead: nothing
+      // is being delivered now, and the Scheduled surface must show the appointment the instant the press lands — the
+      // same one-source rule as the wire, since the adapter reads the same field to pick `POST /drafts/:id/schedule`
+      // over `/send`.
+
+      // NOTE for the demo world: `FixturesAdapter` replays this same effect AUTHORITATIVELY, so a demo send leaves a
+      // draft parked at `sending` forever — and a demo Send-later leaves a `scheduled` row the Scheduled group
+      // renders, which is the honest demo of the feature (nothing in the demo ever sends). Harmless; revisit if an
+      // Outbox ever renders `sending` rows.
       const draft: EngineDraft = {
         id: ctx.uuid(),
         mailboxId,
@@ -859,19 +839,14 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
     }
 
     /**
-     * ANSWER FOR AN UNCONFIRMED SEND — the row leaves the held state on screen at once, and
-     * authoritatively on the next drain.
-     *
-     * `arrived` writes `sent`, which takes the row out of the Drafts list (the list renders
-     * `draft`/`unverified`/interrupted rows). `not_arrived` writes `draft` AND clears
-     * `sendError`: the sentence was about an appointment that is now definitively over, and
-     * leaving it would put a stale explanation on a row that has just become ordinary — the
-     * same clearing the server does in the same transaction.
-     *
-     * An unknown id yields [] ⇒ the engine rejects locally without going near the wire, the
-     * right answer for a row a concurrent drain already settled. A row the server finds already
-     * resolved is not an error there (the CAS makes a repeat the asked-for state), so this
-     * overlay converges rather than rolling back.
+     * ANSWER FOR AN UNCONFIRMED SEND — the row leaves the held state on screen at once, and authoritatively on the
+     * next drain. `arrived` writes `sent`, which takes the row out of the Drafts list (the list renders
+     * `draft`/`unverified`/interrupted rows). `not_arrived` writes `draft` AND clears `sendError`: the sentence was
+     * about an appointment that is now definitively over, and leaving it would put a stale explanation on a row that
+     * has just become ordinary — the same clearing the server does in the same transaction. An unknown id yields [] ⇒
+     * the engine rejects locally without going near the wire, the right answer for a row a concurrent drain already
+     * settled. A row the server finds already resolved is not an error there (the CAS makes a repeat the asked-for
+     * state), so this overlay converges rather than rolling back.
      */
     case "draft_resolve": {
       const draft = reader.get<EngineDraft>("draft", m.draftId);
@@ -913,17 +888,13 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
     }
 
     /**
-     * REVOKE — a tombstone, and NOTHING ELSE.
-     *
-     * The absent effects are the specification. `screener_decide` produces one rule effect
-     * AND a `move` per held message, because deciding at the gate genuinely re-files mail.
-     * Revoking does not: `RulesService.remove` deletes the row and appends a `rule` delete,
-     * and never reads `folder_state`. If this branch also emitted moves, the optimistic view
-     * would re-sort a backlog the server is not going to touch, and the next drain would
-     * silently put it all back — the user watching a thousand rows move and then un-move.
-     *
-     * An unknown id yields [] ⇒ the engine rejects locally with `not_found` and nothing goes
-     * on the wire, which is the right answer for a rule a concurrent drain already removed.
+     * REVOKE — a tombstone, and NOTHING ELSE. The absent effects are the specification. `screener_decide` produces
+     * one rule effect AND a `move` per held message, because deciding at the gate genuinely re-files mail. Revoking
+     * does not: `RulesService.remove` deletes the row and appends a `rule` delete, and never reads `folder_state`. If
+     * this branch also emitted moves, the optimistic view would re-sort a backlog the server is not going to touch,
+     * and the next drain would silently put it all back — the user watching a thousand rows move and then un-move. An
+     * unknown id yields [] ⇒ the engine rejects locally with `not_found` and nothing goes on the wire, which is the
+     * right answer for a rule a concurrent drain already removed.
      */
     case "rule_delete": {
       const rule = reader.get<RuleDTO>("rule", m.ruleId);

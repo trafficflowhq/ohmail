@@ -291,16 +291,13 @@ export function StreamCard({
   };
 
   /**
-   * A CLICK ANYWHERE ON THE CARD SELECTS AND EXPANDS IT.
-   *
-   * The reply bar is gated by the caller on the EXPANDED card, not on the scroll-spy's `current`
-   * — so a bar must never appear on a card the reader merely scrolled past. Opening on click is
-   * the other half of that contract: a plain click is how a reader engages a card, and engaging
-   * it is what surfaces its verbs. Only ever OPENS (the pill still toggles both ways); clicking
-   * an already-open card just re-selects. It opens even a card with nothing more to reveal — a
-   * short, fully-loaded one — because the point is the engagement, not the extra text: the visual
-   * expand is a no-op there and the bar is what changes. The expand pill and the action bar both
-   * `stopPropagation`, so neither reaches this.
+   * A CLICK ANYWHERE ON THE CARD SELECTS AND EXPANDS IT. The reply bar is gated by the caller on the EXPANDED card,
+   * not on the scroll-spy's `current` — so a bar must never appear on a card the reader merely scrolled past. Opening
+   * on click is the other half of that contract: a plain click is how a reader engages a card, and engaging it is
+   * what surfaces its verbs. Only ever OPENS (the pill still toggles both ways); clicking an already-open card just
+   * re-selects. It opens even a card with nothing more to reveal — a short, fully-loaded one — because the point is
+   * the engagement, not the extra text: the visual expand is a no-op there and the bar is what changes. The expand
+   * pill and the action bar both `stopPropagation`, so neither reaches this.
    */
   const expandOnClick = () => {
     if (open) return;

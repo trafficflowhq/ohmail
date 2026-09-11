@@ -174,37 +174,31 @@ const installed = new WeakSet<Document>();
 
 interface InterceptOptions {
   /**
-   * Whether a link to this document's OWN origin may be left to the browser.
-   *
-   * `true` for the app's document, where same-origin anchors are the client's own navigation —
-   * the `#/settings` routes, the in-page jumps — and preventing them would break the app.
-   *
-   * `false` inside a message frame, where nothing is the app's own navigation. A `srcdoc`
-   * document inherits the embedder's base URL, so a sender writing `<a href="/x">` or an
-   * absolute link to the app's own origin would otherwise be handed straight to the webview,
-   * which would navigate the frame — or, having escaped it, the window — inside the app's origin.
-   * That is the catastrophic shape this file's header rules out, and it is ruled out by refusing
-   * every click in a frame that is not an http/https address to open.
+   * Whether a link to this document's OWN origin may be left to the browser. `true` for the app's document, where
+   * same-origin anchors are the client's own navigation — the `#/settings` routes, the in-page jumps — and preventing
+   * them would break the app. `false` inside a message frame, where nothing is the app's own navigation. A `srcdoc`
+   * document inherits the embedder's base URL, so a sender writing `<a href="/x">` or an absolute link to the app's
+   * own origin would otherwise be handed straight to the webview, which would navigate the frame — or, having escaped
+   * it, the window — inside the app's origin. That is the catastrophic shape this file's header rules out, and it is
+   * ruled out by refusing every click in a frame that is not an http/https address to open.
    */
   trustSameOrigin: boolean;
 }
 
 /**
- * Install the one handler on one document. Idempotent, and a no-op unless
- * {@link enableExternalLinks} has been called.
- *
- * CAPTURE phase, so the decision is made before any component's own `onClick` — a surface that
- * stops propagation for its own reasons must not be able to turn a link back into a silent
- * no-op, which is the failure being fixed.
- *
- * Modifier keys are deliberately NOT inspected. In a browser ⌘-click means "open in a new tab",
- * and here every one of these opens in the user's browser regardless; branching on the modifier
- * would produce two behaviours where the platform offers one.
- *
- * Answers a disposer. Neither caller needs one — the app's document lives as long as the window
- * and a frame's dies with the message — and it is returned because a listener with no way off is
- * a listener no test can prove the ABSENCE of: the web app's case is "nothing is installed", and
- * asserting that in a suite that shares one document means being able to get back to nothing.
+ * Install the one handler on one document. Idempotent, and a no-op unless {@link enableExternalLinks} has been
+ * called. CAPTURE phase, so the decision is made before any component's own `onClick` — a surface that stops
+ * propagation for its own reasons must not be able to turn a link back into a silent no-op, which is the failure
+ * being fixed. Modifier keys are deliberately NOT inspected. In a browser ⌘-click means "open in a new tab", and here
+ * every one of these opens in the user's browser regardless; branching on the modifier would produce two behaviours
+ * where the platform offers one. Answers a disposer.
+ */
+
+/**
+ * Neither caller needs one — the app's document lives as long as the window and a frame's dies with the message — and
+ * it is returned because a listener with no way off is a listener no test can prove the ABSENCE of: the web app's
+ * case is "nothing is installed", and asserting that in a suite that shares one document means being able to get back
+ * to nothing.
  */
 export function interceptLinkClicks(doc: Document, opts: InterceptOptions): () => void {
   if (!enabled) return () => {};
@@ -229,21 +223,18 @@ export function interceptLinkClicks(doc: Document, opts: InterceptOptions): () =
 
     const base = doc.baseURI;
 
-    // THE APP'S OWN NAVIGATION IS DECIDED FIRST, AND THE ORDER IS THE WHOLE OF IT.
-    //
-    // This test used to sit BELOW the one after it, which made it dead code for exactly the
-    // scheme it exists to judge: `/mailbox#/settings` resolves to an `http:` URL, so the
-    // classifier claimed it and the client's own route was posted to the platform's browser
-    // before the same-origin question was ever asked. On macOS that never showed — the window is
-    // served from `tauri://localhost`, so an in-app link is not http at all and fell through to
-    // the check below. On Windows and Linux the window is served from `http://tauri.localhost`,
-    // where every internal link in the app is same-origin http and would have left for the
-    // browser. One ordering, two platforms, and only one of them could see it.
-    //
-    // The test itself is scheme-and-host rather than origin equality, and that is not a detail:
-    // on macOS an origin comparison answered YES for `mailto:`, `cid:`, `javascript:` and
-    // `file:` as well, because every opaque origin serialises to the same `"null"`. See
-    // {@link isAppsOwnNavigation} — that is the mirror of the bug this comment describes.
+    // THE APP'S OWN NAVIGATION IS DECIDED FIRST, AND THE ORDER IS THE WHOLE OF IT. This test used to sit BELOW the
+    // one after it, which made it dead code for exactly the scheme it exists to judge: `/mailbox#/settings` resolves
+    // to an `http:` URL, so the classifier claimed it and the client's own route was posted to the platform's browser
+    // before the same-origin question was ever asked. On macOS that never showed — the window is served from
+    // `tauri://localhost`, so an in-app link is not http at all and fell through to the check below. On Windows and
+    // Linux the window is served from `http://tauri.localhost`, where every internal link in the app is same-origin
+    // http and would have left for the browser. One ordering, two platforms, and only one of them could see it.
+
+    // The test itself is scheme-and-host rather than origin equality, and that is not a detail: on macOS an origin
+    // comparison answered YES for `mailto:`, `cid:`, `javascript:` and `file:` as well, because every opaque origin
+    // serialises to the same `"null"`. See {@link isAppsOwnNavigation} — that is the mirror of the bug this comment
+    // describes.
     if (opts.trustSameOrigin && isAppsOwnNavigation(href, base)) return;
 
     const target = externalTargetOf(href, base);

@@ -84,15 +84,11 @@ export interface LocalSweep {
 }
 
 /**
- * Remove every `localStorage` key on this origin matching any of `prefixes`.
- *
- * Extracted from {@link clearBootCaches} because sign-out has to sweep MORE than the boot caches
- * and the sweep is the part nobody should write twice. One pass over the jar for all of them: the
- * index shifts as keys are removed, so the doomed set is collected before anything is deleted.
- *
- * An exact key is a prefix of itself, so a legacy un-owned key is passed here unchanged.
- *
- * ANSWERS THE KEYS THAT SURVIVED. See the read-back below for why `void` was not enough.
+ * Remove every `localStorage` key on this origin matching any of `prefixes`. Extracted from {@link clearBootCaches}
+ * because sign-out has to sweep MORE than the boot caches and the sweep is the part nobody should write twice. One
+ * pass over the jar for all of them: the index shifts as keys are removed, so the doomed set is collected before
+ * anything is deleted. An exact key is a prefix of itself, so a legacy un-owned key is passed here unchanged. ANSWERS
+ * THE KEYS THAT SURVIVED. See the read-back below for why `void` was not enough.
  */
 export function dropLocalStorageKeys(prefixes: readonly string[]): LocalSweep {
   try {

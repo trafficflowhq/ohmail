@@ -98,35 +98,27 @@ export function useMessageVerbs(input: MessageVerbsInput): void {
   /** Every verb rests on a view with no cursor. One predicate so none of them can forget it. */
   const none = shown == null;
   /**
-   * …AND THE REASON, so the dispatcher can offer to place the cursor rather than drop the key —
-   * see `keymap.tsx#DisabledReason`. Spread into every binding whose `disabled` is `none` or
-   * `none || <something else>`: when `none` is false this object is EMPTY, so a verb resting for
-   * its own reason (a 1:1 message, a `no_forward` one, no chrome to open a strip in) keeps
-   * falling through exactly as it does today.
-   *
-   * WHAT THIS DOES AND DOES NOT BUY IN THESE THREE VIEWS. Folder, Tag and History hold their
-   * cursor in view-local state and claim no `useCursorPlacer`, so the innermost claim is the
-   * shell's, which answers `false` for a route it holds no cursor for — the key stays as inert
-   * as it is today. The declaration is here because it is TRUE of the binding and because the
-   * host that supplies a placer is the only thing missing; a gap row names that half.
+   * …AND THE REASON, so the dispatcher can offer to place the cursor rather than drop the key — see
+   * `keymap.tsx#DisabledReason`. Spread into every binding whose `disabled` is `none` or `none || <something else>`:
+   * when `none` is false this object is EMPTY, so a verb resting for its own reason (a 1:1 message, a `no_forward`
+   * one, no chrome to open a strip in) keeps falling through exactly as it does today. WHAT THIS DOES AND DOES NOT
+   * BUY IN THESE THREE VIEWS. Folder, Tag and History hold their cursor in view-local state and claim no
+   * `useCursorPlacer`, so the innermost claim is the shell's, which answers `false` for a route it holds no cursor
+   * for — the key stays as inert as it is today. The declaration is here because it is TRUE of the binding and
+   * because the host that supplies a placer is the only thing missing; a gap row names that half.
    */
   const parked = none ? ({ disabledReason: "no_cursor" } as const) : {};
 
   useKeyBindings([
     /**
-     * ⌫ AND ⌦ — the same two chords the shell declares over its own cursor, declared here over
-     * THIS view's.
-     *
-     * They were missing, and the shape of the miss is this file's founding defect exactly: the
-     * shell's bindings act on `focused`, which is null in a split view, so Tag, Folder, History
-     * and Triage showed a message with a visible cursor on it and both keys did nothing. Nine
-     * keycaps were dead in these three views for that reason before; this is the tenth and
-     * eleventh, caught by review before anybody had to report them.
-     *
-     * The FACTORY and not a hand-written pair: the chords, the label, the auto-repeat guard and
-     * the DOM modal gate are one spelling, so the shell's `⌫` and this one cannot come to mean
-     * different things. `canDelete` is the host's — the same strip render gates, resolved by the
-     * shell for the reason the header states, and never re-derived here.
+     * ⌫ AND ⌦ — the same two chords the shell declares over its own cursor, declared here over THIS view's. They were
+     * missing, and the shape of the miss is this file's founding defect exactly: the shell's bindings act on
+     * `focused`, which is null in a split view, so Tag, Folder, History and Triage showed a message with a visible
+     * cursor on it and both keys did nothing. Nine keycaps were dead in these three views for that reason before;
+     * this is the tenth and eleventh, caught by review before anybody had to report them. The FACTORY and not a
+     * hand-written pair: the chords, the label, the auto-repeat guard and the DOM modal gate are one spelling, so the
+     * shell's `⌫` and this one cannot come to mean different things. `canDelete` is the host's — the same strip
+     * render gates, resolved by the shell for the reason the header states, and never re-derived here.
      */
     ...deleteKeyBindings({
       focused: shown,

@@ -50,21 +50,19 @@ export interface MirrorStore extends EntityReader {
   /** Apply changes without touching the cursor (optimistic echo, §3.4). */
   applyChanges(changes: SyncChange[]): Promise<void>;
   /**
-   * Write — or, with `entity: null`, tombstone — ONE CLIENT-LOCAL record: a record whose
-   * type `/sync` has no vocabulary for, so the server can neither send it nor contradict it.
-   * `message_body` is the first.
-   *
-   * It bypasses `applyToRecords` on purpose. That function's job is the seq contract —
-   * ordering, replay, "never let an older-or-equal seq overwrite" — and a client-local
-   * record has no seq to order it by: it did not come from the log. Pushing one through
-   * with a synthetic seq would either be refused by the guard on the second write (same id,
-   * same seq) or move `maxSeq()` past deltas the mirror never applied. So these records sit
-   * at `seq: 0` and are simply overwritten, which is what "local, latest wins" means.
-   *
-   * There is no risk of collision with the log: `applyToRecords` only ever writes types the
-   * server sent, and the server has never heard of this one. If `/sync` ever DOES learn a
-   * type written here, its `create` carries a real seq and wins over the 0 — which is the
-   * right outcome and needs no special case.
+   * Write — or, with `entity: null`, tombstone — ONE CLIENT-LOCAL record: a record whose type `/sync` has no
+   * vocabulary for, so the server can neither send it nor contradict it. `message_body` is the first. It bypasses
+   * `applyToRecords` on purpose. That function's job is the seq contract — ordering, replay, "never let an
+   * older-or-equal seq overwrite" — and a client-local record has no seq to order it by: it did not come from the
+   * log. Pushing one through with a synthetic seq would either be refused by the guard on the second write (same id,
+   * same seq) or move `maxSeq()` past deltas the mirror never applied. So these records sit at `seq: 0` and are
+   * simply overwritten, which is what "local, latest wins" means. There is no risk of collision with the log:
+   * `applyToRecords` only ever writes types the server sent, and the server has never heard of this one.
+   */
+
+  /**
+   * If `/sync` ever DOES learn a type written here, its `create` carries a real seq and wins over the 0 — which is
+   * the right outcome and needs no special case.
    */
   putLocal(type: string, id: string, entity: unknown | null): Promise<void>;
   getMeta<T = unknown>(key: string): T | undefined;
@@ -141,20 +139,14 @@ export interface MirrorStore extends EntityReader {
     deletes: ReadonlyArray<{ type: string; id: string }>,
   ): Promise<void>;
   /**
-   * HARD-DELETE EVERY RECORD CARRYING EXACTLY `seq` — the abandoned-snapshot-prefix sweep.
-   *
-   * A snapshot stamps every row it emits with the SAME `seq` (its `asOfSeq`), so one seq value
-   * names one snapshot's output exactly. That makes "drop the prefix a previous, abandoned
-   * bootstrap left behind" expressible as a single predicate over the mirror rather than as a
-   * list somebody has to have kept — which is the point, because the list would itself be
-   * in-memory state that a crash destroys.
-   *
-   * `seq` must be greater than zero and this refuses otherwise: CLIENT-LOCAL records live at
-   * seq 0 ({@link MirrorStore.putLocal}), and the durable outbox is one of them. A sweep that
-   * accepted 0 would delete the user's queued intents to clean up after a failed bootstrap.
-   *
-   * Returns how many records went, INCLUDING the cascaded bodies, so a caller can assert the
-   * sweep did something rather than assume it.
+   * HARD-DELETE EVERY RECORD CARRYING EXACTLY `seq` — the abandoned-snapshot-prefix sweep. A snapshot stamps every
+   * row it emits with the SAME `seq` (its `asOfSeq`), so one seq value names one snapshot's output exactly. That
+   * makes "drop the prefix a previous, abandoned bootstrap left behind" expressible as a single predicate over the
+   * mirror rather than as a list somebody has to have kept — which is the point, because the list would itself be
+   * in-memory state that a crash destroys. `seq` must be greater than zero and this refuses otherwise: CLIENT-LOCAL
+   * records live at seq 0 ({@link MirrorStore.putLocal}), and the durable outbox is one of them. A sweep that
+   * accepted 0 would delete the user's queued intents to clean up after a failed bootstrap. Returns how many records
+   * went, INCLUDING the cascaded bodies, so a caller can assert the sweep did something rather than assume it.
    */
   pruneBySeq(seq: number): Promise<number>;
   /** Discard all local state and reset the cursor to "0" (410 re-bootstrap, §3.2). */
@@ -225,15 +217,13 @@ export abstract class BaseMirrorStore implements MirrorStore {
   private wipeKeep: MirrorRecord[] = [];
 
   /**
-   * HYDRATE FROM STORAGE, AND DROP THE CARRY THE OLD MEMORY OWED.
-   *
-   * A TEMPLATE METHOD, and the clearing is the whole of it. The carry-forward contract above
-   * keeps a failed page's rows in `unflushed` so the next flush takes them with the cursor —
-   * correct while memory holds those rows. `readPersisted()` REPLACES memory from disk, so the
-   * carried cursor now names a page this store no longer has: the identity sweep in `flush`
-   * drops the rows (memory has disowned them) and would then write the cursor alone, past a page
-   * disk never received. Unreachable today — the engine's single-flight hydrates once, before
-   * its first drain — and the clearing is what keeps it so if that ever changes.
+   * HYDRATE FROM STORAGE, AND DROP THE CARRY THE OLD MEMORY OWED. A TEMPLATE METHOD, and the clearing is the whole of
+   * it. The carry-forward contract above keeps a failed page's rows in `unflushed` so the next flush takes them with
+   * the cursor — correct while memory holds those rows. `readPersisted()` REPLACES memory from disk, so the carried
+   * cursor now names a page this store no longer has: the identity sweep in `flush` drops the rows (memory has
+   * disowned them) and would then write the cursor alone, past a page disk never received. Unreachable today — the
+   * engine's single-flight hydrates once, before its first drain — and the clearing is what keeps it so if that ever
+   * changes.
    */
   async load(): Promise<void> {
     await this.readPersisted();
@@ -275,19 +265,18 @@ export abstract class BaseMirrorStore implements MirrorStore {
   }
 
   /**
-   * THE ONE WRITE PATH — see the persistence contract above.
-   *
-   * Everything that persists goes through here rather than calling `persist` directly, because the
-   * carry-forward is only a contract if there is no second door. On success only the entries THIS
-   * flush actually wrote are retired, matched by IDENTITY rather than by key.
-   *
-   * **That last part is defence in depth and is labelled as such rather than counted as
-   * coverage.** Every flush adds its records and captures its batch with only `settleWipe`
-   * between them, so a concurrent apply is captured by its own flush and a key-wise delete would
-   * lose nothing today — mutating it reddens nothing, which is written here rather than left for
-   * somebody to find and read as a tested guard. It stays because it makes "a flush retires
-   * exactly what it wrote" true LOCALLY, without a reader having to trace which awaits sit
-   * between the add and the capture. That trace is what a future edit will get wrong.
+   * THE ONE WRITE PATH — see the persistence contract above. Everything that persists goes through here rather than
+   * calling `persist` directly, because the carry-forward is only a contract if there is no second door. On success
+   * only the entries THIS flush actually wrote are retired, matched by IDENTITY rather than by key. **That last part
+   * is defence in depth and is labelled as such rather than counted as coverage.** Every flush adds its records and
+   * captures its batch with only `settleWipe` between them, so a concurrent apply is captured by its own flush and a
+   * key-wise delete would lose nothing today — mutating it reddens nothing, which is written here rather than left
+   * for somebody to find and read as a tested guard. It stays because it makes "a flush retires exactly what it
+   * wrote" true LOCALLY, without a reader having to trace which awaits sit between the add and the capture.
+   */
+
+  /**
+   * That trace is what a future edit will get wrong.
    */
   private async flush(
     dirty: MirrorRecord[],
@@ -305,16 +294,13 @@ export abstract class BaseMirrorStore implements MirrorStore {
     }
     await this.settleWipe();
     /**
-     * AN UNFLUSHED RECORD IS WRITTEN ONLY WHILE IT IS STILL *THE* RECORD IN MEMORY.
-     *
-     * The carry-forward's own failure mode, and it is not hypothetical: `load()` REPLACES
-     * `this.records` from disk, and `resetForBootstrap` empties it. A carried record from before
-     * either one is a row memory has since disowned, and writing it back would resurrect it on
-     * disk while the reader shows it gone — the exact inversion of the defect this contract
-     * closes. Identity is the right test rather than presence: every writer here (`applyToRecords`,
-     * the body cascade, `putLocal`) leaves the object it produced AS the map's value, so a key
-     * whose value is no longer this object has been superseded by a newer apply — which flushed
-     * itself — or dropped.
+     * AN UNFLUSHED RECORD IS WRITTEN ONLY WHILE IT IS STILL *THE* RECORD IN MEMORY. The carry-forward's own failure
+     * mode, and it is not hypothetical: `load()` REPLACES `this.records` from disk, and `resetForBootstrap` empties
+     * it. A carried record from before either one is a row memory has since disowned, and writing it back would
+     * resurrect it on disk while the reader shows it gone — the exact inversion of the defect this contract closes.
+     * Identity is the right test rather than presence: every writer here (`applyToRecords`, the body cascade,
+     * `putLocal`) leaves the object it produced AS the map's value, so a key whose value is no longer this object has
+     * been superseded by a newer apply — which flushed itself — or dropped.
      */
     for (const [key, rec] of [...this.unflushed]) {
       if (this.records.get(key) !== rec) this.unflushed.delete(key);
@@ -438,21 +424,21 @@ export abstract class BaseMirrorStore implements MirrorStore {
   }
 
   /**
-   * PER-TYPE BUCKETS, REBUILT LAZILY ONCE PER VERSION — `list`/`entries` used to walk EVERY
-   * record for EVERY query, so on a mailbox tens of thousands deep a `list("tag")` over three
-   * tags cost a whole-mirror pass, and one render's dozen small-type queries cost a dozen of
-   * them. One walk per version builds every type's bucket; each call then copies its own
-   * bucket only (a fresh array per call — callers sort the result in place, and that contract
-   * predates this cache). Keyed on `ver`, which every write path that MOVES A RECORD bumps — a
-   * record write between two reads of the same version cannot exist, so a bucket can never serve
-   * stale rows.
-   *
-   * "Every write path already bumps" is what this used to say, and it is no longer true: `setMeta`
-   * writes without bumping, and `applyResponse` bumps only when its dirty set is non-empty. Neither
-   * weakens the invariant this cache needs, because the invariant is about RECORDS. Meta lives in
-   * its own map and `bucketsOf` never reads it; a page that applied no changes left every record
-   * exactly where it was. The distinction is worth keeping sharp: anything that adds, removes or
-   * replaces a `MirrorRecord` must bump, and nothing else has to.
+   * PER-TYPE BUCKETS, REBUILT LAZILY ONCE PER VERSION — `list`/`entries` used to walk EVERY record for EVERY query,
+   * so on a mailbox tens of thousands deep a `list("tag")` over three tags cost a whole-mirror pass, and one render's
+   * dozen small-type queries cost a dozen of them. One walk per version builds every type's bucket; each call then
+   * copies its own bucket only (a fresh array per call — callers sort the result in place, and that contract predates
+   * this cache). Keyed on `ver`, which every write path that MOVES A RECORD bumps — a record write between two reads
+   * of the same version cannot exist, so a bucket can never serve stale rows. "Every write path already bumps" is
+   * what this used to say, and it is no longer true: `setMeta` writes without bumping, and `applyResponse` bumps only
+   * when its dirty set is non-empty.
+   */
+
+  /**
+   * Neither weakens the invariant this cache needs, because the invariant is about RECORDS. Meta lives in its own map
+   * and `bucketsOf` never reads it; a page that applied no changes left every record exactly where it was. The
+   * distinction is worth keeping sharp: anything that adds, removes or replaces a `MirrorRecord` must bump, and
+   * nothing else has to.
    */
   private typeBuckets: { v: number; byType: Map<string, MirrorRecord[]> } | null = null;
 
@@ -677,22 +663,20 @@ export abstract class BaseMirrorStore implements MirrorStore {
     this.highSeq = Math.max(this.highSeq, maxSeqOf(changes));
     this.cursor = resp.cursor;
     /**
-     * THE VERSION MOVES FOR ROWS, NOT FOR THE CURSOR — {@link applyChanges}'s guard, which this
-     * method was missing.
-     *
-     * An idle poll is the common case, not the rare one: the drain loop asks every eight seconds
-     * and almost every answer is an empty page. This bumped anyway, and `version()` is what the
-     * shell's whole-mirror derivation keys on — so a mailbox that had not changed in hours still
-     * paid `consentPartition` + the presentation projection + every pile selector, over every
-     * message it holds, on every poll. At an eight-second cadence that is one pointless
-     * whole-mirror pass per poll for as long as the window stays open, each one also
-     * re-rendering the shell.
-     *
-     * An empty page still moves the CURSOR, and the cursor still has to become durable — hence
-     * the flush below is unconditional. What the version promises is only that a derived cache
-     * over ENTITIES is stale, and an empty page makes none of them stale. `dirty` covers the
-     * body cascade as well as the page's own rows, so a page that changed nothing visible but
-     * purged a body still counts as a change.
+     * THE VERSION MOVES FOR ROWS, NOT FOR THE CURSOR — {@link applyChanges}'s guard, which this method was missing.
+     * An idle poll is the common case, not the rare one: the drain loop asks every eight seconds and almost every
+     * answer is an empty page. This bumped anyway, and `version()` is what the shell's whole-mirror derivation keys
+     * on — so a mailbox that had not changed in hours still paid `consentPartition` + the presentation projection +
+     * every pile selector, over every message it holds, on every poll. At an eight-second cadence that is one
+     * pointless whole-mirror pass per poll for as long as the window stays open, each one also re-rendering the
+     * shell. An empty page still moves the CURSOR, and the cursor still has to become durable — hence the flush below
+     * is unconditional.
+     */
+
+    /**
+     * What the version promises is only that a derived cache over ENTITIES is stale, and an empty page makes none of
+     * them stale. `dirty` covers the body cascade as well as the page's own rows, so a page that changed nothing
+     * visible but purged a body still counts as a change.
      */
     if (dirty.length > 0) this.ver++;
     // One atomic flush: page + cursor together (contract §3.3 step 3) — and, since the
@@ -702,17 +686,13 @@ export abstract class BaseMirrorStore implements MirrorStore {
   }
 
   /**
-   * {@link prune}, ON THE DURABLE-WRITE LANE.
-   *
-   * `prune` is memory-first: it evicts, then purges. That direction is right for a terminal
-   * delete — gone from memory, still on disk, replayed under the same key — but its persisted
-   * half raced `resetForBootstrap` in the same way `commitLocal` did before the lane existed:
-   * the reset snapshots which rows to carry, the purge lands, and the wipe writes back a row the
-   * purge has just removed. The verb had reached its terminal outcome and comes back on the next
-   * boot to be sent again.
-   *
-   * The memory eviction stays synchronous — three callers depend on it landing before their first
-   * await — and only the durable half takes its turn.
+   * {@link prune}, ON THE DURABLE-WRITE LANE. `prune` is memory-first: it evicts, then purges. That direction is
+   * right for a terminal delete — gone from memory, still on disk, replayed under the same key — but its persisted
+   * half raced `resetForBootstrap` in the same way `commitLocal` did before the lane existed: the reset snapshots
+   * which rows to carry, the purge lands, and the wipe writes back a row the purge has just removed. The verb had
+   * reached its terminal outcome and comes back on the next boot to be sent again. The memory eviction stays
+   * synchronous — three callers depend on it landing before their first await — and only the durable half takes its
+   * turn.
    */
   async pruneSerialized(keys: ReadonlyArray<{ type: string; id: string }>): Promise<void> {
     // THE EVICTION HAPPENS HERE, synchronously, before any await — three callers are `void`

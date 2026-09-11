@@ -420,17 +420,13 @@ function save(rows: SendLock[], owner: string | null = storageOwner()): DurableW
 }
 
 /**
- * THE KEY THIS LANE'S UNSETTLED SEND OF *THIS MESSAGE* IS GOING OUT UNDER, or `null`.
- *
- * Both halves of the identity are required — see {@link sendFingerprint} for the message half and
- * why a lane alone is not enough. A record for the lane whose fingerprint does not match is a key
- * minted for a message the user has since replaced; it is DROPPED here rather than resumed, so the
- * new message gets a key of its own and the stale one stops being offered to anybody.
- *
- * The TTL is applied on READ and swept in the same pass, so an expired record can never be resumed
- * and can never accumulate. `nowMs` is injected for the same reason it is on the Screener's
- * journal: the caller's clock is the engine's clock, and a guard that reads its own is a guard
- * nobody can drive.
+ * THE KEY THIS LANE'S UNSETTLED SEND OF *THIS MESSAGE* IS GOING OUT UNDER, or `null`. Both halves of the identity are
+ * required — see {@link sendFingerprint} for the message half and why a lane alone is not enough. A record for the
+ * lane whose fingerprint does not match is a key minted for a message the user has since replaced; it is DROPPED here
+ * rather than resumed, so the new message gets a key of its own and the stale one stops being offered to anybody. The
+ * TTL is applied on READ and swept in the same pass, so an expired record can never be resumed and can never
+ * accumulate. `nowMs` is injected for the same reason it is on the Screener's journal: the caller's clock is the
+ * engine's clock, and a guard that reads its own is a guard nobody can drive.
  */
 /**
  * IS THIS RECORD STILL WORTH KEEPING? One answer, shared by every reader.
@@ -463,16 +459,13 @@ function isLive(r: SendLock, nowMs: number, pendingLanes?: ReadonlySet<string>):
    */
   if (pendingLanes?.has(r.lane) === true) return true;
   /**
-   * A RECORD FROM A LATER FORMAT IS NOT AGED OUT, and this arm is why the answer is not simply
-   * the two below it.
-   *
-   * `at` is the only field of a newer shape this build may read, and the age limit acts on the
-   * FILTERED list: both readers persist what they keep, so a downgrade that ran eight days after a
-   * newer install left an unresolved record would have deleted the one thing naming the key that
-   * send went under — and re-upgrading would then mint a fresh key for a message that may already
-   * have been delivered. `unverified` cannot answer for such a record either: the flag means
-   * whatever the build that wrote it decided, so reading it is a guess. The record is carried, as
-   * everywhere else in this file.
+   * A RECORD FROM A LATER FORMAT IS NOT AGED OUT, and this arm is why the answer is not simply the two below it. `at`
+   * is the only field of a newer shape this build may read, and the age limit acts on the FILTERED list: both readers
+   * persist what they keep, so a downgrade that ran eight days after a newer install left an unresolved record would
+   * have deleted the one thing naming the key that send went under — and re-upgrading would then mint a fresh key for
+   * a message that may already have been delivered. `unverified` cannot answer for such a record either: the flag
+   * means whatever the build that wrote it decided, so reading it is a guess. The record is carried, as everywhere
+   * else in this file.
    */
   if (r.v > SEND_LOCK_FORMAT) return true;
   return r.unverified === true || nowMs - r.at <= SEND_LOCK_TTL_MS;
@@ -544,40 +537,34 @@ export function resumeSendLock(
 }
 
 /**
- * IS THIS RECORD IN THE PRE-0.14.1 SHAPE? — the only reliable way to spot a 0.14.0 record.
- *
- * `v` cannot answer it. 0.14.0 wrote `v: 1` and 0.14.1 changed what a fingerprint hashes WITHOUT
- * bumping it, so the number says the same thing about two different algebras. The SHAPE does
- * answer it: `subject` arrived with 0.14.1 and `session` with the fix above it, and 0.14.0's
- * record type had neither field — its whole interface was `v, lane, key, at, draftId, fp`. So a
- * record carrying neither name was written before either existed.
- *
- * A 0.14.1 record for a message this browser could not name at all would also carry neither — but
- * such a browser has no writable jar (`sendSubject` answers `undefined` only when the session id
- * could not be read, which is the same failure that stops the record being saved), so it is not a
- * state that reaches storage. `v < SEND_LOCK_FORMAT` is required as well, which keeps this off
- * anything this build or a later one wrote — and it is what makes {@link load}'s rewrite happen
- * once: the rewrite moves `v`, so the next read is no longer a legacy read.
- *
- * WHAT IT NO LONGER DOES is guard a resume. It named the records whose key a press was allowed to
- * take over, which is the decision {@link load}'s header withdraws: this predicate now only says
- * "the outcome of this send was never observed and this build cannot name what it was of".
+ * IS THIS RECORD IN THE PRE-0.14.1 SHAPE? — the only reliable way to spot a 0.14.0 record. `v` cannot answer it.
+ * 0.14.0 wrote `v: 1` and 0.14.1 changed what a fingerprint hashes WITHOUT bumping it, so the number says the same
+ * thing about two different algebras. The SHAPE does answer it: `subject` arrived with 0.14.1 and `session` with the
+ * fix above it, and 0.14.0's record type had neither field — its whole interface was `v, lane, key, at, draftId, fp`.
+ * So a record carrying neither name was written before either existed. A 0.14.1 record for a message this browser
+ * could not name at all would also carry neither — but such a browser has no writable jar (`sendSubject` answers
+ * `undefined` only when the session id could not be read, which is the same failure that stops the record being
+ * saved), so it is not a state that reaches storage.
+ */
+
+/**
+ * `v < SEND_LOCK_FORMAT` is required as well, which keeps this off anything this build or a later one wrote — and it
+ * is what makes {@link load}'s rewrite happen once: the rewrite moves `v`, so the next read is no longer a legacy
+ * read. WHAT IT NO LONGER DOES is guard a resume. It named the records whose key a press was allowed to take over,
+ * which is the decision {@link load}'s header withdraws: this predicate now only says "the outcome of this send was
+ * never observed and this build cannot name what it was of".
  */
 function mayMatchLegacy(r: SendLock): boolean {
   return r.v <= LAST_0_14_0_FORMAT && r.subject === undefined && r.session === undefined;
 }
 
 /**
- * WHICH SPELLING OF THIS MESSAGE A STORED RECORD'S FINGERPRINT IS IN — the version decides.
- *
- * `v: 2` is the released 0.14.1 algebra ({@link legacySendFingerprint_0_14_1}, `draftId` folded
- * in); `v: 3` is this build's. Comparing every record against one hash is what made the 0.14.0 →
- * 0.14.1 flip a duplicate-delivery window, and it is the same window here.
- *
- * A record the 0.14.0 decode rewrote carries `v: 3` and a 0.14.0 fingerprint on purpose: it is
- * NAMELESS and must match no message by hash at all, which is exactly what comparing it against
- * this build's algebra achieves. Its park is `unresolvedNames`' nameless arm, which tries all
- * three spellings.
+ * WHICH SPELLING OF THIS MESSAGE A STORED RECORD'S FINGERPRINT IS IN — the version decides. `v: 2` is the released
+ * 0.14.1 algebra ({@link legacySendFingerprint_0_14_1}, `draftId` folded in); `v: 3` is this build's. Comparing every
+ * record against one hash is what made the 0.14.0 → 0.14.1 flip a duplicate-delivery window, and it is the same
+ * window here. A record the 0.14.0 decode rewrote carries `v: 3` and a 0.14.0 fingerprint on purpose: it is NAMELESS
+ * and must match no message by hash at all, which is exactly what comparing it against this build's algebra achieves.
+ * Its park is `unresolvedNames`' nameless arm, which tries all three spellings.
  */
 function fingerprintFor(r: SendLock, id: SendIdentity): string {
   return r.v <= LAST_0_14_1_FORMAT ? id.legacyFp0141 : id.fp;
@@ -683,15 +670,12 @@ export function claimSendLock(lock: SendLock, owner: string | null = storageOwne
 }
 
 /**
- * Release ONE MESSAGE's claim on a lane at a TERMINAL outcome — see the header for why `queued`
- * is not one.
- *
- * The fingerprint is required rather than optional, and that is the whole correction. A lane can
- * hold an unresolved record beside a live claim, so "release the lane" is no longer a statement
- * anybody can make: releasing everything would delete the record saying an earlier message may
- * already have been delivered, and an optional fingerprint would make that the DEFAULT for any
- * caller that did not think about it. A confirmed or failed outcome for the message named here
- * releases that message's record — including its unresolved one, because an outcome the session
+ * Release ONE MESSAGE's claim on a lane at a TERMINAL outcome — see the header for why `queued` is not one. The
+ * fingerprint is required rather than optional, and that is the whole correction. A lane can hold an unresolved
+ * record beside a live claim, so "release the lane" is no longer a statement anybody can make: releasing everything
+ * would delete the record saying an earlier message may already have been delivered, and an optional fingerprint
+ * would make that the DEFAULT for any caller that did not think about it. A confirmed or failed outcome for the
+ * message named here releases that message's record — including its unresolved one, because an outcome the session
  * has now observed is no longer unknown — and leaves every other record on the lane alone.
  */
 export function releaseSendLock(lane: string, fp: string, owner: string | null = storageOwner()): void {
@@ -703,17 +687,13 @@ export function releaseSendLock(lane: string, fp: string, owner: string | null =
 }
 
 /**
- * Every live claim, oldest first — for a restart's adoption pass.
- *
- * IT SHARES `isLive` WITH `readSendLock`, and that is the point of the helper. This filtered on
- * the age limit ALONE while its sibling exempted unverified locks from it, and it PERSISTS what
- * it filters — so the first caller anybody wrote would, seven days on, delete the one record
- * saying a message may already have been delivered. `unverifiedSendLock` would then answer false,
- * the composer would come back live, and the next press would mint a fresh key.
- *
- * There is no such caller today, which is exactly what makes it worth fixing rather than leaving:
- * an unreachable half of a pair is a trap for whoever reaches it, and this one had a docblock
- * inviting them to.
+ * Every live claim, oldest first — for a restart's adoption pass. IT SHARES `isLive` WITH `readSendLock`, and that is
+ * the point of the helper. This filtered on the age limit ALONE while its sibling exempted unverified locks from it,
+ * and it PERSISTS what it filters — so the first caller anybody wrote would, seven days on, delete the one record
+ * saying a message may already have been delivered. `unverifiedSendLock` would then answer false, the composer would
+ * come back live, and the next press would mint a fresh key. There is no such caller today, which is exactly what
+ * makes it worth fixing rather than leaving: an unreachable half of a pair is a trap for whoever reaches it, and this
+ * one had a docblock inviting them to.
  */
 export function allSendLocks(
   nowMs: number,
@@ -746,17 +726,14 @@ export function allSendLocks(
  */
 export interface SendIntent {
   /**
-   * EVERY IDENTITY the message this key was minted for answers to — {@link sendSubjects}.
-   *
-   * A list rather than one string, because one message-in-progress carries more than one name and
-   * acquires them at different moments. A compose is `compose:<session>` from the first press and
-   * becomes `draft:<id>` as well the moment autosave gives it a row; a draft reopened after the
-   * session was cleared has only the row. Comparing ONE name against ONE name meant a message
-   * whose row appeared between two presses read as a different message and sent twice.
-   *
-   * EMPTY means this browser could not name the message at all — no row, no session (a jar it
-   * cannot write, a state built by hand). It is not evidence of a different message, so the
-   * reader fails closed on it, and the fingerprint is the only comparison left.
+   * EVERY IDENTITY the message this key was minted for answers to — {@link sendSubjects}. A list rather than one
+   * string, because one message-in-progress carries more than one name and acquires them at different moments. A
+   * compose is `compose:<session>` from the first press and becomes `draft:<id>` as well the moment autosave gives it
+   * a row; a draft reopened after the session was cleared has only the row. Comparing ONE name against ONE name meant
+   * a message whose row appeared between two presses read as a different message and sent twice. EMPTY means this
+   * browser could not name the message at all — no row, no session (a jar it cannot write, a state built by hand). It
+   * is not evidence of a different message, so the reader fails closed on it, and the fingerprint is the only
+   * comparison left.
    */
   subjects: ReadonlyArray<string>;
   /** {@link sendFingerprint} of the message the key was minted for. */
@@ -945,17 +922,13 @@ export interface ParkedIdentity {
 }
 
 /**
- * THE SAME QUESTION, ANSWERED WITH THE NAMES — {@link parkedComposeMessage} is this, made boolean.
- *
- * The reopen needs more than "yes": it has to put the message's identity BACK. A door in between
- * (writing to a contact, a mail link from outside) legitimately starts a new message and mints a
- * new session, so the browser can arrive back at an unconfirmed message holding neither of the
- * names its record carries. Answering only `true` there produced a surface that KNEW the message
- * was parked and then presented it under a session the record had never heard of: no warning,
- * Send live, one press and a second copy — the same ending as the door this replaced, reached
- * from a different direction.
- *
- * `null` = not parked. Otherwise the record's own names, for the caller to restore.
+ * THE SAME QUESTION, ANSWERED WITH THE NAMES — {@link parkedComposeMessage} is this, made boolean. The reopen needs
+ * more than "yes": it has to put the message's identity BACK. A door in between (writing to a contact, a mail link
+ * from outside) legitimately starts a new message and mints a new session, so the browser can arrive back at an
+ * unconfirmed message holding neither of the names its record carries. Answering only `true` there produced a surface
+ * that KNEW the message was parked and then presented it under a session the record had never heard of: no warning,
+ * Send live, one press and a second copy — the same ending as the door this replaced, reached from a different
+ * direction. `null` = not parked. Otherwise the record's own names, for the caller to restore.
  */
 export function parkedComposeRecord(
   lane: string,
@@ -1169,17 +1142,14 @@ export function unresolvedSendRows(lane: string, owner: string | null = storageO
 }
 
 /**
- * THE DRAFT ROW THIS MESSAGE HAS ACQUIRED SINCE THE KEY WAS MINTED — recorded, never re-keyed.
- *
- * A compose pressed before autosave had written anything holds `draftId: null`, and a row appears
- * moments later. The record's identity does NOT move with it — that is the whole point of
- * {@link SendLock.session}, and re-keying the subject onto the new row is exactly the defect this
- * pair of fields exists to close. What the row is worth is diagnostic: somebody reading the jar
- * beside a parked send, or the account's Drafts list, needs to know which row belongs to the
- * message whose outcome nobody knows. So it is written down and nothing branches on it.
- *
- * Matched on the SET, so it finds the record however the message is named at this moment. Only a
- * record that names this message is touched, and only when the row has actually changed.
+ * THE DRAFT ROW THIS MESSAGE HAS ACQUIRED SINCE THE KEY WAS MINTED — recorded, never re-keyed. A compose pressed
+ * before autosave had written anything holds `draftId: null`, and a row appears moments later. The record's identity
+ * does NOT move with it — that is the whole point of {@link SendLock.session}, and re-keying the subject onto the new
+ * row is exactly the defect this pair of fields exists to close. What the row is worth is diagnostic: somebody
+ * reading the jar beside a parked send, or the account's Drafts list, needs to know which row belongs to the message
+ * whose outcome nobody knows. So it is written down and nothing branches on it. Matched on the SET, so it finds the
+ * record however the message is named at this moment. Only a record that names this message is touched, and only when
+ * the row has actually changed.
  */
 export function attachSendLockDraft(
   lane: string,

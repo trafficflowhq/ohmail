@@ -342,16 +342,13 @@ export function useBarDensity(): {
   const watchedRef = useRef<Set<Element>>(new Set());
 
   /**
-   * Re-sync which children are watched, and say whether the set changed.
-   *
-   * THE CHILDREN SET IS NOT FIXED FOR THE LIFE OF THE ROW. `canReplyAll` and `canForward` add and
-   * remove a direct child, and React REUSES the measure row when it does — so the ref callback,
-   * which fires only on mount and unmount, never runs. Observing "the children present at mount"
-   * therefore missed every group that appeared later: switching in place from a 1:1 message to
-   * one with an audience inserted a Reply-all group that nothing watched, neither the row's own
-   * box nor the container's had to resize, and the previous `data-admit` survived — admitting a
-   * LATER group while the newly inserted earlier one stayed folded, which breaks the greedy
-   * prefix the whole admission rests on.
+   * Re-sync which children are watched, and say whether the set changed. THE CHILDREN SET IS NOT FIXED FOR THE LIFE
+   * OF THE ROW. `canReplyAll` and `canForward` add and remove a direct child, and React REUSES the measure row when
+   * it does — so the ref callback, which fires only on mount and unmount, never runs. Observing "the children present
+   * at mount" therefore missed every group that appeared later: switching in place from a 1:1 message to one with an
+   * audience inserted a Reply-all group that nothing watched, neither the row's own box nor the container's had to
+   * resize, and the previous `data-admit` survived — admitting a LATER group while the newly inserted earlier one
+   * stayed folded, which breaks the greedy prefix the whole admission rests on.
    */
   const syncWatched = useCallback((row: HTMLDivElement): boolean => {
     const ro = roRef.current;
@@ -402,21 +399,20 @@ export function useBarDensity(): {
       const pane = container?.closest(".msg") ? container.closest(PANE_SELECTOR) : null;
       if (pane) roRef.current.observe(pane);
       /**
-       * AND EVERY GROUP IN THE COPY, because the widths this hook reads are the CHILDREN's and
-       * those can change while neither the row's box nor the container's does.
-       *
-       * The measure row is `position: absolute` inside the pill with `overflow: hidden`, so in a
-       * constrained column its own box can stay put while a child grows. React also REUSES this
-       * row across message swaps. Put together, that was a live defect: at the 1024px German
-       * Triage width, moving from a resurfaced message (whose read slot says the short
-       * "Erledigt") to an ordinary read one (whose slot says "Als ungelesen markieren") grows the
-       * floor by the difference between two labels — and if neither observed box resized, the
-       * previous non-`compact` admission survived, the floor overflowed, and More was pushed past
-       * the column. That is precisely the overflow the compact floor exists to prevent,
-       * reintroduced through the one door the observer was not watching.
-       *
-       * Observing the children closes it for every cause rather than for that one: a label swap,
-       * a locale switch, a face switch, and a webfont finishing load all change a child's box.
+       * AND EVERY GROUP IN THE COPY, because the widths this hook reads are the CHILDREN's and those can change while
+       * neither the row's box nor the container's does. The measure row is `position: absolute` inside the pill with
+       * `overflow: hidden`, so in a constrained column its own box can stay put while a child grows. React also
+       * REUSES this row across message swaps. Put together, that was a live defect: at the 1024px German Triage
+       * width, moving from a resurfaced message (whose read slot says the short "Erledigt") to an ordinary read one
+       * (whose slot says "Als ungelesen markieren") grows the floor by the difference between two labels — and if
+       * neither observed box resized, the previous non-`compact` admission survived, the floor overflowed, and More
+       * was pushed past the column.
+       */
+
+      /**
+       * That is precisely the overflow the compact floor exists to prevent, reintroduced through the one door the
+       * observer was not watching. Observing the children closes it for every cause rather than for that one: a label
+       * swap, a locale switch, a face switch, and a webfont finishing load all change a child's box.
        */
       syncWatched(el);
       // Ref callbacks run after the commit's DOM insertion — the row is laid out enough to

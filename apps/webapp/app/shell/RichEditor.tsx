@@ -565,18 +565,16 @@ function splitTargetLines(
   quotationAsLines = false,
 ): boolean {
   const sel = state.selection;
-  // A NODE selection — a whole list or block picked as a node — is not a run of lines, and
-  // narrowing it to the text inside (what `between` does) would change which node the chained
-  // toggle acts on: unquoting a selected `<ul>` must lift THE LIST, not the first line in it
-  // (review-caught). Left exactly as the user made it; the stock toggles know node selections.
-  //
-  // The one exception is OPT-IN, because each button means something different by a selected
-  // QUOTATION (all three review-caught, one round each): the LIST buttons mean "list the
-  // quoted lines" — they pass `quotationAsLines` and the normalisation narrows to the
-  // contents; the QUOTE button never brings one here, answering the wrapper's own node
-  // selection structurally before isolation is asked; and the CODE button keeps the bail, so
-  // the whole quotation becomes one block rather than the exemption descending into a nested
-  // list's items and leaving its shell behind.
+  // A NODE selection — a whole list or block picked as a node — is not a run of lines, and narrowing it to the text
+  // inside (what `between` does) would change which node the chained toggle acts on: unquoting a selected `<ul>` must
+  // lift THE LIST, not the first line in it (review-caught). Left exactly as the user made it; the stock toggles know
+  // node selections.
+
+  // The one exception is OPT-IN, because each button means something different by a selected QUOTATION (all three
+  // review-caught, one round each): the LIST buttons mean "list the quoted lines" — they pass `quotationAsLines` and
+  // the normalisation narrows to the contents; the QUOTE button never brings one here, answering the wrapper's own
+  // node selection structurally before isolation is asked; and the CODE button keeps the bail, so the whole quotation
+  // becomes one block rather than the exemption descending into a nested list's items and leaving its shell behind.
   if (
     sel instanceof NodeSelection &&
     !(quotationAsLines && sel.node.type.name === "blockquote")
@@ -591,16 +589,14 @@ function splitTargetLines(
   const lineEnd = lineEdge($to, to, 1);
 
   /**
-   * A ZERO-WIDTH LINE — the caret on an empty line, `<p>intro<br>│</p>` or `<p>a<br>│<br>b</p>`.
-   * Review-caught, then measured twice: an empty line has no interior for a mapping bias to
-   * hold on to, so mapping its one position inward from both sides lands on OPPOSITE sides of
-   * the surrounding splits — an inverted range whose clamp put the caret on the line ABOVE,
-   * and the button formatted a line the caret was not on. And no single bias serves both
-   * surrounding splits: +1 pushes the caret past the break AFTER the line (onto the next
-   * line), −1 keeps it before the break BEFORE it (onto the previous). So the empty line is
-   * isolated explicitly — the break after it first (the caret stays at the end of the first
-   * half), then the break before it (the caret moves into the split's second half, the empty
-   * paragraph itself) — with the caret TRACKED through each step rather than mapped.
+   * A ZERO-WIDTH LINE — the caret on an empty line, `<p>intro<br>│</p>` or `<p>a<br>│<br>b</p>`. Review-caught, then
+   * measured twice: an empty line has no interior for a mapping bias to hold on to, so mapping its one position
+   * inward from both sides lands on OPPOSITE sides of the surrounding splits — an inverted range whose clamp put the
+   * caret on the line ABOVE, and the button formatted a line the caret was not on. And no single bias serves both
+   * surrounding splits: +1 pushes the caret past the break AFTER the line (onto the next line), −1 keeps it before
+   * the break BEFORE it (onto the previous). So the empty line is isolated explicitly — the break after it first (the
+   * caret stays at the end of the first half), then the break before it (the caret moves into the split's second
+   * half, the empty paragraph itself) — with the caret TRACKED through each step rather than mapped.
    */
   if (lineStart === lineEnd && empty) {
     let caret = lineStart;
@@ -672,17 +668,14 @@ function applyList(editor: Editor, list: "bulletList" | "orderedList"): void {
 }
 
 /**
- * The quote button. One quote for the target lines, with the breaks INSIDE it kept as breaks —
- * quoting three lines of prose is one quotation, not three (the difference from a list, where
- * every line is its own item; `splitInner` is that difference, spelled as an argument).
- *
- * The OFF direction is line-scoped too, and that is not free the way it is for lists. A list's
- * items are lines, so TipTap's own lift already takes the item the caret stands in — but this
- * command deliberately quotes several lines as ONE paragraph, so a bare `toggleBlockquote`
- * would lift all of them together and pressing Quote on one line of a three-line quotation
- * would unquote all three (review-caught). Isolating the caret's line first makes the lift
- * take exactly that line out, splitting the quotation around it, which is what unquoting one
- * line of a quotation has always meant.
+ * The quote button. One quote for the target lines, with the breaks INSIDE it kept as breaks — quoting three lines of
+ * prose is one quotation, not three (the difference from a list, where every line is its own item; `splitInner` is
+ * that difference, spelled as an argument). The OFF direction is line-scoped too, and that is not free the way it is
+ * for lists. A list's items are lines, so TipTap's own lift already takes the item the caret stands in — but this
+ * command deliberately quotes several lines as ONE paragraph, so a bare `toggleBlockquote` would lift all of them
+ * together and pressing Quote on one line of a three-line quotation would unquote all three (review-caught).
+ * Isolating the caret's line first makes the lift take exactly that line out, splitting the quotation around it,
+ * which is what unquoting one line of a quotation has always meant.
  */
 function applyQuote(editor: Editor): void {
   /**
@@ -711,24 +704,20 @@ function applyQuote(editor: Editor): void {
 }
 
 /**
- * DOES THE SELECTION COVER MORE THAN ONE LINE?
- *
- * TWO WAYS IT CAN, and reading only the first is the bug this predicate exists to close. The
- * obvious one is a selection touching more than one block — two paragraphs, two list items. The
- * one that actually bit is a selection inside a SINGLE paragraph that contains hard breaks,
- * which is what almost every multi-line message here is: `EnterAsHardBreak` makes Enter a `<br>`
- * rather than a paragraph split, so "five lines pasted into a reply" is one `<p>` with four
- * `<br>`s in it. A predicate that only compared the two ends' blocks would call that one line
- * and hand it to the inline mark, which is the reported defect exactly.
- *
- * COUNTED BY WALKING, not by comparing `$from.sameParent($to)`, and the difference is not
- * academic: under an AllSelection both ends resolve to the DOCUMENT, so `sameParent` is true
- * across a whole three-paragraph message and Select-All + Code would have kept the bug in the
- * one case people reach for first.
- *
- * `nodesBetween` visits a node at `p` only while it overlaps `[from, to)`, so a break sitting
- * immediately after the selection is not counted — selecting exactly one line of a multi-line
- * paragraph is a one-line selection, which is the answer a person expects.
+ * DOES THE SELECTION COVER MORE THAN ONE LINE? TWO WAYS IT CAN, and reading only the first is the bug this predicate
+ * exists to close. The obvious one is a selection touching more than one block — two paragraphs, two list items. The
+ * one that actually bit is a selection inside a SINGLE paragraph that contains hard breaks, which is what almost
+ * every multi-line message here is: `EnterAsHardBreak` makes Enter a `<br>` rather than a paragraph split, so "five
+ * lines pasted into a reply" is one `<p>` with four `<br>`s in it. A predicate that only compared the two ends'
+ * blocks would call that one line and hand it to the inline mark, which is the reported defect exactly.
+ */
+
+/**
+ * COUNTED BY WALKING, not by comparing `$from.sameParent($to)`, and the difference is not academic: under an
+ * AllSelection both ends resolve to the DOCUMENT, so `sameParent` is true across a whole three-paragraph message and
+ * Select-All + Code would have kept the bug in the one case people reach for first. `nodesBetween` visits a node at
+ * `p` only while it overlaps `[from, to)`, so a break sitting immediately after the selection is not counted —
+ * selecting exactly one line of a multi-line paragraph is a one-line selection, which is the answer a person expects.
  */
 function selectionCoversLines(editor: Editor): boolean {
   const { doc, selection } = editor.state;

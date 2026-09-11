@@ -157,17 +157,13 @@ let activeCatalog: Catalog | null = null;
 let translators = new Map<string, NamespaceTranslator>();
 
 /**
- * Hand the non-hook surfaces the catalogue the provider is rendering with.
- *
- * Called by BOTH hosts at the same point they build their intl provider — `LocaleShell` on the web,
- * `main.tsx` on the desktop — and called for ENGLISH too, not only for a second locale. Running the
- * English case through the same path is what keeps it exercised: a register that were only touched
- * when somebody switched to German would be untested on every English session, which is all of
- * them today.
- *
- * Synchronous, and it has to be: the host calls it during its own render, before children render,
- * so the first paint after a switch already carries the new vocabulary. `null` clears it, which is
- * what a test that wants the English constants back asks for.
+ * Hand the non-hook surfaces the catalogue the provider is rendering with. Called by BOTH hosts at the same point
+ * they build their intl provider — `LocaleShell` on the web, `main.tsx` on the desktop — and called for ENGLISH too,
+ * not only for a second locale. Running the English case through the same path is what keeps it exercised: a register
+ * that were only touched when somebody switched to German would be untested on every English session, which is all of
+ * them today. Synchronous, and it has to be: the host calls it during its own render, before children render, so the
+ * first paint after a switch already carries the new vocabulary. `null` clears it, which is what a test that wants
+ * the English constants back asks for.
  */
 export function setActiveCatalog(locale: AppLocale, messages: Catalog | null): void {
   activeLocale = locale;
@@ -262,15 +258,11 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * `over` wins wherever it holds a LEAF; `base` supplies everything else, at every depth.
- *
- * DEEP, because the catalogue nests (`screener.empty.waiting.title`,
- * `settings.channel.people.label`). A shallow spread would take German's whole `screener` object and
- * drop every English leaf under it that German had not filled — the same failure one level down and
- * much harder to see.
- *
- * An EMPTY STRING counts as absent. A placeholder somebody left unfilled must not blank a sentence:
- * the English one is a worse translation and a better product than nothing at all.
+ * `over` wins wherever it holds a LEAF; `base` supplies everything else, at every depth. DEEP, because the catalogue
+ * nests (`screener.empty.waiting.title`, `settings.channel.people.label`). A shallow spread would take German's whole
+ * `screener` object and drop every English leaf under it that German had not filled — the same failure one level down
+ * and much harder to see. An EMPTY STRING counts as absent. A placeholder somebody left unfilled must not blank a
+ * sentence: the English one is a worse translation and a better product than nothing at all.
  */
 export function fillFrom(
   base: Record<string, unknown>, over: Record<string, unknown>,

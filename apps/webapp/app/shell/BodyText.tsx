@@ -265,18 +265,14 @@ const EN = {
 export const COPY: typeof EN = liveCopy("bodyText", EN, { linkTitle: ["host"] });
 
 /**
- * The fold's one decision: which top-level nodes are "the trailing quoted history"?
- *
- * The LAST top-level node must be a quote run (`toTree` has already merged contiguous quoted
- * material, so a trailing history is exactly one node), and every attribution paragraph sitting
- * immediately above it — "On … wrote:", a Von/Gesendet/Betreff header block — introduces that
- * history and folds with it. `null` means "do not fold", and it is the answer whenever the lead
- * would hold no fresh words: a fully-quoted forward, a bare attribution over a quote, an empty
- * body. Collapsing those would put the whole message behind a chip.
- *
- * Mid-message quotes are lead BY CONSTRUCTION: a quote run with depth-0 prose after it is not
- * the last node, so it never reaches the fold. That is the inline-reply case, and it stays on
- * screen with the words that answer it.
+ * The fold's one decision: which top-level nodes are "the trailing quoted history"? The LAST top-level node must be a
+ * quote run (`toTree` has already merged contiguous quoted material, so a trailing history is exactly one node), and
+ * every attribution paragraph sitting immediately above it — "On … wrote:", a Von/Gesendet/Betreff header block —
+ * introduces that history and folds with it. `null` means "do not fold", and it is the answer whenever the lead would
+ * hold no fresh words: a fully-quoted forward, a bare attribution over a quote, an empty body. Collapsing those would
+ * put the whole message behind a chip. Mid-message quotes are lead BY CONSTRUCTION: a quote run with depth-0 prose
+ * after it is not the last node, so it never reaches the fold. That is the inline-reply case, and it stays on screen
+ * with the words that answer it.
  */
 /** Is this node an attribution line, in either of the two paragraph spellings? */
 function isAttributionNode(n: BodyNode): boolean {
@@ -314,17 +310,13 @@ function splitTrailingHistory(
 }
 
 /**
- * A CANDIDATE, NOT A DECISION.
- *
- * This matches anything shaped like `scheme:rest`, INCLUDING `javascript:` and `data:`. That is
- * on purpose and it is the whole design: if the pattern itself only ever matched `https?://`,
- * the scheme rule would be an invisible property of a regex nobody can watch fail, and
- * `test/body-text.test.ts` case 1 would pass vacuously. The rejection happens in one named place
- * ({@link anchorFor}), where it can be deleted and watched go red.
- *
- * The body charset excludes whitespace and the quote/angle characters. Brackets and parens ARE
- * allowed inside — `http://[::1]:8080/x` is a real URL — and are stripped only from the END,
- * which is what unwraps the `text [url]` pairs `htmlToText` emits.
+ * A CANDIDATE, NOT A DECISION. This matches anything shaped like `scheme:rest`, INCLUDING `javascript:` and `data:`.
+ * That is on purpose and it is the whole design: if the pattern itself only ever matched `https?://`, the scheme rule
+ * would be an invisible property of a regex nobody can watch fail, and `test/body-text.test.ts` case 1 would pass
+ * vacuously. The rejection happens in one named place ({@link anchorFor}), where it can be deleted and watched go
+ * red. The body charset excludes whitespace and the quote/angle characters. Brackets and parens ARE allowed inside —
+ * `http://[::1]:8080/x` is a real URL — and are stripped only from the END, which is what unwraps the `text [url]`
+ * pairs `htmlToText` emits.
  */
 const URL_CANDIDATE = /[a-zA-Z][a-zA-Z0-9+.-]{1,31}:[^\s<>"'`]+/g;
 
@@ -414,16 +406,12 @@ function linkify(block: string, keyBase: string): ReactNode[] {
 }
 
 /**
- * The shared body renderer — the focused message in `MessagePane` AND the conversation
- * siblings in `Conversation`.
- *
- * ONE COMPONENT, BOTH SURFACES, on purpose. "Built, tested, unreachable" — the fix landing on
- * the pane while the thread below it keeps dumping raw text — is a shape this repo has shipped
- * five times, and a second copy of this logic is how it happens a sixth.
- *
- * Returns a fragment of `<p>` rather than its own wrapper: the caller owns the container and
- * its class (`.msg-body`, `.hm-body`), which are what the existing pane and screener
- * assertions select on, and what carries the surface's own type scale.
+ * The shared body renderer — the focused message in `MessagePane` AND the conversation siblings in `Conversation`.
+ * ONE COMPONENT, BOTH SURFACES, on purpose. "Built, tested, unreachable" — the fix landing on the pane while the
+ * thread below it keeps dumping raw text — is a shape this repo has shipped five times, and a second copy of this
+ * logic is how it happens a sixth. Returns a fragment of `<p>` rather than its own wrapper: the caller owns the
+ * container and its class (`.msg-body`, `.hm-body`), which are what the existing pane and screener assertions select
+ * on, and what carries the surface's own type scale.
  */
 /**
  * Rich inline content, as React elements. A `text` run renders as a bare string — a React

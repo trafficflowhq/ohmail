@@ -88,17 +88,13 @@ export interface RemoteImagesOptions {
   /** Say why the consent could not be recorded. The server's own sentence, never a guess. */
   onFailed: (message: string) => void;
   /**
-   * MAY THIS WINDOW STILL ASK THE SERVER FOR THIS ACCOUNT'S BYTES? Asked immediately before a
-   * proxied image URL is handed to the renderer, never cached.
-   *
-   * `/img` is one of the two Cloud reads that never go through `api()` — the browser fetches it
-   * itself, from an `<img src>`, so the account boundary cannot see it. On its own that is not a
-   * leak: a message id from A's mirror answers 404 under B's session. It stops being harmless
-   * the moment anything else has already put a valid id from the other account in front of this
-   * window, which is exactly the state every other guard in this slice exists to prevent — so
-   * this one is defence in depth, and it is cheap.
-   *
-   * Absent ⇒ always allowed, which is the desktop and the demo: no cookie jar, no question.
+   * MAY THIS WINDOW STILL ASK THE SERVER FOR THIS ACCOUNT'S BYTES? Asked immediately before a proxied image URL is
+   * handed to the renderer, never cached. `/img` is one of the two Cloud reads that never go through `api()` — the
+   * browser fetches it itself, from an `<img src>`, so the account boundary cannot see it. On its own that is not a
+   * leak: a message id from A's mirror answers 404 under B's session. It stops being harmless the moment anything
+   * else has already put a valid id from the other account in front of this window, which is exactly the state every
+   * other guard in this slice exists to prevent — so this one is defence in depth, and it is cheap. Absent ⇒ always
+   * allowed, which is the desktop and the demo: no cookie jar, no question.
    */
   mayRead?: () => boolean;
   /**

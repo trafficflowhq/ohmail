@@ -192,21 +192,19 @@ const PRESENTATION_ATTR = [
 const ALLOWED_ATTR = [...URL_ATTR, ...PRESENTATION_ATTR];
 
 /**
- * THE URI GATE — ONE CONSTANT, ENFORCED TWICE, DELETABLE IN ONE PLACE.
- *
- * It is handed to DOMPurify as `ALLOWED_URI_REGEXP` (which strips a failing `href` before
- * this file ever sees the node) AND read again in the hook (which is what decides that a
- * link with no usable href becomes visible-but-inert rather than silently unclickable).
- *
- * That is deliberately NOT two guards. `BodyText`'s header states the rule this follows:
- * "two overlapping guards read as belt-and-braces and behave as neither — deleting one
- * leaves the test green, so neither one is ever proven to do anything". Here there is one
- * value. Widen it to `/./` and BOTH enforcement points open at once, which is exactly the
- * mutation `test/message-body.test.ts` performs to prove the gate is load-bearing.
- *
- * `cid:` is admitted because it names a part of this very message and cannot leave the
- * machine. `data:` is NOT: a `data:text/html` href navigates to attacker markup, and every
- * legitimate use of `data:` in mail is an image, which is a `src` and handled as one.
+ * THE URI GATE — ONE CONSTANT, ENFORCED TWICE, DELETABLE IN ONE PLACE. It is handed to DOMPurify as
+ * `ALLOWED_URI_REGEXP` (which strips a failing `href` before this file ever sees the node) AND read again in the hook
+ * (which is what decides that a link with no usable href becomes visible-but-inert rather than silently unclickable).
+ * That is deliberately NOT two guards. `BodyText`'s header states the rule this follows: "two overlapping guards read
+ * as belt-and-braces and behave as neither — deleting one leaves the test green, so neither one is ever proven to do
+ * anything". Here there is one value. Widen it to `/./` and BOTH enforcement points open at once, which is exactly
+ * the mutation `test/message-body.test.ts` performs to prove the gate is load-bearing. `cid:` is admitted because it
+ * names a part of this very message and cannot leave the machine.
+ */
+
+/**
+ * `data:` is NOT: a `data:text/html` href navigates to attacker markup, and every legitimate use of `data:` in mail
+ * is an image, which is a `src` and handled as one.
  */
 const SAFE_HREF = /^(?:https?:|mailto:|tel:|cid:)/i;
 
@@ -990,15 +988,11 @@ export function relativeLuminance({ r, g, b }: Rgb): number {
 export const LIGHT_LUMINANCE = 0.179;
 
 /**
- * An OPAQUE-ENOUGH background declared on one element, or `null` for "nothing declared here".
- *
- * Both spellings mail uses: the html 3.2 `bgcolor` attribute, which is still what a table-based
- * newsletter is built from, and a `background`/`background-color` declaration in the inline
- * `style`. The shorthand is scanned token by token because `background:#fff url(x) no-repeat`
- * is one declaration with the colour buried in it.
- *
- * A translucent value (alpha under a half) is `null` — it lets the surface behind it through,
- * so it is not what the mail is painted on.
+ * An OPAQUE-ENOUGH background declared on one element, or `null` for "nothing declared here". Both spellings mail
+ * uses: the html 3.2 `bgcolor` attribute, which is still what a table-based newsletter is built from, and a
+ * `background`/`background-color` declaration in the inline `style`. The shorthand is scanned token by token because
+ * `background:#fff url(x) no-repeat` is one declaration with the colour buried in it. A translucent value (alpha
+ * under a half) is `null` — it lets the surface behind it through, so it is not what the mail is painted on.
  */
 function declaredBackground(el: Element): Rgb | null {
   const opaque = (c: Rgb | null): Rgb | null => (c && c.a >= 0.5 ? c : null);
@@ -1104,17 +1098,14 @@ export function mailIsLight(bg: Rgb | null): boolean {
 }
 
 /**
- * HOW FAR FROM GREY A PAPER MAY DRIFT AND STILL COUNT AS "NO COLOUR", on the 0–255 channel
- * scale. It is a chroma — the spread between the strongest and weakest sRGB channel — so it
- * needs no colour-space conversion and reads as exactly "how far from grey is this".
- *
- * 12 is chosen against the two things it has to separate. A template's habit — the faint
- * off-white or grey a mail builder drops behind a white card (`#efefef`, `#f5f5f5`, a warm
- * `#faf8f2`) — has a chroma at or near 0 and is caught. A DELIBERATE pale tint — a brand's
- * `#eef2ff`, a pale-yellow highlight card — clears it (17, 51) and is kept. The band is narrow
- * on purpose: clamping a paper that WAS meant costs one letter drawn on white instead of
- * near-white, which the "Show original" flip returns; not clamping costs the dull grey sheet
- * behind an otherwise white letter, which is the reported defect.
+ * HOW FAR FROM GREY A PAPER MAY DRIFT AND STILL COUNT AS "NO COLOUR", on the 0–255 channel scale. It is a chroma —
+ * the spread between the strongest and weakest sRGB channel — so it needs no colour-space conversion and reads as
+ * exactly "how far from grey is this". 12 is chosen against the two things it has to separate. A template's habit —
+ * the faint off-white or grey a mail builder drops behind a white card (`#efefef`, `#f5f5f5`, a warm `#faf8f2`) — has
+ * a chroma at or near 0 and is caught. A DELIBERATE pale tint — a brand's `#eef2ff`, a pale-yellow highlight card —
+ * clears it (17, 51) and is kept. The band is narrow on purpose: clamping a paper that WAS meant costs one letter
+ * drawn on white instead of near-white, which the "Show original" flip returns; not clamping costs the dull grey
+ * sheet behind an otherwise white letter, which is the reported defect.
  */
 export const NEUTRAL_CHROMA = 12;
 
@@ -1235,21 +1226,19 @@ function isCanvasPx(n: number | null): boolean {
 }
 
 /**
- * Does a chunk of css DECLARE a canvas — any `width` / `min-width` in the band?
- *
- * ANY, not the widest, and that is the whole reason this is a predicate rather than a number.
- * It used to return the widest declaration and the caller compared it to the floor, which reads
- * the same on a document with one width and differently on a document with two: a real 600 px
- * newsletter with a pasted 1578 px fragment in it answered 1578, and under an upper bound that
- * would have dropped a genuine design out of the rigid class because of the debris beside it.
- * A canvas is a thing a document CONTAINS; a maximum is not the way to ask whether it does.
- *
- * Anchored at a declaration boundary (`;`, `{`, or the start of a style attribute or of a
- * rule's block, which is where {@link sheetsDeclare} slices), which is what keeps two
- * near-misses out:
- *   `max-width:600px`            a cap, not a canvas — `-` is not a boundary, so it never matches.
- *   `@media (max-width:620px)`   a QUERY about the viewport, inside `(`, which is not a
- *                                boundary either. Every responsive newsletter contains one.
+ * Does a chunk of css DECLARE a canvas — any `width` / `min-width` in the band? ANY, not the widest, and that is the
+ * whole reason this is a predicate rather than a number. It used to return the widest declaration and the caller
+ * compared it to the floor, which reads the same on a document with one width and differently on a document with two:
+ * a real 600 px newsletter with a pasted 1578 px fragment in it answered 1578, and under an upper bound that would
+ * have dropped a genuine design out of the rigid class because of the debris beside it. A canvas is a thing a
+ * document CONTAINS; a maximum is not the way to ask whether it does. Anchored at a declaration boundary (`;`, `{`,
+ * or the start of a style attribute or of a rule's block, which is where {@link sheetsDeclare} slices), which is what
+ * keeps two near-misses out: `max-width:600px` a cap, not a canvas — `-` is not a boundary, so it never matches.
+ */
+
+/**
+ * `@media (max-width:620px)` a QUERY about the viewport, inside `(`, which is not a boundary either. Every responsive
+ * newsletter contains one.
  */
 function declaresCanvas(css: string): boolean {
   const re = /(?:^|[;{])\s*(?:min-)?width\s*:\s*(\d+(?:\.\d+)?)\s*px/gi;
@@ -1321,19 +1310,18 @@ function widthAttrPx(v: string | null): number | null {
  */
 
 /**
- * Does this document declare a fixed layout canvas wider than a reading column?
- *
- * Exported so the classification can be watched directly against real mail rather than
- * inferred from a rendered frame — see the reflow guards in `test/message-body.test.ts` and the
- * prose guards in `test/message-body-prose.test.ts`. It is the ONLY classifier behind both.
- *
- * `styleText` is the sanitized document's `<style>` texts — one entry per element, the same
- * union {@link isDesignedLayout} takes — and it is read through the same rule-wise walk
- * ({@link sheetsDeclare}): each sheet its own tokenizer run, a declaration counted only inside
- * a selector's block. The flat declaration regex stays for inline `style` ATTRIBUTES, where a
- * bare `width:600px` really is a declaration; in a SHEET the same text outside a rule is one
- * no browser applies, and a flat read of the sheets — joined, or even one element at a time —
- * turned ruleless fragments, comment text and string data into canvas evidence the rendered
+ * Does this document declare a fixed layout canvas wider than a reading column? Exported so the classification can be
+ * watched directly against real mail rather than inferred from a rendered frame — see the reflow guards in
+ * `test/message-body.test.ts` and the prose guards in `test/message-body-prose.test.ts`. It is the ONLY classifier
+ * behind both. `styleText` is the sanitized document's `<style>` texts — one entry per element, the same union {@link
+ * isDesignedLayout} takes — and it is read through the same rule-wise walk ({@link sheetsDeclare}): each sheet its
+ * own tokenizer run, a declaration counted only inside a selector's block.
+ */
+
+/**
+ * The flat declaration regex stays for inline `style` ATTRIBUTES, where a bare `width:600px` really is a declaration;
+ * in a SHEET the same text outside a rule is one no browser applies, and a flat read of the sheets — joined, or even
+ * one element at a time — turned ruleless fragments, comment text and string data into canvas evidence the rendered
  * document has not got. That one seam was circled repeatedly; the walk is its close.
  */
 export function isRigidLayout(root: Element, styleText: string | readonly string[]): boolean {
@@ -1385,23 +1373,21 @@ function declaresResponsiveCanvas(css: string): boolean {
 }
 
 /**
- * CSS comments out, in ONE forward pass — quote-aware, and linear by construction.
- *
- * The obvious lazy global regex (comment-open, anything, comment-close) fails both of this
- * file's standing rules at once — and its delimiters cannot even be written in THIS comment
- * without ending it, which is the trap in miniature. It is QUADRATIC on hostile input: a
- * stylesheet of repeated comment-opens that never close makes the lazy quantifier re-scan the
- * remainder from every start — the `url(` regex's failure shape (measured there at
- * 125 KB → 6.1 s), on the same render thread, reachable within the 512 KiB cap. And it is
- * blind to STRINGS: a `content` property may hold a comment-open in one quoted value and a
- * comment-close in another, both text to CSS, and a regex that cannot know that deletes every
- * real rule between them.
- *
- * So: one scan, every terminator found with `indexOf` from a position that only moves forward.
- * A quoted string is copied whole (escapes honoured); an unterminated string runs to EOF, which
- * can only make this find FEWER canvases — the safe direction, prose. An unterminated comment
- * runs to EOF too, which is CSS Syntax's own rule for it, and is also what the browser will do
- * to whatever "rules" sit inside it — they were never live CSS, so hiding them from the
+ * CSS comments out, in ONE forward pass — quote-aware, and linear by construction. The obvious lazy global regex
+ * (comment-open, anything, comment-close) fails both of this file's standing rules at once — and its delimiters
+ * cannot even be written in THIS comment without ending it, which is the trap in miniature. It is QUADRATIC on
+ * hostile input: a stylesheet of repeated comment-opens that never close makes the lazy quantifier re-scan the
+ * remainder from every start — the `url(` regex's failure shape (measured there at 125 KB → 6.1 s), on the same
+ * render thread, reachable within the 512 KiB cap. And it is blind to STRINGS: a `content` property may hold a
+ * comment-open in one quoted value and a comment-close in another, both text to CSS, and a regex that cannot know
+ * that deletes every real rule between them.
+ */
+
+/**
+ * So: one scan, every terminator found with `indexOf` from a position that only moves forward. A quoted string is
+ * copied whole (escapes honoured); an unterminated string runs to EOF, which can only make this find FEWER canvases —
+ * the safe direction, prose. An unterminated comment runs to EOF too, which is CSS Syntax's own rule for it, and is
+ * also what the browser will do to whatever "rules" sit inside it — they were never live CSS, so hiding them from the
  * classifier tells no lies.
  */
 /**
@@ -2274,16 +2260,12 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   };
 
   /**
-   * `<style>` LIVES IN `<head>`, AND THE SANITIZER ONLY EVER SEES `<body>`.
-   *
-   * DOMPurify parses into a body context and returns the body's content, so a stylesheet in
-   * the head is silently dropped — which would mean every designed mail arrives unstyled and
-   * the whole point of rendering html is lost. So the styles are moved into the body first,
-   * in source order, where `<style>` is still valid html and the sanitizer can see them.
-   *
-   * The head is otherwise discarded, which is how `<base href>` and `<meta http-equiv=
-   * refresh>` leave — and they are also in {@link FORBID_TAGS}, because "the parser happened
-   * to put it somewhere we throw away" is not a rule anybody can rely on.
+   * `<style>` LIVES IN `<head>`, AND THE SANITIZER ONLY EVER SEES `<body>`. DOMPurify parses into a body context and
+   * returns the body's content, so a stylesheet in the head is silently dropped — which would mean every designed
+   * mail arrives unstyled and the whole point of rendering html is lost. So the styles are moved into the body first,
+   * in source order, where `<style>` is still valid html and the sanitizer can see them. The head is otherwise
+   * discarded, which is how `<base href>` and `<meta http-equiv= refresh>` leave — and they are also in {@link
+   * FORBID_TAGS}, because "the parser happened to put it somewhere we throw away" is not a rule anybody can rely on.
    */
   const parsed = new DOMParser().parseFromString(html, "text/html");
   const headStyles = [...parsed.head.querySelectorAll("style")];
@@ -2292,15 +2274,12 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   const purify = DOMPurify;
 
   /**
-   * What replaces a remote `url()` in css: the proxy when the reader has consented and the
-   * url is not beacon-shaped, `null` (⇒ `none`) otherwise.
-   *
-   * A css `url()` in a STYLESHEET has no width or height to inspect, so {@link BEACON_PATH} is
-   * the only signal there. On an `<img>`'s own inline `style` there IS one, and `declaresPixel`
-   * is passed in as `tiny` — otherwise a 1×1 image whose beacon hides in a css background
-   * classifies as a picture. That asymmetry is the reason this is a named function rather than
-   * an inline lambda: the img branch and this one must agree that a beacon is never fetched,
-   * and one place saying it is easier to keep true than two.
+   * What replaces a remote `url()` in css: the proxy when the reader has consented and the url is not beacon-shaped,
+   * `null` (⇒ `none`) otherwise. A css `url()` in a STYLESHEET has no width or height to inspect, so {@link
+   * BEACON_PATH} is the only signal there. On an `<img>`'s own inline `style` there IS one, and `declaresPixel` is
+   * passed in as `tiny` — otherwise a 1×1 image whose beacon hides in a css background classifies as a picture. That
+   * asymmetry is the reason this is a named function rather than an inline lambda: the img branch and this one must
+   * agree that a beacon is never fetched, and one place saying it is easier to keep true than two.
    */
   const cssUrl = (url: string, tiny = false): string | null => {
     const beacon = tiny || BEACON_PATH.test(url);
@@ -3074,18 +3053,14 @@ const PROBE_PX = 600;
 const MAX_FRAME_PX = 20_000;
 
 /**
- * HOW SMALL THE MAIL MAY BE SHRUNK BEFORE FITTING STOPS BEING WORTH IT.
- *
- * Scale-to-fit trades size for the absence of a horizontal scrollbar, and past a point that
- * trade is a bad one: a 1 200 px poster in a 390 px column is a scale of 0.32, which renders
- * 15 px body text at under 5 px — present, technically un-scrolled, and unreadable. So the
- * scale is CAPPED at the floor rather than the fit, and whatever still does not fit gets the
- * horizontal scroll it was always going to get. Readability wins over fit.
- *
- * 0.6 is chosen against the shape this exists for: the fixed-width newsletter. 600 px and
- * 700 px are what bulk mail is built at, and the narrowest reading column this app produces is
- * around 390 px — so 390/700 = 0.56 … 390/600 = 0.65, and the common cases land at or just
- * under the floor while anything pathological is refused outright.
+ * HOW SMALL THE MAIL MAY BE SHRUNK BEFORE FITTING STOPS BEING WORTH IT. Scale-to-fit trades size for the absence of a
+ * horizontal scrollbar, and past a point that trade is a bad one: a 1 200 px poster in a 390 px column is a scale of
+ * 0.32, which renders 15 px body text at under 5 px — present, technically un-scrolled, and unreadable. So the scale
+ * is CAPPED at the floor rather than the fit, and whatever still does not fit gets the horizontal scroll it was
+ * always going to get. Readability wins over fit. 0.6 is chosen against the shape this exists for: the fixed-width
+ * newsletter. 600 px and 700 px are what bulk mail is built at, and the narrowest reading column this app produces is
+ * around 390 px — so 390/700 = 0.56 … 390/600 = 0.65, and the common cases land at or just under the floor while
+ * anything pathological is refused outright.
  */
 export const MIN_FIT_SCALE = 0.6;
 
@@ -3124,19 +3099,19 @@ export function fitScale(columnPx: number, naturalPx: number, reflow = false): n
 }
 
 /**
- * THE SCROLLABLE ANCESTORS OF THE FRAME, nearest first, plus the document scroller.
- *
- * {@link measure} sizes the frame by briefly SHRINKING it to {@link PROBE_PX}. Anything that
- * scrolls above the frame — the reading pane, the app column, the page itself — has its own
- * `scrollHeight` drop by the difference the instant the frame shrinks, and the browser clamps
- * that element's `scrollTop` to the new, smaller maximum during the forced layout the probe
- * read triggers. Restoring the frame's height does NOT unclamp it. These are the elements
- * whose `scrollTop` the probe must capture and put back, or a reader who has scrolled down is
- * yanked toward the top on every reflow: every remote image that loads, every column resize.
- *
- * jsdom performs no layout, so `scrollHeight`/`clientHeight` are both 0 there and this returns
- * `[]` — the whole preservation is a no-op under the unit suite and only does work in a real
- * engine, which is why #95's acceptance is a browser check, not a jsdom one.
+ * THE SCROLLABLE ANCESTORS OF THE FRAME, nearest first, plus the document scroller. {@link measure} sizes the frame
+ * by briefly SHRINKING it to {@link PROBE_PX}. Anything that scrolls above the frame — the reading pane, the app
+ * column, the page itself — has its own `scrollHeight` drop by the difference the instant the frame shrinks, and the
+ * browser clamps that element's `scrollTop` to the new, smaller maximum during the forced layout the probe read
+ * triggers. Restoring the frame's height does NOT unclamp it.
+ */
+
+/**
+ * These are the elements whose `scrollTop` the probe must capture and put back, or a reader who has scrolled down is
+ * yanked toward the top on every reflow: every remote image that loads, every column resize. jsdom performs no
+ * layout, so `scrollHeight`/`clientHeight` are both 0 there and this returns `[]` — the whole preservation is a no-op
+ * under the unit suite and only does work in a real engine, which is why #95's acceptance is a browser check, not a
+ * jsdom one.
  */
 function scrollAncestors(el: Element): Element[] {
   const out: Element[] = [];
@@ -3157,22 +3132,20 @@ function scrollAncestors(el: Element): Element[] {
 }
 
 /**
- * WHAT THE BAR SAYS ABOUT WHAT WAS REFUSED — composed once, read twice.
- *
- * The bar above a framed message and the glyph in a stream card's head state the SAME fact from the
- * SAME terms, and this is the one place the sentences are chosen, so the two can never disagree.
- * `lead` is the images-or-beacons sentence, `hit` the "one of them is a tracking pixel" that rides
- * inside an images sentence (the bar sets it in the accent), `sheet` the stylesheet sentence, said
- * LAST, ALWAYS: the browser-level test of the bar reads the FIRST number in it and holds that
- * against the remote images the message names, and a stylesheet count in front would make that
- * guard measure the wrong thing. `spaceBeforeSheet` is the bar's exact separator rule — a space
- * whenever the message named remote images, even where the loaded modes left `lead` unsaid.
- *
- * `pixelSaid` is whether the lead sentence itself is a beacon sentence, kept as a fact rather than
- * re-derived from the strings: the caption a host shows is decided from it, and a string comparison
- * against a translated sentence is not a decision.
- *
- * Every member reads `COPY`, so the answer follows the active catalogue like the bar always did.
+ * WHAT THE BAR SAYS ABOUT WHAT WAS REFUSED — composed once, read twice. The bar above a framed message and the glyph
+ * in a stream card's head state the SAME fact from the SAME terms, and this is the one place the sentences are
+ * chosen, so the two can never disagree. `lead` is the images-or-beacons sentence, `hit` the "one of them is a
+ * tracking pixel" that rides inside an images sentence (the bar sets it in the accent), `sheet` the stylesheet
+ * sentence, said LAST, ALWAYS: the browser-level test of the bar reads the FIRST number in it and holds that against
+ * the remote images the message names, and a stylesheet count in front would make that guard measure the wrong thing.
+ * `spaceBeforeSheet` is the bar's exact separator rule — a space whenever the message named remote images, even where
+ * the loaded modes left `lead` unsaid.
+ */
+
+/**
+ * `pixelSaid` is whether the lead sentence itself is a beacon sentence, kept as a fact rather than re-derived from
+ * the strings: the caption a host shows is decided from it, and a string comparison against a translated sentence is
+ * not a decision. Every member reads `COPY`, so the answer follows the active catalogue like the bar always did.
  */
 interface BlockedSaid {
   lead: string | null;
@@ -3295,22 +3268,21 @@ export interface MessageBodyProps {
    */
   onRenderMode?: (mode: "prose" | "framed") => void;
   /**
-   * THE HOST STATES THE BLOCKING DISCLOSURE ITSELF — and this component then does not.
-   *
-   * Present, it is called (from an effect, never during render) with what this message had refused
-   * and how that is said — the caption a meta line shows and the whole sentence behind it
-   * (`BlockNotice`) — or `null` when nothing was refused. Every surface that mounts this viewer
-   * passes it and puts the fact in its own meta line as a glyph — the reading stream's card head,
+   * THE HOST STATES THE BLOCKING DISCLOSURE ITSELF — and this component then does not. Present, it is called (from an
+   * effect, never during render) with what this message had refused and how that is said — the caption a meta line
+   * shows and the whole sentence behind it (`BlockNotice`) — or `null` when nothing was refused. Every surface that
+   * mounts this viewer passes it and puts the fact in its own meta line as a glyph — the reading stream's card head,
    * the message header the reading pane and a conversation panel share, the Screener card's line
-   * (`test/block-notice-surfaces.test.tsx` is the census) — and the bar here keeps only the
-   * controls it still owns ("Show images", the dark toggle), with no sentence and no box around
-   * them. Absent — a bare mount with no meta line to carry the fact — the bar says the sentence
-   * exactly as it always has. The fact is stated in every case; what moves is where.
-   *
-   * A callback and not a value the host computes, for the reason `onRenderMode` is one: the terms
-   * are fields of the sanitize pass this component already runs, and asking for them from outside
-   * would sanitize every message twice. The reported object is rebuilt only when one of its three
-   * strings changes, so a host that stores it re-renders once per real change.
+   * (`test/block-notice-surfaces.test.tsx` is the census) — and the bar here keeps only the controls it still owns
+   * ("Show images", the dark toggle), with no sentence and no box around them. Absent — a bare mount with no meta
+   * line to carry the fact — the bar says the sentence exactly as it always has.
+   */
+
+  /**
+   * The fact is stated in every case; what moves is where. A callback and not a value the host computes, for the
+   * reason `onRenderMode` is one: the terms are fields of the sanitize pass this component already runs, and asking
+   * for them from outside would sanitize every message twice. The reported object is rebuilt only when one of its
+   * three strings changes, so a host that stores it re-renders once per real change.
    */
   onNotice?: (notice: BlockNotice | null) => void;
 }
@@ -3387,18 +3359,13 @@ export function MessageBody({
    */
   const darkWanted = themeDark && !original;
   /**
-   * FIRST CLIENT RENDER MUST MATCH THE SERVER RENDER, OR REACT THROWS AWAY THE TREE.
-   *
-   * `"use client"` does not mean "client only" — Next executes this component on the
-   * server for the first paint, where {@link sanitizerAvailable} is false and the text
-   * fallback renders. Deciding straight off `sanitizerAvailable()` would make the
-   * client's FIRST render a frame where the server sent a paragraph, which is a
-   * hydration mismatch: React 18 discards the subtree and re-renders it client-side,
-   * and logs an error doing it.
-   *
-   * So the frame appears on the render AFTER mount, deliberately. The cost is one extra
-   * render; the practical flash is none, because the body is hydrated by an engine that
-   * only exists in the browser — `html` is null during every real server render.
+   * FIRST CLIENT RENDER MUST MATCH THE SERVER RENDER, OR REACT THROWS AWAY THE TREE. `"use client"` does not mean
+   * "client only" — Next executes this component on the server for the first paint, where {@link sanitizerAvailable}
+   * is false and the text fallback renders. Deciding straight off `sanitizerAvailable()` would make the client's
+   * FIRST render a frame where the server sent a paragraph, which is a hydration mismatch: React 18 discards the
+   * subtree and re-renders it client-side, and logs an error doing it. So the frame appears on the render AFTER
+   * mount, deliberately. The cost is one extra render; the practical flash is none, because the body is hydrated by
+   * an engine that only exists in the browser — `html` is null during every real server render.
    */
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
@@ -3505,17 +3472,14 @@ export function MessageBody({
   const dark = darkWanted && adaptable;
 
   /**
-   * FLIP THE DARK TRANSFORM ON THE LIVE DOCUMENT — never by rebuilding the srcdoc.
-   *
-   * The transform is gated on `:root[data-ohmail-dark]` in the frame's own sheet, so switching
-   * it on or off is one attribute write on the frame's `documentElement`. A rebuild would
-   * re-parse the sender's html and force a fresh measurement pass; this does neither, so a
-   * theme change (or the reader's per-message override) is instant and motionless.
-   *
-   * `ready` and `mail` are deps so the attribute is re-asserted after the frame (re)loads —
-   * a new srcdoc starts from whatever `dark` was baked in, and this keeps the live document in
-   * step with the current value. In jsdom `contentDocument` is null, so this is a no-op there,
-   * which is why the dark transform's real proof is a browser check and not this file.
+   * FLIP THE DARK TRANSFORM ON THE LIVE DOCUMENT — never by rebuilding the srcdoc. The transform is gated on
+   * `:root[data-ohmail-dark]` in the frame's own sheet, so switching it on or off is one attribute write on the
+   * frame's `documentElement`. A rebuild would re-parse the sender's html and force a fresh measurement pass; this
+   * does neither, so a theme change (or the reader's per-message override) is instant and motionless. `ready` and
+   * `mail` are deps so the attribute is re-asserted after the frame (re)loads — a new srcdoc starts from whatever
+   * `dark` was baked in, and this keeps the live document in step with the current value. In jsdom `contentDocument`
+   * is null, so this is a no-op there, which is why the dark transform's real proof is a browser check and not this
+   * file.
    */
   useEffect(() => {
     const doc = frameRef.current?.contentDocument;
@@ -3696,16 +3660,12 @@ export function MessageBody({
   const framelessView =
     mail?.state !== "ok" ? true : mail.prose && text.trim().length > 0 && !showOriginal;
   /**
-   * REPORT IT — see {@link MessageBodyProps.onRenderMode}.
-   *
-   * In an effect, so nothing is announced for a render React may discard, and so a listener that
-   * sets state is never doing it during this component's render. The reported value is derived
-   * from a BOOLEAN, so a listener that maps it to a primitive gets React's own bail-out on an
-   * unchanged value and this cannot become a loop however unstable the callback's identity is.
-   *
-   * It follows the reader's "Show original" press, which is the point: that press brings the frame
-   * back and with it every picture the html paints, and a signal that ignored it would leave a
-   * strip listing pictures that are already on screen.
+   * REPORT IT — see {@link MessageBodyProps.onRenderMode}. In an effect, so nothing is announced for a render React
+   * may discard, and so a listener that sets state is never doing it during this component's render. The reported
+   * value is derived from a BOOLEAN, so a listener that maps it to a primitive gets React's own bail-out on an
+   * unchanged value and this cannot become a loop however unstable the callback's identity is. It follows the
+   * reader's "Show original" press, which is the point: that press brings the frame back and with it every picture
+   * the html paints, and a signal that ignored it would leave a strip listing pictures that are already on screen.
    */
   useEffect(() => {
     onRenderMode?.(framelessView ? "prose" : "framed");

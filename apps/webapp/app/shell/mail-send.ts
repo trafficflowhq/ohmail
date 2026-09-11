@@ -291,18 +291,18 @@ export function sendPendingInOutbox(engine: OhmailEngine, lane: string): boolean
 }
 
 /**
- * IS A SEND OF THIS LANE STILL IN THE **DURABLE** OUTBOX — the question the QUEUE cannot answer.
- *
- * {@link sendPendingInOutbox} reads `engine.pendingMutations()`, which is the in-memory queue, and
- * for a RESTORED send that list is empty at every moment a surface could look at it. Measured, at
- * five points on a restored engine — before `start()`, immediately after, +1 ms, +11 ms, and after
- * the drive resolved: zero, zero, zero, zero, zero. The entry is loaded and dispatched without
- * ever being observable, so a rule built on that read is a rule that never fires. Two arms of the
- * hold below were written on it and both were silently dead until this was measured.
- *
- * The STORE holds the row for the whole window — one before `start()`, one mid-flight, none once
- * the send settles — and `OUTBOX_TYPE` is exported for exactly this kind of read. So the durable
- * record of the verb is the evidence, and it lapses when the verb does, with no timer anywhere.
+ * IS A SEND OF THIS LANE STILL IN THE **DURABLE** OUTBOX — the question the QUEUE cannot answer. {@link
+ * sendPendingInOutbox} reads `engine.pendingMutations()`, which is the in-memory queue, and for a RESTORED send that
+ * list is empty at every moment a surface could look at it. Measured, at five points on a restored engine — before
+ * `start()`, immediately after, +1 ms, +11 ms, and after the drive resolved: zero, zero, zero, zero, zero. The entry
+ * is loaded and dispatched without ever being observable, so a rule built on that read is a rule that never fires.
+ * Two arms of the hold below were written on it and both were silently dead until this was measured. The STORE holds
+ * the row for the whole window — one before `start()`, one mid-flight, none once the send settles — and `OUTBOX_TYPE`
+ * is exported for exactly this kind of read.
+ */
+
+/**
+ * So the durable record of the verb is the evidence, and it lapses when the verb does, with no timer anywhere.
  */
 export function sendPendingInDurableOutbox(engine: OhmailEngine, lane: string): boolean {
   const rows = engine.read().list(OUTBOX_TYPE) as ReadonlyArray<{ mutation?: { kind?: string } }>;
@@ -314,22 +314,20 @@ export function sendPendingInDurableOutbox(engine: OhmailEngine, lane: string): 
 export const COMPOSE_SEND_KEY = "compose";
 
 /**
- * WHAT THE COMPOSE BUFFER HOLDS, AS AN IDENTITY — computed once here and used at BOTH moments.
- *
- * The press records this beside the sent message's own fingerprint ({@link SendLock.bfp}), and a
- * mount coming back after a reload recomputes it from the restored buffer. Equal means the text on
- * screen is still the message that send is carrying; different means it is something else.
- *
- * ONE FUNCTION, TWO MOMENTS, and that is the point rather than a convenience. The alternative —
- * comparing the buffer against the fingerprint of the mutation AS SENT — cannot work: the press
- * folds the signature into the body and the html and resolves the sending mailbox, none of which
- * is in the buffer, so the comparison would match only for an account that has no signature. A
- * guard that silently does not guard for everybody else is the same defect as one that cannot fire
- * at all, and it is invisible from a test account with no signature set.
- *
- * `null` for an EMPTY buffer, which is not a message and must never match a record: a surface with
- * no compose on it (a reply-only harness, a shell that has never opened one) would otherwise latch
- * on somebody else's record and refuse a press it has no business refusing.
+ * WHAT THE COMPOSE BUFFER HOLDS, AS AN IDENTITY — computed once here and used at BOTH moments. The press records this
+ * beside the sent message's own fingerprint ({@link SendLock.bfp}), and a mount coming back after a reload recomputes
+ * it from the restored buffer. Equal means the text on screen is still the message that send is carrying; different
+ * means it is something else. ONE FUNCTION, TWO MOMENTS, and that is the point rather than a convenience. The
+ * alternative — comparing the buffer against the fingerprint of the mutation AS SENT — cannot work: the press folds
+ * the signature into the body and the html and resolves the sending mailbox, none of which is in the buffer, so the
+ * comparison would match only for an account that has no signature.
+ */
+
+/**
+ * A guard that silently does not guard for everybody else is the same defect as one that cannot fire at all, and it
+ * is invisible from a test account with no signature set. `null` for an EMPTY buffer, which is not a message and must
+ * never match a record: a surface with no compose on it (a reply-only harness, a shell that has never opened one)
+ * would otherwise latch on somebody else's record and refuse a press it has no business refusing.
  */
 export function composeBufferFingerprint(): string | null {
   const fields = readComposeDraft();
@@ -350,15 +348,12 @@ export function composeBufferFingerprint(): string | null {
 export const inlineForwardKey = (messageId: string): string => `fwd:${messageId}`;
 
 /**
- * Which send state a mutation belongs to — derived, never passed as a key.
- *
- * `send(m)` takes only the mutation plus, at most, WHICH SURFACE is sending: a reply's outcome
- * always lands on the message it answers, and a compose's on the compose surface. The surface
- * argument exists because a FORWARD is one mutation shape sent from two surfaces — the compose
- * form (`ComposeFields.forwardOf`) and the thread's inline dock — and the mutation alone cannot
- * say which editor's button should show "Sending…" and which scratch a confirmation should
- * clear. A surface is a fact the caller alone holds and cannot usefully lie about; the KEY is
- * still derived here, in one place.
+ * Which send state a mutation belongs to — derived, never passed as a key. `send(m)` takes only the mutation plus, at
+ * most, WHICH SURFACE is sending: a reply's outcome always lands on the message it answers, and a compose's on the
+ * compose surface. The surface argument exists because a FORWARD is one mutation shape sent from two surfaces — the
+ * compose form (`ComposeFields.forwardOf`) and the thread's inline dock — and the mutation alone cannot say which
+ * editor's button should show "Sending…" and which scratch a confirmation should clear. A surface is a fact the
+ * caller alone holds and cannot usefully lie about; the KEY is still derived here, in one place.
  */
 export function sendKeyOf(m: MailSend, surface: "compose" | "inline" = "compose"): string {
   if (m.inReplyTo !== null) return m.inReplyTo;
@@ -413,24 +408,21 @@ export function writeReplyDraft(messageId: string, value: RichValue): void {
 }
 
 /**
- * THE PER-MESSAGE EDITOR META — the subject as edited and the signature block's state, beside
- * the body scratch and on its lifecycle (closing the editor kept the body and
- * silently dropped these two, so a struck signature came back and a retitled reply lost its
- * title on reopen).
- *
- * Its own key rather than a field inside the body scratch, because the body's value is
- * shape-based (`parseRichValue`: a bare string or the rich envelope) and growing it a third
- * shape would complicate every reader for two small fields. The LANE is the key, exactly as
- * the body scratch's is: a reply's meta lives under the message id, an inline forward's under
- * `fwd:<id>`, and the compose form's under `draft:<rowId>` — the AUTOSAVED ROW's id, because
- * that is the one handle that survives a reload and names the same message on this device
- * (a content key broke on rich drafts, whose local text and server-derived
- * text legitimately differ). Cleared where the body scratch clears: in `settle`, because "the
- * send landed" means the whole per-message state is spent — and by the draft verbs that end a
- * row's life (`discardDraft`, the compose cancel).
- *
- * `subject` is absent while the derived `Re:` one stands; `sig` is absent while `following`
- * stands — absence IS the resting state, and a meta with neither field stores nothing.
+ * THE PER-MESSAGE EDITOR META — the subject as edited and the signature block's state, beside the body scratch and on
+ * its lifecycle (closing the editor kept the body and silently dropped these two, so a struck signature came back and
+ * a retitled reply lost its title on reopen). Its own key rather than a field inside the body scratch, because the
+ * body's value is shape-based (`parseRichValue`: a bare string or the rich envelope) and growing it a third shape
+ * would complicate every reader for two small fields.
+ */
+
+/**
+ * The LANE is the key, exactly as the body scratch's is: a reply's meta lives under the message id, an inline
+ * forward's under `fwd:<id>`, and the compose form's under `draft:<rowId>` — the AUTOSAVED ROW's id, because that is
+ * the one handle that survives a reload and names the same message on this device (a content key broke on rich
+ * drafts, whose local text and server-derived text legitimately differ). Cleared where the body scratch clears: in
+ * `settle`, because "the send landed" means the whole per-message state is spent — and by the draft verbs that end a
+ * row's life (`discardDraft`, the compose cancel). `subject` is absent while the derived `Re:` one stands; `sig` is
+ * absent while `following` stands — absence IS the resting state, and a meta with neither field stores nothing.
  */
 export interface ReplyEditorMeta {
   subject?: string;
@@ -471,16 +463,13 @@ export function writeReplyMeta(lane: string, meta: ReplyEditorMeta): void {
 }
 
 /**
- * DROP THE PER-LANE SCRATCH a settled send is done with — the body buffer and the editor meta.
- *
- * Module-level and shared, because two different endings now spend it: a delivery (`settle`) and
- * the server's accepted-pending hand-off, which closes the surface without discharging anything
- * else. A second copy of "which keys is this lane holding" is a second place for a lane to leak a
- * draft that outlives the message it was.
- *
- * Every removal goes through the durable door: a browser that refuses `localStorage` outright
- * holds nothing to remove, and one that refuses a single key says so rather than leaving the
- * pair half-dropped — the body and its meta are one lane's scratch and clear together.
+ * DROP THE PER-LANE SCRATCH a settled send is done with — the body buffer and the editor meta. Module-level and
+ * shared, because two different endings now spend it: a delivery (`settle`) and the server's accepted-pending
+ * hand-off, which closes the surface without discharging anything else. A second copy of "which keys is this lane
+ * holding" is a second place for a lane to leak a draft that outlives the message it was. Every removal goes through
+ * the durable door: a browser that refuses `localStorage` outright holds nothing to remove, and one that refuses a
+ * single key says so rather than leaving the pair half-dropped — the body and its meta are one lane's scratch and
+ * clear together.
  */
 export function clearLaneScratch(key: string, m: MailSend, owner: string | null): void {
   if (m.inReplyTo === null) {
@@ -503,22 +492,19 @@ export function clearLaneScratch(key: string, m: MailSend, owner: string | null)
 }
 
 /**
- * WHAT THE SEND BUTTON SAYS, and what the button wears while it says it — one derivation, both
- * surfaces.
- *
- * The compose form and the thread's inline dock render the same verb in the same six states, and
- * a second copy of "which word goes with which phase" is a second place for the button to claim a
- * delivery that did not happen. That is not hypothetical for one pair in particular: `sent` and
- * `queued` differ by whether the mail is gone, and they are one `?:` apart.
- *
- * `attr` is the value for `data-send`, which is what `packages/ui` paints the state from. Only the
- * three phases the stylesheet names are ever written — a state it has no rule for would be an
- * attribute that changes nothing, which reads in the DOM as a claim the CSS is not making. The
- * not-sent phases deliberately carry none: the button is back at rest and Send is the retry.
- *
- * `scheduled` is COMPOSE-ONLY because a send-later appointment is: the reply scope has no such
- * key, and asking for one would render the key's own name at a reader. The fallback is `sent`,
- * which for a reply is always the true word.
+ * WHAT THE SEND BUTTON SAYS, and what the button wears while it says it — one derivation, both surfaces. The compose
+ * form and the thread's inline dock render the same verb in the same six states, and a second copy of "which word
+ * goes with which phase" is a second place for the button to claim a delivery that did not happen. That is not
+ * hypothetical for one pair in particular: `sent` and `queued` differ by whether the mail is gone, and they are one
+ * `?:` apart. `attr` is the value for `data-send`, which is what `packages/ui` paints the state from. Only the three
+ * phases the stylesheet names are ever written — a state it has no rule for would be an attribute that changes
+ * nothing, which reads in the DOM as a claim the CSS is not making. The not-sent phases deliberately carry none: the
+ * button is back at rest and Send is the retry.
+ */
+
+/**
+ * `scheduled` is COMPOSE-ONLY because a send-later appointment is: the reply scope has no such key, and asking for
+ * one would render the key's own name at a reader. The fallback is `sent`, which for a reply is always the true word.
  */
 export function sendVerb(
   state: SendState, scope: "compose" | "reply",
@@ -593,16 +579,13 @@ export function sendVerb(
  * `forward-send.test.ts` walks all three.
  */
 /**
- * DOES THIS STATE'S UNRESOLVED LIST NAME *THIS* MESSAGE? — one answer, both readers.
- *
- * {@link canSend} decides whether the press is refused and {@link sendStateFor} decides whether
- * the surface says anything about it. Two copies of this would be two places for the button and
- * the sentence beside it to disagree, which is the failure the "one rule" header is about.
- *
- * The two states {@link SendState.unresolved} distinguishes are both here. ABSENT means nobody
- * supplied intents — `phaseFor` cannot, it sees a `MutationResult` and not the message it belongs
- * to — and an `unverified` phase with nothing named FAILS CLOSED, exactly as it did before the
- * field existed. PRESENT means the record was read, and only a match counts.
+ * DOES THIS STATE'S UNRESOLVED LIST NAME *THIS* MESSAGE? — one answer, both readers. {@link canSend} decides whether
+ * the press is refused and {@link sendStateFor} decides whether the surface says anything about it. Two copies of
+ * this would be two places for the button and the sentence beside it to disagree, which is the failure the "one rule"
+ * header is about. The two states {@link SendState.unresolved} distinguishes are both here. ABSENT means nobody
+ * supplied intents — `phaseFor` cannot, it sees a `MutationResult` and not the message it belongs to — and an
+ * `unverified` phase with nothing named FAILS CLOSED, exactly as it did before the field existed. PRESENT means the
+ * record was read, and only a match counts.
  */
 function unresolvedNames(state: SendState, m: MailSend): boolean {
   if (state.unresolved === undefined) return state.phase === "unverified";
@@ -660,16 +643,12 @@ function unresolvedNames(state: SendState, m: MailSend): boolean {
   let legacyFp: string | null = null;
   const legacyFpOf = (): string => (legacyFp ??= legacySendFingerprint_0_14_0(m));
   /**
-   * AND THE 0.14.1 ONE, for the same reason one step later.
-   *
-   * A `v: 2` record that carries no name at all — a 0.14.1 browser that could not read its own
-   * session id — has its fingerprint in THAT build's algebra, which folded the draft row in. It is
-   * neither the 0.14.0 spelling nor this one, so without this line such a record parked nothing:
-   * no warning, Send live, for the very message whose fate is unknown.
-   *
-   * All three are tried because a nameless record does not say which build wrote it. Widening a
-   * fail-closed comparison in the closed direction costs a false park at worst; the other
-   * direction costs a second copy in somebody's mailbox.
+   * AND THE 0.14.1 ONE, for the same reason one step later. A `v: 2` record that carries no name at all — a 0.14.1
+   * browser that could not read its own session id — has its fingerprint in THAT build's algebra, which folded the
+   * draft row in. It is neither the 0.14.0 spelling nor this one, so without this line such a record parked nothing:
+   * no warning, Send live, for the very message whose fate is unknown. All three are tried because a nameless record
+   * does not say which build wrote it. Widening a fail-closed comparison in the closed direction costs a false park
+   * at worst; the other direction costs a second copy in somebody's mailbox.
    */
   let legacyFp0141: string | null = null;
   const legacyFp0141Of = (): string => (legacyFp0141 ??= legacySendFingerprint_0_14_1(m));
@@ -707,17 +686,14 @@ function unresolvedNames(state: SendState, m: MailSend): boolean {
 }
 
 /**
- * THE STATE AS IT APPLIES TO THE MESSAGE ON SCREEN — what a surface renders.
- *
- * `unverified` is a lane-level phase and `SendStatus` renders a warn sentence for it: "We
- * couldn't confirm this send. Check your Sent folder before retrying." That sentence is true of
- * the message the unresolved send belongs to and false of anything written afterwards on the same
- * surface — and with the press no longer refused, leaving it would put a warning about somebody
- * else's mail above a live Send button, permanently.
- *
- * So a surface renders THIS. It hands back the state untouched when the phase names the message,
- * and presents it as `idle` when it does not — the phase only, with `unresolved` carried through,
- * so a `canSend` reading the narrowed state gives the same answer as one reading the original.
+ * THE STATE AS IT APPLIES TO THE MESSAGE ON SCREEN — what a surface renders. `unverified` is a lane-level phase and
+ * `SendStatus` renders a warn sentence for it: "We couldn't confirm this send. Check your Sent folder before
+ * retrying." That sentence is true of the message the unresolved send belongs to and false of anything written
+ * afterwards on the same surface — and with the press no longer refused, leaving it would put a warning about
+ * somebody else's mail above a live Send button, permanently. So a surface renders THIS. It hands back the state
+ * untouched when the phase names the message, and presents it as `idle` when it does not — the phase only, with
+ * `unresolved` carried through, so a `canSend` reading the narrowed state gives the same answer as one reading the
+ * original.
  */
 export function sendStateFor(state: SendState, m: MailSend): SendState {
   if (state.phase !== "unverified") return state;
@@ -760,15 +736,11 @@ export function heldRowUnverified(
   if (state.phase === "sending" || state.phase === "queued" || state.phase === "sent") return state;
   if (heldRow === null) return state;
   /**
-   * A PROJECTION OF {@link holdOf}, NOT A SECOND READING OF THE ROW.
-   *
-   * This used to look the row up in the drafts array and apply the status rule itself, which made
-   * it the third place that decided what "held" means. It now consumes the answer: the caller asks
-   * `holdOf` once and hands it here.
-   *
-   * `parked` only. `unknown` — a jar this browser cannot read — deliberately does NOT put the
-   * warning up or lock the button: a browser that refuses this app its own storage must still be
-   * able to send (invariant S(4)). The recovery sites are where `unknown` fails closed.
+   * A PROJECTION OF {@link holdOf}, NOT A SECOND READING OF THE ROW. This used to look the row up in the drafts array
+   * and apply the status rule itself, which made it the third place that decided what "held" means. It now consumes
+   * the answer: the caller asks `holdOf` once and hands it here. `parked` only. `unknown` — a jar this browser cannot
+   * read — deliberately does NOT put the warning up or lock the button: a browser that refuses this app its own
+   * storage must still be able to send (invariant S(4)). The recovery sites are where `unknown` fails closed.
    */
   if (hold.kind !== "parked") return state;
   /**
@@ -804,17 +776,14 @@ export function heldRowUnverified(
 
 export function canSend(state: SendState, m: MailSend): boolean {
   /**
-   * `sent` joins the two locked phases: it is the beat between the confirmation and the surface
-   * closing, and a press landing inside it would mint a second key for a message already gone.
-   *
-   * `unverified` IS LOCKED TOO, and it used not to be. An unverified send is a TERMINAL-UNKNOWN
-   * state, not a failure: the reservation may already have delivered, and the only thing that
-   * makes a retry safe is reusing the key it went under. Leaving Send enabled here let the next
-   * press mint a fresh key — and the compose had shed the draft id by then, so the server saw a
-   * different draft under a different key and had nothing to collide with. Server uniqueness is
-   * `(account_id, idempotency_key)`, so two reservations for one message is not a race: it is the
-   * documented behaviour of pressing the button twice. A second copy in somebody's inbox cannot
-   * be taken back, which is why this is a lock rather than a warning.
+   * `sent` joins the two locked phases: it is the beat between the confirmation and the surface closing, and a press
+   * landing inside it would mint a second key for a message already gone. `unverified` IS LOCKED TOO, and it used not
+   * to be. An unverified send is a TERMINAL-UNKNOWN state, not a failure: the reservation may already have delivered,
+   * and the only thing that makes a retry safe is reusing the key it went under. Leaving Send enabled here let the
+   * next press mint a fresh key — and the compose had shed the draft id by then, so the server saw a different draft
+   * under a different key and had nothing to collide with. Server uniqueness is `(account_id, idempotency_key)`, so
+   * two reservations for one message is not a race: it is the documented behaviour of pressing the button twice. A
+   * second copy in somebody's inbox cannot be taken back, which is why this is a lock rather than a warning.
    */
   if (state.phase === "sending" || state.phase === "queued" || state.phase === "sent") return false;
   /**
@@ -862,18 +831,14 @@ export function phaseFor(res: MutationResult): SendState {
   }
   if (res.error?.code === "send_unverified") return { phase: "unverified" };
   /**
-   * THE SERVER REFUSED THIS AS A SECOND COPY OF A MESSAGE IT ALREADY HAS.
-   *
-   * Its own phase and not `failed`, because "failed" is the product's word for *nothing went out
-   * and you may try again*, and here the opposite may be true: something identical was already
-   * accepted, possibly delivered, and the one thing the reader must not do is press Send again.
-   * Not `unverified` either — that copy tells the reader a Sent-folder probe ran and came back
-   * empty, and on this path no probe ran at all.
-   *
-   * `firstSend` is the fact the sentence turns on and only the server has it: whether the first
-   * attempt is known sent, unconfirmed, or still running right now. It is carried as structured
-   * detail rather than as prose so the surface can say it in the reader's own language — the
-   * server's `message` stays in `reason` for diagnostics, exactly as it does for `failed`.
+   * THE SERVER REFUSED THIS AS A SECOND COPY OF A MESSAGE IT ALREADY HAS. Its own phase and not `failed`, because
+   * "failed" is the product's word for *nothing went out and you may try again*, and here the opposite may be true:
+   * something identical was already accepted, possibly delivered, and the one thing the reader must not do is press
+   * Send again. Not `unverified` either — that copy tells the reader a Sent-folder probe ran and came back empty, and
+   * on this path no probe ran at all. `firstSend` is the fact the sentence turns on and only the server has it:
+   * whether the first attempt is known sent, unconfirmed, or still running right now. It is carried as structured
+   * detail rather than as prose so the surface can say it in the reader's own language — the server's `message` stays
+   * in `reason` for diagnostics, exactly as it does for `failed`.
    */
   if (res.error?.code === "duplicate_send") {
     return {
@@ -907,17 +872,13 @@ export function firstSendStatusOf(details: unknown): "sent" | "unverified" | "pe
 }
 
 /**
- * Which triage states a delivered reply discharges WITH `triage_set: none`.
- *
- * `reply_later` (Answer Later) and `bubbled_up` (a Resurface that came due) are both "come
- * back to this", and replying IS coming back to it. `set_aside` (Parked) and `muted` are
- * statements about the message rather than an owed answer, and a reply is not an obvious
- * argument to undo either.
- *
- * `resurfaced` — the PIN — is deliberately NOT here, and it is not un-discharged: the settle
- * answers it with a deliberate `mark_seen` instead (see the branch in `settle`), because the
- * pin's own release mechanism is "reading spends the resurface" and a bare state-clear would
- * put the answered row back in "New for you" unread.
+ * Which triage states a delivered reply discharges WITH `triage_set: none`. `reply_later` (Answer Later) and
+ * `bubbled_up` (a Resurface that came due) are both "come back to this", and replying IS coming back to it.
+ * `set_aside` (Parked) and `muted` are statements about the message rather than an owed answer, and a reply is not an
+ * obvious argument to undo either. `resurfaced` — the PIN — is deliberately NOT here, and it is not un-discharged:
+ * the settle answers it with a deliberate `mark_seen` instead (see the branch in `settle`), because the pin's own
+ * release mechanism is "reading spends the resurface" and a bare state-clear would put the answered row back in "New
+ * for you" unread.
  */
 export function clearsTriage(state: string | undefined): boolean {
   return state === "reply_later" || state === "bubbled_up";
@@ -975,34 +936,28 @@ export function useMailSend(
   /** `Idempotency-Key → the frozen mutation`, so a late confirmation knows what it delivered. */
   const inFlight = useRef(new Map<string, MailSend>());
   /**
-   * THE LOCK — a ref, and it has to be, which a test proved rather than a comment claimed.
-   *
-   * `send` first gated on `states[key]`, i.e. React state captured at RENDER. Two calls
-   * inside one tick therefore both read `idle`, both dispatched, and each minted its own
-   * Idempotency-Key: two reservations, two deliveries, to a real person. The button's
-   * `disabled` does not save you — it only exists after the re-render the second call beat,
-   * and a double-tap or any programmatic caller gets there first.
-   *
-   * Holds every send key that is `sending` OR `queued` — the two phases where an intent
-   * is already out under a key. Cleared on any terminal outcome, from whichever path
-   * delivered it.
+   * THE LOCK — a ref, and it has to be, which a test proved rather than a comment claimed. `send` first gated on
+   * `states[key]`, i.e. React state captured at RENDER. Two calls inside one tick therefore both read `idle`, both
+   * dispatched, and each minted its own Idempotency-Key: two reservations, two deliveries, to a real person. The
+   * button's `disabled` does not save you — it only exists after the re-render the second call beat, and a double-tap
+   * or any programmatic caller gets there first. Holds every send key that is `sending` OR `queued` — the two phases
+   * where an intent is already out under a key. Cleared on any terminal outcome, from whichever path delivered it.
    */
   const locked = useRef(new Set<string>());
   /**
-   * LANES THE SERVER HAS ACCEPTED — and it is STICKY, which a review had to point out.
-   *
-   * The 202 is said ONCE, by the request that reserved the send. Every retry after it presents
-   * the same key against a live reservation and is answered `in_flight` (409), whose result maps
-   * to a plain `queued` with no `accepted` flag — so `setPhase` overwrote the accepted state five
-   * seconds after the press and the line went from "the product has this" to "this may not have
-   * arrived". That is the collapse the two flavours exist to prevent, running BACKWARDS: the
-   * request provably did arrive, because there is a committed reservation, and the surface was
-   * saying it might not have. It fired on every accepted send and then persisted, because every
-   * later retry is `in_flight` too.
-   *
-   * A committed reservation is a fact that cannot become untrue, so the flag is remembered per
-   * lane rather than re-derived from each answer. Cleared only on a terminal outcome, beside the
-   * lock — the two have the same lifetime for the same reason.
+   * LANES THE SERVER HAS ACCEPTED — and it is STICKY, which a review had to point out. The 202 is said ONCE, by the
+   * request that reserved the send. Every retry after it presents the same key against a live reservation and is
+   * answered `in_flight` (409), whose result maps to a plain `queued` with no `accepted` flag — so `setPhase`
+   * overwrote the accepted state five seconds after the press and the line went from "the product has this" to "this
+   * may not have arrived". That is the collapse the two flavours exist to prevent, running BACKWARDS: the request
+   * provably did arrive, because there is a committed reservation, and the surface was saying it might not have. It
+   * fired on every accepted send and then persisted, because every later retry is `in_flight` too.
+   */
+
+  /**
+   * A committed reservation is a fact that cannot become untrue, so the flag is remembered per lane rather than
+   * re-derived from each answer. Cleared only on a terminal outcome, beside the lock — the two have the same lifetime
+   * for the same reason.
    */
   const accepted = useRef(new Set<string>());
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1067,21 +1022,21 @@ export function useMailSend(
           void engine.mutate({ kind: "triage_set", messageId: m.inReplyTo, state: "none" });
         } else if (state === "resurfaced") {
           /**
-           * A REPLY TO A PINNED ROW IS THE ANSWER THE PIN WAS WAITING FOR — so it clears the
-           * resurface, automatically, through the ONE mechanism that already exists: a
-           * deliberate `mark_seen` (no `via`) spends the pin in the same transaction on both
-           * sides of the wire (`spendResurface` server-side, `spentResurface` in the overlay)
-           * and stamps `lastReadAt`, filing the row at the top of "Earlier" — exactly what the
-           * explicit "Done" verb (`resurface_done`) performs. `mark_seen`'s own doc has named
-           * "the settled reply that marks its parent read" a deliberate caller all along; this
-           * makes that sentence true for the pinned case, which nothing dispatched for:
-           * `OhboxView`'s replyDone effect acts only on rows in the NEW session order, and a
-           * pinned row is never there — so answering a resurfaced message left its pin
-           * standing, saying "deal with this" about mail the reader had just dealt with.
-           *
-           * Not `triage_set: none` like the branch above: that clears the STATE but leaves the
-           * row unread (the pin forces unread), so the answered message would come back bold in
-           * "New for you" — a claim of new attention the reader just spent. Answered = read.
+           * A REPLY TO A PINNED ROW IS THE ANSWER THE PIN WAS WAITING FOR — so it clears the resurface,
+           * automatically, through the ONE mechanism that already exists: a deliberate `mark_seen` (no `via`) spends
+           * the pin in the same transaction on both sides of the wire (`spendResurface` server-side, `spentResurface`
+           * in the overlay) and stamps `lastReadAt`, filing the row at the top of "Earlier" — exactly what the
+           * explicit "Done" verb (`resurface_done`) performs.
+           */
+
+          /**
+           * `mark_seen`'s own doc has named "the settled reply that marks its parent read" a deliberate caller all
+           * along; this makes that sentence true for the pinned case, which nothing dispatched for: `OhboxView`'s
+           * replyDone effect acts only on rows in the NEW session order, and a pinned row is never there — so
+           * answering a resurfaced message left its pin standing, saying "deal with this" about mail the reader had
+           * just dealt with. Not `triage_set: none` like the branch above: that clears the STATE but leaves the row
+           * unread (the pin forces unread), so the answered message would come back bold in "New for you" — a claim
+           * of new attention the reader just spent. Answered = read.
            */
           void engine.mutate({ kind: "mark_seen", messageIds: [m.inReplyTo], unread: false });
         }
@@ -1124,22 +1079,20 @@ export function useMailSend(
   );
 
   /**
-   * THE MAILBOX THIS HOOK'S STORAGE BELONGS TO, captured once at mount.
-   *
-   * `storageOwner()` answers the mailbox the window is showing NOW, and a send does not settle
-   * now. `engine.mutate`'s promise outlives the surface that started it: the desktop replaces the
-   * mailbox, the shell remounts under the new one (which is what its key is for), and then
-   * mailbox A's promise resolves and runs `absorb` — whose `releaseSendLock` and
-   * `clearComposeDraft` would resolve their keys through the module global and delete MAILBOX B's
-   * unfinished message and B's durable idempotency claim.
-   *
-   * Losing B's draft is the visible half. Losing B's LOCK is the worse one: that record is what
-   * makes a press survive a crash without delivering twice, so clearing it under B reopens the
-   * duplicate-send the durable key exists to prevent.
-   *
-   * Captured in a ref rather than read per call, because the shell is keyed by this same id — one
-   * mount is one mailbox for its whole life, so the value cannot go stale within it, and a
-   * settlement that arrives late writes to the partition it was started in.
+   * THE MAILBOX THIS HOOK'S STORAGE BELONGS TO, captured once at mount. `storageOwner()` answers the mailbox the
+   * window is showing NOW, and a send does not settle now. `engine.mutate`'s promise outlives the surface that
+   * started it: the desktop replaces the mailbox, the shell remounts under the new one (which is what its key is
+   * for), and then mailbox A's promise resolves and runs `absorb` — whose `releaseSendLock` and `clearComposeDraft`
+   * would resolve their keys through the module global and delete MAILBOX B's unfinished message and B's durable
+   * idempotency claim. Losing B's draft is the visible half. Losing B's LOCK is the worse one: that record is what
+   * makes a press survive a crash without delivering twice, so clearing it under B reopens the duplicate-send the
+   * durable key exists to prevent.
+   */
+
+  /**
+   * Captured in a ref rather than read per call, because the shell is keyed by this same id — one mount is one
+   * mailbox for its whole life, so the value cannot go stale within it, and a settlement that arrives late writes to
+   * the partition it was started in.
    */
   const owner = useRef<string | null>(storageOwner());
 
@@ -1387,17 +1340,13 @@ export function useMailSend(
     let cancelled = false;
     let running = false;
     /**
-     * WHEN TO PULL, and a once-at-mount pull is the wrong answer — measured.
-     *
-     * The boot replay is asynchronous: the mount happens first and the result lands afterwards,
-     * so a single pass at mount finds an empty `lateResults` and the settlement is never
-     * collected. The trigger is therefore the engine's own notification, narrowed to the EDGE
-     * where a `mail_send` on some lane stops being pending — which is when the replay has
-     * finished with it.
-     *
-     * The edge is only a TRIGGER. What settles the compose is the RESULT this pull returns, never
-     * the queue having emptied: a drain that produced no result for us leaves everything as it
-     * was, which is the difference between "the send is over" and "nothing is queued any more".
+     * WHEN TO PULL, and a once-at-mount pull is the wrong answer — measured. The boot replay is asynchronous: the
+     * mount happens first and the result lands afterwards, so a single pass at mount finds an empty `lateResults` and
+     * the settlement is never collected. The trigger is therefore the engine's own notification, narrowed to the EDGE
+     * where a `mail_send` on some lane stops being pending — which is when the replay has finished with it. The edge
+     * is only a TRIGGER. What settles the compose is the RESULT this pull returns, never the queue having emptied: a
+     * drain that produced no result for us leaves everything as it was, which is the difference between "the send is
+     * over" and "nothing is queued any more".
      */
     const collect = async (): Promise<void> => {
       if (running || cancelled) return;
@@ -1409,17 +1358,14 @@ export function useMailSend(
       }
     };
     /**
-     * ASKED DIRECTLY, because the two indirect signals were both wrong and one of them silently.
-     *
-     * A falling edge on "a send is pending" never fires for the case this exists for: a replayed
-     * entry is removed from the queue BEFORE it is dispatched, so a mount that did not issue it
-     * never observes the pending state to fall from. Three pulls ran, all empty, while the answer
-     * sat in the engine's map — the same ending the engine used to have, moved one layer out.
-     * Pulling on every notification is the other bad option: `flushPending` takes the outbox gate
-     * and can dispatch the queue, so that is a poll wearing a subscription's clothes.
-     *
-     * `hasLateResults()` is the exact question and it is free. `notify()` fires immediately after
-     * an answer with no caller is recorded, so this collects on that notification and no other.
+     * ASKED DIRECTLY, because the two indirect signals were both wrong and one of them silently. A falling edge on "a
+     * send is pending" never fires for the case this exists for: a replayed entry is removed from the queue BEFORE it
+     * is dispatched, so a mount that did not issue it never observes the pending state to fall from. Three pulls ran,
+     * all empty, while the answer sat in the engine's map — the same ending the engine used to have, moved one layer
+     * out. Pulling on every notification is the other bad option: `flushPending` takes the outbox gate and can
+     * dispatch the queue, so that is a poll wearing a subscription's clothes. `hasLateResults()` is the exact
+     * question and it is free. `notify()` fires immediately after an answer with no caller is recorded, so this
+     * collects on that notification and no other.
      */
     const off = engine.subscribe(() => {
       if (engine.hasLateResults()) void collect();

@@ -433,18 +433,14 @@ export function goFirstRun(
 }
 
 /**
- * NAME THE MAILBOX AN ADD RUN JUST MADE, WITHOUT ADDING A HISTORY ENTRY.
- *
- * `replaceState` rather than a hash assignment, and the difference is the Back press. The create
- * is not a place somebody navigated to; it is a thing that happened on the screen they are on. An
- * assignment would stack an entry, and Back would then land on `#/first-run/add` with no mailbox
- * named — which renders the connect FORM again, for a mailbox that now exists.
- *
- * `replaceState` fires no `hashchange`, so the event is dispatched by hand: `useHashRoute`
- * subscribes to exactly that event and would otherwise keep rendering the old route until
- * something else moved the hash. A plain `Event` and not a `HashChangeEvent` — the listener reads
- * `window.location.hash` rather than the event's fields, and the narrower constructor is the one
- * every environment this bundle runs in has.
+ * NAME THE MAILBOX AN ADD RUN JUST MADE, WITHOUT ADDING A HISTORY ENTRY. `replaceState` rather than a hash
+ * assignment, and the difference is the Back press. The create is not a place somebody navigated to; it is a thing
+ * that happened on the screen they are on. An assignment would stack an entry, and Back would then land on
+ * `#/first-run/add` with no mailbox named — which renders the connect FORM again, for a mailbox that now exists.
+ * `replaceState` fires no `hashchange`, so the event is dispatched by hand: `useHashRoute` subscribes to exactly that
+ * event and would otherwise keep rendering the old route until something else moved the hash. A plain `Event` and not
+ * a `HashChangeEvent` — the listener reads `window.location.hash` rather than the event's fields, and the narrower
+ * constructor is the one every environment this bundle runs in has.
  */
 export function nameFirstRunMailbox(mailboxId: string): void {
   const next = `#/first-run/add?mailbox=${encodeURIComponent(mailboxId)}`;

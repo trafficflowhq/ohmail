@@ -61,16 +61,12 @@ export function offerKey(offer: UpdateOffer): string {
 }
 
 /**
- * Has a period passed since `since`?
- *
- * `null` means "never happened", which is elapsed by definition — a check that has never run
- * is overdue, not early.
- *
- * A stamp in the FUTURE is elapsed too, and that is the clock-moved-backwards guard rather
- * than a rounding convenience. The stamps here are wall-clock instants; if the machine's clock
- * is put back a year, a stamp written before the change is a year ahead of `now`, and a plain
- * `now - since >= period` would then answer "not yet" every time it is asked until the clock
- * catches up. Refusing to check for a year is a worse failure than checking once too early.
+ * Has a period passed since `since`? `null` means "never happened", which is elapsed by definition — a check that has
+ * never run is overdue, not early. A stamp in the FUTURE is elapsed too, and that is the clock-moved-backwards guard
+ * rather than a rounding convenience. The stamps here are wall-clock instants; if the machine's clock is put back a
+ * year, a stamp written before the change is a year ahead of `now`, and a plain `now - since >= period` would then
+ * answer "not yet" every time it is asked until the clock catches up. Refusing to check for a year is a worse failure
+ * than checking once too early.
  */
 export function periodElapsed(
   since: number | null | undefined,
@@ -147,23 +143,20 @@ export function writeAskMemory(memory: AskMemory): void {
 }
 
 /**
- * THE BUILD TOKEN — a short name for "which build is this", and deliberately not the build.
- *
- * The tab has to compare the build it is running against the build the origin is serving, and
- * the honest identifier for a build is its commit. Answering that identifier to anybody who
- * asks would publish this deployment's commit history one request at a time, to no one's
- * benefit: the comparison needs only to know whether two builds are the SAME, which a digest
- * answers exactly as well as the original.
- *
- * The release number is folded in beside the commit so that a deployment which genuinely has
- * no commit to name — a self-hosted image built from a tarball, where the sha is "dev" — still
- * changes its token when it is upgraded. Without it, every such deployment would carry one
- * token for ever and no reader would ever be told anything.
- *
- * FNV-1a, not a cryptographic hash. What is wanted is "different builds get different names",
- * and the failure mode of a collision is one missed notice on one deployment boundary, which
- * the next deployment corrects. It is synchronous, which matters: the same value is computed
- * inside a request handler and inside a render, and neither is a place to await a digest.
+ * THE BUILD TOKEN — a short name for "which build is this", and deliberately not the build. The tab has to compare
+ * the build it is running against the build the origin is serving, and the honest identifier for a build is its
+ * commit. Answering that identifier to anybody who asks would publish this deployment's commit history one request at
+ * a time, to no one's benefit: the comparison needs only to know whether two builds are the SAME, which a digest
+ * answers exactly as well as the original. The release number is folded in beside the commit so that a deployment
+ * which genuinely has no commit to name — a self-hosted image built from a tarball, where the sha is "dev" — still
+ * changes its token when it is upgraded. Without it, every such deployment would carry one token for ever and no
+ * reader would ever be told anything. FNV-1a, not a cryptographic hash.
+ */
+
+/**
+ * What is wanted is "different builds get different names", and the failure mode of a collision is one missed notice
+ * on one deployment boundary, which the next deployment corrects. It is synchronous, which matters: the same value is
+ * computed inside a request handler and inside a render, and neither is a place to await a digest.
  */
 export function buildToken(version: string | undefined, build: string | undefined): string {
   /* The separator is written as an ESCAPE and not as a raw byte: a source file containing a

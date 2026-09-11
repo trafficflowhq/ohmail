@@ -82,18 +82,14 @@ export function formatStorageBytes(bytes: number, locale: string): string {
 export const BYTES_PER_STORED_EMAIL_ESTIMATE = 25_000;
 
 /**
- * Bytes → the advertised email count, floored — every step moves the number DOWN.
- *
- * A NUMBER, not a string, and that is the whole of what this module has to say about the count.
- * The GROUPING belongs to the catalogue: both panes' strings take it as `{used, number}` /
- * `{cap, number}`, which formats against the locale the intl provider was built with — the
- * language the reader chose in this app.
- *
- * Formatting it here was tried and was wrong twice over. A hardcoded `toLocaleString("en-US")`
- * put "200,000" into a German pane. Dropping the argument was worse in a subtler way: it reads
- * the HOST's locale, so German-in-app on a US machine still grouped "60,000" and switching the
- * app's language changed nothing — the one thing a reader would expect it to change. The app's
- * locale is a preference, not a property of the computer, and only the catalogue layer knows it.
+ * Bytes → the advertised email count, floored — every step moves the number DOWN. A NUMBER, not a string, and that is
+ * the whole of what this module has to say about the count. The GROUPING belongs to the catalogue: both panes'
+ * strings take it as `{used, number}` / `{cap, number}`, which formats against the locale the intl provider was built
+ * with — the language the reader chose in this app. Formatting it here was tried and was wrong twice over. A
+ * hardcoded `toLocaleString("en-US")` put "200,000" into a German pane. Dropping the argument was worse in a subtler
+ * way: it reads the HOST's locale, so German-in-app on a US machine still grouped "60,000" and switching the app's
+ * language changed nothing — the one thing a reader would expect it to change. The app's locale is a preference, not
+ * a property of the computer, and only the catalogue layer knows it.
  */
 export function estimatedEmails(bytes: number): number {
   return Math.floor(bytes / BYTES_PER_STORED_EMAIL_ESTIMATE);

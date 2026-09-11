@@ -103,16 +103,12 @@ export const clampRail = (px: number): number => clamp(px, RAIL.min, RAIL.max);
 export const clampList = (px: number): number => clamp(px, LIST.min, LIST.max);
 
 /**
- * The split's whole track list for a given list width.
- *
- * `minmax(floor, min(chosen, room))` and not a bare width: the floor keeps a list that cannot
- * shrink further from being squeezed by the `1fr` beside it, and `min(…, calc(100% - …))` is
- * the viewer's floor expressed so the BROWSER enforces it — narrow the window and the list
- * gives way without a resize listener, widen it and the chosen width returns.
- *
- * ONE function, because three callers must produce the same string: the live writer, the web
- * door's inline stamp, and the desktop's. `column-geometry.test.ts` compares the stamp's output
- * against this for a table of stored values, including hostile ones.
+ * The split's whole track list for a given list width. `minmax(floor, min(chosen, room))` and not a bare width: the
+ * floor keeps a list that cannot shrink further from being squeezed by the `1fr` beside it, and `min(…, calc(100% -
+ * …))` is the viewer's floor expressed so the BROWSER enforces it — narrow the window and the list gives way without
+ * a resize listener, widen it and the chosen width returns. ONE function, because three callers must produce the same
+ * string: the live writer, the web door's inline stamp, and the desktop's. `column-geometry.test.ts` compares the
+ * stamp's output against this for a table of stored values, including hostile ones.
  */
 function splitTracks(listPx: number, room: string): string {
   return `minmax(${LIST.min}px, min(${listPx}px, ${room})) 1fr`;
@@ -212,16 +208,13 @@ export function stampColumns(): void {
 }
 
 /**
- * THE SAME STAMP AS A STRING, for the web door, which paints from server-rendered HTML and has
- * no bundle running yet. Inlined by `(product)/providers.tsx` under the request's nonce.
- *
- * It is hand-written rather than derived from {@link stampColumns} by `Function.toString()`,
- * deliberately: a serialized function is whatever the bundler left behind, and a minifier that
- * hoisted one reference out of it would produce a script that throws in production and passes
+ * THE SAME STAMP AS A STRING, for the web door, which paints from server-rendered HTML and has no bundle running yet.
+ * Inlined by `(product)/providers.tsx` under the request's nonce. It is hand-written rather than derived from {@link
+ * stampColumns} by `Function.toString()`, deliberately: a serialized function is whatever the bundler left behind,
+ * and a minifier that hoisted one reference out of it would produce a script that throws in production and passes
  * every test, because the test never sees the bundled form. So the duplication is explicit and
- * `column-geometry.test.ts` executes THIS string against a table of stored values and requires
- * the same two properties {@link applyColumnVars} writes — the guard is the comparison, not the
- * derivation.
+ * `column-geometry.test.ts` executes THIS string against a table of stored values and requires the same two
+ * properties {@link applyColumnVars} writes — the guard is the comparison, not the derivation.
  */
 export function columnsBootScript(): string {
   const key = JSON.stringify(COLUMNS_KEY);

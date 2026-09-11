@@ -1015,18 +1015,13 @@ export function useScreenerState(
   const undecided = waiting.filter((x) => !s.pending.has(x.id)
     && !decidedElsewhere.has(x.id) && notDecided(x));
   /**
-   * THE DECIDED SENDERS, AS ROWS — the same rows the queue would have shown, on the other side
-   * of the line.
-   *
-   * Built from `waiting` rather than from the decisions alone, and that is what makes them REAL
-   * rows: the mail has not moved (only the organizer moves mail), so every one of these senders
-   * is still in the mirror with their subject, their time and their held bag. A list rebuilt from
-   * the decision records would carry an address and nothing else, and would have to invent the
-   * rest or show less than the row above it.
-   *
-   * They are out of {@link waiting} and not finished, which is a third state this queue has never
-   * had. Leaving them in would ask the same question twice; dropping them silently would make a
-   * press look like nothing happened.
+   * THE DECIDED SENDERS, AS ROWS — the same rows the queue would have shown, on the other side of the line. Built
+   * from `waiting` rather than from the decisions alone, and that is what makes them REAL rows: the mail has not
+   * moved (only the organizer moves mail), so every one of these senders is still in the mirror with their subject,
+   * their time and their held bag. A list rebuilt from the decision records would carry an address and nothing else,
+   * and would have to invent the rest or show less than the row above it. They are out of {@link waiting} and not
+   * finished, which is a third state this queue has never had. Leaving them in would ask the same question twice;
+   * dropping them silently would make a press look like nothing happened.
    */
   const decided = waiting.flatMap((x) => {
     const p = outstandingFor(x.from.address);
@@ -1056,16 +1051,13 @@ export function useScreenerState(
   const suggestedRows = undecided.filter((x) => x.ai != null && x.ai.dest !== "screener");
   const suggestedCount = suggestedRows.length;
   /**
-   * WHICH PILES the press would file into, deduped, in the surface's own reading order.
-   *
-   * Derived from `suggestedRows` and not from a second filter, because the label and the number
-   * beside it have to describe one set. "Apply 5" over rows that turn out to be three Reads and
-   * two Receipts is a control whose consequence a person cannot picture before pressing it —
-   * they see a count, press, and find five senders filed into piles nobody named.
-   *
-   * The order is DECLARED here rather than taken from the queue, so the label is stable: read
-   * off row order it would reshuffle every time a suggestion landed, and a control whose text
-   * changes while you look at it reads as a different control.
+   * WHICH PILES the press would file into, deduped, in the surface's own reading order. Derived from `suggestedRows`
+   * and not from a second filter, because the label and the number beside it have to describe one set. "Apply 5" over
+   * rows that turn out to be three Reads and two Receipts is a control whose consequence a person cannot picture
+   * before pressing it — they see a count, press, and find five senders filed into piles nobody named. The order is
+   * DECLARED here rather than taken from the queue, so the label is stable: read off row order it would reshuffle
+   * every time a suggestion landed, and a control whose text changes while you look at it reads as a different
+   * control.
    */
   const suggestedDests = APPLY_PILE_ORDER.filter(
     (d) => suggestedRows.some((x) => x.ai!.dest === d),
@@ -1111,19 +1103,18 @@ export function useScreenerState(
     ),
   ];
   /**
-   * THE RE-ASK LIST — the same buyable set, on the other side of `ai == null`.
-   *
-   * Every filter above is repeated deliberately rather than computed as "waiting minus
-   * unsuggested": `derived` and `gatePhysical` are facts about whether the SERVER can speak for
-   * this sender at all, and they are as true of a sender who already has an answer as of one who
-   * does not. A complement taken over the whole queue would put fixture rows and past-the-gate
-   * rows into a batch the endpoint can only answer `not_held` for — the exact loop #116 removed
-   * from the buy list, re-created on the re-ask path.
-   *
-   * `ai != null` and NOT `suggestedRows`' predicate: that set drops `screener`, because it is the
-   * one answer a bulk APPLY refuses to act on. A sender the model declined to place, or one a run
-   * could not answer for, is not un-re-askable — it is the case with the most to gain from being
-   * asked again once their next mail arrives.
+   * THE RE-ASK LIST — the same buyable set, on the other side of `ai == null`. Every filter above is repeated
+   * deliberately rather than computed as "waiting minus unsuggested": `derived` and `gatePhysical` are facts about
+   * whether the SERVER can speak for this sender at all, and they are as true of a sender who already has an answer
+   * as of one who does not. A complement taken over the whole queue would put fixture rows and past-the-gate rows
+   * into a batch the endpoint can only answer `not_held` for — the exact loop #116 removed from the buy list,
+   * re-created on the re-ask path. `ai != null` and NOT `suggestedRows`' predicate: that set drops `screener`,
+   * because it is the one answer a bulk APPLY refuses to act on.
+   */
+
+  /**
+   * A sender the model declined to place, or one a run could not answer for, is not un-re-askable — it is the case
+   * with the most to gain from being asked again once their next mail arrives.
    */
   const suggestedSenders = [
     ...new Set(
@@ -1551,15 +1542,13 @@ export function useScreenerState(
        the replay. */
     if (role.mode === "blocked") return;
     /**
-     * THE READ HAPPENS AT MOUNT; ONLY THE DISPATCH WAITS FOR THE OTHER TABS.
-     *
-     * The order matters and getting it wrong dispatched twice. This effect re-runs on the local
-     * tick as well as on the mirror's version, so with the read behind the handshake's gate the
-     * FIRST journal read landed after a press — where the jar still holds this session's own
-     * intent while its commit is in flight (the disarm settles with the mutation, `s.pending` is
-     * already cleared), so the replay took it as stranded and sent it a second time. Measured as a
-     * duplicate `mark_seen` and a duplicate demote in the bulk paths. Read once at mount, before
-     * anything can be pressed, exactly as this effect always did.
+     * THE READ HAPPENS AT MOUNT; ONLY THE DISPATCH WAITS FOR THE OTHER TABS. The order matters and getting it wrong
+     * dispatched twice. This effect re-runs on the local tick as well as on the mirror's version, so with the read
+     * behind the handshake's gate the FIRST journal read landed after a press — where the jar still holds this
+     * session's own intent while its commit is in flight (the disarm settles with the mutation, `s.pending` is
+     * already cleared), so the replay took it as stranded and sent it a second time. Measured as a duplicate
+     * `mark_seen` and a duplicate demote in the bulk paths. Read once at mount, before anything can be pressed,
+     * exactly as this effect always did.
      */
     if (restoredIntents.current === null) {
       restoredIntents.current = takeScreenerIntents(Date.now())
@@ -1611,16 +1600,13 @@ export function useScreenerState(
   ];
 
   /**
-   * WHAT A DECIDING VERB DOES ON A MAILBOX THIS INSTALL DOES NOT ORGANIZE — say so, do nothing.
-   *
-   * ONE sentence for all seven verbs, and one wall for all seven, which is the point of putting
-   * it at the return rather than at the top of each: the list below is complete by construction,
-   * and a verb added later that is not wrapped is a verb visibly outside the guard rather than
-   * one that silently escaped it. `test/screener-reader.test.ts` asserts the exact set.
-   *
-   * It raises a toast and does NOT touch `s.refused`: that mark means "the wire would not take
-   * your decision", which is a thing that happened to a row. Nothing happened to a row here —
-   * nothing was armed, nothing was dispatched, no overlay moved, and the queue does not flicker.
+   * WHAT A DECIDING VERB DOES ON A MAILBOX THIS INSTALL DOES NOT ORGANIZE — say so, do nothing. ONE sentence for all
+   * seven verbs, and one wall for all seven, which is the point of putting it at the return rather than at the top of
+   * each: the list below is complete by construction, and a verb added later that is not wrapped is a verb visibly
+   * outside the guard rather than one that silently escaped it. `test/screener-reader.test.ts` asserts the exact set.
+   * It raises a toast and does NOT touch `s.refused`: that mark means "the wire would not take your decision", which
+   * is a thing that happened to a row. Nothing happened to a row here — nothing was armed, nothing was dispatched, no
+   * overlay moved, and the queue does not flicker.
    */
   const refuseReadOnly = (): void => {
     toast(role.name
@@ -1628,17 +1614,14 @@ export function useScreenerState(
       : t("readerRefusedUnknown"));
   };
   /**
-   * WHAT A READER MAY NOT DO WHATEVER ITS ORGANIZER OFFERS — a MOVE, and the sentence says so.
-   *
-   * Releasing a screened-out sender, rescuing mail out of Quarantine and deleting it are folder
-   * moves against mail another install is organizing. They are refused for EVERY reader, in both
-   * modes, because the channel a decision travels carries a decision and nothing else: there is
-   * no vocabulary for "move this mail" in it, and inventing one here would put two installs on
-   * the same folder at once, which is the invariant the whole organizer lease exists to hold.
-   *
-   * Its own sentence, and not the decide refusal's: on a `pending` reader "this computer does
-   * not decide about senders" is FALSE — it does, and the press works. What it does not do is
-   * move mail, which is a different thing to be told.
+   * WHAT A READER MAY NOT DO WHATEVER ITS ORGANIZER OFFERS — a MOVE, and the sentence says so. Releasing a
+   * screened-out sender, rescuing mail out of Quarantine and deleting it are folder moves against mail another
+   * install is organizing. They are refused for EVERY reader, in both modes, because the channel a decision travels
+   * carries a decision and nothing else: there is no vocabulary for "move this mail" in it, and inventing one here
+   * would put two installs on the same folder at once, which is the invariant the whole organizer lease exists to
+   * hold. Its own sentence, and not the decide refusal's: on a `pending` reader "this computer does not decide about
+   * senders" is FALSE — it does, and the press works. What it does not do is move mail, which is a different thing to
+   * be told.
    */
   const refuseMove = (): void => {
     /* THE ACCOUNT-SCOPED FORM, and it stays here rather than moving to the shared predicate.

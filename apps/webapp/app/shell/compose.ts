@@ -134,18 +134,13 @@ export function composeDraftKey(owner: string | null = storageOwner()): string {
 export const LEGACY_COMPOSE_DRAFT_KEY = "ohmail.ui.compose";
 
 /**
- * The scratch buffer, and what it is NOT.
- *
- * This is the client's own draft, in this browser, exactly like the per-message reply buffer.
- * It is not an IMAP draft and it is not a `drafts` row on the server: nothing is written to
- * the account until Send is pressed, because a draft-per-keystroke is a write storm and an
- * orphan-row factory (`POST /drafts` has no delete-on-abandon path the client drives). Server
- * drafts on the mailbox are a later phase, and when they arrive they belong on the mailbox
- * itself; the compose surface therefore says "kept in this browser" and nothing stronger.
- *
- * Storage can refuse — Safari private mode throws on write — and a refusal must never break
- * composing, so every access is wrapped and a failure simply means the draft lives for as
- * long as the tab does.
+ * The scratch buffer, and what it is NOT. This is the client's own draft, in this browser, exactly like the
+ * per-message reply buffer. It is not an IMAP draft and it is not a `drafts` row on the server: nothing is written to
+ * the account until Send is pressed, because a draft-per-keystroke is a write storm and an orphan-row factory (`POST
+ * /drafts` has no delete-on-abandon path the client drives). Server drafts on the mailbox are a later phase, and when
+ * they arrive they belong on the mailbox itself; the compose surface therefore says "kept in this browser" and
+ * nothing stronger. Storage can refuse — Safari private mode throws on write — and a refusal must never break
+ * composing, so every access is wrapped and a failure simply means the draft lives for as long as the tab does.
  */
 export function readComposeDraft(): ComposeFields {
   try {
@@ -203,17 +198,13 @@ export function readComposeDraft(): ComposeFields {
  */
 export function writeComposeDraft(f: ComposeFields): void {
   /**
-   * "EMPTY" IS ABOUT THE TEXT, and `fromMailboxId` deliberately does not count.
-   *
-   * A sender pick on a form with nothing written in it is not a draft — persisting it would
-   * turn every visit to Compose into a stored buffer, and it would make the pick sticky in a
-   * way ruling 2 rules out: the default is derived on every fresh compose, and the only thing
-   * worth remembering is a pick attached to a message somebody is actually writing.
-   *
-   * `html` does not count either, and for a sharper reason: an empty ProseMirror document
-   * serialises to `<p></p>`, so testing it would make every visit to Compose leave a stored
-   * buffer behind. `body` is the editor's plain rendering and is `""` for that document,
-   * which is why it is the field that decides. Same rule as `isRichEmpty`.
+   * "EMPTY" IS ABOUT THE TEXT, and `fromMailboxId` deliberately does not count. A sender pick on a form with nothing
+   * written in it is not a draft — persisting it would turn every visit to Compose into a stored buffer, and it would
+   * make the pick sticky in a way ruling 2 rules out: the default is derived on every fresh compose, and the only
+   * thing worth remembering is a pick attached to a message somebody is actually writing. `html` does not count
+   * either, and for a sharper reason: an empty ProseMirror document serialises to `<p></p>`, so testing it would make
+   * every visit to Compose leave a stored buffer behind. `body` is the editor's plain rendering and is `""` for that
+   * document, which is why it is the field that decides. Same rule as `isRichEmpty`.
    */
   if (f.to === "" && f.cc === "" && f.bcc === "" && f.subject === "" && f.body === "") {
     durableRemove(composeDraftKey(), "compose.draft");
@@ -280,17 +271,14 @@ export function composeSessionId(owner: string | null = storageOwner()): string 
 }
 
 /**
- * PUT A MESSAGE'S OWN SESSION BACK — the one writer, and it exists for exactly one caller.
- *
- * Every other door MINTS (lazily, by reading) or CLEARS. Reopening a message this browser holds
- * an unresolved send record for does neither: that message already HAS a session — the one the
- * record was written under — and the surface may have minted a different one since, because any
- * door in between (writing to a contact, an operating-system mail link) legitimately starts a new
- * message. Coming back to the unconfirmed one has to come back to its identity, or the record
- * names neither of the things the message is now called and the hold silently lifts.
- *
- * `null` is not accepted: clearing is {@link clearComposeDraft}'s job, which drops the buffer and
- * the row with it. This only ever restores a session that a record still names.
+ * PUT A MESSAGE'S OWN SESSION BACK — the one writer, and it exists for exactly one caller. Every other door MINTS
+ * (lazily, by reading) or CLEARS. Reopening a message this browser holds an unresolved send record for does neither:
+ * that message already HAS a session — the one the record was written under — and the surface may have minted a
+ * different one since, because any door in between (writing to a contact, an operating-system mail link) legitimately
+ * starts a new message. Coming back to the unconfirmed one has to come back to its identity, or the record names
+ * neither of the things the message is now called and the hold silently lifts. `null` is not accepted: clearing is
+ * {@link clearComposeDraft}'s job, which drops the buffer and the row with it. This only ever restores a session that
+ * a record still names.
  */
 export function writeComposeSession(session: string, owner: string | null = storageOwner()): void {
   // The same failure `composeSessionId` answers `null` for, and it is announced the same way.
@@ -319,15 +307,12 @@ export function composeRowKey(owner: string | null = storageOwner()): string {
 }
 
 /**
- * THE TAB'S OWN MEMORY OF THE ROW, for a browser that refuses this app its storage.
- *
- * There nothing can be written, so `readComposeRow` answered `null` BY CONSTRUCTION: `holdOf` said
- * `unknown`, the adoption waited, and the timer created a SECOND row for the one just opened.
- *
- * Keyed by the same storage key, so it is account-scoped as the jar is, and swept by
- * {@link forgetComposeRows} at sign-out — an id on the departed account must not reach the next
- * sign-in. It answers ONLY when the jar throws: a jar that works and says `null` is another tab
- * having cleared the row, and a remembered value would resurrect it.
+ * THE TAB'S OWN MEMORY OF THE ROW, for a browser that refuses this app its storage. There nothing can be written, so
+ * `readComposeRow` answered `null` BY CONSTRUCTION: `holdOf` said `unknown`, the adoption waited, and the timer
+ * created a SECOND row for the one just opened. Keyed by the same storage key, so it is account-scoped as the jar is,
+ * and swept by {@link forgetComposeRows} at sign-out — an id on the departed account must not reach the next sign-in.
+ * It answers ONLY when the jar throws: a jar that works and says `null` is another tab having cleared the row, and a
+ * remembered value would resurrect it.
  */
 const composeRowInMemory = new Map<string, string>();
 
@@ -426,15 +411,11 @@ export interface RecipientParse {
 }
 
 /**
- * One line of typed text → recipients.
- *
- * Commas and semicolons both separate, because every mail client accepts both and a user who
- * pastes a list from elsewhere has no idea which one they got. `Name <addr>` is accepted
- * because that is what copying a recipient out of another client yields; the display name is
- * kept, so the person's name survives into `drafts.to` and out onto the wire's To header.
- *
- * De-duplicated case-insensitively on the address: a list pasted twice must not mail anyone
- * twice, and the SMTP envelope is built straight from this array (`SendService` →
+ * One line of typed text → recipients. Commas and semicolons both separate, because every mail client accepts both
+ * and a user who pastes a list from elsewhere has no idea which one they got. `Name <addr>` is accepted because that
+ * is what copying a recipient out of another client yields; the display name is kept, so the person's name survives
+ * into `drafts.to` and out onto the wire's To header. De-duplicated case-insensitively on the address: a list pasted
+ * twice must not mail anyone twice, and the SMTP envelope is built straight from this array (`SendService` →
  * `to.map(a => a.address)`).
  */
 export function parseRecipients(raw: string): RecipientParse {

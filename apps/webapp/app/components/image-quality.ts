@@ -128,22 +128,19 @@ export function isImageQualityLevel(value: unknown): value is ImageQualityLevel 
 }
 
 /**
- * The stored level for this account, or the default.
- *
- * FOUR READS, IN ONE ORDER, AND THE ORDER IS THE MIGRATION. The account-scoped NEW key wins; then
- * the account-less new key (the desktop's store, and where a pre-scoping choice lives); then the
- * same two positions on the LEGACY key, each mapped through {@link LEGACY_LEVEL_MIGRATION}. A new
- * value always beats an old one, so a person who has touched the dial since the rename is never
- * pulled back to what they chose before it.
- *
- * NEVER CALL THIS DURING A RENDER. There is no `localStorage` on the server, so a component that
- * read it while rendering would draw the default on the server, the stored value on the client, and
- * React would resolve the mismatch by keeping the SERVER's — silently discarding the setting. The
- * settings row reads it in an effect; the attach control reads it in an effect and inside the
- * pick, both after mount by construction.
- *
- * A blocked or throwing storage (Safari private mode, site data blocked) resolves to the default
- * rather than propagating: a preference is never worth breaking an attach over.
+ * The stored level for this account, or the default. FOUR READS, IN ONE ORDER, AND THE ORDER IS THE MIGRATION. The
+ * account-scoped NEW key wins; then the account-less new key (the desktop's store, and where a pre-scoping choice
+ * lives); then the same two positions on the LEGACY key, each mapped through {@link LEGACY_LEVEL_MIGRATION}. A new
+ * value always beats an old one, so a person who has touched the dial since the rename is never pulled back to what
+ * they chose before it. NEVER CALL THIS DURING A RENDER. There is no `localStorage` on the server, so a component
+ * that read it while rendering would draw the default on the server, the stored value on the client, and React would
+ * resolve the mismatch by keeping the SERVER's — silently discarding the setting. The settings row reads it in an
+ * effect; the attach control reads it in an effect and inside the pick, both after mount by construction.
+ */
+
+/**
+ * A blocked or throwing storage (Safari private mode, site data blocked) resolves to the default rather than
+ * propagating: a preference is never worth breaking an attach over.
  */
 export function readImageQualityLevel(accountId: string | null = null): ImageQualityLevel {
   try {
@@ -259,16 +256,13 @@ interface OffscreenCanvasLike {
 }
 
 /**
- * Draw the bitmap at the target size and read the bytes back.
- *
- * TWO PATHS, AND THE SECOND IS NOT DEAD CODE. `OffscreenCanvas.convertToBlob` is the good path —
- * it needs no document and never touches the DOM — but Safari and WKWebView only got it in 16.4,
- * and the desktop shell runs on the system WebView. So the element's `toBlob` is the fallback, and
- * it is reached in two ways: no `OffscreenCanvas` at all, and an `OffscreenCanvas` whose
- * `convertToBlob` throws or is missing (the shape a partial implementation has). The first path
- * therefore falls THROUGH on failure rather than returning null.
- *
- * Every failure here ends at `null`, which the caller reads as "send the original".
+ * Draw the bitmap at the target size and read the bytes back. TWO PATHS, AND THE SECOND IS NOT DEAD CODE.
+ * `OffscreenCanvas.convertToBlob` is the good path — it needs no document and never touches the DOM — but Safari and
+ * WKWebView only got it in 16.4, and the desktop shell runs on the system WebView. So the element's `toBlob` is the
+ * fallback, and it is reached in two ways: no `OffscreenCanvas` at all, and an `OffscreenCanvas` whose
+ * `convertToBlob` throws or is missing (the shape a partial implementation has). The first path therefore falls
+ * THROUGH on failure rather than returning null. Every failure here ends at `null`, which the caller reads as "send
+ * the original".
  */
 async function encode(
   bitmap: BitmapLike,

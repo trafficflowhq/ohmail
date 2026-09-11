@@ -309,17 +309,13 @@ export function screenerMode(facts: ReadonlyArray<OrganizerRow> | null): Screene
 }
 
 /**
- * THE HOLDER, FOR A SURFACE THAT ASKS A TWO-WAY QUESTION — `null` where this install organizes.
- *
- * Several panes ask only "does this install organize these mailboxes, or read them?": the
- * install's own About and Desktop rows, and the screening preferences, whose stored values take
- * effect on a takeover and take effect on nothing before one. Both reader modes answer that
- * question identically — a `pending` reader still moves no mail here — so narrowing at the read
- * is the honest shape rather than a lossy one.
- *
- * It exists so the narrowing is written ONCE. A surface that wrote `role.mode !== "organizer"`
- * inline would be one edit away from accidentally treating `pending` as organizing on the day
- * somebody adds a fourth mode.
+ * THE HOLDER, FOR A SURFACE THAT ASKS A TWO-WAY QUESTION — `null` where this install organizes. Several panes ask
+ * only "does this install organize these mailboxes, or read them?": the install's own About and Desktop rows, and the
+ * screening preferences, whose stored values take effect on a takeover and take effect on nothing before one. Both
+ * reader modes answer that question identically — a `pending` reader still moves no mail here — so narrowing at the
+ * read is the honest shape rather than a lossy one. It exists so the narrowing is written ONCE. A surface that wrote
+ * `role.mode !== "organizer"` inline would be one edit away from accidentally treating `pending` as organizing on the
+ * day somebody adds a fourth mode.
  */
 export function readerHolder(role: ScreenerRole): { name: string | null } | null {
   return role.mode === "organizer" ? null : { name: role.name };

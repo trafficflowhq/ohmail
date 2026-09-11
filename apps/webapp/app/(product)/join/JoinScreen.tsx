@@ -253,17 +253,13 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
   useEffect(() => { void bootstrap(); }, [bootstrap]);
 
   /**
-   * MINT THE LINK to the page that takes the plan, and — while this step is on screen — keep
-   * asking whether the account has become entitled.
-   *
-   * Whatever happens on that page happens at the service operator's end and races the
-   * browser's return, so polling is the honest shape: this client cannot know it landed until
-   * the port says the account may add a mailbox, and pretending otherwise would send somebody
-   * to the mailbox step to be refused by the allowance gate.
-   *
-   * The poll is BOUNDED and the bound is the whole of what it promises. When it expires the
-   * screen says the account is not entitled YET — never that something failed, because nothing
-   * here can know that, and never a plan word.
+   * MINT THE LINK to the page that takes the plan, and — while this step is on screen — keep asking whether the
+   * account has become entitled. Whatever happens on that page happens at the service operator's end and races the
+   * browser's return, so polling is the honest shape: this client cannot know it landed until the port says the
+   * account may add a mailbox, and pretending otherwise would send somebody to the mailbox step to be refused by the
+   * allowance gate. The poll is BOUNDED and the bound is the whole of what it promises. When it expires the screen
+   * says the account is not entitled YET — never that something failed, because nothing here can know that, and never
+   * a plan word.
    */
   useEffect(() => {
     if (step !== "plan") return;
@@ -431,17 +427,13 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
         ...(offered.length > 0 ? { inviteCode: offered } : {}),
       });
       setPassword("");
-      // TWO OUTCOMES, and the wizard must not try to tell them apart beyond this.
-      //
-      // The PUBLIC path answers `{status:"ok"}` with no session, byte-identically whether or not
-      // that address already had an account. There is nothing to continue with in this tab, so
-      // the honest next screen is "we sent you a mail" — and its copy says exactly that and no
-      // more. Claiming "your account is ready" would be false for half the callers and would
-      // also re-open the oracle in the UI, since the wizard would be asserting something the
-      // response deliberately does not say.
-      //
-      // The INVITE path still returns an enrollment session and still goes straight to the
-      // passkey step, unchanged from the first build of this wizard.
+      // TWO OUTCOMES, and the wizard must not try to tell them apart beyond this. The PUBLIC path answers
+      // `{status:"ok"}` with no session, byte-identically whether or not that address already had an account. There
+      // is nothing to continue with in this tab, so the honest next screen is "we sent you a mail" — and its copy
+      // says exactly that and no more. Claiming "your account is ready" would be false for half the callers and would
+      // also re-open the oracle in the UI, since the wizard would be asserting something the response deliberately
+      // does not say. The INVITE path still returns an enrollment session and still goes straight to the passkey
+      // step, unchanged from the first build of this wizard.
       if (out.status === "ok") { setStep("sent"); return; }
       /*
        * THE ACCOUNT THIS WIZARD IS FOR, on the path that actually creates one.

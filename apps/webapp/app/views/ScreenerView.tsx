@@ -524,34 +524,29 @@ export function ScreenerView({
    */
   suggest?: SuggestBatchControl;
   /**
-   * A CONTROL THE HOST BROUGHT, in place of the one above.
-   *
-   * Same seam as the injected Settings panes, and it exists for the same reason: this file is
-   * compiled into a browser tab and into the desktop app, and the two are not asking the same
-   * question. A hosted account buys suggestions out of an allowance, so the control above names a
-   * price before it spends. A standalone install has no account and no allowance — the model is
-   * one its owner set up — so the price is not merely a different number, it is a thing that does
-   * not exist. Wording that around a shared control would put desktop vocabulary in this file and
-   * account vocabulary in that binary, both wrong.
-   *
-   * When present it REPLACES {@link suggest}: never both, because two controls over one queue is
-   * two ways to ask the same question with different words on them.
+   * A CONTROL THE HOST BROUGHT, in place of the one above. Same seam as the injected Settings panes, and it exists
+   * for the same reason: this file is compiled into a browser tab and into the desktop app, and the two are not
+   * asking the same question. A hosted account buys suggestions out of an allowance, so the control above names a
+   * price before it spends. A standalone install has no account and no allowance — the model is one its owner set up
+   * — so the price is not merely a different number, it is a thing that does not exist. Wording that around a shared
+   * control would put desktop vocabulary in this file and account vocabulary in that binary, both wrong. When present
+   * it REPLACES {@link suggest}: never both, because two controls over one queue is two ways to ask the same question
+   * with different words on them.
    */
   suggestNode?: ReactNode;
   /**
-   * WHAT THE ACCOUNT'S AI ALLOWANCE IS DOING — one line under whichever control is offered above.
-   *
-   * Injected for the same reason both controls are: the answer is a billing read, and this file
-   * is compiled into a binary that has no account. It is deliberately SEPARATE from
-   * {@link suggest} rather than a field on it — the control describes a PURCHASE (these senders,
-   * this price, this button) and this describes the account's standing (what is left, or why
-   * nothing can be spent and what would change that). Folding the second into the first would
-   * mean the sentence could only be shown while a ladder was open, which is precisely the moment
-   * a person has already decided to spend.
-   *
-   * Rendered whether or not there is anything to buy, and that is the point of putting it beside
-   * the resting state too: an exhausted allowance is most worth saying on the visit where the
-   * suggest control has nothing to offer and no explanation for it.
+   * WHAT THE ACCOUNT'S AI ALLOWANCE IS DOING — one line under whichever control is offered above. Injected for the
+   * same reason both controls are: the answer is a billing read, and this file is compiled into a binary that has no
+   * account. It is deliberately SEPARATE from {@link suggest} rather than a field on it — the control describes a
+   * PURCHASE (these senders, this price, this button) and this describes the account's standing (what is left, or why
+   * nothing can be spent and what would change that). Folding the second into the first would mean the sentence could
+   * only be shown while a ladder was open, which is precisely the moment a person has already decided to spend.
+   */
+
+  /**
+   * Rendered whether or not there is anything to buy, and that is the point of putting it beside the resting state
+   * too: an exhausted allowance is most worth saying on the visit where the suggest control has nothing to offer and
+   * no explanation for it.
    */
   /**
    * The remote-image consent chrome, threaded to every held preview so the Screener's
@@ -683,15 +678,12 @@ export function ScreenerView({
   })();
 
   /**
-   * THE SELECTED SENDER — and a DECIDED one is selectable, which is why this is not `items` alone.
-   *
-   * A sender whose decision is waiting on another install is out of the queue and still on screen,
-   * and their mail has not moved: opening them is how somebody reads what they decided about, and
-   * how they find out that the organizer refused it. A row that draws and opens nothing would be
-   * the one place on this pane where a press does nothing at all.
-   *
-   * `items` first, so nothing about the queue's own selection changes. `state.decided` is empty
-   * in every mode but `pending`, so this is the queue's own behaviour everywhere else.
+   * THE SELECTED SENDER — and a DECIDED one is selectable, which is why this is not `items` alone. A sender whose
+   * decision is waiting on another install is out of the queue and still on screen, and their mail has not moved:
+   * opening them is how somebody reads what they decided about, and how they find out that the organizer refused it.
+   * A row that draws and opens nothing would be the one place on this pane where a press does nothing at all. `items`
+   * first, so nothing about the queue's own selection changes. `state.decided` is empty in every mode but `pending`,
+   * so this is the queue's own behaviour everywhere else.
    */
   const current = items.find((x) => idOf(x) === activeId)
     ?? state.decided.find((d) => d.sender.id === activeId)?.sender
@@ -1725,22 +1717,20 @@ export function HeldMail({
    */
   const [notice, setNotice] = useState<BlockNotice | null>(null);
   /**
-   * A CONSENT DECISION MUST NOT BE TAKEN ON TEXT THAT SILENTLY ISN'T THE MAIL.
-   *
-   * Every other pile can afford to say nothing while a body is in flight — the reader has a
-   * pill and can ask again. Here the reader is about to decide whether a stranger may write
-   * to them, and the difference between "this is all they said" and "this is the first line
-   * of what they said" is the whole basis of that decision. `snippet` is included for that
-   * reason, where the stream cards leave it silent: in this preview there is no pill standing
-   * in for the same fact.
-   *
-   * AND IT CARRIES A CONTROL, for the reason the reading pane's does: the selection effect
-   * above is an AUTOMATIC trigger, and `hydrateBody` deliberately refuses to re-ask a server
-   * that already refused unless a human says so — otherwise a failing endpoint under an open
-   * view is a request loop billed per attempt, with nobody behind it. Reselecting the sender
-   * therefore does NOT retry, so without this button a held message whose body 500'd could
-   * only be recovered by reloading the tab. In the one pile where the text is the basis of a
-   * consent decision, that is not an acceptable dead end.
+   * A CONSENT DECISION MUST NOT BE TAKEN ON TEXT THAT SILENTLY ISN'T THE MAIL. Every other pile can afford to say
+   * nothing while a body is in flight — the reader has a pill and can ask again. Here the reader is about to decide
+   * whether a stranger may write to them, and the difference between "this is all they said" and "this is the first
+   * line of what they said" is the whole basis of that decision. `snippet` is included for that reason, where the
+   * stream cards leave it silent: in this preview there is no pill standing in for the same fact. AND IT CARRIES A
+   * CONTROL, for the reason the reading pane's does: the selection effect above is an AUTOMATIC trigger, and
+   * `hydrateBody` deliberately refuses to re-ask a server that already refused unless a human says so — otherwise a
+   * failing endpoint under an open view is a request loop billed per attempt, with nobody behind it.
+   */
+
+  /**
+   * Reselecting the sender therefore does NOT retry, so without this button a held message whose body 500'd could
+   * only be recovered by reloading the tab. In the one pile where the text is the basis of a consent decision, that
+   * is not an acceptable dead end.
    */
   /**
    * ── AND THE SPINNER MUST BE A CLAIM ABOUT A REAL REQUEST ────────────────────────────────
@@ -1873,16 +1863,13 @@ export function HeldMail({
 }
 
 /**
- * WHAT STANDS WHERE A PREVIEW'S VERBS WOULD BE, on a mailbox this install does not organize.
- *
- * One component for all three segments, because it is one fact: this computer reads the mailbox
- * and somebody else decides where mail goes. Rendering it three times in three wordings is how
- * the three surfaces come to describe one state differently, which is the failure
- * `mail-state.ts` and `ONBOARDING-RULINGS.md` both spend paragraphs on.
- *
- * `role="note"` and not `alert`: nothing has gone wrong and nothing needs answering. It is the
- * standing condition of the pane, present before any press, which is the whole point — the
- * released build said it AFTER the press, in a toast, and the toast was not true.
+ * WHAT STANDS WHERE A PREVIEW'S VERBS WOULD BE, on a mailbox this install does not organize. One component for all
+ * three segments, because it is one fact: this computer reads the mailbox and somebody else decides where mail goes.
+ * Rendering it three times in three wordings is how the three surfaces come to describe one state differently, which
+ * is the failure `mail-state.ts` and `ONBOARDING-RULINGS.md` both spend paragraphs on. `role="note"` and not `alert`:
+ * nothing has gone wrong and nothing needs answering. It is the standing condition of the pane, present before any
+ * press, which is the whole point — the released build said it AFTER the press, in a toast, and the toast was not
+ * true.
  */
 function ReaderNote({
   name,
@@ -1988,15 +1975,11 @@ function DecidedRow({
 }
 
 /**
- * THE ORGANIZER'S REFUSAL, in this build's words or in the one it keeps for words it has not got.
- *
- * The vocabulary is closed on the wire and deliberately open here. It can grow without a client
- * release, and the two failures to avoid are a raw token on screen and a `MISSING_MESSAGE`
- * rendering the dotted key — both of which say nothing to the person and hide that the decision
- * did not land. A refusal with no reason at all is the same case: it happened, and why is not
- * known.
- *
- * `t.has` rather than a `try`, because a missing key otherwise renders its own path and reports
+ * THE ORGANIZER'S REFUSAL, in this build's words or in the one it keeps for words it has not got. The vocabulary is
+ * closed on the wire and deliberately open here. It can grow without a client release, and the two failures to avoid
+ * are a raw token on screen and a `MISSING_MESSAGE` rendering the dotted key — both of which say nothing to the
+ * person and hide that the decision did not land. A refusal with no reason at all is the same case: it happened, and
+ * why is not known. `t.has` rather than a `try`, because a missing key otherwise renders its own path and reports
  * nothing anywhere the suite can see it.
  */
 function refusalSentence(
@@ -2011,16 +1994,13 @@ function refusalSentence(
 }
 
 /**
- * WHERE A DECISION MADE HERE GOES, AND HOW LONG IT TAKES — the `pending` reader's standing line.
- *
- * The mirror image of {@link ReaderNote} and deliberately its own component rather than a fourth
- * variant of it: that one explains a control that is NOT on screen, this one explains a control
- * that is. Sharing a component would put "this computer does not screen this mailbox" one prop
- * away from a pane whose decision bar is working, which is the confusion most worth preventing
- * here — the two states look similar and mean opposite things.
- *
- * `role="note"` and not `alert`, on the same rule: nothing has gone wrong. What it adds to a
- * press is a delay and an owner, and both are stated before the press rather than after it.
+ * WHERE A DECISION MADE HERE GOES, AND HOW LONG IT TAKES — the `pending` reader's standing line. The mirror image of
+ * {@link ReaderNote} and deliberately its own component rather than a fourth variant of it: that one explains a
+ * control that is NOT on screen, this one explains a control that is. Sharing a component would put "this computer
+ * does not screen this mailbox" one prop away from a pane whose decision bar is working, which is the confusion most
+ * worth preventing here — the two states look similar and mean opposite things. `role="note"` and not `alert`, on the
+ * same rule: nothing has gone wrong. What it adds to a press is a delay and an owner, and both are stated before the
+ * press rather than after it.
  */
 function PendingNote({ name }: { name: string | null }) {
   const t = useTranslations("screener");

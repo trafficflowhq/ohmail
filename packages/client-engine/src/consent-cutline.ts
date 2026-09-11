@@ -511,19 +511,14 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
 }
 
 /**
- * A read-only view of the mirror in which every message sits where it is PRESENTED.
- *
- * This exists so the pile selectors keep working untouched: they group by folder, and after
- * this projection grouping by folder is grouping by place. History mail is absent from the
- * `message` list entirely — it belongs to no pile, and {@link ConsentPartition.history} is
- * where it is read from instead.
- *
- * The rewritten rows keep their real folder in `physicalFolder`, so a projected message can
- * always still say where it actually is on the server. Nothing else about the row changes.
- *
- * NEVER use this reader to open a message, to search, or behind a mutation. A mutation reads
- * the current folder to work out what it is moving from, and this reader would answer with a
- * presentation rather than a location. Pass the mirror's own reader to all three.
+ * A read-only view of the mirror in which every message sits where it is PRESENTED. This exists so the pile selectors
+ * keep working untouched: they group by folder, and after this projection grouping by folder is grouping by place.
+ * History mail is absent from the `message` list entirely — it belongs to no pile, and {@link
+ * ConsentPartition.history} is where it is read from instead. The rewritten rows keep their real folder in
+ * `physicalFolder`, so a projected message can always still say where it actually is on the server. Nothing else
+ * about the row changes. NEVER use this reader to open a message, to search, or behind a mutation. A mutation reads
+ * the current folder to work out what it is moving from, and this reader would answer with a presentation rather than
+ * a location. Pass the mirror's own reader to all three.
  */
 export function presentationReader(reader: EntityReader, partition: ConsentPartition): EntityReader {
   const project = (m: EngineMessage): EngineMessage | null => {
