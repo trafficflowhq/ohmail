@@ -2221,27 +2221,21 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
 
     neutraliseStyleAttr(node, (url) => cssUrl(url, pixel));
 
-    // ── A BACKGROUND IMAGE IS A PICTURE, AND DARK VIEWING MUST NOT NEGATE IT ─────────────
-    //
-    // The dark filter inverts everything under it, and {@link FRAME_CSS} negates `img` back so
-    // photographs and logos keep their real colours. An element painted with a CSS background
-    // image is the same picture by another spelling and needs the same treatment — so it is
-    // MARKED here and counter-inverted by the sheet.
-    //
-    // Only a surviving `url()` counts: the rewrite above has already turned every REMOTE one
-    // into `none`, so what is left is `data:` (and `cid:`, which resolves to nothing today).
-    // That makes this rare — and it is written for the case where it is not, because the shape
-    // it fixes is a logo band that renders as its own photographic negative.
-    //
-    // ── THE ARTIFACT THIS BUYS, NAMED RATHER THAN DISCOVERED LATER ──────────────────────
-    //
-    // A filter applies to an element AND its descendants, so counter-inverting a box that has
-    // both a background image and text inside it puts that TEXT back to its original colour
-    // too — dark ink on a dark surface. There is no way to invert a box's background and not
-    // its content in CSS alone. The trade is deliberate: a hero banner whose picture is its
-    // point reads correctly and its overlaid caption reads worse, which is better than the
-    // banner itself arriving as a negative. Same escape as everywhere else in this transform —
-    // the reader can drop this message back to its original colours.
+    // A background image is a picture, and dark viewing must not negate it. The dark filter
+    // inverts everything under it, and {@link FRAME_CSS} negates `img` back so photographs and
+    // logos keep their real colours; an element painted with a CSS background image is the same
+    // picture by another spelling, so it is MARKED here and counter-inverted by the sheet. Only
+    // a surviving `url()` counts: the rewrite above has turned every REMOTE one into `none`, so
+    // what is left is `data:` (and `cid:`) — rare, and written for the case where it is not,
+    // because the shape it fixes is a logo band rendering as its own photographic negative.
+
+    // The artifact this buys, named rather than discovered later: a filter applies to an
+    // element AND its descendants, so counter-inverting a box with both a background image and
+    // text puts that TEXT back to its original colour too — dark ink on a dark surface; CSS
+    // cannot invert a box's background and not its content. The trade is deliberate: a hero
+    // banner whose picture is its point reads correctly and its overlaid caption reads worse,
+    // which is better than the banner arriving as a negative. Same escape as everywhere in this
+    // transform — the reader can drop the message back to its original colours.
     const styled = node.getAttribute("style");
     if (styled && /background[^:;]*:[^;]*url\(/i.test(styled)) {
       node.setAttribute("data-ohmail-bgimg", "1");
@@ -2357,33 +2351,27 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   };
 
   /**
-   * ── DATA TABLE OR LAYOUT TABLE — DECIDED HERE, BECAUSE CSS INSIDE THE FRAME CANNOT ──────
-   *
-   * The reflow sheet needs two opposite wrapping rules for one element. A LAYOUT cell — the
-   * grid a table-based letter is built from — needs `overflow-wrap:anywhere`, or one long
-   * tracked link's min-content forces the whole letter into a sideways scroll (the defect
-   * the reflow class was built to end). A DATA cell — an invoice line — needs the opposite:
-   * `anywhere` lets auto table layout crush the table to any width and then split the
-   * values themselves ("3,528.00" rendered as "3,528." over "00" on a 390px walk).
-   * No selector can tell those apart, so the document has to say which is which, and this
-   * post-pass is the one place allowed to say it: an ATTRIBUTE, `data-ohmail-datatable`,
-   * the only kind of write the post-pass may perform (see this function's header). A
-   * sender's own copy of the stamp dies at `ALLOW_DATA_ATTR: false` with every other
-   * `data-ohmail-*` marker, and this classifier then re-decides from shape alone.
-   *
-   * WHAT COUNTS AS DATA, and each clause is a real mail shape:
-   *   · it nests no table — nesting is how layout grids are BUILT, and a wrapper is a
-   *     wrapper whatever its own cells look like (its nested grid is classified on its own);
-   *   · two-plus rows and two-plus columns — a single row or column has no alignment to
-   *     protect, and the single-column wrapper is the most common table in mail;
-   *   · then any of: a header row (`th` is a sender saying "these are fields"), a declared
-   *     border grid (`border="1"` is how bulk invoices draw one), or every cell being short
-   *     text without block children — a grid of values, however unadorned.
-   * The costs are asymmetric by design. Data-read-as-layout keeps today's behaviour (a
-   * value may split); layout-read-as-data costs a sideways scroll on that one letter — so
-   * the block-content and length checks below are what hold the second, worse error down:
-   * a cell holding a `div`, `p` or picture is composing a page, not stating a value, and a
-   * cell past 120 characters is a sentence whatever it is wearing.
+   * Data table or layout table — decided here, because CSS inside the frame cannot. The reflow sheet needs two
+   * opposite wrapping rules for one element: a LAYOUT cell needs `overflow-wrap:anywhere`, or one long tracked link's
+   * min-content forces the whole letter into a sideways scroll; a DATA cell — an invoice line — needs the opposite,
+   * because `anywhere` lets auto table layout crush the table and split the values themselves ("3,528.00" rendered as
+   * "3,528." over "00" on a 390px walk). No selector can tell those apart, so the document has to say which is which:
+   * an ATTRIBUTE, `data-ohmail-datatable`, the only kind of write the post-pass may perform. A sender's own copy of
+   * the stamp dies at `ALLOW_DATA_ATTR: false`, and this classifier re-decides from shape alone.
+   */
+
+  /**
+   * What counts as data — each clause a real mail shape: it nests no table (nesting is how layout grids are BUILT,
+   * and a wrapper is a wrapper whatever its cells look like); two-plus rows and columns (a single row or column has
+   * no alignment to protect); then any of a header row (`th` is a sender saying "these are fields"), a declared
+   * border grid (`border="1"` is how bulk invoices draw one), or every cell being short text without block children.
+   * The costs are asymmetric by design: data-read-as-layout keeps today's behaviour (a value may split);
+   * layout-read-as-data costs a sideways scroll on that letter — so the block-content and length checks hold the
+   * second, worse error down: a cell holding a `div`, `p` or picture is composing a page, and a cell past 120
+   * characters is a sentence whatever it is wearing.
+   */
+
+  /**
    * `test/message-body-tables.test.ts` holds all of it, forged stamps included.
    */
   const DATA_CELL_MAX_CHARS = 120;
@@ -2578,67 +2566,45 @@ export function proxyImgSource(proxy: (url: string) => string, pageOrigin: strin
 }
 
 /**
- * The frame's own Content-Security-Policy.
- *
- * THIS IS THE ENFORCEMENT. Everything above it is presentation and accounting; this line is
- * what makes "opening a message fetches nothing" true for the remote-reference shape nobody
- * has thought of. It is an allow-list of `data:` over a `default-src 'none'`, so a vector
- * this file does not know about is refused by not being mentioned.
- *
- * `img-src` gains ONE SOURCE — the image proxy's own path, and nothing else — when images
- * have been consented to: the one place a consented image may come from is our own image
- * proxy, which fetches server-side so the sender never sees the reader. It is {@link
- * proxyImgSource} that decides whether such a source can be stated at all, and `null` here
- * is the blocked policy. There is no policy under which this frame may name a sender's host,
- * and — since the narrowing — no policy under which it may name any other path of ours.
- *
- * ── THIS POLICY IS AN INTERSECTION WITH THE APP'S OWN, MEASURED IN CHROME ───────────────
- *
- * A `srcdoc` document inherits the embedder's policy container, so what is enforced is the
- * intersection of this and the policy the app itself is served under. Verified in Chrome
- * rather than assumed: a control page rendering a real marketing message RAW inside a plain
- * `srcdoc` frame, under the app's own CSP, produced five requests and the browser reported
- * every one of them as `[FAILED] csp` — the open-tracking beacon among them. The SAME control
- * with the app CSP removed fetched that beacon successfully, `[200]`. So the app's
- * `img-src 'self' data: blob:` is a real second layer, and the consent path could never have
- * worked by pointing at a sender's host even if this file had let it.
- *
- * The intersection is also why this directive is the ONLY place the narrowing can happen. The
- * app's own policy has to keep `'self'` in `img-src` — the whole product chrome is
- * same-origin images — so an origin-wide policy can never be tighter than the frame's, and a
- * frame that says `'self'` inherits the app's breadth rather than adding to it.
- *
- * ── A SEPARATE, COOKIE-LESS ORIGIN FOR THE PROXY IS THE STRONGER VERSION, AND IT IS NOT
- *    WHAT WAS BUILT ───────────────────────────────────────────────────────────────────────
- *
- * Serving `/img` from a host that holds no session would end the authenticated-request class
- * outright rather than narrowing it to one path, and the disagreement is recorded rather than
- * dropped. It is not taken, for reasons that are about this codebase and not about taste:
- * the proxy's AUTHORISATION is the host-only `tf_session` cookie plus an owned `mid`
- * (`packages/api/src/routes/privacy.ts`), so a cookie-less origin has no authorisation left
- * and would need signed capability urls — new key material, new rotation, and a token in a
- * url that the sender chose the query of. It would also re-split the single origin that
- * `auth/origins.ts` exists to describe. What the path narrowing leaves behind is a strictly
- * smaller residue than that trade: a sender who defeats the sanitizer can reach `/api/img`
- * itself, which already refuses without consent, without an owned `mid`, and without passing
- * the SSRF gate — and which never carries the reader's address either way.
- *
- * A `<base>` in the frame's head — so relative urls resolve somewhere dead instead of at the
- * embedder — was considered for the same family and NOT added. It would need `base-uri` to
- * stop being `'none'`, which is a widening, to buy a second answer to the question this
- * directive already answers. This file's own rule (see {@link SAFE_HREF}) is that two
- * overlapping guards read as belt-and-braces and behave as neither.
- *
- * It was argued that a source belongs in the BLOCKED policy too, so a future
- * `cid:`-attachment url could render. Not taken, and that disagreement is recorded too:
- * blocked-by-default is the product's central promise. The slice that resolved `cid:`
- * references confirmed the refusal was right — they resolve as `data:` URIs minted from the
- * part's own bytes ({@link SanitizeOptions.cidImages}), which the blocked policy has always
- * admitted, so the blocked state still needs nothing.
- *
- * @param imgSource the proxy's own source expression from {@link proxyImgSource}, or `null`
- *                  for the blocked policy. NOT a boolean: a caller that knows only "images are
- *                  on" cannot say WHERE from, and that gap is what `'self'` used to paper over.
+ * The frame's own Content-Security-Policy. THIS IS THE ENFORCEMENT: everything above is presentation and accounting;
+ * this line makes "opening a message fetches nothing" true for the remote-reference shape nobody has thought of — an
+ * allow-list of `data:` over a `default-src 'none'`, so an unknown vector is refused by not being mentioned.
+ * `img-src` gains ONE SOURCE — the image proxy's own path, nothing else — when images are consented: the one place a
+ * consented image may come from is our own proxy, which fetches server-side so the sender never sees the reader.
+ * {@link proxyImgSource} decides whether such a source can be stated at all; `null` here is the blocked policy. There
+ * is no policy under which this frame may name a sender's host or any other path of ours.
+ */
+
+/**
+ * This policy is an INTERSECTION with the app's own, measured in Chrome: a `srcdoc` document
+ * inherits the embedder's policy container. A control page rendering a real marketing message
+ * RAW in a plain `srcdoc` frame under the app's CSP produced five requests, every one reported
+ * `[FAILED] csp` — the open-tracking beacon among them; the same control without the app CSP
+ * fetched that beacon `[200]`. So the app's `img-src 'self' data: blob:` is a real second
+ * layer. The intersection is also why this directive is the ONLY place the narrowing can
+ * happen: the app's policy must keep `'self'` in `img-src` (the product chrome is same-origin
+ * images), so a frame that says `'self'` inherits the app's breadth rather than adding to it.
+ */
+
+/**
+ * A separate cookie-less origin for the proxy is the stronger version, and it is not what was built — recorded rather
+ * than dropped. The proxy's AUTHORISATION is the host-only `tf_session` cookie plus an owned `mid`
+ * (`packages/api/src/routes/privacy.ts`), so a cookie-less origin has no authorisation left and would need signed
+ * capability urls — new key material, new rotation, a token in a url whose query the sender chose — and it would
+ * re-split the single origin `auth/origins.ts` exists to describe. The residue the path narrowing leaves is strictly
+ * smaller: a sender who defeats the sanitizer reaches `/api/img` itself, which already refuses without consent,
+ * without an owned `mid`, and without passing the SSRF gate — and never carries the reader's address either way.
+ */
+
+/**
+ * Two more considered and refused. A `<base>` in the frame's head (so relative urls resolve somewhere dead) would
+ * need `base-uri` to stop being `'none'` — a widening — to buy a second answer to a question this directive already
+ * answers; this file's own rule ({@link SAFE_HREF}) is that two overlapping guards behave as neither. And a source in
+ * the BLOCKED policy for a future `cid:` url: blocked-by-default is the product's central promise, and the slice that
+ * resolved `cid:` references confirmed the refusal — they resolve as `data:` URIs minted from the part's own bytes
+ * ({@link SanitizeOptions.cidImages}), which the blocked policy has always admitted. @param imgSource the proxy's own
+ * source expression from {@link proxyImgSource}, or `null` for the blocked policy. NOT a boolean: a caller that knows
+ * only "images are on" cannot say WHERE from, and that gap is what `'self'` used to paper over.
  */
 export function frameCsp(imgSource: string | null): string {
   return [
