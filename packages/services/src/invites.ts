@@ -7,46 +7,25 @@ import { normalizeRecipient } from "./mail/port.js";
 import { ServiceError } from "./errors.js";
 
 /**
- * The consumable, email-bound, expiring invite.
- *
- * Two functions and a refusal taxonomy. They live here rather than inside `AuthService`
- * because BOTH sides need them and the two sides are in different processes' worth of
- * concerns: `AuthService.register` CONSUMES one inside the transaction that creates the
- * account, and the operator mint path (`WaitlistService.mintInvite`, driven by
- * `invite-cli.ts`) ISSUES one and hands it to the invite mail.
- *
- * ── THE ONE THING THAT MATTERS ABOUT CONSUMPTION ────────────────────────────────────
- *
- * It is a SINGLE STATEMENT:
- *
- *   UPDATE invites SET consumed_at = $now, consumed_by_user_id = …
- *    WHERE code_hash = $1 AND email = $2 AND consumed_at IS NULL AND expires_at > $now
- *    RETURNING id
- *
- * Not SELECT-then-check-then-UPDATE. That shape is a read-modify-write, and it is the
- * exact defect `consumeEmailVerification` was fixed for (see that method's
- * doc): two concurrent presentations of one code both read `consumed_at IS NULL`, both
- * pass, and both proceed — one invite, two accounts, and a sequential test can never see
- * it. Here the row lock decides the race and exactly one caller gets a row back.
- *
- * The `email` predicate is IN the same statement for the same reason it is in the schema:
- * the binding must not be a separate check some later caller can forget.
+ * The consumable, email-bound, expiring invite. Two functions and a refusal taxonomy, here
+ * because BOTH sides need them: `AuthService.register` CONSUMES one inside the account-creating
+ * transaction; the operator mint path ISSUES one. Consumption is a SINGLE STATEMENT — `UPDATE …
+ * WHERE code_hash AND email AND consumed_at IS NULL AND expires_at > now RETURNING id` — never
+ * SELECT-then-check-then-UPDATE: two concurrent presentations both pass and one invite opens two
+ * accounts, invisible to any sequential test. The row lock decides and exactly one caller gets a
+ * row back. The `email` predicate is IN the same statement: the binding must not be a separate
+ * check some later caller can forget.
  */
 
 /**
- * Why an invite was refused. Each maps to a different true sentence and a different
- * remedy — which is the entire reason this table exists instead of a `Set.has`.
- *
- *  · `unknown`  — no invite row carries this code (or it is bound to a different address:
- *                 see {@link classifyInviteFailure} for why those are the same answer).
- *  · `used`     — it was redeemed already. Remedy: sign in.
- *  · `expired`  — it was real and is past `expires_at`. Remedy: ask for a new one.
- *  · `revoked`  — an operator took it back. Remedy: ask for a new one, same as `expired`,
- *                 and the wire message is DELIBERATELY the expired one. A code's holder is
- *                 not always the person it was meant for — revocation is what happens when
- *                 it is not — so "this was cancelled" tells whoever is holding it that
- *                 somebody noticed, and telling them that buys nothing. It is a distinct
- *                 refusal internally because the operator's logs must distinguish the two.
+ * Why an invite was refused — each maps to a different true sentence and remedy, which is why
+ * this is a table and not a `Set.has`. `unknown` — no row carries this code, or it is bound to a
+ * different address (the same answer, see {@link classifyInviteFailure}). `used` — redeemed
+ * already; sign in. `expired` — real, past `expires_at`; ask for a new one. `revoked` — an
+ * operator took it back; the wire message is DELIBERATELY the expired one: a code's holder is not
+ * always the person it was meant for — revocation is what happens when it is not — and telling
+ * them somebody noticed buys nothing. It stays a distinct refusal internally because the
+ * operator's logs must distinguish the two.
  */
 export type InviteRefusal = "unknown" | "used" | "expired" | "revoked";
 
@@ -139,16 +118,13 @@ export async function consumeInvite(
 }
 
 /**
- * Why the UPDATE matched nothing — the ONLY place an invite's state is disclosed.
- *
- * The rule is: **`used` and `expired` are told only to a caller who already proved they
- * hold the bound address.** A code bound to someone else, or no code at all, is `unknown`
- * — byte-identical answers — so a stranger holding a leaked code learns nothing about
- * which addresses have invites, and a code holder cannot walk the table.
- *
- * (The `email` predicate is applied here as an equality on the row's own column rather
- * than re-running the UPDATE's WHERE, so this is one indexed lookup on the unique
- * `code_hash` and no second write.)
+ * Why the UPDATE matched nothing — the ONLY place an invite's state is disclosed. The rule:
+ * `used` and `expired` are told only to a caller who already proved they hold the bound address.
+ * A code bound to someone else, or no code at all, is `unknown` — byte-identical answers — so a
+ * stranger holding a leaked code learns nothing about which addresses have invites, and a code
+ * holder cannot walk the table. The `email` predicate is applied as an equality on the row's own
+ * column rather than re-running the UPDATE's WHERE: one indexed lookup on the unique `code_hash`,
+ * no second write.
  */
 async function classifyInviteFailure(
   tx: Tx, codeHash: string, email: string, now: Date,
@@ -172,21 +148,14 @@ async function classifyInviteFailure(
 }
 
 /**
- * Mint an invite for `email` and return the RAW code (the only time it exists in memory
- * on our side). `codeLength` is the token generator's, not a parameter — see `crypto.ts`.
- *
- * Also stamps `waitlist.invited_at` when the address is on the list, so "who is still
- * waiting" stays one query and nobody is invited twice by accident.
- *
- * `confersVerified` DEFAULTS TRUE, matching the column default: an omitted flag asserts the
- * mailed-invite semantic — redeeming proves receipt, so register may stamp
- * `email_verified_at`. Every production caller now states its answer rather than leaning on
- * the default: the pairing-token redeem passes the consumed token row's own discriminator,
- * and the operator mint passes FALSE and upgrades through {@link markInviteDelivered} only
- * after the transport reports `sent` — because until the mail is out, the receipt argument
- * has not happened yet. Whatever the source, it must be the caller's OWN record, never
- * anything ITS caller sent: the flag chooses whether an account is born verified, so a
- * forgeable source here would be the verification forgery this parameter exists to close.
+ * Mint an invite for `email` and return the RAW code — the only time it exists in memory on our
+ * side. Also stamps `waitlist.invited_at` when the address is on the list. `confersVerified`
+ * DEFAULTS TRUE, matching the column: an omitted flag asserts the mailed-invite semantic —
+ * redeeming proves receipt. Every production caller states its answer: the pairing-token redeem
+ * passes the consumed token row's own discriminator; the operator mint passes FALSE and upgrades
+ * through {@link markInviteDelivered} only after the transport reports `sent`. Whatever the
+ * source, it must be the caller's OWN record, never anything ITS caller sent: the flag chooses
+ * whether an account is born verified.
  */
 export async function issueInvite(
   tx: Tx,
@@ -223,20 +192,14 @@ export async function issueInvite(
 }
 
 /**
- * Record that this invite's mail actually went out — the PROOF upgrade.
- *
- * The operator mint issues its row NON-conferring and calls this only on a `sent` result,
- * so `confers_verified` claims receipt-proof exactly when a mail carried the code to the
- * bound address and never before: a `send: false` mint (hand delivery), a failed transport
- * and a skipped send all leave the row non-conferring, and the account that registers
- * through such a code starts unverified and proves its address through the ordinary mailed
- * flow. Issue-then-upgrade rather than issue-true-then-demote, deliberately: a crash between
- * the two steps must land on the harmless side (a mailed code that happens not to confer),
- * never on a conferring row for a code no inbox received.
- *
- * The `consumed_at IS NULL` conjunct keeps the record honest under any interleaving: a row
- * consumed before the upgrade landed was non-conferring AT THE MOMENT register read it, and
- * rewriting the flag afterwards would claim a proof that arrived after the account was born.
+ * Record that this invite's mail actually went out — the PROOF upgrade. The operator mint issues
+ * its row NON-conferring and calls this only on a `sent` result: a `send: false` mint, a failed
+ * transport and a skipped send all leave the row non-conferring, and such an account proves its
+ * address through the ordinary mailed flow. Issue-then-upgrade, never issue-true-then-demote: a
+ * crash between the steps lands on the harmless side — a mailed code that happens not to confer,
+ * never a conferring row for a code no inbox received. The `consumed_at IS NULL` conjunct keeps
+ * it honest: rewriting the flag after consumption would claim a proof that arrived after the
+ * account was born.
  */
 export async function markInviteDelivered(tx: Tx, inviteId: string): Promise<boolean> {
   const rows = await tx.update(invites)
@@ -268,18 +231,14 @@ export async function liveInvitesFor(
 }
 
 /**
- * Take back every live invite for `email`. Returns how many were revoked.
- *
- * THE POINT OF THIS FUNCTION is that it is the same statement as the check: one
- * `UPDATE … WHERE consumed_at IS NULL AND revoked_at IS NULL AND expires_at > now`, so it
- * cannot revoke a code somebody is redeeming in the same instant and then report success —
- * the row lock decides, exactly as it does in {@link consumeInvite}. A consumed invite is
- * deliberately NOT touched: `consumed_by_user_id` is the record of which invite opened which
- * account, and revoking after the fact would rewrite history without closing anything.
- *
- * Called two ways: on its own (`pnpm invite revoke --email …`), and by `mintInvite` when
- * `--force` is used — because "issue another one" without "and cancel the old one" is how a
- * leaked code stays live for another fortnight next to its replacement.
+ * Take back every live invite for `email`. The point is that it is the same statement as the
+ * check: one `UPDATE … WHERE consumed_at IS NULL AND revoked_at IS NULL AND expires_at > now`, so
+ * it cannot revoke a code somebody is redeeming in the same instant and then report success — the
+ * row lock decides, exactly as in {@link consumeInvite}. A consumed invite is deliberately NOT
+ * touched: `consumed_by_user_id` is the record of which invite opened which account, and revoking
+ * after the fact would rewrite history without closing anything. Called on its own (`pnpm invite
+ * revoke`) and by `mintInvite --force` — "issue another one" without "cancel the old one" is how
+ * a leaked code stays live beside its replacement.
  */
 export async function revokeInvitesFor(
   tx: Tx,
@@ -304,26 +263,14 @@ export async function revokeInvitesFor(
 }
 
 /**
- * A human-transcribable invite code: `OHMAIL-XXXX-XXXX-XXXX`.
- *
- * The FORMAT IS THE CODE — `code_hash` is `sha256` of exactly this string, so changing
- * the shape invalidates every outstanding invite. That is not a hypothetical: the
- * `mailoh → ohmail` rename did exactly this, which is why {@link CODE_PREFIXES} is now an
- * append-only list rather than a literal, and why a shape change is a migration question.
- *
- * Why not `generateToken()`, which every other credential here uses: this value is read
- * off a screen (or out of a mail) and typed into a form by a person. 43 characters of
- * mixed-case base64url containing both `-` and `_` is a transcription-error generator and
- * cannot be read aloud. The alphabet below is Crockford-ish — no `I`, `L`, `O` or `U`, so
- * `1`/`I` and `0`/`O` cannot be confused, and no accidental words.
- *
- * Entropy: 12 symbols × 5 bits = **60 bits**, and the draw is unbiased because 256 is an
- * exact multiple of 32 — every byte maps to exactly eight alphabet positions. Against a
- * `UNIQUE` code column behind a rate-limited register endpoint, guessing is not a threat
- * model; transcription is, which is what the format optimises for.
- *
- * Normalisation on the way IN is `normalizeInviteCode` — a user pasting
- * `ohmail xxxx xxxx xxxx` must not be told their code is invalid.
+ * A human-transcribable invite code: `OHMAIL-XXXX-XXXX-XXXX`. The FORMAT IS THE CODE —
+ * `code_hash` is `sha256` of exactly this string, so changing the shape invalidates every
+ * outstanding invite (the rename did exactly this; {@link CODE_PREFIXES} is append-only and a
+ * shape change is a migration question). Not `generateToken()`: this value is typed by a person,
+ * and 43 characters of mixed-case base64url is a transcription-error generator. The alphabet is
+ * Crockford-ish: no `I`, `L`, `O`, `U`. Entropy: 12 symbols × 5 bits = 60 bits, unbiased because
+ * 256 is an exact multiple of 32. Guessing is not the threat model; transcription is.
+ * Normalisation on the way in is `normalizeInviteCode`.
  */
 const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
@@ -331,24 +278,14 @@ const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const MINT_PREFIX = "OHMAIL";
 
 /**
- * Every prefix {@link normalizeInviteCode} recognises — and it must recognise ALL of them
- * forever, or at least for as long as a code carrying one can still be outstanding.
- *
- * `MAILOH` is the pre-rebrand shape — the product was renamed once. It is here because
- * `code_hash` is `sha256` of the canonical string, so the prefix is INSIDE the hash: a
- * code minted as `MAILOH-…` hashes to a value only the string `MAILOH-…` reproduces. When
- * the rename swapped the mint prefix it also, silently, made this function stop
- * canonicalising the old shape — a legacy code pasted lower-cased or space-separated (the
- * two inputs this function exists to accept) fell through the early return, hashed as raw
- * user input, matched nothing, and was refused as `invite_invalid` with a message telling
- * its holder the code was not for their address. That is a real person locked out
- * mid-signup by a string rename, and no test could see it: the regression test mints a
- * code and therefore always tests the CURRENT prefix.
- *
- * The rule this encodes: **a mint prefix is append-only.** Adding one is a one-line change
- * here; removing one invalidates every outstanding code carrying it, so a prefix may only
- * be dropped after a full invite TTL (14 days) has passed with none unconsumed —
- * `pnpm invite list --pending` is the check.
+ * Every prefix {@link normalizeInviteCode} recognises — ALL of them, for as long as a code
+ * carrying one can be outstanding. `MAILOH` is the pre-rebrand shape: the prefix is INSIDE the
+ * hash, so when the rename swapped the mint prefix it silently stopped canonicalising the old
+ * shape — a legacy code pasted lower-cased fell through the early return, hashed as raw input,
+ * and was refused: a real person locked out mid-signup by a string rename, invisible to the
+ * regression test, which mints a code and therefore always tests the CURRENT prefix. The rule: a
+ * mint prefix is APPEND-ONLY; one may be dropped only after a full invite TTL has passed with
+ * none unconsumed — `pnpm invite list --pending` is the check.
  */
 const CODE_PREFIXES = [MINT_PREFIX, "MAILOH"] as const;
 
@@ -360,16 +297,13 @@ export function generateInviteCode(): string {
 }
 
 /**
- * Canonicalise a code a human typed or pasted before it is hashed.
- *
- * Upper-cases, strips everything that is not an alphabet symbol, and re-groups. So
- * `  ohmail xxxx-xxxx xxxx `, `OHMAILXXXXXXXXXXXX` and the exact minted string all hash
- * to the same value, while a genuinely different code still does not. Anything that does
- * not have the shape of one of our codes is returned trimmed and untouched, so the static
- * `inviteCodes` bootstrap path (arbitrary operator strings) keeps working unchanged.
- *
- * The PREFIX IS PRESERVED, never rewritten to the current one: it is part of the hashed
- * string, so a `MAILOH-` code must canonicalise back to `MAILOH-…`. See {@link CODE_PREFIXES}.
+ * Canonicalise a code a human typed or pasted, before it is hashed. Upper-cases, strips
+ * everything that is not an alphabet symbol, re-groups — so ` ohmail xxxx-xxxx xxxx `,
+ * `OHMAILXXXXXXXXXXXX` and the exact minted string hash to the same value, while a genuinely
+ * different code does not. Anything without the shape of one of our codes is returned trimmed and
+ * untouched, so the static `inviteCodes` bootstrap path (arbitrary operator strings) keeps
+ * working. The PREFIX IS PRESERVED, never rewritten to the current one: it is part of the hashed
+ * string, so a `MAILOH-` code must canonicalise back to `MAILOH-…` — see {@link CODE_PREFIXES}.
  */
 export function normalizeInviteCode(raw: string): string {
   const value = typeof raw === "string" ? raw.trim() : "";

@@ -18,19 +18,14 @@ export { GRADUATION_THRESHOLD, DEMOTION_THRESHOLD, patternKeyFor, parsePatternKe
 export type { LearningKind, LearningLabel, LearningSignalInput, ParsedPattern };
 
 /**
- * LearningService. Captures every learning-relevant action as a
- * `learning_signals` row **deduped by `triggeringActionId`**, and advances the
- * `graduations` counters with **SQL expressions** — never an
- * app-side read-modify-write, which would lose updates under the worker-read /
- * API-write race. The `graduated` flip is likewise computed and guarded in SQL.
- *
- * The `graduations` table is the seam the 1c pipeline reads via
- * `RoutingPort.isGraduated`: once a (sender→destination, route) pattern graduates
- * here, the pipeline auto-applies confident classifications for it.
- *
- * `record` / `recordOn` are now thin wrappers over `@trafficflow/db#recordLearningSignal` — see
- * that function's own header for why the write moved and why this class is not a second
- * implementation of it.
+ * LearningService. Captures every learning-relevant action as a `learning_signals` row deduped by
+ * `triggeringActionId`, and advances the `graduations` counters with SQL EXPRESSIONS — never an
+ * app-side read-modify-write, which loses updates under the worker-read / API-write race; the
+ * `graduated` flip is likewise computed and guarded in SQL. `graduations` is the seam the
+ * pipeline reads via `RoutingPort.isGraduated`: once a (sender→destination, route) pattern
+ * graduates, the pipeline auto-applies confident classifications for it. `record`/`recordOn` are
+ * thin wrappers over `@trafficflow/db#recordLearningSignal` — see that function for why the write
+ * moved.
  */
 export class LearningService {
   /** Public entry: runs on the request's ambient db (which may already be a tx). */

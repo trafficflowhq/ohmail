@@ -1,45 +1,12 @@
 /**
- * `@trafficflow/services/mail` — THE MAIL SERVICES, without the ones that make a Cloud account.
- *
- * The default barrel is the whole service layer, and it is `export *` over the auth ceremony,
- * the billing seam, invites, the waitlist and the cross-account admin reads. Importing one mail
- * service from it therefore loads all of them, which is free inside a server we deploy whole and
- * is not free when the same package is compiled into something we hand to a stranger.
- *
- * Measured rather than assumed: bundling the local engine against the default barrel put 29
- * private-half modules in the artifact, including the whole auth ceremony and (at the time) the
- * Stripe client — the Stripe machinery has since moved out of this repository entirely, into
- * its own billing service, but the billing seam and the ceremony still live behind the default
- * barrel. Tree-shaking does not remove them — a barrel re-exports live bindings, so the bundler
- * keeps them — which is why this is a second entry point and not a build flag.
- *
- * ── WHAT IS ABSENT, AND WHY EACH ONE ──────────────────────────────────────────────────────
- *
- *  · `auth/index.js` — the CEREMONY: registration, password verification, the lockout, WebAuthn,
- *    TOTP, recovery codes, OAuth, devices. A local engine has no registration and no second
- *    factor; the machine's own login is the boundary. See below for the two pieces that stay.
- *  · `entitlements/index.js` — the billing seam. Cloud is what you pay for; the desktop tier is
- *    free and has no signup. (The Stripe machinery itself is not in this repository at all —
- *    it lives in a separate billing service.)
- *  · `invites.js` / `waitlist-service.js` — there is no funnel to join on your own laptop.
- *  · `admin-dto.js` / `admin-service.js` — the only cross-account reader in the repo. An operator
- *    surface on a single user's machine is nothing but attack surface.
- *  · `mail/index.js` — transactional mail. The engine talks to the user's own server; it
- *    never sends on our behalf.
- *  · `ip-throttle.js`, `account-deletion-service.js`, `hey-migration.js`, `mailbox-allowance.js`,
- *    `learning-service.js`, and the two one-time backfills — every one of them is a hosted-service
- *    operation. Deleting the data directory is the erasure here, and the plan limit is Cloud's.
- *
- * ── AND THE TWO AUTH MODULES THAT DO STAY ─────────────────────────────────────────────────
- *
- * `withSession` resolves a bearer token against the `sessions` table, and the engine mints one
- * session per launch. So session RESOLUTION is mail infrastructure, not ceremony: without it the
- * local API has no way to tell its own shell from anything else that reaches the pipe.
- *
- * What stays is therefore `resolve-session.js` (look up a session by token hash) and the config
- * validator, plus the primitives they are built from. What does not is every module that
- * ESTABLISHES a session: nothing here can register an account, verify a password, or enrol a
- * factor.
+ * `@trafficflow/services/mail` — the mail services, without the ones that make a Cloud account.
+ * The default barrel is `export *` over the ceremony, billing, invites, waitlist and admin reads;
+ * importing one mail service loads all of them — measured: the local engine bundled against it
+ * carried 29 private-half modules, and tree-shaking does not remove live bindings, hence a second
+ * entry point. Absent: the ceremony, the billing seam, invites/waitlist, the admin reader,
+ * transactional mail, every hosted-only operation. What STAYS of auth: session RESOLUTION and the
+ * config validator — the engine mints one session per launch, so resolution is mail
+ * infrastructure, not ceremony; nothing here can register or verify a password.
  */
 
 export const SERVICES_VERSION = "0.0.0";
@@ -253,25 +220,14 @@ export {
   type AwayThrottle, type AwayResponderPassDeps, type AwayResponderPassResult,
 } from "./away-responder-pass.js";
 /**
- * THE SEND RECONCILER, ON THE MAIL BARREL — and its absence here is why the standalone door had
- * no reconciler at all.
- *
- * The slice that added it shipped the pass, the hosted route and the self-host tick, and left the
- * sidecar hook for a
- * file another lane held. It could not have been written: `runSendReconcilePass` was exported from
- * `./index.js` only, and the sidecar imports THIS barrel — so the hook would not have compiled,
- * and the desktop engine bundle measured byte-identical before and after that slice because
- * nothing in it could reach the pass.
- *
- * That is the same shape the away responder was found in ("the worker's package publishes four
- * subpaths and the responder is not among them"), and it is worth naming twice: a pass is only as
- * reachable as the entry point its host actually imports, and a barrel omission fails SILENTLY —
- * no error, no red test, just a door that quietly does less than the others.
- *
- * Mail-half by the same test as the two passes above: it names no cloud table (its eligibility
- * gate is injected), it reads and writes only the mail schema, and its adapter is handed in. The
- * standalone door needs it more than either, because there a stranded reservation has NO other
- * resolver — no cron, no clock, nothing but the drain.
+ * The send reconciler, on the MAIL barrel — its absence here is why the standalone door had no
+ * reconciler at all. The slice that added it shipped the pass, the hosted route and the self-host
+ * tick; the sidecar hook could not have been written: `runSendReconcilePass` was on `./index.js`
+ * only, and the sidecar imports THIS barrel — the engine bundle measured byte-identical before
+ * and after. The same shape the away responder was found in: a pass is only as reachable as the
+ * entry point its host imports, and a barrel omission fails SILENTLY. Mail-half by the same test:
+ * no cloud table, eligibility injected, adapter handed in. The standalone door needs it most — a
+ * stranded reservation there has NO other resolver.
  */
 export {
   runSendReconcilePass, SEND_RECONCILE_BATCH, SEND_RECONCILE_CALL_CEILING_MS,

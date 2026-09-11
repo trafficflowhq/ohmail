@@ -84,16 +84,13 @@ function hasTrgm(db: Db): Promise<boolean> {
 const FUZZY_THRESHOLD = 0.3;
 
 /**
- * KbService — the account's knowledge base. Plain
- * account-scoped CRUD, REST-only (no `change_log` / EntityType growth);
- * clients refetch. PUT is a FULL replace of `title`/`content`/`tags`. `title` and
- * `content` are validated non-empty; a cross-account id is a 404.
- *
- * `retrieve` is KB's OWN lexical retrieval (NOT routed through
- * SearchService, which is hardwired to the messages/bodies joins): it queries the
- * DB-generated `kb_tsv` with `websearch_to_tsquery` ranked by `ts_rank`, with a
- * pg_trgm/ILIKE degrade (probing `to_regprocedure` like search-service's hasTrgm)
- * so it also works offline in PGlite. accountId-scoped throughout.
+ * KbService — the account's knowledge base. Plain account-scoped CRUD, REST-only (no
+ * `change_log`); clients refetch. PUT is a FULL replace of `title`/`content`/`tags`; `title` and
+ * `content` are validated non-empty; a cross-account id is a 404. `retrieve` is KB's OWN lexical
+ * retrieval — not routed through SearchService, which is hardwired to the messages/bodies joins:
+ * it queries the DB-generated `kb_tsv` with `websearch_to_tsquery` ranked by `ts_rank`, with a
+ * pg_trgm/ILIKE degrade (probing `to_regprocedure` like search-service's hasTrgm) so it also
+ * works offline in PGlite. Account-scoped throughout.
  */
 export class KbService {
   async list(ctx: ServiceContext, opts: ListKbOptions = {}): Promise<Page<KbEntryDTO>> {
@@ -155,34 +152,14 @@ export class KbService {
    */
   async retrieve(ctx: ServiceContext, query: string, k = DEFAULT_K): Promise<KbEntryDTO[]> {
     /**
-     * ── THE RETRIEVAL TERM IS SENDER-CHOSEN, AND IT REACHES A PER-ROW TRIGRAM COMPARISON ────
-     *
-     * The one production caller is `DraftingService.draftReply`, which builds
-     * `` `${target.subject} ${target.snippet}` `` — the snippet is capped at 200 characters when
-     * it is cut (`pipeline.ts`, `husk-restore.ts`), and the SUBJECT is not capped anywhere: it
-     * is whatever header the sending server delivered. So a stranger who sends one message with
-     * a 100 KB `Subject:` decides the length of the string this method hands to
-     * `websearch_to_tsquery` and to `word_similarity(q, title|content)`, the latter evaluated
-     * once per KB row.
-     *
-     * TRUNCATED rather than refused, which is the opposite of `SearchService.search`'s answer to
-     * the same shape, and the difference is who is asking. There, a person typed a query and an
-     * answer to a shortened version of it would be a silently different answer. Here the string
-     * is a RELEVANCE HINT assembled by our own code, and refusing would fail a legitimate AI
-     * draft because of a header its recipient did not write.
-     *
-     * **Truncation is a relevance TRADEOFF, not a guarantee, and this used to over-claim it.**
-     * Dropping later terms can change the ranking or select a different entry — it does not
-     * merely narrow the grounding. What makes that acceptable is that the caller no longer lets
-     * one half of the hint eat the other: `DraftingService` budgets the subject and the snippet
-     * separately before they get here, so in production this slice is a backstop that does not
-     * fire rather than the thing deciding what the model sees.
-     *
-     * SLICED BEFORE TRIMMED, not after: `.trim()` scans the whole string, so trimming first would
-     * pay an unbounded cost on a sender-chosen header in order to bound it.
-     *
-     * {@link SEARCH_QUERY_MAX_CHARS} rather than a number of its own — one answer to "how much
-     * text is a search term", used by both retrieval paths.
+     * The retrieval term is sender-chosen and reaches a per-row trigram comparison: the snippet
+     * is capped at 200 characters, the SUBJECT is whatever header arrived — a stranger's 100 KB
+     * `Subject:` decides the length handed to `websearch_to_tsquery` and `word_similarity`, per
+     * KB row. TRUNCATED rather than refused — the opposite of `SearchService.search`, because of
+     * who is asking: there a person typed the query; here the string is a RELEVANCE HINT
+     * assembled by our own code. A tradeoff, not a guarantee — `DraftingService` budgets the
+     * halves separately, so this is a backstop. SLICED BEFORE TRIMMED: `.trim()` scans the whole
+     * string. {@link SEARCH_QUERY_MAX_CHARS}.
      */
     const q = (query ?? "").slice(0, SEARCH_QUERY_MAX_CHARS).trim();
     if (!q) return [];
@@ -225,16 +202,13 @@ export class KbService {
   }
 
   /**
-   * A KB entry's tag list — shape, COUNT and per-tag length.
-   *
-   * The count and the length were both missing: the array is stored whole as a `jsonb` column
-   * and read back into every retrieval's DTO, so an unbounded list is unbounded rows in every
-   * later response as well as in the write. Bounded here rather than at the column, because a
-   * `CHECK` on a jsonb array cannot say which entry was wrong.
-   *
-   * {@link MAX_TAG_NAME_CHARS} is deliberately the SAME 40 the first-class tags surface uses
+   * A KB entry's tag list — shape, COUNT and per-tag length. The count and length were both
+   * missing: the array is stored whole as `jsonb` and read back into every retrieval's DTO, so an
+   * unbounded list is unbounded rows in every later response. Bounded here rather than at the
+   * column, because a CHECK on a jsonb array cannot say which entry was wrong. {@link
+   * MAX_TAG_NAME_CHARS} is deliberately the SAME 40 the first-class tags surface uses
    * (`tags-service.ts`), imported rather than restated — a KB tag and a message tag are the same
-   * kind of word to the person typing it, and two limits would be two answers to one question.
+   * kind of word to the person typing it.
    */
   private validTags(v: unknown): string[] {
     if (v === undefined || v === null) return [];

@@ -359,19 +359,14 @@ export {
 // in the clear (German/EU OTPs, TANs, issued passwords the earlier detector left `no_ai = false`).
 
 /**
- * ATTACHMENT STAGING — the SEND-FACING half of the hosted send's direct-upload transport.
- *
- * On THIS barrel and deliberately not on `./mail`: the desktop engine imports `@trafficflow/services/mail`
- * and nothing else, and a local install has no object storage to stage into. Keeping these names off
- * the mail entry point is what makes "the standalone door never stages" a fact about the import
- * graph rather than a rule somebody has to remember.
- *
- * THE STORAGE CLIENT AND THE RETENTION SWEEP ARE NOT RE-EXPORTED HERE. They live on
- * `@trafficflow/db/cloud`, because their caller is the worker's maintenance slot and the worker
- * may not depend on this package. A convenience re-export would put this barrel back in the
- * worker's import graph for a symbol that is not this package's — which is the whole failure the
- * move undid; see the header of `attachment-staging.ts`. A host that needs both imports both, and
- * `apps/api-vercel/src/deps.ts` does exactly that.
+ * Attachment staging — the send-facing half of the hosted send's direct-upload transport. On THIS
+ * barrel and deliberately not on `./mail`: the desktop engine imports
+ * `@trafficflow/services/mail` and nothing else, and a local install has no object storage to
+ * stage into — keeping these names off the mail entry makes "the standalone door never stages" a
+ * fact about the import graph rather than a rule to remember. The storage client and the
+ * retention sweep are NOT re-exported here: they live on `@trafficflow/db/cloud`, because their
+ * caller is the worker's maintenance slot and the worker may not depend on this package. A host
+ * that needs both imports both — `apps/api-vercel/src/deps.ts` does exactly that.
  */
 export {
   makeAttachmentStagingPort, resolveStagedAttachments,

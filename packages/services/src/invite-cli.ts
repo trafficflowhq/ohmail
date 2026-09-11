@@ -1,49 +1,12 @@
 /**
- * THE OPERATOR INVITE PATH.
- *
- * It lives in `packages/services/src/` rather than in `scripts/` for the same reason
- * `packages/db/src/setup-prod.ts` does: the repo ROOT has no dependency on the workspace
- * packages, so a `scripts/*.ts` importing `@trafficflow/db` resolves to nothing under tsx.
- * The command is `pnpm invite …`; the location is where its imports work.
- *
- *   pnpm invite list [--pending] [--limit 50]
- *   pnpm invite mint --email someone@example.com [--ttl 14d] [--note "…"] [--force] [--no-send]
- *   pnpm invite revoke --email someone@example.com [--note "why"]
- *   pnpm invite stats
- *
- * ── WHY THIS IS A SCRIPT AND NOT AN ENDPOINT ─────────────────────────────────────────────
- *
- * Minting an invite is the single most privileged operation while signup is invite-gated: it
- * hands a stranger the right to open an account. The only correct authentication for it is
- * a staff role plus step-up, which the invite gate predates. Shipping an HTTP route without
- * one would mean choosing between a shared-secret bearer
- * (a second, weaker auth scheme on the public API, for the one action that most needs the
- * strong one) and no gate at all. So the mint stays where the authentication is already
- * strong and already audited: an operator with the production database URL, on their own
- * machine. When an admin route takes this over, `WaitlistService.mintInvite` is what it
- * calls — the
- * logic does not move, only the door in front of it.
- *
- * ── ENVIRONMENT ──────────────────────────────────────────────────────────────────────────
- *
- * Read from the process environment (the operator's secrets file — never git):
- *
- *   DATABASE_URL_POOLED   required. The pooled URL, same as the API host uses.
- *   RESEND_API_KEY        required unless --no-send. Without it the code is printed and
- *   MAIL_FROM             required unless --no-send. nothing is mailed.
- *   MAIL_APP_URL          optional (default https://ohmail.app) — where /join lives.
- *   MAIL_SITE_URL         optional (default https://ohmail.app).
- *   MAIL_SUPPORT_EMAIL    optional (default support@ohmail.app).
- *
- * The mailer is constructed through `MailService`, never as a bare `ResendMailer`: the
- * per-recipient limiter, the link construction and the redeem URL all live there, and an
- * operator running this in a loop is exactly the caller the limiter was written for.
- *
- * ── THE CODE IS PRINTED ONCE ─────────────────────────────────────────────────────────────
- *
- * `invites.code_hash` is `sha256(code)`. There is no way to recover the raw value from the
- * database, by design — so the terminal output IS the only copy on our side, and re-issuing
- * (with --force) is the remedy for a lost one.
+ * The operator invite path (`pnpm invite list|mint|revoke|stats`). In `packages/services/src/`
+ * rather than `scripts/` because the repo root has no dependency on the workspace packages. A
+ * script and not an endpoint: minting an invite is the most privileged operation while signup is
+ * invite-gated, and the only correct authentication is a staff role plus step-up, which the gate
+ * predates — the mint stays with an operator holding the production database URL; an admin route
+ * would call `WaitlistService.mintInvite`. `DATABASE_URL_POOLED` required;
+ * `RESEND_API_KEY`/`MAIL_FROM` unless `--no-send`. Constructed through `MailService`, never a
+ * bare `ResendMailer`. The code is printed ONCE — `--force` re-issue is the remedy.
  */
 import { pathToFileURL } from "node:url";
 import { makeOwnedDb } from "@trafficflow/db/cloud";

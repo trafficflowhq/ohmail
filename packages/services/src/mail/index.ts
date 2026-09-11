@@ -1,21 +1,12 @@
 /**
- * Transactional mail.
- *
- * The template set is closed: waitlist confirmation, invite
- * delivery, new-device sign-in notice, email verification, the account-exists notice — and
- * `operator_alert`, which
- * is the only one that is not customer mail (it goes to the configured operator
- * address, carries no user-controlled string, and is the second delivery path for the
- * pager so a single vendor outage cannot silence it). Stripe's Dashboard sends
- * invoices, receipts and dunning; ohmail sends none of those, and adding a
- * template is a product decision, argued at its definition in `templates.ts`.
- *
- * ⚠ `ResendMailer` is exported because a composition root has to construct the
- * transport, and there is no way to inject one without naming it. It is NOT the thing
- * callers should hold: it enforces no rate limit, builds no URLs and owns no token
- * lifecycle. Construct it once, wrap it in `MailService`, pass the service. Under a
- * test runner it refuses to construct at all without an injected `http` — the suite
- * performs zero external requests, structurally.
+ * Transactional mail. The template set is CLOSED: waitlist confirmation, invite delivery,
+ * new-device sign-in notice, email verification, the account-exists notice — and
+ * `operator_alert`, the only non-customer one (the configured operator address, no
+ * user-controlled string, the pager's second path). Adding a template is a product decision,
+ * argued in `templates.ts`. `ResendMailer` is exported because a composition root must construct
+ * the transport — it is NOT what callers hold: no rate limit, no URLs, no token lifecycle;
+ * construct once, wrap in `MailService`, pass the service. Under a test runner it refuses to
+ * construct without an injected `http` — zero external requests, structurally.
  */
 export {
   type MailerPort, type MailSendResult, type SendOptions, type SkipReason,
