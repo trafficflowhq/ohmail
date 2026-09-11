@@ -327,126 +327,60 @@ export const mailboxes = sqliteTable("mailboxes", {
   // the value derives from an SMTP AUTH failure — a server's own text can echo the credential.
   smtpSizeProbedAt: integer("smtp_size_probed_at", { mode: "timestamp_ms" }),
   smtpSizeProbeCode: text("smtp_size_probe_code"),
-  // ── Mail 0030 — the ONE-TIME re-evaluation of mail the sensitivity override already misrouted ──
-  //
-  // A fix stopped `pipeline.ts:393` letting a sender-chosen subject or body carry a stranger
-  // past the consent gate. It is forward-looking only, and the damage was already filed:
-  // when it was measured, a large majority of the Ohbox's rows were sensitive and nearly all of
-  // those came from a sender absent from `contacts`. This column is the whole of that correction's
-  // idempotency — NULL means "never re-screened", a timestamp means "done, never again".
-  //
-  // A MARKER, exactly as `kickstart_at` is, and stamped by the same rule for a sharper reason:
-  // AFTER the pass, never before it. Claiming it first would make a crash permanent — a mailbox
-  // marked corrected with half its misrouted mail still in the Ohbox and nothing that would ever
-  // look again. Re-running is safe without the marker at all, because the pass's candidate query
-  // is what makes it idempotent: a message it has moved is desired into `ohmail/Screener` and is
-  // no longer a candidate. The marker saves the scan, not the correctness.
-  //
-  // It is NOT `kickstart_at` re-used, and that was considered first: `listScreenerBacklog`
-  // selects the INVERSE candidate set (desired = `ohmail/Screener`) and the kickstart marker is
-  // already stamped on every live mailbox. Written by the one-time re-screen pass and by nothing
-  // else.
+  // Mail 0030 — the one-time re-evaluation of mail the sensitivity override already misrouted. A
+  // fix stopped a sender-chosen subject or body carrying a stranger past the consent gate; it is
+  // forward-looking only, and the damage was already filed — most of the measured Ohbox rows were
+  // sensitive and nearly all came from senders absent from `contacts`. This column is the
+  // correction's idempotency: NULL means "never re-screened", a timestamp "done, never again". A
+  // MARKER, stamped AFTER the pass, never before: claiming it first would make a crash permanent.
+  // Re-running is safe without it — the candidate query is the idempotency (a moved message is no
+  // longer a candidate); the marker saves the scan, not the correctness. NOT `kickstart_at`
+  // re-used: `listScreenerBacklog` selects the INVERSE candidate set, and that marker is already
+  // stamped on every live mailbox.
   sensitiveRescreenAt: integer("sensitive_rescreen_at", { mode: "timestamp_ms" }),
   /**
-   * WHERE THE RE-SCREEN GOT TO — the last `messages.id` of the last COMMITTED page (mail 0081).
-   *
-   * The marker above says whether the pass is FINISHED. This says where it is. They are
-   * different facts and the pass needs both, because it is bounded:
-   * `SENSITIVE_RESCREEN_MAX_PAGES` stops it after 50 000 rows and it then correctly declines to
-   * stamp the marker. Without a resume point the next run started at the beginning again, and
-   * whether that made any progress depended on the rows already seen dropping out of the
-   * candidate query. The MOVERS drop out — a message sent to the Screener is no longer desired
-   * into the Ohbox. The STAYERS do not: a candidate the re-evaluation deliberately leaves in
-   * place (a known sender's login code) satisfies the candidate query for ever. So a mailbox
-   * whose first 50 000 candidates are stayers re-read the same prefix on every run and never
-   * reached the misrouted mail behind it, while reporting progress-shaped counts.
-   *
-   * The same column, for the same reason, as `rules.retro_cursor` (mail 0034) and
-   * `account_settings.ohbox_tidy_cursor` (mail 0043) — this pass was the one member of that
-   * family without one. Per MAILBOX, matching the marker beside it: one run is one mailbox.
-   *
-   * WRITTEN INSIDE THE PAGE'S OWN TRANSACTION, so the position and the work it covers commit
-   * together and a kill between them is not a state the database can hold. Advanced under
-   * `WHERE cursor IS NULL OR cursor < <new>` so two operators running the pass at once cannot
-   * rewind one another; NULLed in the same UPDATE that stamps the marker, so a completed
-   * mailbox has no stale resume point and a `force` re-run starts at the beginning — which is
-   * what makes the `force` test's "zero writes" mean the candidate query is idempotent rather
-   * than that the cursor was already at the end. A dry-run plan READS it as a start and never
-   * advances it: every page it writes is rolled back, this UPDATE included.
-   *
-   * KNOWN LIMIT, stated here rather than rediscovered as a bug — the same one `retro_cursor`
-   * records: a row BEHIND the cursor that becomes a candidate again mid-pass is not reconsidered
-   * by the remainder of that pass. The pass detects the arm it CAN see before it stamps — a
-   * candidate whose `folder_state` was rewritten under the walk, which is how the worker's
-   * completion restores a stale Ohbox intent — and declines the marker, clearing this column so
-   * the next run re-walks the prefix. It cannot see an exclusion being REMOVED (the user deletes
-   * their own rule, or returns a triage state to `none`), because that touches no
-   * `folder_state` row. For that arm the supported remedy is to NULL **all three** of this
-   * column, `sensitive_rescreen_started_at` and `sensitive_rescreen_at`: clearing this one alone
-   * does nothing once the marker is stamped, because the marker is what stops the pass looking at
-   * the mailbox at all — and leaving the epoch behind would date the next walk from the previous
-   * one, so its completion check would look back over a window that is not its own.
+   * Where the re-screen got to — the last `messages.id` of the last COMMITTED page (mail 0081).
+   * The marker says whether the pass is FINISHED; this says where it is. The pass is bounded, and
+   * without a resume point the next run started at the beginning: MOVERS drop out of the
+   * candidate query, STAYERS do not, so a prefix of stayers was re-read forever. Same column,
+   * same reason as `rules.retro_cursor`. Written inside the page's own transaction; advanced
+   * under `WHERE cursor IS NULL OR cursor < <new>` so two operators cannot rewind one another;
+   * NULLed in the same UPDATE that stamps the marker. Known limit: an exclusion REMOVED mid-pass
+   * is invisible — the remedy is to NULL all three re-screen columns together.
    */
   sensitiveRescreenCursor: text("sensitive_rescreen_cursor"),
   /**
-   * WHEN THE WALK THAT CURSOR BELONGS TO BEGAN — the window the completion check looks back over
-   * (mail 0081). NULL exactly when the cursor is NULL.
-   *
-   * The check needs the WALK's start and not the RUN's, and the difference is the whole reason
-   * this is a column rather than a local. The cursor outlives an invocation: run A stores a
-   * prefix and exits, the worker restores one of A's rows to the Ohbox, run B resumes past it.
-   * Against B's own start instant that restoration is in the past and invisible, and B stamps.
-   * Against the WALK's start it is inside the window, B declines the marker, clears both columns,
-   * and the next run re-walks the prefix.
-   *
-   * Written with `coalesce(existing, <run start>)` in the same guarded UPDATE that stores the
-   * cursor, so the first page of a walk sets it and every resumption keeps it. Cleared with the
-   * cursor when the marker lands.
+   * When the walk that cursor belongs to BEGAN — the window the completion check looks back over
+   * (mail 0081). NULL exactly when the cursor is NULL. The check needs the WALK's start, not the
+   * RUN's: the cursor outlives an invocation — run A stores a prefix and exits, the worker
+   * restores one of A's rows to the Ohbox, run B resumes past it. Against B's own start that
+   * restoration is invisible, and B stamps; against the WALK's start it is inside the window, B
+   * declines the marker and clears both columns, so the next run re-walks the prefix. Written
+   * with `coalesce(existing, <run start>)` in the same guarded UPDATE as the cursor; cleared with
+   * the cursor when the marker lands.
    */
   sensitiveRescreenStartedAt: integer("sensitive_rescreen_started_at", { mode: "timestamp_ms" }),
-  // ── Mail 0036 — the ONE-TIME repair of bodies a classifier FALSE POSITIVE stored redacted ──
-  //
-  // A click tracker's percent-escaped slash (`-2F`) put word boundaries around the characters
-  // `2Fa`, which the sensitivity vocabulary read as the acronym `2fa`. Mail judged sensitive is
-  // stored with its text redacted and NO HTML AT ALL, so ordinary newsletters, invoices and
-  // monitoring alerts were filed unreadable — a small fraction of the sensitivity-categorised
-  // bodies clear under the fixed classifier. The fix (`packages/core/src/sensitive.ts`,
-  // `proseOnly`) is forward-looking; nothing in the product re-reads a stored body, and the only
-  // remaining copy of the discarded HTML is the message on the IMAP server.
-  //
-  // A MARKER, exactly as `kickstart_at` and `sensitive_rescreen_at` are, and it exists for the
-  // reason `thread-backfill` needed none: THIS candidate set does not shrink. A message that is
-  // still sensitive under the fixed classifier is still categorised, still without html, and
-  // therefore still a candidate for ever — so without a marker the pass would re-read every
-  // categorised message off the mail server every worker cycle, permanently, to reach the same
-  // answer each time.
-  //
-  // Stamped AFTER the pass, never before: claiming it first makes a crash permanent. Re-running
-  // is safe without it, because a message the pass has cleared no longer carries a category and
-  // drops out of the candidate query — the marker saves the IMAP reads, not the correctness.
-  // Setting it back to NULL is the supported, and only, way to ask for the repair again.
-  //
-  // Written by the worker's false-positive backfill pass and by nothing else.
+  // Mail 0036 — the one-time repair of bodies a classifier FALSE POSITIVE stored redacted. A
+  // click tracker's percent-escaped slash (`-2F`) put word boundaries around `2Fa`, read as the
+  // acronym `2fa`; mail judged sensitive is stored with text redacted and NO HTML, so ordinary
+  // newsletters were filed unreadable. The fix (`proseOnly`) is forward-looking; the only
+  // remaining copy of the discarded HTML is on the IMAP server. A MARKER, for the reason
+  // `thread-backfill` needed none: THIS candidate set does not shrink — a message still sensitive
+  // under the fixed classifier is a candidate forever, so without a marker the pass would re-read
+  // every categorised message off the server every cycle. Stamped AFTER the pass (claiming first
+  // makes a crash permanent); re-running is safe — the marker saves the IMAP reads, not the
+  // correctness. NULLing it asks again.
   sensitiveFpBackfillAt: integer("sensitive_fp_backfill_at", { mode: "timestamp_ms" }),
-  // ── Mail 0038 — WHEN THIS MAILBOX'S FIRST IMPORT ACTUALLY FINISHED ──
-  //
-  // A first import drains newest-first in bounded batches over minutes, so the server holds a
-  // PARTIAL mailbox — a recent block, a gap, then older mail — for the whole of it. The client
-  // watches its own mirror grow and says "still syncing"; what it could not see is the import
-  // ENDING for a reason other than completion, so a tab that caught up to the partial state
-  // called the mailbox done and showed a Screener with a hole in it as the whole of it.
-  //
-  // NOT `last_sync_at`, and the difference is the point: that column is SHARED (one
-  // `UPDATE … WHERE id IN (…)` per cycle, so two mailboxes report an identical age) and lands
-  // EARLY (stamped after every successful cycle, backlog or not). This one is PER-MAILBOX and is
-  // written ONLY once a cycle completes with `hasBacklog === false` — the first time the import
-  // has genuinely drained. The client reads it as a FLOOR: `IS NULL ⇒ still importing`, whatever
-  // the mirror is doing.
-  //
-  // NULL means "the first import is not known to have finished". Written AFTER the drain, guarded
-  // on `IS NULL` so it is a once-per-mailbox event, by the worker's sync cycle
-  // (`stampInitialImportComplete`) and by nothing else. Clearing it back to NULL is the supported
-  // way to make the client speak "still importing" again.
+  // Mail 0038 — when this mailbox's FIRST IMPORT actually finished. A first import drains
+  // newest-first in bounded batches, so the server holds a PARTIAL mailbox for the whole of it.
+  // The client watches its own mirror grow and says "still syncing"; what it could not see is the
+  // import ENDING for a reason other than completion, so a tab that caught up called the mailbox
+  // done and showed a Screener with a hole in it as the whole of it. NOT `last_sync_at`: that
+  // column is SHARED (one UPDATE per cycle) and lands EARLY (after every successful cycle,
+  // backlog or not). This one is PER-MAILBOX, written ONLY once a cycle completes with
+  // `hasBacklog === false`. The client reads it as a FLOOR: `IS NULL` means still importing.
+  // Guarded on `IS NULL` so it is a once-per-mailbox event; clearing it back to NULL is the
+  // supported way to make the client speak "still importing" again.
   initialImportCompletedAt: integer("initial_import_completed_at", { mode: "timestamp_ms" }),
   // Mail 0098: the HTML signature beside the text one. Nullable, same as its twin.
   signatureHtml: text("signature_html"),
@@ -526,43 +460,29 @@ export const mailboxFolders = sqliteTable("mailbox_folders", {
   highestmodseq: int64("highestmodseq"),
   deltaToken: text("delta_token"),
   /**
-   * THE FOLDER'S `EXISTS`, AS THE SELECT REPORTED IT  — the first pull's denominator.
-   *
-   * No truthful total existed anywhere. This table held cursors only, and the adapter read
-   * `mb.exists` off every SELECT and discarded it — so the import progress strip had a numerator
-   * (the mirror's row count) and nothing to divide it by, and the one number ever shown was a
-   * literal multiplier somebody guessed. Remaining is Σ this column over WATCHED folders minus
-   * the mirror count; the rate is the client's own rolling `MirrorGrowth`; the ETA is
-   * remaining/rate, said as "about", and it is gone at `initialImportCompletedAt`.
-   *
-   * Written by every cycle that opens the folder, and NULL means "not yet opened under this
-   * build" — never zero. A reader writes it exactly like an organizer: counting is a read.
+   * The folder's `EXISTS`, as the SELECT reported it — the first pull's denominator. No truthful
+   * total existed anywhere: this table held cursors only, and the adapter read `mb.exists` off
+   * every SELECT and discarded it, so the import progress strip had a numerator (the mirror's row
+   * count) and nothing to divide it by — the one number ever shown was a literal multiplier
+   * somebody guessed. Remaining is the sum of this column over WATCHED folders minus the mirror
+   * count; the ETA is remaining/rate, said as "about", and gone at `initialImportCompletedAt`.
+   * Written by every cycle that opens the folder; NULL means "not yet opened under this build" —
+   * never zero. A reader writes it exactly like an organizer: counting is a read.
    */
   serverExists: integer("server_exists"),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
 }, (t) => ({ uq: unique().on(t.mailboxId, t.folder) }));
 
-/**
- * USER-COMMANDED FOLDER OPERATIONS — mail 0074 (FOLDERS-SPEC.md stage 2: create / rename /
- * delete from the rail).
- *
- * The folder verbs are REAL IMAP writes in the user's own mailbox, and the API never opens an
- * IMAP connection to organize — so it records the COMMAND here and rings the `sync_requested_at`
- * doorbell, and the worker executes it inside the mailbox's serial cycle (one organizer, one
- * connection discipline), then applies the database consequences and DELETES the row. This is
- * `folder_state`'s desired/observed split lifted one level: the desired state of the folder
- * TREE, one pending row per subject folder.
- *
- *  · `op` is a CHECK-closed set: 'create' | 'rename' | 'delete'.
- *  · `to_folder` is the rename's target canonical path; NULL for the other two (CHECK-paired).
- *  · `status` 'pending' → the worker owes it; 'failed' + `error` → the honest refusal, carried
- *    to every client on the `folder` entity (`FolderDTO.op.error`) until dismissed or replaced.
- *  · UNIQUE(folder_id): ONE command in flight per folder — a second is refused 409 with the
- *    honest sentence, because two pending commands on one subject have no defined order.
- *  · `folder_id` CASCADEs with its inventory row: an op cannot outlive its subject.
- *
- * A row is deleted on completion — done needs no residue; `change_log` carries the history.
- */
+  /**
+   * The folder's `EXISTS`, as the SELECT reported it — the first pull's denominator. No truthful
+   * total existed anywhere: this table held cursors only, and the adapter read `mb.exists` off
+   * every SELECT and discarded it, so the progress strip had a numerator and nothing to divide it
+   * by — the one number shown was a literal multiplier somebody guessed. Remaining is the sum of
+   * this column over WATCHED folders minus the mirror count; the ETA is said as "about" and gone
+   * at `initialImportCompletedAt`. Written by every cycle that opens the folder; NULL means "not
+   * yet opened under this build" — never zero. A reader writes it exactly like an organizer:
+   * counting is a read.
+   */
 export const folderOps = sqliteTable("folder_ops", {
   id: text("id").default(UUID_V4).primaryKey(),
   accountId: text("account_id").notNull(),
@@ -607,41 +527,25 @@ export const messages = sqliteTable("messages", {
   threadId: text("thread_id").references(() => threads.id),
   unread: integer("unread", { mode: "boolean" }).notNull().default(true),
   /**
-   * WHEN THIS MESSAGE STOPPED BEING UNREAD — the order "Earlier" is sorted by (mail 0047).
-   *
+   * When this message stopped being unread — the order "Earlier" is sorted by (mail 0047).
    * Written by the same statement that flips {@link unread}: an instant when the flag goes false,
-   * NULL when it goes back to true. It is a record OF that flag and never the source of it, so
-   * dropping the column costs the reading order and nothing else.
-   *
-   * **NULL means "not known", and it must sort BELOW every stamped row rather than being folded in
-   * by date.** Two different rows carry NULL — one read before this column existed, and one never
-   * read at all — and neither has an honest answer. There is no backfill for the same reason:
-   * substituting `updated_at` or `date` would hand the reader a manufactured order they cannot
-   * tell from a real one.
-   *
-   * Nothing filters or pages on it, so it has no index; the sort happens on the client over the
-   * window it already holds, and the server's keyset stays `(date, id)`.
+   * NULL when it goes back to true. A record OF the flag, never its source. NULL means "not
+   * known" and must sort BELOW every stamped row: two different rows carry NULL — read before
+   * this column existed, and never read at all — and neither has an honest answer. No backfill
+   * for the same reason: substituting `updated_at` or `date` would hand the reader a manufactured
+   * order they cannot tell from a real one. No index; the sort happens on the client, and the
+   * server's keyset stays `(date, id)`.
    */
   lastReadAt: integer("last_read_at", { mode: "timestamp_ms" }),
   /**
-   * ── Mail 0065 — WHEN THIS MESSAGE LEFT THE MIRROR'S LIVING VIEWS ──
-   *
-   * Two writers, one meaning: the user DELETED it (`MessageService.delete` — the message rides to
-   * the provider's `\Trash` and the mirror stops presenting it), or the worker observed it
-   * EXPUNGED from every folder we watch (`tombstoneInstanceless` — the server no longer holds it,
-   * and a mirror that kept showing it would be describing a mailbox that does not exist). Both
-   * emit a `change_log` `delete`, so every client tombstones the row.
-   *
-   * A TIMESTAMP AND NOT A ROW DELETE, deliberately: the row is the message's identity —
-   * `dedup_key` is what recognises the same message if it re-appears (a restore from Trash in the
-   * user's own client), and `change_log`/`message_instances`/threads all reference it. The
-   * re-appearance path (`commitChange`'s adopt) CLEARS this and re-emits the entity, which is the
-   * "a LATER create resurrects" rule the client apply contract already carries.
-   *
-   * Every living-view read excludes `deleted_at IS NOT NULL`: the snapshot bootstrap, search, and
-   * the folder views (those exclude it structurally — a deleted row's `folder_state` names the
-   * Trash path, which no view filters on). GET-by-id deliberately still answers, for idempotent
-   * replay and honest inspection.
+   * Mail 0065 — when this message left the mirror's living views. Two writers, one meaning: the
+   * user DELETED it (it rides to the provider's Trash), or the worker observed it EXPUNGED from
+   * every watched folder. Both emit a `change_log` `delete`, so every client tombstones the row.
+   * A TIMESTAMP and not a row delete: the row is the message's identity — `dedup_key` recognises
+   * the same message if it re-appears, and `change_log`/`message_instances`/threads reference it.
+   * The re-appearance path clears this and re-emits the entity — "a LATER create resurrects".
+   * Every living-view read excludes `deleted_at IS NOT NULL`; GET-by-id deliberately still
+   * answers, for idempotent replay.
    */
   deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
   snippet: text("snippet").notNull().default(""),          // sensitivity-redacted preview (never an OTP)
@@ -651,23 +555,14 @@ export const messages = sqliteTable("messages", {
   attachmentCount: integer("attachment_count").notNull().default(0),
   sensitivityCategory: text("sensitivity_category"),      // SensitivityResult.category surfaced in the DTO
   /**
-   * The offline DKIM verdict for the CLAIMED author — column added by mail 0028, wired later.
-   *
-   * The column lands in the mail 0028 migration and **nothing writes or reads it yet.** That is
-   * deliberate: wiring it later then needs no DDL, no second journal
-   * entry, and no second deploy-ordering exercise for a feature whose risky half is the code.
-   *
-   * When it is wired, the union is
-   * `aligned | signed_unaligned | unsigned | fail | temperror | unavailable`, computed from
-   * `change.raw` plus a DNS TXT lookup of the selector — never from a header anyone wrote.
-   *
-   * **NULL resolves to the PERMISSIVE value, and that is a rule about consent, not a convenience.**
-   * Every row that predates the wiring was already decided under the old rules; making a missing
-   * verdict fail closed would put previously-accepted senders back in the Screener, which is the
-   * single outcome the acceptance criteria roll a deploy back for.
-   *
-   * No CHECK, on 0023's rule: the vocabulary belongs to the code that computes it, and a new
-   * member must be a code deploy rather than a migration that has to land first.
+   * The offline DKIM verdict for the CLAIMED author — column added by mail 0028, wired later,
+   * deliberately: wiring it then needs no DDL and no deploy-ordering exercise. When wired, the
+   * union is `aligned | signed_unaligned | unsigned | fail | temperror | unavailable`, computed
+   * from `change.raw` plus a DNS TXT lookup of the selector — never from a header anyone wrote.
+   * NULL resolves to the PERMISSIVE value, and that is a rule about consent: every row predating
+   * the wiring was decided under the old rules, and a missing verdict failing closed would put
+   * previously-accepted senders back in the Screener — the one outcome a deploy is rolled back
+   * for. No CHECK, on 0023's rule: the vocabulary belongs to the code that computes it.
    */
   authVerdict: text("auth_verdict"),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
@@ -683,20 +578,15 @@ export const messages = sqliteTable("messages", {
   // has to be the first key rather than a filter applied to a cross-account result.
   ixMessageIdHeader: index("messages_account_message_id_header_idx").on(t.accountId, t.messageIdHeader),
   ixUnread: index("messages_account_mailbox_unread_idx").on(t.accountId, t.mailboxId, t.unread),
-  // ── Mail 0034 — WHO SENT IT, which nothing could look up ──
-  //
-  // There was no index on `from_address` at all. Every existing reader of it — the retro pass,
-  // `sensitive-rescreen`'s candidate query, `heldRowsForDomain` — is therefore a sequential scan
-  // over the account's messages, and the retro pass runs one PER PAGE, per cycle, per owed rule.
-  //
-  // `lower(from_address)` and not the raw column: every writer and every reader of an address in
-  // this tree case-folds (`mime.ts#toAddr` at parse, `core/rules.ts#matches`, `drizzle-repo`'s
-  // `knownSenders`), so an index on the raw column would be unusable by all of them. `id` is the
-  // third column so the pass's `ORDER BY messages.id` keyset page is served by the same index
-  // rather than a sort. `account_id` LEADS for the reason `messages_account_message_id_header_idx`
-  // gives one line up: a sender address is attacker-choosable, so the account is the first key
-  // and never a filter applied to a cross-account result.
-  //
+  // Mail 0034 — WHO sent it, which nothing could look up. There was no index on `from_address` at
+  // all, so every reader — the retro pass, the re-screen's candidate query, `heldRowsForDomain` —
+  // was a sequential scan over the account's messages, and the retro pass runs one PER PAGE, per
+  // cycle, per owed rule. `lower(from_address)`, not the raw column: every writer and reader of
+  // an address in this tree case-folds, so an index on the raw column would be unusable by all of
+  // them. `id` is the third column so the pass's `ORDER BY messages.id` keyset page is served by
+  // the same index rather than a sort. `account_id` LEADS: a sender address is
+  // attacker-choosable, so the account is the first key and never a filter applied to a
+  // cross-account result.
   ixFromAddress: index("messages_account_from_addr_idx")
     .on(t.accountId, sql`lower(${t.fromAddress})`, t.id),
   // A SECOND index and not a range scan on the one above, BECAUSE A SUFFIX IS NOT A PREFIX.
@@ -780,37 +670,14 @@ export const messageInstances = sqliteTable("message_instances", {
 }));
 
 /**
- * ONE MESSAGE THE SYNC LOOP COULD NOT INGEST — durable, content-free, and retried by UID.
- *
- * The in-memory ledger (`apps/worker/src/dead-letter.ts`) records that a message could not be
- * processed and MOVES PAST IT, which is what stops one malformed message wedging a whole mailbox.
- * For the folders the loop enumerates end to end that record can afford to be process-local: the
- * known-set diff re-offers the UID after a restart. The SENT folder's cursor is a UID WATERMARK,
- * so a skipped UID the watermark has crossed is never enumerated again — and `own_copy` mail
- * legitimately produces no `messages` row, so nothing else in the system notices. A message the
- * user actually sent left their view permanently. This table is the durable half.
- *
- * ── THE COLUMNS THAT ARE NOT HERE ─────────────────────────────────────────────────────────────
- *
- * No subject, no sender, no Message-ID, no bytes, and no free text anywhere. A row is a COORDINATE
- * — mailbox, folder, server epoch, UID — plus a `code` the database itself holds to a closed set.
- * `mailbox_id` scopes it for the same reason every other locator read is mailbox-scoped: a
- * `(folder, uid)` pair repeats across every mailbox on the planet.
- *
- * **This table is never granted to the admin console's role.** The information is in the row's
- * EXISTENCE, not in a column, so no narrower projection closes it: an unparseable probe plus a poll
- * confirms delivery to a named mailbox. That is the oracle that retired `public.messages` from
- * `STAFF_SELECT_GRANTS` entirely, and it applies here unchanged.
- *
- * ── `next_attempt_at IS NULL` MEANS "NO CLOCK-RETRY", NOT "NEVER AGAIN" ───────────────────────
- *
- * Due is `resolved_at IS NULL AND (next_attempt_at <= now() OR attempted_version IS DISTINCT FROM
- * <this build>)`. The version arm is what makes a deploy carrying a parser fix reach the mail it
- * fixes, and it is self-disarming — an attempt stamps `attempted_version`, so it fires once per
- * build. The two REACHABLE failures are deterministic in the raw bytes, so they are born with a
- * NULL instant and woken by the version arm alone; a clock cannot change their answer and each
- * attempt would re-download the body it is about to refuse. `attempts` is the escalation signal,
- * derived rather than stored as a flag so it cannot disagree with itself.
+ * One message the sync loop could not ingest — durable, content-free, retried by UID. The
+ * in-memory ledger moves past a failure; the SENT folder's cursor is a UID WATERMARK, so a
+ * skipped UID the watermark crossed is never enumerated again — and `own_copy` mail produces no
+ * `messages` row, so nothing else notices: a message the user sent left their view permanently.
+ * No subject, sender, Message-ID, bytes or free text: a row is a COORDINATE plus a closed `code`.
+ * NEVER granted to the admin console's role: the information is in the row's EXISTENCE, so no
+ * projection closes it. The due predicate's version arm makes a deploy carrying a parser fix
+ * reach the mail it fixes — self-disarming, once per build.
  */
 export const messageFailures = sqliteTable("message_failures", {
   id: text("id").default(UUID_V4).primaryKey(),
@@ -838,42 +705,14 @@ export const messageFailures = sqliteTable("message_failures", {
 }));
 
 /**
- * ── THE RECONCILE BACKOFF PAIR, ON BOTH DESIRED-STATE TABLES (mail 0058) ────────────────────
- *
- * `attempts` / `next_attempt_at` are the durable half of the reconciler's per-item failure
- * isolation, and they are on BOTH `folder_state` and `flag_state` because the queue behind each
- * one starves the same way.
- *
- * A pending row is an IMAP mutation the worker still owes the server. When the server refuses one
- * particular mutation — a source folder that is read-only, an EXPUNGE the host will not perform, a
- * destination it will not accept — retrying it changes nothing, and retrying it EVERY CYCLE costs
- * an IMAP round trip per cycle for ever. Worse, `listPendingFolderStates` is ordered oldest-first
- * under a fixed per-cycle budget (`RECONCILE_MOVES_PER_CYCLE`), so immortal rows collect at the
- * HEAD of that budget and eventually consume all of it: mail the user filed a minute ago never
- * reaches their server because the reconciler spends its whole allowance re-refusing rows from
- * last week. That is head-of-line blocking by budget rather than by exception, and no amount of
- * per-item `try`/`catch` in the worker fixes it — the queue query has to be able to SKIP a row.
- *
- * So a refused mutation is deferred rather than abandoned:
- *
- *   attempts         how many times THIS mutation has been refused. Bounded backoff reads it;
- *                    the audit row publishes it, so a permanently stuck message is visible as a
- *                    number rather than as a repeating log line.
- *   next_attempt_at  when it may be attempted again. NULL ⇒ DUE NOW, which is what every row is
- *                    born as and what every row is reset to the moment the user expresses fresh
- *                    intent (`upsertFolderState` clears both columns on write). The pending
- *                    queries add `next_attempt_at IS NULL OR next_attempt_at <= now()`.
- *
- * **The row is never dropped, and the backoff has a floor, not a cliff.** There is no "gave up"
- * state and no terminal status: `reconcile_status` stays `pending`, the row keeps counting toward
- * `MailboxDTO.pendingMoves`, and the retry interval tops out at a few hours
- * (`nextReconcileAttemptAfter`, `apps/worker/src/sync.ts`). A user's move is their state and this
- * product does not discard it — a host that starts accepting the mutation next week converges then.
- * Deferral is about how OFTEN we ask, never about whether we still owe it.
- *
- * Deliberately no error column. What went wrong is free text from someone else's mail server; it
- * belongs in the `reconcile.move.failed` / `reconcile.flags.failed` audit row, which is where it
- * already goes. These two columns are a schedule, and a schedule is a coordinate.
+ * The reconcile backoff pair, on BOTH desired-state tables (mail 0058). When the server refuses
+ * one particular mutation, retrying it every cycle costs a round trip forever — and the pending
+ * queue is oldest-first under a fixed budget, so immortal rows collect at the HEAD and consume
+ * the whole allowance: mail filed a minute ago never reaches the server. The queue must be able
+ * to SKIP a row. `attempts` counts refusals; `next_attempt_at` is when to try again — NULL is DUE
+ * NOW, what every row is born as and reset to on fresh intent. The row is never dropped: no "gave
+ * up" state — a user's move is their state. No error column: what went wrong is free text from
+ * someone else's server and belongs in the audit row.
  */
 export const folderState = sqliteTable("folder_state", {
   id: text("id").default(UUID_V4).primaryKey(),
@@ -895,29 +734,14 @@ export const folderState = sqliteTable("folder_state", {
 }, (t) => ({ uqMessage: unique().on(t.messageId) }));
 
 /**
- * READ-STATE DESIRED STATE — `folder_state` for the `\Seen` flag (mail 0024).
- *
- * The shape is deliberately `folder_state`'s, column for column, because the problem is the
- * same problem: the API may never open IMAP, so a client that marks mail read can
- * only write down what it WANTS and let the always-on worker put it on the server. Before this
- * table `PATCH /messages/:id {unread}` wrote `messages.unread` and stopped there — the flag
- * never reached the mailbox in either direction, so the guarantee that "read/seen flags survive
- * everything" was false, and mail the user had read for years came back as
- * "New" on first sync because ingest dropped the adapter's `seen`.
- *
- *   desired_seen    what the USER asked for. Written by the API (and by ingest, at create).
- *   observed_seen   what the SERVER last said. Written by the worker only.
- *   last_set_by     'us' | 'external'. `reconcileMailbox` refuses to push a row it did not
- *                   author — the same user-wins rule the folder reconciler applies, and the
- *                   reason an unread-again in Apple Mail is not silently reverted by us.
- *   reconcile_status 'pending' | 'reconciled'. Derived from desired vs observed at every write,
- *                   never set by hand, so a row can never claim convergence it does not have.
- *   conflict        reserved, mirroring `folder_state`; nothing sets it true yet.
- *
- * One row per message (`unique(message_id)`), because there is one flag and the last writer
- * wins. `messages.unread` stays the READ model the DTO and the view partitions project — this
- * table is the write intent behind it, exactly as `folder_state.desired_folder` sits behind
- * `MessageDTO.folder`.
+ * Read-state desired state — `folder_state` for the `\Seen` flag (mail 0024): the API may never
+ * open IMAP, so a client that marks mail read writes what it WANTS and the worker puts it on the
+ * server. The old PATCH wrote `messages.unread` and stopped — the flag never reached the mailbox,
+ * and mail read for years came back "New" on first sync. `desired_seen` is what the user asked;
+ * `observed_seen` what the server last said (worker-only); `last_set_by` — the reconciler refuses
+ * to push a row it did not author, the user-wins rule; `reconcile_status` is DERIVED at every
+ * write, so a row cannot claim convergence it does not have. One row per message.
+ * `messages.unread` stays the READ model; this is the write intent behind it.
  */
 export const flagState = sqliteTable("flag_state", {
   id: text("id").default(UUID_V4).primaryKey(),
@@ -950,112 +774,42 @@ export const rules = sqliteTable("rules", {
   demotions: integer("demotions").notNull().default(0),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
 
-  /* ── mail 0034 — APPLYING A RULE TO MAIL THAT IS ALREADY FILED ────────────────
-   *
-   * A rule has always been consulted when mail ARRIVES and never afterwards, so writing one
-   * left the mailbox exactly as it was. The required behaviour is the opposite, and it is about
-   * the DEFAULT: creating a rule should apply it to ALL messages, future and previous, so the
-   * mailbox is managed efficiently — and that is the default rather than an opt-in.
-   *
-   * These four columns are the whole of the durable state for that. `retro_requested_at` set
-   * with `retro_done_at` NULL is the ONE definition of owed work; the worker's retro-apply pass
-   * is the only writer of the other three, and `RulesService` the only writer of the first.
-   *
-   *   retro_requested_at  the user asked for this rule to reach mail already on disk.
-   *   retro_done_at       the pass finished. Written LAST, on 0030's rule: claiming it first
-   *                       makes a crash permanent — a rule marked applied with most of its
-   *                       mail unmoved and nothing that would ever look again. Written last, a
-   *                       crash re-runs, and re-running is safe because the candidate query is
-   *                       itself the idempotency (a message already desired into the rule's
-   *                       destination is no longer a candidate).
-   *   retro_cursor        resume point: the last `messages.id` of the last COMMITTED page.
-   *                       ACCOUNT-scoped, not mailbox-scoped, because `rules.account_id` is the
-   *                       rule's scope — one cursor pages every mailbox on the account, which a
-   *                       per-mailbox marker (0025, 0030) could not do.
-   *
-   *                       KNOWN LIMIT, written here so it is not rediscovered as a bug:
-   *                       `messages.id` is a random UUID, so it is monotone only WITHIN one
-   *                       run's ordering. A message ingested after the cursor has passed its id
-   *                       — a backlog still draining — is skipped by this pass for ever. That
-   *                       is acceptable (a rule routes new mail at arrival, which is the
-   *                       ordinary path) and it is a second reason no copy anywhere may say
-   *                       "every message".
-   *   retro_moved         desired-state rows this rule's pass has written. Reported, not read.
-   *
-   * `rules` is a MAIL table, so these columns ship to the desktop LOCAL engine too, where
-   * nothing writes them yet. That is deliberate and has precedent — `messages.auth_verdict`
-   * landed the same way, ahead of its reader — and is recorded here so the next reader does not
-   * file it as dead schema.
-   */
+  // Mail 0034 — applying a rule to mail that is ALREADY filed. The default: creating a rule
+  // applies it to all messages, future and previous. `retro_requested_at` set with
+  // `retro_done_at` NULL is the ONE definition of owed work. `retro_done_at` is written LAST
+  // (claiming first makes a crash permanent); re-running is safe because the candidate query is
+  // the idempotency. `retro_cursor` is the resume point — ACCOUNT-scoped (a rule's scope is the
+  // account). Known limit: `messages.id` is a random UUID, monotone only within one run's
+  // ordering, so a message ingested after the cursor passed its id is skipped forever —
+  // acceptable, since a rule routes new mail at arrival. `retro_moved` is reported, not read.
+  // These columns ship to the desktop engine where nothing writes them yet — deliberate
+  // (`messages.auth_verdict` landed the same way).
   retroRequestedAt: integer("retro_requested_at", { mode: "timestamp_ms" }),
   retroDoneAt: integer("retro_done_at", { mode: "timestamp_ms" }),
   retroCursor: text("retro_cursor"),
   retroMoved: integer("retro_moved").notNull().default(0),
 
-  /* ── mail 0050 — A SECOND TERM ON A SENDER RULE: THE SUBJECT ────────────────────
-   *
-   * One sender sends two kinds of mail. `info@` at a small host is the invoice AND the
-   * `[NinjaFirewall]` alert every night; a sender rule can only say "all of it goes to Reads",
-   * which files the invoice with the alerts. The requirement is a rule that says BOTH things:
-   * *from this address AND with this in the subject*.
-   *
-   * NULL is the resting state and means "no subject term" — which is the truth for every rule
-   * that existed before this column and is byte-identical to the pre-slice router. There is no
-   * backfill and there can never be one: a term invented for an existing rule would NARROW a
-   * decision the user made about a whole sender, silently un-filing their mail.
-   *
-   * ── IT IS A CONJUNCTION, WHICH IS WHY IT IS SAFE TO ADD ────────────────────────
-   *
-   * `core/src/rules.ts#matches` reads it as an EXTRA term a rule must satisfy, never as an
-   * alternative one: a present term can only make a rule fire LESS often than it did. So the
-   * column cannot widen anybody's routing, and a row whose term nothing understands (an older
-   * engine reading a newer database) simply keeps matching on the sender alone — which is the
-   * pre-column behaviour and not a bypass.
-   *
-   * ── AND IT CHANGES THE ORDER, WHICH IS THE HALF THAT NEEDED A DECISION ─────────
-   *
-   * A subject-carrying sender rule OUTRANKS a bare sender rule for the same address
-   * (`compareRules`, mirrored in `drizzle-repo.ts#listRules`' `ORDER BY`). Without that, writing
-   * "from info@… AND subject contains [NinjaFirewall] → Reads" beside an existing
-   * "from info@… → Ohbox" would be a coin toss decided by a UUID tie-break: the more specific
-   * statement has to win, or the feature does not work at the only moment anybody reaches for it.
-   *
-   * The CHECK forbids the empty and whitespace-only string, so "no term" has exactly one
-   * representation (NULL) at the storage layer rather than three the readers must each agree
-   * about. The 200-char ceiling is a refusal to store a subject-length haystack as a needle.
-   *
-   * A MAIL column, so it ships to the desktop LOCAL engine with the rest of `rules`. Unlike the
-   * `retro_*` family above it has a reader there from day one: the local engine runs this same
-   * `evaluateRules`.
-   */
+  // Mail 0050 — a second term on a sender rule: the SUBJECT. One sender sends two kinds of mail
+  // (`info@` is the invoice AND the nightly alert), and a sender rule could only file all of it
+  // together. NULL is the resting state, "no subject term"; there is no backfill and can never be
+  // one: a term invented for an existing rule would NARROW a decision the user made about a whole
+  // sender. A CONJUNCTION: `matches` reads it as an extra term, so a present term can only make a
+  // rule fire LESS often, and an older engine reading a newer database keeps matching on the
+  // sender alone. It changes the ORDER: a subject-carrying rule OUTRANKS a bare rule for the same
+  // address — the more specific statement has to win. The CHECK forbids empty and whitespace-only
+  // (one representation of "no term"); the 200-char ceiling refuses a haystack as a needle.
   subjectContains: text("subject_contains"),
 
-  /* ── mail 0052 — THE OTHER HALF OF THE SAME REQUIREMENT: THE MESSAGE TEXT ───────
-   *
-   * `subject_contains` above splits one sender by subject. Some senders defeat that by writing
-   * the SAME subject on every message — "Notification", "Alert" — and putting the distinguishing
-   * text in the body. This column is the same conjunction one field deeper: *from this address
-   * AND with this in the message text*.
-   *
-   * Everything the 0050 comment says holds here unchanged, deliberately: NULL is the resting
-   * state, there is no backfill and can never be one, `core/src/rules.ts#matches` reads it as an
-   * EXTRA term above the kind switch so a present term can only make a rule fire LESS often, and
-   * the CHECK (`rules_body_contains_nonempty`) makes NULL the only representation of "no term".
-   *
-   * ── WHAT IT IS MATCHED AGAINST, WHICH IS THE ONE NEW DECISION ──────────────────
-   *
-   * The message's canonical PLAIN TEXT: `NormalizedMessage.textBody` on arrival, which is the
-   * byte-identical string `message_bodies.text` stores (mailparser's text part, or its html→text
-   * derivation for html-only mail). The retroactive passes read that stored column back, so
-   * arrival and retro consult the SAME haystack. A message whose body is not on disk reads as
-   * `""`, which satisfies no term — the fail-closed direction for a narrowing conjunct: the rule
-   * declines to fire and the mail stays where it is.
-   *
-   * In the order, a body term counts exactly as a subject term does — below `kind`, above
-   * `provenance` — with the subject clause ranked first, so a rule carrying both terms outranks
-   * subject-only, which outranks body-only, which outranks bare. Same 200-char ceiling: a term
-   * is a needle, and the haystack being bigger is not a licence to store a bigger needle.
-   */
+  // Mail 0052 — the other half of the same requirement: the MESSAGE TEXT. Some senders write the
+  // SAME subject on every message and put the distinguishing text in the body; this is the same
+  // conjunction one field deeper. Everything the 0050 comment says holds unchanged: NULL is the
+  // resting state, no backfill ever, `matches` reads it as an extra term, the CHECK makes NULL
+  // the only spelling of "no term". The one new decision is the haystack: the message's canonical
+  // PLAIN TEXT — `NormalizedMessage.textBody` on arrival, byte-identical to
+  // `message_bodies.text`, which the retro passes read back, so arrival and retro consult the
+  // SAME haystack. A body not on disk reads as `""`, which satisfies no term — fail-closed for a
+  // narrowing conjunct. Rank: both terms, then subject-only, then body-only, then bare. Same
+  // 200-char ceiling.
   bodyContains: text("body_contains"),
 }, (t) => ({
   /**
@@ -1126,24 +880,14 @@ export const changeLog = sqliteTable("change_log", {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * The `classid` half of `pg_advisory_xact_lock(int4, int4)`, the SECOND half `hashtext(account_id)`
- * — the pattern `STAGING_QUOTA_LOCK_CLASS` and `PROFILE_IMPORT_LOCK_CLASS` already use.
- *
- * Serializes ACCOUNT ERASURE against the THREAD BACKFILL, and nothing else. Both are the only
- * two writers that ever lock a whole account's worth of `threads` or `messages` rows in bulk,
- * and they lock the two tables in OPPOSITE orders for reasons neither can give up: erasure's
- * DELETE order is forced child-before-parent by the FKs (`messages` before `threads`), while the
- * backfill locks an unthreaded `messages` row first because — being unthreaded — there is no
- * `threads` row yet to lock ahead of it (`listThreadBacklog`, `packages/core/src/adapters/
- * drizzle-repo.ts`). Interleaved, that is a genuine lock cycle: erasure holds every thread row
- * and waits on a message row the backfill is mid-resolve on, while the backfill holds that
- * message and waits on the very thread erasure is about to attach it to.
- *
- * Every OTHER writer of a thread (ingest, the user's own merge, the worker's join heal) locks
- * `threads` before `messages` — one shared order among themselves — and none of them ever locks
- * more than the few rows one message or one merge group touches, so none of them needs this
- * lock: the risk this guards against is specific to a WHOLE-ACCOUNT sweep meeting the one path
- * that is structurally message-first.
+ * The `classid` half of `pg_advisory_xact_lock(int4, int4)`; the second half is
+ * `hashtext(account_id)`. Serializes ACCOUNT ERASURE against the THREAD BACKFILL — the only two
+ * writers that lock a whole account's `threads`/`messages` in bulk, in OPPOSITE orders: erasure's
+ * DELETE order is forced child-before-parent by the FKs, while the backfill locks an unthreaded
+ * `messages` row first because there is no `threads` row yet. Interleaved, a genuine lock cycle.
+ * Every OTHER thread writer locks `threads` before `messages` and touches only one message or
+ * merge group, so none needs this: the risk is a whole-account sweep meeting the one structurally
+ * message-first path.
  */
 export const ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS = 420_727_017;
 
@@ -1156,18 +900,14 @@ export const threads = sqliteTable("threads", {
   muted: integer("muted", { mode: "boolean" }).notNull().default(false),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
   /**
-   * THE CONVERSATION'S ROOT Message-ID — the find-or-create conflict anchor (mail 0026).
-   *
-   * The leftmost (oldest) entry of the arriving message's `References`, else its `In-Reply-To`,
-   * else its own Message-ID. Leftmost and not rightmost is the whole reason out-of-order ingest
-   * converges: a 4-deep chain A <- B <- C <- D arriving as D, B, A, C derives `a` from all four,
-   * so all four find one row; keyed on the rightmost they would derive `c`, `a`, `a`, `b` and
-   * split one conversation into three threads.
-   *
-   * Before it, `threads` had no natural key and a find-or-create could only be SELECT-then-
-   * INSERT — two mailboxes of one account syncing in parallel both miss and both insert. NULL
-   * only for a message carrying no Message-ID at all, and NULLs are DISTINCT in a Postgres
-   * unique index, so each of those is its own singleton rather than all of them colliding.
+   * The conversation's ROOT Message-ID — the find-or-create conflict anchor (mail 0026). The
+   * leftmost (oldest) entry of the arriving message's `References`, else its `In-Reply-To`, else
+   * its own Message-ID. Leftmost, not rightmost, is why out-of-order ingest converges: a 4-deep
+   * chain arriving as D, B, A, C derives the root from all four, so all four find one row; keyed
+   * on the rightmost they would split one conversation into three threads. Before it, `threads`
+   * had no natural key and find-or-create was SELECT-then-INSERT — two mailboxes of one account
+   * syncing in parallel both miss and both insert. NULL only for a message with no Message-ID at
+   * all, and NULLs are DISTINCT in a unique index, so each is its own singleton.
    */
   rootMessageIdHeader: text("root_message_id_header"),
 }, (t) => ({
@@ -1185,44 +925,14 @@ export const messageBodies = sqliteTable("message_bodies", {
   headers: text("headers", { mode: "json" }).notNull().default(sql`'{}'`),
   loadedRemoteContent: integer("loaded_remote_content", { mode: "boolean" }).notNull().default(false),
   /**
-   * ── Mail 0062: WHY THIS ROW HOLDS NO CONTENT — the managed storage cap's honest marker ──
-   *
-   * NULL for every ordinarily stored body. `'storage_cap'` means this message's text/html is
-   * not in the hosted store BECAUSE OF the account's managed storage cap — since the 2026-08-21
-   * rolling-window ruling that is almost always an EVICTED husk (the body was stored, then aged
-   * out of the window as new mail needed the room, `storage.ts#evictOldestBodies`), and only at
-   * the pathological ceiling a declined-new one (`reserveBodyBytesEvicting`'s bound). One marker
-   * for both deliberately: the REASON is the cap either way, and every consumer below already
-   * says the right sentence for both. The row still
-   * carries the real `headers` (the organizing passes read stored headers; declining them would
-   * silently break unsubscribe/screener/consent/away on exactly the mail the cap touches) and
-   * `text = ''`/`html = NULL`, and the message on the IMAP server is UNTOUCHED (the mailbox is
-   * the master; the cap governs OUR copy only).
-   *
-   * A marker column and not "no row", three times over: no-row is indistinguishable from "not
-   * yet mirrored" (the sidecar's gap query would re-ask forever), the DTO must say WHY the text
-   * is empty (an empty body claiming to be complete is the lie this column ends), and a future
-   * ratified restore pass is then an UPDATE in place (`redacted-restore.ts`'s exact shape) with
-   * `WHERE withheld_reason = 'storage_cap'` as its predicate. The repair passes that re-fetch
-   * bodies from IMAP must SKIP rows where this is non-null — they repair damage, and a withheld
-   * row is policy, not damage.
-   *
-   * ── Mail 0065 adds two more members to the closed set, same shape, different sentences ──
-   *
-   *  · `'junk_filed'` — the spam verdict filed this message to the provider's native `\Junk`
-   *    (imap-types.ts, the 2026-08-22 amendment). The durable artifact of a spam verdict is the
-   *    SENDER RULE, never the body: the bytes live on in the provider's Junk folder, which is
-   *    the master, and holding a hosted copy of mail the user judged spam is storage against no
-   *    product surface. Written ONLY after the IMAP move landed — a husk claiming Junk while the
-   *    message still sits in a watched folder would be the mirror lying about the mailbox.
-   *  · `'expunged'` — the worker observed every watched instance of this message gone from the
-   *    server (`tombstoneInstanceless`). The row is tombstoned (`messages.deleted_at`) in the
-   *    same transaction; the husk exists so the account stops paying for bytes of a message the
-   *    mailbox no longer holds.
-   *
-   * Both keep real headers and release their bytes exactly as `'storage_cap'` does. A row that
-   * is ALREADY withheld keeps its first reason — the content is already gone, and rewriting the
-   * marker would erase which policy took it.
+   * Mail 0062: why this row holds no content — the storage cap's honest marker. NULL for every
+   * ordinarily stored body. `'storage_cap'` means the body left the hosted store because of the
+   * cap — almost always an EVICTED husk. The row keeps real `headers` (the organizing passes read
+   * them), and the message on the IMAP server is UNTOUCHED. A marker and not "no row": no-row is
+   * indistinguishable from "not yet mirrored"; the DTO must say WHY the text is empty; a future
+   * restore is an UPDATE with this as its predicate. Repair passes SKIP non-null rows: withheld
+   * is policy, not damage. Mail 0065 adds `'junk_filed'` (written only after the IMAP move
+   * landed) and `'expunged'`; an already-withheld row keeps its first reason.
    */
   withheldReason: text("withheld_reason"),
   // ── Migration 0008: the body-text lexical index lives HERE
