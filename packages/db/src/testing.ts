@@ -15,15 +15,12 @@ import { assertDistinct, brandDialect } from "./dialect/index.js";
 import { migrateSqlite } from "./sqlite-migrate.js";
 
 /**
- * Create an in-process PGlite-backed Drizzle client with all migrations applied.
- * Used by tests only — no external DB, no network. Each call yields a fresh,
- * isolated in-memory database.
- *
- * It runs the SAME sequence production does — **adopt → mail → cloud**, in
- * {@link JOURNALS} order — so the whole suite exercises the two-journal path rather than a
- * test-only shortcut. Adoption is always a no-op here (a brand-new PGlite database hits the
- * `fresh` cell of the truth table), and it is still called rather than skipped: a code path that
- * only production takes is a code path nothing checks.
+ * Create an in-process PGlite-backed Drizzle client with all migrations applied. Tests only — no
+ * external DB, no network; each call yields a fresh, isolated in-memory database. It runs the
+ * SAME sequence production does — adopt, mail, cloud, in {@link JOURNALS} order — so the whole
+ * suite exercises the two-journal path rather than a test-only shortcut. Adoption is always a
+ * no-op here (a brand-new PGlite database hits the `fresh` cell of the truth table) and is still
+ * called rather than skipped: a code path only production takes is a code path nothing checks.
  */
 export async function makeTestDb(): Promise<PgliteDatabase<typeof schema>> {
   if (process.env[TEST_DIALECT_ENV] === "sqlite") return makeSqliteTestDb();
@@ -46,21 +43,14 @@ export async function makeTestDb(): Promise<PgliteDatabase<typeof schema>> {
 export const TEST_DIALECT_ENV = "OHMAIL_TEST_DIALECT";
 
 /**
- * The same schema, on SQLite, through the binding a device uses.
- *
- * ── ONE CONNECTION, SERIALIZED, AND THAT IS THE CONCURRENCY MODEL ─────────────────────────
- *
- * Every statement goes through one queue against one handle. That is not a convenience for the
- * suite: it is what makes the store's absent row locks safe, and a harness that quietly allowed
- * two overlapping statements would be testing a program the device cannot run. A second
- * connection to the same file does not contend, it fails outright.
- *
- * ── THE ONE CAST, AND WHY IT IS HERE RATHER THAN IN EVERY CALLER ──────────────────────────
- *
- * Callers are typed against the server's handle, because that is what the services are typed
- * against and the whole point is that neither changes for the other store. The substitution
- * happens once, here, where the reason can be written down — not at three thousand call sites
- * that would each have to be told there is a second dialect.
+ * The same schema, on SQLite, through the binding a device uses. ONE connection, serialized — the
+ * concurrency model, not a convenience: it is what makes the store's absent row locks safe, and a
+ * harness that quietly allowed two overlapping statements would be testing a program the device
+ * cannot run; a second connection to the same file does not contend, it fails outright. The one
+ * cast lives here rather than in every caller: callers are typed against the server's handle,
+ * because that is what the services are typed against and the whole point is that neither changes
+ * for the other store. The substitution happens once, where the reason can be written down — not
+ * at three thousand call sites.
  */
 async function makeSqliteTestDb(): Promise<PgliteDatabase<typeof schema>> {
   // Reached through `createRequire` because the bundler this suite runs under does not yet know
@@ -188,35 +178,14 @@ function shortHash(h: string): string {
 }
 
 /**
- * IS THIS DATABASE'S SCHEMA THE ONE THIS TREE DECLARES? A sentence naming the drift, or `null`.
- *
- * The migrator decides what to replay from each journal's `when` — the migration folder's own
- * millisecond stamp — and it applies only a migration stamped strictly AFTER the latest one the
- * database has already recorded. Two consequences follow, and both are silent:
- *
- *   - A migration EDITED IN PLACE — same `when`, new statements — is already recorded as applied,
- *     so its new statements never run. The database then sits behind this tree for good, and
- *     nothing says so. That is not hypothetical: one migration here was amended four times after
- *     it had first run, and a long-lived test database carried the pre-amendment version for
- *     weeks. The missing column surfaced as a caught-and-logged write failure three layers away,
- *     and the component that got blamed was not the one that was wrong.
- *   - A database carrying a stamp HIGHER than anything this tree declares will record every
- *     migration this tree adds as applied WITHOUT RUNNING IT, because each new one is below the
- *     latest stamp already recorded. Nothing raises when that happens either.
- *
- * Either way the schema is not this tree's, and a test run against it measures a database nobody
- * has counted — which fails as a defect in whatever the test was about. So drift is DETECTED
- * rather than assumed away: every applied row must correspond to a migration this tree declares,
- * matched on `when` AND on the file's own sha256.
- *
- * A database that is merely BEHIND — later migrations missing — is deliberately NOT drift. The
- * migrator applies those itself, which is the ordinary case. Only a database that is AHEAD, or
- * one whose recorded content disagrees with the file, is unfixable by running anything.
- *
- * This function answers the question and does not decide what to do about it, because the two
- * callers hold two different policies. A database created for one test file is dropped and
- * rebuilt. A long-lived shared one is REFUSED, since dropping a database other runs are using
- * would be a worse failure than the one being reported. Each caller names its own policy.
+ * Is this database's schema the one THIS TREE declares? A sentence naming the drift, or `null`.
+ * The migrator replays only migrations stamped strictly AFTER the latest recorded `when`, with
+ * two silent consequences: a migration EDITED IN PLACE never runs its new statements (measured: a
+ * shared test database sat on the pre-amendment version for weeks), and a database carrying a
+ * HIGHER stamp records every new migration as applied WITHOUT RUNNING IT. So drift is DETECTED:
+ * every applied row must match a declared migration, on `when` AND the file's sha256. Merely
+ * BEHIND is not drift — the migrator fixes that itself. This answers the question, not the
+ * policy: a per-file database is dropped and rebuilt; a shared one is REFUSED.
  */
 export async function journalDrift(url: string): Promise<string | null> {
   const sql = postgres(url, { max: 1, onnotice: () => { /* quiet */ } });

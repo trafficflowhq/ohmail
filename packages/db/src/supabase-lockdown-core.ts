@@ -55,16 +55,13 @@ export async function supabaseHostRoles(sql: Sql): Promise<string[]> {
 }
 
 /**
- * The lockdown batch for the roles that are actually present.
- *
- * Parameterised because `REVOKE … FROM a, b, c` is an ERROR when any one of the names does not
- * exist: a host carrying only SOME of the roles (not a shape Supabase produces, but one a
- * self-hoster could) must have the present ones revoked rather than the whole batch dying on the
- * absent ones. The §3 postconditions stay pinned to the full triple — an absent role cannot hold
- * a grant, so it can never fail the check falsely, and a present-but-undetected one must.
- *
- * `roles` is validated against {@link HOST_ROLES} — this function interpolates into SQL, and the
- * closed allowlist is what makes that safe.
+ * The lockdown batch for the roles that are actually present. Parameterised because `REVOKE …
+ * FROM a, b, c` is an ERROR when any one name does not exist: a host carrying only SOME of the
+ * roles (not a shape Supabase produces, but one a self-hoster could) must have the present ones
+ * revoked rather than the whole batch dying. The §3 postconditions stay pinned to the full triple
+ * — an absent role cannot hold a grant, so it can never fail the check falsely, and a
+ * present-but-undetected one must. `roles` is validated against {@link HOST_ROLES}: this function
+ * interpolates into SQL, and the closed allowlist is what makes that safe.
  */
 export function lockdownSqlFor(roles: readonly string[]): string {
   if (roles.length === 0) {
@@ -215,16 +212,14 @@ export interface LockdownCensus {
    */
   residual: number;
   /**
-   * Table privileges a host role can EXERCISE on a `public` relation, however it comes by them
-   * — directly, through a role it is a member of, or via a grant to PUBLIC. Must be 0.
-   *
-   * This is the arm the other three cannot cover: `grants` matches the ACL's GRANTEE, so a
-   * `GRANT api_reader TO anon` plus a grant to `api_reader` never shows a host role in any ACL
-   * while PostgREST running as `anon` reads the table through inheritance. Not a shape stock
-   * Supabase produces — it takes an operator-made membership — but the census exists to be the
-   * fail-closed verdict, and a verdict that is blind to what the role can DO is not one.
-   * `has_table_privilege` answers capability, not bookkeeping. Probed only for roles that
-   * exist, over ordinary/partitioned tables, views and matviews in `public`.
+   * Table privileges a host role can EXERCISE on a `public` relation, however it comes by them —
+   * directly, through membership, or via a grant to PUBLIC. Must be 0. The arm the other three
+   * cannot cover: `grants` matches the ACL's GRANTEE, so a `GRANT api_reader TO anon` plus a
+   * grant to `api_reader` never shows a host role in any ACL while PostgREST running as `anon`
+   * reads the table through inheritance. Not a shape stock Supabase produces — it takes an
+   * operator-made membership — but the census exists to be the fail-closed verdict, and one blind
+   * to what the role can DO is not one. `has_table_privilege` answers capability, not
+   * bookkeeping.
    */
   effective: number;
   /** Up to six object names still carrying a host-role grant — the exposure, named. */
@@ -333,42 +328,16 @@ export function lockdownProblems(census: LockdownCensus): string[] {
   return problems;
 }
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════
-   THE DATA API HALF — the endpoint, and the verdict from OUTSIDE
-   ══════════════════════════════════════════════════════════════════════════════════════════
-
-   Everything above is the DATABASE half: it proves the ACLs are gone. It does NOT prove the
-   product is safe, and treating it as though it did is exactly the mistake that let the
-   exposure ship in the first place — a stock project granted `anon` full `arwdDxtm` on all 55
-   tables and served them over PostgREST while two internal checks read clean, because one
-   tested `grantee = 0` and the other measured the admin role, and `anon` is neither.
-
-   So the verdict is a live HTTP request to `<base>/rest/v1/<table>` carrying the PUBLIC anon
-   key — the actual threat model: a public key, an internet-facing endpoint, no VPN, no
-   session. **A 2xx with `[]` is a FAILURE, not a pass**: an empty array means the SELECT ran
-   against a table that happens to be empty, and tables are only empty until they are not.
-
-   This lived in the operator CLI alone, so the one idempotent provisioning path could report
-   OK over an open endpoint. It is library code here for the same reason the census is: two
-   callers, one implementation, no drift.
-
-   ── WHY A REFUSAL IS NOT AUTOMATICALLY A PASS ────────────────────────────────────────────
-
-   The nastier half, measured against a live project rather than reasoned about:
-
-     · valid anon key, endpoint closed → 404 `{"code":"PGRST205", … 'graphql_public.messages'
-       … }` — PostgREST itself answering about the table;
-     · JUNK key                        → 401 `{"message":"Invalid API key", …}`;
-     · NO key                          → 401 `{"message":"No API key found in request", …}`.
-
-   The last two carry no `code`, because the gateway refused before any table was consulted —
-   so they are returned by an EXPOSED table and a closed one alike. A probe that counts them as
-   "refused" is a green check that cannot see the case it exists to detect, which is how a
-   mistyped or rotated key becomes a security sign-off. {@link classifyDataApiResponse}
-   therefore treats a refusal as evidence ONLY when the body carries PostgREST's own error
-   `code`; everything else — a gateway 401, a 429, a 5xx, a DNS failure — is UNKNOWN, and the
-   caller fails on UNKNOWN. That same rule doubles as the probe's positive control: a
-   PostgREST error body proves the key was accepted and the request reached the database. */
+/**
+ * The DATA API half — the endpoint, and the verdict from OUTSIDE. The database half proves the
+ * ACLs are gone, not that the product is safe — the mistake that shipped the exposure: a stock
+ * project served every table over PostgREST while two internal checks read clean. The verdict is
+ * a live HTTP request with the PUBLIC anon key. A 2xx with `[]` is a FAILURE: the SELECT ran
+ * against a table that happens to be empty. A refusal is not automatically a pass: a gateway 401
+ * carries no PostgREST `code` and is returned by an exposed and a closed table alike. {@link
+ * classifyDataApiResponse} treats a refusal as evidence ONLY when the body carries PostgREST's
+ * own `code`; everything else is UNKNOWN, and the caller FAILS on UNKNOWN.
+ */
 
 /**
  * Probed by name whatever the schema currently holds. Deliberately the worst cases rather than
@@ -474,24 +443,14 @@ export interface DataApiProbeResult {
 export type DataApiVerdict = "exposed" | "refused" | "unknown";
 
 /**
- * The error codes that prove a RELATION-level refusal — an ALLOWLIST, because the fail-closed
- * direction of a mistake here is a false failure and the other direction is a false sign-off.
- *
- * The distinction the list encodes: PostgREST answers some errors BEFORE it ever resolves the
- * relation. Its `PGRST3xx` family is exactly that — JWT/authentication failures — so an expired
- * or malformed key gets the same 401 from an EXPOSED table as from a closed one, which is the
- * gateway hazard one layer in. Only these codes mean "the request reached the relation and was
- * turned away":
- *
- *   · `42501`    — Postgres: permission denied for the relation (the lockdown working);
- *   · `42P01`    — Postgres: the relation does not exist;
- *   · `3F000`    — Postgres: the schema does not exist;
- *   · `PGRST205` — the table is not in the exposed schema cache (the endpoint half working);
- *   · `PGRST106` — the requested schema is not exposed at all.
- *
- * Anything else with a code — including a PostgREST code this list has not met — is UNKNOWN, and
- * the caller fails on UNKNOWN. A new refusal code costs one failed provisioning run and a line
- * here; a new code silently read as a refusal costs a world-readable database.
+ * The error codes that prove a RELATION-level refusal — an ALLOWLIST: the fail-closed direction
+ * of a mistake is a false failure; the other is a false sign-off. PostgREST answers some errors
+ * BEFORE it resolves the relation — its `PGRST3xx` family is JWT failures, so an expired key gets
+ * the same 401 from an exposed table as a closed one. Only these mean "the request reached the
+ * relation and was turned away": `42501` (permission denied), `42P01` (no relation), `3F000` (no
+ * schema), `PGRST205` (not in the exposed schema cache), `PGRST106` (schema not exposed).
+ * Anything else is UNKNOWN, and the caller fails on UNKNOWN. A new refusal code costs one failed
+ * run and a line here; a code silently read as a refusal costs a world-readable database.
  */
 export const RELATION_REFUSAL_CODES: ReadonlySet<string> = new Set([
   "42501", "42P01", "3F000", "PGRST205", "PGRST106",
@@ -673,23 +632,14 @@ export function dataApiProblems(result: DataApiProbeResult): string[] {
 }
 
 /**
- * Does a project ref name the database that was just provisioned?
- *
- * This is the hole a clean probe would otherwise leave wide open: point `SUPABASE_PROJECT_REF`
- * at a DIFFERENT project — a stale value in a shell, a copied line from another deployment — and
- * every relation comes back refused, because that project's endpoint really is closed. The run
- * then prints a verdict about a database nobody provisioned, and with a management token in the
- * environment it also rewrites that project's configuration. It is the same class of mistake
- * {@link assertExpectedHost} exists for on the SQL side, one connection over.
- *
- * A hosted project's ref appears in the connection string in both shapes the platform issues:
- * `db.<ref>.supabase.co` puts it in the host, and the session pooler puts it in the USER
- * (`postgres.<ref>@…pooler…`), which is the shape production uses — so the check reads both.
- *
- * COMPONENT-EXACT, never a substring: a role named `migrator_<other-ref>` or a host like
- * `<other-ref>-backup.example.com` would satisfy a substring test for a project this database
- * has nothing to do with, which is the check certifying the mistake it exists to catch. The ref
- * has to BE one of the dot-separated components.
+ * Does a project ref name the database that was just provisioned? The hole a clean probe leaves
+ * open: point `SUPABASE_PROJECT_REF` at a DIFFERENT project and every relation comes back
+ * refused, because that project's endpoint really is closed — the run prints a verdict about a
+ * database nobody provisioned, and with a management token it also rewrites that project's
+ * configuration. The same class of mistake {@link assertExpectedHost} exists for on the SQL side.
+ * The ref appears in the host (`db.<ref>.supabase.co`) or in the session pooler's USER — the
+ * check reads both. COMPONENT-EXACT, never a substring: a role named `migrator_<other-ref>` would
+ * satisfy a substring test. The ref has to BE one of the dot-separated components.
  */
 export function dataApiTargetProblem(
   dbUrl: string,
@@ -746,18 +696,14 @@ export function hostedProjectRef(baseUrl: string): string | null {
 }
 
 /**
- * Every project this run would touch, checked against the database it is provisioning.
- *
- * Two of them, and the second is the one a narrower check missed: the endpoint about to be
- * PROBED (identifiable whenever the base URL is a hosted one, however it was configured — a
- * ref-derived URL and an explicitly stated hosted URL are the same fact), and the project whose
- * configuration the endpoint half would REWRITE, which is always identified by a ref and must
- * therefore always be checkable. An explicit URL made the first check defer; it never licensed
- * a PATCH of a project the database does not name.
- *
- * A base URL that is not hosted — a self-hosted gateway, a custom domain — cannot be tied to a
- * database from here without knowing the operator's topology. That case yields no problem and
- * no evidence either: see {@link dataApiBindingUnprovable}, whose caller says so out loud.
+ * Every project this run would touch, checked against the database it is provisioning. Two, and
+ * the second is the one a narrower check missed: the endpoint about to be PROBED (identifiable
+ * whenever the base URL is a hosted one), and the project whose configuration the endpoint half
+ * would REWRITE, which is always identified by a ref and must therefore always be checkable. An
+ * explicit URL made the first check defer; it never licensed a PATCH of a project the database
+ * does not name. A base URL that is not hosted — a self-hosted gateway, a custom domain — cannot
+ * be tied to a database from here: that case yields no problem and no evidence either — see
+ * {@link dataApiBindingUnprovable}.
  */
 export function dataApiBindingProblems(dbUrl: string, target: DataApiTarget): string[] {
   const urlRef = hostedProjectRef(target.baseUrl);

@@ -277,18 +277,14 @@ async function main(): Promise<number> {
 }
 
 /**
- * `process.exitCode` and NOT `process.exit()`, matching `provision-staff-role.ts`.
- * `console.log`/`console.error` queue when stdout is a pipe and `process.exit` drops whatever
- * has not drained — 65536 of 120001 bytes, measured on this platform. This command's whole
- * output is a verdict an operator reads, and it is exactly the kind of thing that gets run as
+ * `process.exitCode`, NOT `process.exit()`, matching `provision-staff-role.ts`: `console.log`
+ * queues when stdout is a pipe and `process.exit` drops whatever has not drained — 65536 of
+ * 120001 bytes, measured. This command's whole output is a verdict an operator reads, run as
  * `supabase:lockdown 2>&1 | tee lockdown.log`, so the verdict must not be the part that is lost.
- *
- * Checked rather than assumed, because this file is the one that makes HTTP requests: Node's
- * `fetch` keep-alive sockets do not hold the loop open, so dropping the forced exit does not
- * delay this script.
- *
- * `.then`, NOT top-level `await` — one grammar with the other two CLIs, and the reason they
- * cannot use `await` is recorded in `setup-prod.ts`.
+ * Checked rather than assumed, because this file makes HTTP requests: Node's `fetch` keep-alive
+ * sockets do not hold the loop open, so dropping the forced exit does not delay the script.
+ * `.then`, NOT top-level `await` — one grammar with the other two CLIs; the reason is recorded in
+ * `setup-prod.ts`.
  */
 void main()
   .catch((e: unknown) => {
