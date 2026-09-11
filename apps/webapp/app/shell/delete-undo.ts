@@ -1,64 +1,25 @@
 "use client";
 
 /**
- * BACKSPACE AND DELETE MOVE THE FOCUSED MESSAGE TO TRASH — with an Undo in the toast.
- *
- * ══ WHY THE UNDO IS A DELAYED COMMIT AND NOT A REVERSAL ═══════════════════════════════════
- *
- * There is no un-delete on the wire. `message_delete` files the message into the provider's
- * native `\Trash` (never an expunge) and tombstones the row; `EngineMutation` carries nothing
- * that brings it back, and `move` cannot name a deleted row because every living view excludes
- * it. So an Undo offered AFTER the dispatch would be a button for something the product cannot
- * do — which is why the bar's own `d` ceremony asks BEFORE it acts and offers no Undo at all.
- *
- * The Screener reached this exact fork first and answered it (`screener-state.ts`: "the wire has
- * no un-decide endpoint either, so undo is a DELAYED COMMIT"). This is that answer, one verb
- * over: the press hides the row and starts a timer, the toast carries Undo for as long as the
- * timer runs, and the mutation is dispatched only when the window closes. Undo before then
- * cancels a delete that never happened, which is the only kind of undo this wire can honour.
- *
- * {@link UNDO_MS} is imported rather than re-declared: two numbers for "how long Undo is true"
- * is how the toast and the window come apart, and `screener-state.ts` already carries the
- * measurement that fixed the duration.
- *
- * ── THE WINDOW IS DURABLE, WHICH IT WAS NOT ───────────────────────────────────────────────
- *
- * For one revision the only record of a requested delete, for the length of the window, was the
- * timer. A tab closed inside it dropped a delete the toast had already reported — silent, and
- * silent in the direction where the product did not do what it said. `delete-intents.ts` is the
- * fix and it is the Screener's own shape: the intent is written SYNCHRONOUSLY before the timer is
- * armed, Undo removes it, the commit removes it only once the engine has taken the verb, a
- * `pagehide` commits what is still open, and anything that outlives even that is replayed at the
- * next launch. An UNMOUNT commits too ({@link DeleteUndo.flush}) — leaving a view is not asking
- * for the delete back.
- *
- * ══ WHAT A READER DOES INSTEAD ════════════════════════════════════════════════════════════
- *
- * Nothing, and it says so before it does it. A delete is a folder move against mail another
- * install is arranging, and the rule for that is already written once —
- * `screener-state.ts#refuseMove`, whose docstring names deleting explicitly among the moves
- * "refused for EVERY reader, in both modes, because the channel a decision travels carries a
- * decision and nothing else". The server agrees from the other side
- * (`message-service.ts#delete` calls `assertOrganizerRole` before it looks for a Trash folder,
- * so a reader is refused for the reason that is TRUE rather than for a missing folder).
- *
- * The role is asked PER MAILBOX and never of the roster as a whole — `mailboxWriteRole(facts,
- * m.mailboxId)`. `screenerMode`'s account-wide answer is deliberately permissive and is right for
- * a Screener decision, which writes an account-scoped rule; using it here let an account that
- * organizes mailbox A delete from mailbox B, which somebody else organizes (review, 2026-09-06).
- * An UNKNOWN roster refuses too: a destructive verb fails closed, and the sentence says the
- * holder is not known yet rather than claiming one.
- *
- * The refusal is evaluated BEFORE anything else the press would do — nothing held, nothing
- * hidden, no sheet closed, nothing on the wire. `remove` answers whether it acted so the caller
- * can order its own side effects behind that verdict; a control wired to a refusal that arrives
- * as a rollback four seconds later is the failure `ScreenerMode`'s third state was invented to
- * end.
- *
- * A folder-move REQUEST is not an option today and is deliberately not invented here.
- * `REQUEST_KINDS` (`packages/core/src/adapters/organizer-lease.ts`) holds four members —
- * `screener.decide`, `rule.create`, `rule.update`, `rule.delete` — and the column's CHECK is
- * closed on exactly those. A fifth kind is 0.16's own slice.
+ * Backspace and Delete move the focused message to Trash — with an Undo in the toast. The undo is a
+ * DELAYED COMMIT, not a reversal: there is no un-delete on the wire (`message_delete` files into the
+ * provider's native `\Trash` and tombstones the row), so the press hides the row and starts a
+ * timer, the toast carries Undo while it runs, and the mutation dispatches only when the window
+ * closes — the Screener's own answer, one verb over ({@link UNDO_MS} is imported, never a second
+ * number). The window is durable (`delete-intents.ts`): the intent is written synchronously before
+ * the timer, Undo removes it, `pagehide` commits what is open, survivors replay at launch, and an
+ * unmount commits too ({@link DeleteUndo.flush}) — leaving a view is not asking for the delete back.
+ */
+
+/**
+ * A reader does nothing, and is told so before anything happens. A delete is a folder move against
+ * mail another install is arranging — `screener-state.ts#refuseMove` names deleting among the moves
+ * refused for every reader, and the server agrees (`message-service.ts#delete` calls
+ * `assertOrganizerRole` before looking for a Trash folder). The role is asked PER MAILBOX
+ * (`mailboxWriteRole(facts, m.mailboxId)`), never of the roster — the account-wide answer let an
+ * account organizing mailbox A delete from mailbox B; an unknown roster refuses too. The refusal is
+ * evaluated BEFORE anything else the press would do, and `remove` answers whether it acted. A
+ * folder-move REQUEST is not invented here: `REQUEST_KINDS` is closed by CHECK on four members.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -72,18 +33,13 @@ import { UNDO_MS } from "./screener-state";
 export { UNDO_MS };
 
 /**
- * A READER WITH SOME MESSAGES TAKEN OUT — what makes a held delete look like a delete.
- *
- * The row has to leave every list the instant the key is pressed, and the only thing that would
- * otherwise do that is the mutation itself, which is exactly what the window is postponing. So
- * the presentation loses the row and the MIRROR keeps it: `AppShell` composes this over
- * `presented` (the pile source) and never over `reader`, which is the one every mutation, body
- * open and search reads from. That split is `presentationReader`'s own rule — "NEVER use this
- * reader to open a message, to search, or behind a mutation" — and it is what lets Undo restore
- * the row by forgetting an id rather than by re-fetching anything.
- *
- * IDENTITY IS PRESERVED WHEN NOTHING IS HELD, which is the normal case: the base reader is
- * returned unwrapped, so the `useMemo`s downstream keep their inputs and nothing re-derives.
+ * A reader with some messages taken out — what makes a held delete look like a delete. The row has
+ * to leave every list the instant the key is pressed, and the only thing that would otherwise do
+ * that is the mutation the window is postponing. So the presentation loses the row and the MIRROR
+ * keeps it: `AppShell` composes this over `presented` (the pile source) and never over `reader` —
+ * `presentationReader`'s own rule ("never use this reader to open a message, to search, or behind
+ * a mutation") — which lets Undo restore the row by forgetting an id. Identity is preserved when
+ * nothing is held: the base reader returns unwrapped, so downstream `useMemo`s keep their inputs.
  */
 export function hideMessages(base: EntityReader, hidden: ReadonlySet<string>): EntityReader {
   if (hidden.size === 0) return base;
@@ -140,26 +96,14 @@ export interface DeleteUndoCopy {
 }
 
 /**
- * WHICH VERB THIS WINDOW HOLDS, and the dispatch it commits to.
- *
- * ── WHY THE VERB IS INJECTED RATHER THAN BRANCHED ON ──────────────────────────────────────
- *
- * `createDeleteUndo` used to know one dispatch: `engine.mutate({ kind: "message_delete", … })`.
- * The restore cannot be an `EngineMutation` at all — the engine REJECTS a mutation whose local
- * effects are empty, and a mutation over a tombstoned row has none — so a second window would
- * have needed a second copy of the timer, the journal write, the idempotence-over-the-set rule
- * and the toast ceremony. Two copies of that is how a `pagehide` commit comes to be right for
- * one verb and wrong for the other.
- *
- * So the window is verb-agnostic: it holds ids, it arms a timer, it writes ONE journal row for
- * the press naming this verb, and when the window closes it calls `dispatch` per id. The delete
- * passes a function that calls `engine.mutate`; the restore passes one that calls
- * `engine.restoreFromTrash`. Neither is special-cased here.
- *
- * `dispatch` answers a STATUS STRING and not a boolean, because the two verbs already agree on
- * the vocabulary: `"rolled_back"` is what the engine's mutation outcome says for a refused
- * delete and what {@link RestoreOutcome} was given for a refused restore, precisely so this
- * one comparison covers both.
+ * Which verb this window holds, and the dispatch it commits to. The verb is injected, not branched on: the
+ * restore cannot be an `EngineMutation` at all (the engine rejects a mutation whose local effects are empty,
+ * and a mutation over a tombstoned row has none), so a second window would have needed a second copy of the
+ * timer, the journal write, the idempotence rule and the toast ceremony — two copies is how a `pagehide` commit
+ * comes to be right for one verb and wrong for the other. The window holds ids, arms a timer, writes ONE
+ * journal row naming the verb, and calls `dispatch` per id when it closes; delete passes `engine.mutate`,
+ * restore passes `engine.restoreFromTrash`. `dispatch` answers a status string, not a boolean: `"rolled_back"`
+ * is the vocabulary both verbs already share, so one comparison covers both.
  */
 export type HeldDispatch = (
   messageId: string,
@@ -189,18 +133,13 @@ export interface DeleteUndoDeps {
   /** Called whenever the held set changes, with a NEW set. */
   onHeld: (held: ReadonlySet<string>) => void;
   /**
-   * MAY THESE MAILBOXES BE WRITTEN TO — the sentence to say, or `null` for yes.
-   *
-   * Takes EVERY mailbox the press touches, and is asked ONCE for the whole press. That is not a
-   * convenience: a selection spanning a mailbox this install organizes and one it only reads is a
-   * single gesture, and answering it per message would delete the half that is permitted and
-   * refuse the half that is not — a partial outcome nobody asked for, reported by one toast. The
-   * press is refused whole, and the mixed-selection ruling falls out of the signature rather than
-   * out of a rule somebody has to remember.
-   *
-   * A function rather than a value so the roster is read at PRESS time; one captured at
-   * construction would answer with the roster the shell had when the view mounted, which for a
-   * mailbox that changed hands mid-session is the wrong answer.
+   * May these mailboxes be written to — the sentence to say, or `null` for yes. Takes EVERY mailbox
+   * the press touches and is asked once for the whole press: a selection spanning a mailbox this
+   * install organizes and one it only reads is a single gesture, and answering per message would
+   * delete the permitted half and refuse the rest — a partial outcome reported by one toast. The
+   * press is refused whole; the mixed-selection ruling falls out of the signature. A function
+   * rather than a value so the roster is read at PRESS time — one captured at construction answers
+   * with the roster the shell had at mount, wrong for a mailbox that changed hands mid-session.
    */
   refusal: (mailboxIds: ReadonlyArray<string | null | undefined>) => string | null;
   windowMs?: number;
@@ -220,17 +159,12 @@ export interface DeleteTarget {
 
 export interface DeleteUndo {
   /**
-   * ONE PRESS — over the focused message, or over a whole selection.
-   *
-   * A SET IS ONE PRESS AND NOT N PRESSES, which is the load-bearing half of this signature. One
-   * window opens, one toast is shown, one Undo takes the whole selection back, and one durable
-   * intent records it — so `pagehide` commits a press atomically instead of landing some of it.
-   * N separate windows would give N toasts that replace each other, of which only the last is
-   * still undoable, and a tab closed mid-way would delete an arbitrary prefix of the selection.
-   *
-   * Returns whether the press ACTED. `false` is a refusal or a no-op — the caller must not run
-   * its own side effects (closing the reading sheet, clearing a selection) on a press that did
-   * nothing, which is how a refused delete came to close the sheet over the message it had just
+   * One press — over the focused message, or a whole selection. A set is ONE press and not N: one
+   * window opens, one toast shows, one Undo takes the whole selection back, one durable intent
+   * records it — so `pagehide` commits a press atomically. N windows would give N toasts replacing
+   * each other, only the last undoable, and a tab closed mid-way would delete an arbitrary prefix.
+   * Returns whether the press ACTED: `false` is a refusal or no-op, and the caller must not run its
+   * own side effects on it — a refused delete once closed the sheet over the message it had just
    * declined to touch.
    */
   remove: (target: DeleteTarget | readonly DeleteTarget[]) => boolean;

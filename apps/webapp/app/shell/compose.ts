@@ -1,13 +1,10 @@
 /**
- * COMPOSING A NEW MESSAGE — the three fields, and the address parser.
- *
- * A reply inherits its recipient, its subject, its mailbox and its thread from the message
- * being answered. A compose has none of that, so this module owns the part of the send that
- * a reply never needed: turning a line of typed text into recipients, and refusing to guess.
- *
- * It deliberately knows nothing about React and nothing about send phases — `mail-send.ts`
- * owns the state machine and `canSend` — so the parsing below is testable one row at a time
- * and cannot drift into a second copy of the send rule.
+ * Composing a new message — the three fields, and the address parser. A reply inherits recipient,
+ * subject, mailbox and thread from the message being answered; a compose has none of that, so this
+ * module owns turning a line of typed text into recipients, and refusing to guess. It deliberately
+ * knows nothing about React and nothing about send phases — `mail-send.ts` owns the state machine
+ * and `canSend` — so the parsing is testable one row at a time and cannot drift into a second copy
+ * of the send rule.
  */
 import type { ComposeAttachment, EmailAddress, EngineMutation } from "@ohmail/client-engine";
 import type { SignatureState } from "./signature";
@@ -51,53 +48,35 @@ export interface ComposeFields {
    */
   html: string;
   /**
-   * THE SENDER THE USER PICKED, as a mailbox id. `null` = they did not pick one.
-   *
-   * It is a field on the FORM rather than a derivation because a default that is re-derived on
-   * every render would silently revert a deliberate choice: `drafts.mailboxId` is NOT NULL and
-   * immutable after create, so the pick has to survive as long as the text it belongs to. It
-   * lives here, beside the body, for the same reason the body lives here — leaving the view and
-   * coming back must not throw either of them away.
-   *
-   * `null` is not "no mailbox". It means the derived default applies, which is what a compose
-   * nobody has touched should send from. A stored id is revalidated against the account's
-   * mailboxes on the way out (`resolveComposeFrom`), never trusted.
-   *
-   * NEVER an address string — see `compose-from.ts`.
+   * The sender the user picked, as a mailbox id; `null` = they did not pick one. A field on the
+   * FORM rather than a derivation, because a default re-derived on every render would silently
+   * revert a deliberate choice — `drafts.mailboxId` is NOT NULL and immutable after create, so the
+   * pick must survive as long as the text it belongs to; it lives beside the body so leaving the
+   * view throws away neither. `null` is not "no mailbox": the derived default applies. A stored id
+   * is revalidated against the account's mailboxes on the way out (`resolveComposeFrom`), never
+   * trusted. Never an address string — see `compose-from.ts`.
    */
   fromMailboxId: string | null;
   /**
-   * FILES TO SEND WITH THIS MESSAGE — held in memory only, NEVER written to `localStorage`.
-   *
-   * Attachments carry bytes (base64), and the scratch buffer is a small string in this browser; a
-   * file the size of a photo would blow past a storage quota that Safari private mode refuses
-   * outright. So `writeComposeDraft` strips this field and `readComposeDraft` never restores it —
-   * the buffer's job is to survive navigation and a reload of the TEXT, and a file the user picked
-   * before reloading is re-picked, which is the honest behaviour rather than a phantom paperclip
-   * pointing at bytes that are gone. It is also NOT part of the autosaved `drafts` row — nothing on
-   * the account stores attachment bytes (§13.2/§14) — so `signatureOf`/`worthSaving` ignore it too.
-   * Optional so a buffer written before it existed reads back as a draft with no files.
+   * Files to send with this message — held in memory only, never written to `localStorage`.
+   * Attachments carry base64 bytes and a photo would blow past a quota Safari private mode refuses
+   * outright, so `writeComposeDraft` strips this field and `readComposeDraft` never restores it: the
+   * buffer's job is to survive navigation and a reload of the TEXT, and a file picked before a
+   * reload is re-picked — honest, rather than a phantom paperclip pointing at bytes that are gone.
+   * Not part of the autosaved `drafts` row either — nothing on the account stores attachment bytes
+   * (§13.2/§14) — so `signatureOf`/`worthSaving` ignore it. Optional, so an old buffer reads back
+   * as a draft with no files.
    */
   attachments?: ComposeAttachment[];
   /**
-   * THE MESSAGE THIS COMPOSE IS FORWARDING — an id, and nothing else.
-   *
-   * A forward is written on the ordinary compose form: the user picks recipients and may add a line
-   * above the quote, so everything the form already holds is what a forward needs. This one extra
-   * field is what turns it into a forward on the wire, and it deliberately carries no copy of the
-   * original — not its body, not its attachments, not its quote block. The SERVER reads the original
-   * from the account, refuses a `no_forward` one, builds the quote and streams the attachments from
-   * IMAP at send (`send-service.ts`); a client-assembled quote is exactly the seam a redacted
-   * sensitive body would escape through, so the client is never trusted with it.
-   *
-   * PERSISTED in the scratch buffer, unlike {@link attachments}: it is one short string, and a
-   * reload that kept the subject and the note but silently turned the message back into a plain
-   * compose would send an empty mail with "Fwd:" on it. Guarded field-wise on read like
-   * {@link fromMailboxId}, so a buffer written before this field existed restores as a plain
-   * compose.
-   *
-   * `null`/absent is the ordinary case. It is the EXCLUSIVE PEER of the mutation's `inReplyTo`,
-   * which `composePlan` keeps `null` — a forward threads onto no conversation (`types.ts`).
+   * The message this compose is forwarding — an id, and nothing else. A forward is written on the ordinary compose
+   * form; this one field turns it into a forward on the wire, and it deliberately carries no copy of the original —
+   * not body, attachments or quote. The SERVER reads the original from the account, refuses a `no_forward` one,
+   * builds the quote and streams the attachments from IMAP at send (`send-service.ts`); a client-assembled quote is
+   * exactly the seam a redacted sensitive body would escape through. PERSISTED in the scratch buffer, unlike {@link
+   * attachments}: one short string, and a reload that silently turned the message back into a plain compose would
+   * send an empty mail with "Fwd:" on it. Guarded field-wise on read, like {@link fromMailboxId}. `null` is the
+   * ordinary case; the exclusive peer of `inReplyTo` — a forward threads onto no conversation (`types.ts`).
    */
   forwardOf?: string | null;
   /**
@@ -135,28 +114,14 @@ export interface ComposePrefill {
 }
 
 /**
- * `localStorage` key for the compose scratch buffer — one per ACCOUNT, not one per browser.
- *
- * It used to be the bare constant below, and "one, because there is one compose" was true about
- * the SURFACE and wrong about the STORAGE. `localStorage` is per-origin, not per-session, and
- * nothing cleared this key on sign-out: `clearBootCaches()` removes the `ohmail.boot.` prefix
- * only and `clearAllMirrors()` is IndexedDB. So an unfinished message — recipients, subject,
- * body — written by one account survived into the next account to sign in on the same browser,
- * where the composer restored it and autosave could persist it as THEIR server draft.
- *
- * The account suffix is the same shape `searchSortKey` already uses, for the same reason and with
- * the same `"local"` fallback: a device with no account is a real situation rather than a missing
- * value.
- *
- * **The owner is `storageOwner()`, not `readOwner()`, and the difference is the standalone
- * desktop.** There is no cookie there, so this key used to resolve to the literal `"local"` for
- * every mailbox on the install at once — and the desktop mounts a different engine per mailbox.
- * The leak this key was created to stop (an unfinished message reaching the next account) was
- * therefore wide open on the one door that has no sign-out between the two. `storage-owner.ts`
- * is where the host supplies the identity a cookie cannot.
- *
- * The legacy key is drained rather than read. Reading it once "to migrate" is exactly the leak
- * — the migrating reader has no way to know whose draft it is.
+ * `localStorage` key for the compose scratch buffer — one per ACCOUNT, not one per browser. The bare constant
+ * was true about the surface and wrong about the storage: nothing cleared the key on sign-out
+ * (`clearBootCaches()` removes only `ohmail.boot.`, `clearAllMirrors()` is IndexedDB), so one account's
+ * unfinished message survived into the next account on the same browser, where autosave could persist it as
+ * THEIR server draft. The suffix is `searchSortKey`'s shape, with the same `"local"` fallback. The owner is
+ * `storageOwner()`, not `readOwner()`: the standalone desktop has no cookie, so this key used to resolve to
+ * `"local"` for every mailbox on the install at once — and the desktop mounts an engine per mailbox. The legacy
+ * key is drained, never read "to migrate": the migrating reader has no way to know whose draft it is.
  */
 /** Every owner's scratch key starts here. Exported so sign-out can sweep them. */
 export const COMPOSE_DRAFT_PREFIX = "ohmail.ui.compose.";

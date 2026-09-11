@@ -1,28 +1,14 @@
 "use client";
 
 /**
- * WHAT THE FIRST-RUN STAGE ASKS ITS DOOR FOR — the seam, and the only one it has.
- *
- * ── WHY THE STAGE TAKES A HOST INSTEAD OF CALLING THE API ─────────────────────────────────
- *
- * `app/shell/**` is SHARED with `apps/desktop`, a standalone AGPL program whose build aliases
- * `app/api-client` to a stub that throws (`apps/desktop/vite.config.ts`), and it is copied into
- * a public mirror that does not contain that module at all
- * (`scripts/publish-desktop.mjs` DENYs it). So the stage cannot import "connect a mailbox" any
- * more than `AppShell` can import "who is signed in" — the pattern here is `CloudShell`'s
- * verbatim, and every method below exists because some door implements it differently:
- *
- *  · Cloud/self-host reach `packages/api` over REST with a session cookie.
- *  · The standalone desktop reaches the SAME service code in-process through the sidecar's
- *    local door, with the launch bearer standing in for "this machine".
- *
- * ── AND WHY {@link FirstRunHost.providerForm} IS A NODE ───────────────────────────────────
- *
- * The AI provider step exists on the standalone door alone (ruling 2(d)), and its form is
- * `apps/desktop/src/AiProviderForm.tsx` — the SAME component `DesktopAiSettings` mounts, so
- * there is one write path to the install's model file and not two. `apps/webapp` may not import
- * it, and a pin asserts that it does not; the desktop passes the node in. On the other two doors
- * the field is absent and the step renders the door's own sentence instead.
+ * What the first-run stage asks its door for — the seam, and the only one it has. `app/shell/**` is shared with
+ * `apps/desktop`, whose build aliases `app/api-client` to a throwing stub, and it is copied into a public
+ * mirror that lacks the module entirely (`scripts/publish-desktop.mjs` denies it) — so the stage cannot import
+ * "connect a mailbox" any more than `AppShell` can import "who is signed in"; the pattern is `CloudShell`'s
+ * verbatim. Cloud/self-host reach `packages/api` over REST with a session cookie; the standalone desktop
+ * reaches the same service code in-process through the sidecar's local door. {@link FirstRunHost.providerForm}
+ * is a NODE because the AI provider step exists on the standalone door alone (ruling 2(d)) and its form is
+ * `apps/desktop/src/AiProviderForm.tsx`, which `apps/webapp` may not import — a pin asserts that.
  */
 
 import type { ReactNode } from "react";
@@ -53,18 +39,14 @@ export interface FirstRunMailboxInput {
 }
 
 /**
- * WHAT "AGREE AND START ORGANIZING" ACTUALLY DID — two answers, because the stage needs exactly
- * one bit and the doors answer it in two different vocabularies.
- *
- * Cloud answers `authorized | already_organizing | disconnected`; the standalone door adds
- * `removed` and `no_mailbox`. None of those distinctions mean anything to a screen — what the
- * screen has to know is whether the press stored the answer it promised to store. Mapping at the
- * host keeps the server's vocabulary out of the stage, the same way {@link FirstRunHost.probeReason}
- * keeps `ApiError` out of it.
- *
- * IT IS A RETURN VALUE AND NOT AN EXCEPTION because none of these is an error: every one of them
- * is a 200. Before this existed the stage could not tell them apart at all and treated a press
- * that stored nothing exactly like a press that worked.
+ * What "agree and start organizing" actually did — two answers, because the stage needs exactly
+ * one bit and the doors answer in two vocabularies: Cloud answers
+ * `authorized | already_organizing | disconnected`; the standalone door adds `removed` and
+ * `no_mailbox`. What the screen has to know is whether the press stored the answer it promised to
+ * store; mapping at the host keeps the server's vocabulary out of the stage, as
+ * {@link FirstRunHost.probeReason} keeps `ApiError` out. A return value, not an exception: every
+ * one of these is a 200 — before this existed the stage treated a press that stored nothing
+ * exactly like a press that worked.
  */
 export type FirstRunOrganizeOutcome =
   /**
@@ -83,16 +65,12 @@ export interface FirstRunHost {
   door: OnboardingDoor;
 
   /**
-   * WHERE THIS INSTALL STANDS ON AI — the four-state posture, resolved by the DOOR because only
-   * the door knows where the answer is kept.
-   *
-   *  · standalone — the install's own AI file (`ai-provider.ts`), which records a real choice;
-   *  · cloud      — `accounts.ai_enabled`, a BOOLEAN that rests false, so this door genuinely
-   *                 cannot tell "answered no" from "never asked" and reports `unset` until the
-   *                 flow has been through once. The stage compensates by walking past a "no"
-   *                 on its own cursor rather than by re-deriving into the same question; see
-   *                 the AI step.
-   *  · self-host  — the operator's key, from `/hello`. Nothing here for a person to answer.
+   * Where this install stands on AI — the four-state posture, resolved by the DOOR because only the
+   * door knows where the answer is kept: standalone — the install's own AI file (`ai-provider.ts`),
+   * a real choice; cloud — `accounts.ai_enabled`, a boolean that rests false, so this door cannot
+   * tell "answered no" from "never asked" and reports `unset` until the flow has been through
+   * once (the stage compensates by walking past a "no" on its own cursor); self-host — the
+   * operator's key, from `/hello`, nothing for a person to answer.
    */
   ai: OnboardingAi;
 
@@ -108,52 +86,26 @@ export interface FirstRunHost {
   probe: (input: FirstRunMailboxInput) => Promise<FirstRunProbeOk>;
 
   /**
-   * CONNECT IT — creates a CONSENT-LESS READER: the mirror starts building, nothing is moved, and
-   * `ohmail/*` is never created. The stage may say "connected" truthfully at this point and may
-   * not say "organizing".
-   *
-   * ── `mode` IS REQUIRED, AND THE DEFAULT IT DOES NOT HAVE IS THE POINT ─────────────────────
-   *
-   *  · `"seed"` — the FIRST mailbox of an install. On the standalone door this is not a request
-   *    at all but a reconfiguration: the shell's settings file is what the engine composes its
-   *    IMAP dial from at every launch, so a row created any other way would be a row nothing
-   *    ever connects to.
-   *  · `"add"` — a FURTHER mailbox on an install that already has one. It is a request:
-   *    `POST /local/mailboxes`, which writes the row and its credential beside the ones already
-   *    running and attaches a runtime for it. It must never reconfigure the install.
-   *
-   * A default would pick one of those for a caller that did not say, and both directions are
-   * wrong in a way that costs a mailbox. Defaulted to `seed`, "Add mailbox" replaces the engine
-   * and the first-connect order then seals the newly typed password onto the row the REPLACED
-   * engine settles on — the install's original mailbox. Defaulted to `add`, a first connect
-   * writes a row the shell has never heard of and the install dials nothing.
-   *
-   * On the hosted door both words select the same call (`POST /mailboxes`), because there is no
-   * settings file and no engine to reconfigure; the parameter is still required there, so that
-   * the seam has one shape and a caller cannot learn a habit that is wrong on the other door.
+   * Connect it — creates a CONSENT-LESS READER: the mirror starts building, nothing is moved, `ohmail/*` is never
+   * created; the stage may say "connected" and may not say "organizing". `mode` is required, and the default it does
+   * not have is the point. `"seed"` — the first mailbox of an install; on the standalone door a reconfiguration of
+   * the settings file the engine dials from. `"add"` — a further mailbox: `POST /local/mailboxes`, beside the ones
+   * already running, never reconfiguring the install. A default picks one for a caller that did not say, and both
+   * directions cost a mailbox: defaulted to `seed`, "Add mailbox" replaces the engine and seals the new password onto
+   * the original mailbox; defaulted to `add`, a first connect writes a row the install never dials. On the hosted
+   * door both words select `POST /mailboxes`; the parameter stays required so the seam has one shape.
    */
   connect: (input: FirstRunMailboxInput, mode: "seed" | "add") => Promise<{ id: string }>;
 
   /**
-   * AGREE AND START ORGANIZING — `POST /mailboxes/:id/organize`, and the ONE call the consent
-   * and the window both ride.
-   *
-   * The window cannot be a second request. `screening_baseline_at` is what the window is
-   * measured from and the consent is what writes it, so a separate "set the window" call would
-   * leave a gap in which the baseline exists and the window does not — and during that gap the
-   * cutoff is the product default, not the answer the person just gave. The service writes
-   * consent, baseline, window and scope in one transaction; this method is the door to it.
-   *
-   * ── IT ANSWERS, AND THE ANSWER IS NOT ALWAYS "DONE" ──────────────────────────────────────
-   *
-   * See {@link FirstRunOrganizeOutcome}. Every reply is a 200, including the ones that store
-   * nothing, so a `Promise<void>` gave the stage no way to tell a press that worked from a press
-   * that could not — and it advanced either way.
-   *
-   * On a RE-RUN of setup the mailbox is usually already organized with consent recorded. Both
-   * doors refuse to re-stamp it (a second press is not a second becoming) and both still write
-   * the window and the scope, because those are the answer the person just gave. That is
-   * `"stored"`, and it is why the re-run's window control is not decorative.
+   * Agree and start organizing — `POST /mailboxes/:id/organize`, the ONE call the consent and the window both ride.
+   * The window cannot be a second request: `screening_baseline_at` is what the window is measured from and the
+   * consent is what writes it, so a separate call would leave a gap in which the cutoff is the product default rather
+   * than the answer the person just gave — the service writes consent, baseline, window and scope in one transaction.
+   * It answers, and the answer is not always "done" ({@link FirstRunOrganizeOutcome}): every reply is a 200, so a
+   * `Promise<void>` could not tell a press that worked from one that stored nothing. On a re-run both doors refuse to
+   * re-stamp consent (a second press is not a second becoming) and still write the window and scope — `"stored"`,
+   * which is why the re-run's window control is not decorative.
    */
   organize: (
     mailboxId: string,
