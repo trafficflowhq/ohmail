@@ -1043,23 +1043,16 @@ function ActionBar({
         </div>
 
         <div className="abar-g abar-read-g">
-          {/*
-           * One slot, two directions — and a third face on a resurfaced message (see `markUnread`
-           * and `markRead` above). Exactly one of the two renders, same position, same shape: the
-           * verb as the label (not a `role="switch"` hiding the action in a `title`), a dot
-           * PREVIEWING the outcome (filled ⇒ the row will have one), and a keycap read from the
-           * live registry. A resurfaced message owns the slot with "Done": on a pinned message
-           * the deliberate read IS the release — one act spends both — so "Mark as read" was the
-           * release wearing the wrong name, and nothing on the surface said how to END a
-           * resurface (reported in exactly those terms). Renamed where the state gives it its
-           * real meaning, not added beside: two buttons would be one mutation twice. It
-           * dispatches `resurface_done` (the shell's one release arm) rather than pressing `⇧I`,
-           * because the key acts on the SELECTED message and this bar can be mounted over an
-           * unselected one (a stream card); the keycap still shows `⇧I` where bound. A check
-           * instead of the dot — the previewed outcome is "finished", not a read mark. It
-           * replaces the slot at every width and folds nowhere: the read switch is part of the
-           * floor, and "Done" plus the check is narrower than either label it replaces.
-           */}
+          {/* One slot, two directions — and a third face on a resurfaced message (see
+              `markUnread`/`markRead`). Exactly one of the two renders, same position, same
+              shape: the verb as the label, a dot previewing the outcome, a keycap from the live
+              registry. A resurfaced message owns the slot with "Done": on a pinned message the
+              deliberate read IS the release — one act spends both — so "Mark as read" was the
+              release wearing the wrong name; renamed where the state gives it meaning, not
+              added beside (two buttons would be one mutation twice). It dispatches
+              `resurface_done` rather than pressing `⇧I`, because the key acts on the SELECTED
+              message and this bar can be mounted over an unselected one; a check instead of the
+              dot — the previewed outcome is "finished". Part of the floor, folds nowhere. */}
           {isResurfaced(message) ? (
             <button
               type="button"
@@ -1347,53 +1340,36 @@ export function MessagePane({
   }, [siblingKey, hydrateThread]);
 
   /**
-   * OPEN A THREAD AT ITS LATEST MESSAGE — instant, no animation.
-   *
-   * A conversation renders oldest→newest (`ConversationPanels`, one full-body panel per
-   * message), so a fresh render sits at the TOP, on the oldest mail, and the reader has to
-   * scroll down to reach what just arrived. This puts the newest on screen the moment the
-   * pane paints.
-   *
-   * The FOCUS is NOT remapped — `message` stays the id that was opened (ActionBar, reply,
-   * read-state and selection all key on it). The anchor is purely a scroll position: the LAST
-   * `[data-conv-id]` element in the stack — the newest PANEL (or the focused message's own
-   * panel when it is the newest).
-   *
-   * `scrollTop` is assigned DIRECTLY rather than via `scrollIntoView`, for two reasons: it
-   * moves ONE scroller instead of every scrollable ancestor, and it is instant regardless of
-   * `scroll-behavior` — neither `.read-col` (`message.css`) nor `.reader` (`reader.css`)
-   * declares `smooth`, but a direct assignment does not depend on that staying true. The walk
-   * to the nearest scrollable ancestor is inlined (its shape copied from `MessageBody.tsx`'s
-   * `scrollAncestors`) rather than imported, to keep this pane off the sanitizer module.
-   *
-   * `useLayoutEffect` so the position is set before first paint; keyed on
-   * `[message.id, showConversation]` ONLY — a dependency on body-state or contents would
-   * re-anchor on every hydration delta, for as long as the pane is open, and yank a reader who
-   * had scrolled up.
-   *
-   * ── AND ONE PASS IS NOT ENOUGH ANY MORE ─────────────────────────────────────────────────
-   *
-   * This used to run exactly once and stop, on the premise stated above it: *"the conversation
-   * list is complete at first render"*. That premise was true when a sibling rendered its
-   * snippet — two lines, final height, at first paint. It stopped being true when siblings
-   * started hydrating: `Conversation` asks for every sibling's body in a mount effect, the
-   * answers land over the following moments, and each one replaces two lines of snippet with a
-   * whole message. So the stack this pass measured is not the stack the reader ends up looking
-   * at, and the newest message walks back off the bottom of the screen as its older siblings
-   * grow above it — a thread opening at its OLDEST message, which is the exact defect this
-   * anchor exists to prevent, restored through a door that did not exist when it was written.
-   *
-   * There is a second, sharper arm of the same fault. The walk below requires an ancestor that
-   * is ALREADY overflowing; before the bodies land there may be nothing to scroll at all, the
-   * walk falls off the top and returns, and no later event brings it back. That case anchors
-   * nothing whatsoever rather than anchoring imprecisely.
-   *
-   * So the anchor is re-applied while the conversation's own box keeps changing size, and
-   * handed over to the reader the moment they touch it — a wheel, a drag, a key, a press.
-   * Bounded by that handover and by a timeout, so a thread that never settles cannot hold the
-   * scroller for ever. `ResizeObserver` and not a hydration dependency: it fires on the thing
-   * that actually invalidates the position (the stack got taller), so a body that arrives
-   * without changing the height costs nothing, and it is guarded for environments without one.
+   * Open a thread at its latest message — instant, no animation. A conversation renders oldest→newest
+   * (`ConversationPanels`), so a fresh render sits at the TOP on the oldest mail; this puts the newest on screen the
+   * moment the pane paints. The FOCUS is not remapped — `message` stays the opened id (ActionBar, reply, read-state
+   * and selection key on it); the anchor is purely a scroll position, the last `[data-conv-id]` element in the stack.
+   * `scrollTop` is assigned directly rather than via `scrollIntoView`: it moves ONE scroller instead of every
+   * scrollable ancestor, and it is instant regardless of `scroll-behavior`. The walk to the nearest scrollable
+   * ancestor is inlined (copied from `MessageBody.tsx`'s `scrollAncestors`) to keep this pane off the sanitizer
+   * module.
+   */
+
+  /**
+   * `useLayoutEffect` so the position is set before first paint; keyed on `[message.id, showConversation]` ONLY — a
+   * dependency on body-state would re-anchor on every hydration delta and yank a reader who had scrolled up.
+   */
+
+  /**
+   * One pass is not enough any more. This ran once and stopped, on the premise "the
+   * conversation list is complete at first render" — true when a sibling rendered its snippet
+   * at final height, false once siblings started hydrating: `Conversation` asks for every
+   * sibling's body in a mount effect, each answer replaces two lines of snippet with a whole
+   * message, and the newest message walks back off the bottom as its older siblings grow above
+   * it — a thread opening at its OLDEST message, the exact defect this anchor prevents,
+   * restored through a door that did not exist when it was written. Sharper second arm: the
+   * walk requires an ancestor ALREADY overflowing — before the bodies land there may be nothing
+   * to scroll, the walk falls off the top, and no later event brings it back. So the anchor is
+   * re-applied while the conversation's box keeps changing size, and handed to the reader the
+   * moment they touch it (wheel, drag, key, press) — bounded by that handover and a timeout, so
+   * a thread that never settles cannot hold the scroller. `ResizeObserver`, not a hydration
+   * dependency: it fires on what actually invalidates the position (the stack got taller), so a
+   * body arriving without changing height costs nothing; guarded for environments without one.
    */
   useLayoutEffect(() => {
     if (!showConversation) return;
@@ -1581,24 +1557,17 @@ export function MessagePane({
        that holds the mail and nothing else, which is what `test/conversation.test.ts` and
        `test/inline-reply.test.ts` select on and what a reader is entitled to assume. */
     <div className="msg-body">
-      {/* The consent path for remote images. `remoteImages` is ABSENT on a client that
-          has no proxy (`?demo=1`, the desktop shell, a test with no API), and `MessageBody`
-          answers that by offering no button at all rather than a dead one.
-
-          `remoteLoaded` is the OR of THREE facts that mean the same thing to a reader and are
-          stored in different places: the server's `loadedRemoteContent`, which is why images
-          stay loaded across a reload; this session's press, which is why they appear at
-          the moment it happens; and the ACCOUNT's own setting, which is why most readers never
-          see the button at all. The mirror's body record is not re-fetched on consent —
-          `hydrateBody` returns early on a `ready` record — so without the second term the
-          button would write a row and change nothing on screen.
-
-          `auto` is the product default (mail 0048). It admits PICTURES through the proxy; the
-          sanitizer still refuses the proxy to a beacon or a 1×1 in both modes, so a tracking
-          pixel is no more loaded here than it was before.
-
-          `onLoadRemote` is withheld in auto mode, which is what removes the button: `MessageBody`
-          offers no control it cannot honour, and "Show images" over images that are already
+      {/* The consent path for remote images. `remoteImages` is ABSENT on a client with no proxy
+          (`?demo=1`, the desktop shell, a test with no API), and `MessageBody` answers that with
+          no button rather than a dead one. `remoteLoaded` is the OR of three facts stored in
+          different places: the server's `loadedRemoteContent` (images stay loaded across a
+          reload), this session's press (they appear the moment it happens), and the account's
+          own setting (most readers never see the button). The mirror's body record is not
+          re-fetched on consent — `hydrateBody` returns early on a `ready` record — so without
+          the second term the button would write a row and change nothing on screen. `auto` is
+          the product default (mail 0048): it admits PICTURES through the proxy, and the
+          sanitizer still refuses the proxy to a beacon or a 1×1 in both modes. `onLoadRemote`
+          is withheld in auto mode, which removes the button: "Show images" over images already
           showing is a control whose press does nothing. */}
       <MessageBody
         messageId={message.id}
@@ -1650,27 +1619,22 @@ export function MessagePane({
              and the whole tile on one that cannot. Every attachment can be saved, whatever else
              it can do, so this is never withheld. */
           onOpen={(attachmentId) => attachments.open(message.id, attachmentId)}
-          /* LOOKING IS WHAT A PRESS DOES, and WHICH FILES OFFER IT IS DECIDED HERE rather than
-             in the strip — the strip stays a pure component that asks no questions, and the
-             answer is a security judgement with one owner. A type this app can draw inline
-             (image, PDF, text) opens the Quick-Look overlay; everything else — a docx, a zip,
-             and an SVG, which is a document that executes script — cannot be previewed at all
-             and its tile saves. The metadata carries the type whatever the item's byte state, so
-             the decision needs no fetch.
+          /**
+           * Looking is what a press does, and WHICH files offer it is decided here rather than in the strip — the
+           * strip stays a pure component, and the answer is a security judgement with one owner. A type this app can
+           * draw inline (image, PDF, text) opens the Quick-Look overlay; everything else — a docx, a zip, and an SVG,
+           * a document that executes script — cannot be previewed and its tile saves. The metadata carries the type
+           * whatever the byte state, so the decision needs no fetch. The swap changed the geometry, not this line:
+           * `isPreviewable` is the same predicate with the same refusals.
+           */
 
-             THE SWAP CHANGED THE GEOMETRY, NOT THIS LINE. `isPreviewable` is the same predicate
-             with the same owner and the same refusals; what moved is which control is the big
-             one. An attachment is usually opened to be read once, and a press that put the file
-             in ~/Downloads made the reader find it, open it elsewhere and then delete it.
-
-             AND ON THE DESKTOP, A PDF IS NOT ONE OF THEM — `opensInSystemViewer` is the second
-             half, and it subtracts rather than adds. That window cannot draw a PDF at all: the
-             renderer needs a worker, the window's policy is `worker-src 'none'`, and both desktop
-             bundles alias the library away for it. Offering the eye there produced a viewer whose
-             only possible outcome was a panel saying to download the file instead — over a
-             Download that, until this change, could not deliver one. Without the eye, the tile's
-             own press is the whole gesture and it opens the PDF in the program this computer uses
-             for PDFs. It answers false everywhere else, including the whole web app. */
+          /**
+           * On the desktop a PDF is not one of them — `opensInSystemViewer` subtracts: that window cannot draw a PDF
+           * (the renderer needs a worker, the policy is `worker-src 'none'`, both bundles alias the library away), so
+           * the eye there was a viewer whose only outcome was a panel saying to download instead. Without the eye,
+           * the tile's press opens the PDF in the program this computer uses for PDFs; it answers false everywhere
+           * else, including the whole web app.
+           */
           onPreview={(attachmentId) => chrome.openAttachmentPreview(message.id, attachmentId)}
           canPreview={(item) => isPreviewable(item.mimeType) && !opensInSystemViewer(item.mimeType)}
           onDownloadAll={() => attachments.downloadAll(message.id, { includeInlineImages: nativeBody })}
@@ -1686,26 +1650,21 @@ export function MessagePane({
   );
 
   /**
-   * Said for everything that is not the mail — and `snippet` IS one of those things here.
-   *
-   * This used to exempt `snippet` alongside `full`, on the argument that the shell hydrates on
-   * selection so a snippet is a sub-frame state and a sentence that appears and vanishes within
-   * one frame is noise. The premise was false in the case that matters. `hydrateBody` writes its
-   * `loading` marker at ENQUEUE now, but before that it wrote it only once a fetch DEPARTED, and
-   * departures are capped at four — so the fifth message opened during a busy tick had no
-   * `message_body` record at all, `bodyOf` answered `snippet`, and this pane rendered 200
-   * characters of the mail cut mid-word inside full message anatomy with NOTHING saying more was
-   * coming. Silent, indistinguishable from a short email, and worst exactly when the app is busy.
-   *
-   * The engine's marker closes that window; this line is the second half of the same fix, and it
-   * is the half that does not depend on getting the enqueue right. Both panes hydrate what they
-   * render, so a snippet AT REST in this pane is a defect by construction — the honest thing to
-   * say about it is that the message is still coming, which is what a reader can act on.
-   *
-   * THE FAILURE CARRIES A CONTROL, not only a sentence. The stream cards recover on their
-   * own (re-expand, or scroll back and become current again); this pane's hydration is keyed
-   * on the selected id, so without a button a single 500 leaves the body unreachable until
-   * the user selects away and returns — a dead end nobody would guess the exit from.
+   * Said for everything that is not the mail — and `snippet` IS one of those things here. This used to exempt
+   * `snippet` alongside `full`, arguing the shell hydrates on selection so a snippet is a sub-frame state. False in
+   * the case that matters: before `hydrateBody` wrote its `loading` marker at ENQUEUE, it wrote it only when a fetch
+   * DEPARTED, and departures are capped at four — the fifth message opened during a busy tick had no `message_body`
+   * record, `bodyOf` answered `snippet`, and this pane rendered 200 characters cut mid-word inside full message
+   * anatomy with nothing saying more was coming: silent, indistinguishable from a short email, worst exactly when the
+   * app is busy.
+   */
+
+  /**
+   * The engine's marker closes that window; this line is the half that does not depend on getting the enqueue right —
+   * a snippet AT REST in this pane is a defect by construction, and the honest thing to say is that the message is
+   * still coming. The failure carries a CONTROL, not only a sentence: this pane's hydration is keyed on the selected
+   * id, so without a button a single 500 leaves the body unreachable until the user selects away and returns — a dead
+   * end nobody would guess the exit from.
    */
   /**
    * `snippet` is grouped with `loading` because both mean "not the mail yet" — see the note
@@ -1769,34 +1728,25 @@ export function MessagePane({
     );
 
   /**
-   * ── THE TITLE'S CHROME — SIGNALS INLINE, TAGS FOLDED ──────────────────────────────────────
-   *
-   * Two different things used to share one wrapping row directly under the subject. The routing
-   * rationale and the tracker shield are SIGNALS the product is stating about this message — they
-   * are here to be read once, and there are at most two of them. The tags are the reader's OWN
-   * marks, and a message can carry several; rendered as a row of full colour chips right under the
-   * title they dominated the head of every tagged message, so a mark meant to be quiet read louder
-   * than the sender.
-   *
-   * So the signals keep their inline row (rendered only when one exists — no empty gap otherwise),
-   * and the tags move into the same collapsed `(i)` disclosure the list explainers use: a quiet
-   * "{n} tags" line under the title that opens to the colour chips on demand. The list rows are
-   * left exactly as they were — a tag there is a scanning aid at row scale, not the head of an
-   * open letter, so `MessageRow` still renders its chips inline.
-   *
-   * ── AND THE `+ Tag` AFFORDANCE IS NO LONGER ONE OF THEM ───────────────────────────────────
-   *
-   * A dashed `+ Tag` chip used to stand here permanently, outside the fold, with its own `addRef`
-   * anchor and a hand-typed `t` hint. Reported twice — *"Tag + is still under the title and not in
-   * the Pill shape (I gave this feedback before). Added Tags should stay where they are, but the
-   * + Tag element should go into the Pill UI."* — so the ENTRY POINT is a verb of the action bar
-   * now (see `ActionBar`'s `tag`) and the chip is deleted rather than left standing beside it: two
-   * controls opening one picker is what the note is about.
-   *
-   * What is left under the title is only what the note asked to leave alone — the message's own
-   * marks. And with the affordance gone, an untagged message renders no `.tag-chrome` at all: the
-   * row existed to hold a control that is somewhere else, and an empty flex box under every
-   * untagged subject is a gap with nothing in it.
+   * The title's chrome — signals inline, tags folded. Two different things shared one wrapping
+   * row under the subject: the routing rationale and the tracker shield are SIGNALS the product
+   * states about this message — read once, at most two of them — while the tags are the
+   * reader's OWN marks, and rendered as full colour chips they dominated the head of every
+   * tagged message. So the signals keep their inline row (rendered only when one exists) and
+   * the tags move into the same collapsed `(i)` disclosure the list explainers use: a quiet
+   * "{n} tags" line that opens to the chips on demand. The list rows are untouched — a tag
+   * there is a scanning aid at row scale, so `MessageRow` still renders its chips inline.
+   */
+
+  /**
+   * The `+ Tag` affordance is no longer one of them. A dashed chip stood here permanently,
+   * outside the fold, with its own `addRef` anchor and a hand-typed `t` hint. Reported twice
+   * ("the + Tag element should go into the Pill UI"), so the ENTRY POINT is a verb of the
+   * action bar now (see `ActionBar`'s `tag`) and the chip is deleted rather than left standing:
+   * two controls opening one picker is what the note is about. What is left under the title is
+   * only the message's own marks — and with the affordance gone, an untagged message renders no
+   * `.tag-chrome` at all: an empty flex box under every untagged subject is a gap with nothing
+   * in it.
    */
   const titleChrome = (
     <div className="msg-marks">
@@ -1968,27 +1918,20 @@ export function MessagePane({
   }
 
   /**
-   * ── THE THREAD DOES NOT ROUTE THROUGH `ReadingPane` — an article cannot wrap N panels ────
-   *
-   * The wrapper below is the scrolling column: every message on the conversation is its own
-   * full-width, full-body panel (`.pm`), oldest first, sitting directly on the canvas — the
-   * `.read-col` drops its panel skin for this case (`message.css`). No peek rows, no counts,
-   * no "show earlier": every panel is the mail itself (`ConversationPanels`).
-   *
-   *   · NO LEDE: the column opens on the oldest panel. Every panel prints its OWN subject in
-   *     its header (SUBJECT-D, `MessageHeader`) — the one-time thread heading is deleted, and
-   *     with it the suppression that decided which panels earned a line.
-   *   · The FOCUSED panel is composed here (the protected rule decided first, the hydrated
-   *     body, the attachment strip, the body-state line — and the signal/tag marks, which are
-   *     facts about THIS message and ride its panel now the lede is gone); `aria-current`
-   *     marks it, and the focus is never remapped.
-   *   · The PILL and the reply dock are direct children of the wrapper, AFTER the panels, so
-   *     `.msg-actions`' sticky rule pins the one bar at the foot of the scrolling column
-   *     exactly as it pins inside `.msg` — and the editor docks under it, one copy, below the
-   *     conversation.
-   *
-   * `role="group"` because `aria-label` on a bare div is ignored, and a landmark
-   * (`<section>`) would be too loud for one part of one view.
+   * The thread does not route through `ReadingPane` — an article cannot wrap N panels. The
+   * wrapper below is the scrolling column: every message on the conversation is its own
+   * full-width, full-body panel (`.pm`), oldest first, on the canvas (`.read-col` drops its
+   * panel skin — `message.css`); no peek rows, no counts, no "show earlier" — every panel is
+   * the mail itself (`ConversationPanels`). No lede: the column opens on the oldest panel, and
+   * every panel prints its OWN subject (SUBJECT-D, `MessageHeader`) — the one-time thread
+   * heading is deleted, and with it the suppression that decided which panels earned a line.
+   * The FOCUSED panel is composed here (the protected rule decided first, the hydrated body,
+   * the attachment strip, the body-state line, the signal/tag marks — facts about THIS message,
+   * riding its panel now the lede is gone); `aria-current` marks it, the focus never remapped.
+   * The PILL and the reply dock are direct children of the wrapper, AFTER the panels, so
+   * `.msg-actions`' sticky rule pins the one bar at the foot and the editor docks under it.
+   * `role="group"` because `aria-label` on a bare div is ignored, and a `<section>` landmark
+   * would be too loud for one part of one view.
    */
   return (
     <div className="conv" role="group" aria-label={tc("conversationAria")} ref={convRef}>
