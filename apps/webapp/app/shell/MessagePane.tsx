@@ -433,32 +433,24 @@ function ActionBar({
   useEffect(() => setMenuOpen(false), [message.id]);
 
   /**
-   * ── CANCELLING A PANEL PUTS THE KEYBOARD BACK ON THE CONTROL THAT OPENED IT ────────────────
-   *
-   * Three ceremonies open a strip over the bar and each of them focuses INTO it (Cancel for the
-   * delete ask, the first destination for Move, "Now" for Resurface). Cancelling did the opposite
-   * of opening: the strip unmounted, the row came back, and focus was on nothing — a keyboard user
-   * who opened Resurface and changed their mind was returned to the top of the document, with the
-   * bar they had been operating several Tab stops away.
-   *
-   * The trigger is recorded on the way IN, and the restore happens in an effect on the render that
-   * brings the row back — see {@link PanelTrigger} for why the element itself cannot be held. The
-   * message id rides along because this bar is mounted more than once (the reading column and the
-   * reader sheet) over a panel the chrome keys by message: a cursor move clears the panel with
-   * nobody having cancelled anything, and a restore then would take the keyboard to a DIFFERENT
-   * message's Resurface button. A recorded trigger belongs to the message it was pressed on, or
-   * to nothing.
-   *
-   * AN ANSWER IS NOT A CANCEL. Choosing a destination, a horizon or Delete clears the record, so
-   * the keyboard is not sent back to a verb that has just been spent on a message which has moved
-   * out from under it. That is the behaviour those three already had and it is deliberately
-   * unchanged here.
-   *
-   * ESCAPE GETS THE SAME RESTORE FOR FREE, and that is the reason this is a transition and not a
-   * callback: the shell closes the innermost layer by setting the panel to null itself
-   * (`AppShell`'s `escapeLayers`), never through anything in this file, so a restore hung off the
-   * Cancel button's handler would have covered the mouse and left the key that people actually
-   * use unfixed.
+   * Cancelling a panel puts the keyboard back on the control that opened it. Three ceremonies open a strip over the
+   * bar and each focuses INTO it (Cancel for the delete ask, the first destination for Move, "Now" for Resurface);
+   * cancelling did the opposite of opening — the strip unmounted, the row came back, and focus was on nothing: a
+   * keyboard user who opened Resurface and changed their mind was returned to the top of the document. The trigger is
+   * recorded on the way IN and the restore happens in an effect on the render that brings the row back — see {@link
+   * PanelTrigger} for why the element itself cannot be held. The message id rides along because this bar is mounted
+   * twice (reading column, reader sheet) over a panel the chrome keys by message: a cursor move clears the panel with
+   * nobody having cancelled, and a restore then would take the keyboard to a DIFFERENT message's Resurface button.
+   */
+
+  /**
+   * An answer is not a cancel: choosing a destination, a horizon or Delete clears the record,
+   * so the keyboard is not sent back to a verb just spent on a message that has moved out from
+   * under it — the behaviour those three already had. Escape gets the same restore for free,
+   * which is why this is a transition and not a callback: the shell closes the innermost layer
+   * by setting the panel to null itself (`AppShell`'s `escapeLayers`), never through this file,
+   * so a restore hung off the Cancel button's handler would have covered the mouse and left
+   * the key people actually use unfixed.
    */
   const panelTriggerRef = useRef<{ from: PanelTrigger; messageId: string } | null>(null);
   /** The row's own Resurface and Move buttons, bound on the VISIBLE row only — see `rowGroups`. */
@@ -519,26 +511,19 @@ function ActionBar({
   };
 
   /**
-   * MARK AS READ — the OTHER half of the same slot, and the reason the slot is never empty.
-   *
-   * The bar used to render nothing at all on an unread message: the argument was that opening a
-   * message reads it, so a "Mark read" arm acts on a state the message is about to be in anyway.
-   * That is true of an ARMED read — and the Ohbox now presents one as read, so `message.unread`
-   * here is presented state and this arm never renders over a message being read — but false of
-   * the message `u` just put back to unread: it sits under the reader's eyes as unread with no way
-   * to say "I am done with this" except to leave. And a slot that holds a verb in one state and
-   * nothing in the other reads as a control that has disappeared rather than as a state with no
-   * verb.
-   *
-   * IT PRESSES `⇧I`, NOT A TOGGLED `u`. The keyboard here is two DIRECTIONS and not one flip —
-   * `u` marks unread, `⇧I` marks read, argued out in `OhboxView`'s own binding table — and a
-   * button that pressed `u` on an unread message would need `u` to become a toggle, which is the
-   * shape that ruling rejects. Pressing the direction that already exists also means the `?` sheet
-   * documents this button's key without a new row: the sheet is generated from the same registry.
-   *
-   * Same seam as {@link markUnread} in every other respect: `press` resolves at call time, and
-   * `onAction("unread")` — a deliberate flip, so it needs no direction of its own — is the fallback
-   * for surfaces with no keymap behind them.
+   * Mark as read — the other half of the same slot, and the reason the slot is never empty. The bar used to render
+   * nothing on an unread message, arguing that opening a message reads it — true of an ARMED read (the Ohbox presents
+   * one as read, so `message.unread` here is presented state), false of the message `u` just put back to unread: it
+   * sits under the reader's eyes with no way to say "I am done" except to leave. And a slot holding a verb in one
+   * state and nothing in the other reads as a control that disappeared. It presses `⇧I`, not a toggled `u`: the
+   * keyboard is two DIRECTIONS, not one flip (argued in `OhboxView`'s binding table), and a button pressing `u` on an
+   * unread message would need `u` to become a toggle — the shape that ruling rejects; pressing the existing direction
+   * also means the `?` sheet documents this button's key with no new row.
+   */
+
+  /**
+   * Same seam as {@link markUnread} otherwise: `press` resolves at call time, and `onAction("unread")` — a deliberate
+   * flip needing no direction — is the fallback for surfaces with no keymap behind them.
    */
   const markRead = () => {
     if (!press("shift+i")) onAction("unread");
@@ -681,25 +666,19 @@ function ActionBar({
   );
 
   /**
-   * ── TAG, AS A VERB OF THE BAR ─────────────────────────────────────────────────────────
-   *
-   * Reported twice: *"Tag + is still under the title and not in the Pill shape (I gave this
-   * feedback before). Added Tags should stay where they are, but the + Tag element should go into
-   * the Pill UI."* The entry point used to be a dashed `+ Tag` chip beside the subject; it is this
-   * button now, and the chip is deleted rather than kept alongside — two doors to one picker was
-   * the substance of the note.
-   *
-   * It OPENS the picker the chip opened. `onTag` reaches `AppShell.openTagPicker`, which is the
-   * same seam the `t` key and the selection bar's Tag button call, so nothing here is a second
-   * implementation of tagging. The anchor is the BUTTON, exactly as Screening's is and for the
-   * same reason: in the reader sheet the list row is behind the overlay, so a popover placed from
-   * it would open under the message being read. `.tagp` is `position: fixed` at `--z-pal`, so it
-   * is clipped by nothing on the way out of the pill.
-   *
-   * Its own `.abar-g`, not a member of the filing segment: Screening and Move both answer "where
-   * does this mail live", and a tag is the reader's own mark on mail that lives where it lives.
-   * `.abar-tag` is a density group of its own, admitted after the horizons and before filing —
-   * see the admission order at the foot of `action-bar.css`.
+   * Tag, as a verb of the bar. Reported twice ("the + Tag element should go into the Pill UI"): the entry point used
+   * to be a dashed `+ Tag` chip beside the subject; it is this button now, and the chip is deleted rather than kept
+   * alongside — two doors to one picker was the substance of the note. It OPENS the picker the chip opened: `onTag`
+   * reaches `AppShell.openTagPicker`, the same seam the `t` key and the selection bar's Tag button call, so nothing
+   * here is a second implementation. The anchor is the BUTTON, exactly as Screening's and for the same reason: in the
+   * reader sheet the list row is behind the overlay, so a popover placed from it would open under the message being
+   * read (`.tagp` is `position: fixed` at `--z-pal`).
+   */
+
+  /**
+   * Its own `.abar-g`, not a member of the filing segment: Screening and Move answer "where does this mail live", and
+   * a tag is the reader's own mark on mail that lives where it lives. `.abar-tag` is a density group of its own,
+   * admitted after the horizons and before filing — see the foot of `action-bar.css`.
    */
   const tag = onTag ? (
     <div className="abar-g abar-v abar-tag">
@@ -929,25 +908,19 @@ function ActionBar({
     { id: "aside", group: "aside", label: t("actionSetAside"), run: () => { closeMenu(); onAction("aside"); } },
     { id: "resurface", group: "resurface", label: t("actionResurface"), run: () => { closeMenu(); openPanel("resurface", "more"); } },
     /**
-     * TAG — THE FOLDED HALF OF THE ROW BUTTON, and it used to be the only half.
-     *
-     * While tagging's always-visible entry point was the `+ Tag` chip under the title, this row
-     * was a convenience with no row position at all: it carried no group class, like Draft reply,
-     * and no query could switch it off. The chip is gone and the verb stands in the bar, so this
-     * is now the FOLDED HALF — `group: "tag"` is what lets the admission rule hide it exactly
-     * where `.abar-tag` stands, keeping "a verb is in the row or in the menu, never both".
-     *
-     * Placed between the horizons and filing, mirroring the row: a reader who has seen Tag there
-     * on a wide bar looks for it there on a narrow one. Anchored on More (`moreRef`), like
-     * Screening, so the picker opens where the press was rather than under a menu that has closed.
-     * Only where the surface can tag (`onTag` present) — the stream bar cannot.
-     *
-     * **THIS IS NOT A SECOND ENTRY POINT, and that is checked rather than argued.** Rendered in
-     * Chrome with both halves present, at every container width the bar is given in both locales
-     * and on both faces, the row and the menu are exactly complementary: never both, never
-     * neither. Deleting this row to make the move "a move" would instead make tagging
-     * UNREACHABLE from an open message in the split column and on a phone, which are the
-     * narrowest of those widths.
+     * Tag — the folded half of the row button, and it used to be the only half. While tagging's always-visible entry
+     * was the `+ Tag` chip under the title, this row was a convenience with no row position (no group class, like
+     * Draft reply). The chip is gone and the verb stands in the bar, so this is the FOLDED HALF — `group: "tag"` lets
+     * the admission rule hide it exactly where `.abar-tag` stands, keeping "a verb is in the row or in the menu,
+     * never both". Placed between the horizons and filing, mirroring the row; anchored on More (`moreRef`), like
+     * Screening, so the picker opens where the press was; only where the surface can tag (`onTag` present) — the
+     * stream bar cannot.
+     */
+
+    /**
+     * Not a second entry point, checked rather than argued: rendered in Chrome with both halves present at every
+     * width, locale and face, the row and menu are exactly complementary — never both, never neither. Deleting this
+     * row would make tagging unreachable from an open message in the split column and on a phone.
      */
     ...(onTag
       ? [{
@@ -1006,15 +979,13 @@ function ActionBar({
 
         {/* REPLY ALL — the same question as Reply, answered to everyone, so it stands beside
             the accent verb and NOT inside it: a segment would dilute the one primary capsule.
-            Rendered only when `canReplyAll` (see above), and its own `.abar-g` so the row gap
-            applies. `.abar-rall` is FIRST in the admission order, which is not the same claim
-            as "always": the two reply verbs are the first thing the measurement seats after the
-            floor, so they stand together at every width a message is read at on a desktop, and
-            this group is also the LAST to fold — where the row cannot hold it (the 242px split
-            column, or a narrow reader in German) it goes behind More and everything after it
-            has gone already. `mm-rall` is the other half of "in the row or in the menu, never
-            both"; which widths those are depends on the locale and the face, which is why no
-            number is written here. */}
+            Rendered only when `canReplyAll` (above), with its own `.abar-g` so the row gap
+            applies. `.abar-rall` is FIRST in the admission order, which is not "always": the
+            two reply verbs are the first thing the measurement seats after the floor and the
+            LAST to fold — where the row cannot hold it (the 242px split column, a narrow German
+            reader) it goes behind More, everything after it already gone. `mm-rall` is the
+            other half of "in the row or in the menu, never both"; which widths those are
+            depends on locale and face, why no number is written here. */}
         {canReplyAll ? (
           <div className="abar-g abar-v abar-rall">
             <button
@@ -1029,22 +1000,16 @@ function ActionBar({
         ) : null}
 
         {/* FORWARD — the third verb of the answer family, and the reason this group exists.
-            Reported from real use: *"fwd message / Forward in general should be within our main
-            pill-shaped UI besides Reply etc."* It stood in no row at any width before this: the
-            only mouse door was a panel's ⋯ menu, which is a disclosure a reader has to already
-            know about.
-
-            Its own `.abar-g` beside the other two rather than a segment inside either: Reply is
-            the one primary capsule (the argument the Reply-all group already makes), and Forward
-            answers a different question from both — not "what do I say back" but "who else needs
-            to see this".
-
-            `.abar-fwd` is SECOND in the admission order, directly after Reply all, so the three
-            answer verbs are seated before anything else and stand together at every width a
-            message is read at on a desktop. What pays for it is the three horizons and Tag,
-            which fold into More earlier than they used to — the trade is stated as a trade with
-            the admission order at the foot of `action-bar.css`. `mm-fwd` is the other half of
-            "in the row or in the menu, never both". */}
+            Reported from real use: "fwd message / Forward in general should be within our main
+            pill-shaped UI besides Reply etc." It stood in no row at any width — the only mouse
+            door was a panel's ⋯ menu, a disclosure a reader must already know about. Its own
+            `.abar-g` beside the other two rather than a segment inside either: Reply is the one
+            primary capsule, and Forward answers a different question — not "what do I say back"
+            but "who else needs to see this". `.abar-fwd` is SECOND in the admission order, so
+            the three answer verbs are seated before anything else; what pays is the horizons
+            and Tag folding into More earlier — the trade is stated with the admission order at
+            the foot of `action-bar.css`. `mm-fwd` is the other half of "in the row or in the
+            menu, never both". */}
         {canForward ? (
           <div className="abar-g abar-v abar-fwd">
             <button
