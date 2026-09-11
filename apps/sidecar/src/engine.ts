@@ -5409,24 +5409,29 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          * batch has rows committed and a cursor it is about to move, and dropping it there is
          * how a mailbox re-reads mail it already had.
          *
-         * ── AND THE WAIT IS BOUNDED, BECAUSE ON A HALF-OPEN LINK IT NEVER ENDED ──────────────
+         * ── AND THE WHOLE OF IT IS BOUNDED: ON A HALF-OPEN LINK IT NEVER ENDED ──────────────
          *
-         * A drain parked inside a hung command holds `tail`, and a half-open link (a phone losing
-         * its route: the socket answers TCP, nothing answers IMAP) has nothing to end that park.
-         * So this waited for ever and the stop never finished: measured on a device as a
-         * foreground service that would not stand down. The budget is ONE DRAIN INTERVAL — past
-         * that a cycle is not "about to finish", it is wedged — shared across both waits, and when
-         * it runs out the socket is DESTROYED rather than asked to log out. Destroying it is also
-         * the only thing that ends the hung command, which is why nothing is left to wait for
-         * afterwards and this returns without a LOGOUT.
+         * A half-open link — a phone losing its route: the socket answers TCP, nothing answers
+         * IMAP — has nothing to end a command, and this method has THREE waits a command can
+         * hold: the queue, an in-flight re-dial, and the polite `close()` whose LOGOUT queues
+         * behind whatever is already hung. Measured: the drain parks in its PREFLIGHT PROBE,
+         * which runs OUTSIDE the serial queue, so the queue is clear and what hung was the
+         * LOGOUT — a bound on the queue alone was half a fix and the case that found it is in
+         * `reconnect-after-close.test.ts`.
+         *
+         * So there is ONE budget — one drain interval, past which a cycle is not "about to
+         * finish", it is wedged — spent across all three, and when it runs out the socket is
+         * DESTROYED. That is also the only thing that ends the hung command, so nothing is left
+         * to wait for and this returns without a LOGOUT.
          */
         async detach() {
           stopped = true;
           if (timer) clearTimeout(timer);
           if (heartbeatTimer) clearTimeout(heartbeatTimer);
           const startedAt = Date.now();
-          const deadline = startedAt + detachWaitMs;
-          let wedged = !(await settledWithin(tail, detachWaitMs));
+          const left = (): number => startedAt + detachWaitMs - Date.now();
+          /* THE QUEUE, which a drain parked inside a serialized body holds. */
+          let wedged = !(await settledWithin(tail, left()));
           /* AND THE RE-DIAL, WHICH IS NOT IN THE QUEUE — see {@link redialInFlight}. Without this
              a re-dial suspended in `connect()` resumes AFTER the teardown has closed the adapter
              and dropped the runtime, and then installs a fresh authenticated connection for a
@@ -5434,37 +5439,42 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              released it, folders created in somebody's mailbox on the way out, and a login with
              no handle anywhere that can close it. `stopped` is already true here, so the re-dial's
              own re-checks turn this wait into an early exit rather than a full second dial.
-             It shares the budget above rather than getting its own: two bounds in sequence would
-             be a stop that can take twice as long as the number this method promises. */
-          if (!wedged) wedged = !(await settledWithin(redialInFlight, deadline - Date.now()));
-          if (wedged) {
-            /* The same teardown the re-dial uses on a connection found dead, and for the same
-               reason — `close()` would queue its LOGOUT behind the command that is already hung.
-               `adapter` is re-read here, so a re-dial that installed a fresh one is the one that
-               goes: this runtime is stopping, and the newest connection is the one with no owner. */
-            const held = adapter;
-            if (held.forceClose !== undefined) {
-              try { held.forceClose(); } catch { /* the socket is going away regardless */ }
-            } else {
-              try { void Promise.resolve(held.close()).catch(() => undefined); }
-              catch { /* threw synchronously; it is going away either way */ }
-            }
-            log("mailbox_detach_forced", {
-              mailboxId: mb.id,
-              pollIntervalMs: detachWaitMs,
-              totalMs: Date.now() - startedAt,
-              reason: "the in-flight cycle did not come back within one drain interval, which is " +
-                "what a half-open link produces, so the connection was destroyed and the stop " +
-                "completed. Destroying it is also what ends the hung command, so nothing is " +
-                "left to log out and the mailbox's timers are already down",
+             It SHARES the budget rather than getting its own: two bounds in sequence would be a
+             stop that can take twice as long as the number this method promises. */
+          if (!wedged) wedged = !(await settledWithin(redialInFlight, left()));
+          /* AND THE LOGOUT, which is where a preflight-parked drain actually holds it. Raced
+             rather than awaited, and its rejection still reaches the log: a server that answers
+             the LOGOUT with an error is a different thing from one that answers nothing. */
+          if (!wedged) {
+            const politely = Promise.resolve(adapter.close()).catch((err: unknown) => {
+              log("adapter_close_failed", { err });
             });
-            return;
+            wedged = !(await settledWithin(politely, left()));
           }
-          try {
-            await adapter.close();
-          } catch (err) {
-            log("adapter_close_failed", { err });
+          if (!wedged) return;
+          /* The same teardown the re-dial uses on a connection found dead, and for the same
+             reason. `adapter` is re-read here, so a re-dial that installed a fresh one is the one
+             that goes: this runtime is stopping, and the newest connection is the one with no
+             owner. */
+          const held = adapter;
+          if (held.forceClose !== undefined) {
+            try { held.forceClose(); } catch { /* the socket is going away regardless */ }
+          } else {
+            /* An injected double with no `forceClose`. NOT awaited — a teardown this method waits
+               on is the latch it is escaping. */
+            try { void Promise.resolve(held.close()).catch(() => undefined); }
+            catch { /* threw synchronously; it is going away either way */ }
           }
+          log("mailbox_detach_forced", {
+            mailboxId: mb.id,
+            pollIntervalMs: detachWaitMs,
+            totalMs: Date.now() - startedAt,
+            reason: "this mailbox did not let go within one drain interval — the cycle, the " +
+              "re-dial or the logout was waiting on a link that answers nothing, which is what " +
+              "a half-open link produces — so the connection was destroyed and the stop " +
+              "completed. Destroying it is also what ends the hung command, so nothing is left " +
+              "to log out and the mailbox's timers are already down",
+          });
         },
         /**
          * THE CLAIM GOES BACK; THE ROW DOES NOT MOVE. See `LocalMailboxRuntime.handBack`.
