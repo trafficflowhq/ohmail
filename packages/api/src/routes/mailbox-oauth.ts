@@ -19,67 +19,14 @@ import type { Route } from "../router.js";
 import { mailbox, readBody } from "./shared.js";
 
 /**
- * EXCHANGE / MICROSOFT 365 ONBOARDING — the consent ceremony, in THREE routes and not two.
- *
- * ══ WHY THREE, AND WHY THE CALLBACK CANNOT DO THE WORK ═════════════════════════════════════
- *
- * The obvious design is `POST …/start` then `GET …/callback`, with the callback consuming the
- * ceremony, exchanging the code and writing the mailbox. **That design cannot work on this
- * deployment, and the reason is a cookie attribute this repository is explicitly forbidden to
- * widen.**
- *
- * `tf_session` is `SameSite=Strict` (`packages/api/src/cookies.ts`), and Strict means the browser
- * withholds the cookie on a **cross-site top-level navigation**. Microsoft's redirect back from
- * `login.microsoftonline.com` is exactly that. So the callback GET arrives with NO session cookie —
- * not sometimes, always — and a callback that resolved a session would answer 401 to every consent
- * this product will ever run. `cookies.ts` already records this precise behaviour as the reason the
- * `tf_resume` marker exists: *"`SameSite=Strict` withholds every cookie on a cross-site top-level
- * navigation"*. The invariant is `The session cookie is host-only, no Domain=… Never widen it`, and
- * relaxing it to `Lax` for this feature is not on the table.
- *
- * The consequence is a THREE-step shape, and each step's authority is different:
- *
- *  1. **`POST /mailboxes/oauth/microsoft/start`** — a normal authenticated mutation on the FULL
- *     pipeline: verified session (`cost: "work"`), CSRF double-submit, same-site fetch. It mints the
- *     `state` + PKCE pair, writes the ceremony row bound to `session.accountId`, and returns the
- *     authorize URL as JSON for the client to navigate to at top level.
- *  2. **`GET /mailboxes/oauth/microsoft/callback`** — the BOUNCE. It is the URI registered in Azure,
- *     it resolves no session (it cannot), it reads no database, it consumes nothing, and it
- *     authorises nothing. All it does is validate the SHAPE of the parameters Microsoft sent and
- *     303 the browser to this deployment's own app origin carrying them. The origin comes from
- *     CONFIG, never from the request, so this is not an open redirect.
- *  3. **`POST /mailboxes/oauth/microsoft/complete`** — the real thing, and once the browser is on
- *     `ohmail.app` this is a SAME-SITE fetch, so `tf_session` and `tf_csrf` are both sent. It
- *     consumes the ceremony exactly once, asserts the session's account IS the ceremony's account,
- *     exchanges the code, reads the address from the `id_token`, PROBES IMAP, and only then stores.
- *
- * Nothing is lost by the split. The authorization code is single-use and PKCE-bound; the `state` is
- * single-use and account-bound; and the step that spends them both is the one holding a session.
- * What is GAINED is the assertion that the session OWNS the ceremony —
- * `session.accountId === row.account_id` — which the
- * two-route design could not make at all, because it has no session to compare against.
- *
- * ══ ORDER OF OPERATIONS IN `complete`, AND WHY IT IS THIS ORDER ════════════════════════════
- *
- *   consume (single-use, replay-safe) → TTL → ACCOUNT MATCH → exchange → address → probe → store
- *
- *  · CONSUME FIRST, before anything expensive. The `UPDATE … WHERE state = $1 AND consumed_at IS
- *    NULL RETURNING` is the whole replay defence (see `packages/db/src/oauth-ceremony.ts`); doing it
- *    first means a replayed request is refused before it can make this process POST to Microsoft.
- *  · THE ACCOUNT MATCH BEFORE THE EXCHANGE. A `state` belonging to another account is refused
- *    without spending the code, so a stolen `state` cannot be used to burn somebody else's ceremony
- *    AND learn whether the exchange would have worked.
- *  · THE PROBE BEFORE THE STORE — `MailboxService.connectOAuth` owns that ordering, exactly as
- *    `create` and `update` do for a password. A refused probe leaves an existing mailbox syncing on
- *    the credential it already has.
- *
- * ══ WHAT IS NEVER LOGGED HERE ═════════════════════════════════════════════════════════════
- *
- * No line in this file prints an authorization code, a `state`, an access token, a refresh token, an
- * `id_token`, or Microsoft's `error_description` (which carries request ids and can echo the
- * redirect URI). `log.ts` redacts on the `token`/`secret` substrings, and that is a backstop rather
- * than the plan: the plan is that these values are not passed to a logger. The one diagnostic that
- * leaves is the closed-set reason code.
+ * Exchange / Microsoft 365 onboarding — three routes: `tf_session` is `SameSite=Strict` and
+ * Microsoft's redirect back is cross-site top-level, so the callback arrives with no session
+ * cookie. `start` — an authenticated mutation minting the `state` + PKCE pair, binding the
+ * ceremony to `session.accountId`. The callback — the bounce: no session, no database; validates
+ * shape and 303s to this deployment's own app origin. `complete` — a same-site fetch: consumes
+ * the ceremony once, asserts the session's account IS the ceremony's, exchanges the code, reads
+ * the address from the `id_token`, probes, then stores. Consume first; match before exchange;
+ * probe before store. Nothing prints a code, `state`, token, or `error_description`.
  */
 
 /**
