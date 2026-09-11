@@ -2,6 +2,7 @@ import {
   counterpartyEvidence, type CounterpartyEvidence, type CounterpartyMessage,
 } from "@trafficflow/core/sender-headers";
 import type { EntityReader } from "./store.js";
+import { ownAddressKeys } from "./own-address.js";
 import { isOwnSent, isResurfaced, messagesByDateDesc, rulesList, senderKey } from "./selectors.js";
 import type { EngineMessage, Folder, RuleDTO } from "./types.js";
 
@@ -217,32 +218,6 @@ export interface ConsentOptions {
    * them — `consent-cutline.pg.test.ts` pins the server's answer to this one.
    */
   ownAddresses?: Iterable<string>;
-}
-
-/**
- * THE ACCOUNT'S OWN ADDRESSES, FOLDED — one predicate, two consumers.
- *
- * {@link consentPartition} reads it so the user is never weighed as one of their own
- * correspondents, and `screenerSegments` reads THE SAME function so they never hold a waiting
- * row. A second list spelled beside this one is the defect it exists to make unrepresentable:
- * the guard held for INBOX mail and not for a message physically in `ohmail/Screener`, because
- * the queue grouped on the presented folder and never asked who sent it.
- *
- * Explicit addresses win; absent, the mirror's `mailbox` rows are the fallback — see
- * {@link ConsentOptions.ownAddresses}.
- */
-export function ownAddressKeys(
-  reader: EntityReader, opts: ConsentOptions = {},
-): ReadonlySet<string> {
-  const explicit = opts.ownAddresses;
-  const source = explicit ?? reader.list<{ address?: unknown }>("mailbox")
-    .map((m) => (typeof m.address === "string" ? m.address : ""));
-  const out = new Set<string>();
-  for (const a of source) {
-    const key = senderKey(String(a));
-    if (key) out.add(key);
-  }
-  return out;
 }
 
 /** The domain half of an address, lower-cased, or `null` when there is not one. */

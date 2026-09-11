@@ -1,9 +1,10 @@
 import { isSentFolderPath } from "@trafficflow/core/folder-name";
 import { mayGroupByMessageId } from "@trafficflow/core/sender-headers";
 import type { EntityReader } from "./store.js";
-/* The partition's own-address predicate — imported, never re-spelled here. `consent-cutline.ts`
-   imports this module's `senderKey` in return; neither reads the other at module scope. */
-import { ownAddressKeys } from "./consent-cutline.js";
+/* The address fold and the own-address predicate, from the leaf that owns both — never
+   re-spelled here. A LEAF and not `consent-cutline.ts`: the partition imports this module, so
+   taking the predicate from it would close an import cycle. */
+import { ownAddressKeys, senderKey } from "./own-address.js";
 import { zonedFields } from "./zone.js";
 import { daysAgo, messageStamp, named } from "./stamp.js";
 import {
@@ -1079,16 +1080,9 @@ const SEGMENT_OF_VIEW: Partial<Record<OhmailView, ScreenerSegment>> = {
   spam: "spam",
 };
 
-/**
- * The grouping key for a Screener sender — the address, case-folded.
- *
- * Shared with `mutationEffects`' `screener_decide` branch so the set of messages a
- * decision moves is exactly the set the row said it was holding, and with the server,
- * which lower-cases the same way (`screener-service.ts:118`, `:147`).
- */
-export function senderKey(address: string): string {
-  return address.trim().toLowerCase();
-}
+/* DEFINED in `own-address.ts`, re-exported here under the name every importer already uses
+   (`mutations.ts`, `consent-cutline.ts`, the barrel, the web app, the phone). */
+export { senderKey };
 
 /**
  * One held message, with its body RESOLVED rather than degraded.
