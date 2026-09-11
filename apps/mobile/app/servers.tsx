@@ -20,8 +20,7 @@ import { sayArg, sayRefusal, type Refusal } from "../src/refusal";
 import { View } from "react-native";
 import { router } from "expo-router";
 import { Copy } from "../src/copy";
-import { LOCAL_ENGINE_ORIGIN } from "../src/engine/boot";
-import { PHONE_CLAIM_NAME } from "../src/engine/standalone-door";
+import { PHONE_CLAIM_NAME, organizesHere } from "../src/engine/standalone-door";
 import { useConnection } from "../src/net/connection";
 import type { ServerProfile } from "../src/state/servers";
 import { useTheme } from "../src/theme";
@@ -185,9 +184,9 @@ function ProfileRow({ profile, active, onForgetFailed }: {
   /* ── THIS PHONE'S OWN MAILBOX IS A ROW HERE TOO, AND THE ORIGIN IS WHAT TELLS IT APART ──────
      It carries no refresh token BY DESIGN (`state/servers.ts`), so the needs-pair reading below —
      right for every pairing whose token a server cleared — would send somebody to the QR scanner
-     for the mailbox on the phone in their hand. The name is the phone's own claim name rather than
-     `http://sidecar`, which is an address nothing dials and nobody should be shown. */
-  const here = profile.origin === LOCAL_ENGINE_ORIGIN;
+     for the mailbox on the phone in their hand. The name is the phone's own claim name, because
+     that row's origin is an address nothing dials and nobody should be shown. */
+  const here = organizesHere(profile);
   const needsPair = !here && profile.refreshToken === null;
   // Forgetting the FINAL pairing returns to the welcome screen — explicitly, from the
   // action itself. The tabs' redirect cannot be trusted to fire here: while /servers is

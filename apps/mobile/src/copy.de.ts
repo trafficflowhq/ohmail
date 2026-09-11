@@ -87,7 +87,7 @@ export const DE: Deck = {
     "Nur solange die App offen ist — oder im Hintergrund hinter einer sichtbaren Benachrichtigung.",
 
   doorsTravel:
-    "Du kannst jederzeit wechseln. Deine aussortierten Absender, deine Regeln und deine Benachrichtigungs­einstellungen liegen in deinem eigenen Postfach und sind hinter jeder Tür dieselben — das Postfach ist immer das Original.",
+    "Du kannst jederzeit wechseln. Deine aussortierten Absender, deine Regeln und deine Benachrichtigungseinstellungen liegen in deinem eigenen Postfach und sind hinter jeder Tür dieselben — das Postfach ist immer das Original.",
 
   /* ------------------------------------------------- the self-hosted door */
 
@@ -179,7 +179,7 @@ export const DE: Deck = {
     `Das Öffnen des Postfachs wurde abgebrochen: ${detail}`,
   /* Die drei des Neustarts. Jede benennt ein anderes Fehlen. */
   standaloneNoSealedCredential:
-    "Dieses Telefon organisiert laut Eintrag ein Postfach, und hier ist nichts gespeichert, womit es sich öffnen ließe. Nimm die Tür noch einmal und gib das Passwort des Postfachs an.",
+    "Auf diesem Telefon ist nichts gespeichert, womit sich dieses Postfach öffnen ließe. Nimm die Tür noch einmal und gib das Passwort des Postfachs an.",
   standaloneOtherMailbox:
     "Das Postfach auf diesem Telefon ist nicht das, welches dieser Eintrag nennt. Entferne den Eintrag und öffne das Postfach erneut.",
   standaloneNotStored: (detail: string) =>
@@ -195,8 +195,9 @@ export const DE: Deck = {
   serversProfiles: "Gekoppelte Server",
   serversAdd: "Server hinzufügen",
   serversNeedsPair: "Die Kopplung ist beendet — scanne einen frischen QR-Code, um erneut zu koppeln.",
-  /* Die eigene Zeile des Telefons in der Liste. Ohne Adresse und ohne Konto-Kennung. */
-  serversOrganizedHere: "Dieses Telefon organisiert dieses Postfach.",
+  /* Die eigene Zeile des Telefons in der Liste. Sie benennt, was der Eintrag IST, und verspricht
+     nichts über den Augenblick — siehe die englische Fassung. */
+  serversOrganizedHere: "Das Postfach, das dieses Telefon selbst geöffnet hat.",
   serversStopHere: "Beenden und entfernen",
   serversForget: "Vergessen",
   serversForgetNote:

@@ -24,6 +24,7 @@
  * key ring `kek.ts` produces. Nothing in this file calls `console`.
  */
 import { portMeansImplicitTls } from "@ohmail/client-engine";
+import { LOCAL_ENGINE_ORIGIN } from "./boot";
 import { faultDetail, refuse, type Refusal } from "../refusal";
 import type { StandaloneFields } from "../ui/standalone-form";
 
@@ -163,6 +164,17 @@ export function imapConfigFor(fields: StandaloneFields): {
  *    sees is the other client's `readerLabel("<name>")` around it, in the reader's own language.
  */
 export const PHONE_CLAIM_NAME = "ohmail on a phone";
+
+/**
+ * IS THIS PROFILE ROW THE MAILBOX THIS PHONE OPENED ITSELF? The ORIGIN decides, and nothing else.
+ *
+ * Answered here rather than in the screen that asks, because a screen may not reach `engine/boot.ts`
+ * — the privacy census holds the connection layer as the one door to the engine seam, and the
+ * chooser importing the origin would have been a screen naming the engine's address. Both readings
+ * that depend on it (the row's name, and whether a token-less row means "re-pair") are one question.
+ */
+export const organizesHere = (profile: { origin: string }): boolean =>
+  profile.origin === LOCAL_ENGINE_ORIGIN;
 
 /** What the form does next. A refusal carries the engine's own words, or the missing-field one. */
 export type StandaloneOutcome =
