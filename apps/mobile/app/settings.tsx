@@ -31,7 +31,7 @@ import { useWorld } from "../src/state/world";
 import { Button, Chip, Panel, Rule, Screen, Scroller, Section, TapRow, Txt } from "../src/ui/base";
 import { Sheet, SheetRow } from "../src/ui/Sheet";
 import { phoneEngineStart } from "../src/engine/engine-artifact";
-import { standaloneAvailable } from "../src/engine/standalone-door";
+import { PHONE_CLAIM_NAME, standaloneAvailable } from "../src/engine/standalone-door";
 import { releaseMailbox } from "../src/net/mailboxes";
 import { useConnection } from "../src/net/connection";
 import {
@@ -350,7 +350,11 @@ function ThisPhonePanel() {
         {w.mailboxes.rows.map((row, i) => {
           const claim = claimFrom(
             { known: w.mailboxes.known, organizer: holderFor(row) },
-            Copy.phoneThisPhone,
+            /* THE SAME CONSTANT THE CLAIM WAS WRITTEN WITH — never `Copy.phoneThisPhone`, which
+               changes with the language and would make this phone read its own claim as a
+               stranger's the first time somebody switches. The deck string is the section LABEL
+               above, which is the half a reader sees. */
+            PHONE_CLAIM_NAME,
             asked.includes(row.id),
           );
           const chip = claimChipLabel(claim);

@@ -1,5 +1,5 @@
 /**
- * ═══ THE THREE DOORS, ON A PHONE ═══════════════════════════════════════════════════════════════
+ * ═══ THE FOUR DOORS, ON A PHONE ════════════════════════════════════════════════════════════════
  *
  * One component, rendered by the first-run screen and by the Servers screen's "Add a server"
  * panel, because they are the same question asked at two moments. It was two implementations —

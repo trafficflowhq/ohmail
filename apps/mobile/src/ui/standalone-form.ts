@@ -12,13 +12,21 @@
  * test can drive. The app already answers this by keeping its rules in plain modules; this is the
  * same move for the fourth door.
  *
+ * ── AND IT IMPORTS NO `react-native`, WHICH IS WHAT MAKES IT LOADABLE AT ALL ───────────────────
+ *
+ * The expo and react-native packages ship Flow-typed JavaScript, and the node-side suite's
+ * transform refuses it with `Expected 'from', got 'typeOf'` — a parse error naming neither the
+ * package nor the import that reached it. So the platform is a PARAMETER here and the screens pass
+ * it in, which is the same split `servers-native.ts` and `local-engine.ts` already make. It is also
+ * the better shape: the platform is a fact about the runtime, and a function that read it for
+ * itself could not be asked what it would say on the other one.
+ *
  * ── AND NOTHING HERE HOLDS A PASSWORD BEYOND THE FORM'S OWN STATE ──────────────────────────────
  *
  * {@link StandaloneFields} carries the password because the form does, and it goes to the engine
  * once. It is never logged, never stamped into a refusal, and never stored by this module — the
  * only thing that may keep it is the platform's secure store, under the engine's key ring.
  */
-import { Platform } from "react-native";
 import { portMeansImplicitTls, serverGuessFor } from "@ohmail/client-engine";
 import { Copy } from "../copy";
 
@@ -33,12 +41,12 @@ export type StandaloneStep = "limits" | "credentials";
  * may have no way to show. The conservative sentence is the true one for everything that is not
  * Android.
  */
-export function platformRuleLine(os: string = Platform.OS): string {
+export function platformRuleLine(os: string): string {
   return os === "android" ? Copy.phoneStandaloneL1Android : Copy.phoneStandaloneL1Ios;
 }
 
 /** The limitations screen's three lines, in the ruled order. */
-export function limitationLines(os: string = Platform.OS): readonly string[] {
+export function limitationLines(os: string): readonly string[] {
   return [platformRuleLine(os), Copy.phoneStandaloneL2, Copy.phoneStandaloneL3];
 }
 

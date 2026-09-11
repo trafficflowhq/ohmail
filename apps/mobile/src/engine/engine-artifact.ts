@@ -23,14 +23,18 @@ let registered: StartPhoneEngine | null = null;
 /**
  * Register the artifact's composition root. Called once, by the packaging half.
  *
- * Idempotent on the same value and REFUSES a second, different one: two engines in one process
- * would be two organizers of one mailbox, which is the invariant the whole product is built on.
+ * THE FIRST REGISTRATION WINS, and a second, different one changes nothing — two engines in one
+ * process would be two organizers of one mailbox, which is the invariant the whole product is
+ * built on. Enforced by construction rather than by an exception: a throw here would be an English
+ * sentence inside `src/engine/`, where `faultDetail` quotes anything that is not a `StoreFault`
+ * verbatim into a translated refusal (`test/refusal.test.ts` holds that rule).
+ *
+ * Answers whether THIS call is the registered engine, so a caller that cares can say so rather
+ * than assume. Registering the same value twice is not a conflict.
  */
-export function registerPhoneEngine(start: StartPhoneEngine): void {
-  if (registered !== null && registered !== start) {
-    throw new Error("a phone engine is already registered");
-  }
-  registered = start;
+export function registerPhoneEngine(start: StartPhoneEngine): boolean {
+  if (registered === null) registered = start;
+  return registered === start;
 }
 
 /** The registered artifact, or `null`. `null` is "this build carries no engine", not an error. */

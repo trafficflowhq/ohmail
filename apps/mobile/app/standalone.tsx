@@ -16,7 +16,7 @@ import { router } from "expo-router";
 import { Copy } from "../src/copy";
 import { sayRefusal, type Refusal } from "../src/refusal";
 import { phoneEngineStart } from "../src/engine/engine-artifact";
-import { openStandaloneMailbox } from "../src/engine/standalone-door";
+import { PHONE_CLAIM_NAME, openStandaloneMailbox } from "../src/engine/standalone-door";
 import { useTheme } from "../src/theme";
 import { Button, Panel, Rule, Screen, Scroller, Tap, Txt } from "../src/ui/base";
 import { DetailBar } from "../src/ui/chrome";
@@ -122,7 +122,7 @@ function Credentials() {
         };
         return native.nativeEnginePlatform();
       },
-      machineName: () => Copy.phoneThisPhone,
+      machineName: () => PHONE_CLAIM_NAME,
       /* THE SAME ID THE GATE STAMPED, never a fresh one: a claim written against a second id is
          how an install reads its own claim as somebody else's. `null` — the marker has not been
          settled — is handed on as the empty string, and the engine refuses a nameless claimant

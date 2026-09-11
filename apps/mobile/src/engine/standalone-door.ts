@@ -24,7 +24,7 @@
  * key ring `kek.ts` produces. Nothing in this file calls `console`.
  */
 import { portMeansImplicitTls } from "@ohmail/client-engine";
-import { refuse, type Refusal } from "../refusal";
+import { faultDetail, refuse, type Refusal } from "../refusal";
 import type { StandaloneFields } from "../ui/standalone-form";
 
 /** The engine's composition root, as the artifact exports it. Structural: the bundle is not typed. */
@@ -96,6 +96,20 @@ export function imapConfigFor(fields: StandaloneFields): {
     : base;
 }
 
+/**
+ * HOW THIS PHONE NAMES ITSELF IN THE CLAIM — a constant, and deliberately NOT a deck string.
+ *
+ * This value is written into the organizer claim in the mailbox, read back by every install, and
+ * rendered on somebody else's desktop as the holder line. Two consequences decide it:
+ *
+ *  · it must not depend on the language. `claimFrom` recognises this install's own claim BY NAME,
+ *    so a name read from the deck would change when the person switches language and the phone
+ *    would stop recognising its own claim — the misread-own-claim class, arriving through copy.
+ *  · it is DATA leaving this app, like an address, not a sentence this app renders. What the reader
+ *    sees is the other client's `readerLabel("<name>")` around it, in the reader's own language.
+ */
+export const PHONE_CLAIM_NAME = "ohmail on a phone";
+
 /** What the form does next. A refusal carries the engine's own words, or the missing-field one. */
 export type StandaloneOutcome =
   | { ok: true; door: { handle(req: Request): Promise<Response>; sessionToken: string; stop(): Promise<void> } }
@@ -131,9 +145,10 @@ export async function openStandaloneMailbox(
     });
     return { ok: true, door: engine };
   } catch (err) {
-    /* THE ENGINE'S OWN SENTENCE, and the value rather than the class: a thrown STRING loses its
-       payload at every `errorClass` log site, so what travels is what was thrown. The password is
-       not in it — it is not in any argument this module builds. */
-    return { ok: false, reason: refuse("standaloneRefused", String(err)) };
+    /* `faultDetail`, never `String(err)`: it words a fault THIS APP authored (a store fault
+       becomes a keyed refusal, rendered in the reader's language at the moment it is shown) and
+       quotes anybody else's verbatim. The password is in neither — it is not in any argument this
+       module builds. */
+    return { ok: false, reason: refuse("standaloneRefused", faultDetail(err)) };
   }
 }
