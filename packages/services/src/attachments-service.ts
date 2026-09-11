@@ -54,34 +54,13 @@ export interface FetchedBytes { contentType: string; filename: string | null; bo
 export interface AttachmentAdapter {
   /**
    * `opts.maxBytes` abandons the transfer mid-stream once the ceiling is crossed and rejects with
-   * an `AttachmentTooLargeError` (code `EATTACHTOOLARGE`). Doing so POISONS THE CONNECTION — the
-   * parser is left mid-literal — so a caller that passes it must treat the breach as TERMINAL for
-   * that socket.
-   *
-   * Both callers do, in the two ways that are available to them. {@link
-   * AttachmentsService.fetchBytes} owns its adapter for one fetch and closes it in a `finally`.
-   * `downloadAll` shares one socket across a mailbox's whole group, so it abandons the REST OF
-   * THAT GROUP on a breach and names each skipped part in the archive's `_errors.txt` — this
-   * used to say `downloadAll` must not pass it at all, which left the one caller that reads a
-   * hostile server's bytes as the one caller with no ceiling on how many of them it buffers.
-   *
-   * ── THE POISONING IS REAL, AND THE ADAPTER SAYS SO IN ITS OWN WORDS ──────────────────────
-   *
-   * A review round argued the opposite — that imapflow fetches complete partial ranges, so an
-   * abort lands on a chunk boundary and the connection stays usable, making the group-abandon
-   * unnecessarily lossy. That is true of `fetchRaw` and NOT of `fetchPart`, and the difference is
-   * written down at both: `fetchPart` (`imap.ts`) counts bytes and `throw`s out of its own
-   * `for await (const chunk of dl.content)`, abandoning the stream wherever it happens to be;
-   * `fetchRaw`'s docstring next to it states the consequence — *"`fetchPart` throws out of its
-   * own `for await`, which destroys the stream while the driver may be halfway through reading a
-   * FETCH literal — the connection is dead afterwards"* — and hands `maxBytes` to `download`
-   * instead precisely to avoid it, because ITS caller holds a long-lived per-mailbox connection.
-   *
-   * Giving `fetchPart` the same driver-level ceiling would make the breach non-terminal and let
-   * `downloadAll` continue with the group's remaining parts. That is a real improvement and it is
-   * a change to `fetchBytes`' proven behaviour, so it is parked rather than folded in here.
-   *
-   * Optional third parameter so every existing fake/GreenMail adapter keeps compiling.
+   * `AttachmentTooLargeError`. Doing so POISONS THE CONNECTION — the parser is left mid-literal —
+   * so a caller must treat the breach as TERMINAL for that socket. Both callers do: {@link
+   * AttachmentsService.fetchBytes} owns its adapter for one fetch and closes it in a `finally`;
+   * `downloadAll` shares one socket per mailbox group, so it abandons the REST OF THAT GROUP and
+   * names each skipped part in `_errors.txt`. The poisoning is real for `fetchPart` (it `throw`s
+   * out of its own `for await`), unlike `fetchRaw` — see both docstrings in `imap.ts`. Optional
+   * third parameter so every existing fake/GreenMail adapter keeps compiling.
    */
   fetchPart(locator: NativeLocator, partId: string | null, opts?: { maxBytes?: number }): Promise<FetchedBytes>;
   close(): Promise<void>;
@@ -108,16 +87,11 @@ export interface DownloadAllResult { zip: Uint8Array; filename: string }
 export const BIG_FILE_DEFAULT_BYTES = 1024 * 1024;
 
 /**
- * `minSizeBytes` as a value a `bigint` column can take, or a 400.
- *
- * It is declared `number` in `FilesFilter` and arrives from `JSON.parse`, so the type says
- * nothing at runtime: `{"filter":{"minSizeBytes":"x"}}` reached the `gte` predicate as a string
- * and `1e30` reached it as a value `attachments.size_bytes` — an `integer` column — cannot take.
- * Both are 22P02/22003 from Postgres, surfacing as a 500 for a plainly bad request. That is the
- * `clampLimit` shape exactly: a caller-chosen number reaching a query with the guard assuming it
- * had been checked.
- *
- * Bounded above by the largest attachment this product will ever move rather than by the column:
+ * `minSizeBytes` as a value a `bigint` column can take, or a 400. It is declared `number` in
+ * `FilesFilter` and arrives from `JSON.parse`, so the type says nothing at runtime: a string
+ * reached the `gte` predicate and `1e30` reached an `integer` column — both 22P02/22003 from
+ * Postgres, a 500 for a plainly bad request (the `clampLimit` shape). Bounded above by the
+ * largest attachment this product will ever move rather than by the column:
  * `DOWNLOAD_ALL_MAX_BYTES` (64 MiB) is well inside `int4`, so a floor above it selects nothing
  * and asking for it is a mistake worth naming.
  */
@@ -133,46 +107,26 @@ function validMinSize(v: unknown): number | undefined {
 }
 
 /**
- * CEILINGS on `download-all` (the serverless memory/connection bound).
- *
- * The archive is assembled in MEMORY: JSZip holds every fetched part AND the finished zip at
- * once, so peak usage is roughly twice the total payload. With no cap, `POST /files/download-all`
- * with no filter meant "zip my entire attachment history", which on a 1 GB serverless function
- * is an OOM kill — and an OOM kill is indistinguishable to the client from the platform
- * timeout, i.e. the worst possible error message. `partId` count is capped too, because each
- * part is a separate IMAP FETCH round trip and providers throttle.
- *
- * Exceeding either is a **413**, deliberately, rather than a silently truncated archive: an
- * archive missing files the user asked for and did not notice is worse than a refusal that
- * names the limit.
+ * Ceilings on `download-all` (the serverless memory/connection bound). The archive is assembled
+ * in MEMORY — JSZip holds every fetched part AND the finished zip, so peak usage is roughly twice
+ * the payload; uncapped, `POST /files/download-all` with no filter meant "zip my entire
+ * attachment history", an OOM kill indistinguishable from the platform timeout. The part count is
+ * capped too: each part is a separate IMAP FETCH and providers throttle. Exceeding either is a
+ * 413, deliberately, rather than a silently truncated archive: an archive missing files the user
+ * asked for and did not notice is worse than a refusal that names the limit.
  */
 export const DOWNLOAD_ALL_MAX_PARTS = 200;
 export const DOWNLOAD_ALL_MAX_BYTES = 64 * 1024 * 1024;   // 64 MiB of attachment payload
 
 /**
- * CEILING on ONE on-demand fetch (`GET /attachments/:id`).
- *
- * Without it `fetchPart` buffered whatever the server sent, under a held mailbox lock, so a single
- * oversized part could hold that mailbox's lock for the length of its transfer and take the
- * function's memory with it. That is the shape of the failure where one bad message stopped all
- * later mail for a mailbox, and the fix has to be a limit that fires DURING the read, not a check
- * afterwards on bytes already paid for.
- *
- * 32 MiB, for reasons that each stand alone:
- *
- *   · It is ~4x the largest attachment in the live corpus (7.8 MB measured), so it refuses nothing
- *     a real user currently has.
- *   · It is above what mainstream providers accept as an attachment (Gmail ~25 MB, iCloud/Yahoo
- *     ≤ 25 MB), so it does not refuse mail the user's own mailbox would hold.
- *   · It is half {@link DOWNLOAD_ALL_MAX_BYTES}, and equal to core's `DEFAULT_SYNC_BATCH_MAX_BYTES`
- *     — the same number the sync path already argues for, rather than a new invention.
- *
- * Peak memory is ~3x the payload (the chunk list, the `Buffer.concat`, and the route's
- * `ArrayBuffer` copy), which at the ceiling is ~96 MB on a 1 GB function.
- *
- * Enforced TWICE, and the second time is the one that counts: once as a pre-flight against the
- * STORED metadata size, which costs no connection at all, and once as a real byte count inside the
- * stream, because the metadata is the sender's claim and can be wrong.
+ * Ceiling on ONE on-demand fetch (`GET /attachments/:id`). Without it `fetchPart` buffered
+ * whatever the server sent under a held mailbox lock, so one oversized part could stall all later
+ * mail for that mailbox — the fix must fire DURING the read. 32 MiB: ~4x the largest attachment
+ * in the live corpus (7.8 MB measured); above what mainstream providers accept (~25 MB); half
+ * {@link DOWNLOAD_ALL_MAX_BYTES} and equal to core's `DEFAULT_SYNC_BATCH_MAX_BYTES`. Peak memory
+ * is ~3x the payload. Enforced TWICE, and the second is the one that counts: a pre-flight against
+ * STORED metadata (costs no connection), then a real byte count inside the stream — the metadata
+ * is the sender's claim and can be wrong.
  */
 export const ATTACHMENT_MAX_FETCH_BYTES = 32 * 1024 * 1024;
 
@@ -228,25 +182,14 @@ export function downloadAllOpenFailure(err: unknown): string {
  * download and a zip entry all name one file; its comment points here.
  */
 /**
- * A ZIP ENTRY NAME IS A PATH, AND THE SENDER WROTE IT.
- *
- * `filename` on a MIME part is attacker-controlled text that reaches this service verbatim (the
- * parser preserves what the sender sent, deliberately — see `packages/core/src/mime.ts`). JSZip's
- * `file()` treats `/` as a FOLDER SEPARATOR, and its documented traversal sanitisation is on
- * `loadAsync` — reading an archive — not on writing one. So a part named `../../.ssh/authorized_keys`
- * became an entry at exactly that path, and any extractor that honours relative components writes
- * outside the directory the user picked. The single-attachment download never had the same hole:
- * it leaves as a `Content-Disposition` header, where the browser keeps the basename.
- *
- * The name is therefore reduced to a BASENAME: the last component of either separator, with
- * control bytes removed, trimmed, and length-capped. `.` and `..` reduce to nothing and fall back
- * to the generated part name, because an entry called `..` is a directory reference and not a
- * file. Returning `""` for anything unusable is deliberate — the caller's `||` then reaches
- * {@link partFallbackName}, so the user still gets the bytes under a name they can open.
- *
- * DE-DUPLICATION RUNS ON THE SANITISED NAME (see {@link AttachmentsService.uniqueName}), or two
- * hostile parts that differ only in their stripped bytes would collide into one entry and one of
- * the two files would silently vanish from the archive.
+ * A zip entry name is a PATH, and the sender wrote it. `filename` on a MIME part is
+ * attacker-controlled text reaching this service verbatim; JSZip's `file()` treats `/` as a
+ * folder separator and sanitises only on `loadAsync`, so a part named
+ * `../../.ssh/authorized_keys` became an entry at exactly that path. (The single-attachment
+ * download leaves as `Content-Disposition`; the browser keeps the basename.) The name is reduced
+ * to a BASENAME: control bytes removed, trimmed, length-capped; `.` and `..` reduce to nothing
+ * and fall back to {@link partFallbackName}. De-duplication runs on the SANITISED name, or two
+ * hostile parts differing only in stripped bytes would collide and one file would vanish.
  */
 function zipEntryName(filename: string | null | undefined): string {
   if (!filename) return "";
@@ -364,39 +307,14 @@ export class AttachmentsService {
   }
 
   /**
-   * POST /messages/:id/attachments/download-all + POST /files/download-all — resolve the
-   * target set (a message's attachments, an explicit `fileIds` selection, or a filtered slice
-   * of the file library), fetch each part on-demand, and assemble a zip in memory (personal
-   * scale). A part that fails to fetch is SKIPPED and noted in a `_errors.txt` entry rather
-   * than aborting the whole archive. Bytes are never persisted.
-   *
-   * ## Bounded connections
-   *
-   * Parts are processed GROUPED BY MAILBOX, one connection at a time: open → fetch every part
-   * of that mailbox → close, then the next. The previous shape opened an adapter per distinct
-   * mailbox and held them all open until the end, so a library-wide download from an account
-   * with N mailboxes meant N simultaneous IMAP logins from one serverless invocation — the
-   * pattern providers like iCloud and Gmail throttle first, and N sockets held for the whole
-   * request. One at a time is also what capping the `download-all` fan-out requires.
-   *
-   * ## Bounded memory
-   *
-   * {@link DOWNLOAD_ALL_MAX_PARTS} / {@link DOWNLOAD_ALL_MAX_BYTES} are checked BEFORE any
-   * connection is opened, from the stored metadata (413 when exceeded). The metadata can be
-   * wrong, so the running total of ACTUAL bytes is enforced too: once the cap is reached the
-   * remaining parts are skipped and named in `_errors.txt`, which is the one place truncation
-   * is the lesser evil — the alternative is an OOM kill mid-archive with no message at all.
-   *
-   * The part-count check below is now a BACKSTOP rather than the enforcement: `resolveTargets`
-   * bounds the caller's `fileIds` before they reach a SQL `IN`, and `partsWhere` bounds the READ
-   * itself at the ceiling plus one, so no current branch can hand this function an oversized
-   * array. It is kept because a fourth resolution branch that did not go through `partsWhere`
-   * would otherwise arrive here unbounded.
-   *
-   * And the METADATA IS THE SENDER'S CLAIM, so the per-part read carries the archive's remaining
-   * byte budget as its own mid-stream ceiling — see the block comment at the fetch. Without it,
-   * one part that declares 1 KiB and streams 4 GiB was buffered whole, because the running total
-   * is only consulted between parts.
+   * download-all — resolve the target set (a message's attachments, a `fileIds` selection, or a
+   * filtered library slice), fetch each part on demand, assemble a zip in memory; a failing part
+   * is SKIPPED and named in `_errors.txt`; bytes are never persisted. Parts are grouped BY
+   * MAILBOX, one connection at a time — N simultaneous IMAP logins is what providers throttle
+   * first. {@link DOWNLOAD_ALL_MAX_PARTS}/{@link DOWNLOAD_ALL_MAX_BYTES} are checked BEFORE any
+   * connection, from stored metadata (413), and the running total of ACTUAL bytes is enforced
+   * too. The part-count check below is a BACKSTOP. The metadata is the sender's claim, so each
+   * per-part read carries the archive's remaining budget as its ceiling.
    */
   async downloadAll(ctx: ServiceContext, input: DownloadAllInput, deps: FetchDeps): Promise<DownloadAllResult> {
     const parts = await this.resolveTargets(ctx, input);
@@ -463,38 +381,14 @@ export class AttachmentsService {
           }
           try {
             /**
-             * ── THE BUDGET IS ENFORCED DURING THE READ, NOT AFTER IT ──────────────────────
-             *
-             * This was `fetchPart(locator, partId)` with no ceiling at all, and the two guards
-             * around it are both checks on the sender's CLAIM: `DOWNLOAD_ALL_MAX_BYTES` above
-             * is compared against bytes already fetched, and the pre-flight in `downloadAll`
-             * sums `sizeBytes` from the stored metadata. The metadata is what the sending
-             * server said the part weighs. A hostile or broken mailbox that declares 1 KiB and
-             * streams 4 GiB was buffered in full — the running total is only consulted between
-             * parts, so ONE part is unbounded however small it claims to be.
-             *
-             * The ceiling is the archive's REMAINING budget, so the transfer is abandoned at
-             * the first byte that could not have fitted anyway.
-             *
-             * ── WHY THIS IS SAFE HERE, WHEN THE ADAPTER'S OWN DOCSTRING SAYS IT IS NOT ────
-             *
-             * Passing `maxBytes` POISONS THE CONNECTION — `imap.ts#fetchPart` throws out of its
-             * own `for await` over the download stream, abandoning the driver mid-literal, and
-             * `fetchRaw`'s docstring beside it states the consequence in the adapter's own words:
-             * *"the connection is dead afterwards"*. The interface used to forbid `downloadAll`
-             * from passing it at all for that reason; it now describes the obligation instead,
-             * because the breach being TERMINAL is a thing a caller can honour and an unbounded
-             * read is not. That is what `poisoned` is for, rather than a reason to leave the read
-             * unbounded: the
-             * breach is TERMINAL for this mailbox's group. Every remaining part of that group
-             * is named in `_errors.txt` and the socket is closed by the `finally` below, so no
-             * further read is attempted through a parser that is mid-literal. Other mailboxes'
-             * groups are untouched — they get their own connection.
-             *
-             * Aborting the group rather than reconnecting is deliberate: a reconnect per breach
-             * is a loop whose length the hostile server chooses, which is the same defect one
-             * layer up. And an honest mailbox never reaches this line, because the declared-size
-             * pre-flight has already refused it with a 413 that names the limit.
+             * The budget is enforced DURING the read, not after it. The two guards around this
+             * are checks on the sender's CLAIM, so one part declaring 1 KiB and streaming 4 GiB
+             * was buffered whole. The ceiling is the archive's REMAINING budget. Passing
+             * `maxBytes` poisons the connection (`imap.ts#fetchPart` throws out of its own `for
+             * await`), so the breach is TERMINAL for this mailbox's group: every remaining part
+             * is named in `_errors.txt` and the socket is closed by the `finally` below. Aborting
+             * the group rather than reconnecting is deliberate — a reconnect per breach is a loop
+             * whose length the hostile server chooses.
              */
             const fetched = await adapter.fetchPart(part.locator, part.partId, {
               maxBytes: DOWNLOAD_ALL_MAX_BYTES - fetchedBytes,
@@ -509,20 +403,13 @@ export class AttachmentsService {
                   `(the whole archive may hold ${Math.round(DOWNLOAD_ALL_MAX_BYTES / 1048576)} MiB)`,
               );
             } else if (isMessageGone(err)) {
-              // NOT a mail-server fault, and the generic line below said it was. The message this
-              // part belongs to is not at the locator the mirror holds. Blaming the server sent
-              // people to check a server that is fine.
-              //
-              // ── AND IT SAYS "NO LONGER THERE", NOT "MOVED" ────────────────────────────────
-              //
-              // This line first read *"this message has moved … refresh and download again"*,
-              // which review was right to call an over-claim: the refusal establishes only that
-              // the locator no longer resolves. A message that was permanently deleted produces
-              // exactly the same refusal, and for that one no refresh will ever make the download
-              // work — so the sentence promised a recovery that does not exist, in the case where
-              // the reader most needs to be told the file is gone. The single-file download's
-              // wording was already correct because it allows both readings; this one now does
-              // too, and offers the refresh as the thing to try rather than as the fix.
+              // Not a mail-server fault, and the generic line below once said it was: the message
+              // is not at the locator the mirror holds, and blaming the server sent people to
+              // check a server that is fine. It says "no longer there", not "moved": the refusal
+              // establishes only that the locator no longer resolves — a permanently deleted
+              // message produces the same refusal, and for that one no refresh will ever work, so
+              // promising recovery was an over-claim. The refresh is offered as the thing to try,
+              // not as the fix.
               errors.push(
                 `${name}: skipped — this message is no longer where the mailbox recorded it. ` +
                   `It may have moved, in which case refreshing and downloading again will work, ` +
@@ -585,28 +472,14 @@ export class AttachmentsService {
   // ── internals ────────────────────────────────────────────────────────────
 
   /**
-   * Resolve the download-all target set into fetch-ready parts (account-scoped).
-   *
-   * ── THE CEILING IS APPLIED TO THE READ, NOT TO ITS RESULT ────────────────────────────────
-   *
-   * {@link DOWNLOAD_ALL_MAX_PARTS} used to be checked in `downloadAll`, on the array this
-   * function had already built — which is one statement too late in both of its branches:
-   *
-   *  · the `fileIds` branch put the caller's array STRAIGHT into a SQL `IN`, so a request
-   *    naming 100 000 file ids sent 100 000 bind parameters at a driver whose protocol limit is
-   *    65 535, and the 200-part ceiling that was supposed to refuse it was evaluated on rows
-   *    that could never come back. `fileIds` is now bounded and SHAPE-CHECKED here, before the
-   *    predicate is built: a non-uuid would otherwise reach Postgres as 22P02, a 500 for a
-   *    plainly bad request — the guard `MessageService.getBodies` already applies to its ids.
-   *  · the FILTER branch names no ids at all, so `POST /files/download-all` with
-   *    `{"filter":{}}` selected the account's ENTIRE attachment history, materialized every row
-   *    in the process, and only then counted them and answered 413. The refusal was correct and
-   *    the work behind it was unbounded. The read now stops at the ceiling PLUS ONE, which is
-   *    exactly enough to know the ceiling was crossed and nothing more.
-   *
-   * The `messageId` branch needs no bound of its own beyond the same limit: one message's
-   * attachment count is bounded by what a sender could put in one MIME tree, and it now shares
-   * the same ceiling rather than resting on that argument.
+   * Resolve the download-all target set into fetch-ready parts (account-scoped). The ceiling is
+   * applied to the READ, not its result — checking {@link DOWNLOAD_ALL_MAX_PARTS} on the built
+   * array was one statement too late in both branches: the `fileIds` branch put the caller's
+   * array straight into a SQL `IN` (100 000 ids = 100 000 bind parameters against a 65 535
+   * protocol limit), so `fileIds` is now bounded and SHAPE-CHECKED before the predicate is built;
+   * the FILTER branch (`{"filter":{}}`) materialized the account's ENTIRE attachment history and
+   * only then answered 413 — the read now stops at the ceiling PLUS ONE, exactly enough to know
+   * it was crossed. The `messageId` branch shares the same ceiling.
    */
   private async resolveTargets(ctx: ServiceContext, input: DownloadAllInput): Promise<ResolvedPart[]> {
     if (input.messageId) {
@@ -636,18 +509,14 @@ export class AttachmentsService {
         }
       }
       /**
-       * A PRESENT `fileIds` IS THE SELECTION MODE, EVEN WHEN IT IS EMPTY.
-       *
-       * `[]` used to fall through to the library branch below, so `{"fileIds": []}` — a client
-       * asking to archive nothing — downloaded the account's ENTIRE non-inline attachment
-       * history, or answered 413 about a limit the request had not gone near. A caller-chosen
-       * selection of zero became "everything", which is the same shape as the `NaN` limit that
-       * named this class: a value the guard could not read, read as "no ceiling".
-       *
-       * `GET /messages/bodies` already made this exact ruling one route over, and its words
-       * apply verbatim: *"A present-but-empty `ids=` is still the ids MODE (an empty answer),
-       * never a silent fall-through to the keyset page, which would send a client asking for
-       * nothing the account's first fifty bodies."*
+       * A present `fileIds` is the SELECTION MODE, even when empty. `[]` used to fall through to
+       * the library branch, so `{"fileIds": []}` — a client asking to archive nothing —
+       * downloaded the account's ENTIRE non-inline attachment history, or answered 413 about a
+       * limit the request had not gone near. A selection of zero became "everything", the same
+       * shape as the `NaN` limit that named this class: a value the guard could not read, read as
+       * "no ceiling". `GET /messages/bodies` made this exact ruling one route over: a
+       * present-but-empty ids parameter is still the ids mode — an empty answer, never a silent
+       * fall-through.
        */
       return input.fileIds.length === 0
         ? []
