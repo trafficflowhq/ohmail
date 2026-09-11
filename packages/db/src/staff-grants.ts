@@ -1,46 +1,12 @@
 /**
- * THE ONE STATEMENT OF WHAT `ohmail_admin` MAY DO, and the query that asks Postgres
- * what it actually does.
- *
- * ## Why this module exists at all
- *
- * The first cut of this boundary shipped two halves that never met. `scripts/harden-staff-role.sql`
- * granted a column list; `test/staff-role.pg.test.ts` asserted a column list; and
- * `assertContentBlind` asked ONE question — `select subject from messages where false` — and
- * treated a single 42501 as proof of blindness. An external security review put it plainly:
- *
- * > Provision or drift a `DATABASE_URL_ADMIN` role so it lacks `SELECT(messages.subject)` but
- * > retains `SELECT(message_bodies.*)` […] the first staff request […] brands the connection
- * > `AdminDb`. The staff surface now runs on a handle that is not content-blind.
- *
- * A one-column oracle cannot answer "is this role content-blind"; only an enumeration can. So
- * the boot path now asks Postgres for the role's **entire effective capability set** and
- * compares it to {@link STAFF_SELECT_GRANTS} / {@link STAFF_TABLE_GRANTS} — the same
- * allowlist the pg guard compares against, imported, not copied. This repo has been bitten
- * twice by a constant that existed in two places (an error taxonomy, and the pooler
- * predicate); a privacy boundary is not the third.
- *
- * ## "Effective", and why that word is load-bearing
- *
- * {@link STAFF_CAPABILITY_SQL} is built out of `has_column_privilege` / `has_table_privilege`
- * / `pg_has_role`, not out of the ACL columns. That distinction is the entire point:
- * PostgreSQL has no negative grant, so a privilege can arrive from four places and a `REVOKE
- * … FROM ohmail_admin` only removes one of them.
- *
- *   · a direct grant                     — `REVOKE` removes it
- *   · a grant to a role it is a MEMBER of (including predefined `pg_read_all_data`)
- *   · a grant to `PUBLIC`
- *   · OWNERSHIP of the relation
- *
- * `has_column_privilege` returns true for all four. Verified against PostgreSQL 16 before this
- * module was written, because a census that silently missed one of them would be worse than
- * no census: it would be a green light nobody re-examines.
- *
- * ## Read-only, catalog-only, safe to name in an error
- *
- * Every value the query returns is a `pg_catalog` identifier — a schema, a relation, a column,
- * a role, a privilege verb. None of it is application data, so {@link describeCapability} can
- * be quoted verbatim into a log line or a `NotContentBlindError` without leaking anything.
+ * The ONE statement of what `ohmail_admin` may do, and the query that asks Postgres what it
+ * actually does. The first cut asked ONE question — a single 42501 as proof of blindness — and a
+ * one-column oracle cannot answer "is this role content-blind"; only an enumeration can. The boot
+ * path asks for the role's ENTIRE effective capability set and compares it to the same allowlist
+ * the pg guard uses. "Effective" is load-bearing: the census uses
+ * `has_column_privilege`/`pg_has_role`, not ACL columns — Postgres has no negative grant; a
+ * privilege can arrive from a direct grant, membership, `PUBLIC`, or OWNERSHIP, and
+ * `has_column_privilege` covers all four. Every value returned is a catalog identifier.
  */
 
 /** The role `scripts/harden-staff-role.sql` creates. One spelling, three consumers. */
