@@ -928,32 +928,14 @@ export const messageBodies = sqliteTable("message_bodies", {
 }));
 
 /**
- * ── Mail 0062: PER-ACCOUNT STORED-BODY BYTES — the managed storage cap's ledger ──────────────
- *
- * One row per account: how many bytes of message-body content (`octet_length(text) +
- * octet_length(html)`) this account holds in `message_bodies`. Maintained in the SAME
- * transaction as every body write — the ingest insert increments it, the two repair passes
- * (`sensitive-backfill`, `redacted-restore`) apply their byte delta, account deletion drops the
- * row — so the number can never describe a state the table is not in.
- *
- * What deliberately does NOT count: `headers` (small, bounded, and still written at cap — a
- * count of undeclinable bytes would grow with no user remedy), `messages.snippet`, drafts,
- * attachment METADATA (attachment bytes are never stored server-side — pulled on demand from
- * IMAP), outbound `attachment_staging` (transient, its own quota), and `body_tsv` (derived).
- * The user-facing sentence is therefore scoped to "mail body storage", never "storage".
- *
- * A maintained counter and not an aggregate because `message_bodies` is the largest table in
- * the database and `sum(octet_length(...))` over it has no index; a MAIL-schema table (not
- * cloud) because the bytes it counts live in the mail schema on every tier. On desktop and
- * self-host it is maintained and read by nothing — the cap is a MANAGED-tier policy wired only
- * in the hosted worker. In the sidecar's cloud-MIRROR mode it is not even maintained: the
- * mirror copies the hosted store, whose authoritative counter is the hosted one, and nothing
- * may ever read the local row there.
- *
- * LOCK ORDER (pinned by `storage-reserve.pg.test.ts`): within any transaction, the
- * `account_storage` row is written BEFORE the first `recordChange`/`allocateSeq` — the ingest
- * path writes bodies before deltas, and the repair passes apply their delta before their
- * `recordChange`, so the two locks are always taken in the same order.
+ * Mail 0062: per-account stored-body bytes — the storage cap's ledger. One row per account:
+ * `octet_length(text) + octet_length(html)` over `message_bodies`, maintained in the SAME
+ * transaction as every body write (ingest, the repair passes, erasure), so the number can never
+ * describe a state the table is not in. What does NOT count: `headers` (still written at cap —
+ * undeclinable bytes would grow with no remedy), snippets, drafts, attachment metadata, staging —
+ * the user-facing sentence is "mail body storage", never "storage". A maintained counter, not an
+ * aggregate: the sum has no index over the largest table. Lock order (pinned by a pg test): the
+ * `account_storage` row is written BEFORE the first `recordChange` in any transaction.
  */
 export const accountStorage = sqliteTable("account_storage", {
   accountId: text("account_id").primaryKey(),
@@ -1382,35 +1364,14 @@ export const awayResponders = sqliteTable("away_responders", {
 }, (t) => ({ uqAccount: unique().on(t.accountId) }));   // one row per account ⇒ PUT upserts
 
 /**
- * ONE AUTOMATIC REPLY PER SENDER, AND THE ROW THAT PROVES IT — one row per
- * `(account, sender, enablement episode)`, and the UNIQUE is the guard rather than a diagnostic.
- *
- * ── WHAT AN "EPISODE" IS, AND WHY IT IS `responder_updated_at` ────────────────────────────────
- *
- * The requirement is at most one automatic reply per sender per enablement. A boolean "replied"
- * flag cannot express that: somebody comes back, turns the responder off, travels again next
- * month, and every correspondent from the first trip is permanently silenced. So the episode key is
- * the responder row's own `updated_at` — the instant of the PUT that produced the current
- * configuration. Turning the responder on again is a PUT, which moves `updated_at`, which starts a
- * new episode, which lets each sender be answered once more.
- *
- * The consequence to know about: ANY edit is a new episode, including a typo fix to the body while
- * away. Somebody who corrects their message mid-trip may answer a correspondent from earlier in
- * that trip a second time. That is the deliberate trade — the alternative keys (a separate
- * `enabled_at`, a nullable episode id) all reintroduce the permanent-silence failure the moment the
- * two columns disagree, and being answered twice is recoverable where never being answered is not.
- *
- * ── THE ROW IS WRITTEN BEFORE THE SEND, NEVER AFTER ─────────────────────────────────────────
- *
- * SMTP is not transactional, so the choice is at-most-once or at-least-once and there is no third
- * option. Claiming first makes a crash between the claim and the send cost ONE unsent reply;
- * claiming after would make it cost a duplicate reply to a stranger, forever, every time the pass
- * re-ran. `INSERT … ON CONFLICT DO NOTHING` returning zero rows IS the "somebody already answered
- * this sender" branch — there is no read-then-write window for two workers to race through.
- *
- * `sender` is the lowercased envelope author, never a display name. There is no FK to `messages`:
- * the record has to outlive the message it was triggered by (an expunge must not un-answer a
- * sender), and `message_id` is carried only as evidence, nullable, with no reference.
+ * One automatic reply per sender, and the row that proves it — keyed `(account, sender,
+ * episode)`; the UNIQUE is the guard. The episode key is the responder row's own `updated_at`: a
+ * boolean "replied" flag would permanently silence every first-trip correspondent after an
+ * off-and-on. Stated: ANY edit is a new episode, so a mid-trip typo fix may answer a
+ * correspondent twice — deliberate, because twice is recoverable and never is not. Written BEFORE
+ * the send: SMTP is not transactional, so claiming first costs a crash ONE unsent reply. `ON
+ * CONFLICT DO NOTHING` returning zero rows IS the already-answered branch. `sender` is the
+ * lowercased envelope author; no FK to `messages` — an expunge must not un-answer a sender.
  */
 export const awayResponderSent = sqliteTable("away_responder_sent", {
   id: text("id").default(UUID_V4).primaryKey(),
