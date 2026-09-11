@@ -200,32 +200,24 @@ export function statusKey(m: Pick<MailboxDTO, "status" | "lastSyncAt">): string 
 // `(product)` is denied from the Desktop mirror. This pane imports it beside `isSyncBlockReason`.
 
 /**
- * ONE ADDRESS, ONE ROW.
- *
- * ── WHAT WAS ON SCREEN ──────────────────────────────────────────────────────────────────
- *
- * `delete` is a SOFT delete and mail 0021's unique index is PARTIAL (`WHERE status <>
- * 'disabled'`, on `lower(address)`), so a disabled row is not a conflict and connecting the same
- * address again legally inserts a second one. That is the intended schema — a tombstone must not
- * lock its own address out for ever — and the pane rendered the consequence verbatim: the dead
- * row sat beside the live one, same address, indistinguishable, for ever.
- *
- * It is not a rare shape. It is what the ONLY available remedy produces: a mailbox the organizer
- * lease stood down is off the worker's roster (`loadEnabledMailboxes` filters `status <>
- * 'disabled'`) and this pane offers no re-enable, so connecting the address again is the only
- * move a Cloud customer has.
- *
- * ── THE KEY ITSELF MOVED, AND SO DID ITS REASONING ──────────────────────────────────────
- *
- * `addressKey` now lives at `app/shell/address-key.ts` — `lower()` only, never `trim()`, with the
- * whole argument for that (a grouping may be narrower than the constraint; it may never be wider).
- * It moved when a SECOND consumer arrived: `mail-state.ts`'s stand-down arm decides the same
- * question — has this address come back? — and that rail and this pane render on ONE SCREEN. Two
- * copies that agree today are how they come to disagree later, and on this pair disagreeing means
- * two contradictory sentences about one mailbox, which is the defect both were written to end.
- *
- * Re-exported here because this pane was its only home for a long time and callers read better
- * for it.
+ * One address, one row. `delete` is a SOFT delete and mail 0021's unique index is PARTIAL (`WHERE status <>
+ * 'disabled'`, on `lower(address)`), so a disabled row is not a conflict and connecting the same address again
+ * legally inserts a second one — the intended schema: a tombstone must not lock its own address out for ever. The
+ * pane rendered the consequence verbatim: the dead row sat beside the live one, same address, indistinguishable, for
+ * ever. Not rare — it is what the only available remedy produces: a mailbox the organizer lease stood down is off the
+ * worker's roster (`loadEnabledMailboxes` filters `status <> 'disabled'`) and this pane offers no re-enable, so
+ * connecting the address again is the only move a Cloud customer has.
+ */
+
+/**
+ * The key itself moved: `addressKey` now lives at `app/shell/address-key.ts` — `lower()` only,
+ * never `trim()`, with the whole argument there (a grouping may be narrower than the
+ * constraint; it may never be wider). It moved when a SECOND consumer arrived: `mail-state.ts`'s
+ * stand-down arm decides the same question — has this address come back? — and that rail and
+ * this pane render on ONE SCREEN. Two copies that agree today are how they come to disagree
+ * later, and on this pair that means two contradictory sentences about one mailbox — the defect
+ * both were written to end. Re-exported here because this pane was its only home for a long
+ * time and callers read better for it.
  */
 /* IMPORTED as well as re-exported, and the difference is a caught defect rather than a style
  * choice: `export { x } from "..."` re-exports without binding `x` in THIS module's scope, so the
@@ -235,50 +227,34 @@ import { durableSessionRemove, durableSessionSet } from "../../shell/durable";
 export { addressKey };
 
 /**
- * WHY THE CONNECT BUTTON IS NOT ALWAYS THERE.
- *
- * ── WHAT WAS ON SCREEN ──────────────────────────────────────────────────────────────────
- *
- * Walked end to end on a live Cloud account. Someone whose account was not entitled to another
- * mailbox was offered **"Connect a mailbox"** and walked through every screen this pane has —
- * provider, credentials, the ohmail account password, and a FRESH SECOND FACTOR — and only then
- * did `POST /mailboxes` refuse.
- *
- * So the product asked for a second factor before saying it was never going to work. That is
- * the worst possible ordering: the most annoying step sat in front of the refusal.
- *
- * ── EVERY FACT THIS NEEDS WAS ALREADY ON THE WIRE ───────────────────────────────────────
- *
- * Nothing here re-decides anything. `GET /account/access` is `cost: "read"` with no `stepUp`
- * and answers the entitlements port's own verdict — the same port `readMailboxAllowance`
- * consults inside the create's transaction; `emailVerified` rides on `GET /auth/session`,
- * which this pane already calls; and the slot count is the list it already holds, filtered
- * exactly as the gate counts it (`status <> 'disabled'`).
- *
- * ── THE PRECEDENCE IS THE SERVER'S PIPELINE, IN ORDER ───────────────────────────────────
- *
- * `withStepUp` → `withSpendGate` → handler (`packages/api/src/app.ts`), so an unverified
- * address is refused BEFORE the allowance gate is reached. A pane that named a limit to an
- * unverified account would be naming a refusal that never fires. Then
- * `decideMailboxAllowance`'s own order: `canAddMailbox` first, the count second — an account
- * that may not add another must be told THAT, not that it is full.
- *
- * ── IT MAY ONLY EVER WITHHOLD AN OFFER IT CAN PROVE IS DEAD ─────────────────────────────
- *
- * The read is a snapshot; the gate is `SELECT … FOR UPDATE` inside the create's transaction.
- * They can disagree, so every unknown fails OPEN — an unreadable verdict, an unreadable
- * session, a list that has not arrived — and `connect()`'s catch is untouched. Withholding a
- * connect the server would have allowed is worse than the defect being fixed.
- *
- * ── THE TWO SUBSCRIPTION-SHAPED BLOCKS ARE GONE, AND NOT BECAUSE THEY WERE WRONG ────────
- *
- * They named states this pane can no longer be in. An account the service has REFUSED does not
- * reach a settings pane at all: every door answers 402 and the client swaps the whole surface
- * for the lock screen, which is where the way back to paying now lives. So the states left for
- * this gate to describe are the ones an ACTIVE account can be in — may it add another mailbox,
- * and has it filled the ones it has — and a sentence about choosing a plan would be naming a
- * refusal that cannot fire here, which is the same defect as the ordering above wearing
- * different words.
+ * Why the connect button is not always there. Walked end to end on a live Cloud account: someone not entitled to
+ * another mailbox was offered "Connect a mailbox" and walked through every screen this pane has — provider,
+ * credentials, the ohmail account password, and a FRESH SECOND FACTOR — and only then did `POST /mailboxes` refuse.
+ * The most annoying step sat in front of the refusal. Every fact this needs was already on the wire: `GET
+ * /account/access` is `cost: "read"` with no `stepUp` and answers the entitlements port's own verdict — the same port
+ * `readMailboxAllowance` consults inside the create's transaction; `emailVerified` rides on `GET /auth/session`,
+ * already called; the slot count is the list this pane holds, filtered exactly as the gate counts it (`status <>
+ * 'disabled'`).
+ */
+
+/**
+ * The precedence is the server's pipeline, in order: `withStepUp` → `withSpendGate` → handler
+ * (`packages/api/src/app.ts`), so an unverified address is refused BEFORE the allowance gate — a pane naming a limit
+ * to an unverified account would name a refusal that never fires. Then `decideMailboxAllowance`'s own order:
+ * `canAddMailbox` first, the count second — an account that may not add another must be told THAT, not that it is
+ * full. And it may only ever withhold an offer it can prove is dead: the read is a snapshot, the gate is `SELECT …
+ * FOR UPDATE` inside the create's transaction, they can disagree — so every unknown fails OPEN (an unreadable
+ * verdict, an unreadable session, a list not arrived) and `connect()`'s catch is untouched. Withholding a connect the
+ * server would have allowed is worse than the defect being fixed.
+ */
+
+/**
+ * The two subscription-shaped blocks are gone, and not because they were wrong: they named
+ * states this pane can no longer be in. An account the service has REFUSED does not reach a
+ * settings pane at all — every door answers 402 and the client swaps the whole surface for the
+ * lock screen, where the way back to paying now lives. What is left for this gate to describe
+ * is what an ACTIVE account can be: may it add another mailbox, and has it filled the ones it
+ * has. A sentence about choosing a plan would name a refusal that cannot fire here.
  */
 export type ConnectBlock = "email_unverified" | "cannot_add" | "at_limit";
 
@@ -642,27 +618,18 @@ export function MailboxSection() {
   useEffect(() => () => { alive.current = false; }, []);
 
   /**
-   * Re-read the mailbox list.
-   *
-   * ── `counts` IS ASKED FOR ON PANE OPEN AND NEVER ON THE POLL ────────────────────────────
-   *
-   * `messageCount` is one grouped aggregate over the account's whole `messages` table, and
-   * `refresh` runs on a 10-second timer for as long as this pane is on screen (plus whatever
-   * `MailStateProvider` is doing every 30 s in the same tab). Putting the count on the poll
-   * would buy a number that changes by single digits an hour and charge a full scan of
-   * somebody's mail history for it, six times a minute. It is read once, when the pane mounts.
-   *
-   * ── WHICH IS WHY THE POLL MERGES RATHER THAN REPLACES ───────────────────────────────────
-   *
-   * A countless response omits the field entirely, so `setItems(got)` would drop the number
-   * ten seconds after the pane opened — the count would appear, sit there for one tick, and
-   * vanish for the rest of the visit. The poll therefore carries forward the last count each
-   * mailbox actually reported.
-   *
-   * `??`, matched on `id`, and NOT `|| `: `0` is a real count — an empty mailbox, or one still
-   * importing — and `||` would discard it and re-render the row as though nobody had asked.
-   * A mailbox that has gone from the list takes its count with it, because the merge is keyed
-   * off the INCOMING rows; a stale id cannot resurrect a row or lend its number to a new one.
+   * Re-read the mailbox list. `counts` is asked for on pane open and never on the poll: `messageCount` is one grouped
+   * aggregate over the account's whole `messages` table, and `refresh` runs on a 10-second timer while this pane is
+   * on screen — putting the count on the poll would buy a number that changes by single digits an hour and charge a
+   * full scan for it, six times a minute. Which is why the poll MERGES rather than replaces: a countless response
+   * omits the field entirely, so `setItems(got)` would drop the number ten seconds after the pane opened. The poll
+   * carries forward the last count each mailbox actually reported — `??`, matched on `id`, NOT `||`: `0` is a real
+   * count (an empty mailbox, or one still importing) and `||` would discard it.
+   */
+
+  /**
+   * A mailbox gone from the list takes its count with it, because the merge is keyed off the INCOMING rows; a stale
+   * id cannot resurrect a row or lend its number to a new one.
    */
   const refresh = useCallback(async (opts: { counts?: boolean } = {}): Promise<void> => {
     try {
@@ -698,30 +665,21 @@ export function MailboxSection() {
       }
     } catch (err) {
       /**
-       * ── A FAILED READ IS NOT AN EMPTY RESULT — `setItems([])` WAS A CLAIM, AND IT WAS THE WRONG ONE ──────────────
-       *
-       * This used to answer a REJECTION with the value it uses for an empty result, under a
-       * comment saying "a signed-out or unreachable server is reported by the shell around
-       * this pane". That comment was false for the case it was written for: on a 500 or a
-       * 503 `MailStateProvider` deliberately holds `facts` at `null` and `mail-state.ts`
-       * returns `QUIET`, so `SyncBar` renders NOTHING. Nothing anywhere reported it.
-       *
-       * What the `[]` produced instead is a sentence: `items !== null && connected.length
-       * === 0` is **"No mailbox connected yet."**, told to a customer whose three mailboxes
-       * are working — and `refresh` is on a 10 s poll, so the false state is rewritten every
-       * ten seconds for as long as the outage lasts. Stable, not a flicker.
-       *
-       * `items` is therefore left ALONE. On a first load it stays `null`, which every reader
-       * in this pane already treats as "unknown" (`connectBlock` takes `enabledCount: null`
-       * and produces no gate); on a poll it keeps the last list that was actually true, which
-       * is a better answer than erasing it. `listFailed` is what stops the "Reading your
-       * mailboxes…" line from becoming the new permanent lie, and the reason goes in `error`
-       * — the slot this pane already renders with `role="alert"`.
-       *
-       * The sentence is the SERVER'S. `api-client.ts`'s header is explicit that re-deriving
-       * it here is how somebody is told they are out of mailbox slots when the real problem
-       * is an unpaid subscription, and an onboarding guard forbids those strings in webapp
-       * source outright.
+       * A failed read is not an empty result — `setItems([])` was a claim, and the wrong one. This used to answer a
+       * REJECTION with the empty-result value, under a comment saying the shell reports outages around this pane.
+       * False for the case it was written for: on a 500 or 503 `MailStateProvider` holds `facts` at `null`,
+       * `mail-state.ts` returns `QUIET`, and `SyncBar` renders NOTHING. What the `[]` produced is a sentence — "No
+       * mailbox connected yet." — told to a customer whose three mailboxes are working, rewritten every ten seconds
+       * by the poll for as long as the outage lasts. `items` is therefore left ALONE: on a first load it stays
+       * `null`, which every reader treats as "unknown" (`connectBlock` takes `enabledCount: null` and produces no
+       * gate); on a poll it keeps the last list that was true.
+       */
+
+      /**
+       * `listFailed` stops "Reading your mailboxes…" becoming the new permanent lie, and the reason goes in `error`,
+       * the slot already rendered with `role="alert"`. The sentence is the SERVER'S: `api-client.ts` is explicit that
+       * re-deriving it here is how somebody is told they are out of slots when the real problem is an unpaid
+       * subscription.
        */
       if (alive.current) { setListFailed(true); setError(messageOf(err)); }
     }
@@ -1916,24 +1874,16 @@ export function MailboxSection() {
                   (`shell/idn.ts`). `m.address` itself is untouched everywhere it is USED: the
                   edit form, `addressKey`'s collapse, the connect ceremony. */}
               <span className="mbx-addr" title={displayAddress(m.address)}>{displayAddress(m.address)}</span>
-              {/* ── HOW MUCH MAIL IS IN HERE, IN THE ROW'S EXISTING META LINE ───────────────
-                  It was asked for by name, and the row had every fact about a mailbox except this
-                  one. It joins the provider and the status rather than taking an element of its
-                  own: it is the same KIND of statement — a quiet, unchanging fact about the
-                  mailbox — and the column to the right is reserved for what is happening NOW
-                  (a stamp, a spinner, a failure), which this is not.
-
-                  `typeof === "number"`, and the guard is the whole contract. The field is
-                  present only on the response to `?counts=1`, which is the mount's read; the
-                  10-second poll gets a response without it. Reading an absent field as `0`
-                  would put "0 messages" on a full mailbox every time a poll landed, and the
-                  optionality exists precisely for the case where we do not know. Absent renders
-                  nothing; `0` renders "0 messages", because an empty mailbox has an answer.
-
-                  Shown for a `disabled` row too, unlike everything else on this card that is
-                  gated on status. It is not a claim about syncing — it is how much of this
-                  mailbox's mail ohmail holds — so a disconnected mailbox reporting its size
-                  contradicts nothing beside it. */}
+              {/* How much mail is in here, in the row's existing meta line. It joins the
+                  provider and the status rather than taking an element of its own: the same
+                  KIND of statement — a quiet, unchanging fact — while the column to the right is
+                  reserved for what is happening NOW. `typeof === "number"`, and the guard is the
+                  whole contract: the field is present only on the `?counts=1` response (the
+                  mount's read), and the 10-second poll gets one without it — reading absent as
+                  `0` would put "0 messages" on a full mailbox every time a poll landed. Absent
+                  renders nothing; `0` renders "0 messages", because an empty mailbox has an
+                  answer. Shown for a `disabled` row too: it is how much of this mailbox's mail
+                  ohmail holds, not a claim about syncing, so it contradicts nothing beside it. */}
               <span className="mbx-sub">
                 {providerLabel(providerById(m.provider), tp)} · {t(statusKey(m))}
                 {typeof m.messageCount === "number"
@@ -1945,35 +1895,26 @@ export function MailboxSection() {
                   that reason is history, and repeating it would put two contradictory
                   explanations on one card — which is the defect, not the fix. */}
               {superseded > 0 ? <span className="mbx-sub">{t("superseded")}</span> : null}
-              {/* ── WHY, AND THE ONE ACTION THERE IS ─────────────────────────────────────────
-                  This block used to end at the two sentences and say, in a comment, that there
-                  must never be a takeover control here because nothing in the Cloud tier wrote
-                  `takeover_authorized_at`. That is no longer true — `MailboxService.organizeHere`
-                  does — so the copy that told people to go and delete a message out of their own
-                  `ohmail/_meta` folder by hand has gone with it.
-
-                  TWO STEPS, and the first one is not a formality. The stored reason records what
-                  was true at the moment Cloud stood down, and nothing has re-read the mailbox
-                  since; a card cannot know whether that install is still running. So the check
-                  opens one short-lived connection, reads the claim, and reports what is there —
-                  and only then is anybody asked to decide. Confirming writes an authorization and
-                  nothing else: the worker reads the claim again on its next pass and decides. */}
-              {/* ── AND THE MAILBOX YOU LET GO IS NOT ONE SOMEBODY TOOK ─────────────────────
-                  FIRST, ahead of the ceremony above, because everything the ceremony describes is
-                  false here. Nobody holds this mailbox — this account released it — so there is
-                  no claim worth opening a connection to inspect and no install to displace. The
-                  check would answer "no other ohmail install is organizing this mailbox", which
-                  is a question this row already knows the answer to.
-
-                  `mbx-sub` AND NOT `mbx-bad`. Nothing is broken and nothing failed: a person
-                  pressed "stop organizing here" and this is that, still true. Alarm styling would
-                  make the sentence itself a lie, the same argument the forwarding notice below
-                  makes for the same class.
-
-                  ONE PRESS, and it is the same authorization the confirm step writes — the second
-                  step of the ceremony exists to follow the first, and with the first gone there is
-                  nothing to confirm. The row's role moves at the worker's next pass, which is what
-                  the answer under the button says. */}
+              {/* Why, and the one action there is. This block used to say in a comment that
+                  there must never be a takeover control here because nothing in the Cloud tier
+                  wrote `takeover_authorized_at`. No longer true — `MailboxService.organizeHere`
+                  does — so the copy telling people to hand-delete a message out of their own
+                  `ohmail/_meta` folder has gone with it. TWO steps, and the first is not a
+                  formality: the stored reason records what was true when Cloud stood down and
+                  nothing has re-read the mailbox since, so the check opens one short-lived
+                  connection, reads the claim, reports what is there, and only then is anybody
+                  asked to decide. Confirming writes an authorization and nothing else: the
+                  worker reads the claim again on its next pass and decides. */}
+              {/* And the mailbox you let go is not one somebody took. FIRST, ahead of the
+                  ceremony above, because everything the ceremony describes is false here: nobody
+                  holds this mailbox — this account released it — so there is no claim worth
+                  opening a connection to inspect and no install to displace; the check would
+                  answer a question this row already knows. `mbx-sub` and NOT `mbx-bad`: nothing
+                  is broken — a person pressed "stop organizing here" and this is that, still
+                  true; alarm styling would make the sentence itself a lie. ONE press, the same
+                  authorization the confirm step writes — with the first step gone there is
+                  nothing to confirm. The row's role moves at the worker's next pass, as the
+                  answer under the button says. */}
               {/*
                   ONE REMEDY PER ROW: `readerStandDown` answers non-null for a reader with a holder, and a STRANDED
                   row is exactly that — so without the `!stranded` below the row drew both remedies at once: "another
