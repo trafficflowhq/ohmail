@@ -1,45 +1,14 @@
 "use client";
 
 /**
- * ONE READING-STREAM CARD, MEMOIZED ON WHAT IT DRAWS — NOT ON THE MESSAGE'S IDENTITY.
- *
- * Reads and Receipts mount an opening run of cards that grows toward the reader and never
- * unmounts (`stream-window.ts` — variable heights rule out the list column's fixed-row window,
- * and the `\Seen` observers need every card a reader could have scrolled past to stay in the
- * DOM). `content-visibility` makes the mounted cards cheap to LAY OUT and PAINT
- * (`app.css`); this is the third piece — the React RECONCILE. Every `/sync` apply bumps
- * the engine version, the shell re-renders, and the pile comes back down and re-runs the render
- * function of every mounted card whether or not its inputs changed. On a large mailbox that is
- * thousands of card renders per poll — most of the CPU a browser tab and the desktop WebView were
- * spending while sitting idle.
- *
- * ── WHY A CUSTOM COMPARATOR AND NOT DEFAULT SHALLOW-EQUAL ─────────────────────────────────────
- *
- * The obvious memo — compare the `m` prop by reference — is WRONG here, and quietly so: it would
- * work in a test that hands the same object back and fail in the app. The pile these views render
- * is the CONSENT PROJECTION (`presentationReader`), which returns `{ ...m, folder: place }` — a
- * FRESH object — for every message presented somewhere other than its physical folder. So a
- * relocated card's `m` reference changes on every version bump even when nothing it shows moved,
- * and a reference memo would re-render exactly those cards forever.
- *
- * So the comparator is keyed on the FACTS the card draws. A message's content is immutable per id
- * (subject, sender, amount and art never change under a stable id), so `m.id` stands in for all of
- * them. The MUTABLE bits are four, and every one of them is compared: `unread`, which travels as
- * its own prop, and `triage`, `sensitivity.no_forward` and `folder`, which do not — they are drawn
- * by the action bar, which is handed `m` WHOLE. The body arrives as PRIMITIVES (not the object
- * `bodyOf` mints fresh each call), so a hydration flips exactly the card that hydrated. The
- * callbacks are stable (`useCallback`/state setters in the view, and `stable-callback.ts` in the
- * shell), and the per-card facts (`current`, `expanded`) are booleans, so a selection or expand
- * re-renders that one card and no other. `now` is `useMemo`'d on `demo` in the shell.
- *
- * That "four" is load-bearing and was three for a while: the three that arrive inside `m` were
- * missing, and nothing caught it because `onAction` still changed identity often enough to
- * re-render the card for another reason. See `areEqual` for what that cost once the shell's
- * callbacks became genuinely stable.
- *
- * The inline `onToggle`/`onAction`/`bodySlot`/`art` closures are built INSIDE this component, so
- * they cost nothing on a render it skips. The guard is `test/stream-rerender.test.tsx`, which drives the
- * cards through `presentationReader` so a reference memo cannot pass it.
+ * One reading-stream card, memoized on what it draws — not the message's identity. Reads and Receipts
+ * mount an opening run of cards that never unmounts (`stream-window.ts`), and every `/sync` apply
+ * re-renders every mounted card — thousands per poll, most of an idle tab's CPU. A reference memo on `m`
+ * is quietly wrong: the pile is the consent projection (`presentationReader`), which returns a FRESH
+ * object for every relocated message, so exactly those cards would re-render forever. The comparator keys
+ * on the facts the card draws: `m.id` for the immutable fields; the four mutable ones (`unread`,
+ * `triage`, `sensitivity.no_forward`, `folder`) each compared; the body as primitives; callbacks stable.
+ * The guard is `test/stream-rerender.test.tsx`, driven through `presentationReader`.
  */
 
 import { memo, useState, type ReactNode } from "react";
@@ -86,17 +55,13 @@ export interface StreamCardMemoProps {
   /** The STORED per-message consent flag. One of three facts `remoteLoaded` is the OR of. */
   bodyLoadedRemote: boolean;
   /**
-   * THE REMOTE-IMAGES CHROME — the same object `MessagePane` and `MessageCard` read, so a card in
-   * the stream loads a message's pictures under exactly the rules the reading pane does: the
-   * account's auto mode, this session's press, the proxy, the pixel switch. ABSENT on a client
-   * with no proxy (the demo, a test with no API), in which case nothing loads and no button is
-   * offered — the same answer `MessageBody` gives everywhere else.
-   *
-   * This used to be missing, and the stream was the one surface where the reading pane's
-   * "images load when you open a message" was false: every remote image blanked, the bar
-   * counting them as blocked, and no button to press. Compared by REFERENCE in `areEqual` — the
-   * hook memoizes it, so it moves only when a setting or a consent changes, which is exactly when
-   * every mounted card must re-sanitize.
+   * The remote-images chrome — the same object `MessagePane` and `MessageCard` read, so a stream
+   * card loads pictures under exactly the reading pane's rules: the account's auto mode, this
+   * session's press, the proxy, the pixel switch. Absent on a client with no proxy (the demo, a
+   * test with no API): nothing loads and no button is offered. It used to be missing, and the
+   * stream was the one surface where "images load when you open a message" was false. Compared by
+   * REFERENCE in `areEqual` — the hook memoizes it, so it moves only when a setting or a consent
+   * changes, which is exactly when every mounted card must re-sanitize.
    */
   remoteImages?: RemoteImagesChrome;
   loadingLabel: string;
@@ -146,17 +111,12 @@ function StreamCardMemoInner({
       />
     ) : undefined;
   /**
-   * WHO ELSE GOT IT — the reading pane's own block, capped (`CARD_RECIPIENT_CHIPS`).
-   *
-   * WITHHELD ENTIRELY BELOW TWO. A message addressed to one person is the ordinary case, and
-   * "To: you" under every subject in the stream is a line that never says anything — the item
-   * asks that a message with SEVERAL recipients say so, so the card draws the block exactly
-   * when there is something to say and is otherwise the header it was. The reading pane keeps
-   * naming the single recipient, because a reader who opened a message is asking about that
-   * message; a card is a summary of a pile.
-   *
-   * `to`/`cc` are absent on a DTO that predates them and on a bare test message, hence `?? 0`
-   * — an unknown audience is not several.
+   * Who else got it — the reading pane's own block, capped (`CARD_RECIPIENT_CHIPS`). Withheld
+   * entirely below two: a message addressed to one person is the ordinary case, and "To: you"
+   * under every subject is a line that never says anything — the card draws the block exactly when
+   * there is something to say. The reading pane keeps naming the single recipient: a reader who
+   * opened a message is asking about that message; a card is a summary of a pile. `to`/`cc` are
+   * absent on a DTO that predates them, hence `?? 0` — an unknown audience is not several.
    */
   const recipientCount = (m.to?.length ?? 0) + (m.cc?.length ?? 0);
   const recipients: ReactNode =
@@ -204,30 +164,14 @@ function StreamCardMemoInner({
 }
 
 /**
- * Keyed on what the card DRAWS, not on the message reference — see the header. `m.id` stands in for
- * every immutable-per-id field (subject/sender/amount/art); the mutable ones travel as their own
- * props. Miss one and a real change would be dropped, so the list is deliberately exhaustive over
- * `StreamCardMemoProps`.
- *
- * ── THE THREE THAT DO NOT TRAVEL AS THEIR OWN PROP ──────────────────────────────────────────
- *
- * `m` is handed WHOLE to `MessageActionBar`, so the fields that bar reads are drawn by this card
- * even though they arrive inside `m` rather than beside it. `m.id` alone cannot stand in for them:
- * the projection clones a relocated message, so a NEW object with the SAME id is exactly what a
- * triage change looks like, and comparing ids says "equal" to it.
- *
- * That gap was invisible for as long as `onAction` changed identity on every render that mattered
- * — the card re-rendered for that reason and picked up the fresh `m` on the way past. Once the
- * shell's callbacks became genuinely stable (`stable-callback.ts`) the cover was gone and the
- * defect became reachable: press Park on a card, the mutation lands, the button does not move
- * because the card still holds the pre-mutation `m`; press again and the STALE `m` reaches the
- * handler, which dispatches `set_aside` a second time instead of `none`, so the message cannot be
- * unparked from the card that parked it.
- *
- * Compared at the exact sub-values `ActionBar` reads (`triage?.state`, `sensitivity?.no_forward`,
- * `folder`) rather than by object reference: the containers are rebuilt per projection pass, so a
- * reference comparison would re-render every card on every version bump — the cost this memo
- * exists to avoid — while telling us nothing about whether the card's drawing changed.
+ * Keyed on what the card DRAWS, not the message reference — see the header. `m.id` stands in for every
+ * immutable-per-id field; the mutable ones travel as their own props, and the list is deliberately exhaustive
+ * over `StreamCardMemoProps`. Three do not travel as props: `m` is handed whole to `MessageActionBar`, and the
+ * projection clones a relocated message, so a NEW object with the SAME id is exactly what a triage change looks
+ * like. That gap was covered while `onAction` changed identity every render; once the shell's callbacks became
+ * stable (`stable-callback.ts`), Park's button stopped moving and a second press dispatched `set_aside` again
+ * instead of `none`. Compared at the exact sub-values `ActionBar` reads (`triage?.state`,
+ * `sensitivity?.no_forward`, `folder`), never by container reference — those are rebuilt per projection pass.
  */
 function areEqual(a: StreamCardMemoProps, b: StreamCardMemoProps): boolean {
   return (

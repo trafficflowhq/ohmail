@@ -1,74 +1,40 @@
 "use client";
 
 /**
- * THE THREE COLUMNS' WIDTHS — one contract, four readers.
- *
- * The shell is rail | list | reading column, and until now all three widths were constants in
- * the stylesheet. They are now draggable, and every part of that lives here: what is stored,
- * where, what the numbers may be, and the two CSS custom properties the geometry actually
- * hangs on. The handles themselves are `ColumnHandles.tsx`; this file is the part that four
- * different callers must agree about, so it is deliberately a module of plain functions with
- * no React in it.
- *
- * The four readers, and why each one exists:
- *
- *  · `ColumnHandles` — writes live while a handle is dragged, persists on release.
- *  · the web door's pre-paint script (`columnsBootScript`, inlined by `(product)/providers.tsx`)
- *    — a served page has no bundle running yet, so the widths must be stamped by a string of
- *    JavaScript in the HTML or the first frame is the default and the second is the truth.
- *  · the desktop window and the served host client (`stampColumns`) — neither has Next, both
- *    run this bundle before `createRoot`, so they call the function instead of inlining a
- *    script (their CSP forbids inline scripts; `main.tsx` already re-states the theme stamp
- *    the same way for the same reason).
- *  · `BootSkeleton` via `app.css`, which reads the same two properties so the silhouette and
- *    the shell it becomes stand in the same three columns.
- *
- * ── PER MACHINE, NEVER PER ACCOUNT ──────────────────────────────────────────────────────────
- *
- * A column width is a fact about the SCREEN, not about the mailbox — a 13" laptop and a 27"
- * display want different answers and syncing it would let the small one dictate to the large
- * one. So this is `localStorage` on the origin, unkeyed by owner, exactly like the face's
- * device pin (`ohmail.face`) and the rail's group disclosures (`ohmail.ui.rail.*`), and like
- * them it SURVIVES SIGN-OUT — it is chrome, and there is no mail in a number of pixels. The
- * desktop's store is the same one: the webview's own `localStorage` inside the app's data
- * directory, which is where the face pin already survives relaunch. The sidecar's settings
- * hold mailbox and AI facts; window chrome has no business there and gets no route.
- *
- * ── WHY A CLAMP IN CSS *AND* A CLAMP IN JS, WHICH LOOKS LIKE A DUPLICATE ────────────────────
- *
- * They answer different questions. The CSS clamp is what makes a SMALLER WINDOW behave: shrink
- * the window and the rail re-clamps with no JavaScript at all, and widen it again and the
- * stored width comes back, because the stored number was never overwritten. The JS clamp is
- * what keeps the STORE honest: a value written by an older build, a hand-edited jar, or a drag
- * that ran past the ceiling must not be persisted as-is. Removing either one leaves a real
- * defect, so both are pinned in `column-geometry.test.ts`.
- *
- * ── THE VIEWER'S FLOOR IS A CSS EXPRESSION, NOT A MEASURED NUMBER ───────────────────────────
- *
- * The list's ceiling has a second bound: whatever leaves the reading column at least
- * {@link LIST.viewerMin}. That bound depends on the tile gap, which is a token (16px paper,
- * 10px ohmarchy) — and the pre-paint script runs before the stylesheet is guaranteed to have
- * loaded, so it cannot read the token. Writing `calc(100% - 480px - var(--gap-tile))` hands
- * the arithmetic to the browser instead, where the token is resolved at computed-value time on
- * the root. That is the reason the stamp and the live writer can produce byte-identical text
- * without either of them measuring anything.
+ * The three columns' widths — one contract, four readers: `ColumnHandles` (writes live during a
+ * drag, persists on release); the web door's pre-paint script (`columnsBootScript`, inlined by
+ * `(product)/providers.tsx` — a served page has no bundle yet, so the widths are stamped or the
+ * first frame is the default and the second the truth); the desktop window and served host client
+ * (`stampColumns` — their CSP forbids inline scripts, so they call the function before
+ * `createRoot`); and `BootSkeleton` via `app.css`, reading the same two custom properties. Plain
+ * functions, no React — four callers must agree. Per machine, never per account: a column width is
+ * a fact about the screen, so it is origin `localStorage`, unkeyed by owner, and survives sign-out
+ * like the face pin and the rail disclosures; the sidecar's settings hold mailbox and AI facts, and
+ * window chrome gets no route there.
+ */
+
+/**
+ * A clamp in CSS AND a clamp in JS — different questions. The CSS clamp makes a smaller window
+ * behave: shrink and the rail re-clamps with no JavaScript, widen and the stored width comes back
+ * because the stored number was never overwritten. The JS clamp keeps the STORE honest: a value
+ * written by an older build, a hand-edited jar, or a drag past the ceiling must not persist as-is.
+ * Both are pinned in `column-geometry.test.ts`. The viewer's floor is a CSS expression, not a
+ * measured number: the bound depends on the tile gap, a token the pre-paint script cannot read
+ * before the stylesheet loads — `calc(100% - 480px - var(--gap-tile))` hands the arithmetic to the
+ * browser, which is why the stamp and the live writer produce byte-identical text.
  */
 
 import { UI_KEYS } from "./persisted-ui";
 import { durableRemove, durableSet } from "./durable";
 
 /**
- * The store's key and its shape. The key itself comes from `UI_KEYS` rather than being spelled
- * again here: that table is what keeps every key this app writes greppable from one prefix, and
- * it is the string `sign-out-clears-durable-stores.test.ts` rules on. Two copies of it would let
- * the store read one key while the sign-out census classified another — and the census would
- * still pass, because it only checks that every literal it FINDS is dispositioned.
- *
- * `v` is present so a future geometry that means something
- * different by `rail`/`list` can be told from this one: an unrecognised version reads as NO
- * PREFERENCE (the defaults stand) rather than as a value to repair, because a repaired guess
- * at an unknown shape is how a stale jar produces a layout nobody chose. The next write
- * replaces it with a v1 record.
+ * The store's key and its shape. The key comes from `UI_KEYS` rather than being spelled again: that
+ * table keeps every key this app writes greppable from one prefix, and it is the string
+ * `sign-out-clears-durable-stores.test.ts` rules on — two copies would let the store read one key
+ * while the census classified another, and the census would still pass. `v` exists so a future
+ * geometry that means something different by `rail`/`list` can be told from this one: an
+ * unrecognised version reads as NO PREFERENCE rather than a value to repair — a repaired guess at
+ * an unknown shape is how a stale jar produces a layout nobody chose.
  */
 export const COLUMNS_KEY = UI_KEYS.columns;
 export const COLUMNS_VERSION = 1;
@@ -102,33 +68,26 @@ export const BIG_STEP = 64;
 export const RAIL_VAR = "--rail-w";
 export const SPLIT_VAR = "--split-user";
 /**
- * …AND A SECOND TRACK LIST FOR THE BOOT SILHOUETTE, WHICH IS NOT THE SAME BOX.
- *
- * `--split-user` contains `calc(100% - …)`, and `100%` means the element the property is USED
- * on. In the shell that is `.view.split`, which the rail and one gap have already been taken
- * out of; the silhouette's `.boot-sk-window` is the whole deck, rail included, and is therefore
- * a few hundred pixels wider. Handing it the same string made it draw a list up to
- * `rail + gap` wider than the shell it becomes — the exact snap on every cold boot that reading
- * the chosen widths was supposed to remove.
- *
- * It cannot be repaired at the point of use: a `var()` inside a custom property is substituted
- * where the property is DECLARED (`:root`), not where it is read, so no per-element override
- * can reach inside it. So the room is baked in per box, by the one function below, and the
- * agreement table in `column-geometry.test.ts` compares both properties.
+ * …and a second track list for the boot silhouette, which is not the same box. `--split-user`
+ * contains `calc(100% - …)`, and `100%` means the element the property is USED on: in the shell
+ * that is `.view.split` (rail and one gap already taken out), while the silhouette's
+ * `.boot-sk-window` is the whole deck — a few hundred pixels wider. Handing it the same string
+ * drew a list up to `rail + gap` wider than the shell it becomes: the exact cold-boot snap this
+ * store exists to remove. It cannot be repaired at the point of use — a `var()` inside a custom
+ * property is substituted where the property is DECLARED (`:root`) — so the room is baked in per
+ * box by the one function below, and `column-geometry.test.ts` compares both properties.
  */
 export const SPLIT_SK_VAR = "--split-user-sk";
 
 /**
- * The rail's track, as CSS. One string, so the stylesheet and the stamp cannot drift.
- *
- * THE CEILING FOLLOWS THE WINDOW. A constant 360px cap let a rail dragged wide keep its width
- * while the window shrank, and at 1000px the reading column was left ~250px — its header
- * address ran into the time and its action pill clipped. The cap is now the smaller of the
- * rail's own ceiling and what the window leaves once the list keeps its floor and the reading
- * column its own (`LIST.min` + `LIST.viewerMin`, plus the two edge gaps and the two tile gaps,
- * in tokens): the viewer keeps a floor at every width the split exists at, with no script
- * running. When the window is too narrow for even the floor, `clamp()` resolves to the rail's
- * minimum, which is the right answer there too.
+ * The rail's track, as CSS. One string, so the stylesheet and the stamp cannot drift. The ceiling
+ * follows the window: a constant 360px cap let a rail dragged wide keep its width while the window
+ * shrank, leaving the reading column ~250px at 1000px — its header address ran into the time. The
+ * cap is now the smaller of the rail's own ceiling and what the window leaves once the list keeps
+ * its floor and the reading column its own (`LIST.min` + `LIST.viewerMin`, plus the edge and tile
+ * gaps, in tokens): the viewer keeps a floor at every split width, no script running. When the
+ * window is too narrow even for the floor, `clamp()` resolves to the rail's minimum — right there
+ * too.
  */
 export const RAIL_TRACK =
   `clamp(${RAIL.min}px, var(${RAIL_VAR}, ${RAIL.dflt}px), `

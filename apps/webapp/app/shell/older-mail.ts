@@ -4,40 +4,14 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { EngineMessage, OhmailEngine, OhmailView } from "@ohmail/client-engine";
 
 /**
- * THE BOTTOM OF A PILE, WHEN THE DEVICE HOLDS ONLY PART OF THE MAILBOX.
- *
- * The browser's mirror is a window: the newest slice of the mail, kept on disk, in front of a
- * server that still holds all of it. That makes the end of a list an ambiguous place. It can mean
- * "this is your mail" or it can mean "this is what this device kept", and those are different
- * sentences — one of them has more mail behind it and the other does not.
- *
- * This hook is what lets a list tell them apart and act on the difference. It asks the engine
- * whether there is anything further back at all, fetches one page at a time when somebody asks
- * for it, and reports what it has in a shape a surface can render honestly.
- *
- * ── ONE PAGE PER ASK, NEVER SPECULATIVE ─────────────────────────────────────────────────────
- *
- * Nothing here fires on mount, on scroll position, or on a re-render. The fetch happens when
- * {@link OlderMail.loadMore} is called, which is a person reaching the end of a list and asking
- * to see further. A pile-wide prefetch would be the whole mailbox coming back down the wire to
- * fill a mirror that deliberately does not want it.
- *
- * ── THE ROWS ARE NOT MIRROR ROWS, AND THAT IS THE POINT ─────────────────────────────────────
- *
- * `engine.listOlder` returns items and writes nothing: they have no sync sequence, so the mirror
- * has no way to reconcile them and the next prune pass would evict them anyway. They live here,
- * in this hook's state, for as long as the view is open.
- *
- * The MERGE prefers the mirror's own row wherever it has one. The mirror row carries the
- * optimistic overlay and this device's triage state; a wire item is a snapshot from before
- * whatever the user just did. Preferring the wire would make a message somebody has just filed
- * reappear in the pile they filed it out of.
- *
- * ── RESET ON VIEW CHANGE ────────────────────────────────────────────────────────────────────
- *
- * Everything is keyed to one view. Leaving and returning starts again from the top of the older
- * mail rather than resuming a cursor from a list that is no longer on screen — a paging position
- * is only meaningful while the list it pages is being read.
+ * The bottom of a pile, when the device holds only part of the mailbox. The mirror is a window in
+ * front of a server holding all of it, so the end of a list is ambiguous — "this is your mail" or
+ * "this is what this device kept". This hook lets a list tell them apart: one page per
+ * {@link OlderMail.loadMore} call, never on mount, scroll or re-render — a prefetch would pull the
+ * mailbox into a mirror that deliberately does not want it. The rows are NOT mirror rows:
+ * `engine.listOlder` writes nothing (no sync sequence), and they live in this hook's state. The
+ * merge prefers the mirror's own row (it carries the overlay and this device's triage; a wire item
+ * is a pre-edit snapshot). Keyed to one view: leaving and returning starts from the top.
  */
 
 /** What the surface renders below its own rows. */
@@ -96,19 +70,14 @@ interface Paging {
 }
 
 /**
- * ERROR CODES WHOSE MESSAGE IS WRITTEN FOR THE PERSON, NOT FOR A LOG.
- *
- * An ALLOWLIST, and it has to be one. A server's error message is developer text by default: it
- * names internal vocabulary, it is not translated, and it is written on the assumption that
- * whoever reads it can change the request. Passing it through to a mail list means the first
- * refusal nobody anticipated is published verbatim into somebody's mailbox — which is exactly how
- * a validation message listing the server's own internal view names came to be rendered under a
- * pile of mail.
- *
- * The spend gate is the exception the list exists for. A 402 here says what ran out and what to
- * do about it; replacing it with "could not be loaded" would take away the only thing that would
- * let the reader fix it. So the rule is: say nothing extra unless the server's sentence was
- * addressed to the reader.
+ * Error codes whose message is written for the person, not for a log. An allowlist, necessarily: a
+ * server's error message is developer text by default — internal vocabulary, untranslated, written
+ * for somebody who can change the request — and passing it through publishes the first refusal
+ * nobody anticipated verbatim under a pile of mail (a validation message listing internal view
+ * names did exactly that). The spend gate is the exception the list exists for: a 402 says what ran
+ * out and what to do about it, and "could not be loaded" would take away the only thing that lets
+ * the reader fix it. The rule: say nothing extra unless the server's sentence was addressed to the
+ * reader.
  */
 const SPEAKS_TO_THE_READER: ReadonlySet<string> = new Set(["payment_required"]);
 
@@ -147,59 +116,39 @@ export function useOlderMail(
    */
   startBelow?: { date: string | null; id: string },
   /**
-   * "MUST THIS FETCHED ROW STAY OUT OF THE TAIL RIGHT NOW?" — asked per render, of the LIVE
-   * mirror, never remembered. Without a boundary the first pages routinely overlap the
-   * mirror's window, and each wrong shape of hiding tells its own lie:
-   *
-   *  · a filter against the surface's own list resurfaces a row MOVED out of the scope (it
-   *    leaves the list, so the filter releases it) and counts rows it hides;
-   *  · a remembered accept-time discard makes mail VANISH when the windowed mirror later
-   *    hard-prunes the live row — the fetched copy was thrown away and the id stayed banned,
-   *    so an open folder silently omitted mail the server still holds.
-   *
-   * So the fetched copies are all KEPT, and this predicate answers per render with FOUR
-   * verdicts, because eviction, an authoritative removal, and a render that cannot judge the
-   * scope must not read alike:
-   *
-   *  · `"hide"` — the mirror POSITIVELY shows the row in this scope (the surface above renders
-   *    it); the tail stays quiet, and any latch on the id clears — see below;
-   *  · `"ban"`  — the mirror shows the row has LEFT this scope (moved elsewhere): the fetched
-   *    pre-move copy is stale by the mirror's word, and the id is latched out, so a LATER
-   *    hard-prune of the moved row cannot revive it here;
-   *  · `"hold"` — the render CANNOT JUDGE the scope (the folder entity is not in the mirror —
-   *    the flag mid-toggle, a tombstone render): the row stays out of the tail and the latch
-   *    is left exactly as it was, because a defensive hide is not an observation;
-   *  · `"show"` — the mirror does not hold the row: evicted by the window's policy, or
-   *    genuinely older mail. The fetched copy renders (unless latched).
-   *
-   * The latch fires on OBSERVATION — a render that sees the moved row — and it CLEARS only on
-   * the OPPOSITE observation: a `"hide"`, the mirror holding the row in this scope again. The
-   * clear exists because the mirror the caller reads is overlay-aware and a pending optimistic
-   * move also answers `"ban"` — a hard-rejected move rolls the row back into the scope, and a
-   * row can be genuinely moved back, and neither may leave a stale latch that outlives a later
-   * eviction. `"hold"` is the reason the clear is safe: without it, the caller's defensive
-   * hides (folders toggled off and on over an open URL) would count as returns and release
-   * latches the scope never re-earned. What happens INSIDE such a gap is settled by
-   * `scopeEpoch` below — nothing is judged, and the gap's end resets the tail — because moves
-   * that end in a prune during the gap erase their own evidence. The one residual the latch
-   * cannot close is a change applied and hard-pruned inside a single render tick of an open
-   * scope, which no reader of the live mirror can distinguish from eviction; named here
-   * rather than papered over.
+   * "Must this fetched row stay out of the tail right now?" — asked per render, of the LIVE
+   * mirror, never remembered. The wrong shapes each lie: a filter against the surface's own list
+   * resurfaces a row moved out of scope, and a remembered accept-time discard makes mail vanish
+   * when the windowed mirror later hard-prunes the live row. So the fetched copies are all kept and
+   * this predicate answers four verdicts: `"hide"` — the mirror positively shows the row in this
+   * scope (the surface renders it; any latch clears); `"ban"` — the mirror shows the row has LEFT
+   * this scope, so the stale pre-move copy is latched out and a later hard-prune cannot revive it;
+   * `"hold"` — the render cannot judge the scope (folder entity absent): the row stays out and the
+   * latch is untouched, because a defensive hide is not an observation; `"show"` — the mirror does
+   * not hold the row (evicted, or genuinely older), so the fetched copy renders unless latched.
+   */
+
+  /**
+   * The latch fires on observation and clears only on the opposite observation (a `"hide"`): the
+   * mirror is overlay-aware, so a pending optimistic move also answers `"ban"`, and a
+   * hard-rejected move rolls the row back — neither may leave a stale latch outliving a later
+   * eviction. `"hold"` is what makes the clear safe: without it, defensive hides (folders toggled
+   * off and on over an open URL) would count as returns and release latches the scope never
+   * re-earned; what happens inside such a gap is settled by `scopeEpoch` below. The one residual
+   * the latch cannot close: a change applied and hard-pruned inside a single render tick of an open
+   * scope, indistinguishable from eviction by any reader of the live mirror — named, not papered
+   * over.
    */
   suppress?: (id: string) => "show" | "hide" | "ban" | "hold",
   /**
-   * THE SCOPE'S EPOCH — bumped by the caller when the scope becomes JUDGEABLE again after a
-   * gap it could not judge (the folder entity re-entering the mirror after a feature toggle).
-   * A bump is a full reset: pages, cursor and latches are dropped and the tail re-earns its
-   * rows from the server, whose next pages are the authority the gap withheld.
-   *
-   * This exists because the gap is genuinely unjudgeable, not merely awkward. While the
-   * entity is absent every verdict is `"hold"`, and any move sequence that ends in a window
-   * prune before the entity returns erases its own evidence — a banned row moved back then
-   * pruned reads exactly like a shown row moved out then pruned, so ANY policy that keeps
-   * state across the gap tells one of the two lies (three separate defects, one each).
-   * Refusing to remember and re-asking the server is the only answer that is right in both
-   * directions.
+   * The scope's epoch — bumped by the caller when the scope becomes judgeable again after a gap it
+   * could not judge (the folder entity re-entering the mirror after a feature toggle). A bump is a
+   * full reset: pages, cursor and latches drop and the tail re-earns its rows from the server. The
+   * gap is genuinely unjudgeable: while the entity is absent every verdict is "hold", and a move
+   * sequence ending in a window prune before the entity returns erases its own evidence — a banned
+   * row moved back then pruned reads exactly like a shown row moved out then pruned, so any policy
+   * that keeps state across the gap tells one of the two lies (three defects, one each). Refusing
+   * to remember and re-asking the server is the only answer right in both directions.
    */
   scopeEpoch: number = 0,
 ): OlderMail {
