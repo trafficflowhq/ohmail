@@ -1,72 +1,25 @@
 "use client";
 
 /**
- * THE SHELL'S SYNC STRIP — everything the product has to say about a sync, said wherever you
- * are standing.
- *
- * ── WHAT WAS WRONG THE FIRST TIME ───────────────────────────────────────────────────────
- *
- * "Sync failed. Retrying." existed, and it rendered in exactly one place: the Ohbox's EMPTY
- * state. So the only mailbox that could ever be told its sync was broken was one that had
- * never loaded anything — and the mailbox that most needs telling is the opposite of that.
- * A list with four hundred rows in it whose drains have been failing for ten minutes looked
- * completely healthy: the rows were there, they were just from ten minutes ago, and nothing
- * anywhere said so. Reads, Receipts and the Screener had no failure surface at all.
- *
- * It has been found three separate times, because each time the fix was written as another
- * branch inside a view — and a view can only speak about itself.
- *
- * ── AND THE SAME WAS TRUE OF PROGRESS ───────────────────────────────────────────────────
- *
- * The failure had a home; the FIRST IMPORT did not. `mailboxes.syncPending` — "Waiting for
- * first sync" — was one sentence for every state a first sync can be in, and it lived on a row
- * in Settings → Mailboxes, three clicks from where anybody was looking — and a first import
- * runs for tens of minutes, not seconds, on a mailbox of any size. The Ohbox's own
- * counter existed but stopped at `bootstrapping`, which goes false as soon as the first CLIENT
- * drain lands — seconds — so it was silent for the entire multi-minute WORKER import that
- * follows.
- *
- * So the strip renders the whole ladder in `mail-state.ts`, and this file decides NOTHING: it
- * is a switch over a key somebody else derived. That is the actual repair. A view cannot forget
- * it, the next view added gets it for free, and a seventh state cannot be invented here because
- * there is nowhere here to invent one.
- *
- * ── WHY A SHELL STRIP AND NOT A PER-VIEW BANNER ─────────────────────────────────────────
- *
- * Three properties the gap asks for, and one placement that has all three:
- *
- *  1. **Every view, including the ones nobody thought of.** Rendered once, by the shell,
- *     above the deck.
- *  2. **It cannot scroll away.** It is a `flex: none` row of `.shell`, a sibling of the
- *     deck, so it is outside every list's scroller by construction rather than by a
- *     `position: sticky` that a future overflow context could break.
- *  3. **Silent when healthy.** `quiet` renders `null`, so there is no permanent "everything
- *     is fine" chrome to learn to ignore. The demo and the Desktop are gated to `quiet` in the
- *     derivation and have no mailbox probe either, so they never render it at all.
- *
- * Above the mobile topbar rather than below it: the topbar is the current view's title, and
- * this is not about the current view.
- *
- * ── RETRYING IS NOT STOPPED ─────────────────────────────────────────────────────────────
- *
- * `terminal` means the server refused this session in a way no waiting fixes — a 401 or
- * 403, a revoked session, a deleted account — and the loop has stopped. Rendering "Retrying."
- * for that would be a false statement about what the app is doing, so it gets its own line
- * and the one remedy that exists. Everything else is genuinely still being retried, forever,
- * at up to a minute apart, and says so.
- *
- * ── WHY THE COUNT IS NOT ANNOUNCED, AND NOT HIDDEN EITHER ───────────────────────────────
- *
- * `importing`'s count climbs on every drain — up to once every eight seconds, for minutes.
- * Inside a `role="status"` region that is a screen reader reading out a new number seven times
- * a minute, which is not information; it is noise that makes the app unusable to listen to.
- * The existing strip got away with `aria-live="polite"` only because its text is CONSTANT.
- *
- * So each sentence is split. The stable half is live and announces once when the strip appears;
- * the volatile half carries `aria-live="off"`, which suppresses announcements for changes to
- * that node while leaving the text present and readable by browsing. Deliberately NOT
- * `aria-hidden`: the count is the information, and removing it from the accessibility tree
- * would be a second defect dressed as a fix for the first.
+ * The shell's sync strip — everything the product has to say about a sync, said wherever you are
+ * standing. "Sync failed. Retrying." used to render only in the Ohbox's empty state, so the one
+ * mailbox that could be told its sync was broken had never loaded anything, while a list of four
+ * hundred ten-minute-old rows looked healthy — found three times, because each fix was another
+ * branch inside a view. First import had the same gap: `mailboxes.syncPending` lived three clicks
+ * away in Settings while a multi-minute worker import ran in silence. So the strip renders the
+ * whole ladder in `mail-state.ts` and this file decides NOTHING — a switch over a key somebody else
+ * derived: a view cannot forget it, and a seventh state cannot be invented here.
+ */
+
+/**
+ * Why a shell strip and not a per-view banner: rendered once above the deck, so it covers every
+ * view; a `flex: none` row of `.shell`, outside every list's scroller by construction; silent when
+ * healthy — `quiet` renders `null` (the demo and Desktop are gated to `quiet` in the derivation).
+ * `terminal` means the server refused this session in a way no waiting fixes and the loop has
+ * stopped — "Retrying." would be false, so it gets its own line and the one remedy; everything
+ * else genuinely retries and says so. The importing count is not announced and not hidden: the
+ * stable half of each sentence announces once, the volatile half carries `aria-live="off"` — not
+ * `aria-hidden`, because the count is the information and removing it would be a second defect.
  */
 import type { ReactNode } from "react";
 import { Spinner } from "@ohmail/ui";
@@ -84,17 +37,13 @@ import { activeFormatLocale, activeFormatZone } from "./locale";
 import { clock } from "@ohmail/client-engine";
 
 /**
- * "14:32" in the reader's own zone — the `as of` and `next try at` halves of the filing
- * sentences.
- *
- * The engine's own `clock`, not a second `Intl` call: every stamp in this product goes through
- * one formatter reading one zone seam (`activeFormatZone`), and a strip that named a different
- * hour from the rows beneath it is the defect `waterlineStamp`'s own comment records — reached by
- * asking `Intl` for a pattern with no `timeZone`.
- *
- * A TIME AND NOT A DATE, deliberately: both sentences are about the last few minutes, and a date
- * on them would invite reading the strip as an event log. An unparseable instant answers null and
- * the clause is dropped, because "as of Invalid Date" is worse than no clause.
+ * "14:32" in the reader's own zone — the `as of` and `next try at` halves of the filing sentences.
+ * The engine's own `clock`, not a second `Intl` call: every stamp goes through one formatter
+ * reading one zone seam (`activeFormatZone`), and a strip naming a different hour from the rows
+ * beneath it is the defect `waterlineStamp`'s comment records. A time and not a date, deliberately:
+ * both sentences are about the last few minutes, and a date would invite reading the strip as an
+ * event log. An unparseable instant answers null and the clause is dropped — "as of Invalid
+ * Date" is worse than no clause.
  */
 function clockTime(iso: string): string | null {
   const at = new Date(iso);
@@ -112,43 +61,14 @@ const readable = (address: string | null): string | null =>
 import { stripSpeaks, type MailState } from "./mail-state";
 
 /**
- * ── AND WHY IT IS RENDERED TWICE, IN TWO SHAPES ─────────────────────────────────────────
- *
- * The strip's placement above the deck was right about WHOSE chrome this is and wrong about
- * where that chrome lives now. The rail already carries everything that acts on the app rather
- * than on mail — the palette, the theme, the account — so a line about the mailbox belongs at
- * the foot of it, not across the top of somebody's reading. The `busy` states were worse still:
- * a pill floating over the bottom-left corner of every view, which is chrome ON the mail.
- *
- * So the shell renders `variant="rail"` into the rail's own slot and keeps `variant="shell"`
- * where it always was, and `app.css` shows exactly one of them: the rail form wherever the rail
- * is standing, the strip and the corner pill wherever it is not (under 900px the rail collapses
- * into a drawer, and a sync line inside a closed drawer is a sync line nobody is told about).
- *
- * `display:none` and not a JS width test, deliberately. The hidden copy leaves the accessibility
- * tree with it, so two `role="status"` regions never announce the same sentence twice, and there
- * is no render that disagrees with the media query it is trying to predict.
- *
- * THAT GUARANTEE IS THE STYLESHEET'S AND IT HAS TO BE WRITTEN AS ONE RULE. It was two — one query
- * hiding the strip above the breakpoint, another hiding the rail slot below it — and a pair of
- * queries that look complementary is not the same thing as a rule that is. The two numbers left a
- * gap: at a fractional width between them neither query matched, both copies were painted, and
- * the sentence stood on screen twice with two live regions announcing it. It is one `min-width`
- * now, swapping both halves together, so "exactly one is on screen" holds at every width by
- * construction rather than by arithmetic. `test/sync-notice-one-copy.test.ts` sweeps it.
- *
- * The other half of the same lesson, and the reason this note is here rather than only in
- * `app.css`: because the shell renders the strip BEFORE the deck, the hidden copy is the FIRST
- * match in document order for any search by text. Anything that reads the DOM rather than the
- * accessibility tree — a diagnostic, a script, an automated walk — and takes the first hit gets
- * the invisible one and concludes the product said nothing. It said it in the rail.
- *
- * ── ONE DESCRIPTION, TWO RENDERERS ──────────────────────────────────────────────────────
- *
- * `speech()` below is the switch this file used to BE. Both shapes read it, so the sentence, the
- * tone and the remedy for a given state are decided once. Two independent switches over the same
- * seven states is the drift this file's header spends forty lines arguing against, and adding a
- * second placement would have been the exact way to reintroduce it.
+ * Rendered twice, in two shapes. The rail carries everything that acts on the app rather than on mail, so
+ * the shell renders `variant="rail"` into the rail's slot and keeps `variant="shell"` where it was;
+ * `app.css` shows exactly one (under 900px the rail collapses into a drawer, and a sync line in a closed
+ * drawer tells nobody anything). `display:none`, not a JS width test: the hidden copy leaves the
+ * accessibility tree too, so two `role="status"` regions never announce twice. Written as ONE stylesheet
+ * rule: two complementary-looking queries left a fractional width where both copies painted
+ * (`test/sync-notice-one-copy.test.ts` sweeps it). DOM readers: the hidden strip is the first text match
+ * — the visible one is in the rail. `speech()` is the one description both shapes read.
  */
 /* No default VALUE on the parameter, only on the field. A `= {}` there types the component as
    `(props?: …)`, which is not a `FunctionComponent<P>`, and `createElement(SyncBar, { variant })`
@@ -156,22 +76,14 @@ import { stripSpeaks, type MailState } from "./mail-state";
 export function SyncBar({ variant = "shell", hostOffline = false }: {
   variant?: "shell" | "rail";
   /**
-   * IS THIS WINDOW PAIRED TO A COMPUTER THAT IS NOT ANSWERING? — and if so, the `stale` arm below
-   * YIELDS.
-   *
-   * `staleAsOf` reads *"As of {time} · catching up"*, with a spinner and a travelling track. That
-   * is an ACTIVITY CLAIM, and on a paired desktop whose host is off nothing is catching up: there
-   * is no pull in flight, nothing converging, and no reason to expect the number to move. The
-   * sentence would be false for as long as the other machine stayed away — which is exactly the
-   * period a person is trying to understand.
-   *
-   * So the strip says nothing and `HostConnectionLine` says the true thing in its place. What is
-   * NOT suppressed is the state itself: the ladder still derives `stale` (`mail-state.ts`), so the
-   * settled clock, the holdings sentence and the mail beat go on working — this withholds one
-   * sentence, not a fact.
-   *
-   * The other six arms are untouched, and deliberately: a paired desktop can still be signed out,
-   * blocked on a mailbox or importing, and every one of those is as true here as anywhere.
+   * Is this window paired to a computer that is not answering? — then the `stale` arm yields.
+   * `staleAsOf` reads "As of {time} · catching up" with a spinner: an ACTIVITY claim, and on a
+   * paired desktop whose host is off nothing is catching up — the sentence would be false for
+   * exactly the period a person is trying to understand. So the strip says nothing and
+   * `HostConnectionLine` says the true thing in its place. The state itself is not suppressed: the
+   * ladder still derives `stale` (`mail-state.ts`), so the settled clock and the holdings sentence
+   * go on working — this withholds one sentence, not a fact. The other six arms are untouched: a
+   * paired desktop can still be signed out, blocked or importing.
    */
   hostOffline?: boolean;
 }) {

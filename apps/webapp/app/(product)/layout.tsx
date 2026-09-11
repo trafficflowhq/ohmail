@@ -15,18 +15,13 @@ import "../app.css";
 import "../zero-layout.css";
 
 /*
- * THE OTHER ROOT LAYOUT of the single-origin app — see
- * `(marketing)/layout.tsx` for why there are two and what that buys.
- *
- * Everything under `(product)` renders inside this <html>: `/login`, `/join`, and
- * `mailbox/page.tsx`, which is what a signed-in `/` becomes after `middleware.ts`
- * rewrites it. `app.css` is linked HERE and only here, so the marketing page never
- * carries it and its `html`/`body`/`.btn` rules can never reach the landing.
- *
- * `app.css` stays at `app/app.css` rather than moving in beside this file because
- * `apps/desktop` imports it verbatim (`src/main.tsx`) and `scripts/publish-desktop.mjs`
- * copies it by path into the public mirror. The same is true of `app/shell` and
- * `app/views`: the route files moved into this group, the SHARED shell did not.
+ * The other root layout of the single-origin app — see `(marketing)/layout.tsx` for why there are
+ * two. Everything under `(product)` renders inside this <html>: `/login`, `/join`, and
+ * `mailbox/page.tsx`, which is what a signed-in `/` becomes after `middleware.ts` rewrites it.
+ * `app.css` is linked HERE and only here, so the marketing page never carries it. It stays at
+ * `app/app.css` rather than moving in beside this file because `apps/desktop` imports it verbatim
+ * (`src/main.tsx`) and `scripts/publish-desktop.mjs` copies it by path into the public mirror — the
+ * route files moved into this group, the shared shell did not.
  */
 
 /* The "oh." mark — the same asset set the marketing group declares, out of the
@@ -47,23 +42,15 @@ const ICONS: Metadata["icons"] = {
 /** The `t` these two need — `getTranslations`' return, narrowed to the one call shape used. */
 type Translate = (key: string) => string;
 
-/* Unfurl cards and search indexing are two different decisions, and this file used to make
-   only the second one. `noindex` keeps the app shell out of search results — and under one
-   origin that is now the only thing that does. `/` is a SINGLE URL serving the marketing page
-   to a crawler (which is never signed in, so it always gets `(marketing)`'s indexable
-   metadata) and this shell to a session; whichever one rendered is what the <head> describes.
-   It says nothing about what happens when somebody pastes https://ohmail.app into Slack,
-   iMessage or a mail thread — that paste is anonymous too, and gets the landing's 1200×630 card.
-
-   So: a `summary` card, not `summary_large_image`. The landing owns the 1200×630 og.png with
-   the headline in it, because the landing is the thing being sold. This is the app you already
-   decided to use — the honest card is the "oh." tile at icon size, the same mark that sits in
-   the dock and the browser tab, plus the name and one line of what it is. Anything wider would
-   be borrowing marketing weight the shell has not earned.
-
-   Lifted out of the return so the self-host arm can omit the pair WHOLE rather than blank each
-   field — see `generateMetadata`. The URLs stay relative; `metadataBase` resolves them, and on
-   the build that has no `metadataBase` there is nothing here to resolve. */
+/* Unfurl cards and search indexing are two different decisions. `noindex` keeps the app shell out
+   of search results — under one origin the only thing that does: `/` serves the marketing page to a
+   crawler (never signed in, so it gets the indexable metadata) and this shell to a session. A paste
+   into Slack or a mail thread is anonymous too and gets the landing's 1200×630 card. So: a
+   `summary` card, not `summary_large_image` — the landing owns the big og.png because the landing is
+   the thing being sold; this is the app you already decided to use, and the honest card is the
+   "oh." tile at icon size plus the name and one line. Lifted out of the return so the self-host
+   arm can omit the pair whole — see `generateMetadata`. The URLs stay relative; `metadataBase`
+   resolves them, and the build with no `metadataBase` has nothing to resolve. */
 const OPEN_GRAPH = (t: Translate): Metadata["openGraph"] => ({
   title: t("title"),
   description: t("description"),
@@ -87,24 +74,15 @@ export async function generateMetadata(): Promise<Metadata> {
      read for the same answer. Naming it makes today's behaviour the stated one. */
   const t = await getTranslations({ locale: DEFAULT_LOCALE, namespace: "meta" });
 
-  /* A SELF-HOSTED INSTALL HAS NO UNFURL CARD, AND MUST NOT BORROW OURS.
-   *
-   * The `openGraph`/`twitter` URLs below are written RELATIVE — `/`, `/icon-512.png` — and
-   * `metadataBase` is what turns them absolute. Pinned to `https://ohmail.app`, an operator's
-   * own sign-in page therefore shipped `og:url` naming OUR address and `og:image` /
-   * `twitter:image` pointing at OUR server. Measured on a built self-host bundle.
-   *
-   * Two things wrong with that, and the second is the one that matters. The card claims the
-   * hosted service's address for a server somebody else runs; and every client that unfurls a
-   * link to their install fetches an image FROM US — a live dependency on our origin inside an
-   * install whose whole point is not having one, and a request that tells us the link was
-   * shared. `metadataBase` cannot simply be corrected here because the web container is not
-   * told its own public origin (the compose passes it only the API's in-network name).
-   *
-   * So the self-host build emits no card at all. Nothing is lost: this shell is already
-   * `noindex, nofollow`, a private mail server is not a page anyone means to preview, and a
-   * generic unfurl is the honest result for one. `metadataBase` goes with it — with no
-   * relative metadata URL left to resolve, it has nothing to do but name the wrong origin.
+  /* A self-hosted install has no unfurl card, and must not borrow ours. The `openGraph`/`twitter`
+   * URLs are relative and `metadataBase` (pinned to `https://ohmail.app`) turns them absolute, so an
+   * operator's own sign-in page shipped `og:url` naming OUR address and images pointing at OUR
+   * server — measured on a built self-host bundle. The card claims our address for a server somebody
+   * else runs, and every unfurl fetches an image FROM US: a live dependency on our origin inside an
+   * install whose whole point is not having one, and a request that tells us the link was shared.
+   * `metadataBase` cannot simply be corrected — the web container is not told its own public origin.
+   * So the self-host build emits no card at all: the shell is already `noindex`, and a generic
+   * unfurl is the honest result for a private mail server. `metadataBase` goes with it.
    */
   const card: Metadata = SELF_HOST_BUILD ? {} : {
     metadataBase: new URL("https://ohmail.app"),
@@ -134,48 +112,26 @@ export const viewport: Viewport = {
 
 export default async function RootLayout({ children }: { children: ReactNode }) {
   /*
-   * THE LOCALE, RESOLVED HERE RATHER THAN IN `i18n/request.ts`.
-   *
-   * `getLocale()`/`getMessages()` go through next-intl's request config, which is shared with the
-   * `(marketing)` group — and that group is a STATIC PRERENDER that must stay CDN-cacheable, so a
-   * cookie read there would turn the landing page into a function. `i18n/request.ts` says the whole
-   * of that argument. This group is already dynamic (it reads `headers()` two lines down, and every
-   * document in it is `private, no-store` or a credential screen), so reading the reader's cookie
-   * costs it nothing that was not already spent.
-   *
-   * The cookie comes out of `headers()` rather than `cookies()` because the header bag is being read
-   * anyway for the nonce — one dynamic API instead of two, and one function to reason about when
-   * asking why this group cannot be prerendered.
-   *
-   * ABSENT COOKIE ⇒ ENGLISH, and there is deliberately no `Accept-Language` negotiation. A browser
-   * set to German is not a statement about what language somebody wants their MAIL CLIENT in, and
-   * silently switching an existing account's interface on the strength of a header nobody set for
-   * this purpose is the kind of helpfulness that reads as a bug. The account preference is the
-   * authority (adopted by `AppShell` the moment `GET /consent` lands) and the selector in Settings
-   * is how it is set.
+   * The locale, resolved here rather than in `i18n/request.ts`: that config is shared with the
+   * `(marketing)` group, a static prerender that must stay CDN-cacheable — a cookie read there
+   * would turn the landing into a function. This group is already dynamic (it reads `headers()` for
+   * the nonce), so the cookie comes out of that same header bag — one dynamic API instead of two.
+   * Absent cookie ⇒ English, and deliberately no `Accept-Language` negotiation: a browser set to
+   * German is not a statement about what language somebody wants their mail client in. The account
+   * preference is the authority (adopted by `AppShell` when `GET /consent` lands) and the Settings
+   * selector is how it is set.
    */
   const locale = localeFromCookieHeader(headers().get("cookie")) ?? DEFAULT_LOCALE;
   const messages = await loadCatalog(locale);
   /*
-   * THE CSP NONCE for the one inline script this group writes by hand.
-   *
-   * `middleware.ts` mints it, puts it on the response's `Content-Security-Policy`, on the
-   * REQUEST's (so Next stamps its own RSC bootstrap scripts with it), and on `x-nonce` —
-   * which is this. Next has no way to reach a hand-written `<script>` tag, so the theme
-   * boot has to carry it explicitly or first paint under the strict policy is a blocked
-   * script and a flash of the wrong theme.
-   *
-   * Reading `headers()` opts this whole group into DYNAMIC rendering. That is the intended
-   * trade and not a side effect: everything under `(product)` is either the mail client
-   * (already dynamic, already `private, no-store`) or a credential screen, and none of the
-   * three was ever something a CDN should be handing out from a shared cache. The
-   * marketing group is untouched and stays a static prerender — which is exactly why it
-   * cannot have a nonce, and why `app/security-headers.ts` splits the policy by surface.
-   *
-   * `?? undefined`: on a request middleware did not mark (a direct `/login` hit in `pnpm
-   * dev`, where the header is absent) the attribute is simply omitted and the baseline
-   * policy's `'unsafe-inline'` covers the script. It never renders `nonce=""`, which would
-   * match nothing.
+   * The CSP nonce for the one inline script this group writes by hand. `middleware.ts` mints it, puts it on the
+   * response's CSP, the request's (so Next stamps its own RSC bootstrap scripts) and on `x-nonce` — which is this;
+   * Next cannot reach a hand-written `<script>`, so the theme boot carries it explicitly or first paint is a blocked
+   * script and a flash of the wrong theme. Reading `headers()` opts the whole group into dynamic rendering — the
+   * intended trade: everything under `(product)` is the mail client or a credential screen, never CDN material; the
+   * marketing group stays a static prerender, which is why it cannot have a nonce and why `app/security-headers.ts`
+   * splits the policy by surface. `?? undefined`: on a request middleware did not mark, the attribute is omitted and
+   * the baseline `'unsafe-inline'` covers the script — never `nonce=""`, which would match nothing.
    */
   const nonce = headers().get("x-nonce") ?? undefined;
   return (

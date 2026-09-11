@@ -1,30 +1,14 @@
 "use client";
 
 /**
- * Settings, grouped so the nav reads top-to-bottom as client basics -> mail plumbing -> account
- * administration -> facts: General (language + theme, wired to the ThemeProvider), Notifications
- * (only-what-matters defaults + VIP + the learned suggestion), Mailboxes (host-supplied on every
- * surface — see {@link mailboxSection}), Screener (the posture, the dormancy dial, the auto-suggest
- * opt-in, and the door back to the sent-mail review), Rules, Tags, Subscription, Security, Account,
- * and About (last).
- *
- * ── AND A FIFTH PANE THIS FILE DELIBERATELY KNOWS NOTHING ABOUT ─────────────────────────
- *
- * `accountSection` is the same seam `AppShell`'s `resolveOwner` is, for the same reason.
- * This file is SHARED with `apps/desktop` and copied into a public AGPL mirror that does not
- * contain `app/api-client` at all (`scripts/publish-desktop.mjs` DENYs it), so it cannot
- * import "erase this account from the server". The Cloud client passes a node in
- * (`(product)/mailbox/AccountSection.tsx`). Nothing about account deletion is written down in
- * this file.
- *
- * ── AND "DESKTOP HAS NO ACCOUNT" IS A STATEMENT ABOUT A DOOR, NOT ABOUT A BUILD ─────────
- *
- * This paragraph used to end "Desktop passes nothing and the pane does not exist", which was
- * true of the app as a whole only while every install was standalone. An install on the
- * HOSTED door mirrors a real account and does pass a node — a door out to the browser, since
- * erasure is a step-up ceremony no desktop session can satisfy (`DesktopWebSection`). A
- * STANDALONE install still passes nothing, which is the invariant that was always the point:
- * no account, no pane, structurally rather than by remembering.
+ * Settings, grouped so the nav reads client basics → mail plumbing → account administration → facts: General,
+ * Notifications, Mailboxes (host-supplied — see {@link mailboxSection}), Screener, Rules, Tags, Subscription,
+ * Security, Account, About. `accountSection` is a seam this file deliberately knows nothing about: the file is shared
+ * with `apps/desktop` and copied into a public AGPL mirror that lacks `app/api-client` entirely, so it cannot import
+ * "erase this account" — the Cloud client passes a node in (`(product)/mailbox/AccountSection.tsx`). "Desktop has no
+ * account" is a statement about a DOOR, not a build: an install on the hosted door mirrors a real account and passes
+ * a node (a door out to the browser — erasure is a step-up ceremony no desktop session can satisfy,
+ * `DesktopWebSection`); a standalone install passes nothing — no account, no pane, structurally.
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
@@ -80,23 +64,14 @@ import { RulesView, type RuleOutcome } from "./RulesView";
 export { PANE_IDS, type PaneId } from "../shell/routing";
 
 /**
- * The notification channels, and why this list is here rather than in the fixtures.
- *
- * It used to be `notificationSettings` from `@ohmail/fixtures`, rendered unconditionally, which
- * put two kinds of demo content on every live account's Settings screen. The
- * channel labels were merely MISFILED — they are ordinary product copy that a live account
- * legitimately sees, so they moved to `messages/en.json` and the ids below are their keys.
- *
- * The VIP list and the "you usually open Petra's mail within 5 minutes" suggestion were the
- * real defect: those are Mila's people, invented for the demo world, and a paying customer was
- * reading a learned pattern about someone who does not exist. They reach this view through the
- * MIRROR now ({@link NotificationsMeta}) rather than through an import.
- *
- * SINCE SET-M1 the channel switches render ONLY where that same meta row exists — the demo.
- * On a live account they were five controls whose every position meant nothing: no permission
- * request, no service worker, no subscription, no sender behind `POST /push/subscriptions`.
- * The pane says so instead. This list therefore now describes the PROTOTYPE's channels, and
- * whichever slice ships real delivery inherits it as the starting vocabulary.
+ * The notification channels, and why this list is here rather than in the fixtures. It used to be
+ * `notificationSettings` from `@ohmail/fixtures`, rendered unconditionally. The channel labels were merely misfiled —
+ * ordinary product copy, moved to `messages/en.json`; the ids below are their keys. The VIP list and the "you usually
+ * open Petra's mail within 5 minutes" suggestion were the real defect: Mila's people, invented for the demo, read by
+ * paying customers — they reach this view through the MIRROR now ({@link NotificationsMeta}). Since SET-M1 the
+ * channel switches render only where that meta row exists — the demo; on a live account they were five controls whose
+ * every position meant nothing, and the pane says so instead. This list describes the PROTOTYPE's channels; whichever
+ * slice ships real delivery inherits it as the starting vocabulary.
  */
 /**
  * THE FOUR REAL EVENTS, in the order the pane lists them: the two arrivals somebody is waiting
@@ -122,15 +97,12 @@ const NOTIFICATION_CHANNELS: Array<{ id: string; enabled: boolean }> = [
 ];
 
 /**
- * The demo world's Notifications extras, as a `view_meta` row.
- *
- * `/sync` has no `view_meta` entity type in its change log, so a Cloud account
- * can never be sent one: absent ⇒ the VIP block does not render, structurally, with no boolean
- * for a view to forget. Only `FixturesAdapter` seeds it — the demo and Desktop.
- *
- * There is no VIP backend and no learning loop behind either control. In the demo that is what
- * it is — the Blanc prototype's screen, brought to life on invented mail. On a live account it
- * would be a claim, which is exactly what this row's absence prevents.
+ * The demo world's Notifications extras, as a `view_meta` row. `/sync` has no `view_meta` entity
+ * type in its change log, so a Cloud account can never be sent one: absent ⇒ the VIP block does not
+ * render, structurally, with no boolean for a view to forget. Only `FixturesAdapter` seeds it — the
+ * demo and Desktop. There is no VIP backend and no learning loop behind either control; in the demo
+ * that is the Blanc prototype's screen on invented mail, and on a live account it would be a claim,
+ * which is exactly what this row's absence prevents.
  */
 export interface NotificationsMeta {
   vipLabel: string;
@@ -158,20 +130,13 @@ export interface MailboxEntity {
 }
 
 /**
- * ONE TAG, AND THE TWO THINGS THAT CAN BE DONE TO IT.
- *
- * A row with three states — resting, renaming, confirming a delete — held as a union rather
- * than two booleans, for the reason `MessagePane`'s `BarPanel` gives: two booleans can both
- * be true, which is a state there is no rendering for.
- *
- * ── THE DELETE STATES THE COUNT, AND THE COUNT IS A FLOOR ─────────────────────────────
- *
- * "Delete Invoices?" with no number is a question nobody can answer. The count comes from
- * `tagsCrossView` over the local mirror, so on an account whose mirror is still filling it
- * counts the messages this client has drained and not the account's total. It is therefore
- * worded as what it is — how many of YOUR messages carry it — rather than as an absolute,
- * and the sentence next to it says the messages themselves do not move, which is true
- * regardless of the number: `TagsService.remove` deletes the assignment rows and never
+ * One tag, and the two things that can be done to it. A row with three states — resting, renaming,
+ * confirming a delete — held as a union rather than two booleans, for the reason `MessagePane`'s
+ * `BarPanel` gives: two booleans can both be true, a state there is no rendering for. The delete
+ * states the count, and the count is a FLOOR: it comes from `tagsCrossView` over the local mirror,
+ * so on a filling mirror it counts what this client has drained, and it is worded as how many of
+ * YOUR messages carry it rather than as an absolute. The sentence beside it says the messages
+ * themselves do not move, true regardless: `TagsService.remove` deletes assignment rows and never
  * touches `folder_state`.
  */
 type RowMode =
