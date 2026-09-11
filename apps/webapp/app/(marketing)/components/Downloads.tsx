@@ -16,51 +16,27 @@ import {
 } from "../downloads";
 
 /**
- * The download section — three real downloads, not a list of platform names.
- *
- * What stood here was a row of six words (macOS · Windows · Linux · iOS · Android · Web)
- * under the heading "Everywhere you read mail." It named two platforms that have no app
- * and offered no way to get the ones that do: the page promised a free product and the
- * only route to it was a link inside the pricing card, pointing at a release page the
- * visitor then had to read. This section is the route.
- *
- * ── THREE DECISIONS WORTH KEEPING ──────────────────────────────────────────────────────
- *
- *  · **The links are direct.** Each button is the asset itself (see `../downloads.ts`), so
- *    a click starts the download rather than opening a releases index to choose from. The
- *    filenames are a contract with the release pipeline, which is why they live in a
- *    manifest with the rule written next to them rather than inline here.
- *  · **The guess emphasizes, never hides.** We read the user-agent once, after mount, to
- *    mark one column as probably-yours. All three stay identical in size, order and
- *    reachability — a wrong guess costs a glance, not a download. The read happens in an
- *    effect so the server-rendered markup is the same for everyone and the page can stay a
- *    static, CDN-cacheable route.
- *  · **Linux gets one button and the packages beside it.** AppImage is the primary (it
- *    runs anywhere without a package manager); the `.deb` and the `.rpm` sit beside it as
- *    text links for people who want their system to own the install. Equal buttons would
- *    have made Linux look like three products, and the list is rendered from the manifest
- *    so a fourth packaging is an entry there rather than a change here.
- *
- * ── THE MOBILE ROW ────────────────────────────────────────────────────────────────────
- *
- * A second row under the desktop three, in the same idiom: Android is a direct APK link
- * through `latest`, the same indirection the desktop buttons use (`../downloads.ts` has
- * why it stopped being a release-page link), and iOS is named with "coming soon" and
- * nothing more — the app is built, the App Store step is not done, and that is the whole
- * of what can be said truthfully. Two columns, same glyph size, same button size, the iOS
- * column carrying a tag where the Android column carries a button.
- *
- * ── THE STAGE CAPTION ─────────────────────────────────────────────────────────────────
- *
- * All three buttons deliver a real installer, and they do not all deliver the same
- * program: macOS carries the mail engine, Windows and Linux are the interface running on a
- * sample mailbox. The caption under each button says which one you are about to download.
- *
- * It is NOT a warning and it does not demote a column — every platform keeps an identical
- * button in an identical column, because the download works and the person asking for it
- * should get it. What changes is that they know what opens. Which platforms are a preview
- * is `PREVIEW_PLATFORMS` in `../downloads.ts`, never a list here; when that array empties
- * the whole distinction disappears from the page in one edit.
+ * The download section — three real downloads, not a list of platform names (the old row named two
+ * platforms with no app and offered no route to the ones that do). The links are DIRECT: each button
+ * is the asset itself (`../downloads.ts` — the filenames are a contract with the release pipeline).
+ * The guess emphasizes, never hides: the user-agent is read once, after mount, to mark one column as
+ * probably-yours; all three stay identical in size and order, so a wrong guess costs a glance, and
+ * the effect keeps the server markup identical for everyone (CDN-cacheable). Linux gets one button
+ * (AppImage) with the `.deb`/`.rpm` as text links beside it, rendered from the manifest.
+ */
+
+/**
+ * The mobile row: Android is a direct APK link through `latest` (same indirection as the desktop buttons); iOS is
+ * named with "coming soon" and nothing more — the app is built, the App Store step is not, and that is the whole of
+ * what can be said truthfully. The stage caption: all three desktop buttons deliver a real installer but not the same
+ * program — macOS carries the mail engine, Windows and Linux are the interface on a sample mailbox — and the caption
+ * under each button says which one you are about to download.
+ */
+
+/**
+ * Not a warning and not a demotion: every platform keeps an identical button, because the download works. Which
+ * platforms are a preview is `PREVIEW_PLATFORMS` in `../downloads.ts`, never a list here; when that array empties the
+ * distinction disappears in one edit.
  */
 export function Downloads() {
   const t = useTranslations("downloads");

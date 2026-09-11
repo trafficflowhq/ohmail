@@ -19,48 +19,22 @@ import { Faq } from "./Faq";
 import { Footer } from "./Footer";
 
 /**
- * THE LANDING PAGE'S COMPOSITION — ONE OF THEM, FOR EVERY LOCALE.
- *
- * It used to be the body of `(marketing)/page.tsx`. It moved here when the site became
- * bilingual, and the move is the point: `/` and `/de` are two root layouts over ONE
- * composition, so a section added to the English landing cannot be missing from the German
- * one. Two copies of this list would compile, render, and drift on the first slice that
- * touched only the file it happened to open.
- *
- * The sections themselves take no locale. Every one of them reads the catalogue the enclosing
- * root layout provided — `useTranslations` on the server through `i18n/request.ts`, on the
- * client through `NextIntlClientProvider` — so translating the page is entirely a matter of
- * which layout mounted it.
- *
- * `publicSignup` is passed rather than read here so the read stays in the page, where it is a
- * BUILD-time constant on a prerendered route (see `app/signup-mode.ts` for why that is the
- * right trade rather than asking the API per request).
- *
- * ── THE ORDER IS THE STORY ────────────────────────────────────────────────────────────
- *
- * promise → model → mechanism → compatibility → trust → speed → polish:
- *
- *  0. FaceToggle — paper / ohmarchy, directly above the headline, right after the menu
- *     (OHMARCHY-PLAN.md §5). It flips the WHOLE site — tokens, chrome, demo skin and
- *     screenshot set — while this composition stays identical in both faces: the one-UI
- *     law applies to the landing too, so the toggle changes presentation, never story.
- *  1. Hero — only consent-first mail in your Ohbox (the promise) — then the live demo as
- *     the promise's proof AND the page's first visual. HeroSplit (the same screen in both
- *     faces under one diagonal divider, §5) is PARKED, not deleted — see SHOW_HERO_SPLIT.
- *  2. Views — Ohbox / Reads / Receipts, the three-view model the promise lands in.
- *  3. Screener + AI — the mechanism: who gets in, and the gated help deciding.
- *  4. Providers — all your mailboxes: Gmail, Microsoft, iCloud, any IMAP.
- *  5. InPlace + FolderShowcase — your mail keeps living in your IMAP folders; LeaveAnytime
- *     states the consequence (switch how you run it, or leave — the mailbox is the source
- *     of truth); then Compare and DataOwnership carry the same trust argument to its end.
- *  6. Fast — search.
- *  7. DarkMode — polish, last.
- *  8. GetOhmail — the four ways to run it, free ones first; it opens the acting
- *     cluster (trial → pricing → download) and is where the nav's "Get ohmail."
- *     button lands.
- *
- * The feat-shaped sections sit in `.l-features` blocks (the shared grid rhythm); the
- * wide sections stand between them. A story-order guard holds this sequence.
+ * The landing page's composition — one of them, for every locale. It moved out of
+ * `(marketing)/page.tsx` when the site became bilingual, and the move is the point: `/` and `/de`
+ * are two root layouts over ONE composition, so a section added to the English landing cannot be
+ * missing from the German one. The sections take no locale — each reads the catalogue its root
+ * layout provided. `publicSignup` is passed rather than read here so the read stays a build-time
+ * constant on a prerendered route (`app/signup-mode.ts`).
+ */
+
+/**
+ * The order is the story — promise → model → mechanism → compatibility → trust → speed → polish:
+ * FaceToggle (flips presentation, never story); Hero with the live demo as the promise's proof
+ * (HeroSplit is PARKED, not deleted — `SHOW_HERO_SPLIT`); Views — the three-view model; Screener +
+ * AI — the mechanism; Providers — all your mailboxes; InPlace + FolderShowcase + LeaveAnytime +
+ * Compare + DataOwnership — the trust run; Fast — search; DarkMode — polish; GetOhmail — the four
+ * ways to run it, free ones first, where the nav's "Get ohmail." button lands. The feat-shaped
+ * sections sit in `.l-features` blocks; a story-order guard holds this sequence.
  */
 
 /**

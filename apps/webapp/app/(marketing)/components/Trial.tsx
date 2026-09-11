@@ -5,34 +5,17 @@ import { Reveal } from "./Reveal";
 import { markTags } from "./Mark";
 
 /**
- * The trial band — the page's one change of surface.
- *
- * It used to be a 12.5px line beneath the tier cards, which put the
- * strongest thing we can offer a stranger ("try it, we are not asking for
- * a card") AFTER they had already decided about the price. It now stands
- * on its own immediately before the pricing section, so the risk is taken
- * off the table one screen BEFORE the number is asked for.
- *
- * Three sentences, in the order a sceptic needs them: what you get, what
- * the one limit is, and what happens if you do nothing. Every term here
- * is the vetted one — 14 days, no card, rules-only, managed AI actions
- * begin with the subscription. Nothing is
- * softened for the sake of the headline; the whole point of putting it
- * this large is that it survives being read closely.
- *
- * ## Why the caveat is IN the band
- *
- * The headline makes the strongest present-tense offer on the page, and
- * for a while the only thing qualifying it ("nothing on this page is for
- * sale or download yet: both tiers open with the beta") sat a full screen
- * lower, in the pricing sub. A reader who took the offer at the band and
- * clicked through to sign up met the qualification after they had already
- * believed the offer — which is the shape of a bait, however unintended.
- * `when` is that qualification, moved to the one place it cannot be
- * missed: the line directly under the headline, before the lede that
- * describes what the trial contains. The lede then reads in the future it
- * actually belongs to ("when it does…"), and the pricing sub keeps its
- * own copy for the reader who scrolls straight past this band.
+ * The trial band — the page's one change of surface. It used to be a 12.5px line beneath the tier cards, which put
+ * the strongest thing we can offer a stranger ("try it, we are not asking for a card") AFTER they had decided about
+ * the price; it now stands immediately before the pricing section. Three sentences in the order a sceptic needs them:
+ * what you get, the one limit, what happens if you do nothing — every term the vetted one (14 days, no card,
+ * rules-only, managed AI actions begin with the subscription).
+ */
+
+/**
+ * The caveat is IN the band: the qualification used to sit a full screen lower, so a reader who took the offer met it
+ * after they had believed it — the shape of a bait, however unintended; `when` is that qualification, directly under
+ * the headline, and the pricing sub keeps its own copy for the reader who scrolls straight past.
  */
 export function Trial() {
   const t = useTranslations("trial");

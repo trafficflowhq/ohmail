@@ -5,39 +5,25 @@ import { useTranslations } from "next-intl";
 import { useTheme } from "@ohmail/ui";
 
 /**
- * The site's face toggle — paper / ohmarchy — directly above the headline, right after
- * the menu (OHMARCHY-PLAN.md §5). Two tabs; the choice flips the WHOLE site: the page's
- * own chrome, the demo's skin and the screenshot set all read the same `data-face`
- * stamp, and content, claims and structure stay identical across faces (the one-UI law
- * applies to the landing too).
- *
- * The machinery is the shared provider's, not a second writer: this control only calls
- * `setFace`, and the ONE ThemeProvider stamps `<html data-face>` (OHMARCHY-CONTRACT.md).
- * The choice persists under `ohmail.face` — the same device pin the product door reads,
- * which is exactly why a visitor who flips the landing and later opens the app meets one
- * coherent device, not two settings pretending to be one.
- *
- * ── THE WINK ────────────────────────────────────────────────────────────────────────────
- * A Linux visitor with no stored choice gets the ohmarchy face first (the §5 wedge bet —
- * a browser can only see "Linux", not "Omarchy", and the plan takes that bet with its
- * guardrails: remembered in localStorage, one click back, an explicit choice always
- * wins). The wink line renders ONLY on that auto-flip — never once a choice exists at
- * either scope, and never on the `#face=` preset, which is the visitor's own request.
- *
- * Hydration: the provider resolves "paper" until it has adopted storage post-mount, so
- * the pressed state and the wink wait for `mounted` — same move as the Nav's theme icon.
- * The page's LOOK never flashes: the marketing boot script stamped `data-face` pre-paint.
- *
- * ── THE CONTROL IS THE PREVIEW (owner review, 2026-08-31) ──────────────────────────────
- * With the hero split parked, this toggle carries the two-faces story alone, so it
- * demonstrates rather than names: the LEFT half is drawn in the paper idiom (the paper
- * stack's type, a soft pill edge, light falloff) and the RIGHT half in the ohmarchy idiom
- * (mono, radius 0, a drawn ring) — whichever face the SITE currently wears. That is why
- * the halves' styles are literal values and not tokens: tokens flip with `data-face`, and
- * a preview that flipped with the thing it previews would show two copies of one face.
- * The active side reads active in its own idiom — paper by lift, ohmarchy by the 2px
- * accent ring the app's tiling face uses (`--lift-3` there). See `.l-face-tab` in
- * landing.css.
+ * The site's face toggle — paper / ohmarchy — directly above the headline (OHMARCHY-PLAN.md §5).
+ * The choice flips the WHOLE site: chrome, demo skin and screenshot set all read one `data-face`
+ * stamp, and content, claims and structure stay identical (the one-UI law applies to the landing).
+ * The machinery is the shared provider's: this control only calls `setFace`, the ONE ThemeProvider
+ * stamps `<html data-face>`, and the choice persists under `ohmail.face` — the same device pin the
+ * product door reads. The wink: a Linux visitor with no stored choice gets the ohmarchy face first
+ * (the §5 wedge bet — remembered, one click back, an explicit choice always wins), and the wink line
+ * renders ONLY on that auto-flip — never once a choice exists, never on the `#face=` preset.
+ */
+
+/**
+ * Hydration: the provider resolves "paper" until it adopts storage post-mount, so the pressed
+ * state and the wink wait for `mounted` (the Nav theme icon's move); the page's LOOK never flashes —
+ * the boot script stamped `data-face` pre-paint. The control is the preview (owner review,
+ * 2026-08-31): the LEFT half is drawn in the paper idiom and the RIGHT in the ohmarchy idiom,
+ * whichever face the site wears — which is why the halves' styles are literal values and not
+ * tokens: tokens flip with `data-face`, and a preview that flipped with the thing it previews would
+ * show two copies of one face. The active side reads active in its own idiom — paper by lift,
+ * ohmarchy by the 2px accent ring (`.l-face-tab`, landing.css).
  */
 export function FaceToggle() {
   const t = useTranslations("face");

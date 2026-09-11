@@ -9,46 +9,29 @@ import { SELF_HOST_GUIDE_URL } from "./GetOhmail";
 import { CREDIT_PRICES_ANCHOR } from "../faq-anchors";
 
 /**
- * The price list in first-sight order: the two free ways side by side, the managed tiers
- * full-width beneath them — one structured section, all of it meant to be seen in one
- * viewport.
- *
- * ── THE ORDER IS THE OFFER ───────────────────────────────────────────────────────────
- *
- * 1. **ohmail Desktop — free.** And not as a teaser: the card says out loud that a
- *    running desktop app is a complete self-hosted ohmail — the whole organizer on your
- *    machine, the mailbox as the master, no cloud in the loop. `pricing-structure.test.ts`
- *    holds that claim against `PREVIEW_PLATFORMS`: the sentence is licensed exactly while
- *    every shipped build carries the real engine.
- * 2. **Self-hosted Cloud — free.** The same open server on hardware you own, with its
- *    three ways in stated on the card (a box you rent or own, a home-server box, or the
- *    desktop app that is already one). The prebuilt-images claim is new and licensed:
- *    the GHCR packages answer anonymous pulls (verified live 2026-08-30), and the claim
- *    is pinned to the public README's own "images are prebuilt" sentence so the two
- *    surfaces move together.
- * 3. **ohmail Cloud — the paid tiers**, full-width below the free row, so a visitor who
- *    never scrolls still meets the managed offering: defensive selling is the brand, but
- *    nobody should miss that the managed service exists.
- *
- * On narrow screens the grid stacks in exactly that order — the order, not the fold,
- * carries the intent there.
- *
- * ── WHAT DID NOT MOVE ────────────────────────────────────────────────────────────────
- *
- *  · Every tier figure stays the string the anti-drift gate parses
- *    (`test/landing-pricing-matches-plan-card.test.ts` against `PLAN_LIMITS`); the trial
- *    note keeps the granted figure `trial-credits.test.ts` compares.
- *  · **Both CTAs point at real things** — the desktop card at the download section that
- *    owns the per-platform links (`../downloads.ts`), never at an off-origin release URL
- *    (which once went four releases stale); the tier buttons at `/join` when
- *    `TF_PUBLIC_SIGNUP=1`, at the waitlist otherwise. No third state.
- *  · The waitlist door survives (`desktopNotify`): it is the only entry point left to
- *    the dialog once the Cloud tiers link straight to `/join`, and the capacity valve
- *    (`signup_capacity`) sends people back here when Cloud has no room.
- *  · The claim-accuracy rules on the desktop note: it is a real mail client against your
- *    own IMAP server, and what must never come back is the other direction — "no IMAP
- *    client", "no network at all" — because every build makes a signed update check and
- *    every build is a mail client (`public-signup.test.ts`).
+ * The price list in first-sight order: the two free ways side by side, the managed tiers full-width
+ * beneath — the order is the offer. (1) ohmail Desktop — free, and not a teaser: the card says a
+ * running desktop app is a complete self-hosted ohmail; `pricing-structure.test.ts` licenses that
+ * claim exactly while every shipped build carries the real engine (`PREVIEW_PLATFORMS`). (2)
+ * Self-hosted Cloud — free, with its three ways in on the card; the prebuilt-images claim is
+ * licensed — GHCR answers anonymous pulls (verified live 2026-08-30), pinned to the public README's
+ * own sentence. (3) ohmail Cloud — the paid tiers, full-width below, so a visitor who never scrolls
+ * still meets the managed offering. On narrow screens the grid stacks in exactly that order.
+ */
+
+/**
+ * What did not move: every tier figure stays the string the anti-drift gate parses
+ * (`test/landing-pricing-matches-plan-card.test.ts` against `PLAN_LIMITS`); the trial note keeps the granted figure
+ * `trial-credits.test.ts` compares. Both CTAs point at real things — the desktop card at the download section (never
+ * an off-origin release URL, which once went four releases stale); the tier buttons at `/join` when
+ * `TF_PUBLIC_SIGNUP=1`, at the waitlist otherwise, no third state.
+ */
+
+/**
+ * The waitlist door survives (`desktopNotify`): the only entry left to the dialog, and the capacity valve
+ * (`signup_capacity`) sends people back here when Cloud has no room. The desktop note's claim-accuracy rule: it is a
+ * real mail client against your own IMAP server, and what must never come back is "no IMAP client" or "no network at
+ * all" (`public-signup.test.ts`).
  */
 export function Pricing({ publicSignup = false }: { publicSignup?: boolean }) {
   const t = useTranslations("pricing");

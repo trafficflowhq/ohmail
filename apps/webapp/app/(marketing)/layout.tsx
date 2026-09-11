@@ -7,28 +7,19 @@ import "./landing.css";
 /* the face layer AFTER the base sheet: its rules override on order where specificity ties */
 import "./landing-face.css";
 
-/*
- * ONE OF THE THREE ROOT LAYOUTS of the single-origin app — the ENGLISH marketing tree.
- *
- * `ohmail.app` serves the marketing site AND the product from one origin. Next's
- * multiple-root-layout feature is what keeps them from bleeding into each other:
- * this file is the <html> of `/`, `/privacy`, `/imprint`, `/subprocessors` and the
- * branded 404; `(marketing-de)/layout.tsx` is the <html> of `/de`;
- * `(product)/layout.tsx` is the <html> of everything under `(product)`. None of them
- * inherits another's <body> class, <head> metadata or GLOBAL CSS.
- *
- * The CSS separation is the load-bearing half of the marketing/product split and the
- * reason the merge is shaped this way rather than as one layout with a conditional
- * subtree. `landing.css` and `app.css` both style `html`, `body` and `.btn`; a single
- * layout that could render either would put both stylesheets on the same document and
- * let source order decide what the marketing page looks like. Here `/` (this group)
- * links landing.css only, and the signed-in `/` — which `middleware.ts` rewrites to
- * `(product)/mailbox` — links app.css only. See `app/session-gate.ts` for the decision
- * itself.
- *
- * The German half of the split is a different argument and it is written out in
- * `marketing-root.tsx`: a root layout cannot see its own pathname, so the locale has to
- * be a literal in the layout that renders it, and both trees stay static as a result.
+/**
+ * One of the three root layouts of the single-origin app — the ENGLISH marketing tree. Next's multiple-root-layout
+ * feature keeps marketing and product from bleeding into each other: this file is the <html> of `/`, `/privacy`,
+ * `/imprint`, `/subprocessors` and the branded 404; `(marketing-de)/layout.tsx` is `/de`'s; `(product)/layout.tsx` is
+ * the rest. None inherits another's <body> class, <head> metadata or global CSS.
+ */
+
+/**
+ * The CSS separation is the load-bearing half: `landing.css` and `app.css` both style `html`, `body` and `.btn`, and
+ * a single layout that could render either would let source order decide what the marketing page looks like — `/`
+ * links landing.css only, the signed-in `/` (rewritten to `(product)/mailbox`) links app.css only
+ * (`app/session-gate.ts`). The German half's argument is in `marketing-root.tsx`: a root layout cannot see its own
+ * pathname, so the locale is a literal and both trees stay static.
  */
 
 export function generateMetadata(): Promise<Metadata> {
