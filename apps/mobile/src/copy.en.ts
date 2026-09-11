@@ -1421,6 +1421,16 @@ const TABLE = {
    * one that was sent.
    */
   scheduledNotSent: "Not sent",
+  /**
+   * PHONE-ONLY: this phone organizes the mailbox itself, so it keeps no appointments.
+   *
+   * Rendered on the Scheduled screen and in the composer where Send later would have been.
+   * "while ohmail is running on it" rather than "while ohmail is open": Android organizes behind
+   * a notification (`phoneStandaloneL1Android`) and iPhone while the app is open, and one
+   * sentence has to be true on both. The action names the two places the promise CAN be kept.
+   */
+  scheduledNotOnThisPhone:
+    "This phone organizes your mailbox only while ohmail is running on it, so it cannot hold a message for a later time. Send now, or schedule it from a computer or ohmail Cloud.",
   /*
    * THE SIGNATURE BLOCK (`compose.signature*` in the webapp catalogue, word for word —
    * `folders-parity.test.ts` pins them): the sending mailbox's stored signature as a

@@ -140,6 +140,19 @@ export interface World {
   /** The header identity: the paired server + account id; empty while nothing is live. */
   account: { name: string; email: string };
   /**
+   * IS THIS SESSION THE ENGINE IN THIS APP — the standalone door, rather than a server on a wire.
+   *
+   * `ConnectedSession.standalone`, carried through unchanged. The connection layer derives it from
+   * the session's ORIGIN — the one thing `bootEngine` refuses a local engine off — and it is
+   * derived THERE so no screen or state module reaches into `engine/` (`privacy.test.ts`).
+   * `false` while nothing is live, which is the same answer as a paired session and the right
+   * one — every surface that reads this withholds something.
+   *
+   * What it decides today: send-later appointments. This install organizes only while ohmail is
+   * running on it, so it keeps none (`sendLaterOffered`, and the engine's own 409).
+   */
+  standalone: boolean;
+  /**
    * THE MAILBOX FACTS — `GET /mailboxes` over the paired server (`src/net/mailboxes.ts`), on the
    * folders flag's own cadence (boot + after every completed drain).
    *
@@ -374,6 +387,7 @@ function emptyWorld(actions: WorldActions): World {
     abandoned: EMPTY_ABANDONED,
     worldKey: "none",
     account: { name: "", email: "" },
+    standalone: false,
     // Nothing has been asked on the empty world, so `known` is false and the banner is withheld
     // — the same honest-unknown the boot facts keep between a teardown and the redirect.
     mailboxes: { known: false, ownAddresses: [], organizer: null, rows: [] },
@@ -930,6 +944,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       abandoned: engine.abandoned(),
       worldKey: session.ownerKey,
       account: { name: session.profile.origin, email: session.profile.accountId },
+      // THE DOOR, derived once by the layer that composes the session. See the field.
+      standalone: session.standalone,
       mailboxes: {
         // `known` is the SUCCESSFUL-read gate, not "the list is non-empty": an account whose
         // mailbox was removed answers `[]`, and that is an answer. The banner is drawn behind

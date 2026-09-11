@@ -213,6 +213,26 @@ export function mayStopHere(claim: PhoneClaim): boolean {
 }
 
 /**
+ * ═══ IS SEND LATER OFFERED AT ALL — the composer's one predicate for the affordance ════════════
+ *
+ * Two reasons to withhold it, and the file that used to test only the first now holds both in one
+ * place, because they are one question: may this message be given an appointment?
+ *
+ *  · a FORWARD cannot wear one — a draft row stores no forward reference;
+ *  · the STANDALONE door keeps no appointments. This phone organizes the mailbox only while
+ *    ohmail is running on it, so an appointment it accepted is a promise about a moment nothing
+ *    will be awake for. The engine refuses the verb (409, `composition-passes.ts`), and a control
+ *    that fails after the pick is exactly what the forward arm is already shaped to avoid.
+ *
+ * A PAIRED session keeps the offer, and that is the half worth stating: there the appointment is
+ * kept by the install the phone is paired to — a computer, a self-host box, ohmail Cloud — and
+ * that install stays on, so the promise is true and narrowing it would remove a working feature.
+ */
+export function sendLaterOffered(o: { standalone: boolean; forward: boolean }): boolean {
+  return !o.standalone && !o.forward;
+}
+
+/**
  * THE CHIP'S STATE, DERIVED FROM THE MAILBOXES READ AND NOTHING ELSE.
  *
  * The standalone engine answers the same `/mailboxes` contract every other door answers, so the app

@@ -860,6 +860,8 @@ export const DE: Deck = {
     "Abbrechen legt die Nachricht zurück in die Entwürfe, wo du sie in ohmail im Web oder auf dem Desktop bearbeiten und senden kannst.",
   scheduledWhenUnknown: "Wird zur geplanten Zeit gesendet",
   scheduledNotSent: "Nicht gesendet",
+  scheduledNotOnThisPhone:
+    "Dieses Telefon organisiert dein Postfach nur, solange ohmail darauf läuft, und kann eine Nachricht deshalb nicht für einen späteren Zeitpunkt aufbewahren. Sende jetzt, oder plane den Versand auf einem Computer oder in ohmail Cloud.",
 
   sigLabel: "Signatur",
   sigRemove: "Signatur für diese Nachricht entfernen",

@@ -55,6 +55,7 @@ import {
 import { useWorld } from "../state/world";
 import { Button, Rule, Tap, Txt } from "./base";
 import { Icon, type IconName } from "./Icon";
+import { sendLaterOffered } from "./standalone-form";
 import { Segmented } from "./Segmented";
 import { CancelRow, Sheet, SheetRow } from "./Sheet";
 
@@ -444,6 +445,10 @@ function ComposeSheet({
    * combination where it cannot be bypassed.
    */
   const [later, setLater] = useState<LaterStep | null>(null);
+  /* WHETHER THE AFFORDANCE IS THERE AT ALL — one predicate, two reasons (`sendLaterOffered`): a
+     forward cannot wear an appointment, and the standalone door keeps none. Withheld rather than
+     refused after the pick, and the sentence below says which it is. */
+  const laterOffered = sendLaterOffered({ standalone: w.standalone, forward });
   const [openedAt, setOpenedAt] = useState<Date>(() => new Date());
   /** The one refusal this picker can raise, said in place — the webapp's `role="status"` note. */
   const [pastNote, setPastNote] = useState(false);
@@ -807,6 +812,14 @@ function ComposeSheet({
               />
             </View>
           ) : null}
+          {/* WHY THERE IS NO SEND LATER on a phone that organizes its own mailbox. Only for that
+              reason — a forward's absence has its own note above — and above the buttons, where
+              the control it explains would have been. */}
+          {w.standalone && !forward ? (
+            <Txt variant="hint" tone="ink3" style={{ paddingBottom: 2 }}>
+              {Copy.scheduledNotOnThisPhone}
+            </Txt>
+          ) : null}
           <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
             <Button label={Copy.replyCancel} variant="quiet" onPress={onClose} />
             {/* SEND LATER stands beside Send because it is the same act on a different clock,
@@ -815,7 +828,7 @@ function ComposeSheet({
                 a draft row cannot hold the forward reference (§14) — and the sentence saying
                 so is the button's accessibility hint rather than a control that fails after
                 the pick. */}
-            {!forward ? (
+            {laterOffered ? (
               <Button
                 label={Copy.sendLater}
                 variant="plain"

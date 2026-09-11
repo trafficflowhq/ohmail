@@ -57,6 +57,17 @@ function ScheduledBody() {
             {settled ? `${rows.length}` : " "}
           </Txt>
         </View>
+        {/* THIS PHONE MAKES NO APPOINTMENTS, said where a person comes looking for one. Above the
+            list rather than at its foot: rows can still be here (a desktop or ohmail Cloud made
+            them before this phone took the mailbox over, and cancel still works on them), so the
+            sentence is about the screen, not about a row. */}
+        {w.standalone ? (
+          <Panel style={{ paddingVertical: 14, marginBottom: 12 }}>
+            <Txt variant="note" tone="ink2" style={{ paddingHorizontal: 18 }}>
+              {Copy.scheduledNotOnThisPhone}
+            </Txt>
+          </Panel>
+        ) : null}
         <Panel style={{ paddingBottom: 10 }}>
           {rows.length === 0 && !settled ? (
             <View style={{ paddingHorizontal: 6, paddingTop: 8 }}>
