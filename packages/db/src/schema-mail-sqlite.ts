@@ -604,49 +604,14 @@ export const messages = sqliteTable("messages", {
 }));
 
 /**
- * PHYSICAL IDENTITY — every locator one LOGICAL message occupies (mail 0028).
- *
- * ── WHY A TABLE, WHEN `messages.native_locator` ALREADY EXISTS ────────────────────────────────
- *
- * One string used to answer three different questions: is this the same logical message, WHICH
- * BYTES ON THE SERVER is it, and did the user move it. `dedup_key` was the first,
- * `native_locator` was the second, and the third was inferred from the second — which is where the
- * consent boundary broke.
- *
- * A logical message legitimately occupies several locators at once: the Sent twin of a self-CC, a
- * mailing-list echo of your own post, a copy the user's own client made, and — the case this table
- * exists for — a SECOND DELIVERY of the same bytes by someone who wants ohmail to treat their mail
- * as mail you already accepted. `native_locator` can name exactly one, so every other one was
- * invisible: absent from `listKnownLocators`, therefore an unknown UID, therefore fetched, parsed,
- * declined and forgotten on every single sync cycle. For ever.
- *
- * ── THE THREE CONSTRAINTS ARE THE MODEL ───────────────────────────────────────────────────────
- *
- *   UNIQUE (mailbox_id, folder, uidvalidity, uid)   one UID inside one server epoch is ONE place.
- *                                                   `uidvalidity` is in the key because a UID
- *                                                   number means nothing outside its epoch — a
- *                                                   folder that resets commonly re-allocates from
- *                                                   low numbers, and treating a reused number as
- *                                                   already-known silences real mail permanently.
- *   UNIQUE (message_id) WHERE is_primary            exactly ONE instance per message is the one
- *                                                   `messages.native_locator` mirrors and the one
- *                                                   `adapter.move` acts on. A partial unique index,
- *                                                   which is the kind of object an in-memory
- *                                                   Postgres can mislead you about, so it is
- *                                                   covered against a real server.
- *   INDEX (message_id)                              every read here is by message.
- *
- * ── AND WHAT A ROW'S EXISTENCE MEANS ──────────────────────────────────────────────────────────
- *
- * "This locator is on the server." There is no `absent` column, because absence is the row being
- * gone — written only by the worker consuming the adapter's `deletes`, and only when the folder's
- * epoch matches. That deletion is the ONLY evidence in the system that authorises adopting a
- * placement we did not choose: a sender can make a locator appear; only the user can make a stored
- * locator disappear.
- *
- * `messages.native_locator` STAYS as the primary's mirror and every existing read path keeps using
- * it: this change deliberately does not touch a read path. The only read that moved is
- * `listKnownLocators`, because that is the one that decides what gets re-fetched.
+ * Physical identity — every locator one LOGICAL message occupies (mail 0028). `native_locator`
+ * names exactly one place, and a message legitimately occupies several: the Sent twin of a
+ * self-CC, a list echo, and — the case this table exists for — a SECOND DELIVERY of the same
+ * bytes; every other locator was an unknown UID, fetched and declined every cycle. UNIQUE
+ * (mailbox, folder, uidvalidity, uid): a UID means nothing outside its epoch. UNIQUE (message_id)
+ * WHERE is_primary: one instance mirrors `native_locator`. A row means "this locator is on the
+ * server"; absence is the row being gone, written only by the worker consuming the adapter's
+ * `deletes` — only the user can make a stored locator disappear.
  */
 export const messageInstances = sqliteTable("message_instances", {
   id: text("id").default(UUID_V4).primaryKey(),
