@@ -56,21 +56,14 @@ export interface MigrateSummary {
 }
 
 /**
- * HeyMigrationService (sub-plan 1e). Seeds the deterministic ruleset from a HEY /
- * existing-mailbox export or folder-scan.
- *
- * **Idempotent & reversible (spec §16).** `migrateFromObservations` upserts one
- * `provenance:'migrated'` rule per observation, keyed on `(accountId, kind, match)`
- * among migrated rules: a re-run with the same observations creates ZERO duplicates
- * and returns them all as `unchanged`. Each newly-created rule emits a `change_log`
- * `rule` `create`; the whole run also writes an append-only `audit_log` entry whose
- * inverse is the undo. `undoMigration` removes ONLY `provenance:'migrated'` rules
- * (manual/promoted rules are untouched), emitting a `change_log` `rule` `delete` per
- * removed rule.
- *
- * **Rules-only by default.** Migration creates rules; it does not move live mail.
- * An opt-in `reroute` pass routes any backfill placement through the reconciler
- * write-path OUTSIDE the tx, idempotently, so it can never thrash folders.
+ * HeyMigrationService — seeds the deterministic ruleset from a HEY / existing-mailbox export or
+ * folder-scan. Idempotent and reversible (spec §16): `migrateFromObservations` upserts one
+ * `provenance:'migrated'` rule per observation keyed on `(accountId, kind, match)` — a re-run
+ * creates ZERO duplicates, returned `unchanged`. Each new rule emits a `change_log` create; the
+ * run writes an `audit_log` entry whose inverse is the undo. `undoMigration` removes ONLY
+ * migrated rules. Rules-only by default: migration creates rules, it does not move live mail; an
+ * opt-in `reroute` pass routes backfill placements through the reconciler write-path OUTSIDE the
+ * tx, idempotently.
  */
 export class HeyMigrationService {
   constructor(private readonly deps: { adapter?: AdapterPort } = {}) {}
@@ -194,25 +187,14 @@ export class HeyMigrationService {
   }
 
   /**
-   * Re-route already-ingested mail whose sender/domain matches a migrated observation
-   * but whose desired folder differs. Idempotent: a message already in its destination
-   * reconciles to `none` (no adapter move). Runs OUTSIDE any DB tx. Bounded: at most
-   * one move per out-of-place matching message.
-   *
-   * ── ONE STALE LOCATOR MAY NOT END THE MIGRATION ─────────────────────────────────────────
-   *
-   * This loop runs AFTER the rules have committed, over every message in the account, on a verb
-   * the user opted into once. Until `applyReconcileAction` learned to defer a gone locator, the
-   * first message whose source UID had moved threw straight out of this method: the rules were in
-   * place, the mail behind that row was never attempted, and — because this pass is the only thing
-   * that persists these desires — the un-attempted rows carried NO durable intent for the
-   * organizer to drain. A provider recycling one folder therefore silently truncated a
-   * mailbox-wide migration, and re-running the verb was the only recovery.
-   *
-   * The seam now persists the desire and reports `deferred`, so the loop continues and every row
-   * it touched is queued. Nothing else here catches: a transport failure or a refused MOVE is not
-   * evidence about the rest of the mailbox either, but it is also not a condition this pass can
-   * make durable on its own, so it still ends the pass rather than being logged away.
+   * Re-route already-ingested mail matching a migrated observation whose desired folder differs.
+   * Idempotent; outside any DB tx; at most one move per out-of-place message. One stale locator
+   * may not end the migration: until `applyReconcileAction` learned to defer a gone locator, the
+   * first moved UID threw straight out — the un-attempted rows carried NO durable intent for the
+   * organizer to drain, so a provider recycling one folder silently truncated a mailbox-wide
+   * migration. The seam now persists the desire and reports `deferred`, so the loop continues. A
+   * transport failure still ends the pass: not evidence about the rest of the mailbox, but not
+   * something this pass can make durable either.
    */
   private async rerouteToMatchRules(
     ctx: ServiceContext,
@@ -237,22 +219,14 @@ export class HeyMigrationService {
       .innerJoin(folderState, eq(folderState.messageId, messages.id))
       .where(eq(messages.accountId, ctx.accountId));
 
-    /* ── REFUSED WHOLE ON A READER, BEFORE THE FIRST ROW IS TOUCHED (mail 0094) ────────────
-     *
-     * This pass writes `folder_state.desired_folder` with `last_set_by: 'us'` for every matching
-     * message in the account and hands each to the reconciler, which performs a real IMAP move. It
-     * is the largest single mail-moving act in the product, and it asked nothing about who
-     * organizes the mailboxes involved.
-     *
-     * It REFUSES rather than travelling for the reason `refuseBulkMoveOnReader` sets out: one press
-     * here is thousands of `message.move` records, a shape ruling 6 does not have and whose flood
-     * LB1's drain explicitly guards against. Refused WHOLE, and AHEAD of the loop —
-     * `applyReconcileAction` reaches the mail server per row, so a refusal discovered mid-walk
-     * would already have moved somebody's mail.
-     *
-     * Only the messages this pass would actually TOUCH: a row with no matching observation is
-     * skipped below and cannot block a migration it was never part of. Computed with the same
-     * lookup the loop uses, so the two cannot disagree about which rows are in scope.
+    /**
+     * Refused WHOLE on a reader, before the first row is touched (mail 0094). This pass writes
+     * `folder_state.desired_folder` with `last_set_by: 'us'` for every matching message — a real
+     * IMAP move per row, the largest single mail-moving act in the product — and it asked nothing
+     * about who organizes. It REFUSES rather than travelling: one press is thousands of
+     * `message.move` records, a flood the drain guards against. Refused AHEAD of the loop — a
+     * refusal discovered mid-walk would already have moved somebody's mail. Only the messages
+     * this pass would TOUCH, computed with the same lookup the loop uses.
      */
     const willMove = rows.flatMap((r) => {
       const from = r.fromAddress.toLowerCase();
@@ -289,37 +263,15 @@ export class HeyMigrationService {
       if (action.type !== "move") continue;
 
       const locator = (r.nativeLocator as NativeLocator | null) ?? { folder: r.observedFolder, ref: "0:0" };
-      // ── RECORD THE INTENT BEFORE THE NETWORK CALL, NOT AFTER IT ─────────────────────────────
-      //
-      // This pass is the only thing that persists the desires it computes, and it used to persist
-      // them as a side effect of `applyReconcileAction` — which meant AFTER the IMAP move, and on
-      // the failure path meant writing back a value read before it. Review named the consequence:
-      // a newer decision committed by another device during the move was overwritten by this
-      // older one.
-      //
-      // Writing first fixes both halves. The desire is durable before anything can go wrong, so a
-      // stale locator (or a refused move, or a lost connection) leaves a row the organizer drains
-      // rather than an intent nobody recorded; and because nothing is written after the round
-      // trip, there is no pre-I/O value left to overwrite a post-I/O one with. `observedFolder`
-      // stays what we last saw, which is what makes the row unconverged and therefore queued.
-      // ── AND IT IS CONDITIONAL ON THE SNAPSHOT STILL BEING TRUE ──────────────────────────────
-      //
-      // The `rows` read above is ONE bulk snapshot of the whole account, and this loop then spends
-      // an IMAP round trip per out-of-place message. Over a large mailbox that is a long time, and
-      // review found what an unconditional write did with it: a decision committed on another
-      // device for a message this loop has not reached yet is overwritten by the snapshot's older
-      // value when the loop gets there. Moving the write earlier fixed the post-I/O race and
-      // opened a snapshot-age one in its place, which is not progress.
-      //
-      // `DO UPDATE … WHERE desired_folder = <what the snapshot saw>` is the whole guard, and it is
-      // the construction `screener-service.ts` already uses for the same reason: re-route only the
-      // rows that are STILL where this pass believed they were. A row that has moved on keeps
-      // where it went — "user always wins", the rule the reconciler runs on. `.returning()` is
-      // what makes the skip observable, so a row the guard declined is not counted as re-routed
-      // and never reaches the adapter.
-      // `asTx` and not `ctx.db` directly: this file's other writers go through the same cast, and
-      // it is what gives the upsert its `returning` typing. Not inside a transaction — this pass
-      // runs outside one deliberately, and the guard is a single statement.
+      // Record the intent BEFORE the network call. This pass used to persist its desires after
+      // the IMAP move — a newer decision committed by another device mid-move was overwritten by
+      // this older one. Writing first fixes both halves: the desire is durable before anything
+      // can go wrong, and nothing is written after the round trip. AND conditional on the
+      // snapshot still being true: `DO UPDATE … WHERE desired_folder = <what the snapshot saw>` —
+      // re-route only rows STILL where this pass believed they were; a row that moved on keeps
+      // where it went ("user always wins"). `.returning()` makes the skip observable, so a
+      // declined row is never counted or dialled. Not inside a transaction — the guard is a
+      // single statement.
       const [claimed] = await asTx(ctx).insert(folderState).values({
         messageId: r.messageId, desiredFolder: dest, observedFolder: r.observedFolder,
         lastSetBy: "us", reconcileStatus: "pending", conflict: false,

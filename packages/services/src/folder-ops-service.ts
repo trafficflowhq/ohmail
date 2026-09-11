@@ -12,34 +12,14 @@ import { folderRowToDTO } from "./dto/materialize.js";
 import type { FolderDTO } from "./dto/types.js";
 
 /**
- * ═══ THE FOLDER VERBS — create / rename / delete, as USER COMMANDS (FOLDERS-SPEC.md stage 2) ═══
- *
- * Every verb here is a REAL IMAP write in the user's own mailbox, and the API never opens an
- * IMAP connection to organize — so this service records the COMMAND (`folder_ops`, mail 0074),
- * appends the `folder` change row that lets every client render the pending state honestly, and
- * rings the `sync_requested_at` doorbell. The worker's `folderOpsPass` (apps/worker/src/
- * folder-ops.ts) executes the command inside the mailbox's serial cycle — exactly one organizer
- * — applies the database consequences in one transaction, and deletes the row. The wake channel
- * then carries the settled entity back within seconds.
- *
- * ── THE OPTIMISM MODEL: PENDING MARKERS, NEVER PRETENDED COMPLETION ─────────────────────────
- *
- * `FolderDTO.name` stays the MAILBOX's truth throughout. A create inserts the inventory row (so
- * the folder renders instantly, marked `op.kind = 'create'`); a rename records the target in
- * `op.to` and keeps the old name until the worker's RENAME lands; a delete marks the row
- * `op.kind = 'delete'` and the tombstones arrive as the worker files and removes. The mirror
- * never claims a mailbox state that does not exist yet — the marker is the honest middle.
- *
- * ── ONE COMMAND IN FLIGHT PER SUBTREE ───────────────────────────────────────────────────────
- *
- * UNIQUE(folder_id) refuses a second command on one folder at the database; {@link assertNoOpOverlap}
- * widens that to the SUBTREE and the rename target, because two in-flight commands whose paths
- * overlap have no defined order ("rename A" + "delete A/B" — which subtree?). Ops resolve in
- * seconds, so the refusal is a sentence the user reads once, not a workflow.
- *
- * A FAILED command keeps its row (the honest refusal, carried on the entity until seen) and
- * blocks new commands on its folder until dismissed — {@link dismiss} — so a refusal cannot be
- * silently steamrolled by a retry loop.
+ * The folder verbs — create / rename / delete, as USER COMMANDS (FOLDERS-SPEC.md stage 2). Every
+ * verb is a real IMAP write, and the API never opens IMAP — so this service records the COMMAND
+ * (`folder_ops`, mail 0074), appends the `folder` change row, and rings `sync_requested_at`; the
+ * worker's `folderOpsPass` executes inside the mailbox's serial cycle and deletes the row.
+ * PENDING MARKERS, never pretended completion: `FolderDTO.name` stays the mailbox's truth
+ * throughout. One command in flight per SUBTREE: UNIQUE(folder_id) at the database, {@link
+ * assertNoOpOverlap} widening to the subtree and rename target. A FAILED command keeps its row
+ * and blocks new commands until dismissed — a refusal cannot be steamrolled by a retry loop.
  */
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
@@ -326,28 +306,15 @@ export class FolderOpsService {
         "this mailbox is organized by your local install — make folder changes there",
       );
     }
-    /* -- AND THE ROLE, WHICH `status` STOPPED ANSWERING (mail 0083) -----------------------
-     *
-     * The refusal above was the whole test, and its own comment says why it existed: *"a
-     * `disabled` mailbox is another organizer's (a local install holds the lease), and a command
-     * Cloud's worker will never execute is a lie in a table."* Every word of that is still the
-     * right reason — and `disabled` stopped being how the product records it. A demoted install
-     * is `organizer_role = 'reader'` and `status = 'connected'`, so this door admitted the exact
-     * case it was written to refuse.
-     *
-     * It is the worst of the doors this ruling touched, because a folder command is not an
-     * intent that waits: it is recorded in `folder_ops` and rings the worker, and the pass
-     * CREATES, RENAMES or DELETES a real folder on the person's server — a delete moving the
-     * whole subtree's mail to Trash. The reader's cycle now skips that pass, so nothing executes
-     * it today; the row would still be there for the first cycle after a promotion.
-     *
-     * `assertOrganizerRole` rather than an inline check, so the refusal is the SAME sentence
-     * every other door gives (`409 organized_elsewhere` naming the holder) instead of a second
-     * one, and so the census can see this door at all — it could not, because a census discovers
-     * guard calls and not write doors, which is precisely how this one was missed.
-     *
-     * The row lock is already held by the seam's lock above, so the share lock the helper
-     * takes is free here and the pair is genuinely atomic against a demotion.
+    /**
+     * And the ROLE, which `status` stopped answering (mail 0083). The old refusal keyed on
+     * `disabled` — a demoted install is now `reader` with `status = 'connected'`, so this door
+     * admitted the exact case it was written to refuse. The worst of the doors touched: the pass
+     * CREATES, RENAMES or DELETES a real folder on the person's server, a delete moving the
+     * subtree's mail to Trash; the row would wait for the first cycle after a promotion.
+     * `assertOrganizerRole` rather than an inline check: the refusal is the SAME sentence every
+     * door gives, and the census can see this door — it discovers guard calls, not write doors.
+     * The row lock is already held.
      */
     await assertOrganizerRole(tx, dialect(ctx.db), ctx.accountId, mailboxId);
     return mb;
