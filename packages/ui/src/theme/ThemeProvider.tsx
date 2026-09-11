@@ -228,13 +228,17 @@ export interface ThemeProviderProps {
   children: ReactNode;
   /** Initial preference; defaults to following the system. */
   defaultPreference?: ThemePreference;
-  /** localStorage key; pass null to disable persistence. */
+  /**
+   * The key the preference is kept under, through {@link ThemeProviderProps.storage}. `null`
+   * turns persistence off for ALL FOUR keys — the host's explicit opt-out, and the same named
+   * state as passing no door ({@link ThemePersistence}).
+   */
   storageKey?: string | null;
-  /** Device-pin key for the face; follows `storageKey === null` into non-persistence. */
+  /** Device-pin key for the face; `storageKey === null` turns it off with the rest. */
   faceStorageKey?: string;
   /** Account-mirror key for the face (what the init script reads on the next boot). */
   accountFaceStorageKey?: string;
-  /** Device key for the layout; follows `storageKey === null` into non-persistence. */
+  /** Device key for the layout; `storageKey === null` turns it off with the rest. */
   layoutStorageKey?: string;
   /**
    * Activate the FACE and LAYOUT axes on this host. OPT-IN, default false (review-caught):
