@@ -200,24 +200,32 @@ export function statusKey(m: Pick<MailboxDTO, "status" | "lastSyncAt">): string 
 // `(product)` is denied from the Desktop mirror. This pane imports it beside `isSyncBlockReason`.
 
 /**
- * One address, one row. `delete` is a SOFT delete and mail 0021's unique index is PARTIAL (`WHERE status <>
- * 'disabled'`, on `lower(address)`), so a disabled row is not a conflict and connecting the same address again
- * legally inserts a second one — the intended schema: a tombstone must not lock its own address out for ever. The
- * pane rendered the consequence verbatim: the dead row sat beside the live one, same address, indistinguishable, for
- * ever. Not rare — it is what the only available remedy produces: a mailbox the organizer lease stood down is off the
- * worker's roster (`loadEnabledMailboxes` filters `status <> 'disabled'`) and this pane offers no re-enable, so
- * connecting the address again is the only move a Cloud customer has.
- */
-
-/**
- * The key itself moved: `addressKey` now lives at `app/shell/address-key.ts` — `lower()` only,
- * never `trim()`, with the whole argument there (a grouping may be narrower than the
- * constraint; it may never be wider). It moved when a SECOND consumer arrived: `mail-state.ts`'s
- * stand-down arm decides the same question — has this address come back? — and that rail and
- * this pane render on ONE SCREEN. Two copies that agree today are how they come to disagree
- * later, and on this pair that means two contradictory sentences about one mailbox — the defect
- * both were written to end. Re-exported here because this pane was its only home for a long
- * time and callers read better for it.
+ * ONE ADDRESS, ONE ROW.
+ *
+ * ── WHAT WAS ON SCREEN ──────────────────────────────────────────────────────────────────
+ *
+ * `delete` is a SOFT delete and mail 0021's unique index is PARTIAL (`WHERE status <>
+ * 'disabled'`, on `lower(address)`), so a disabled row is not a conflict and connecting the same
+ * address again legally inserts a second one. That is the intended schema — a tombstone must not
+ * lock its own address out for ever — and the pane rendered the consequence verbatim: the dead
+ * row sat beside the live one, same address, indistinguishable, for ever.
+ *
+ * It is not a rare shape. It is what the ONLY available remedy produces: a mailbox the organizer
+ * lease stood down is off the worker's roster (`loadEnabledMailboxes` filters `status <>
+ * 'disabled'`) and this pane offers no re-enable, so connecting the address again is the only
+ * move a Cloud customer has.
+ *
+ * ── THE KEY ITSELF MOVED, AND SO DID ITS REASONING ──────────────────────────────────────
+ *
+ * `addressKey` now lives at `app/shell/address-key.ts` — `lower()` only, never `trim()`, with the
+ * whole argument for that (a grouping may be narrower than the constraint; it may never be wider).
+ * It moved when a SECOND consumer arrived: `mail-state.ts`'s stand-down arm decides the same
+ * question — has this address come back? — and that rail and this pane render on ONE SCREEN. Two
+ * copies that agree today are how they come to disagree later, and on this pair disagreeing means
+ * two contradictory sentences about one mailbox, which is the defect both were written to end.
+ *
+ * Re-exported here because this pane was its only home for a long time and callers read better
+ * for it.
  */
 /* IMPORTED as well as re-exported, and the difference is a caught defect rather than a style
  * choice: `export { x } from "..."` re-exports without binding `x` in THIS module's scope, so the
@@ -227,34 +235,50 @@ import { durableSessionRemove, durableSessionSet } from "../../shell/durable";
 export { addressKey };
 
 /**
- * Why the connect button is not always there. Walked end to end on a live Cloud account: someone not entitled to
- * another mailbox was offered "Connect a mailbox" and walked through every screen this pane has — provider,
- * credentials, the ohmail account password, and a FRESH SECOND FACTOR — and only then did `POST /mailboxes` refuse.
- * The most annoying step sat in front of the refusal. Every fact this needs was already on the wire: `GET
- * /account/access` is `cost: "read"` with no `stepUp` and answers the entitlements port's own verdict — the same port
- * `readMailboxAllowance` consults inside the create's transaction; `emailVerified` rides on `GET /auth/session`,
- * already called; the slot count is the list this pane holds, filtered exactly as the gate counts it (`status <>
- * 'disabled'`).
- */
-
-/**
- * The precedence is the server's pipeline, in order: `withStepUp` → `withSpendGate` → handler
- * (`packages/api/src/app.ts`), so an unverified address is refused BEFORE the allowance gate — a pane naming a limit
- * to an unverified account would name a refusal that never fires. Then `decideMailboxAllowance`'s own order:
- * `canAddMailbox` first, the count second — an account that may not add another must be told THAT, not that it is
- * full. And it may only ever withhold an offer it can prove is dead: the read is a snapshot, the gate is `SELECT …
- * FOR UPDATE` inside the create's transaction, they can disagree — so every unknown fails OPEN (an unreadable
- * verdict, an unreadable session, a list not arrived) and `connect()`'s catch is untouched. Withholding a connect the
- * server would have allowed is worse than the defect being fixed.
- */
-
-/**
- * The two subscription-shaped blocks are gone, and not because they were wrong: they named
- * states this pane can no longer be in. An account the service has REFUSED does not reach a
- * settings pane at all — every door answers 402 and the client swaps the whole surface for the
- * lock screen, where the way back to paying now lives. What is left for this gate to describe
- * is what an ACTIVE account can be: may it add another mailbox, and has it filled the ones it
- * has. A sentence about choosing a plan would name a refusal that cannot fire here.
+ * WHY THE CONNECT BUTTON IS NOT ALWAYS THERE.
+ *
+ * ── WHAT WAS ON SCREEN ──────────────────────────────────────────────────────────────────
+ *
+ * Walked end to end on a live Cloud account. Someone whose account was not entitled to another
+ * mailbox was offered **"Connect a mailbox"** and walked through every screen this pane has —
+ * provider, credentials, the ohmail account password, and a FRESH SECOND FACTOR — and only then
+ * did `POST /mailboxes` refuse.
+ *
+ * So the product asked for a second factor before saying it was never going to work. That is
+ * the worst possible ordering: the most annoying step sat in front of the refusal.
+ *
+ * ── EVERY FACT THIS NEEDS WAS ALREADY ON THE WIRE ───────────────────────────────────────
+ *
+ * Nothing here re-decides anything. `GET /account/access` is `cost: "read"` with no `stepUp`
+ * and answers the entitlements port's own verdict — the same port `readMailboxAllowance`
+ * consults inside the create's transaction; `emailVerified` rides on `GET /auth/session`,
+ * which this pane already calls; and the slot count is the list it already holds, filtered
+ * exactly as the gate counts it (`status <> 'disabled'`).
+ *
+ * ── THE PRECEDENCE IS THE SERVER'S PIPELINE, IN ORDER ───────────────────────────────────
+ *
+ * `withStepUp` → `withSpendGate` → handler (`packages/api/src/app.ts`), so an unverified
+ * address is refused BEFORE the allowance gate is reached. A pane that named a limit to an
+ * unverified account would be naming a refusal that never fires. Then
+ * `decideMailboxAllowance`'s own order: `canAddMailbox` first, the count second — an account
+ * that may not add another must be told THAT, not that it is full.
+ *
+ * ── IT MAY ONLY EVER WITHHOLD AN OFFER IT CAN PROVE IS DEAD ─────────────────────────────
+ *
+ * The read is a snapshot; the gate is `SELECT … FOR UPDATE` inside the create's transaction.
+ * They can disagree, so every unknown fails OPEN — an unreadable verdict, an unreadable
+ * session, a list that has not arrived — and `connect()`'s catch is untouched. Withholding a
+ * connect the server would have allowed is worse than the defect being fixed.
+ *
+ * ── THE TWO SUBSCRIPTION-SHAPED BLOCKS ARE GONE, AND NOT BECAUSE THEY WERE WRONG ────────
+ *
+ * They named states this pane can no longer be in. An account the service has REFUSED does not
+ * reach a settings pane at all: every door answers 402 and the client swaps the whole surface
+ * for the lock screen, which is where the way back to paying now lives. So the states left for
+ * this gate to describe are the ones an ACTIVE account can be in — may it add another mailbox,
+ * and has it filled the ones it has — and a sentence about choosing a plan would be naming a
+ * refusal that cannot fire here, which is the same defect as the ordering above wearing
+ * different words.
  */
 export type ConnectBlock = "email_unverified" | "cannot_add" | "at_limit";
 
@@ -298,12 +322,15 @@ interface AddressGroup {
 }
 
 /**
- * Collapse the list to one entry per address. THE SHOWN ROW IS THE LIVE ONE when there is a live one, and the FIRST
- * otherwise. `list` returns the whole account ordered by `id` and the index guarantees at most one non-disabled row
- * per address, so "the live one" is unambiguous whenever it exists. A group of disabled rows with no live sibling is
- * NOT collapsed to a footnote — it keeps a real row. An account whose only mailbox was stood down must still see it,
- * with its reason; that is the state the one-row rule was written for, and hiding it would be the same defect from
- * the other side.
+ * Collapse the list to one entry per address.
+ *
+ * THE SHOWN ROW IS THE LIVE ONE when there is a live one, and the FIRST otherwise. `list`
+ * returns the whole account ordered by `id` and the index guarantees at most one non-disabled
+ * row per address, so "the live one" is unambiguous whenever it exists.
+ *
+ * A group of disabled rows with no live sibling is NOT collapsed to a footnote — it keeps a real
+ * row. An account whose only mailbox was stood down must still see it, with its reason; that is
+ * the state the one-row rule was written for, and hiding it would be the same defect from the other side.
  */
 export function groupByAddress(items: MailboxDTO[]): AddressGroup[] {
   const order: string[] = [];
@@ -327,21 +354,24 @@ export function groupByAddress(items: MailboxDTO[]): AddressGroup[] {
 }
 
 /**
- * WHICH OF THE FOUR THINGS FAILED, IN THIS PANE'S OWN WORDS. `POST /mailboxes` now tries the credentials before
- * storing them and refuses with `mailbox_probe_failed` plus `details.reason`, a member of the SAME seven-value
- * taxonomy the worker's classifier emits. That is the whole reason this reads `reason` and not the sentence: one
- * vocabulary for one set of failures, so a mistyped host and a wrong password cannot drift back into sharing a
- * sentence. IT IS `probe_*`, NOT `err_*`, AND THAT IS NOT DUPLICATION. The `err_*` lines all begin "Sync failed",
- * which is a claim about a mailbox that exists and has a worker attached to it. Nothing has been stored when this
- * fires — there is no mailbox and there was no sync — so reusing them would ship a false sentence in the deploy that
- * removes one.
- */
-
-/**
- * UNKNOWN REASONS FALL BACK TO THE SERVER'S OWN SENTENCE rather than to a generic apology: a newer API that adds a
- * taxonomy member must degrade to something true, and the server's message is always exactly that. It is also what
- * `JoinScreen` shows, since it renders `messageOf` directly — so the two connect surfaces never disagree about a
- * failure, they only differ in how localizable the words are.
+ * WHICH OF THE FOUR THINGS FAILED, IN THIS PANE'S OWN WORDS.
+ *
+ * `POST /mailboxes` now tries the credentials before storing them and refuses with
+ * `mailbox_probe_failed` plus `details.reason`, a member of the SAME seven-value taxonomy the
+ * worker's classifier emits. That is the whole reason this reads `reason` and not the sentence:
+ * one vocabulary for one set of failures, so a mistyped host and a wrong password cannot drift
+ * back into sharing a sentence.
+ *
+ * IT IS `probe_*`, NOT `err_*`, AND THAT IS NOT DUPLICATION. The `err_*` lines all begin "Sync
+ * failed", which is a claim about a mailbox that exists and has a worker attached to it. Nothing
+ * has been stored when this fires — there is no mailbox and there was no sync — so reusing them
+ * would ship a false sentence in the deploy that removes one.
+ *
+ * UNKNOWN REASONS FALL BACK TO THE SERVER'S OWN SENTENCE rather than to a generic apology: a
+ * newer API that adds a taxonomy member must degrade to something true, and the server's message
+ * is always exactly that. It is also what `JoinScreen` shows, since it renders `messageOf`
+ * directly — so the two connect surfaces never disagree about a failure, they only differ in how
+ * localizable the words are.
  */
 const PROBE_REASONS = new Set([
   "auth", "connect", "tls", "timeout", "storage", "sync", "unknown",
@@ -537,24 +567,31 @@ export function MailboxSection() {
    */
   const [outlookOffer, setOutlookOffer] = useState(false);
   /**
-   * IS THE OUTLOOK DOOR ARMED ON THIS DEPLOYMENT (cloud 0009). `false` until the server says otherwise, and it FAILS
-   * CLOSED — the opposite of the billing gate two fields up, and deliberately. That gate withholds a connect only
-   * when it can prove the account is dead, because withholding one the server would allow is the worse error. Here
-   * the worse error is the one this flag exists to remove: a "Connect Outlook" button on a deployment whose Entra
-   * registration is disabled or half-entered, which answers a raw 503 the moment it is pressed. So an unread or
-   * unreadable capability leaves the door HIDDEN, and only an explicit `available: true` shows it. The value is a
-   * deployment fact — it flips only when an operator saves the admin form — so it is read once on mount and never
-   * polled.
+   * IS THE OUTLOOK DOOR ARMED ON THIS DEPLOYMENT (cloud 0009).
+   *
+   * `false` until the server says otherwise, and it FAILS CLOSED — the opposite of the billing gate
+   * two fields up, and deliberately. That gate withholds a connect only when it can prove the account
+   * is dead, because withholding one the server would allow is the worse error. Here the worse error
+   * is the one this flag exists to remove: a "Connect Outlook" button on a deployment whose Entra
+   * registration is disabled or half-entered, which answers a raw 503 the moment it is pressed. So an
+   * unread or unreadable capability leaves the door HIDDEN, and only an explicit `available: true`
+   * shows it. The value is a deployment fact — it flips only when an operator saves the admin form —
+   * so it is read once on mount and never polled.
    */
   const [oauthAvailable, setOauthAvailable] = useState(false);
   /**
-   * THE SECOND MICROSOFT DOOR — the device-code flow, on servers whose operator has no Entra registration of their
-   * own. Read from the same capability call as `oauthAvailable` and FAILS CLOSED for the identical reason: an unread
-   * or unreadable answer leaves this false, so no affordance appears for a ceremony this deployment cannot run. The
-   * two doors are independent — an install may have neither, either, or both — and they are NOT two buttons. One
-   * "Connect Outlook" affordance is offered when either is armed, and `startOutlook` picks: the operator's OWN
-   * registration wins when it is present, because it is theirs and it does not put their users behind a client id
-   * shared with every other install. The device flow is what makes the door exist at all for everybody else.
+   * THE SECOND MICROSOFT DOOR — the device-code flow, on servers whose operator has no Entra
+   * registration of their own.
+   *
+   * Read from the same capability call as `oauthAvailable` and FAILS CLOSED for the identical
+   * reason: an unread or unreadable answer leaves this false, so no affordance appears for a
+   * ceremony this deployment cannot run.
+   *
+   * The two doors are independent — an install may have neither, either, or both — and they are NOT
+   * two buttons. One "Connect Outlook" affordance is offered when either is armed, and
+   * `startOutlook` picks: the operator's OWN registration wins when it is present, because it is
+   * theirs and it does not put their users behind a client id shared with every other install. The
+   * device flow is what makes the door exist at all for everybody else.
    */
   const [deviceAvailable, setDeviceAvailable] = useState(false);
   /**
@@ -584,13 +621,16 @@ export function MailboxSection() {
    */
   const [accountId, setAccountId] = useState<string | null>(null);
   /**
-   * The same value, readable from an ASYNC CLOSURE that outlives the render it was created in. `startDeviceFlow`
-   * awaits a network round trip. If the session read resolves during that await — which is exactly the ordering this
-   * whole guard exists for, since the Outlook affordance is enabled by a DIFFERENT read — React re-renders with the
-   * account id while the in-flight closure still holds the `null` it captured. The synchronous write would then be
-   * skipped on the very path it was added to cover, leaving only the passive effect and the unload gap with it. A ref
-   * because it must be readable at WRITE time rather than at render time. Found by review, one layer under the fix
-   * that added the synchronous write.
+   * The same value, readable from an ASYNC CLOSURE that outlives the render it was created in.
+   *
+   * `startDeviceFlow` awaits a network round trip. If the session read resolves during that await —
+   * which is exactly the ordering this whole guard exists for, since the Outlook affordance is
+   * enabled by a DIFFERENT read — React re-renders with the account id while the in-flight closure
+   * still holds the `null` it captured. The synchronous write would then be skipped on the very
+   * path it was added to cover, leaving only the passive effect and the unload gap with it.
+   *
+   * A ref because it must be readable at WRITE time rather than at render time. Found by review,
+   * one layer under the fix that added the synchronous write.
    */
   const accountIdRef = useRef<string | null>(null);
   /**
@@ -618,36 +658,48 @@ export function MailboxSection() {
   useEffect(() => () => { alive.current = false; }, []);
 
   /**
-   * Re-read the mailbox list. `counts` is asked for on pane open and never on the poll: `messageCount` is one grouped
-   * aggregate over the account's whole `messages` table, and `refresh` runs on a 10-second timer while this pane is
-   * on screen — putting the count on the poll would buy a number that changes by single digits an hour and charge a
-   * full scan for it, six times a minute. Which is why the poll MERGES rather than replaces: a countless response
-   * omits the field entirely, so `setItems(got)` would drop the number ten seconds after the pane opened. The poll
-   * carries forward the last count each mailbox actually reported — `??`, matched on `id`, NOT `||`: `0` is a real
-   * count (an empty mailbox, or one still importing) and `||` would discard it.
-   */
-
-  /**
-   * A mailbox gone from the list takes its count with it, because the merge is keyed off the INCOMING rows; a stale
-   * id cannot resurrect a row or lend its number to a new one.
+   * Re-read the mailbox list.
+   *
+   * ── `counts` IS ASKED FOR ON PANE OPEN AND NEVER ON THE POLL ────────────────────────────
+   *
+   * `messageCount` is one grouped aggregate over the account's whole `messages` table, and
+   * `refresh` runs on a 10-second timer for as long as this pane is on screen (plus whatever
+   * `MailStateProvider` is doing every 30 s in the same tab). Putting the count on the poll
+   * would buy a number that changes by single digits an hour and charge a full scan of
+   * somebody's mail history for it, six times a minute. It is read once, when the pane mounts.
+   *
+   * ── WHICH IS WHY THE POLL MERGES RATHER THAN REPLACES ───────────────────────────────────
+   *
+   * A countless response omits the field entirely, so `setItems(got)` would drop the number
+   * ten seconds after the pane opened — the count would appear, sit there for one tick, and
+   * vanish for the rest of the visit. The poll therefore carries forward the last count each
+   * mailbox actually reported.
+   *
+   * `??`, matched on `id`, and NOT `|| `: `0` is a real count — an empty mailbox, or one still
+   * importing — and `||` would discard it and re-render the row as though nobody had asked.
+   * A mailbox that has gone from the list takes its count with it, because the merge is keyed
+   * off the INCOMING rows; a stale id cannot resurrect a row or lend its number to a new one.
    */
   const refresh = useCallback(async (opts: { counts?: boolean } = {}): Promise<void> => {
     try {
       const { items: got } = await mailboxApi.list(opts.counts ? { counts: true } : {});
       if (alive.current) {
         /**
-         * AND IT RETURNS `got` ITSELF WHEN THERE IS NOTHING TO CARRY: Not a micro-optimisation. `setItems` with a
-         * value React can see is unchanged makes React BAIL OUT of the re-render, and the first version of this merge
-         * — an unconditional `got.map(...)` — allocated a fresh array on every one of the six polls a minute, so
-         * every poll re-rendered the pane whether anything had changed or not. That is what made two suites hang
-         * rather than fail: the effect that renders an OAuth return depends on `refreshMailState`, and a render that
-         * produces a new binding re-runs it, and it calls `refresh()` — render → effect → refresh → render.
-         */
-
-        /**
-         * The real `MailStateProvider` memoizes its binding (`shell/MailStateProvider.tsx`) so the cycle does not
-         * close in the product; a test that stands in for it with a fresh closure per render closes it, and then the
-         * loop only needs a state update that never bails out. This is that update, so this is where it is fixed.
+         * ── AND IT RETURNS `got` ITSELF WHEN THERE IS NOTHING TO CARRY ────────────────────
+         *
+         * Not a micro-optimisation. `setItems` with a value React can see is unchanged makes
+         * React BAIL OUT of the re-render, and the first version of this merge — an
+         * unconditional `got.map(...)` — allocated a fresh array on every one of the six
+         * polls a minute, so every poll re-rendered the pane whether anything had changed or
+         * not.
+         *
+         * That is what made two suites hang rather than fail: the effect that renders an
+         * OAuth return depends on `refreshMailState`, and a render that produces a new
+         * binding re-runs it, and it calls `refresh()` — render → effect → refresh → render.
+         * The real `MailStateProvider` memoizes its binding (`shell/MailStateProvider.tsx`)
+         * so the cycle does not close in the product; a test that stands in for it with a
+         * fresh closure per render closes it, and then the loop only needs a state update
+         * that never bails out. This is that update, so this is where it is fixed.
          */
         setItems((prev) => {
           if (prev === null) return got;
@@ -665,21 +717,30 @@ export function MailboxSection() {
       }
     } catch (err) {
       /**
-       * A failed read is not an empty result — `setItems([])` was a claim, and the wrong one. This used to answer a
-       * REJECTION with the empty-result value, under a comment saying the shell reports outages around this pane.
-       * False for the case it was written for: on a 500 or 503 `MailStateProvider` holds `facts` at `null`,
-       * `mail-state.ts` returns `QUIET`, and `SyncBar` renders NOTHING. What the `[]` produced is a sentence — "No
-       * mailbox connected yet." — told to a customer whose three mailboxes are working, rewritten every ten seconds
-       * by the poll for as long as the outage lasts. `items` is therefore left ALONE: on a first load it stays
-       * `null`, which every reader treats as "unknown" (`connectBlock` takes `enabledCount: null` and produces no
-       * gate); on a poll it keeps the last list that was true.
-       */
-
-      /**
-       * `listFailed` stops "Reading your mailboxes…" becoming the new permanent lie, and the reason goes in `error`,
-       * the slot already rendered with `role="alert"`. The sentence is the SERVER'S: `api-client.ts` is explicit that
-       * re-deriving it here is how somebody is told they are out of slots when the real problem is an unpaid
-       * subscription.
+       * ── A FAILED READ IS NOT AN EMPTY RESULT — `setItems([])` WAS A CLAIM, AND IT WAS THE WRONG ONE ──────────────
+       *
+       * This used to answer a REJECTION with the value it uses for an empty result, under a
+       * comment saying "a signed-out or unreachable server is reported by the shell around
+       * this pane". That comment was false for the case it was written for: on a 500 or a
+       * 503 `MailStateProvider` deliberately holds `facts` at `null` and `mail-state.ts`
+       * returns `QUIET`, so `SyncBar` renders NOTHING. Nothing anywhere reported it.
+       *
+       * What the `[]` produced instead is a sentence: `items !== null && connected.length
+       * === 0` is **"No mailbox connected yet."**, told to a customer whose three mailboxes
+       * are working — and `refresh` is on a 10 s poll, so the false state is rewritten every
+       * ten seconds for as long as the outage lasts. Stable, not a flicker.
+       *
+       * `items` is therefore left ALONE. On a first load it stays `null`, which every reader
+       * in this pane already treats as "unknown" (`connectBlock` takes `enabledCount: null`
+       * and produces no gate); on a poll it keeps the last list that was actually true, which
+       * is a better answer than erasing it. `listFailed` is what stops the "Reading your
+       * mailboxes…" line from becoming the new permanent lie, and the reason goes in `error`
+       * — the slot this pane already renders with `role="alert"`.
+       *
+       * The sentence is the SERVER'S. `api-client.ts`'s header is explicit that re-deriving
+       * it here is how somebody is told they are out of mailbox slots when the real problem
+       * is an unpaid subscription, and an onboarding guard forbids those strings in webapp
+       * source outright.
        */
       if (alive.current) { setListFailed(true); setError(messageOf(err)); }
     }
@@ -722,30 +783,35 @@ export function MailboxSection() {
   const [releasing, setReleasing] = useState<ReadonlySet<string>>(() => new Set());
 
   /**
-   * MAILBOXES THIS PANE HAS ALREADY ASKED FOR — the released row's one press, spent. The ceremony's confirm needs no
-   * such thing: it lives inside a panel that `setOrganizer(null)` removes on the way out, so the control cannot
-   * survive its own press. The released row's button has no panel around it and the ROW DOES NOT MOVE when the press
-   * lands — the worker changes the role on its next pass, up to a minute later, and the poll brings it back after
-   * that. So without this the sentence and the button both sit there beside the "asked for" answer, inviting a second
-   * press that authorizes the same takeover again. NEVER CLEARED ON SUCCESS, deliberately: what ends this is the
-   * row's own role changing, which the poll delivers. Clearing it when the request returned would re-arm the button
-   * during exactly the window the answer under it says to wait through.
-   */
-
-  /**
-   * A FAILED request is removed again, because then nothing was asked for and the way back has to stay reachable.
+   * MAILBOXES THIS PANE HAS ALREADY ASKED FOR — the released row's one press, spent.
+   *
+   * The ceremony's confirm needs no such thing: it lives inside a panel that `setOrganizer(null)`
+   * removes on the way out, so the control cannot survive its own press. The released row's
+   * button has no panel around it and the ROW DOES NOT MOVE when the press lands — the worker
+   * changes the role on its next pass, up to a minute later, and the poll brings it back after
+   * that. So without this the sentence and the button both sit there beside the "asked for"
+   * answer, inviting a second press that authorizes the same takeover again.
+   *
+   * NEVER CLEARED ON SUCCESS, deliberately: what ends this is the row's own role changing, which
+   * the poll delivers. Clearing it when the request returned would re-arm the button during
+   * exactly the window the answer under it says to wait through. A FAILED request is removed
+   * again, because then nothing was asked for and the way back has to stay reachable.
    */
   const [takingOver, setTakingOver] = useState<ReadonlySet<string>>(() => new Set());
 
   /**
-   * STOP ORGANIZING THIS MAILBOX HERE, AND KEEP THE MAIL — the mirror of {@link confirmTakeover}. It records a
-   * request and does not perform it. The claim lives in the customer's own IMAP folder, so only the process holding
-   * that connection can give it up: the worker honours the request at its next gate, which is why the copy says
-   * "within a minute" rather than reporting it done, and why the answer is a statement rather than a spinner. NOT
-   * step-up-gated, and the asymmetry with the takeover is worth stating rather than smoothing over. A second factor
-   * guards the direction that TAKES CONTROL of somebody's mail; this gives it up, keeps every credential and every
-   * message, and is reversible with the button beside it. Gating it would mean somebody who has lost their second
-   * factor cannot stop a machine from filing their mail.
+   * STOP ORGANIZING THIS MAILBOX HERE, AND KEEP THE MAIL — the mirror of {@link confirmTakeover}.
+   *
+   * It records a request and does not perform it. The claim lives in the customer's own IMAP
+   * folder, so only the process holding that connection can give it up: the worker honours the
+   * request at its next gate, which is why the copy says "within a minute" rather than reporting
+   * it done, and why the answer is a statement rather than a spinner.
+   *
+   * NOT step-up-gated, and the asymmetry with the takeover is worth stating rather than smoothing
+   * over. A second factor guards the direction that TAKES CONTROL of somebody's mail; this gives
+   * it up, keeps every credential and every message, and is reversible with the button beside it.
+   * Gating it would mean somebody who has lost their second factor cannot stop a machine from
+   * filing their mail.
    */
   const confirmRelease = useCallback(async (id: string): Promise<void> => {
     setError(null);
@@ -889,12 +955,16 @@ export function MailboxSection() {
   }, [stage, loadGate]);
 
   /**
-   * KEEP LOOKING. A mailbox connected seconds ago reports `lastSyncAt: null` until the worker's next cycle — up to a
-   * minute — and the first version of this pane read the list once and never again. It said "Not synced yet" and went
-   * on saying it, which reads as a dead mailbox rather than a young one. Polling stops when the tab is hidden: this
-   * is a settings pane, not a monitor. AND IT NEVER ASKS FOR COUNTS. What this timer exists for is the sync state — a
-   * young mailbox's row changing from "No mail yet" to a stamp. `messageCount` is read once, on the mount effect
-   * above; `refresh` carries the last one forward so the number stays on screen.
+   * KEEP LOOKING. A mailbox connected seconds ago reports `lastSyncAt: null` until the
+   * worker's next cycle — up to a minute — and the first version of this pane read the list
+   * once and never again. It said "Not synced yet" and went on saying it, which reads as a
+   * dead mailbox rather than a young one.
+   *
+   * Polling stops when the tab is hidden: this is a settings pane, not a monitor.
+   *
+   * AND IT NEVER ASKS FOR COUNTS. What this timer exists for is the sync state — a young
+   * mailbox's row changing from "No mail yet" to a stamp. `messageCount` is read once, on the
+   * mount effect above; `refresh` carries the last one forward so the number stays on screen.
    */
   useEffect(() => {
     if (!apiConfigured()) return;
@@ -961,31 +1031,34 @@ export function MailboxSection() {
   };
 
   /**
-   * BEGIN the Microsoft consent — one call, then a TOP-LEVEL navigation. `mailboxId` is passed only for a RECONNECT,
-   * and only to preselect the account at the consent screen. It does not choose which row the ceremony writes; the
-   * address in Microsoft's `id_token` does, and mail 0021's unique index is what makes "the row for that address" a
-   * single row. `window.location.assign` and not a `fetch` that follows a redirect: a fetch cannot change the
-   * top-level document, Microsoft's consent screen refuses to be framed, and a popup is blocked in the common case.
-   * So the server hands back a URL and the browser goes there. A 503 `oauth_unconfigured` renders THE SERVER'S
-   * SENTENCE.
-   */
-
-  /**
-   * `api-client.ts`'s header is explicit that re-deriving these here is how somebody is told the wrong thing — and
-   * here the wrong thing would be "Microsoft refused you" about a deployment whose operator has not finished pasting
-   * a client secret in.
+   * BEGIN the Microsoft consent — one call, then a TOP-LEVEL navigation.
+   *
+   * `mailboxId` is passed only for a RECONNECT, and only to preselect the account at the consent
+   * screen. It does not choose which row the ceremony writes; the address in Microsoft's `id_token`
+   * does, and mail 0021's unique index is what makes "the row for that address" a single row.
+   *
+   * `window.location.assign` and not a `fetch` that follows a redirect: a fetch cannot change the
+   * top-level document, Microsoft's consent screen refuses to be framed, and a popup is blocked in
+   * the common case. So the server hands back a URL and the browser goes there.
+   *
+   * A 503 `oauth_unconfigured` renders THE SERVER'S SENTENCE. `api-client.ts`'s header is explicit
+   * that re-deriving these here is how somebody is told the wrong thing — and here the wrong thing
+   * would be "Microsoft refused you" about a deployment whose operator has not finished pasting a
+   * client secret in.
    */
   const startOutlook = (mailboxId?: string): void => {
     setError(null);
     setNotice(null);
-    /**
-     * WHICH DOOR. The operator's OWN registration wins whenever it is armed, and the reason is not that the redirect
-     * flow is nicer: it is theirs. The device flow runs against a client id shared by every install using it, so a
-     * throttle or an abuse report against that application is felt by strangers — an operator who has done the work
-     * of registering their own application should not be quietly put behind the shared one. `deviceAvailable` alone
-     * is the ordinary self-hosted case, and it is the whole reason this branch exists: before it, an install with no
-     * Entra registration had no way to connect an Outlook mailbox at all on a tenant where basic authentication is
-     * already off.
+    /*
+     * WHICH DOOR. The operator's OWN registration wins whenever it is armed, and the reason is not
+     * that the redirect flow is nicer: it is theirs. The device flow runs against a client id shared
+     * by every install using it, so a throttle or an abuse report against that application is felt
+     * by strangers — an operator who has done the work of registering their own application should
+     * not be quietly put behind the shared one.
+     *
+     * `deviceAvailable` alone is the ordinary self-hosted case, and it is the whole reason this
+     * branch exists: before it, an install with no Entra registration had no way to connect an
+     * Outlook mailbox at all on a tenant where basic authentication is already off.
      */
     if (!oauthAvailable && deviceAvailable) { startDeviceFlow(); return; }
     setOauthBusy("starting");
@@ -1020,14 +1093,17 @@ export function MailboxSection() {
   };
 
   /**
-   * THE DEVICE-CODE CEREMONY — no redirect, and the app is never left. What the person does: read a short code off
-   * this screen, open a URL on any device they like, type the code, sign in to Microsoft. Their own server does the
-   * rest over its own back channel; the tokens are issued straight to it. That is why this is the door for an install
-   * that is not `ohmail.app` — there is no redirect URI to register with Microsoft, so nothing has to be, and no
-   * stranger's refresh token passes through anybody else's infrastructure. The ceremony survives this component: it
-   * is a database row on the operator's server. Navigating away loses the code from the screen (a poll re-supplies
-   * it, which is why the server stores the display values) and the grant simply expires on Microsoft's own schedule
-   * if nobody finishes it.
+   * THE DEVICE-CODE CEREMONY — no redirect, and the app is never left.
+   *
+   * What the person does: read a short code off this screen, open a URL on any device they like,
+   * type the code, sign in to Microsoft. Their own server does the rest over its own back channel;
+   * the tokens are issued straight to it. That is why this is the door for an install that is not
+   * `ohmail.app` — there is no redirect URI to register with Microsoft, so nothing has to be, and
+   * no stranger's refresh token passes through anybody else's infrastructure.
+   *
+   * The ceremony survives this component: it is a database row on the operator's server. Navigating
+   * away loses the code from the screen (a poll re-supplies it, which is why the server stores the
+   * display values) and the grant simply expires on Microsoft's own schedule if nobody finishes it.
    */
   const startDeviceFlow = (): void => {
     setError(null);
@@ -1056,14 +1132,17 @@ export function MailboxSection() {
           // and every later one is scheduled from what the server says it will accept.
           retryAfterMs: 0,
         };
-        /**
-         * PERSISTED SYNCHRONOUSLY WHEN THE OWNER IS ALREADY KNOWN — the ordinary case. The effect below is the
-         * LATE-SESSION path and cannot be the only one: a passive effect runs after the browser has been yielded to,
-         * so a reload or an unload in that window would leave the grant live on the server with no handle in this tab
-         * — the exact recovery gap the persistence exists to close, reintroduced by moving the write out of here.
-         * Found by review on the fix that moved it. Both paths are gated on a real `accountId`, so neither can write
-         * the empty owner that the restore would later delete as unowned. Writing twice is harmless — same key, same
-         * value.
+        /*
+         * PERSISTED SYNCHRONOUSLY WHEN THE OWNER IS ALREADY KNOWN — the ordinary case.
+         *
+         * The effect below is the LATE-SESSION path and cannot be the only one: a passive effect
+         * runs after the browser has been yielded to, so a reload or an unload in that window would
+         * leave the grant live on the server with no handle in this tab — the exact recovery gap the
+         * persistence exists to close, reintroduced by moving the write out of here. Found by review
+         * on the fix that moved it.
+         *
+         * Both paths are gated on a real `accountId`, so neither can write the empty owner that the
+         * restore would later delete as unowned. Writing twice is harmless — same key, same value.
          */
         const owner = accountIdRef.current;
         if (owner) rememberDevice({ ...live, accountId: owner });
@@ -1077,19 +1156,20 @@ export function MailboxSection() {
   };
 
   /**
-   * PERSIST THE LIVE CEREMONY — and ONLY once its owner is actually known. WHY THIS IS AN EFFECT AND NOT A LINE IN
-   * `startDeviceFlow`: The pane makes three independent reads on mount: the mailbox list, the availability
-   * capability, and the session. The Outlook affordance is enabled by the second, so a ceremony can legitimately
-   * START before the third has landed — and the first version of this stamped whatever `accountId` held at that
-   * moment, which was `null`. The restore effect below then read that record back, found an owner it could not match,
-   * and DELETED IT — while the in-memory poll loop carried on happily. The ceremony worked, and the reload recovery
-   * it exists for was silently gone. Found by review, and it is the third round in a row where the fix for one layer
-   * opened the next one down.
-   */
-
-  /**
-   * Writing the record from here closes the family rather than the instance: there is one writer, it runs whenever
-   * either fact changes, and it cannot write an owner it does not have.
+   * PERSIST THE LIVE CEREMONY — and ONLY once its owner is actually known.
+   *
+   * ── WHY THIS IS AN EFFECT AND NOT A LINE IN `startDeviceFlow` ──────────────────────────────
+   *
+   * The pane makes three independent reads on mount: the mailbox list, the availability capability,
+   * and the session. The Outlook affordance is enabled by the second, so a ceremony can legitimately
+   * START before the third has landed — and the first version of this stamped whatever `accountId`
+   * held at that moment, which was `null`. The restore effect below then read that record back,
+   * found an owner it could not match, and DELETED IT — while the in-memory poll loop carried on
+   * happily. The ceremony worked, and the reload recovery it exists for was silently gone.
+   *
+   * Found by review, and it is the third round in a row where the fix for one layer opened the next
+   * one down. Writing the record from here closes the family rather than the instance: there is one
+   * writer, it runs whenever either fact changes, and it cannot write an owner it does not have.
    */
   useEffect(() => {
     if (!device || !accountId) return;
@@ -1097,13 +1177,16 @@ export function MailboxSection() {
   }, [device, accountId]);
 
   /**
-   * PICK UP A CEREMONY THIS TAB WAS ALREADY RUNNING — once both facts are known. A reload inside the fifteen minutes
-   * somebody spends approving a code used to lose the handle and strand the grant. Two independent reads gate the
-   * restore and neither one's arrival order is guaranteed, which is why this is its own effect rather than a line
-   * inside one of them:
-   * · the door must still be ARMED — an operator who unset the variable mid-ceremony should not be handed a code
-   *   that can no longer be completed;
-   * · the ACCOUNT must be known and must match, or another account's code renders on this pane.
+   * PICK UP A CEREMONY THIS TAB WAS ALREADY RUNNING — once both facts are known.
+   *
+   * A reload inside the fifteen minutes somebody spends approving a code used to lose the handle
+   * and strand the grant. Two independent reads gate the restore and neither one's arrival order is
+   * guaranteed, which is why this is its own effect rather than a line inside one of them:
+   *
+   *  · the door must still be ARMED — an operator who unset the variable mid-ceremony should not be
+   *    handed a code that can no longer be completed;
+   *  · the ACCOUNT must be known and must match, or another account's code renders on this pane.
+   *
    * `setDevice((cur) => cur ?? resumed)` so a ceremony started by hand in the meantime always wins.
    */
   useEffect(() => {
@@ -1118,19 +1201,23 @@ export function MailboxSection() {
   };
 
   /**
-   * THE POLL LOOP — one timer, cadence from the SERVER, and it stops on the first terminal answer. WHY THE DELAY IS
-   * NEVER THIS CLIENT'S CHOICE: The interval is Microsoft's, it grows cumulatively when Microsoft says `slow_down`
-   * (RFC 8628 §3.5), and the application being throttled is SHARED with every other install using the public client.
-   * So `retryAfterMs` comes back from each poll and is used verbatim. The server also refuses an early poll outright
-   * — atomically, without a request to Microsoft — so polling faster would buy nothing; this is written the honest
-   * way round so that the code and the enforcement say the same thing rather than one of them being decoration. A
-   * `setTimeout` PER POLL, NOT A `setInterval`: The delay changes between polls, and a fixed interval would keep the
-   * first one for ever — which is precisely the case where Microsoft has asked us to slow down.
-   */
-
-  /**
-   * Each poll schedules the next from the answer it just got, and the effect's cleanup cancels whatever is pending,
-   * so a navigation mid-ceremony leaves no timer behind.
+   * THE POLL LOOP — one timer, cadence from the SERVER, and it stops on the first terminal answer.
+   *
+   * ── WHY THE DELAY IS NEVER THIS CLIENT'S CHOICE ────────────────────────────────────────────
+   *
+   * The interval is Microsoft's, it grows cumulatively when Microsoft says `slow_down` (RFC 8628
+   * §3.5), and the application being throttled is SHARED with every other install using the public
+   * client. So `retryAfterMs` comes back from each poll and is used verbatim. The server also
+   * refuses an early poll outright — atomically, without a request to Microsoft — so polling faster
+   * would buy nothing; this is written the honest way round so that the code and the enforcement say
+   * the same thing rather than one of them being decoration.
+   *
+   * ── A `setTimeout` PER POLL, NOT A `setInterval` ───────────────────────────────────────────
+   *
+   * The delay changes between polls, and a fixed interval would keep the first one for ever — which
+   * is precisely the case where Microsoft has asked us to slow down. Each poll schedules the next
+   * from the answer it just got, and the effect's cleanup cancels whatever is pending, so a
+   * navigation mid-ceremony leaves no timer behind.
    */
   useEffect(() => {
     if (!device) return;
@@ -1142,14 +1229,18 @@ export function MailboxSection() {
       try {
         const r = await mailboxApi.deviceOAuthPoll({ state: device.state });
         if (stopped || !alive.current) return;
-        /**
-         * A VALID ANSWER CLEARS THIS LOOP'S OWN PREVIOUS FAILURE — and only its own. The catch below shows the
-         * server's "Microsoft could not be reached" sentence, correctly, because a silent pause reads as a hung
-         * screen to somebody staring at a code. Nothing used to take it down again, so a ceremony that recovered
-         * rendered a red error beside the green "connected" notice. The first fix cleared the PANE-WIDE `error`,
-         * which was worse in a quieter way: a failed resync writes that field, and this poll runs every few seconds,
-         * so a message about an operation that never recovered would vanish within moments of appearing. A review
-         * caught it. The device flow now owns its own line and touches nobody else's.
+        /*
+         * A VALID ANSWER CLEARS THIS LOOP'S OWN PREVIOUS FAILURE — and only its own.
+         *
+         * The catch below shows the server's "Microsoft could not be reached" sentence, correctly,
+         * because a silent pause reads as a hung screen to somebody staring at a code. Nothing used
+         * to take it down again, so a ceremony that recovered rendered a red error beside the green
+         * "connected" notice.
+         *
+         * The first fix cleared the PANE-WIDE `error`, which was worse in a quieter way: a failed
+         * resync writes that field, and this poll runs every few seconds, so a message about an
+         * operation that never recovered would vanish within moments of appearing. A review caught
+         * it. The device flow now owns its own line and touches nobody else's.
          */
         setDevicePollError(null);
         if (r.status === "granted") {
@@ -1184,23 +1275,29 @@ export function MailboxSection() {
         timer = setTimeout(() => { void poll(); }, next || DEVICE_POLL_FLOOR_MS);
       } catch (err) {
         if (stopped || !alive.current) return;
-        /**
-         * A FAILED POLL IS NOT A FAILED CEREMONY, and the loop does not stop on one. The server answers 503 for
-         * "Microsoft could not be reached" and says in as many words that the sign-in is still valid; the grant's own
-         * expiry is the bound, and it is checked server-side on every poll. So the error is shown — a silent pause
-         * here reads as a hung screen to somebody staring at a code — and the loop re-arms on the floor cadence. The
-         * one thing that DOES stop it is the ceremony being gone: a 400 `state_invalid` means the row has reached a
-         * terminal verdict or been pruned, and re-polling it for fifteen minutes would be asking a question that now
-         * has one permanent answer.
+        /*
+         * A FAILED POLL IS NOT A FAILED CEREMONY, and the loop does not stop on one. The server
+         * answers 503 for "Microsoft could not be reached" and says in as many words that the
+         * sign-in is still valid; the grant's own expiry is the bound, and it is checked server-side
+         * on every poll. So the error is shown — a silent pause here reads as a hung screen to
+         * somebody staring at a code — and the loop re-arms on the floor cadence.
+         *
+         * The one thing that DOES stop it is the ceremony being gone: a 400 `state_invalid` means
+         * the row has reached a terminal verdict or been pruned, and re-polling it for fifteen
+         * minutes would be asking a question that now has one permanent answer.
          */
-        /**
-         * WHICH LINE THE MESSAGE GOES ON DEPENDS ON WHETHER THE CEREMONY SURVIVES IT. A TERMINAL refusal — the row
-         * reached a verdict, was pruned, or belongs to another account — ends the ceremony, and the block that
-         * renders `devicePollError` is inside the ceremony's own markup. Putting the explanation there and then
-         * nulling `device` in the same tick meant React unmounted the container and the message with it: the code
-         * simply vanished off the screen with nothing said. Found by review, and it is the same mistake as the sticky
-         * error one layer over — the right question is not "which field" but "does the surface that shows this field
-         * still exist". So a terminal failure goes to the PANE-WIDE error, which outlives the ceremony, and a
+        /*
+         * WHICH LINE THE MESSAGE GOES ON DEPENDS ON WHETHER THE CEREMONY SURVIVES IT.
+         *
+         * A TERMINAL refusal — the row reached a verdict, was pruned, or belongs to another account
+         * — ends the ceremony, and the block that renders `devicePollError` is inside the ceremony's
+         * own markup. Putting the explanation there and then nulling `device` in the same tick meant
+         * React unmounted the container and the message with it: the code simply vanished off the
+         * screen with nothing said. Found by review, and it is the same mistake as the sticky error
+         * one layer over — the right question is not "which field" but "does the surface that shows
+         * this field still exist".
+         *
+         * So a terminal failure goes to the PANE-WIDE error, which outlives the ceremony, and a
          * transient one stays on the ceremony's own line where the loop is still running.
          */
         if (codeOf(err) === "oauth_device_state_invalid" || codeOf(err) === "forbidden") {
@@ -1228,13 +1325,17 @@ export function MailboxSection() {
   }, [device?.state, refresh, refreshMailState, t]);
 
   /**
-   * THE BOUNCE'S LANDING — READ, NOT PERFORMED. This pane no longer runs the ceremony. `oauth-return.ts` does, at
-   * module scope, from the query alone, before any of this renders. That is a correction of a production failure and
-   * not a refactor: this used to be a mount effect, so a consent that came back to any screen other than Settings →
-   * Mailboxes was never completed at all — the browser sat on the Ohbox with an authorization code in the query and a
-   * ceremony row that was never consumed. A step that must happen on EVERY landing cannot be owned by a component
-   * that mounts on SOME of them. `beginOAuthReturn()` is called here as well as from `CloudShell` because it is
-   * idempotent and because this file must not depend on which of its two hosts got there first — a pane rendered by
+   * THE BOUNCE'S LANDING — READ, NOT PERFORMED. This pane no longer runs the ceremony.
+   *
+   * `oauth-return.ts` does, at module scope, from the query alone, before any of this renders. That
+   * is a correction of a production failure and not a refactor: this used to be a mount effect, so a
+   * consent that came back to any screen other than Settings → Mailboxes was never completed at all —
+   * the browser sat on the Ohbox with an authorization code in the query and a ceremony row that was
+   * never consumed. A step that must happen on EVERY landing cannot be owned by a component that
+   * mounts on SOME of them.
+   *
+   * `beginOAuthReturn()` is called here as well as from `CloudShell` because it is idempotent and
+   * because this file must not depend on which of its two hosts got there first — a pane rendered by
    * some other shell still finishes what it finds. The second call is a latch read, never a POST.
    */
   const back = useSyncExternalStore(subscribeOAuthOutcome, oauthOutcome, noOAuthOutcome);
@@ -1274,14 +1375,17 @@ export function MailboxSection() {
   const finishing = back?.kind === "running";
 
   /**
-   * The sentence for a refused probe — and, for the two actionable TLS kinds, the side state that changes what the
-   * form OFFERS: `tls_unavailable` (IMAP only) unlocks the plaintext opt-in, a `hostname_mismatch` with a suggestion
-   * arms the one-press host correction. ABOVE the fail() handler, not below it, and the position is load-bearing: a
-   * reachability guard reads the source window from fail()'s declaration to connect()'s and asserts nothing in it
-   * resets the typed state — a failure path must never discard what the user typed. applySuggestion's reset is a
-   * user-initiated press, not a failure path, so it lives outside that window rather than being granted an exemption.
-   * (No declaration-shaped literals in this comment either: the test finds its window with indexOf, and a comment
-   * that quotes the anchor verbatim becomes the anchor.)
+   * The sentence for a refused probe — and, for the two actionable TLS kinds, the side state
+   * that changes what the form OFFERS: `tls_unavailable` (IMAP only) unlocks the plaintext
+   * opt-in, a `hostname_mismatch` with a suggestion arms the one-press host correction.
+   *
+   * ABOVE the fail() handler, not below it, and the position is load-bearing:
+   * a reachability guard reads the source window from fail()'s declaration to
+   * connect()'s and asserts nothing in it resets the typed state — a failure path must never
+   * discard what the user typed. applySuggestion's reset is a user-initiated press, not a
+   * failure path, so it lives outside that window rather than being granted an exemption.
+   * (No declaration-shaped literals in this comment either: the test finds its window with
+   * indexOf, and a comment that quotes the anchor verbatim becomes the anchor.)
    */
   const probeErrorCopy = (err: unknown, reason: string): string => {
     const tls = probeTlsOf(err);
@@ -1399,14 +1503,18 @@ export function MailboxSection() {
       refreshMailState();
     } catch (err) {
       if (!alive.current) return;
-      // A refused probe sends the user back to the FORM, not to the factor step. Everything else `connect()` can fail
-      // with is about the account (a spent step-up, an entitlement, a duplicate); the factor step is a sensible place
-      // to stand for those. A probe refusal is about the four fields that were typed, and the factor step has no way
-      // to change them — its own escape hatch goes back only as far as the password. Leaving somebody there with
-      // "check the IMAP host" is a dead end: the login token is single-use and spent, so the one thing they can do is
-      // the one thing that screen cannot offer. `typed` is untouched, so the form comes back with the host and
-      // password still in it and the correction is a keystroke. The ceremony does have to run again — the token is
-      // spent — and that is the honest cost of having changed the credentials.
+      // A refused probe sends the user back to the FORM, not to the factor step.
+      //
+      // Everything else `connect()` can fail with is about the account (a spent step-up, an
+      // entitlement, a duplicate); the factor step is a sensible place to stand for those. A probe
+      // refusal is about the four fields that were typed, and the factor step has no way to change
+      // them — its own escape hatch goes back only as far as the password. Leaving somebody there
+      // with "check the IMAP host" is a dead end: the login token is single-use and spent, so the
+      // one thing they can do is the one thing that screen cannot offer.
+      //
+      // `typed` is untouched, so the form comes back with the host and password still in it and
+      // the correction is a keystroke. The ceremony does have to run again — the token is spent —
+      // and that is the honest cost of having changed the credentials.
       const reason = probeReasonOf(err);
       if (reason) {
         setStage("form");
@@ -1422,13 +1530,18 @@ export function MailboxSection() {
   };
 
   /**
-   * The last step of an EDIT, reached only from a verified second factor — the PATCH sibling of {@link connect}. A
-   * REFUSED PROBE LEAVES THE EXISTING MAILBOX RUNNING: This is the whole point of the flow and the reason it goes
-   * through the probe at all. The server tries the new credentials BEFORE it stores them, so a wrong password (or a
-   * mistyped host) is answered `mailbox_probe_failed` and NOTHING is written: the stored credential is left in place,
-   * the mailbox's status is untouched, and the worker keeps organizing it on its stored login. So a refusal returns
-   * to the EDIT form — the fields the user can correct are there and `edited` still holds them — never to a state
-   * that has stood the mailbox down. Same shape as a refused connect probe, one door over.
+   * The last step of an EDIT, reached only from a verified second factor — the PATCH sibling of
+   * {@link connect}.
+   *
+   * ── A REFUSED PROBE LEAVES THE EXISTING MAILBOX RUNNING ──────────────────────────────────────
+   *
+   * This is the whole point of the flow and the reason it goes through the probe at all. The
+   * server tries the new credentials BEFORE it stores them, so a wrong password (or a mistyped
+   * host) is answered `mailbox_probe_failed` and NOTHING is written: the stored credential is left
+   * in place, the mailbox's status is untouched, and the worker keeps organizing it on its stored
+   * login. So a refusal returns to the EDIT form — the fields the user can correct are there and
+   * `edited` still holds them — never to a state that has stood the mailbox down. Same shape as a
+   * refused connect probe, one door over.
    */
   const saveEdit = async (): Promise<void> => {
     const target = editing;
@@ -1477,12 +1590,16 @@ export function MailboxSection() {
   };
 
   /**
-   * REMOVE THE MAILBOX — reached only from a verified second factor, like every other write here. The server does the
-   * whole of it in one transaction: the row goes `disabled` with its lease and sync columns cleared, the credential
-   * rows are deleted, and the pending scheduled sends are closed with a sentence. Nothing here reaches the IMAP
-   * mailbox, which is the claim the confirmation makes. A failure returns to the CONFIRMATION rather than to the
-   * list, for `saveEdit`'s reason: the person is mid-decision, and dropping them back to a list that still shows the
-   * mailbox says nothing about whether the removal happened.
+   * REMOVE THE MAILBOX — reached only from a verified second factor, like every other write here.
+   *
+   * The server does the whole of it in one transaction: the row goes `disabled` with its lease and
+   * sync columns cleared, the credential rows are deleted, and the pending scheduled sends are
+   * closed with a sentence. Nothing here reaches the IMAP mailbox, which is the claim the
+   * confirmation makes.
+   *
+   * A failure returns to the CONFIRMATION rather than to the list, for `saveEdit`'s reason: the
+   * person is mid-decision, and dropping them back to a list that still shows the mailbox says
+   * nothing about whether the removal happened.
    */
   const removeMailbox = async (): Promise<void> => {
     const target = removing;
@@ -1647,60 +1764,71 @@ export function MailboxSection() {
   });
 
   /**
-   * THE MICROSOFT TILE CONNECTS BY SIGN-IN, on a deployment whose Entra registration is armed. Picking it and
-   * pressing Continue enters the SAME consent ceremony the standalone "Connect Outlook" button starts — no address,
-   * no host, no password, because Microsoft states the address in the token it issues. The app-password fields are
-   * the SECONDARY path, for a work tenant that blocks the sign-in, reached by an explicit "use an app password
-   * instead". When NEITHER door is armed the tile falls back to the app-password form as before, because that path
-   * needs no server-side registration. EITHER door counts. Which ceremony `startOutlook` then runs — the redirect, or
-   * the device code — is the server's configuration and not something this tile has an opinion about; what matters
+   * THE MICROSOFT TILE CONNECTS BY SIGN-IN, on a deployment whose Entra registration is armed.
+   *
+   * Picking it and pressing Continue enters the SAME consent ceremony the standalone "Connect
+   * Outlook" button starts — no address, no host, no password, because Microsoft states the address
+   * in the token it issues. The app-password fields are the SECONDARY path, for a work tenant that
+   * blocks the sign-in, reached by an explicit "use an app password instead". When NEITHER door is
+   * armed the tile falls back to the app-password form as before, because that path needs no
+   * server-side registration.
+   *
+   * EITHER door counts. Which ceremony `startOutlook` then runs — the redirect, or the device code —
+   * is the server's configuration and not something this tile has an opinion about; what matters
    * here is the one thing this predicate decides, which is whether Continue asks for a password.
-   */
-
-  /**
-   * Gating on the redirect flow alone would have shown an app-password form as the only way in on exactly the
-   * installs where the device flow is the only way in.
+   * Gating on the redirect flow alone would have shown an app-password form as the only way in on
+   * exactly the installs where the device flow is the only way in.
    */
   const microsoftOauth =
     typed.provider?.id === "microsoft" && (oauthAvailable || deviceAvailable) && !msAppPassword;
 
-  /**
-   * TEST CONNECTION: This form had no way to check a mailbox's login before storing it, and `POST /mailboxes/probe`
-   * shipped with no caller at all. This block is that caller, and it is worth more here than anywhere else in the
-   * product because of what stands between this form and a stored mailbox: "Continue" leads to the ACCOUNT password
-   * and a step-up ceremony. Somebody who has mistyped a host or pasted the wrong app password used to discover it
-   * only after paying that ceremony, and the refusal arrives with the mailbox credentials still in a form they then
-   * have to re-approach. One press, before any of it, answers the question the ceremony is for. IT WRITES NOTHING. No
-   * mailbox row, no credential, no folder — the endpoint opens one connection, signs in, lists, and hangs up. The
-   * verdict says so, which is the whole reason it can be offered before consent to store anything.
-   */
-
-  /**
-   * THE SENTENCES ARE ALREADY WRITTEN. Failures are the fourteen `probe_*` lines this pane already renders for a
-   * refused CREATE — the service throws the same refusal on both paths, so one vocabulary covers them. Success is the
-   * flow's `probeOk`, reused rather than duplicated: two spellings of "the server answered, signed in, N folders" is
-   * how one of them ends up describing a different number.
+  /* ── TEST CONNECTION ──────────────────────────────────────────────────────────────────────
+   *
+   * This form had no way to check a mailbox's login before storing it, and `POST /mailboxes/probe`
+   * shipped with no caller at all. This block is that caller, and it is worth more
+   * here than anywhere else in the product because of what stands between this form and a stored
+   * mailbox: "Continue" leads to the ACCOUNT password and a step-up ceremony. Somebody who has
+   * mistyped a host or pasted the wrong app password used to discover it only after paying that
+   * ceremony, and the refusal arrives with the mailbox credentials still in a form they then have
+   * to re-approach. One press, before any of it, answers the question the ceremony is for.
+   *
+   * IT WRITES NOTHING. No mailbox row, no credential, no folder — the endpoint opens one
+   * connection, signs in, lists, and hangs up. The verdict says so, which is the whole reason it
+   * can be offered before consent to store anything.
+   *
+   * THE SENTENCES ARE ALREADY WRITTEN. Failures are the fourteen `probe_*` lines this pane
+   * already renders for a refused CREATE — the service throws the same refusal on both paths, so
+   * one vocabulary covers them. Success is the flow's `probeOk`, reused rather than duplicated:
+   * two spellings of "the server answered, signed in, N folders" is how one of them ends up
+   * describing a different number.
    */
   const [probing, setProbing] = useState(false);
   /**
-   * WHICH TEST IS THE NEWEST — the generation guard, and it is not defensive spelling. Clearing the verdict when a
-   * field changes is only half the rule. The other half is that a test ALREADY IN FLIGHT resolves later, and its
-   * `setProbeOk` does not know the form has moved: start a test against A, edit the host to B (the verdict clears,
-   * correctly), A's answer lands, and A's green tick is now sitting over B. The clear made it worse rather than
-   * better, because the tick reappears with nothing on screen having been pressed. So every landing checks that it is
-   * still the newest request. `appliedSeq`'s discipline, from `consent-state.ts`, applied to a press instead of a
-   * poll.
+   * WHICH TEST IS THE NEWEST — the generation guard, and it is not defensive spelling.
+   *
+   * Clearing the verdict when a field changes is only half the rule. The other half is that a
+   * test ALREADY IN FLIGHT resolves later, and its `setProbeOk` does not know the form has moved:
+   * start a test against A, edit the host to B (the verdict clears, correctly), A's answer lands,
+   * and A's green tick is now sitting over B. The clear made it worse rather than better, because
+   * the tick reappears with nothing on screen having been pressed.
+   *
+   * So every landing checks that it is still the newest request. `appliedSeq`'s discipline, from
+   * `consent-state.ts`, applied to a press instead of a poll.
    */
   const probeSeq = useRef(0);
   /**
-   * ANY CHANGE TO A PROBED FIELD CLEARS THE VERDICT. A green tick describes ONE configuration — this host, this
-   * identity, this password. Edit any of them and it describes a configuration that is no longer in the form, and the
-   * person is looking at evidence for something they are not about to submit. The endpoint re-proves everything
-   * before anything is stored, so nothing unproved can be written either way; what is at stake is the SENTENCE on
-   * screen, which would be about a different mailbox than the one the next press creates. The flow's own step 1
-   * clears on the same rule and additionally gates its primary on the verdict; this form's primary leads to a step-up
-   * ceremony rather than straight to a write, so here the verdict informs rather than authorises — but it still may
-   * not be stale.
+   * ANY CHANGE TO A PROBED FIELD CLEARS THE VERDICT.
+   *
+   * A green tick describes ONE configuration — this host, this identity, this password. Edit any
+   * of them and it describes a configuration that is no longer in the form, and the person is
+   * looking at evidence for something they are not about to submit. The endpoint re-proves
+   * everything before anything is stored, so nothing unproved can be written either way; what is
+   * at stake is the SENTENCE on screen, which would be about a different mailbox than the one the
+   * next press creates.
+   *
+   * The flow's own step 1 clears on the same rule and additionally gates its primary on the
+   * verdict; this form's primary leads to a step-up ceremony rather than straight to a write, so
+   * here the verdict informs rather than authorises — but it still may not be stale.
    */
   const clearVerdict = useCallback(() => {
     /* IT RETIRES THE REQUEST, not just the sentence — and believing the generation counter alone
@@ -1725,19 +1853,21 @@ export function MailboxSection() {
   }, []);
 
   /**
-   * RETIRE EVERYTHING THAT WAS LEARNED ABOUT THE PREVIOUS SERVER — not just the test's verdict. Three things on this
-   * form are EVIDENCE ABOUT ONE HOST, and all three used to survive a change of that host:
-   * · `insecureOffer` — the plaintext checkbox, which only appears because a server reported it has no TLS at all;
-   * · `typed.allowInsecure` — the consent itself, and this is the one that matters. It is sent by the create AND
-   *   (since the test began sending what the create sends) by the probe. Granted about server A and carried onto
-   *   server B, it offers B an exemption nobody granted it: a password travelling in the clear to a host that was
-   *   never asked about;
-   * · `suggestion` — a canonical host offered by A's certificate, which says nothing about B.
-   */
-
-  /**
-   * NOT called by the checkbox's own handler, which would un-check it the instant it was ticked. The distinction is
-   * the point: toggling the consent is not changing the thing it is about.
+   * RETIRE EVERYTHING THAT WAS LEARNED ABOUT THE PREVIOUS SERVER — not just the test's verdict.
+   *
+   * Three things on this form are EVIDENCE ABOUT ONE HOST, and all three used to survive a change
+   * of that host:
+   *
+   *  · `insecureOffer` — the plaintext checkbox, which only appears because a server reported it
+   *    has no TLS at all;
+   *  · `typed.allowInsecure` — the consent itself, and this is the one that matters. It is sent by
+   *    the create AND (since the test began sending what the create sends) by the probe. Granted
+   *    about server A and carried onto server B, it offers B an exemption nobody granted it: a
+   *    password travelling in the clear to a host that was never asked about;
+   *  · `suggestion` — a canonical host offered by A's certificate, which says nothing about B.
+   *
+   * NOT called by the checkbox's own handler, which would un-check it the instant it was ticked.
+   * The distinction is the point: toggling the consent is not changing the thing it is about.
    */
   const retireHostEvidence = useCallback(() => {
     clearVerdict();
@@ -1780,16 +1910,18 @@ export function MailboxSection() {
     setProbeBad(null);
     try {
       const address = typed.address.trim();
-      /**
-       * THE TEST MUST DIAL WHAT THE CREATE WOULD DIAL, FIELD FOR FIELD: Mirrors the `imap` block of `connect()` below
-       * EXACTLY, and the manual arm is the reason this is spelled out rather than approximated. A manual provider
-       * sends NO port and NO TLS mode: their absence is what asks the server to walk the standard ladder (993
-       * implicit TLS, then 143 STARTTLS) and keep whichever rung answered. Sending the generic preset's nominal
-       * 993/TLS instead would pin the test to one rung — so a server that speaks only STARTTLS on 143 would fail the
-       * test and then be accepted by the create on the very next press. A test that disagrees with the thing it is
-       * testing is worse than no test. The username is defaulted here for the same reason: the service defaults an
-       * absent one to the address, and the create sends it explicitly, so both must land on one string.
-       */
+      /* ── THE TEST MUST DIAL WHAT THE CREATE WOULD DIAL, FIELD FOR FIELD ────────────────────
+       *
+       * Mirrors the `imap` block of `connect()` below EXACTLY, and the manual arm is the reason
+       * this is spelled out rather than approximated. A manual provider sends NO port and NO TLS
+       * mode: their absence is what asks the server to walk the standard ladder (993 implicit
+       * TLS, then 143 STARTTLS) and keep whichever rung answered. Sending the generic preset's
+       * nominal 993/TLS instead would pin the test to one rung — so a server that speaks only
+       * STARTTLS on 143 would fail the test and then be accepted by the create on the very next
+       * press. A test that disagrees with the thing it is testing is worse than no test.
+       *
+       * The username is defaulted here for the same reason: the service defaults an absent one to
+       * the address, and the create sends it explicitly, so both must land on one string. */
       const chosen = typed.provider;
       const r = await mailboxApi.probe({
         address,
@@ -1819,16 +1951,17 @@ export function MailboxSection() {
 
   return (
     <SettingsSection>
-      {/*
-          THE MODE THIS PANE IS SHOWING. An install is Cloud OR local, never both in parallel (desktop is per-install,
-          not per-mailbox), so the pane names which one it is rather than leaving the reader to infer it from the
-          connect ceremony below. The desktop's own pane heads itself "Local mailboxes on this computer" for the same
-          reason. AND THE SELF-HOST BUILD IS A THIRD ANSWER, not a spelling of the first. This heading was "Cloud
-          mailboxes" on every browser build, so an operator running their own server read a claim about a hosted
-          service they had deliberately not bought. `SELF_HOST_BUILD` is the build arm, decided at compile time, so
-          the managed bundle keeps exactly the string it had. The self-host wording matches that build's own
-          vocabulary elsewhere ("AI on this server", "Accounts on this server").
-        */}
+      {/* THE MODE THIS PANE IS SHOWING. An install is Cloud OR local, never both in parallel
+          (desktop is per-install, not per-mailbox), so the pane names which one
+          it is rather than leaving the reader to infer it from the connect ceremony below. The
+          desktop's own pane heads itself "Local mailboxes on this computer" for the same reason.
+
+          AND THE SELF-HOST BUILD IS A THIRD ANSWER, not a spelling of the first. This heading was
+          "Cloud mailboxes" on every browser build, so an operator running their own server read a
+          claim about a hosted service they had deliberately not bought. `SELF_HOST_BUILD` is the
+          build arm, decided at compile time, so the managed bundle keeps exactly the string it
+          had. The self-host wording matches that build's own vocabulary elsewhere ("AI on this
+          server", "Accounts on this server"). */}
       <h2 className="acct-h">{SELF_HOST_BUILD ? t("modeSelfhost") : t("modeCloud")}</h2>
       {/* A failed read is not an empty result — "Reading your mailboxes…" is only true while a read is outstanding. A
           read that came back refused is not still running, and saying it is would trade one
@@ -1874,16 +2007,24 @@ export function MailboxSection() {
                   (`shell/idn.ts`). `m.address` itself is untouched everywhere it is USED: the
                   edit form, `addressKey`'s collapse, the connect ceremony. */}
               <span className="mbx-addr" title={displayAddress(m.address)}>{displayAddress(m.address)}</span>
-              {/* How much mail is in here, in the row's existing meta line. It joins the
-                  provider and the status rather than taking an element of its own: the same
-                  KIND of statement — a quiet, unchanging fact — while the column to the right is
-                  reserved for what is happening NOW. `typeof === "number"`, and the guard is the
-                  whole contract: the field is present only on the `?counts=1` response (the
-                  mount's read), and the 10-second poll gets one without it — reading absent as
-                  `0` would put "0 messages" on a full mailbox every time a poll landed. Absent
-                  renders nothing; `0` renders "0 messages", because an empty mailbox has an
-                  answer. Shown for a `disabled` row too: it is how much of this mailbox's mail
-                  ohmail holds, not a claim about syncing, so it contradicts nothing beside it. */}
+              {/* ── HOW MUCH MAIL IS IN HERE, IN THE ROW'S EXISTING META LINE ───────────────
+                  It was asked for by name, and the row had every fact about a mailbox except this
+                  one. It joins the provider and the status rather than taking an element of its
+                  own: it is the same KIND of statement — a quiet, unchanging fact about the
+                  mailbox — and the column to the right is reserved for what is happening NOW
+                  (a stamp, a spinner, a failure), which this is not.
+
+                  `typeof === "number"`, and the guard is the whole contract. The field is
+                  present only on the response to `?counts=1`, which is the mount's read; the
+                  10-second poll gets a response without it. Reading an absent field as `0`
+                  would put "0 messages" on a full mailbox every time a poll landed, and the
+                  optionality exists precisely for the case where we do not know. Absent renders
+                  nothing; `0` renders "0 messages", because an empty mailbox has an answer.
+
+                  Shown for a `disabled` row too, unlike everything else on this card that is
+                  gated on status. It is not a claim about syncing — it is how much of this
+                  mailbox's mail ohmail holds — so a disconnected mailbox reporting its size
+                  contradicts nothing beside it. */}
               <span className="mbx-sub">
                 {providerLabel(providerById(m.provider), tp)} · {t(statusKey(m))}
                 {typeof m.messageCount === "number"
@@ -1895,35 +2036,46 @@ export function MailboxSection() {
                   that reason is history, and repeating it would put two contradictory
                   explanations on one card — which is the defect, not the fix. */}
               {superseded > 0 ? <span className="mbx-sub">{t("superseded")}</span> : null}
-              {/* Why, and the one action there is. This block used to say in a comment that
-                  there must never be a takeover control here because nothing in the Cloud tier
-                  wrote `takeover_authorized_at`. No longer true — `MailboxService.organizeHere`
-                  does — so the copy telling people to hand-delete a message out of their own
-                  `ohmail/_meta` folder has gone with it. TWO steps, and the first is not a
-                  formality: the stored reason records what was true when Cloud stood down and
-                  nothing has re-read the mailbox since, so the check opens one short-lived
-                  connection, reads the claim, reports what is there, and only then is anybody
-                  asked to decide. Confirming writes an authorization and nothing else: the
-                  worker reads the claim again on its next pass and decides. */}
-              {/* And the mailbox you let go is not one somebody took. FIRST, ahead of the
-                  ceremony above, because everything the ceremony describes is false here: nobody
-                  holds this mailbox — this account released it — so there is no claim worth
-                  opening a connection to inspect and no install to displace; the check would
-                  answer a question this row already knows. `mbx-sub` and NOT `mbx-bad`: nothing
-                  is broken — a person pressed "stop organizing here" and this is that, still
-                  true; alarm styling would make the sentence itself a lie. ONE press, the same
-                  authorization the confirm step writes — with the first step gone there is
-                  nothing to confirm. The row's role moves at the worker's next pass, as the
-                  answer under the button says. */}
-              {/*
-                  ONE REMEDY PER ROW: `readerStandDown` answers non-null for a reader with a holder, and a STRANDED
-                  row is exactly that — so without the `!stranded` below the row drew both remedies at once: "another
-                  ohmail Cloud install has claimed this mailbox", with the check-then-confirm takeover, directly above
-                  the hand-back. Two controls, opposite directions, one mailbox. The hand-back wins, and it is not a
-                  close call: the takeover ceremony exists to displace a LIVE COMPETING install, and here the holder
-                  is this one. Pointed at a claim of our own it offers to displace ourselves, opens a connection to
-                  ask who holds a mailbox the row already names, and leaves the claim exactly where it is.
-                */}
+              {/* ── WHY, AND THE ONE ACTION THERE IS ─────────────────────────────────────────
+                  This block used to end at the two sentences and say, in a comment, that there
+                  must never be a takeover control here because nothing in the Cloud tier wrote
+                  `takeover_authorized_at`. That is no longer true — `MailboxService.organizeHere`
+                  does — so the copy that told people to go and delete a message out of their own
+                  `ohmail/_meta` folder by hand has gone with it.
+
+                  TWO STEPS, and the first one is not a formality. The stored reason records what
+                  was true at the moment Cloud stood down, and nothing has re-read the mailbox
+                  since; a card cannot know whether that install is still running. So the check
+                  opens one short-lived connection, reads the claim, and reports what is there —
+                  and only then is anybody asked to decide. Confirming writes an authorization and
+                  nothing else: the worker reads the claim again on its next pass and decides. */}
+              {/* ── AND THE MAILBOX YOU LET GO IS NOT ONE SOMEBODY TOOK ─────────────────────
+                  FIRST, ahead of the ceremony above, because everything the ceremony describes is
+                  false here. Nobody holds this mailbox — this account released it — so there is
+                  no claim worth opening a connection to inspect and no install to displace. The
+                  check would answer "no other ohmail install is organizing this mailbox", which
+                  is a question this row already knows the answer to.
+
+                  `mbx-sub` AND NOT `mbx-bad`. Nothing is broken and nothing failed: a person
+                  pressed "stop organizing here" and this is that, still true. Alarm styling would
+                  make the sentence itself a lie, the same argument the forwarding notice below
+                  makes for the same class.
+
+                  ONE PRESS, and it is the same authorization the confirm step writes — the second
+                  step of the ceremony exists to follow the first, and with the first gone there is
+                  nothing to confirm. The row's role moves at the worker's next pass, which is what
+                  the answer under the button says. */}
+              {/* ── ONE REMEDY PER ROW ──────────────────────────────────────────────────────
+                  `readerStandDown` answers non-null for a reader with a holder, and a STRANDED row
+                  is exactly that — so without the `!stranded` below the row drew both remedies at
+                  once: "another ohmail Cloud install has claimed this mailbox", with the
+                  check-then-confirm takeover, directly above the hand-back. Two controls, opposite
+                  directions, one mailbox.
+
+                  The hand-back wins, and it is not a close call: the takeover ceremony exists to
+                  displace a LIVE COMPETING install, and here the holder is this one. Pointed at a
+                  claim of our own it offers to displace ourselves, opens a connection to ask who
+                  holds a mailbox the row already names, and leaves the claim exactly where it is. */}
               {standDown === "released" ? (
                 <>
                   <span className="mbx-sub">
@@ -1962,16 +2114,18 @@ export function MailboxSection() {
                   )}
                 </>
               ) : null}
-              {/* The forwarding-detection notice (mail 0078) — a quiet, dismissible fact about
-                  a HEALTHY row: the worker judged this mailbox to have received essentially
-                  nothing for a generous window while syncing fine — the shape a provider-level
-                  forward without "keep a copy" leaves, which once cost two days of debugging
-                  pointed at ohmail when the answer was upstream. `showInboundQuiet` (exported
-                  above, bitten by the suite) carries the whole gate: health on screen, and the
-                  dismissal-vs-episode comparison that keeps a dismissal durable until genuine
-                  inbound flows again. `mbx-sub`, not `mbx-bad`: nothing is broken. Two keys
-                  because "the last mail came {when}" is false for a mailbox that never received
-                  any — the pass stamps `createdAt` there, and the DTO's own tells them apart. */}
+              {/* ── THE FORWARDING-DETECTION NOTICE (mail 0078) ──────────────────────────────
+                  A quiet, dismissible fact about a HEALTHY row: the worker judged this mailbox
+                  to have received essentially nothing for a generous window while syncing fine —
+                  the shape a provider-level forward without "keep a copy" leaves, which once
+                  cost two days of debugging pointed at ohmail when the answer was upstream.
+                  `showInboundQuiet` (exported above, bitten by the suite) carries the whole
+                  gate: health on screen, and the dismissal-vs-episode comparison that makes a
+                  dismissal durable until genuine inbound actually flows again. `mbx-sub`, not
+                  `mbx-bad`: nothing is broken, and alarm styling would make the first sentence
+                  a lie. Two keys because "the last mail came {when}" is false for a mailbox
+                  that never received any — the pass stamps `createdAt` there, and the DTO's own
+                  `createdAt` tells the two apart by identity. */}
               {/* ── WHO ORGANIZES THIS ONE, AND THE VERB THAT CHANGES IT ────────────────
                   The row above answers "is my mail coming down?"; this answers the other question
                   somebody with two machines has — which one files it — and it never disappears.
@@ -2055,34 +2209,41 @@ export function MailboxSection() {
               ) : null}
             </div>
             <div className="mbx-state">
-              {/* The row's states, and why "Waiting for first sync" is gone. This read
-                  `status === 'connected' && lastSyncAt === null` — one sentence for every state
-                  a first sync can be in; measured live, it sat here half an hour while the first
-                  import poured mail in. Two reasons: `last_sync_at` is stamped for every mailbox
-                  a cycle served in one `UPDATE … WHERE id IN (…)` (`apps/worker/src/mailboxes.ts`),
-                  and it is pushed even when the cycle ended with `hasBacklog` true
-                  (`apps/worker/src/index.ts:1281`) — so `syncedAgo` would say "Synced just now"
-                  thirty seconds into a thirty-minute import. The row decides nothing about
-                  progress: it renders what is strictly per-mailbox, and the account-wide answer
-                  comes from the shell's single derivation (`shell/mail-state.ts`). */}
-              {m.status === "disabled" ? null : m.status === "error" ? (
-                /**
-                 * ── A DISCONNECTED MAILBOX REPORTS NO PROGRESS. FIRST, SO IT CANNOT BE OUTVOTED
-                 * ────────────────────────────────────────────────────────────────── Without this arm a `disabled`
-                 * row matched none of the branches below and fell all the way through to `stamp === null`, which
-                 * turned a spinner and said *"No mail yet — added 3 minutes ago"** about a mailbox nothing will ever
-                 * sync — observed live, four words to the right of the word "disconnected" on the same card. `null`
-                 * and not a sentence: `.mbx-main` already carries the status and, for a stand-down, the reason and
-                 * what to do. A second phrase over here would be the third statement about one mailbox, which is the
-                 * shape of the defect itself.
-                 */
+              {/* ── THE ROW'S STATES, AND WHY "Waiting for first sync" IS GONE ─────────────
+                  This read `status === 'connected' && lastSyncAt === null` and said "Waiting
+                  for first sync" — ONE sentence for every state a first sync can be in.
+                  Measured on a live account: it sat on this row for half an hour while the
+                  first import poured messages in, and it was still on it once mail had
+                  already landed. Two reasons, both in the column:
 
-                /**
-                 * FIRST in the chain, ahead of the block branch, because `MailboxService.delete` is a soft delete: a
-                 * mailbox that was sync-blocked when the user disconnected it would otherwise report the old block on
-                 * its tombstone. That is now also fixed at the write, and this ordering is what makes the row right
-                 * regardless.
-                 */
+                   · `last_sync_at` is stamped for every mailbox a cycle served in ONE
+                     `UPDATE … WHERE id IN (…)` (`apps/worker/src/mailboxes.ts`), which is why
+                     two rows can report an identical age to the second; and
+                   · it is pushed even when the cycle ended with `hasBacklog` true
+                     (`apps/worker/src/index.ts:1281`), so it lands EARLY mid-import — which
+                     means the `syncedAgo` branch below would otherwise say "Synced just now"
+                     thirty seconds into a thirty-minute import.
+
+                  So the row decides nothing about progress any more. It renders what is
+                  strictly PER-MAILBOX — error, block, queued, connected-at — and the
+                  account-wide "the mirror is growing" answer comes from the single derivation
+                  in the shell (`shell/mail-state.ts`), which this pane reads and never
+                  re-derives. */}
+              {m.status === "disabled" ? null : m.status === "error" ? (
+                /* ── A DISCONNECTED MAILBOX REPORTS NO PROGRESS. FIRST, SO IT CANNOT BE
+                   OUTVOTED ──────────────────────────────────────────────────────────────────
+                   Without this arm a `disabled` row matched none of the branches below and fell
+                   all the way through to `stamp === null`, which turned a spinner and said
+                   **"No mail yet — added 3 minutes ago"** about a mailbox nothing will ever sync
+                   — observed live, four words to the right of the word
+                   "disconnected" on the same card.
+                   `null` and not a sentence: `.mbx-main` already carries the status and, for a
+                   stand-down, the reason and what to do. A second phrase over here would be the
+                   third statement about one mailbox, which is the shape of the defect itself.
+                   FIRST in the chain, ahead of the block branch, because `MailboxService.delete`
+                   is a soft delete: a mailbox that was sync-blocked when the user disconnected it
+                   would otherwise report the old block on its tombstone. That is now also fixed
+                   at the write, and this ordering is what makes the row right regardless. */
                 /* WHY, not just THAT. `mailboxes.error_code` (mail 0023) is a stable key the
                    server never renders into a sentence, so the wording lives here and stays
                    translatable. `errorDetail` is an allowlisted diagnostic token — a response
@@ -2092,21 +2253,18 @@ export function MailboxSection() {
                   {t(m.errorCode ? `err_${m.errorCode}` : "syncError")}
                 </span>
               ) : m.syncBlockedSince ? (
-                /**
-                 * THE SYNC-BLOCK PROJECTION'S UI HALF, on the row. `status` IS `connected` and all four `error*`
-                 * columns are null — that asymmetry is mail 0029's entire design — so without this branch the row
-                 * says "Synced 4 minutes ago" about a mailbox nothing is syncing. The wording is `sync.blocked_*`,
-                 * shared with the shell's strip: one owner of the closed set, so two surfaces cannot describe the
-                 * same refusal differently. A reason this build does not recognise still gets a sentence. GATED ON
-                 * `syncBlockedSince`, NOT ON THE REASON. `mailbox-service.ts:526` narrows the reason to the closed
-                 * set and forwards the timestamp unconditionally, so a newer worker's fourth reason arrives here as
-                 * `{reason: null, since: <ts>}`.
-                 */
+                /* THE SYNC-BLOCK PROJECTION'S UI HALF, on the row. `status` IS `connected` and all four `error*`
+                   columns are null — that asymmetry is mail 0029's entire design — so without
+                   this branch the row says "Synced 4 minutes ago" about a mailbox nothing is
+                   syncing. The wording is `sync.blocked_*`, shared with the shell's strip: one
+                   owner of the closed set, so two surfaces cannot describe the same refusal
+                   differently. A reason this build does not recognise still gets a sentence.
 
-                /**
-                 * Gating on the reason sent that row back to "Synced 4 minutes ago" — the defect, restored by version
-                 * skew. `blockedUnknown` below is the copy for it.
-                 */
+                   GATED ON `syncBlockedSince`, NOT ON THE REASON. `mailbox-service.ts:526`
+                   narrows the reason to the closed set and forwards the timestamp unconditionally,
+                   so a newer worker's fourth reason arrives here as `{reason: null, since: <ts>}`.
+                   Gating on the reason sent that row back to "Synced 4 minutes ago" — the defect,
+                   restored by version skew. `blockedUnknown` below is the copy for it. */
                 <span className="mbx-bad">
                   {isSyncBlockReason(m.syncBlockedReason)
                     ? ts(`blocked_${m.syncBlockedReason}`)
@@ -2150,16 +2308,17 @@ export function MailboxSection() {
                   >
                     {t("syncNow")}
                   </Button>
-                  {/*
-                      THE RECONNECT CTA FOR AN OAUTH MAILBOX, and it REPLACES the edit button rather than sitting
-                      beside it. There is nothing to type. An oauth mailbox's only credential is a refresh token
-                      Microsoft issued, and when it dies (`error_code: 'auth'`, `error_detail: 'OAUTH_INVALID_GRANT'`)
-                      the fix is a fresh consent — not a password form. Showing "Edit" here would offer a screen whose
-                      every field is meaningless for this row, and whose PATCH would store a typed password beside an
-                      `authType: "oauth2"` meta that `buildImapAuth` then refuses to dial with. The ceremony lands on
-                      the SAME row: the address comes from the `id_token` and mail 0021's unique index makes at most
-                      one live mailbox per address, so re-consenting cannot produce a duplicate.
-                    */}
+                  {/* THE RECONNECT CTA FOR AN OAUTH MAILBOX, and it REPLACES the edit button rather
+                      than sitting beside it.
+                      There is nothing to type. An oauth mailbox's only credential is a refresh token
+                      Microsoft issued, and when it dies (`error_code: 'auth'`, `error_detail:
+                      'OAUTH_INVALID_GRANT'`) the fix is a fresh consent — not a password form. Showing
+                      "Edit" here would offer a screen whose every field is meaningless for this row,
+                      and whose PATCH would store a typed password beside an `authType: "oauth2"` meta
+                      that `buildImapAuth` then refuses to dial with.
+                      The ceremony lands on the SAME row: the address comes from the `id_token` and
+                      mail 0021's unique index makes at most one live mailbox per address, so
+                      re-consenting cannot produce a duplicate. */}
                   {m.authKind === "oauth" ? (
                     /* GATED ON `oauthAvailable` for the same reason the Connect door is: if the
                        deployment's registration has been disabled or lapsed, the consent cannot run,
@@ -2331,16 +2490,21 @@ export function MailboxSection() {
               <Button variant="primary" icon="plus" onClick={() => { setError(null); setMsAppPassword(false); setStage("form"); }}>
                 {t("connect")}
               </Button>
-              {/* Connect Outlook — beside the password form, not instead of it. A SECOND door,
-                  not a provider inside the first: the password ceremony asks for an address, a
-                  host and a password, and this one asks for none — Microsoft states the address
-                  in the token, the host is fixed by the issuer, and there is no password to
-                  have. A modern Microsoft 365 tenant refuses basic IMAP outright, so for those
-                  accounts this is the only path. `secondary`: the generic path is still the one
-                  most mailboxes take. Gated on EITHER door being armed, so it is never a button
-                  whose press returns a raw 503 — and ONE button, because which ceremony runs is
-                  the server's business. The press opens the disclosure above, which names the
-                  ceremony; only its continue starts anything. */}
+              {/* CONNECT OUTLOOK — beside the password form and not instead of it.
+                  It is a SECOND door and not a provider inside the first: the password ceremony asks
+                  for an address, a host and a password, and this one asks for none of them. Microsoft
+                  states the address in the token it issues, the host is fixed by the token issuer, and
+                  there is no password to have — putting this behind the provider picker would mean a
+                  form that empties itself when somebody chose Microsoft.
+                  A modern Microsoft 365 tenant refuses basic IMAP authentication outright, so for
+                  those accounts this is not an alternative to the password path but the only path.
+                  `secondary`, because the generic path is still the one most mailboxes take.
+                  GATED ON EITHER DOOR being armed, so this is never a button whose press returns a
+                  raw 503 — and ONE button rather than two, because "Connect Outlook" is one thing a
+                  person wants and which ceremony runs is the server's business, not theirs. The
+                  password door beside it is unaffected: it needs no server-side registration.
+                  THE PRESS OPENS THE DISCLOSURE ABOVE, which names the ceremony that will actually
+                  run; only its continue starts anything. */}
               {oauthAvailable || deviceAvailable ? (
                 <Button
                   icon="open"
@@ -2664,16 +2828,26 @@ export function MailboxSection() {
         </form>
       ) : null}
 
-      {/* The removal confirmation — a real one, stating CONSEQUENCES rather than asking "are
-          you sure". Every line is what the server does: organizing stops; THE MAIL IS
-          UNTOUCHED — the one somebody is actually afraid of, and the product's central promise
-          (`MailboxService.delete` opens no IMAP connection, so nothing on their server is
-          reachable from this press); the stored password is deleted — the thing a reconnect
-          cannot undo without typing it again; scheduled sends are closed rather than sent — a
-          consequence with no other surface; and THE COPY ALREADY SYNCED STAYS, said plainly
-          because it is true and unflattering — erasure is account-scoped with no per-mailbox
-          purge, and claiming the local copy goes would be exactly the false statement this
-          panel avoids. `role="alertdialog"`, the safe answer first in the DOM. */}
+      {/* ══ THE REMOVAL CONFIRMATION ═══════════════════════════════════════════════════════
+          A real confirmation, which means it states CONSEQUENCES rather than asking "are you
+          sure". Every line is a statement about what the server actually does, and the set is
+          chosen by what a person is about to lose track of:
+
+           · organizing stops — the visible change.
+           · THE MAIL IS UNTOUCHED. This is the one somebody is actually afraid of, and it is the
+             product's central promise: `MailboxService.delete` does not open an IMAP connection
+             at all, so no folder and no message on their server is reachable from this press.
+           · the stored password is deleted — the thing that cannot be undone by reconnecting
+             without typing it again.
+           · scheduled sends are closed rather than sent — a consequence with no other surface,
+             and one a person who has queued mail would otherwise discover in Drafts.
+           · THE COPY ALREADY SYNCED STAYS. Said plainly because it is true and unflattering:
+             erasure here is account-scoped and there is no per-mailbox purge, so a confirmation
+             claiming the local copy goes would be exactly the false statement this panel exists
+             to avoid. It names the thing that does remove it.
+
+          `role="alertdialog"` and the safe answer first in the DOM, the delete strip's discipline
+          one surface over. */}
       {stage === "remove" && removing ? (
         <div className="acct-confirm" role="alertdialog" aria-label={t("removeTitle", { address: removing.address })}>
           <h3 className="acct-sub">{t("removeTitle", { address: removing.address })}</h3>
@@ -2804,16 +2978,21 @@ export function MailboxSection() {
         </p>
       ) : null}
 
-      {/* Run setup again — the way back into the first-run flow for somebody who has been
-       * through it. It opens on the consent statement and walks forward — what ohmail files,
-       * how far back it screens, and AI — with what is set now filled in from the account, and
-       * nothing written until the person agrees. Only with a mailbox: the flow's later screens
-       * are ABOUT one (the window is measured from its consent, the summary reports what
-       * happened to it), and with none connected the row would open a re-run that immediately
-       * becomes a first run — which "Connect a mailbox" above already is. `#/first-run/again`
-       * and not `#/first-run`: a finished account derives to "nothing to do", correctly, so the
-       * re-run intent has to ride the route — the bare hash would open, find the completion
-       * stamp, and close again on the same render. */}
+      {/* ── RUN SETUP AGAIN ──────────────────────────────────────────────────────────────────
+       *
+       * The way back into the first-run flow for somebody who has already been through it. It
+       * opens on the consent statement and walks forward from there — what ohmail files, how far
+       * back it screens, and AI — with what is set now filled in from what the account stored,
+       * and nothing is written until the person agrees.
+       *
+       * ONLY WITH A MAILBOX. The flow's later screens are ABOUT a mailbox: the window is measured
+       * from the consent on one, and the summary reports what happened to one. With none
+       * connected, the row would open a re-run that immediately becomes a first run — which is
+       * what "Connect a mailbox" above already is, said once instead of twice.
+       *
+       * `#/first-run/again` and not `#/first-run`: a finished account derives to "nothing to do",
+       * correctly, so the RE-RUN INTENT has to ride the route. The bare hash would open, find the
+       * completion stamp, and close again on the same render. */}
       {stage === "list" && connected.length > 0 ? (
         <SettingsRow
           label={t("setupAgain")}
@@ -2844,19 +3023,23 @@ interface OrganizerCheck {
 }
 
 /**
- * WHAT THE MAILBOX SAYS, AND WHAT TAKING OVER WOULD DO. THE SENTENCE IS CHOSEN FROM THE SERVER'S ANSWER, NEVER FROM
- * THE STORED REASON: `disabled_reason` says which KIND of organizer won, at the moment Cloud lost. It cannot say
- * whether that organizer is still running, because nothing re-reads the mailbox after a stand-down. This panel
- * renders the fresh read instead, and the distinction it draws is the one that decides what the user is agreeing to:
- * an install that is still checking in will be STOPPED by taking over, and one that has gone quiet will not. `active`
- * is the server's word for it. A holder is `active` when its claim is still being renewed inside the same window the
- * worker's own gate judges against, so this panel and the gate cannot disagree about who is alive.
- */
-
-/**
- * The effect line is shown in BOTH cases and says exactly what the action does — including the two things people
- * would otherwise have to guess: that the other install stops on its own next check rather than immediately, and that
- * its local copy of the mail is left alone.
+ * WHAT THE MAILBOX SAYS, AND WHAT TAKING OVER WOULD DO.
+ *
+ * ── THE SENTENCE IS CHOSEN FROM THE SERVER'S ANSWER, NEVER FROM THE STORED REASON ───────────
+ *
+ * `disabled_reason` says which KIND of organizer won, at the moment Cloud lost. It cannot say
+ * whether that organizer is still running, because nothing re-reads the mailbox after a stand-down.
+ * This panel renders the fresh read instead, and the distinction it draws is the one that decides
+ * what the user is agreeing to: an install that is still checking in will be STOPPED by taking
+ * over, and one that has gone quiet will not.
+ *
+ * `active` is the server's word for it. A holder is `active` when its claim is still being renewed
+ * inside the same window the worker's own gate judges against, so this panel and the gate cannot
+ * disagree about who is alive.
+ *
+ * The effect line is shown in BOTH cases and says exactly what the action does — including the two
+ * things people would otherwise have to guess: that the other install stops on its own next check
+ * rather than immediately, and that its local copy of the mail is left alone.
  */
 function OrganizerPanel({ state, t, now, onCancel, onConfirm }: {
   state: OrganizerCheck;
@@ -2937,25 +3120,33 @@ const TICK_MS = 10_000;
 const DEVICE_POLL_FLOOR_MS = 5_000;
 
 /**
- * Where a live device ceremony's handle survives a reload — `sessionStorage`, per tab. The
- * ceremony lives ~fifteen minutes on the server and the person is being asked to go to another
- * device and type a code: a reload in that window used to lose the browser's only copy of the
- * handle, unrecoverably — the code and URI are re-supplied by a poll, but there was no handle
- * left to poll with, so the grant sat at Microsoft until it expired while the pane offered to
- * start a new one. A review caught that the comments here already PROMISED reload recovery,
- * making them false rather than optimistic; comments are the claim under test, so the promise is
+ * WHERE A LIVE DEVICE CEREMONY'S HANDLE SURVIVES A RELOAD — `sessionStorage`, per tab.
+ *
+ * ── WHY THIS EXISTS, AND WHY IT IS NOT OPTIONAL POLISH ─────────────────────────────────────
+ *
+ * The ceremony lives for about fifteen minutes on the server and the person is being asked to go to
+ * another device and type a code. A reload in that window — an accidental refresh, a restored tab,
+ * a phone rotating — used to lose the browser's ONLY copy of the handle, and nothing could recover
+ * it: the code and the URI are re-supplied by a poll, but there was no handle left to poll with. The
+ * grant then sat at Microsoft until it expired while the pane offered to start a new one.
+ *
+ * A review caught that the comments in this file already PROMISED reload recovery, which made them
+ * false rather than merely optimistic. Comments here are the claim under test, so the promise is
  * implemented instead of softened.
- */
-
-/**
- * `sessionStorage` because per-tab, cleared on close, matches the ceremony's lifetime — an
- * abandoned ceremony should not greet somebody a week later. Storing it is safe because the
- * handle is NOT a credential: the `device_code` that redeems the grant is sealed in the database
- * and never reaches the browser; this is a 43-character lookup key whose every use is re-checked
- * against the session's own account server-side, so a reader who could take it out of this
- * tab's storage already holds the session that makes it useless. Every access is wrapped: a
- * private window, a browser refusing site data, or a thumbnail capture can make the accessor
- * itself throw, and a settings pane must not fail to render because a storage read did.
+ *
+ * ── WHY `sessionStorage`, AND WHY STORING THIS IS SAFE ─────────────────────────────────────
+ *
+ * Per TAB and cleared when the tab closes, which matches the ceremony's own lifetime far better than
+ * `localStorage` would: an abandoned ceremony should not greet somebody a week later.
+ *
+ * The handle is NOT a credential. The `device_code` — the bearer value that redeems the grant — is
+ * sealed in the database and never reaches the browser at all. This is a 43-character lookup key
+ * whose every use is re-checked against the session's own account server-side, so a reader who could
+ * take it out of this tab's storage already holds the session that makes it useless to them.
+ *
+ * Every access is wrapped: a private window, a browser configured to refuse site data, or a
+ * thumbnail capture can make the accessor itself throw, and a settings pane must not fail to render
+ * because a storage read did.
  */
 const DEVICE_STORE_KEY = "ohmail.deviceCeremony";
 
@@ -2963,13 +3154,16 @@ interface StoredDevice {
   state: string; userCode: string; verificationUri: string;
   expiresAt: number; retryAfterMs: number;
   /**
-   * WHOSE CEREMONY THIS IS, and the reason it is stored rather than assumed. A tab is not a session. Sign out, or
-   * erase the account, and sign in as somebody else within the fifteen minutes a grant lives, and the same tab's
-   * `sessionStorage` still holds the previous account's record — so a restore with no owner check paints THEIR code
-   * and URI on the new account's settings pane. The server would refuse the poll (403, account mismatch), but only
-   * after the values were already on screen, which is exactly one beat too late. Found by review on the fix that
-   * introduced the persistence. The account id is the whole guard; the sign-out sweep below is the tidy-up, and
-   * correctness does not depend on it running.
+   * WHOSE CEREMONY THIS IS, and the reason it is stored rather than assumed.
+   *
+   * A tab is not a session. Sign out, or erase the account, and sign in as somebody else within
+   * the fifteen minutes a grant lives, and the same tab's `sessionStorage` still holds the previous
+   * account's record — so a restore with no owner check paints THEIR code and URI on the new
+   * account's settings pane. The server would refuse the poll (403, account mismatch), but only
+   * after the values were already on screen, which is exactly one beat too late.
+   *
+   * Found by review on the fix that introduced the persistence. The account id is the whole guard;
+   * the sign-out sweep below is the tidy-up, and correctness does not depend on it running.
    */
   accountId: string;
 }
