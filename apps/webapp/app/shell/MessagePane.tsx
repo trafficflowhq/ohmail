@@ -122,30 +122,20 @@ export type MessageAction =
 export const MOVE_TARGETS: MoveTarget[] = ["ohbox", "reads", "receipts", "screened", "spam"];
 
 /**
- * THE SAME VERBS, OVER A SELECTION.
- *
- * Declared beside {@link MessageAction} rather than in the view that renders the bulk bar,
- * because the whole point is that there is ONE vocabulary. The selection used to offer only
- * ⇧U and Escape; what it gets is the action bar's own grouping minus the one verb
- * that cannot mean anything over a set.
- *
- *   · `later` / `aside` / `resurface` — the three horizons, unchanged in meaning.
- *   · `move:<view>` — this message, relocated. Per message, no rule.
- *   · `read` / `unread` — DIRECTIONS, not a toggle, and that is the one deliberate
- *     divergence from the single-message bar. `MessageAction["unread"]` is a flip because
- *     one message has a read state to flip; a selection has a MIXED one, and "toggle eleven
- *     messages" would mark six read and five unread in a gesture that reads as one decision.
- *
- *   · `delete` — the set filed to the provider's native \Trash, one `message_delete` per id,
- *     through the SAME delayed-commit window a single delete opens (`delete-undo.ts`). It is
- *     a member of this union and not a separate callback precisely because it IS the same
- *     verb over more rows: one window, one toast, one Undo for the whole press. The ask —
- *     the confirm strip, or nothing at all for ⌫/⌦ — belongs to the surface, exactly as it
- *     does for one message; the only dispatch site stays the window.
- *
- * Screening is NOT in this union. It is a decision about senders with a consent ceremony of
- * its own (a confirm row stating what will persist), so it travels as its own callback —
- * folding it in here would be the design error the ruling names by name.
+ * The same verbs, over a selection. Declared beside {@link MessageAction} rather than in the
+ * view that renders the bulk bar, because the point is ONE vocabulary: the selection used to
+ * offer only ⇧U and Escape; it gets the action bar's own grouping minus the one verb that
+ * cannot mean anything over a set. `later`/`aside`/`resurface` — the three horizons, unchanged.
+ * `move:<view>` — this message relocated, per message, no rule. `read`/`unread` — DIRECTIONS,
+ * not a toggle, the one deliberate divergence: one message has a read state to flip, a
+ * selection has a MIXED one, and "toggle eleven messages" would mark six read and five unread
+ * in one gesture. `delete` — the set filed to the provider's native \Trash, one
+ * `message_delete` per id, through the SAME delayed-commit window a single delete opens
+ * (`delete-undo.ts`): a member of this union, not a separate callback, because it IS the same
+ * verb over more rows — one window, one toast, one Undo; the ask belongs to the surface, the
+ * only dispatch site stays the window. Screening is NOT in this union: a decision about
+ * senders with a consent ceremony of its own, so it travels as its own callback — folding it in
+ * would be the design error the ruling names by name.
  */
 export type BulkAction =
   | "later"
@@ -225,55 +215,35 @@ export function Key({ chord }: { chord: string }) {
 }
 
 /**
- * ═══ THE ACTION BAR ═══════════════════════════════════════════════════════════════════
- *
- * Reported from real use: the bar breaks a line, it does not show its shortcuts, and it needs
- * to handle mark read and unread sensibly.
- *
- * ── THE GROUPING, WHICH IS THE ACTUAL FIX ─────────────────────────────────────────────
- *
- * The eight buttons this replaces were eight peers in one wrapping row, and they are not
- * eight peers. They answer three different questions, and one of the three was being asked
- * three times:
- *
- *   · ANSWER IT      — Reply (the accent verb), Draft reply (the AI variant, in More).
- *   · NOT NOW        — Answer Later, Park, Resurface. **The same idea at three horizons**,
- *                      so they are ONE segmented control with hairlines between the
- *                      segments, not three siblings competing with Reply for weight.
- *   · FILE IT        — Screening (this SENDER's future mail) and Move (THIS message).
- *                      One control, two scopes, which is exactly why they belong adjacent
- *                      and exactly why they must stay two buttons: Screening is here
- *                      because "where does this sender's mail go" had no control outside
- *                      the Screener, and folding it into Move would undo that.
- *
- * and beside them, not among them, the READ SWITCH — a state, not a decision about where
- * mail goes, so it is separated by `margin-left:auto` rather than by a divider.
- *
- * Layout is in `action-bar.css`; the rule that matters is that a group is atomic, so the
- * row cannot break mid-group at any width. What a narrow container drops is whole groups,
- * into More.
- *
- * ── EVERY VERB SHOWS ITS KEY, AND NOT BY BEING TOLD ───────────────────────────────────
- *
- * Each `<Key chord>` asks the registry. Before this the bar carried exactly one hint —
- * `kbdHint="s"`, typed at the call site — while `r`, `a`, `e`, `b` and `u` were all live
- * and silent. That single hint is the stray `s` in the report: not a bug in the label, a bug
- * in the label row having only one keycap in it.
- *
- * ── AND THE READ SWITCH DOES NOT FIGHT THE READER ─────────────────────────────────────
- *
- * `u` is already bound, in `OhboxView`, and marking unread there sets a `pinnedUnread` ref
- * that the 2 s dwell checks WHEN ITS TIMER FIRES — the guard
- * `test/ohbox-read-state.test.ts` calls *"`u` is not undone by a dwell that is already
- * ticking"*. A button that dispatched `mark_seen` on its own would have no way to set that
- * pin, so a click on it inside the dwell window would be reverted two seconds later by the
- * heuristic: the exact defect that test exists to prevent, reintroduced through a new door.
- *
- * So the switch does not re-implement the verb — **it presses the key**. One handler, one
- * pin, one place where "reading has happened" is decided. `onAction("unread")` is the
- * fallback for surfaces where `u` is not bound at all (the desktop shell, a pane mounted
- * with no keymap provider), and it is the only arm that can drift, which is why it is the
- * arm that is never taken in the product.
+ * The action bar. Reported from real use: it breaks a line, does not show its shortcuts, and needs to handle
+ * read/unread sensibly. The grouping is the actual fix — the eight buttons this replaces were eight peers in one
+ * wrapping row, and they answer three different questions: ANSWER IT (Reply, the accent verb; Draft reply in More);
+ * NOT NOW (Answer Later, Park, Resurface — the same idea at three horizons, so ONE segmented control with hairlines,
+ * not three siblings competing with Reply); FILE IT (Screening — this SENDER's future mail — and Move — THIS message:
+ * one control, two scopes, adjacent but two buttons, because folding Screening into Move would undo the reason it is
+ * here). Beside them, not among them, the READ SWITCH — a state, not a filing decision, separated by
+ * `margin-left:auto`.
+ */
+
+/**
+ * Layout is in `action-bar.css`; a group is atomic, so the row cannot break mid-group — a narrow container drops
+ * whole groups into More.
+ */
+
+/**
+ * Every verb shows its key, and not by being told: each `<Key chord>` asks the registry. Before this the bar carried
+ * exactly one hint — `kbdHint="s"`, typed at the call site — while `r`, `a`, `e`, `b` and `u` were live and silent;
+ * that single hint is the stray `s` in the report. And the read switch does not fight the reader: `u` is already
+ * bound in `OhboxView`, where marking unread sets a `pinnedUnread` ref the 2 s dwell checks when its timer fires
+ * (`test/ohbox-read-state.test.ts` — "`u` is not undone by a dwell that is already ticking"). A button dispatching
+ * `mark_seen` on its own could not set that pin, so a click inside the dwell window would be reverted two seconds
+ * later. So the switch does not re-implement the verb — it PRESSES THE KEY: one handler, one pin, one place where
+ * "reading has happened" is decided.
+ */
+
+/**
+ * `onAction("unread")` is the fallback for surfaces where `u` is not bound (the desktop shell, a pane with no keymap
+ * provider) — the only arm that can drift, which is why it is the arm never taken in the product.
  */
 function ActionBar({
   message,
@@ -333,39 +303,30 @@ function ActionBar({
   /** The runtime density measurement — which groups ACTUALLY fit; see `bar-density.ts`. */
   const density = useBarDensity();
   /**
-   * MAY THE DELETE CONFIRM BE ON SCREEN AT ALL — the mirror actually holding the row.
-   *
-   * Hoisted out of the render conditional below because the effect beside it has to ask the SAME
-   * question, and two spellings of "may this strip be drawn" is exactly how the strip and the state
-   * that says it is open come to disagree. One derivation, read from both places.
-   *
-   * ── "USE FOLDERS" WAS THE FIRST TERM AND IS GONE ──────────────────────────────────────────
-   *
-   * Delete files the message to the mail server's own \Trash, a system folder every account
-   * already has — not to a folder the user made — so the user-folders foundation flag was never
-   * a fact about whether this strip may be drawn, and the engine's `message_delete` has never
-   * read it. Meanwhile the SAME verb over a selection never read it either, so a folders-off
-   * account could delete a picked pile and not the row under its cursor. One verb, one
-   * admission; see `AppShell`'s `canDeleteMessage` for the measurement.
-   *
-   * WHAT REPLACED IT AS THE OTHER STATE. `mirrorHolds` ABSENT is a shell that supplies no mirror
-   * probe at all (the desktop, a bare mount), and `!== false` ADMITS there — deliberately, and
-   * the same way `forwardAdmitted` below has always read it. That is the one shape this file
-   * must not get wrong: "this shell has no such thing" is not "this shell answered no". A shell
-   * that cannot answer is not a shell whose mail may not be deleted; it is a shell whose delete
-   * the path behind it will police. A shell that answers `false` for a row — a Search hit the
-   * mirror deliberately does not hold — still gets no strip, because `message_delete` is a
-   * mutation over a local row and offering it there is a control that always fails.
-   *
-   * ── AND WHAT THE EFFECT BELOW CAN STILL WITHDRAW ──────────────────────────────────────────
-   *
-   * The mirror, which is now the only operand. A flag flip used to be the one way to watch that
-   * effect from a mounted shell, because dropping the row from the mirror also moves the cursor
-   * and the shell clears the bar's panel on a cursor move — so the shell-level test would go
-   * green with the effect deleted. With the flag no longer a gate, the effect's own guard lives
-   * where the two operands ARE independent: `action-bar.test.ts` flips `chrome.mirrorHolds` in
+   * May the delete confirm be on screen at all — the mirror actually holding the row. Hoisted out of the render
+   * conditional because the effect beside it must ask the SAME question, and two spellings of "may this strip be
+   * drawn" is how the strip and its open-state come to disagree. "Use folders" was the first term and is gone: Delete
+   * files to the server's own \Trash, not a user folder, so the flag was never a fact about this strip and the
+   * engine's `message_delete` never read it — meanwhile the same verb over a selection never read it either, so a
+   * folders-off account could delete a picked pile and not the row under its cursor (one verb, one admission; see
+   * `AppShell`'s `canDeleteMessage`).
+   */
+
+  /**
+   * `mirrorHolds` ABSENT is a shell with no mirror probe (the desktop, a bare mount) and `!== false` ADMITS there —
+   * "this shell has no such thing" is not "this shell answered no"; a shell that answers `false` (a Search hit the
+   * mirror deliberately does not hold) gets no strip, because offering a mutation over an absent local row is a
+   * control that always fails.
+   */
+
+  /**
+   * What the effect below can still withdraw: the mirror, now the only operand. A flag flip
+   * used to be the one way to watch that effect from a mounted shell — dropping the row also
+   * moves the cursor, and the shell clears the bar's panel on a cursor move, so the shell-level
+   * test stayed green with the effect deleted. With the flag no longer a gate, the guard lives
+   * where the operands ARE independent: `action-bar.test.ts` flips `chrome.mirrorHolds` in
    * place under an open strip and asserts `onPanel(null)` fired, not merely that the strip is
-   * undrawn. `delete-confirm-ghost.test.tsx` keeps the flag sequence as the INVERTED case — the
+   * undrawn; `delete-confirm-ghost.test.tsx` keeps the flag sequence as the INVERTED case — the
    * strip must now survive it.
    */
   const deleteConfirmAdmitted = chrome.mirrorHolds?.(message.id) !== false;
@@ -378,25 +339,19 @@ function ActionBar({
   }, [panel]);
 
   /**
-   * A CONFIRM THE GATE HAS CLOSED UNDER IS WITHDRAWN, NOT REMEMBERED.
-   *
-   * "Use folders" going off, or the row leaving the local mirror, while the delete strip is up
-   * left `panel === "delete"` standing with nothing drawn for it. The bar fell through to its
-   * resting row, which is correct and is not the defect — the defect is what the STATE then did:
-   * the shell's Escape list has the open bar panel above the reply editor and the reader (see
-   * `AppShell`'s `escapeLayers`), so the next Escape was spent closing a layer nobody could see
-   * and the reader stayed open. Pressing Escape twice to leave a message is indistinguishable
-   * from a key that did not register.
-   *
-   * The strip IS the ceremony, so when it may no longer be drawn the question is withdrawn: if
-   * the gate comes back, the confirmation does not reappear behind the reader's back — Delete is
-   * pressed again. That is the only reading that cannot delete mail somebody did not just ask to
-   * delete, and it is the same one-dispatch-site rule the strip already holds.
-   *
-   * An EFFECT and not a render-time write. The fall-through below is unchanged and still writes
-   * nothing while rendering; `onPanel` is in the dependency list because it closes over the
-   * message id and the chrome's setter, and a stale closure here would clear a different
-   * message's panel.
+   * A confirm the gate has closed under is withdrawn, not remembered. "Use folders" going off, or the row leaving the
+   * mirror, while the delete strip was up left `panel === "delete"` standing with nothing drawn for it. The bar's
+   * fall-through to its resting row is correct; the defect is what the STATE did — the shell's Escape list has the
+   * open bar panel above the reply editor and the reader (`AppShell`'s `escapeLayers`), so the next Escape was spent
+   * closing a layer nobody could see: pressing Escape twice to leave a message reads as a key that did not register.
+   * The strip IS the ceremony, so when it may no longer be drawn the question is withdrawn — if the gate comes back,
+   * the confirmation does not reappear behind the reader's back; Delete is pressed again, the only reading that
+   * cannot delete mail nobody just asked to delete.
+   */
+
+  /**
+   * An EFFECT, not a render-time write: `onPanel` is in the dependency list because it closes over the message id,
+   * and a stale closure would clear a different message's panel.
    */
   useEffect(() => {
     if (panel === "delete" && !deleteConfirmAdmitted) onPanel(null);
@@ -437,31 +392,24 @@ function ActionBar({
   const canReplyAll =
     replyAllRecipients(message, chrome.ownAddresses ?? []) !== null;
   /**
-   * FORWARD IS OFFERED UNLESS THE MESSAGE MAY NOT BE FORWARDED — the `no_forward` sensitivity.
-   *
-   * The server refuses such a forward with a 403 (`SendService.reserve`, the sensitive-leak gate)
-   * and `AppShell.openForward` refuses it client-side with a toast, so a Forward control on an OTP
-   * or a reset link is a button that can only ever say no. That is the same rule Delete follows
-   * against `chrome.mirrorHolds`: a verb the send path must reject is not offered.
-   *
-   * `⇧F`'s own binding carries the identical predicate (see `AppShell`), so the key and the button
-   * appear and disappear together — the discipline `shift+r` and `replyAllRecipients` already keep.
-   *
-   * ── AND OFF-MIRROR IS THE SECOND HALF, for a reason specific to THIS verb ─────────────────
-   *
-   * The reader shows rows the local mirror deliberately does not hold — an archive-only hit
-   * opened from Search, an older Folder row. Reply survives that (`toggleReply` opens an editor
-   * over the message it was handed), but FORWARD does not: `AppShell.openForward` starts with
-   * `engine.read().get("message", id)` and RETURNS SILENTLY when the row is absent, so the
-   * button, the menu item and `⇧F` would all be no-ops that give no reason. Same predicate and
-   * same precedent as Delete (`chrome.mirrorHolds`): a verb the path behind it must reject is not
-   * offered. Absent chrome reads as "holds" (`!== false`), which is the bare-test/desktop default
-   * every other consumer of this field uses.
-   *
-   * THE DENSITY MEASUREMENT NEEDS NO PREDICATE FOR EITHER. It measures the groups this message
-   * actually renders, so a message that gets no Forward simply has one fewer group to admit —
-   * there is no assumed worst case to be wrong about, and no `data-*` chain to keep in step with
-   * the message classes a reader rarely opens. That is the whole reason the static rungs went.
+   * Forward is offered unless the message may not be forwarded — the `no_forward` sensitivity.
+   * The server refuses such a forward with a 403 (`SendService.reserve`, the sensitive-leak
+   * gate) and `AppShell.openForward` refuses it client-side with a toast, so a Forward control
+   * on an OTP or a reset link is a button that can only ever say no — the same rule Delete
+   * follows against `chrome.mirrorHolds`. `⇧F`'s binding carries the identical predicate
+   * (`AppShell`), so key and button appear and disappear together, the discipline `shift+r`
+   * already keeps.
+   */
+
+  /**
+   * Off-mirror is the second half, for a reason specific to this verb: the reader shows rows the mirror deliberately
+   * does not hold (an archive-only Search hit, an older Folder row). Reply survives that — `toggleReply` opens an
+   * editor over the message it was handed — but `AppShell.openForward` starts with `engine.read().get("message", id)`
+   * and RETURNS SILENTLY when the row is absent, so button, menu item and `⇧F` would all be no-ops giving no reason.
+   * Same predicate and precedent as Delete; absent chrome reads as "holds" (`!== false`), the bare-test/desktop
+   * default every consumer of this field uses. The density measurement needs no predicate for either: it measures the
+   * groups this message actually renders, so a message with no Forward simply has one fewer group — no assumed worst
+   * case, no `data-*` chain, which is the whole reason the static rungs went.
    */
   const canForward =
     message.sensitivity?.no_forward !== true && chrome.mirrorHolds?.(message.id) !== false;
