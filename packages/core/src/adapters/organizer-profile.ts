@@ -377,9 +377,13 @@ export function canonicalizeProfilePayload(p: OrganizerProfilePayload): Organize
          payloads meaning the same scope must not hash differently. ABSENT WHEN ABSENT, for the
          reason the signature field spells out one key below: adding a key here for a document
          that never had one would change the fingerprint of every profile an older ohmail wrote. */
-      ...(p.awayResponder.piles === undefined
-        ? {}
-        : { piles: [...new Set(p.awayResponder.piles)].sort(byCodeUnit) }),
+      /* `Array.isArray` AND NOT A TRUTHINESS TEST. `[...new Set("ohmail/Reads")]` spreads a STRING
+         into its characters, so a malformed in-memory payload would be canonicalised into a
+         plausible-looking array of single letters and published as one. A non-array is dropped
+         here, which leaves the parser to refuse the document it arrives in. */
+      ...(Array.isArray(p.awayResponder.piles)
+        ? { piles: [...new Set(p.awayResponder.piles)].sort(byCodeUnit) }
+        : {}),
     },
     tagNames: [...p.tagNames].sort(byCodeUnit),
     /* `?? null` RATHER THAN A PASS-THROUGH, and it is the fingerprint that needs it. An in-memory
@@ -553,6 +557,15 @@ function readPayload(raw: Record<string, unknown>): OrganizerProfilePayload {
       notifyRules.push({ kind: asString(o.kind) ?? "sender", target });
     }
   }
+  /**
+   * The scope a document states, deduped — or `undefined` for both "not stated" and "stated with
+   * the wrong type". The caller tells those two apart by whether the key is present at all.
+   */
+  const pilesOf = (v: unknown): string[] | undefined => {
+    if (v === undefined || v === null) return undefined;
+    if (!Array.isArray(v) || !v.every((m) => typeof m === "string")) return undefined;
+    return [...new Set(v as string[])];
+  };
   let awayResponder: ProfileAwayResponder | null = null;
   if (typeof raw.awayResponder === "object" && raw.awayResponder !== null) {
     const o = raw.awayResponder as Record<string, unknown>;
@@ -570,11 +583,19 @@ function readPayload(raw: Record<string, unknown>): OrganizerProfilePayload {
       // newer ohmail's, and is a different fact from a field that was never written).
       throttle: asString(o.throttle) ?? "per_day",
       // ABSENT STAYS ABSENT. See the field: no default here, because "unstated" and "the Ohbox"
-      // are different facts and only the importer can tell what to do with the first.
-      ...(Array.isArray(o.piles)
-        ? { piles: o.piles.filter((v): v is string => typeof v === "string") }
-        : {}),
+      // are different facts and only the importer can tell what to do with the first. DEDUPED,
+      // because the value is a set at every other door and the notice renders one line per member.
+      ...(pilesOf(o.piles) === undefined ? {} : { piles: pilesOf(o.piles) }),
     };
+    /* A KNOWN KEY WITH THE WRONG TYPE IS NOT AN ABSENT ONE, and reading it as absent is the
+       widening door: a document saying `enabled: true` with a wider `audience` and a malformed
+       scope would turn the responder on and change who it answers while the one field that bounds
+       its reach came from nowhere. The section is unreadable, which is the refusal an unparseable
+       date already gets — applied whole or not at all. CHECKED BEFORE the object above is built,
+       or the read of a non-array throws instead of refusing. */
+    if (o.piles !== undefined && o.piles !== null && pilesOf(o.piles) === undefined) {
+      awayResponder = null;
+    }
   }
   const tagNames: string[] = Array.isArray(raw.tagNames)
     ? raw.tagNames.filter((t): t is string => typeof t === "string" && t.length > 0)

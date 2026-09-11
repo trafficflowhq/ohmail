@@ -7,7 +7,7 @@ import {
   recordChanges,
   type ChangeInput, type Tx,
 } from "@trafficflow/db";
-import { DESTINATIONS, isAwayPile } from "@trafficflow/core/mail";
+import { DESTINATIONS, isAwayPile, awayScopeFitsAudience, type AwayPile } from "@trafficflow/core/mail";
 import {
   ProfileUnavailableError, profileFingerprint,
   type OrganizerProfileDoc, type ProfileReadResult, type ProfileRuleEntry,
@@ -16,7 +16,7 @@ import { serializeOrganizerProfile } from "@trafficflow/core/adapters/organizer-
 import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { MAX_BODY_CONTAINS_CHARS, MAX_SUBJECT_CONTAINS_CHARS } from "./rules-service.js";
-import { AWAY_AUDIENCES, nextEnabledAt } from "./away-responder-service.js";
+import { AWAY_AUDIENCES, nextEnabledAt, type AwayAudience } from "./away-responder-service.js";
 import { AWAY_THROTTLES, type AwayThrottle } from "./away-responder-pass.js";
 import { MAX_TAG_NAME_CHARS } from "./tags-service.js";
 
@@ -633,7 +633,18 @@ export class ProfileImportService {
              narrow the responder on every adoption from an older install. Unrecognised members are
              dropped, on the same argument the audience and throttle are narrowed on: a value this
              build cannot act on must not reach a column whose CHECK refuses it. */
-          const piles = a.piles === undefined ? undefined : a.piles.filter(isAwayPile);
+          let piles = a.piles === undefined ? undefined : [...new Set(a.piles.filter(isAwayPile))];
+          /* AND THE SCOPE MUST FIT THE AUDIENCE THIS IMPORT IS APPLYING. The Screener pile may only
+             be answered with the wider audience, and the PUT enforces that UNGATED BY `enabled` —
+             so a row left holding the Screener beside the narrower audience is one the pane cannot
+             save at all, including the save that turns the responder OFF. That reaches the kept
+             scope too: the document may change the audience while saying nothing about scope.
+             Narrowed, as the audience and throttle are, because a document is not a person asking. */
+          const keptOrStored = piles ?? (await tx.select({ piles: awayResponders.piles })
+            .from(awayResponders).where(eq(awayResponders.accountId, ctx.accountId)).limit(1))[0]?.piles;
+          if (keptOrStored !== undefined && !awayScopeFitsAudience(keptOrStored as AwayPile[], audience as AwayAudience)) {
+            piles = (keptOrStored as AwayPile[]).filter((q) => awayScopeFitsAudience([q], audience as AwayAudience));
+          }
           const [prevAway] = await tx.select({ enabledAt: awayResponders.enabledAt })
             .from(awayResponders).where(eq(awayResponders.accountId, ctx.accountId)).limit(1);
           const enabledAt = nextEnabledAt(prevAway?.enabledAt ?? null, enabled, now);

@@ -364,6 +364,13 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
   const alive = useRef(true);
   /** The `asked` watcher's pending tick, so leaving the pane stops it. See {@link watchForApplied}. */
   const askedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /**
+   * WHICH SAVE THE PANE IS WAITING ON. Two requests can be in flight — turn the responder on, save,
+   * then turn it off and save again — and each 202 leaves a watcher holding its own request. Without
+   * this, the FIRST request landing made its watcher say "applied" and put its values back, about a
+   * request that had already been replaced. A watcher whose generation is stale decides nothing.
+   */
+  const saveGen = useRef(0);
   useEffect(() => {
     alive.current = true;
     return () => {
@@ -444,16 +451,18 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
    * A read that throws is not a state: the request may still land, so the attempt is spent and the
    * wait continues rather than turning a transient refusal into "that did not save".
    */
-  const watchForApplied = (askedAt: string | null, asked: Draft): void => {
+  const watchForApplied = (askedAt: string | null, asked: Draft, gen: number): void => {
     let left = ASKED_POLL_MAX;
     const tick = (): void => {
       askedTimer.current = setTimeout(() => {
         void (async () => {
           if (!alive.current) return;
+          // A LATER SAVE OWNS THE PANE. Stop, without deciding anything.
+          if (gen !== saveGen.current) return;
           left -= 1;
           try {
             const now = await wireOf().state();
-            if (!alive.current) return;
+            if (!alive.current || gen !== saveGen.current) return;
             if (now.updatedAt !== askedAt) {
               setDraft({
                 enabled: now.enabled, body: now.body,
@@ -492,6 +501,10 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
     if (draft.enabled && expired) { setState("expired"); return; }
     setPending(true);
     setState("idle");
+    /* THIS SAVE IS NOW THE ONE THE PANE IS WAITING ON, and the previous watcher's pending tick is
+       cleared so it cannot re-arm. The generation is what stops one already inside its `await`. */
+    const gen = ++saveGen.current;
+    if (askedTimer.current !== null) { clearTimeout(askedTimer.current); askedTimer.current = null; }
     void (async () => {
       /* THE REQUEST, KEPT. The 202 answers the row UNCHANGED, and `setDraft` below puts those
          values back — so without this snapshot the pane no longer holds what it asked for and the
@@ -523,7 +536,7 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
              told, which is the same defect the 202 discriminator was added to fix, one step later.
              `watchForApplied` ends it, and the load effect's own read is what ends it for anyone
              who left the pane and came back. */
-          watchForApplied(stored.updatedAt, asked);
+          watchForApplied(stored.updatedAt, asked, gen);
         } else {
           setState("saved");
         }
