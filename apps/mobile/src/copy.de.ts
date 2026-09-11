@@ -57,9 +57,7 @@ export const DE: Deck = {
 
   welcomeTitle: "Welches Postfach ist das?",
   welcomeLead:
-    "Diese App ist der Telefon-Client für einen ohmail-Server — unseren, einen den du selbst betreibst, oder die ohmail-App auf deinem eigenen Computer. Sie zeigt nichts, bis sie verbunden ist: Deine Post bleibt auf deinem Server, und dieses Telefon spiegelt sie.",
-  welcomeHow:
-    "Was du auch wählst — das Telefon koppelt sich, indem es einen Code scannt, den dieser Server dir zeigt. Hier wird nie ein Passwort eingetippt.",
+    "Was deine Post organisiert, muss laufen — ein Computer, ein Server oder dieses Telefon, solange ohmail offen ist. Deine Post bleibt auf deinem Mailserver.",
 
   /* ------------------------------------------------------------------ doors */
 
@@ -79,20 +77,17 @@ export const DE: Deck = {
   doorDesktopNoPin:
     "Nimm auf diesem Telefon die Tailscale-Adresse, die dieselbe Ansicht zeigt — ohmail kann einen Computer, der über dein eigenes Netz erreicht wird, hier noch nicht prüfen.",
 
-  /**
-   * DIE PRÄSENS-FORM IST DIE GANZE SORGFALT — see the English deck's note for the argument.
-   *
-   * "kann nicht" would be a permanent claim about a build nobody has shipped yet; "noch nicht"
-   * would be a promise. German makes the trap slightly worse than English does, because "noch
-   * nicht" is the idiomatic filler a translator reaches for and it is precisely the word that
-   * turns a fact into a commitment. `organisiert … nicht von selbst` is the plain present tense:
-   * true of this build, silent about any other.
-   */
-  doorsNoFourthDoor:
-    "Dieses Telefon organisiert ein Postfach nicht von selbst: Es arbeitet immer über ohmail Cloud, deinen eigenen Server oder einen Computer, der organisiert.",
+  /* Die vierte Tür — see the English deck's note. The third line is the one platform fork on
+     any of these screens; both sentences live in both decks. */
+  doorPhone: "Eigenständig auf diesem Telefon",
+  doorPhoneSay: "Dein Postfach, auf diesem Telefon organisiert.",
+  doorPhoneNeedIos:
+    "Nur solange die App offen ist. Wenn du sie verlässt, gibt sie das Postfach zurück.",
+  doorPhoneNeedAndroid:
+    "Nur solange die App offen ist — oder im Hintergrund hinter einer sichtbaren Benachrichtigung.",
 
   doorsTravel:
-    "Du kannst jederzeit wechseln. Deine aussortierten Absender, deine Regeln und deine Benachrichtigungs­einstellungen liegen in deinem eigenen Postfach und sind hinter jeder Tür dieselben — das Postfach ist immer das Original. Dieses Telefon hält davon immer nur eine Kopie.",
+    "Du kannst jederzeit wechseln. Deine aussortierten Absender, deine Regeln und deine Benachrichtigungs­einstellungen liegen in deinem eigenen Postfach und sind hinter jeder Tür dieselben — das Postfach ist immer das Original.",
 
   /* ------------------------------------------------- the self-hosted door */
 
@@ -117,12 +112,66 @@ export const DE: Deck = {
     `${origin} erreicht — ein ohmail-Server (${flavor}).`,
   doorSelfApiUnder: (base: string) => `Seine Mail-API liegt unter ${base}.`,
 
+  /* ------------------------------------------------ the standalone door */
+
+  /* Die drei gesetzten Sätze — see the English deck. The iPhone sentence says the mailbox is
+     handed back and never promises the background; that is the ruling, not a shortening. */
+  phoneStandaloneTitle: "Auf diesem Telefon organisieren",
+  phoneStandaloneL1Ios:
+    "Es organisiert, solange ohmail geöffnet ist. Wenn du die App verlässt, gibt es das Postfach zurück.",
+  phoneStandaloneL1Android:
+    "Es organisiert, solange seine Benachrichtigung angezeigt wird. Wische sie weg, um zu stoppen.",
+  phoneStandaloneL2: "Ein Postfach auf diesem Telefon.",
+  phoneStandaloneL3:
+    "Dein Mailserver behält alles. Nichts hier ist eine Kopie, die du verlieren könntest.",
+  phoneStandaloneGo: "Weiter",
+  phoneStandaloneBack: "Anders wählen",
+
+  /* Jedes Feldlabel ist das des Web-Katalogs, Byte für Byte. */
+  phoneStandaloneFormTitle: "Dein eigenes Postfach",
+  phoneStandaloneFormLead:
+    "Dieses Telefon verbindet sich direkt mit deinem Mailserver. Dein Passwort liegt auf diesem Telefon, verschlüsselt mit einem Schlüssel aus seinem Schlüsselspeicher, und geht nie an uns.",
+  phoneStandaloneAddress: "Postfachadresse",
+  phoneStandalonePassword: "Postfachpasswort",
+  phoneStandaloneShowPassword: "Passwort zeigen",
+  phoneStandaloneHidePassword: "Passwort verbergen",
+  phoneStandaloneAdvanced: "Servereinstellungen",
+  phoneStandaloneImapHost: "Posteingangsserver (IMAP)",
+  phoneStandaloneImapPort: "IMAP-Port",
+  phoneStandaloneImapTls: "Implizites TLS",
+  phoneStandaloneImapTlsHint:
+    "Ein bedeutet Port 993. Aus bedeutet Port 143, der per STARTTLS verschlüsselt wird. Wenn du den Port änderst, wandert dieser Schalter mit.",
+  phoneStandaloneSmtpHost: "Postausgangsserver (SMTP)",
+  phoneStandaloneSmtpPort: "SMTP-Port",
+  phoneStandaloneConnect: "Verbinden",
+  phoneStandaloneConnecting: "Postfach wird geöffnet…",
+  phoneStandaloneUseHost: (host: string) => `${host} nehmen`,
+  probeTlsHostname: (certHost: string, expectedHost: string, protocol: string) =>
+    `Das Zertifikat dieses Servers gilt für ${certHost}, nicht für ${expectedHost}, wir haben also abgebrochen, bevor das Passwort rausging. Frag deinen Anbieter nach dem richtigen ${protocol}-Server.`,
+  probeTlsHostnameSuggest: (
+    certHost: string, expectedHost: string, suggestedHost: string, protocol: string,
+  ) =>
+    `Das Zertifikat dieses Servers gilt für ${certHost}, nicht für ${expectedHost}, wir haben also abgebrochen, bevor das Passwort rausging. Er antwortet auf ${suggestedHost} — nimm das als ${protocol}-Server.`,
+
+  /* Die fünf Zustandslabels sind die des Desktops, Byte für Byte. */
+  phoneThisPhone: "Dieses Telefon",
+  phoneStateOrganizing: "Organisiert",
+  phoneStateStopping: "Wird beendet",
+  phoneStateNotOrganized: "Dieses Postfach wird von nichts organisiert",
+  phoneStateReader: (name: string) => `Organisiert von ${name}`,
+  phoneStateReaderLegacy: "Organisiert von einer anderen Installation",
+  settingsStopHere: "Hier nicht mehr organisieren",
+  settingsStopHereWhat:
+    "Dieses Telefon sortiert dieses Postfach nicht mehr ein und liest es weiter. Deine Ordner und alles darin bleiben, wo sie sind. Danach kann jede Installation es übernehmen, auch diese.",
+  settingsStopHereConfirm: "Postfach zurückgeben",
+  settingsStopHereCancel: "Weiter organisieren",
+
   /* --------------------------------------------------- servers & pairing */
 
   serversTitle: "Server",
   serversRow: "Mit einem Server verbinden",
   serversNote:
-    "Koppele dieses Telefon mit dem Computer oder Server, auf dem deine Post liegt. Gekoppelt wird über einen QR-Code oder einen kurzlebigen Token — nie über ein hier eingetipptes Passwort.",
+    "Koppele dieses Telefon mit dem Computer oder Server, auf dem deine Post liegt. Gekoppelt wird über einen QR-Code oder einen kurzlebigen Token, und dafür wird kein Passwort eingetippt.",
   serversActive: "Verbunden",
   serversProfiles: "Gekoppelte Server",
   serversAdd: "Server hinzufügen",

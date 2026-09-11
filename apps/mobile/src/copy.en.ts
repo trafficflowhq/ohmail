@@ -46,14 +46,12 @@ const TABLE = {
 
   welcomeTitle: "Which mailbox is this?",
   welcomeLead:
-    "This app is the phone client for an ohmail server — ours, one you run, or the ohmail app on your own computer. It shows nothing until it is connected: your mail stays on your server, and this phone mirrors it.",
-  welcomeHow:
-    "Whichever you pick, the phone joins by scanning a code that server shows you. No password is ever typed here.",
+    "Whatever organizes your mail has to be running — a computer, a server, or this phone while ohmail is open. Your mail stays on your mail server.",
   /*
-   * NO `welcomeScan` / `welcomeOther` ANY MORE. They were the two buttons this screen led with —
-   * "Scan the pairing QR" and "Other ways to connect" — and the second one is what the change is
-   * about: it filed two of the product's three doors under "other". The scan verb still exists
-   * where a scan is genuinely the next step (`scanTitle`, `stepScan`).
+   * NO `welcomeScan` / `welcomeOther`, AND NO `welcomeHow`. The first two were the buttons this
+   * screen led with, and `welcomeHow` said "No password is ever typed here" — true while all
+   * three doors scanned a code, false the day the standalone door types one. The scan verb still
+   * exists where a scan is genuinely the next step (`scanTitle`, `stepScan`).
    */
 
   /* ------------------------------------------------------------------ doors */
@@ -128,54 +126,31 @@ const TABLE = {
     "On this phone, use the Tailscale address that pane also shows — ohmail cannot yet verify a computer reached over your own network here.",
 
   /**
-   * ═══ THE SENTENCE WHERE A PERSON LOOKS FOR THE FOURTH DOOR ═══════════════════════════════
+   * ═══ THE FOURTH DOOR ═════════════════════════════════════════════════════════════════════
    *
-   * Three tiles, and every one of them names somebody else's machine. The question that leaves
-   * behind is the one this sentence answers: *and if I have none of those?* Nothing on this
-   * screen said it before — the absence was left to be inferred from three doors that happened
-   * not to include a fourth, which is not the same as being told.
+   * Three of these tiles name somebody else's machine. This one names the phone in the reader's
+   * hand, so its third line is a CONDITION where the others' are instructions: what this door
+   * costs, read before the tap rather than discovered after it.
    *
-   * ── WHY IT IS ONE SENTENCE AND NOT A PARAGRAPH ─────────────────────────────────────────────
-   *
-   * A person reading a chooser is deciding, not studying. The whole fact is: this phone is a
-   * client, of one of three things, and organizing is not among them. A second sentence would
-   * have to be about mechanism (no IMAP client here, no engine dialling a mail server) and
-   * mechanism is not what the decision turns on.
-   *
-   * ── AND IT IS IN THE PRESENT TENSE, WHICH IS THE WHOLE CARE IN IT ─────────────────────────
-   *
-   * Two words would each make this false in a different direction and both were considered:
-   *
-   *  · **"cannot", or "never"** — a permanent claim. It would outlive the code the moment the
-   *    phone gains an engine of its own, and a sentence that has to be hunted down later is a
-   *    sentence that gets left in place.
-   *  · **"yet", or "for now"** — a promise. It commits the product to a thing no released build
-   *    does, in the one place a person is making a decision about what to buy into, and it is
-   *    exactly the reassurance nobody asked for.
-   *
-   * So: *does not*. What is true of the build in the reader's hand, stated without a claim about
-   * any other build. If that ever changes, this key changes with the code that changes it and
-   * the census below (`test/no-host-census.test.ts`) is what makes that impossible to forget:
-   * the sentence and the absent door are held by one guard.
-   *
-   * ── AND IT RENDERS ON BOTH SURFACES, NOT ONLY AT FIRST RUN ────────────────────────────────
-   *
-   * {@link doorsLead} is the first-run screen's alone (`lead`), because a lead sentence earns its
-   * room once. This one is not a lead: the question it answers is asked just as hard on the
-   * Servers screen's "Add a server" panel — arguably harder, by somebody who has already
-   * connected one server and is now looking for what else this phone can be.
+   * The third line is the only thing on any of the four screens that forks on platform. Both
+   * sentences live in both decks and the tile renders on both platforms.
    */
-  doorsNoFourthDoor:
-    "This phone does not organize a mailbox on its own: it always works through ohmail Cloud, your own server, or a computer that organizes.",
+  doorPhone: "Standalone on this phone",
+  doorPhoneSay: "Your mailbox, organized on this phone.",
+  doorPhoneNeedIos:
+    "Only while the app is open. When you leave, it hands the mailbox back.",
+  doorPhoneNeedAndroid:
+    "Only while the app is open — or in the background behind a notification you can see.",
 
   /**
    * THE TRAVEL SENTENCE, IN THE ONE FORM THAT IS TRUE FOR A PHONE.
    *
    * The desktop's is *"Your rules and settings live in your own mailbox and travel with you — the
    * mailbox is always the master."* Both halves hold here, and a phone needs a third clause the
-   * desktop does not: the desktop MAY be the organizer, so "move between these" is something its
-   * own install does. A phone is never the organizer, so what moves is which server it mirrors —
-   * and nothing it holds travels, because everything it holds is a copy.
+   * desktop does not: behind three of the four doors what moves is which machine it mirrors, and
+   * nothing the phone holds travels, because behind those three everything it holds is a copy.
+   * Behind the fourth the phone IS the organizer, so the final clause was dropped — it was true
+   * of three doors out of four and the panel carries all four.
    *
    * The list is the catalogue's own (`leave.note`: screened senders, rules, notification choices,
    * the away reply, tag names), shortened to the three a phone actually shows, and it does NOT say
@@ -184,7 +159,7 @@ const TABLE = {
    * them. Claiming them would be claiming the payload does not carry.
    */
   doorsTravel:
-    "Move between these anytime. Your screened senders, rules and notification choices live in your own mailbox, so they are the same behind every door — the mailbox is always the master. This phone only ever keeps a copy of it.",
+    "Move between these anytime. Your screened senders, rules and notification choices live in your own mailbox, so they are the same behind every door — the mailbox is always the master.",
 
   /* ------------------------------------------------- the self-hosted door */
 
@@ -251,12 +226,89 @@ const TABLE = {
    */
   doorSelfApiUnder: (base: string) => `Its mail API is at ${base}.`,
 
+  /* ------------------------------------------------ the standalone door */
+
+  /**
+   * ═══ WHAT THIS PHONE IS AND IS NOT AS THE ORGANIZER ══════════════════════════════════════
+   *
+   * Three ruled sentences, read before the choice is confirmed. The first forks on platform
+   * because the two platforms genuinely differ; the other two are the same everywhere.
+   *
+   * The iPhone sentence says "hands the mailbox back" and never "in the background": iOS does
+   * not let a suspended app hold an organizer claim honestly, and a sentence promising it would
+   * be the double-organizer hazard written down as a feature.
+   */
+  phoneStandaloneTitle: "Organize on this phone",
+  phoneStandaloneL1Ios:
+    "It organizes while ohmail is open. When you leave the app, it hands the mailbox back.",
+  phoneStandaloneL1Android:
+    "It organizes while its notification is shown. Dismiss the notification to stop.",
+  phoneStandaloneL2: "One mailbox on this phone.",
+  phoneStandaloneL3:
+    "Your mail server keeps everything. Nothing here is a copy you could lose.",
+  phoneStandaloneGo: "Continue",
+  phoneStandaloneBack: "Choose differently",
+
+  /* The credential form. Every label here is the web catalogue's, byte for byte — the same
+     mailbox asked for in the same words on whichever surface somebody opens it. */
+  phoneStandaloneFormTitle: "Your own mailbox",
+  phoneStandaloneFormLead:
+    "This phone connects to your mail server directly. Your password is stored on this phone, encrypted under a key held in its keystore, and is never sent to us.",
+  phoneStandaloneAddress: "Mailbox address",
+  phoneStandalonePassword: "Mailbox password",
+  phoneStandaloneShowPassword: "Show password",
+  phoneStandaloneHidePassword: "Hide password",
+  phoneStandaloneAdvanced: "Server settings",
+  phoneStandaloneImapHost: "Incoming server (IMAP)",
+  phoneStandaloneImapPort: "IMAP port",
+  /**
+   * THE SWITCH AND THE PORT ARE ONE FACT, which is why this hint exists.
+   *
+   * `enterLocalDoor` derives `secure` from the PORT and ignores any separate flag, so a switch
+   * that wrote its own value would be a control the engine does not read. Here the switch sets
+   * the port and the port sets the switch — one source of truth, and the hint says so rather
+   * than leaving somebody to discover that the two move together.
+   */
+  phoneStandaloneImapTls: "Implicit TLS",
+  phoneStandaloneImapTlsHint:
+    "On is port 993. Off is port 143, which upgrades with STARTTLS. Changing the port moves this switch with it.",
+  phoneStandaloneSmtpHost: "Outgoing server (SMTP)",
+  phoneStandaloneSmtpPort: "SMTP port",
+  phoneStandaloneConnect: "Connect",
+  phoneStandaloneConnecting: "Opening your mailbox…",
+  /** The press beside a refusal that named a host. Only rendered where there is a field for it. */
+  phoneStandaloneUseHost: (host: string) => `Use ${host}`,
+  /* The probe's own two sentences, verbatim from the web catalogue — the server's answer, not
+     ours. `probe_tls_hostname` / `probe_tls_hostname_suggest`. */
+  probeTlsHostname: (certHost: string, expectedHost: string, protocol: string) =>
+    `That server's certificate is for ${certHost}, not ${expectedHost}, so we stopped before sending the password. Check the ${protocol} host with your provider.`,
+  probeTlsHostnameSuggest: (
+    certHost: string, expectedHost: string, suggestedHost: string, protocol: string,
+  ) =>
+    `That server's certificate is for ${certHost}, not ${expectedHost}, so we stopped before sending the password. It answers to ${suggestedHost} — use that as the ${protocol} host.`,
+
+  /**
+   * Settings → This phone. The five state labels are the desktop's own keys and values, because
+   * a person who reads "Organizing" on a laptop must not meet a second word for it here.
+   */
+  phoneThisPhone: "This phone",
+  phoneStateOrganizing: "Organizing",
+  phoneStateStopping: "Stopping",
+  phoneStateNotOrganized: "Nothing organizes this mailbox",
+  phoneStateReader: (name: string) => `Organized by ${name}`,
+  phoneStateReaderLegacy: "Organized by another install",
+  settingsStopHere: "Stop organizing here",
+  settingsStopHereWhat:
+    "This phone stops filing this mailbox and goes on reading it. Your folders and everything in them stay where they are. Any install can take it over afterwards, including this one.",
+  settingsStopHereConfirm: "Hand the mailbox back",
+  settingsStopHereCancel: "Keep organizing",
+
   /* --------------------------------------------------- servers & pairing */
 
   serversTitle: "Servers",
   serversRow: "Connect to a server",
   serversNote:
-    "Pair this phone with the computer or server that holds your mail. Pairing is a QR code or a short-lived token — never a password typed here.",
+    "Pair this phone with the computer or server that holds your mail. Pairing is a QR code or a short-lived token, and no password is typed for it.",
   serversActive: "Connected",
   serversProfiles: "Paired servers",
   serversAdd: "Add a server",
