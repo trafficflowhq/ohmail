@@ -342,30 +342,24 @@ function TagCreateRow({
 }
 
 /**
- * WHICH PANE A DEEP LINK ASKS FOR — `?settings=<pane>` on the app URL, or `"general"`.
- *
- * It exists for one caller and one reason: the Microsoft consent ceremony's callback has to send the
- * browser somewhere that can render its outcome, and the outcome belongs on the Mailboxes pane.
- * `#/settings` (`shell/routing.ts`) already gets the SETTINGS VIEW open; nothing could ask for a
- * pane inside it, so the redirect landed on General and the sentence explaining what happened was
- * one click away and invisible.
- *
- * A hash segment exists NOW — `#/settings/<pane>` (`shell/routing.ts`), added when sections became
- * places of their own — and it OUTRANKS this parameter: an explicit segment controls the pane from
- * the shell, and this function only decides the BARE `#/settings` mounts. The parameter stays for
- * its one consumer (the ceremony's redirect predates the segment and keeps working), not as a
- * second spelling to hand out; new links say `#/settings/<pane>`.
- *
- * It is read ONCE, as the initial state, and never watched — which is the whole of why the parameter
- * is allowed to stay in the address bar. `MailboxSection` strips the CEREMONY parameters (`oauth`,
- * `state`, `code`, `reason`) because they are single-use, and deliberately leaves this one: a pane
- * name is not a credential, and a value that is only consulted at mount cannot drag a user back from
- * a pane they have since clicked to. On a reload it opens Mailboxes again, which is where somebody
- * reloading a page about their mailboxes wants to be.
- *
- * An unrecognised value is `"general"` — the same posture `parseHash` takes for an unknown view, and
- * the reason this validates against {@link PANE_IDS} rather than casting: `pane` selects a render
- * branch, and a value from a URL that matched none of them would render an empty settings screen.
+ * Which pane a deep link asks for — `?settings=<pane>` on the app URL, or `"general"`. One
+ * caller, one reason: the Microsoft consent ceremony's callback has to land somewhere that can
+ * render its outcome, which belongs on the Mailboxes pane — `#/settings` only opened the VIEW,
+ * so the redirect landed on General with the explanation one click away. A hash segment exists
+ * now (`#/settings/<pane>`, `shell/routing.ts`) and OUTRANKS this parameter: the segment
+ * controls the pane from the shell, this function only decides the bare `#/settings` mounts;
+ * the parameter stays for its one consumer, and new links say `#/settings/<pane>`.
+ */
+
+/**
+ * Read ONCE, as initial state, never watched — the whole of why the parameter may stay in the
+ * address bar. `MailboxSection` strips the CEREMONY parameters (`oauth`, `state`, `code`,
+ * `reason`) because they are single-use, and deliberately leaves this one: a pane name is not a
+ * credential, and a value only consulted at mount cannot drag a user back from a pane they have
+ * since clicked to; on a reload it opens Mailboxes again, where somebody reloading a page about
+ * their mailboxes wants to be. An unrecognised value is `"general"` — `parseHash`'s posture for
+ * an unknown view, and why this validates against {@link PANE_IDS} rather than casting: `pane`
+ * selects a render branch, and an unmatched URL value would render an empty settings screen.
  */
 export function initialPaneFromUrl(): PaneId {
   if (typeof window === "undefined") return "general";
@@ -416,26 +410,19 @@ export function SettingsView({
   tags: TagDTO[];
   tagCounts: Record<string, number>;
   /**
-   * THE RULES PANE — ONE PROP, ALL THREE PARTS, OR NO PANE AT ALL.
-   *
-   * ── WHY IT IS NOT A `ReactNode` SEAM ────────────────────────────────────────────────────
-   *
-   * Account, Mailboxes, Subscription and Security are all injected nodes because each one
-   * needs `app/api-client`, which `scripts/publish-desktop.mjs` DENYs from this shared file.
-   * Rules needs nothing of the sort: `rule` is a real `/sync` entity, so the list comes from
-   * the mirror via `rulesList(reader)`, and both verbs are engine mutations on the same wire
-   * `tag_assign` uses. Desktop and `?demo=1` are therefore correct without a special case —
-   * the FixturesAdapter serves `rule_delete` and `rule_update` out of `mutationEffects` like
-   * every other verb.
-   *
-   * ── WHY IT IS ONE OBJECT AND NOT THREE PROPS ────────────────────────────────────────────
-   *
-   * Three optional props can be half-supplied: a shell that passes the list and forgets a
-   * callback yields a pane whose buttons throw, which is the shape this gap is about. As one
-   * object the state space is two — wired, or absent — and `undefined` means "this shell has
-   * not wired rules yet", which removes the pane from the nav entirely rather than offering
-   * an empty list on an account that has four. An EMPTY `items` array is the other thing
-   * altogether: a real account that has decided nothing yet, and it renders as such.
+   * The Rules pane — one prop, all three parts, or no pane at all. Not a `ReactNode` seam: Account, Mailboxes,
+   * Subscription and Security are injected nodes because each needs `app/api-client`, which
+   * `scripts/publish-desktop.mjs` DENYs from this shared file. Rules needs nothing of the sort — `rule` is a real
+   * `/sync` entity, the list comes from the mirror via `rulesList(reader)`, and both verbs are engine mutations on
+   * the same wire `tag_assign` uses, so Desktop and `?demo=1` are correct without a special case. One object and not
+   * three props because three optionals can be half-supplied — a shell passing the list and forgetting a callback
+   * yields a pane whose buttons throw.
+   */
+
+  /**
+   * As one object the state space is two: wired, or absent — `undefined` means "this shell has not wired rules yet"
+   * and removes the pane from the nav, while an EMPTY `items` array is a real account that has decided nothing yet,
+   * rendered as such.
    */
   rules?: {
     /** Newest first — `rulesList(reader)`. */
@@ -579,55 +566,40 @@ export function SettingsView({
    */
   remoteImagesSection?: ReactNode;
   /**
-   * AUTO-UNSUBSCRIBE ON SCREEN-OUT, injected — the Screener pane's fourth control.
-   *
-   * It belongs to the SCREENER and not to General, unlike {@link remoteImagesSection} directly
-   * above: what it governs is a consequence of a screening decision, so the place somebody looks
-   * for it is the pane where they set what screening does.
-   *
-   * It renders LAST of the pane's behaviour controls, after {@link autoSuggestSection}, which is
-   * an escalation rather than an accident: the two above it change what the Screener shows and
-   * what it may spend, and this one makes a request to a stranger. A control whose consequence
-   * leaves the building sits below every control whose does not.
-   *
-   * It stays in this pane rather than following {@link awaySection} into one of its own, and the
-   * difference is what the control is ABOUT. The responder is a feature you go and configure; this
-   * is a consequence of a decision made here, and the sentence it governs is the one the Screener's
-   * own toasts print. Somebody looking for it is looking for where screening is set up.
-   *
-   * The same injection seam as {@link autoSuggestSection}: it writes `PATCH /consent/settings`
-   * through `app/api-client` and through the shell's `useConsentState` (so the sender sheet and the
-   * Screener stop disclosing a request that will no longer be made), neither of which this shared,
-   * desktop-mirrored file may name. Absent ⇒ no row, which is the honest state on a standalone
-   * install: its engine wires no unsubscribe service at all, so there is nothing there to switch
-   * off.
+   * Auto-unsubscribe on screen-out, injected — the Screener pane's fourth control. It belongs to the SCREENER and not
+   * General, unlike {@link remoteImagesSection} above: it governs a consequence of a screening decision, so the place
+   * somebody looks for it is the pane where they set what screening does. It renders LAST of the behaviour controls,
+   * after {@link autoSuggestSection}, as an escalation: the two above change what the Screener shows and may spend;
+   * this one makes a request to a stranger — a control whose consequence leaves the building sits below every control
+   * whose does not. It stays here rather than following {@link awaySection} into a pane of its own because of what it
+   * is ABOUT: the responder is a feature you go and configure, this is a consequence of a decision made here.
+   */
+
+  /**
+   * Same injection seam as {@link autoSuggestSection} (`PATCH /consent/settings` through `app/api-client` and the
+   * shell's `useConsentState`, neither nameable here). Absent ⇒ no row — honest on a standalone install, whose engine
+   * wires no unsubscribe service at all.
    */
   autoUnsubscribeSection?: ReactNode;
   /**
-   * THE AWAY RESPONDER, injected — and the only injected node whose feature SENDS MAIL.
-   *
-   * The same seam as {@link autoSuggestSection}: it reads and writes `GET/PUT /away-responder`
-   * through `app/api-client`, which this shared, desktop-mirrored file may not name.
-   *
-   * Absent is the RIGHT default here in a way it is not for the reading preferences above, and the
-   * reason is the product rather than the plumbing: the responder is Cloud-only (the sender is a
-   * pass in the hosted worker), so a standalone install has nothing that could send a reply. A
-   * control drawn there would store a configuration and answer nobody — which is the exact
-   * built-and-unreachable shape this whole slice exists to remove, reintroduced one layer up.
-   *
-   * ── IT HAS ITS OWN PANE, AND IT USED TO BE THE SCREENER PANE'S LAST ROW ─────────────────────
-   *
-   * The old filing had a real argument behind it — the responder's one live decision is whether a
-   * sender the Screener is still holding gets answered, so it sat beside the posture that decides
-   * who is held. What that argument left out is that this is the only control in the product that
-   * makes the app SEND MAIL, and "where do I turn that off" is a question people ask of a menu.
-   * Buried as the fifth block of a pane about who reaches the Ohbox, it was findable only by
-   * somebody who already knew where it was.
-   *
-   * So it is its own section, immediately after the Screener — the neighbour it argues with, not
-   * the pane it hides in. The node is the WHOLE pane here, not a row inside a shared one, which is
-   * why an absent node removes the nav entry rather than leaving an empty pane behind: see the
-   * `panes` list below.
+   * The away responder, injected — the only injected node whose feature SENDS MAIL. Same seam
+   * as {@link autoSuggestSection}: it reads and writes `GET/PUT /away-responder` through
+   * `app/api-client`, which this shared, desktop-mirrored file may not name. Absent is the
+   * RIGHT default for product reasons, not plumbing: the responder is Cloud-only (the sender is
+   * a pass in the hosted worker), so a standalone install has nothing that could send a reply —
+   * a control drawn there would store a configuration and answer nobody, the built-and-
+   * unreachable shape this slice exists to remove.
+   */
+
+  /**
+   * It has its own pane, and it used to be the Screener pane's last row. The old filing had a
+   * real argument — the responder's one live decision is whether a sender the Screener still
+   * holds gets answered — but this is the only control that makes the app SEND MAIL, and "where
+   * do I turn that off" is a question people ask of a menu; buried as the fifth block of a pane
+   * about who reaches the Ohbox, it was findable only by somebody who already knew. So it is
+   * its own section, immediately after the Screener — the neighbour it argues with, not the
+   * pane it hides in. The node is the WHOLE pane, which is why an absent node removes the nav
+   * entry rather than leaving an empty pane: see `panes` below.
    */
   awaySection?: ReactNode;
   /**
@@ -987,22 +959,16 @@ export function SettingsView({
             ))}
           </nav>
 
-          {/* ── ONE GRID ITEM FOR THE WHOLE CONTENT COLUMN, AND THE ACCOUNT PANE IS WHY ───────
-              `.set-layout` is a two-column grid: nav | content. Every pane below renders ONE
-              `SettingsSection` into it except Account, which renders TWO (the sign-out card and
-              the delete card). While each section was its own GRID ITEM, the second one was
-              auto-placed into grid ROW 2 — and row 1's height is the tallest item in it, which is
-              the NAV. So on the Account pane the delete card began below the bottom of a
-              ten-entry nav, leaving roughly a nav's worth of blank canvas between the two cards
-              and above "Delete your account". Nothing was hidden and no rule was wrong; the
-              second card was simply obeying a row the nav had sized.
-
-              An earlier fix pinned every direct `.set-pane` to `grid-column: 2`, which cured the
-              other half of the same mechanism (the second card had been landing in the NAV's
-              170px column) and could not cure this half: a column pin does not stop a second item
-              from taking a second row. This wrapper does, by leaving the grid exactly two items
-              wide — nav, content — and stacking a pane's sections inside it with a flex gap that
-              owes the nav nothing. Pinned by `test/settings-account-layout.test.tsx`. */}
+          {/*
+              One grid item for the whole content column, and the Account pane is why. `.set-layout` is nav | content;
+              every pane renders ONE `SettingsSection` except Account, which renders two. As separate grid items the
+              second was auto-placed into grid ROW 2, whose height row 1 sized to the tallest item — the NAV — so the
+              delete card began below a ten-entry nav with a nav's worth of blank canvas above it. Nothing was hidden;
+              the card was obeying a row the nav had sized. An earlier fix pinned `.set-pane` to `grid-column: 2`,
+              curing the other half (the card landing in the nav's 170px column) but a column pin cannot stop a second
+              item taking a second row. This wrapper does: the grid stays two items wide and a pane's sections stack
+              inside with a flex gap owing the nav nothing. Pinned by `test/settings-account-layout.test.tsx`.
+            */}
           <div
             className="set-pane-col"
             /* The reader zone of the settings dive (`useZoneNav` above): → lands real focus
@@ -1062,19 +1028,16 @@ export function SettingsView({
 
           {shown === "notifications" ? (
             <SettingsSection>
-              {/* THE REAL CONTROLS, FOR EVERY LIVE ACCOUNT.
-                  This branch used to hold one sentence saying ohmail delivered no notifications
-                  at all, because it did not: the client asked for no permission, registered no
-                  worker, and the switches that had been here were controls whose every position
-                  meant nothing. That sentence outlived its truth — the desktop build was posting
-                  a system notice on every rise in the unread count the whole time it was on
-                  screen — which is the worst version of this bug, since a false sentence is
-                  harder to notice than a dead switch.
-                  So the switches are real now and each one gates an emitter, the master gates all
-                  of them, and the pane renders the platform's own answer rather than assuming it.
-                  `notifications` (the mirror's `view_meta` row) still exists only in the fixture
-                  world — the sync feed has no such entity — so the branch below keeps the DEMO's
-                  prototype screen exactly as designed, framed by the demo ribbon. */}
+              {/* The real controls, for every live account. This branch used to hold one
+                  sentence saying ohmail delivered no notifications at all — true when written,
+                  outlived by the desktop build posting a system notice on every rise in the
+                  unread count the whole time it was on screen: a false sentence is harder to
+                  notice than a dead switch. The switches are real now — each gates an emitter,
+                  the master gates all, and the pane renders the platform's own answer rather
+                  than assuming it. `notifications` (the mirror's `view_meta` row) still exists
+                  only in the fixture world — the sync feed has no such entity — so the branch
+                  below keeps the demo's prototype screen exactly as designed, framed by the
+                  demo ribbon. */}
               {!notifications ? (
                 <>
                   {/* THE MASTER. Disabled — not merely off — when the platform refuses, because a
@@ -1291,19 +1254,16 @@ export function SettingsView({
             </SettingsSection>
           ) : null}
 
-          {/* THE SCREENER PANE — every control about the mail a connected mailbox brings, in one
-              section: the posture first, then the dormancy dial (both about what the Screener SHOWS
-              and neither spends), then the auto-suggest opt-in (because it is the one that can cost
-              money), then auto-unsubscribe (because it is the one whose consequence leaves the
-              building), and the door back to the sent-mail review at the foot. Each node is absent
-              on Desktop and the demo — the pane itself is withheld from the nav when all five are.
-              The seed section renders its own copy under its own subhead; its `node` brings no
-              `SettingsSection` of its own, because this one wraps the whole pane.
-
-              THE AWAY RESPONDER IS NO LONGER HERE. It was the last row of this section; it has its
-              own pane below. Anything that puts it back has to remove it from there in the same
-              edit — two live controls over one `PUT /away-responder` each hold their own draft, and
-              whichever is saved second silently overwrites the other with a stale one. */}
+          {/* The Screener pane — every control about the mail a connected mailbox brings: the
+              posture, then the dormancy dial (both about what the Screener SHOWS, neither
+              spends), then the auto-suggest opt-in (the one that can cost money), then
+              auto-unsubscribe (the one whose consequence leaves the building), and the door back
+              to the sent-mail review at the foot. Each node is absent on Desktop and the demo;
+              the pane is withheld from the nav when all five are. The seed section renders its
+              own copy under its own subhead. The away responder is no longer here — it has its
+              own pane below; anything that puts it back must remove it from there in the same
+              edit, because two live controls over one `PUT /away-responder` each hold their own
+              draft, and whichever saves second silently overwrites the other. */}
           {shown === "screener" ? (
             <SettingsSection>
               {screeningSection}
