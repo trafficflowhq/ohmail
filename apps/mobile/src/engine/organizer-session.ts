@@ -27,6 +27,7 @@
  * handed back here for that same reason — it is already gone, and asking the server to expunge
  * records by our own id afterwards is a write about a mailbox this install no longer holds.
  */
+import type { StandaloneEngine } from "./standalone-door";
 import {
   createBackgroundOrganizing,
   type AppPhase,
@@ -69,6 +70,32 @@ export function appPhaseOf(status: string): AppPhase {
   if (status === "background") return "background";
   return "inactive";
 }
+
+/**
+ * ══ THE DOOR THIS PROCESS HOLDS — one, and the first wins ══════════════════════════════════
+ *
+ * The connection layer builds its session over this door (`net/pairing.ts`'s standalone arm), so
+ * something has to hold it between the moment it opens and the moment a screen asks for it. Here,
+ * beside the session, because the invariant is the same one and the module already enforces it:
+ * exactly one engine in this process, first-start-wins.
+ *
+ * It is SEPARATE from `live` on purpose. Two acts that look alike are not: "Stop organizing here"
+ * ends the session and leaves the engine serving this phone's cached mail as a reader, so it must
+ * not release the door. Only {@link endStandaloneHere} — the forget — does.
+ */
+let door: StandaloneEngine | null = null;
+
+/**
+ * Record the door this app just opened. Answers whether THIS call is the held one, so a caller that
+ * cares can say so; a second, different door changes nothing.
+ */
+export function holdStandaloneDoor(opened: StandaloneEngine): boolean {
+  if (door === null) door = opened;
+  return door === opened;
+}
+
+/** The door, or `null` — "no engine is running in this process", which is not an error. */
+export const organizerDoor = (): StandaloneEngine | null => door;
 
 /** The live session, or `null`. Module scope for the reason in the header. */
 let live: {
@@ -161,8 +188,33 @@ export function sayOrganizerRestricted(): void {
   restrictedSaid = true;
 }
 
+/**
+ * END IT HERE — the forget's verb, and the only one that stops the engine.
+ *
+ * Three effects in one call because a person pressing Forget on this phone's own mailbox is asking
+ * for all three, and any two of them without the third is a state nothing describes:
+ *
+ *  1. the CLAIM goes back — the engine's own `handBack`, so another machine can take the mailbox
+ *     immediately rather than waiting out the staleness window;
+ *  2. the SESSION stops, which takes the notification down with it;
+ *  3. the ENGINE stops, because the profile row that named it is about to go.
+ *
+ * In that order: the hand-back needs a running engine, and a notification left standing over a
+ * stopped one would say this phone is organizing mail it no longer holds. Never throws — the row
+ * removal must not be blocked by a mailbox that could not be reached. The claim not going back is
+ * the recoverable half: it ages out.
+ */
+export async function endStandaloneHere(): Promise<void> {
+  const held = door;
+  door = null;
+  if (held !== null) await held.handBack().catch(() => undefined);
+  await stopOrganizerSession();
+  if (held !== null) await held.stop().catch(() => undefined);
+}
+
 /** Test seam: forget everything. Never called by the app. */
 export function forgetOrganizerSessionForTests(): void {
   live = null;
+  door = null;
   restrictedSaid = false;
 }

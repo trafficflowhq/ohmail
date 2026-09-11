@@ -169,6 +169,41 @@ export interface ConnectConfig {
 export const LOCAL_ENGINE_ORIGIN = "http://sidecar";
 
 /**
+ * EVERY REQUEST A DOOR IN THIS PROCESS ANSWERS, with this launch's bearer on it.
+ *
+ * Composed here and read by two callers — {@link bootEngine}'s own adapter and the session the
+ * connection layer builds over the same door (`net/pairing.ts`) — because two spellings of "how do
+ * you talk to the local engine" is one too many: the app's own reads (`/mailboxes`, the release
+ * route) would then be stamped differently from the drain's.
+ *
+ * `new Request(url, init)` because the engine's door is written against the same `Request`/`Response`
+ * pair the network one is; the token is read PER REQUEST rather than captured, which keeps this seam
+ * identical in shape to a rotating credential's.
+ */
+export function localEngineTransport(door: LocalEngineDoor): {
+  headers: () => Record<string, string>;
+  /* `unknown` rather than `RequestInit`, because both readers have to fit: the adapter's seam is
+     typed `RequestInit` and the session's is the app's wider `FetchLike`, which every network
+     transport in this app already is. */
+  fetch: (url: string, init?: unknown) => Promise<Response>;
+} {
+  const headers = (): Record<string, string> => ({ authorization: `Bearer ${door.sessionToken}` });
+  return {
+    headers,
+    fetch: async (url, init) => {
+      const given = (init ?? {}) as RequestInit;
+      return door.handle(new Request(url, {
+        ...given,
+        /* THE DOOR'S TOKEN LAST, so it wins. A caller's own `authorization` header can only ever
+           be a different door's or a stale one, and this engine would refuse it — a refusal a
+           person would read as their own mailbox rejecting them. */
+        headers: { ...Object.fromEntries(new Headers(given.headers).entries()), ...headers() },
+      }));
+    },
+  };
+}
+
+/**
  * HOW LONG THE IDENTITY PROBE MAY HOLD THE DRAIN ROUTES SHUT. Every sync chains on the
  * verdict (the clearance below), so a server that ACCEPTS the probe and never answers must
  * not become a session that renders cached mail and never syncs — the exact unbounded hold
@@ -575,18 +610,15 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
   // The credential, behind two seams (headers + fetch). The manager supplies both; the
   // static path composes the same shapes from the pasted token, so everything below is one
   // code path and the rotating credential cannot diverge from the tested one.
-  const authHeaders = local !== undefined
-    /* READ PER REQUEST, like the rotating credential's: the engine's token is stable for a launch,
-       and stamping it per request rather than capturing it keeps this seam identical in shape to
-       the one a paired door uses. */
-    ? (): Record<string, string> => ({ authorization: `Bearer ${local.sessionToken}` })
+  /* THE WHOLE TRANSPORT, on the local door: a function call, composed once in
+     {@link localEngineTransport} so the app's own reads over the same door cannot differ from this
+     adapter's. */
+  const localTransport = local !== undefined ? localEngineTransport(local) : null;
+  const authHeaders = localTransport !== null
+    ? localTransport.headers
     : config.auth?.headers ?? (() => ({ authorization: `Bearer ${token}` }));
-  const fetchImpl = local !== undefined
-    /* THE WHOLE TRANSPORT, on this door: a function call. `new Request(url, init)` because the
-       engine's door is written against the same `Request`/`Response` pair the network one is —
-       that is what lets the desktop's own API serve a client in this app without a second
-       protocol. */
-    ? (async (url: string, init?: RequestInit): Promise<Response> => local.handle(new Request(url, init)))
+  const fetchImpl = localTransport !== null
+    ? localTransport.fetch
     : config.auth?.fetch ??
       deps.fetch ??
       (globalThis.fetch.bind(globalThis) as NonNullable<MobileEngineDeps["fetch"]>);

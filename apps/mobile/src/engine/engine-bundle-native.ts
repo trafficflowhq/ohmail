@@ -31,8 +31,8 @@
  * what `test/engine-bundle-loads.test.ts` does, over the same file at the same path. That suite
  * boots the artifact and watches it dial; this file only hands it to the registry.
  */
-import { registerPhoneEngine } from "./engine-artifact";
-import type { StartPhoneEngine } from "./standalone-door";
+import { registerPhoneEngine, registerPhoneEngineReopen } from "./engine-artifact";
+import type { StartPhoneEngine, StartPhoneEngineFromSealed } from "./standalone-door";
 
 /* eslint-disable @typescript-eslint/no-var-requires, @typescript-eslint/no-unsafe-assignment */
 /**
@@ -42,6 +42,7 @@ import type { StartPhoneEngine } from "./standalone-door";
  */
 const artifact = require("../../generated/phone-engine.js") as {
   startPhoneEngine: StartPhoneEngine;
+  startPhoneEngineFromSealed: StartPhoneEngineFromSealed;
 };
 /* eslint-enable */
 
@@ -58,5 +59,9 @@ const artifact = require("../../generated/phone-engine.js") as {
  * inside `src/engine/` is quoted verbatim into a translated refusal (`test/refusal.test.ts`).
  */
 export function registerBundledPhoneEngine(): boolean {
-  return registerPhoneEngine(artifact.startPhoneEngine);
+  /* BOTH ENTRIES OF ONE ARTIFACT, from one `require`. The door's registration is what the chooser
+     reads; the relaunch's is what a cold launch over a stored row reaches. Registered together so a
+     build cannot offer the door and then be unable to re-open what it opened. */
+  const reopen = registerPhoneEngineReopen(artifact.startPhoneEngineFromSealed);
+  return registerPhoneEngine(artifact.startPhoneEngine) && reopen;
 }

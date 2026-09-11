@@ -37,8 +37,14 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { Platform } from "react-native";
 import { Copy } from "../copy";
 import { faultDetail, refuse, type Refusal, type RefusalArg } from "../refusal";
-import { mirrorExists, mirrorOwnerKey } from "../engine/boot";
+import { LOCAL_ENGINE_ORIGIN, mirrorExists, mirrorOwnerKey } from "../engine/boot";
 import { nativeEngineDeps } from "../engine/native";
+import { endStandaloneHere, holdStandaloneDoor, organizerDoor } from "../engine/organizer-session";
+import {
+  PHONE_CLAIM_NAME, reopenStandaloneMailbox, type StandaloneEngine,
+} from "../engine/standalone-door";
+import { phoneEngineReopen } from "../engine/engine-artifact";
+import { installGeneration } from "../state/install-marker";
 import { settleInstallGeneration } from "../state/install-marker";
 import { nativeServerProfiles } from "../state/servers-native";
 import { installPinning } from "./host-pinning";
@@ -121,6 +127,16 @@ export interface Connection {
    * from a scanned string: the person in between is part of the type.
    */
   pairConfirmed(admission: PairAdmission, token: string): Promise<Attempt>;
+  /**
+   * ADOPT THE MAILBOX THIS PHONE JUST OPENED — the fourth door's second half.
+   *
+   * The door screen starts the engine and hands the door here; this writes the profile row and goes
+   * live on it through the SAME gated connect a paired profile takes, so `welcome.tsx`'s redirect
+   * and every screen see one kind of session. The row is written BEFORE the connect, because the
+   * connect re-reads it from the keystore by id — a session built over a held object would be live
+   * on a mailbox the next launch cannot find.
+   */
+  openStandalone(door: StandaloneEngine): Promise<Attempt>;
   /** Switch the live session to a stored profile — BY ID; the row is re-read in the gate. */
   switchTo(profileId: string): Promise<Attempt>;
   /**
@@ -182,6 +198,30 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
            distributor CHOICE is app-wide. Handed in as a port for the reason every other native
            thing here is: `net/pairing.ts` runs under node in the suite. */
         distributor: unifiedPushDistributor(),
+        /* THE MAILBOX ON THIS PHONE. `door()` answers a door press (the screen has already opened
+           the engine and `organizer-session.ts` holds it); `reopen()` answers a cold launch, which
+           has a profile row and nothing running. Both are ports for `distributor`'s reason — the
+           platform's SQLite, its key ring and the install marker are all `-native` modules. */
+        standalone: {
+          door: organizerDoor,
+          reopen: () => reopenStandaloneMailbox({
+            startFromSealed: phoneEngineReopen(),
+            platform: async () => {
+              /* BEHIND A DYNAMIC IMPORT, never at module scope: the expo packages are Flow-typed
+                 JavaScript and a static import makes this whole module unloadable by the node-side
+                 suite — `servers-native.ts`'s rule. */
+              const native = (await import("../engine/local-engine-native")) as {
+                nativeEnginePlatform: () => Promise<{ exec: unknown; keks: Record<number, string> }>;
+              };
+              return native.nativeEnginePlatform();
+            },
+            machineName: () => PHONE_CLAIM_NAME,
+            /* THE SAME ID THE GATE STAMPED. A claim written against a second id is how an install
+               reads its own claim as somebody else's; the engine refuses a nameless claimant rather
+               than this layer inventing one. */
+            installId: async () => (await installGeneration(nativeEngineDeps())) ?? "",
+          }),
+        },
       };
     },
     [],
@@ -275,13 +315,17 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       // is not this session's status. Idempotent; the teardown path already disowned.
       runner.disown();
       offDead.current?.();
-      offDead.current = session.bearer.onSessionDead(() => {
+      /* NO DEAD SIGNAL ON THE STANDALONE DOOR, and `null` rather than a subscription that can never
+         fire: the engine in this process mints its own bearer per launch, so there is no family for
+         a server to judge and no `ended` state this session can reach. A faked manager here would
+         have made this line compile and the state unreachable. */
+      offDead.current = session.bearer?.onSessionDead(() => {
         // The server judged this family's token — a revoke or a reuse-past. Render mail no
         // further: tear down and say the one-gesture remedy.
         teardown(session);
         setState({ k: "ended", reason: refuse("pairEndedOnServer") });
         void refreshProfiles();
-      });
+      }) ?? null;
       setState({ k: "live", session });
       // Only a mismatch acts, and only on the session it was asked about — a verdict that
       // outlives its session (a switch, a forget) clears nothing and drains nothing.
@@ -457,6 +501,36 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
           adopt(outcome.session);
           return { ok: true };
         }),
+      openStandalone: (door) =>
+        gate.run(async (stillCurrent) => {
+          if (live.current.k === "live") teardown(live.current.session);
+          if (stillCurrent()) setState({ k: "connecting", origin: LOCAL_ENGINE_ORIGIN });
+          /* HELD BEFORE THE ROW IS WRITTEN, so the connect below finds it. `holdStandaloneDoor` is
+             first-start-wins: a second press on a phone that already has an engine keeps the one
+             that is running, and the row it writes is the same row (same origin, same account). */
+          holdStandaloneDoor(door);
+          let row;
+          try {
+            row = await env.profiles.addStandalone({
+              origin: LOCAL_ENGINE_ORIGIN,
+              /* WHAT THIS DOOR IS, in the vocabulary `/hello` uses for it. The chooser reads the
+                 ORIGIN to tell this row from a pairing, never the flavor. */
+              flavor: "local",
+              /* THE ENGINE'S OWN ACCOUNT. The mirror is keyed by it, so it comes from the thing
+                 serving the mail — see `StandaloneEngine.accountId`. */
+              accountId: door.accountId,
+            });
+          } catch (err) {
+            /* The keystore refused to record the mailbox. The engine is running and nothing names
+               it, which is exactly the state a relaunch could not recover from, so it is said here
+               rather than navigated past. */
+            const reason = refuse("standaloneNotStored", faultDetail(err));
+            if (stillCurrent()) setState({ k: "refused", reason });
+            return { ok: false, reason };
+          }
+          await refreshProfiles();
+          return runConnect(row.id, stillCurrent);
+        }),
       switchTo: (profileId) =>
         gate.run(async (stillCurrent) => {
           try {
@@ -476,9 +550,18 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
           // a take-back is therefore assertable without rendering a component.
           let revokeLive: (() => Promise<boolean>) | null = null;
           let closed: Promise<void> = Promise.resolve();
+          /* ── FORGETTING THIS PHONE'S OWN MAILBOX IS ONE VERB WITH THREE EFFECTS ─────────────
+             The claim goes back, the session and its notification stop, and the ENGINE stops —
+             `endStandaloneHere`, before the row goes, because every one of them needs the engine
+             that the row names. Removing the row alone would leave a phone organizing a mailbox
+             nothing on the chooser mentions, with a notification standing over it. */
+          const row = (await env.profiles.list()).find((p) => p.id === profileId);
+          if (row?.origin === LOCAL_ENGINE_ORIGIN) await endStandaloneHere();
           if (live.current.k === "live" && live.current.session.profile.id === profileId) {
             const bearer = live.current.session.bearer;
-            revokeLive = () => bearer.logout();
+            /* NO LOGOUT WITHOUT A MANAGER — the standalone door's session has none, and the seam
+               answers `told` for it on its own (`pairing.ts#forgetProfile`). */
+            revokeLive = bearer === null ? null : () => bearer.logout();
             closed = teardown(live.current.session);
             setState({ k: "idle" });
           } else if (live.current.k === "connecting") {

@@ -16,8 +16,9 @@ import { router } from "expo-router";
 import { Copy } from "../src/copy";
 import { sayRefusal, type Refusal } from "../src/refusal";
 import { phoneEngineStart } from "../src/engine/engine-artifact";
-import { sayOrganizerRestricted } from "../src/engine/organizer-session";
+import { holdStandaloneDoor, sayOrganizerRestricted } from "../src/engine/organizer-session";
 import { PHONE_CLAIM_NAME, openStandaloneMailbox } from "../src/engine/standalone-door";
+import { useConnection } from "../src/net/connection";
 import { useTheme } from "../src/theme";
 import { Button, Panel, Rule, Screen, Scroller, Tap, Txt } from "../src/ui/base";
 import { DetailBar } from "../src/ui/chrome";
@@ -101,6 +102,7 @@ type Phase = { k: "idle" } | { k: "opening" } | { k: "failed"; reason: Refusal }
 
 /** Step two. Address, password, and the server settings behind a disclosure. */
 function Credentials() {
+  const conn = useConnection();
   const [fields, setFields] = useState<StandaloneFields>(EMPTY_STANDALONE);
   const [revealed, setRevealed] = useState(false);
   const [advanced, setAdvanced] = useState(false);
@@ -136,6 +138,19 @@ function Credentials() {
       },
     });
     if (outcome.ok) {
+      /* ══ AND THE APP GOES LIVE ON IT, THROUGH THE PATH A PAIRED CONNECT TAKES ══════════════
+       *
+       * `holdStandaloneDoor` first, because the connection layer's standalone arm reads the door
+       * from there — the engine has no address on a network, so a session over it cannot be built
+       * from a stored row alone. Then `openStandalone`, which writes the profile row and adopts the
+       * session; the navigation below is what `welcome.tsx` redirects through, and it only means
+       * anything once `conn.state.k === "live"`.
+       *
+       * The engine was left running by the arm that returned it, so an adoption that FAILS is said
+       * on this screen rather than navigated past: landing on the chooser with a running engine and
+       * no sentence is the defect this whole change closes.
+       */
+      holdStandaloneDoor(outcome.door);
       /* ══ THE ENGINE IS NOW WIRED TO THE APP'S OWN LIFECYCLE ═══════════════════════════════
        *
        * This is the line `background.ts` was written for and had no call site for. Without it
@@ -155,13 +170,18 @@ function Credentials() {
         /* A BUILD THAT CANNOT REACH ITS OWN BACKGROUND HALF SAYS SO. Swallowed, this would be an
            app that looks like it organizes in the background and does not. */
         .catch(() => { sayOrganizerRestricted(); });
+      const adopted = await conn.openStandalone(outcome.door);
+      if (!adopted.ok) {
+        setPhase({ k: "failed", reason: adopted.reason });
+        return;
+      }
       /* The Ohbox in its first-sync state. Nothing between — the engine's own progress carries the
          wait, and a screen in the middle would be a screen with nothing true to say. */
       router.replace("/");
       return;
     }
     setPhase({ k: "failed", reason: outcome.reason });
-  }, [fields, start]);
+  }, [conn, fields, start]);
 
   return (
     <Scroller>

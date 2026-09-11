@@ -20,6 +20,8 @@ import { sayArg, sayRefusal, type Refusal } from "../src/refusal";
 import { View } from "react-native";
 import { router } from "expo-router";
 import { Copy } from "../src/copy";
+import { LOCAL_ENGINE_ORIGIN } from "../src/engine/boot";
+import { PHONE_CLAIM_NAME } from "../src/engine/standalone-door";
 import { useConnection } from "../src/net/connection";
 import type { ServerProfile } from "../src/state/servers";
 import { useTheme } from "../src/theme";
@@ -180,7 +182,13 @@ function ProfileRow({ profile, active, onForgetFailed }: {
 }) {
   const conn = useConnection();
   const t = useTheme();
-  const needsPair = profile.refreshToken === null;
+  /* ── THIS PHONE'S OWN MAILBOX IS A ROW HERE TOO, AND THE ORIGIN IS WHAT TELLS IT APART ──────
+     It carries no refresh token BY DESIGN (`state/servers.ts`), so the needs-pair reading below —
+     right for every pairing whose token a server cleared — would send somebody to the QR scanner
+     for the mailbox on the phone in their hand. The name is the phone's own claim name rather than
+     `http://sidecar`, which is an address nothing dials and nobody should be shown. */
+  const here = profile.origin === LOCAL_ENGINE_ORIGIN;
+  const needsPair = !here && profile.refreshToken === null;
   // Forgetting the FINAL pairing returns to the welcome screen — explicitly, from the
   // action itself. The tabs' redirect cannot be trusted to fire here: while /servers is
   // the focused route, the gated layouts behind it may never re-render their verdict, and
@@ -211,7 +219,7 @@ function ProfileRow({ profile, active, onForgetFailed }: {
           else void conn.switchTo(profile.id);
         }}
         accessibilityRole="button"
-        accessibilityLabel={Copy.ariaLabelDetail(profile.origin, profile.flavor)}
+        accessibilityLabel={Copy.ariaLabelDetail(here ? PHONE_CLAIM_NAME : profile.origin, profile.flavor)}
         style={{ paddingHorizontal: 12, paddingVertical: 10, gap: 2 }}
       >
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
@@ -219,17 +227,24 @@ function ProfileRow({ profile, active, onForgetFailed }: {
             <View style={{ width: 7, height: 7, borderRadius: t.radius.dot, backgroundColor: t.c.accent }} />
           ) : null}
           <Txt variant="navLabel" numberOfLines={1} style={{ flexShrink: 1 }}>
-            {profile.origin}
+            {here ? PHONE_CLAIM_NAME : profile.origin}
           </Txt>
           <View style={{ flex: 1 }} />
           <Txt variant="caption" tone="ink3">{profile.flavor}</Txt>
         </View>
         <Txt variant="caption" tone="ink3" numberOfLines={1}>
-          {needsPair ? Copy.serversNeedsPair : profile.accountId}
+          {here ? Copy.serversOrganizedHere : needsPair ? Copy.serversNeedsPair : profile.accountId}
         </Txt>
       </TapRow>
       <View style={{ flexDirection: "row", paddingHorizontal: 12, paddingBottom: 6 }}>
-        <Button label={Copy.serversForget} variant="quiet" onPress={() => void forget()} />
+        {/* ONE VERB, AND IT READS AS WHAT IT DOES. Forgetting a pairing removes a credential;
+            forgetting this one stops the engine on this phone and hands the mailbox back — see
+            `connection.tsx`'s forget arm, which does all three before the row goes. */}
+        <Button
+          label={here ? Copy.serversStopHere : Copy.serversForget}
+          variant="quiet"
+          onPress={() => void forget()}
+        />
       </View>
     </View>
   );

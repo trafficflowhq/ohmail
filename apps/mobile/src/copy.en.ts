@@ -324,6 +324,14 @@ const TABLE = {
     "Your mail server offers no encrypted connection on that port, and ohmail will not send your password in the clear. Try port 993 in Server settings.",
   standaloneRefused: (detail: string) =>
     `Opening the mailbox stopped: ${detail}`,
+  /* The relaunch's own three, and each one names a different absence: nothing sealed, a mailbox
+     that is not the one on the row, and a keystore that would not record the mailbox at all. */
+  standaloneNoSealedCredential:
+    "This phone says it organizes a mailbox, and nothing is stored here to open it with. Take the door again and give the mailbox's password.",
+  standaloneOtherMailbox:
+    "The mailbox on this phone is not the one this entry names. Forget this entry and open the mailbox again.",
+  standaloneNotStored: (detail: string) =>
+    `This phone could not record the mailbox it just opened: ${detail}`,
 
   /* --------------------------------------------------- servers & pairing */
 
@@ -335,6 +343,10 @@ const TABLE = {
   serversProfiles: "Paired servers",
   serversAdd: "Add a server",
   serversNeedsPair: "Pairing ended — scan a fresh QR to pair again.",
+  /* The phone's own row in the list. No address and no account id: the section above already says
+     which mailbox, and this line says what this phone is to it. */
+  serversOrganizedHere: "This phone organizes this mailbox.",
+  serversStopHere: "Stop and remove",
   serversForget: "Forget",
   // CLAIMS ARE CONTRACTS. This sentence used to stop at "removes the pairing", and that was the
   // whole truth: forget closed a database handle and left the mail on the phone for ever. Now it

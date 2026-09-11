@@ -14,7 +14,7 @@ import type { ConnectedSession } from "./pairing.js";
  *
  * ── THE TRANSPORT RULE, VERBATIM FROM `consent.ts` ─────────────────────────────────────────
  *
- * `session.bearer.fetch` is the only transport, bound to ONE origin — the profile the user is
+ * `session.fetch` is the only transport, bound to ONE origin — the profile the user is
  * currently connected to. This file holds no origin of its own, so "the count comes from the
  * server you paired with, never anywhere else" is structural. It joins the privacy census'
  * network seam (`test/privacy.test.ts` ENGINE_SEAM) on those terms.
@@ -55,7 +55,7 @@ export async function readFolderSummary(
   // its eventual rejection (the abort, a torn socket) must be an answered `null`, never an
   // unhandled rejection after the caller has moved on.
   const answered = (async (): Promise<{ folders: number; messages: number } | null> => {
-    const res = await session.bearer.fetch(
+    const res = await session.fetch(
       `${session.profile.origin}/folders/${encodeURIComponent(folderId)}/summary`,
       { method: "GET", signal: abort.signal },
     );

@@ -39,7 +39,7 @@ import type { ConnectedSession } from "./pairing.js";
  *
  * ── THE ENDPOINT GOES TO THE ACTIVE PROFILE'S SERVER. NEVER ANYWHERE ELSE. ────────────────────
  *
- * `session.bearer.fetch` is the only transport used here, and it is bound to ONE origin — the
+ * `session.fetch` is the only transport used here, and it is bound to ONE origin — the
  * profile the user is currently connected to. That is what makes "the endpoint goes to the server
  * you paired with, managed or self-host" a structural property rather than a promise: this file
  * has no origin of its own to send anything to, and the app's own privacy census forbids it one.
@@ -172,7 +172,7 @@ const HOSTED_FLAVORS = new Set(["managed", "selfhost", "self-host"]);
  */
 export async function serverVapidKey(session: ConnectedSession): Promise<string | null> {
   try {
-    const res = await session.bearer.fetch(`${session.profile.origin}/push/vapid-key`, {
+    const res = await session.fetch(`${session.profile.origin}/push/vapid-key`, {
       method: "GET",
     });
     if (res.status !== 200) return null;
@@ -240,7 +240,7 @@ export async function registerWake(
    */
   let res: Response;
   try {
-    res = await session.bearer.fetch(`${session.profile.origin}/push/subscriptions`, {
+    res = await session.fetch(`${session.profile.origin}/push/subscriptions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -328,7 +328,7 @@ export async function dropWakeRow(session: ConnectedSession, id: string | null):
   if (id === null) return { ok: true };
   let res: Response;
   try {
-    res = await session.bearer.fetch(`${session.profile.origin}/push/subscriptions/${id}`, {
+    res = await session.fetch(`${session.profile.origin}/push/subscriptions/${id}`, {
       method: "DELETE",
     });
   } catch {

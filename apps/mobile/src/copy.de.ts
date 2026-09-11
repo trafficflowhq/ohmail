@@ -177,6 +177,13 @@ export const DE: Deck = {
     "Dein Mailserver bietet auf diesem Port keine verschlüsselte Verbindung, und ohmail sendet dein Passwort nicht im Klartext. Versuche Port 993 in den Servereinstellungen.",
   standaloneRefused: (detail: string) =>
     `Das Öffnen des Postfachs wurde abgebrochen: ${detail}`,
+  /* Die drei des Neustarts. Jede benennt ein anderes Fehlen. */
+  standaloneNoSealedCredential:
+    "Dieses Telefon organisiert laut Eintrag ein Postfach, und hier ist nichts gespeichert, womit es sich öffnen ließe. Nimm die Tür noch einmal und gib das Passwort des Postfachs an.",
+  standaloneOtherMailbox:
+    "Das Postfach auf diesem Telefon ist nicht das, welches dieser Eintrag nennt. Entferne den Eintrag und öffne das Postfach erneut.",
+  standaloneNotStored: (detail: string) =>
+    `Dieses Telefon konnte das gerade geöffnete Postfach nicht speichern: ${detail}`,
 
   /* --------------------------------------------------- servers & pairing */
 
@@ -188,6 +195,9 @@ export const DE: Deck = {
   serversProfiles: "Gekoppelte Server",
   serversAdd: "Server hinzufügen",
   serversNeedsPair: "Die Kopplung ist beendet — scanne einen frischen QR-Code, um erneut zu koppeln.",
+  /* Die eigene Zeile des Telefons in der Liste. Ohne Adresse und ohne Konto-Kennung. */
+  serversOrganizedHere: "Dieses Telefon organisiert dieses Postfach.",
+  serversStopHere: "Beenden und entfernen",
   serversForget: "Vergessen",
   serversForgetNote:
     "Vergessen löscht die Kopplung und die Post, die dieses Telefon kopiert hatte. Über die Geräteliste des Servers lässt sie sich auch dort widerrufen.",

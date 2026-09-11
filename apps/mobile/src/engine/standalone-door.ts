@@ -29,18 +29,30 @@ import type { StandaloneFields } from "../ui/standalone-form";
 
 /**
  * THE RUNNING ENGINE, AS THIS APP USES IT. Structural, because the bundle is not typed — so every
- * member here is a CLAIM about the artifact, and `test/engine-bundle-loads.test.ts` reads all five
- * off a real booted one rather than off this declaration.
+ * member here is a CLAIM about the artifact, and `test/engine-bundle-loads.test.ts` reads them off
+ * a real booted one rather than off this declaration.
  *
- * The first three are the client's seam. The last two are the background half's: `handBack` and
- * `resume` are the acts `background.ts` drives at every app-state edge, and `runtimes` is the
- * three-answer read the claim watch and the reader check both ask. They were absent from this type
- * while `createBackgroundOrganizing` had no call site, which is what made the omission invisible.
+ * The first three are the client's seam and the next two name the mailbox it serves. The last three
+ * are the background half's: `handBack` and `resume` are the acts `background.ts` drives at every
+ * app-state edge, and `runtimes` is the three-answer read the claim watch and the reader check both
+ * ask. They were absent from this type while `createBackgroundOrganizing` had no call site, which
+ * is what made the omission invisible.
  */
 export interface StandaloneEngine {
   handle(req: Request): Promise<Response>;
   sessionToken: string;
   stop(): Promise<void>;
+  /**
+   * WHOSE MAILBOX THIS IS, in the engine's own words — half of the mirror's owner key.
+   *
+   * Read off the booted engine and never composed here, for `boot.ts`'s reason: the mirror is named
+   * `(origin, accountId)`, so an id this app invented would key a SECOND copy of the one mailbox
+   * this phone holds. This door mounts no `/auth/session`, which is where every paired door's
+   * client reads the same fact.
+   */
+  accountId: string;
+  /** The mailbox this install serves. The notification names it; nothing logs it. */
+  address: string;
   /** Remove this install's claim on every mailbox and leave the rows alone. */
   handBack(): Promise<readonly { mailboxId: string; released: number | null }[]>;
   /** Force one gated cycle per mailbox, so the lease is re-read now. */
@@ -64,6 +76,26 @@ export type StartPhoneEngine = (deps: {
   installId: string;
   keks?: Record<number, string>;
 }) => Promise<StandaloneEngine>;
+
+/**
+ * THE RELAUNCH'S ENTRY — the same engine, started from what it sealed for itself.
+ *
+ * No `imap` and no `address`: a phone's credential form exists once, and every later launch has
+ * only the store. Measured over the real composition, against an engine booted on a store:
+ * the first launch seals the typed password beside the coordinates it was proved against, and a
+ * launch given neither dials with both. So this app keeps no mailbox password anywhere — the one
+ * copy is the engine's own sealed row, under the key ring `kek.ts` holds in the keystore.
+ *
+ * `no-credential` is a STATE and not a failure: a store with nothing sealed has no mailbox to open,
+ * and the door that renders this says so rather than starting an engine that would authenticate to
+ * nothing.
+ */
+export type StartPhoneEngineFromSealed = (deps: {
+  exec: unknown;
+  machineName: string;
+  installId: string;
+  keks?: Record<number, string>;
+}) => Promise<{ kind: "started"; engine: StandaloneEngine } | { kind: "no-credential" }>;
 
 /** What this module needs of the app. Each one is a seam the suite drives directly. */
 export interface StandaloneDeps {
@@ -210,6 +242,59 @@ export async function openStandaloneMailbox(
        becomes a keyed refusal, rendered in the reader's language at the moment it is shown) and
        quotes anybody else's verbatim. The password is in neither — it is not in any argument this
        module builds. */
+    return { ok: false, reason: refuse("standaloneRefused", faultDetail(err)) };
+  }
+}
+
+/* ══ OPENING IT AGAIN, AFTER THE APP WAS KILLED ════════════════════════════════════════════════
+ *
+ * The door above runs once, behind a form. This runs on every launch after it, from the connection
+ * layer, over a stored profile row — and it composes the same three things in the same order, with
+ * the credential coming from the engine's own sealed row instead of from a field.
+ */
+
+/** What the relaunch needs of the app. The same shape {@link StandaloneDeps} has, minus the form. */
+export interface ReopenDeps {
+  /** The artifact's relaunch entry, or `null` where this build carries no engine. */
+  startFromSealed: StartPhoneEngineFromSealed | null;
+  /** The engine's own store and key ring — `openLocalEnginePlatform`'s answer. */
+  platform: () => Promise<{ exec: unknown; keks: Record<number, string> }>;
+  machineName: () => string;
+  /** This install's durable id, from the app's install marker. Never the store's account id. */
+  installId: () => Promise<string>;
+}
+
+/** The relaunch's answer. A refusal is a keyed sentence, never a fall-through to the chooser. */
+export type ReopenOutcome =
+  | { ok: true; door: StandaloneEngine }
+  | { ok: false; reason: Refusal };
+
+/**
+ * OPEN THE MAILBOX THIS PHONE ALREADY HOLDS. Three refusals, each naming a different absence.
+ *
+ * The engine's own `no-credential` is the one worth a sentence of its own: it means the profile row
+ * says this phone organizes a mailbox and the engine's store says nothing was ever sealed — a
+ * disagreement between the two stores, which the person resolves by taking the door again.
+ */
+export async function reopenStandaloneMailbox(deps: ReopenDeps): Promise<ReopenOutcome> {
+  const start = deps.startFromSealed;
+  if (start === null) return { ok: false, reason: refuse("standaloneNoEngine") };
+  try {
+    const platform = await deps.platform();
+    const started = await start({
+      exec: platform.exec,
+      machineName: deps.machineName(),
+      installId: await deps.installId(),
+      keks: platform.keks,
+    });
+    if (started.kind === "no-credential") {
+      return { ok: false, reason: refuse("standaloneNoSealedCredential") };
+    }
+    return { ok: true, door: started.engine };
+  } catch (err) {
+    /* `faultDetail` for `openStandaloneMailbox`'s reason: it words a fault this app authored as a
+       keyed refusal and quotes anybody else's verbatim. No password is in any argument this
+       function builds — it never has one. */
     return { ok: false, reason: refuse("standaloneRefused", faultDetail(err)) };
   }
 }

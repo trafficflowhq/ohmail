@@ -30,7 +30,7 @@ import type { ConnectedSession } from "./pairing.js";
  *
  * ── THE TRANSPORT RULE, VERBATIM FROM `consent.ts` AND `push.ts` ───────────────────────────
  *
- * `session.bearer.fetch` is the only transport, bound to ONE origin — the profile the user is
+ * `session.fetch` is the only transport, bound to ONE origin — the profile the user is
  * connected to. This file holds no origin of its own, so "the mailbox question goes to the
  * server you paired with, never anywhere else" is structural rather than reviewed.
  *
@@ -90,7 +90,7 @@ function stateOf(raw: unknown): PhoneMailbox["organizerState"] {
  */
 export async function readMailboxes(session: ConnectedSession): Promise<PhoneMailbox[] | null> {
   try {
-    const res = await session.bearer.fetch(`${session.profile.origin}/mailboxes`, { method: "GET" });
+    const res = await session.fetch(`${session.profile.origin}/mailboxes`, { method: "GET" });
     if (res.status !== 200) return null;
     const body = (await res.json()) as unknown;
     /* The route answers a bare array today. A future envelope (`{ mailboxes: [...] }`) is read
@@ -136,7 +136,7 @@ export async function releaseMailbox(
   mailboxId: string,
 ): Promise<"requested" | "already" | "refused"> {
   try {
-    const res = await session.bearer.fetch(
+    const res = await session.fetch(
       `${session.profile.origin}/mailboxes/${encodeURIComponent(mailboxId)}/release`,
       { method: "POST" },
     );

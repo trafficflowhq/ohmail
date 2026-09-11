@@ -38,7 +38,11 @@
  * why the refusal is here: a caller that asked for a host door and got a silently disarmed one
  * would believe it had a door. The census over this refusal is `phone-engine-boot.test.ts`.
  */
+import { and, asc, eq } from "drizzle-orm";
 import { drizzle as drizzleSqliteProxy } from "drizzle-orm/sqlite-proxy";
+/* The two tables a relaunch reads to find out where this mailbox lives. The barrel, like
+   `engine.ts` — the device twin is substituted at the module the barrel itself reaches. */
+import { mailboxCredentials, mailboxes } from "@trafficflow/db";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { migrateSqlite } from "@trafficflow/db/sqlite-migrate";
 import type { OrganizerKind } from "@trafficflow/core/adapters/organizer-lease";
@@ -190,6 +194,17 @@ export interface PhoneEngine {
   handle(req: Request): Promise<Response>;
   /** The per-launch bearer the in-app client must send. In memory only. */
   readonly sessionToken: string;
+  /**
+   * WHOSE MAILBOX THIS IS, in the engine's own words — `ensureLocalWorld`'s account row.
+   *
+   * The app's mirror is named by `(origin, accountId)`, so the id has to come from the thing that
+   * serves the mail rather than from the app: a guessed one would key a second copy of this
+   * mailbox on the same phone. Exposed because this door mounts no `/auth/session` for the app to
+   * ask on, which is where every other door's client reads it.
+   */
+  readonly accountId: string;
+  /** The mailbox this install serves, as the store holds it. The notification names it. */
+  readonly address: string;
   /**
    * RE-DIAL EVERY DEAD CONNECTION NOW — call this when the app returns to the foreground.
    *
@@ -484,6 +499,51 @@ export function loggerOver(log: Diagnostic, bound: LogFields = {}): Logger {
  * composition that is wrong about who it is should not have written anything.
  */
 export async function startPhoneEngine(deps: PhoneEngineDeps): Promise<PhoneEngine> {
+  const started = await composePhoneEngine(deps, deps.imap);
+  /* Unreachable on this arm: the sealed read is the only thing that answers `no-credential`, and
+     it is not consulted when a caller supplies a config. Stated rather than cast away. */
+  if (started.kind === "no-credential") {
+    throw new Error("a configured start cannot answer no-credential; the sealed read was not asked");
+  }
+  return started.engine;
+}
+
+/** What a sealed start answers. `no-credential` is a STATE, not a failure — see below. */
+export type SealedStart =
+  | { kind: "started"; engine: PhoneEngine }
+  /** Nothing on this store says where this mailbox lives, so there is nothing to open. */
+  | { kind: "no-credential" };
+
+/** A sealed start's deps: every one of {@link PhoneEngineDeps} except the mailbox's own config. */
+export type SealedPhoneDeps = Omit<PhoneEngineDeps, "imap" | "address">;
+
+/**
+ * START FROM WHAT THE LAST LAUNCH SEALED — the phone's relaunch, and the desktop's own shape.
+ *
+ * The form that took the password exists once. Every later launch has only the store, and the store
+ * holds both halves: the sealed password, which `resolveLogin` reads and decrypts for itself, and
+ * the coordinates it was proved against. So this reads the COORDINATES — host, port, secure, user —
+ * and supplies no password at all; nothing here decrypts anything, and the secret never becomes a
+ * value in this function.
+ *
+ * A store with no credential row answers `no-credential` rather than starting: an engine given an
+ * empty dial would come up, report a mailbox, and authenticate to nothing.
+ */
+export async function startPhoneEngineFromSealed(deps: SealedPhoneDeps): Promise<SealedStart> {
+  return composePhoneEngine(deps, null);
+}
+
+/**
+ * THE ONE COMPOSITION, WITH OR WITHOUT A CONFIG — so the two entries cannot drift.
+ *
+ * `imap === null` means "read it off the sealed row", which is the only difference between a first
+ * launch and a relaunch. Everything below this line is the same code either way, including the
+ * refusals, which run BEFORE the store is touched.
+ */
+async function composePhoneEngine(
+  deps: SealedPhoneDeps & { readonly address?: string },
+  imap: SidecarImapConfig | null,
+): Promise<SealedStart> {
   const bag = deps as unknown as Record<string, unknown>;
   const present = HOST_ONLY_KEYS.filter((k) => bag[k] !== undefined);
   if (present.length > 0) {
@@ -520,6 +580,16 @@ export async function startPhoneEngine(deps: PhoneEngineDeps): Promise<PhoneEngi
   const log: Diagnostic = deps.log ?? ((): void => undefined);
 
   const store = await openPhoneStore(deps.exec);
+  /**
+   * THE DIAL, AND WHO SUPPLIES IT. A configured start uses what it was given; a sealed start reads
+   * the row. A store with nothing to read ends here, with the store CLOSED — an engine left open
+   * behind a refusal holds this phone's only SQLite handle for a mailbox nobody can dial.
+   */
+  const dial = imap ?? await sealedDial(store.db);
+  if (dial === null) {
+    await store.close().catch(() => undefined);
+    return { kind: "no-credential" };
+  }
   const sidecar = await createSidecar({
     dataDir: deps.dataDir ?? "",
     /**
@@ -539,7 +609,7 @@ export async function startPhoneEngine(deps: PhoneEngineDeps): Promise<PhoneEngi
      *
      * A caller that supplies its own timeouts WINS, so this is a default rather than an override.
      */
-    imap: { ...deps.imap, timeouts: deps.imap.timeouts ?? WORKER_NET_TIMEOUTS },
+    imap: { ...dial, timeouts: dial.timeouts ?? WORKER_NET_TIMEOUTS },
     ...(deps.address !== undefined ? { address: deps.address } : {}),
     machineName: deps.machineName,
     installId: deps.installId,
@@ -594,7 +664,7 @@ export async function startPhoneEngine(deps: PhoneEngineDeps): Promise<PhoneEngi
    */
   /* MERGED THE WAY `imapFlowOptions` MERGES IT — `timeouts` on a config is PARTIAL, and a caller
      that overrode only `socketMs` would otherwise leave the two halves of this bound undefined. */
-  const timeouts = { ...DEFAULT_NET_TIMEOUTS, ...(deps.imap.timeouts ?? WORKER_NET_TIMEOUTS) };
+  const timeouts = { ...DEFAULT_NET_TIMEOUTS, ...(dial.timeouts ?? WORKER_NET_TIMEOUTS) };
   const launched = sidecar.start().then(
     (report) => report.failures,
     // `start()` does not reject per mailbox; an assembly-level throw is still a launch failure and
@@ -627,13 +697,60 @@ export async function startPhoneEngine(deps: PhoneEngineDeps): Promise<PhoneEngi
      unhandled one. */
   void launched.catch(() => undefined);
 
-  return {
+  return { kind: "started", engine: {
     handle: (req) => sidecar.handle(req),
     sessionToken: sidecar.sessionToken,
+    /* THE ENGINE'S OWN ACCOUNT, off the world it just established rather than composed from what a
+       caller passed: the app keys its mirror by it, and an id the app invented would key a second
+       copy of this mailbox. The address is `createSidecar`'s own derivation, spelled once. */
+    accountId: sidecar.world.accountId,
+    address: deps.address ?? dial.auth.user,
     wake: () => sidecar.wake(),
     handBack: () => sidecar.handBack(),
     resume: () => sidecar.resume(),
     runtimes: () => ({ organizer: sidecar.organizerStates(), connection: sidecar.connectionStates() }),
     stop: () => sidecar.stop(),
+  } };
+}
+
+/**
+ * THE MAILBOX THIS STORE SERVES AND THE SERVER IT WAS PROVED AGAINST — or `null`.
+ *
+ * `engine.ts` seals `host/port/secure/user` beside the ciphertext, which is what makes a relaunch
+ * possible without the app holding a secret of its own. Read here in the SAME order
+ * `ensureLocalWorld` picks the seed — the oldest live row — so the engine that follows serves the
+ * mailbox whose credential this dial came from.
+ *
+ * `null` for every shape that is not a dial: no mailbox, no credential row, or a row whose meta
+ * does not name a host. The last one is the row shape sealed before the probe recorded coordinates;
+ * treating it as a dial would mean starting with an empty host, and the honest answer is that this
+ * store cannot say where the mailbox is.
+ */
+async function sealedDial(db: LocalDb): Promise<SidecarImapConfig | null> {
+  const rows = await db
+    .select({ address: mailboxes.address, meta: mailboxCredentials.meta })
+    .from(mailboxes)
+    .innerJoin(mailboxCredentials, eq(mailboxCredentials.mailboxId, mailboxes.id))
+    .where(and(eq(mailboxCredentials.transport, "imap"), eq(mailboxes.provider, "imap")))
+    .orderBy(asc(mailboxes.createdAt))
+    .limit(1);
+  const row = rows[0];
+  if (row === undefined) return null;
+  /* The device store keeps `meta` as JSON text in one dialect and as a parsed object in the other.
+     Both are read, because a relaunch that worked on one store and not the other would be a
+     failure only a device could show. */
+  const meta = (typeof row.meta === "string" ? JSON.parse(row.meta) : row.meta) as
+    { host?: unknown; port?: unknown; secure?: unknown; user?: unknown; insecureConsent?: unknown } | null;
+  const host = typeof meta?.host === "string" ? meta.host.trim() : "";
+  if (host === "") return null;
+  return {
+    host,
+    port: typeof meta?.port === "number" ? meta.port : 993,
+    secure: meta?.secure !== false,
+    ...(meta?.insecureConsent === true ? { allowInsecure: true } : {}),
+    /* NO PASSWORD, and no `smtp` block. The password is the engine's to decrypt, and submission
+       coordinates are the send path's to resolve from this mailbox's own `smtp` row — a copy here
+       would be a second source for them. */
+    auth: { user: typeof meta?.user === "string" && meta.user !== "" ? meta.user : row.address },
   };
 }

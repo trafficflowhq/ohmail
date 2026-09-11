@@ -18,7 +18,7 @@ import type { ConnectedSession } from "./pairing.js";
  *
  * ── THE TRANSPORT RULE, VERBATIM FROM `push.ts` ───────────────────────────────────────────
  *
- * `session.bearer.fetch` is the only transport used here, bound to ONE origin — the profile
+ * `session.fetch` is the only transport used here, bound to ONE origin — the profile
  * the user is currently connected to. This file holds no origin of its own, so "the consent
  * question goes to the server you paired with, never anywhere else" is structural. It joins
  * the privacy census' network seam (`test/privacy.test.ts` ENGINE_SEAM) on those terms.
@@ -71,7 +71,7 @@ function signaturesOf(raw: unknown): Record<string, string> {
 
 export async function readFoldersEnabled(session: ConnectedSession): Promise<FoldersConsent | null> {
   try {
-    const res = await session.bearer.fetch(`${session.profile.origin}/consent`, { method: "GET" });
+    const res = await session.fetch(`${session.profile.origin}/consent`, { method: "GET" });
     if (res.status !== 200) return null;
     const body = (await res.json()) as {
       foldersEnabledAt?: unknown; signatures?: unknown; themeFace?: unknown;
@@ -99,7 +99,7 @@ export async function readFoldersEnabled(session: ConnectedSession): Promise<Fol
  * which the pane shows as its one failure sentence.
  */
 export async function writeFoldersEnabled(session: ConnectedSession, enabled: boolean): Promise<{ on: boolean }> {
-  const res = await session.bearer.fetch(`${session.profile.origin}/consent/settings`, {
+  const res = await session.fetch(`${session.profile.origin}/consent/settings`, {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ foldersEnabled: enabled }),
@@ -126,7 +126,7 @@ export async function writeFoldersEnabled(session: ConnectedSession, enabled: bo
 export async function writeThemeFace(
   session: ConnectedSession, face: FaceName,
 ): Promise<FaceName | null> {
-  const res = await session.bearer.fetch(`${session.profile.origin}/consent/settings`, {
+  const res = await session.fetch(`${session.profile.origin}/consent/settings`, {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ themeFace: face }),

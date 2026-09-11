@@ -22,9 +22,17 @@
  * drawn leaves a build that HAS an engine showing three doors until something else re-renders.
  * Register it where the app composes, above the router.
  */
-import type { StartPhoneEngine } from "./standalone-door";
+import type { StartPhoneEngine, StartPhoneEngineFromSealed } from "./standalone-door";
 
 let registered: StartPhoneEngine | null = null;
+/**
+ * THE RELAUNCH ENTRY OF THE SAME ARTIFACT, registered beside the door's.
+ *
+ * Its own slot rather than a second parameter, so `registerPhoneEngine`'s answer goes on meaning
+ * exactly "is there an engine in this build" — which is what the fourth door is offered on. The
+ * packaging half registers both from one `require`, so they cannot come from two artifacts.
+ */
+let reopen: StartPhoneEngineFromSealed | null = null;
 
 /**
  * Register the artifact's composition root. Called once, by the packaging half.
@@ -48,7 +56,24 @@ export function phoneEngineStart(): StartPhoneEngine | null {
   return registered;
 }
 
+/**
+ * Register the artifact's RELAUNCH entry. First one wins, for {@link registerPhoneEngine}'s reason.
+ *
+ * Answers whether this call is the registered one. Separate from the door's registration and called
+ * from the same place with the same `require`, so a build cannot hold one without the other.
+ */
+export function registerPhoneEngineReopen(start: StartPhoneEngineFromSealed): boolean {
+  if (reopen === null) reopen = start;
+  return reopen === start;
+}
+
+/** The registered relaunch entry, or `null` — "this build carries no engine", not an error. */
+export function phoneEngineReopen(): StartPhoneEngineFromSealed | null {
+  return reopen;
+}
+
 /** Test seam: forget the registration. Never called by the app. */
 export function forgetPhoneEngine(): void {
   registered = null;
+  reopen = null;
 }

@@ -91,6 +91,18 @@ export interface ServerProfile {
   flavor: string;
   /** The server-verified account this pairing opens — half of the mirror's owner key. */
   accountId: string;
+  /**
+   * `null` HAS TWO MEANINGS AND THE ORIGIN TELLS THEM APART. Both are states, neither is an error.
+   *
+   *  · on a PAIRED origin: the pairing ended — a refusal cleared it, and one scan re-pairs. The
+   *    picker says so and offers the scan.
+   *  · on the STANDALONE origin (`LOCAL_ENGINE_ORIGIN`): there was never a token to hold. The
+   *    engine in this process mints its own bearer per launch, so the credential a relaunch needs
+   *    is the password the engine sealed for itself and not anything in this store.
+   *
+   * A reader that treats the second as the first sends somebody to the QR scanner for a mailbox on
+   * the phone they are holding, which is what `app/servers.tsx` reads the origin for.
+   */
   refreshToken: string | null;
   /**
    * WHERE THE `/sync` FAMILY LIVES ON THIS SERVER — the origin itself, or `<origin>/api`.
@@ -427,6 +439,61 @@ export class ServerProfileStore {
         throw new StoreFault("pairing_not_recorded", `this phone could not record the pairing "${profile.id}" before storing it`);
       }
       await this.writeProfile(profile);
+      return profile;
+    });
+  }
+
+  /**
+   * ADD THE ROW FOR A MAILBOX THIS PHONE ITSELF ORGANIZES — the one deliberate credential-less row.
+   *
+   * {@link add} requires a refresh token because a pairing without one cannot open anything, and
+   * that is right for every origin on a network. This row is the other kind: there is no server and
+   * no token, and what a relaunch opens the mailbox with is the password the ENGINE sealed under
+   * its own key ring — never anything in this store. See {@link ServerProfile.refreshToken}.
+   *
+   * Everything else is `add`'s ceremony verbatim, through the same chain and the same read-backs:
+   * same `(origin, accountId)` identity so a second door on one mailbox updates the row in place,
+   * the index learning the id before the value exists, and the read-back that refuses a row the
+   * keystore did not record. `add` is not reused with a nullable token because widening it would
+   * let any caller store a pairing that can never connect.
+   */
+  addStandalone(input: { origin: string; flavor: string; accountId: string }): Promise<ServerProfile> {
+    return this.enqueue(async () => {
+      if (input.origin !== input.origin.trim().replace(/\/+$/, "").toLowerCase()) {
+        throw new StoreFault("origin_not_normalized", `profile origin must arrive normalized: "${input.origin}"`);
+      }
+      if (!input.accountId.trim()) throw new StoreFault("account_id_missing", "a profile needs the server-verified account id");
+      const idx = await this.readIndex();
+      const existing = (await Promise.all(idx.ids.map((id) => this.readProfile(id)))).find(
+        (p) => p !== null && p.origin === input.origin && p.accountId === input.accountId,
+      );
+      const profile: ServerProfile = {
+        id: existing ? existing.id : this.newId(),
+        origin: input.origin,
+        flavor: input.flavor,
+        accountId: input.accountId,
+        refreshToken: null,
+        /* NO PIN AND NO BASE. There is no certificate to pin — nothing leaves the device — and the
+           API answers at the origin, which is what an absent base already means. */
+        pin: null,
+        apiBase: null,
+      };
+      await this.writeIndex({
+        ...idx,
+        active: profile.id,
+        ids: existing ? idx.ids : [...idx.ids, profile.id],
+      });
+      if (!(await this.readIndex()).ids.includes(profile.id)) {
+        throw new StoreFault("pairing_not_recorded", `this phone could not record the pairing "${profile.id}" before storing it`);
+      }
+      await this.writeProfile(profile);
+      /* READ BACK. `add`'s read-back is the index's, because the value it writes next is a secret
+         it must not write under a name nothing lists. This row holds no secret, and the failure it
+         has to catch is the other one: a keystore that took the write and kept nothing leaves the
+         app live on a mailbox the next launch cannot find, with nothing saying so. */
+      if ((await this.readProfile(profile.id)) === null) {
+        throw new StoreFault("pairing_not_recorded", `this phone could not store the mailbox it organizes ("${profile.id}")`);
+      }
       return profile;
     });
   }
