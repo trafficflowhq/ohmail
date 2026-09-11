@@ -21,63 +21,14 @@ import { AWAY_THROTTLES, type AwayThrottle } from "./away-responder-pass.js";
 import { MAX_TAG_NAME_CHARS } from "./tags-service.js";
 
 /**
- * THE PROFILE IMPORT — the answer side of the portable organizer profile.
- *
- * A mailbox can arrive carrying its own ohmail configuration: a versioned JSON document in the
- * unsubscribed `ohmail/_meta` folder, written by whichever organizer ran this mailbox before
- * (`packages/core/src/adapters/organizer-profile.ts` is the format). The organizer that finds
- * one it has not been told to adopt NEVER applies it — it records a durable found-marker and
- * holds its own write-behind (`apps/worker/src/profile.ts`), and the decision comes here, to a
- * human, through three verbs:
- *
- *   · {@link ProfileImportService.candidate} — is there something to ask about, and what would
- *     an import bring? Answered from the marker first (one indexed read — this is the cheap,
- *     pollable path) and then from a FRESH read of the mailbox, so the counts on the screen are
- *     the counts of the document that will actually be applied, never a stale record's.
- *   · {@link ProfileImportService.apply} — the user said yes. The document's sections are
- *     written into the local store BY NATURAL KEYS, in one transaction, with the resolution
- *     marker that releases the organizer's hold committed alongside them.
- *   · {@link ProfileImportService.decline} — the user said keep local. Nothing is applied and
- *     nothing in the mailbox is touched; the same resolution marker records the answer, so the
- *     prompt is dismissed durably and the organizer's write-behind resumes over its own store.
- *
- * ── THE MERGE RULE, PRECISELY ───────────────────────────────────────────────────────────────
- *
- * **The profile wins for every natural key it names; local rows whose keys it does not name are
- * untouched.** Concretely, per section:
- *
- *   · screener — key: the sender address. The document's entry becomes the row for that address
- *     (name included: the entry is the whole truth for its key, so a document without a display
- *     name clears one). Local contacts the document does not name stay.
- *   · rules — key: (kind, match, subjectContains, bodyContains); value: (destination, priority,
- *     enabled, provenance). For a named key the local row set becomes EXACTLY the document's
- *     rows for that key — retargeted in place where a row exists, inserted where none does, and
- *     surplus local duplicates of the same key deleted, because two rules answering one key with
- *     different destinations would leave the priority/id tie-break deciding where mail files,
- *     which is the coin toss the sender sheet's retarget-not-duplicate rule exists to prevent.
- *     Local rules under keys the document does not name stay.
- *   · notifyRules — key: (kind, target), which is also the whole value. Inserted where missing.
- *   · awayResponder — key: the account's single responder row. A non-null document section
- *     replaces it wholly; a null section leaves the local one alone (null is "the travelling
- *     mailbox had none", not an instruction to delete).
- *   · tagNames — key: the tag name, case-insensitively (the store's own uniqueness). Missing
- *     names are created; local tags stay; existing names keep their case and hue.
- *
- * Idempotent by construction: every write is keyed on what it means, so re-applying the same
- * document is a no-op that emits no change rows. Applied rules do NOT request the retroactive
- * pass — an import restores configuration for a mailbox whose mail the previous organizer
- * already filed; it must not turn a confirmation click into thousands of IMAP moves.
- *
- * ── WHAT IS REFUSED RATHER THAN GUESSED ─────────────────────────────────────────────────────
- *
- * The document format is public and anything can have written it, so each rule passes the same
- * validation the product's own create enforces (known kind, canonical destination, non-blank
- * bounded terms, terms on sender rules only); a rule that fails is SKIPPED and counted, never
- * half-imported — and a skipped rule means the local store does not equal the document, which
- * is exactly why the resolution marker (not only convergence) releases the organizer's hold.
- * A document from a NEWER format version is never partially imported: the candidate reports
- * `newer` and offers nothing, because applying the fields this build knows would silently drop
- * the ones it does not.
+ * THE PROFILE IMPORT — the answer side of the portable organizer profile: a versioned JSON
+ * document in `ohmail/_meta`, left by the previous organizer (`organizer-profile.ts` is the
+ * format). Never auto-applied — the organizer records a found-marker and the decision comes here:
+ * `candidate` (marker first, then a FRESH mailbox read, so the confirm counts are the
+ * document's), `apply` (natural-key writes in one transaction, resolution marker alongside),
+ * `decline` (dismissed durably). MERGE RULE: the profile wins for every key it names; unnamed
+ * local rows stay. Idempotent; applied rules do NOT request the retroactive pass. Rules pass the
+ * product's own create validation (failures SKIPPED, counted); a NEWER format offers nothing.
  */
 
 /** A fresh read of the mailbox's profile document. Built by the route from the live adapter. */
@@ -106,17 +57,12 @@ export type ProfileImportCandidateDTO =
   /** Written by a later ohmail. Nothing is offered — a partial import would be a silent loss. */
   | { state: "newer"; v: number }
   /**
-   * Too large to apply in one transaction. Nothing is offered, for the same reason `newer` offers
-   * nothing: a partial import is a settings restore that silently omits some of them.
-   *
-   * It carries the offending list and both numbers, and the document's `fingerprint` so the
-   * content-keyed `decline` can be recorded against it — without that a client could never stop
-   * being asked, and every poll would re-dial the mailbox.
-   *
-   * **What it does NOT yet get is a card.** The shared reader (`ProfileImportCard#asOffer`) treats
-   * any unrecognised state as no offer, which is the safe behaviour and a silent one: the person
-   * is not told why their settings are not being offered. Stated here rather than implied — the
-   * wire half is done and the surface half is not.
+   * Too large to apply in one transaction. Nothing is offered, as for `newer`: a partial import
+   * is a settings restore that silently omits some. It carries the offending list, both numbers
+   * and the document's `fingerprint`, so the content-keyed `decline` can be recorded — without it
+   * a client could never stop being asked and every poll would re-dial the mailbox. It does NOT
+   * yet get a card: the shared reader (`ProfileImportCard#asOffer`) treats any unrecognised state
+   * as no offer — safe but silent; the wire half is done, the surface half is not.
    */
   | { state: "too_large"; fingerprint: string; list: string; count: number; max: number };
 
@@ -132,15 +78,14 @@ const KINDS = new Set(["sender", "domain", "header"]);
 const FOLDER_SET = new Set<string>(DESTINATIONS);
 
 /**
- * The `classid` half of the apply's `pg_advisory_xact_lock(int4, int4)` — the second half is
- * `hashtext(account_id)`. The attachment-staging mint's argument, restated for this writer: the
- * merge reads the account's rule/notify/tag rows and then acts on what it read, and two
- * concurrent applies (two tabs answering the same card) would each see the pre-state and each
- * insert — a duplicate rule under one natural key, which is exactly the coin toss the merge rule
- * exists to remove. There is no single row to lock (the interesting case is the ABSENT row), so
- * the mutex is transaction-scoped and per-account, taken FIRST, released at commit. Nothing else
- * in the product takes this class, and the transaction holds no lock across any network call —
- * the mailbox re-read happens strictly BEFORE the transaction opens.
+ * The `classid` half of the apply's `pg_advisory_xact_lock(int4, int4)`; the second half is
+ * `hashtext(account_id)`. The merge reads the account's rule/notify/tag rows and acts on what it
+ * read; two concurrent applies (two tabs answering one card) would each see the pre-state and
+ * each insert — a duplicate rule under one natural key, the coin toss the merge rule removes. No
+ * single row to lock (the interesting case is the ABSENT row), so the mutex is
+ * transaction-scoped, per-account, taken FIRST, released at commit. Nothing else takes this
+ * class; no lock is held across a network call — the mailbox re-read happens strictly BEFORE the
+ * transaction opens.
  */
 export const PROFILE_IMPORT_LOCK_CLASS = 420_727_016;
 
@@ -228,52 +173,14 @@ const ruleKey = (r: { kind: string; match: string; subjectContains: string | nul
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 
 /**
- * HOW LARGE A DOCUMENT `apply` WILL IMPORT, PER LIST.
- *
- * ── WHY THIS NEEDED A BOUND AT ALL ────────────────────────────────────────────────────────
- *
- * `apply` walks `doc.screener`, `doc.rules`, `doc.notifyRules` and `doc.tagNames` one entry at a
- * time inside ONE transaction, holding an account-scoped advisory lock, issuing an upsert or an
- * update per entry and appending a change-log row for each rule it writes. None of those lists
- * had a ceiling, and the counts do not come from the request: they come from a JSON document in
- * the `ohmail/_meta` folder of an IMAP server the user chose and we do not run. So the size of
- * the transaction, the length of the lock and the number of change rows were all decided by the
- * mail server, and the confirmation the user gives is a fingerprint of the content — it proves
- * they saw the same document, not that the document is a reasonable size.
- *
- * (The READ side of the same document — its bytes and message count coming off the wire — is
- * the unbounded-read and adapter-door gaps, which belong to the peek and the adapter.
- * This is the WRITE side, and it needs its own bound whatever the read grows: a document that
- * arrives legitimately can still be too large to apply in one transaction.)
- *
- * ── THE NUMBERS ──────────────────────────────────────────────────────────────────────────
- *
- * ── THE FAILURE MODE OF A TIGHT BOUND HERE IS SEVERE AND PERMANENT ─────────────────────────
- *
- * `serializeOrganizerProfile` exports EVERY contact, rule, notify rule and tag an account holds,
- * and none of the write services impose an account-wide total — so an account can legitimately
- * create more of any of them than a felt ceiling allows, export all of them, and then be unable
- * to restore its own settings. A review round caught exactly that shape at a `tagNames` cap of
- * 500 against an account that could hold 501.
- *
- * So each number is set far above what any real account holds rather than at a comfortable
- * round figure, and the residual — an account already past one of them — is recorded as a known
- * limit rather than argued away. `screener` is an address book and gets the largest, 20 000 —
- * four times `SEED_SCAN_LIMIT` and chosen AGAINST it as a rough scale rather than derived from
- * it, because that constant counts MESSAGES and one message contributes every distinct recipient
- * on it. The document bounded here is an address book another install wrote, not a review, so the
- * two are only loosely related and this is a product ceiling.
- *
- * REFUSED, not truncated. A partial import is a settings restore that silently omits some of the
- * user's rules, and they would have no way to see which — the counts on the confirm screen said
- * one thing and the account holds another.
- *
- * AND REFUSED IN `candidate()` TOO, which is the half that makes the refusal honest: the confirm
- * screen is built from `candidate()`, so a ceiling only `apply()` knew about would OFFER an
- * import and then refuse the press. `candidate()` answers `too_large` with the counts, the limits
- * and the fingerprint, exactly as it answers `newer` for a document this build cannot read — and
- * the shared card, whose reader treats an unrecognised state as no offer, therefore shows
- * nothing rather than something wrong. Explaining it on the surface is a separate change.
+ * HOW LARGE A DOCUMENT `apply` WILL IMPORT, PER LIST. `apply` walks all four lists in ONE
+ * transaction under the account advisory lock, and the counts come from a document on a mail
+ * server we do not run — the transaction's size would otherwise be that server's choice; the
+ * fingerprint proves the user saw the document, not that it is reasonable. A tight bound is
+ * severe: `serializeOrganizerProfile` exports EVERYTHING an account holds and nothing caps an
+ * account-wide total, so an account could export settings it cannot restore — each number sits
+ * far above real accounts (`screener` largest, 20 000). REFUSED, not truncated: a partial import
+ * silently omits rules. Refused in `candidate()` too — never offer what `apply` would 413.
  */
 export const PROFILE_IMPORT_MAX = {
   screener: 20_000,
@@ -365,49 +272,38 @@ export class ProfileImportService {
     if (fresh.state !== "found") return { state: "none" };
 
     /**
-     * THE SIZE REFUSAL COMES BEFORE THE FINGERPRINT, and the fingerprint before the lookup.
-     *
-     * `profileFingerprint` copies and locale-sorts all four arrays and serializes the whole
-     * canonical document to hash it. Refusing after it would bound the TRANSACTION and nothing
-     * else, while the sort and the whole-document buffer the ceiling exists to prevent had
-     * already run — the same "the ceiling is applied to the result and not to the read" shape
-     * this slice is named for, one layer up.
-     *
-     * The cost of putting it first is that a `too_large` answer carries a fingerprint computed
-     * for an oversized document — which it must, because that fingerprint is what makes the
-     * answer DISMISSIBLE. So the order is: refuse on COUNTS (free), then canonicalize once for
-     * the id, then ask whether this exact content has already been answered about.
+     * THE SIZE REFUSAL COMES BEFORE THE FINGERPRINT, the fingerprint before the lookup.
+     * `profileFingerprint` copies, locale-sorts and serializes the whole canonical document;
+     * refusing after it would bound the TRANSACTION while the sort and whole-document buffer had
+     * already run — the ceiling applied to the result instead of the read, one layer up. The
+     * cost: a `too_large` answer carries a fingerprint computed for an oversized document — which
+     * it must, because the fingerprint is what makes the answer DISMISSIBLE. Order: refuse on
+     * COUNTS (free), canonicalize once for the id, then ask whether this exact content was
+     * already answered.
      */
     const over = oversizedList(fresh.doc);
     const fingerprint = profileFingerprint(fresh.doc);
 
     /**
-     * THE RESOLUTION LOOKUP COMES BEFORE THE SIZE ANSWER, and the order is a correction.
-     *
-     * `too_large` used to be answered BEFORE this, which quietly broke the dismissal it carries a
-     * fingerprint for: with a stale marker (A) over a changed, oversized document (B),
-     * `candidate` answered `too_large(B)`, a client recorded `decline(B)`, and the next poll —
-     * which only checks the MARKER's fingerprint above — re-dialled IMAP and answered
-     * `too_large(B)` again, forever. The answer was durable and the question was not.
-     *
-     * Asking about the FRESH fingerprint here settles that for every state at once: a document
-     * the user has already answered about is `none`, whether the answer was "keep local" or an
-     * import, and whether or not it is one this build would offer.
+     * THE RESOLUTION LOOKUP COMES BEFORE THE SIZE ANSWER. `too_large` used to be answered first,
+     * which broke the dismissal it carries a fingerprint for: with a stale marker (A) over a
+     * changed, oversized document (B), `candidate` answered `too_large(B)`, the client recorded
+     * `decline(B)`, and the next poll — which only checks the MARKER's fingerprint — re-dialled
+     * IMAP and answered `too_large(B)` again, forever. Asking about the FRESH fingerprint settles
+     * every state at once: a document already answered about is `none`, whatever the answer was.
      */
     if (await profileImportResolutionExists(db, { accountId: ctx.accountId, mailboxId, fingerprint })) {
       return { state: "none" };
     }
 
     /**
-     * A document `apply` would refuse is not OFFERED. Before this the ceiling lived only in
-     * `apply`, so the confirm screen showed counts and a button that was going to 413 — see
-     * {@link PROFILE_IMPORT_MAX}. Answered like `newer`: nothing is offered.
-     *
-     * IT CARRIES THE FINGERPRINT, and that is what makes the state actionable rather than a
-     * dead end. `decline` is content-keyed, so a client holding the fingerprint can record a
-     * durable "keep local" for this exact document and stop being asked. The shared card
-     * currently reads any state it does not recognise as NO OFFER, so today this is silent
-     * rather than explained; the fingerprint is what a card that explains it will need.
+     * A document `apply` would refuse is not OFFERED — before this the ceiling lived only in
+     * `apply`, so the confirm screen showed counts and a button headed for a 413
+     * (`PROFILE_IMPORT_MAX`). Answered like `newer`: nothing offered. IT CARRIES THE FINGERPRINT,
+     * which makes the state actionable: `decline` is content-keyed, so a client holding it can
+     * record a durable "keep local" and stop being asked. The shared card reads unrecognised
+     * states as NO OFFER, so today this is silent; the fingerprint is what an explaining card
+     * will need.
      */
     if (over) {
       return { state: "too_large", fingerprint, list: over.list, count: over.count, max: over.max };
@@ -442,21 +338,15 @@ export class ProfileImportService {
     ctx: ServiceContext, mailboxId: string, body: { fingerprint?: unknown }, opts: { read: ProfileReader },
   ): Promise<ProfileImportApplied> {
     await this.assertMailbox(ctx, mailboxId);
-    /* -- ONLY AN ORGANIZER IMPORTS A TRAVELLING PROFILE (mail 0083) -------------------------
-     *
-     * The import writes the account's rules, screener entries, notify rules, away responder and
-     * tag names out of a document another install left in `ohmail/_meta`. Every one of those is
-     * configuration this install would then act on — and a reader acts on none of it, so an
-     * import here would rewrite the account's screening on the strength of a handover that did
-     * not happen to this side.
-     *
-     * It is also the mirror image of the hold: the hold exists so an INCOMING organizer does not
-     * re-screen what it is inheriting. An install that is not the incoming organizer has nothing
-     * to inherit, and its cycle never arms the hold (`engine.ts`, `index.ts` — both skip
-     * `armHoldFromFolder` for a reader), so this door is the one place a reader could still have
-     * reached the document.
-     *
-     * PER MAILBOX, because the document belongs to one mailbox's `_meta` folder.
+    /**
+     * ONLY AN ORGANIZER IMPORTS A TRAVELLING PROFILE (mail 0083). The import writes rules,
+     * screener entries, notify rules, the responder and tag names out of a document another
+     * install left in `ohmail/_meta` — configuration this install would then act on. A reader
+     * acts on none of it; an import here would rewrite screening on a handover that did not
+     * happen to this side. Mirror image of the hold: the hold exists so an INCOMING organizer
+     * does not re-screen what it inherits; a reader never arms it (`engine.ts`, `index.ts` skip
+     * `armHoldFromFolder`), so this door is the one place a reader could still reach the
+     * document. PER MAILBOX — the document belongs to one mailbox's `_meta`.
      */
     await assertOrganizerRole(asTx(ctx), dialect(ctx.db), ctx.accountId, mailboxId);
     const fingerprint = body.fingerprint;
@@ -687,24 +577,15 @@ export class ProfileImportService {
         changes.push({ accountId: ctx.accountId, entityType: "tag", entityId: row!.id, op: "create", meta: null });
       }
 
-      /* ── signature — the one PER-MAILBOX field in the document (mail 0094) ──────────────
-       *
-       * Applied for the reason every section above is: this is a restore of the configuration the
-       * organizer published, and a section the importer skips is a setting the person loses
-       * silently on a machine they have just told to take the document.
-       *
-       * It also has to be applied for the import to TERMINATE. The organizer's hold releases when
-       * the local store's own serialization equals the held document — one serializer, one
-       * comparison — and `signature` is now part of that serialization. An importer that wrote
-       * every other section would converge on none of them: the fingerprints would differ for
-       * ever, the prompt would return on every cycle, and nothing would report an error, because
-       * "these two documents are not equal" is a true statement.
-       *
-       * Written to THIS mailbox, scoped by account as well as by id — the same predicate the
-       * serializer reads it back through, so a document cannot reach a row this account does not
-       * own. `null` is written as `null`: the document saying "no signature" is a statement about
-       * the configuration, not an absence of one, and treating it as "leave whatever is here"
-       * would make the import non-idempotent against a machine that had one.
+      /**
+       * signature — the one PER-MAILBOX field in the document (mail 0094). Applied like every
+       * section above: a skipped section is a setting the person loses silently. It also makes
+       * the import TERMINATE: the organizer's hold releases when the local serialization equals
+       * the held document, and `signature` is part of that serialization — an importer skipping
+       * it would never converge and the prompt would return every cycle. Written to THIS mailbox,
+       * scoped by account as well as id — the same predicate the serializer reads through. `null`
+       * is written as `null`: "no signature" is a statement, and treating it as "leave what is
+       * here" would make the import non-idempotent.
        */
       await tx.update(mailboxes).set({ signature: doc.signature })
         .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, ctx.accountId)));

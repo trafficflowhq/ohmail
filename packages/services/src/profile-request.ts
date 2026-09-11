@@ -6,47 +6,25 @@ import {
 } from "./reader-request.js";
 
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  THE PROFILE FAMILY'S ONE PAYLOAD — `profile.update` (mail 0094, ruling 6)
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * Four doors in three files edit the configuration that travels in the organizer's published
- * document: the away responder, the screening preference, the dormancy window, and the mailbox
- * signature. They all compose the SAME partial payload, and they compose it here.
- *
- * ── WHY IT IS PARTIAL, AND WHAT "PARTIAL" MEANS ON THE OTHER SIDE ──────────────────────────
- *
- * Each present field REPLACES; an ABSENT field is not mentioned and is left alone. That is the
- * difference between "the person edited their responder" and "the person cleared everything except
- * their responder", and a full-document payload could not tell those apart: a door that knows
- * about one setting would send nulls for the other three and wipe them on the organizer.
- *
- * So absence is load-bearing, and it is why every field here is optional rather than nullable with
- * a sentinel. `signature: null` means "no signature" — a value somebody chose. `signature` absent
- * means "this request is not about the signature".
- *
- * ── THE FAMILY IS SCOPED TWO DIFFERENT WAYS, WHICH IS THE PART THAT SURPRISES ──────────────
- *
- * Three of the four are ACCOUNT-scoped rows (`away_responders` and `account_settings`), so they
- * fan out: a local write for the mailboxes this install organizes, plus one request per install
- * holding one of the others. The SIGNATURE is `mailboxes.signature` — per mailbox, because a person
- * with two addresses has two sign-offs — so it takes the per-mailbox dispatch instead, and asking
- * it the account-wide question would publish one mailbox's sign-off into the other's document.
+ * THE PROFILE FAMILY'S ONE PAYLOAD — `profile.update` (mail 0094). Four doors edit configuration
+ * that travels in the organizer's published document — away responder, screening preference,
+ * dormancy window, mailbox signature — and all compose the SAME partial payload here. A present
+ * field REPLACES; an ABSENT field is left alone: a door that knows one setting must not wipe the
+ * other three, which a full-document payload would. Fields are optional, not
+ * nullable-with-sentinel: `signature: null` means "no signature" (chosen); absent means "not
+ * about the signature". Three of the four are ACCOUNT-scoped and fan out per holding install; the
+ * SIGNATURE is `mailboxes.signature`, per mailbox, and takes the per-mailbox dispatch.
  */
 
 /**
- * THE SIGNATURE'S BOUND ON A READER DOOR — 2 000 characters (ruling 6).
- *
- * `MAILBOX_SIGNATURE_MAX_CHARS` is 10 000 for a LOCAL write, and that stays: a signature this
- * install stores and appends itself has no wire to cross. A signature that has to TRAVEL does, and
- * the wire's own ceiling is `REQUEST_PAYLOAD_MAX_BYTES` measured on the base64url of the JSON —
- * which a 10 000-character signature exceeds, and which `writeReaderRequest` would refuse with a
- * sentence about encoded bytes.
- *
- * Bounded here as well, in CHARACTERS, so the refusal a person reads is about their signature
- * rather than about an encoding. Both layers, deliberately: this is the sentence, and the byte
- * ceiling behind it is the guarantee — a 2 000-character signature of multi-byte glyphs can still
- * exceed the wire cap, and it is refused there rather than truncated.
+ * THE SIGNATURE'S BOUND ON A READER DOOR — 2 000 characters. `MAILBOX_SIGNATURE_MAX_CHARS` is 10
+ * 000 for a LOCAL write, and that stays: a locally stored signature crosses no wire. One that
+ * TRAVELS does, and the wire's ceiling is `REQUEST_PAYLOAD_MAX_BYTES` measured on the base64url
+ * of the JSON — which a 10 000-character signature exceeds, refused by `writeReaderRequest` with
+ * a sentence about encoded bytes. Bounded here as well, in CHARACTERS, so the refusal a person
+ * reads is about their signature, not an encoding. Both layers, deliberately: this is the
+ * sentence; the byte ceiling is the guarantee — 2 000 multi-byte glyphs can still exceed the wire
+ * cap and are refused there, never truncated.
  */
 export const TRAVELLING_SIGNATURE_MAX_CHARS = 2000;
 
@@ -68,20 +46,14 @@ export interface ProfileAwayResponderPatch {
   audience: string;
   throttle: string;
   /**
-   * WHICH PILES GET A REPLY — folder names (mail 0096).
-   *
-   * Added by the ruling "the away responder's pile scope travels in the profile fan-out"
-   * (2026-09-10). Before it, a save on a MIXED or READER account that changed the scope wrote
-   * nothing locally, sent one request per held mailbox carrying the other six fields, and the
-   * organizer's applier dropped the key it never received — so the pane showed the old scope back
-   * and the person read it as a setting that reverted itself.
-   *
-   * `string[]` and not `AwayPile[]`: this is what a door produced and it crosses an install
-   * boundary, so the receiving half validates it again against the closed set rather than
-   * trusting this type. It is REQUIRED here — every door that builds this patch runs the input
-   * through `validPiles`, which always answers an array — while the wire's own reading of it is
-   * OPTIONAL, because an install one release older sends no `piles` at all and its saves must
-   * keep working.
+   * WHICH PILES GET A REPLY — folder names (mail 0096). The away responder's pile scope travels
+   * in the profile fan-out. Before it did, a scope change on a MIXED or READER account wrote
+   * nothing locally and the organizer's applier dropped the key it never received — the pane
+   * showed the old scope back. `string[]`, not `AwayPile[]`: this is what a door produced and it
+   * crosses an install boundary, so the receiving half validates against the closed set rather
+   * than trusting the type. REQUIRED here — every door runs the input through `validPiles`, which
+   * always answers an array — while the wire's reading is OPTIONAL: an older install sends no
+   * `piles`, and its saves must keep working.
    */
   piles: string[];
 }
@@ -109,23 +81,14 @@ export interface ProfileUpdatePayload {
 }
 
 /**
- * COMPOSE THE PAYLOAD, dropping nothing and inventing nothing.
- *
- * A field the caller did not name never appears. Written as an explicit copy rather than a spread
- * of the caller's object so that a door which grows a field cannot silently start sending it: the
- * shape is defined by ruling 6 and the drain that applies these requests, and a new member is a
- * ruling, not a commit.
- *
- * TWO MEMBERS HAVE BEEN ADDED THAT WAY, and they are named here because this docblock is the rule
- * they had to satisfy: `piles` inside {@link ProfileAwayResponderPatch}, by the ruling "the away
- * responder's pile scope travels in the profile fan-out", and {@link ProfileUpdatePayload.signatureHtml}
- * by "a signature's formatting travels to the install that organizes the mailbox" (both
- * 2026-09-10). Cited by date and subject rather than by commit, because a sha in a source comment
- * is a pointer that a rebase turns into a survivor no sweep can clear.
- *
- * Note that the copy is per TOP-LEVEL field: `awayResponder` is assigned whole, so a member added
- * to that interface travels the moment the type admits it. That is precisely why the interface —
- * not this function — is where the ruling is recorded.
+ * COMPOSE THE PAYLOAD, dropping nothing and inventing nothing. A field the caller did not name
+ * never appears. An explicit copy rather than a spread, so a door that grows a field cannot
+ * silently start sending it: the shape is a contract with the drain that applies these requests,
+ * and a new member is a decision, not a drive-by. Two were added that way: `piles` in
+ * `ProfileAwayResponderPatch` and `signatureHtml`. The copy is per TOP-LEVEL field:
+ * `awayResponder` is assigned whole, so a member added to that interface travels the moment the
+ * type admits it — which is why the interface, not this function, is where such an addition is
+ * recorded.
  */
 export function profileRequestPayload(p: ProfileUpdatePayload): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -173,17 +136,13 @@ export function profileTravelled(plan: AccountFanOut): boolean {
   return plan.requestTo.length > 0 || plan.refused.length > 0;
 }
 
-/* NO `planProfileFanOut` WRAPPER HERE, AND THAT IS DELIBERATE.
- *
- * A one-line alias fixing the kind to `profile.update` looked like the tidy thing and was measured
- * to be a hole: `organizer-role-census` keys on the DISPATCH's names, so every door calling the
- * alias instead of `planAccountFanOut` would have gone INVISIBLE to it — two of the three
- * account-scoped settings doors, silently absent from the list of doors that ask the question,
- * with the census green.
- *
- * A census keyed on names cannot see through an indirection, so the doors name the dispatch
- * directly and pass the kind. One extra argument at three call sites is the price of the guard
- * being able to find them.
+/**
+ * NO `planProfileFanOut` WRAPPER HERE, DELIBERATELY. A one-line alias fixing the kind to
+ * `profile.update` was measured to be a hole: `organizer-role-census` keys on the DISPATCH's
+ * names, so every door calling the alias instead of `planAccountFanOut` would go INVISIBLE to it
+ * — two of the three account-scoped settings doors silently absent, census green. A census keyed
+ * on names cannot see through an indirection, so the doors name the dispatch directly and pass
+ * the kind. One extra argument at three call sites is the price of the guard finding them.
  */
 
 /**

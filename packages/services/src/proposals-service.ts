@@ -11,17 +11,14 @@ import type { WorkflowProposalDTO } from "./dto/types.js";
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 
 /**
- * ProposalsService. A THIN account-scoped wrapper over
- * the core proposal engine (`assembleWorkflowPatterns` / `generateProposals` live in
- * core so the worker cron can call them WITHOUT importing services). The AI
- * `WorkflowPort` is INJECTED into `generate` — mocked in tests, a live
- * `makeOpusProposer(new Anthropic())` in deployment.
- *
- * `assemblePatterns` returns NON-SENSITIVE metadata only and structurally EXCLUDES any
- * pattern derived from sensitivity-flagged mail. `generate` stores INERT
- * proposals — never a workflow; the user must explicitly materialize one
- * (`POST /workflows { fromProposalId }`) before it becomes a disabled workflow. REST-only:
- * no change_log / EntityType growth; clients read via `GET /workflows/proposals`.
+ * ProposalsService — a THIN account-scoped wrapper over the core proposal engine
+ * (`assembleWorkflowPatterns` / `generateProposals` live in core so the worker cron can call them
+ * WITHOUT importing services). The AI `WorkflowPort` is INJECTED into `generate`: mocked in
+ * tests, `makeOpusProposer(new Anthropic())` in deployment. `assemblePatterns` returns
+ * NON-SENSITIVE metadata only and structurally EXCLUDES patterns derived from sensitivity-flagged
+ * mail. `generate` stores INERT proposals — never a workflow; the user must materialize one
+ * (`POST /workflows { fromProposalId }`) before it becomes a disabled workflow. REST-only: no
+ * change_log / EntityType growth; clients read via `GET /workflows/proposals`.
  */
 export class ProposalsService {
   /** The redacted, sensitive-excluded recurring patterns — delegates to core. */

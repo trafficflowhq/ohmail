@@ -12,20 +12,14 @@ import type { Page, TrackerEventDTO } from "./dto/types.js";
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 
 /**
- * The INJECTED server-side fetch port (mirrors ClassifierPort). Its signature takes the url and a
- * `pin` — the validated address(es) the socket must connect to — and NOTHING ELSE: no request
- * object, no headers bag. That absence is still the STRUCTURAL guarantee that the reader's IP /
- * cookies / referer can never be forwarded to the sender, because there is no parameter through
- * which a client header could travel. Tests pass a mock; production passes {@link nodeRemoteFetch}.
- *
- * ── WHY `pin` IS A SECOND PARAMETER AND NOT A WIDENING ────────────────────────────────────────
- *
- * `pin` is not client-supplied data — it is the output of {@link assertPublicHttpUrl}, the
- * addresses that gate already resolved and cleared. It is here so the port connects to a
- * PRE-VALIDATED address instead of re-resolving the hostname, which is the DNS-rebinding hole the
- * gate could not close on its own (validate here, re-resolve inside `fetch`, land on
- * `169.254.169.254`). The SNI and `Host` header still carry the hostname; only the packets'
- * destination is pinned. See `pinned-fetch.ts`.
+ * The INJECTED server-side fetch port (mirrors ClassifierPort). It takes the url and a `pin` —
+ * the validated address(es) the socket must connect to — and NOTHING ELSE: no request object, no
+ * headers bag, so the reader's IP / cookies / referer STRUCTURALLY cannot be forwarded to the
+ * sender. Tests pass a mock; production passes `nodeRemoteFetch`. `pin` is not client data — it
+ * is `assertPublicHttpUrl`'s output, so the port connects to a PRE-VALIDATED address instead of
+ * re-resolving the hostname (the DNS-rebinding hole: validate, re-resolve inside `fetch`, land on
+ * `169.254.169.254`). SNI and `Host` still carry the hostname; only the packets' destination is
+ * pinned. See `pinned-fetch.ts`.
  */
 export interface RemoteFetch {
   fetch(url: string, pin: readonly string[], opts?: {
@@ -64,32 +58,14 @@ const MAX_REDIRECT_HOPS = 3;
 const REDIRECT_CHAIN_BUDGET_MS = 10_000;
 
 /**
- * ── THE STATUS WE SERVE WHEN SOMEBODY ELSE'S SERVER FAILS, AND WHY IT IS NOT 5xx ─────────
- *
- * This was **502**, and that one digit is the difference between an alarm worth reading and
- * an alarm nobody reads. Hosting platforms alert on a route's 5xx rate, and this route is
- * served by a catch-all (`/[[...path]]`), so every refused image is counted against *the
- * whole API*. A burst of 5xx here therefore reads as "the API is failing" when what actually
- * happened is that a sender's image host answered with a redirect.
- *
- * A 5xx is a claim that OUR server failed. Here our server did exactly what it was built to
- * do: it validated a url, fetched it, and found the answer unusable. The failure is the
- * dependency's. Reporting it as ours has two costs and no benefit — it burns the error
- * budget on other people's uptime, and it trains everyone to ignore the one alarm that is
- * supposed to mean "ohmail is broken". Measured over one week before this changed, three
- * quarters of every 5xx the API served came from this single route relaying other people's
- * failures.
- *
- * **424 Failed Dependency** says the true thing: the request failed because a resource it
- * depended on failed. It is a 4xx, so monitoring stops attributing it to us; it is not 404
- * (the message and the url are real) and not 400 (the caller's request was well-formed);
- * and no browser treats it differently from any other non-2xx for an `<img>`, which is the
- * only consumer that renders it.
- *
- * **This is deliberately NOT a soft-fail to a placeholder image.** Serving a 200 with a
- * transparent pixel would make the alarm quiet and the tracker feed dishonest — a fetch that
- * failed would be indistinguishable from a beacon we refused, in the one feature whose whole
- * subject is telling the reader which is which.
+ * 424, NOT 5xx, WHEN SOMEBODY ELSE'S SERVER FAILS. Platforms alert on a route's 5xx rate and this
+ * route is a catch-all (`/[[...path]]`), so every refused image counted against the whole API —
+ * measured over one week, three quarters of the API's 5xx were this route relaying other people's
+ * failures. A 5xx claims OUR server failed; here it validated, fetched, and found the answer
+ * unusable. 424 Failed Dependency says the true thing: not 404 (message and url are real), not
+ * 400 (the request was well-formed), and browsers treat any non-2xx `<img>` alike. Deliberately
+ * NOT a 200 placeholder pixel: a soft-fail makes a failed fetch indistinguishable from a refused
+ * beacon, in the one feature whose subject is telling the reader which is which.
  */
 const UPSTREAM_STATUS = 424;
 
@@ -236,34 +212,14 @@ export class PrivacyService {
     await this.requireOwnedMessage(ctx, messageId);
 
     /**
-     * ── AUTHORIZATION IS ENFORCED HERE, OR IT IS NOT ENFORCED AT ALL ─────────────
-     *
-     * Two grants, either one sufficient, both SERVER facts:
-     *
-     *   · the reader pressed "Show images" for THIS message
-     *     (`message_bodies.loaded_remote_content` — `POST /messages/:id/load-remote`);
-     *   · the ACCOUNT loads images automatically (mail 0048:
-     *     `account_settings.block_remote_images_at` NULL, and an absent row IS the
-     *     default — every account that never changed anything is on auto).
-     *
-     * The second grant is what makes the product default WORK at this boundary. The
-     * client's auto mode points every image at this route without a per-message
-     * press, and a gate that only knew the press answered 403 to all of it — the
-     * shipped default was authorized nowhere server-side. The account column is a
-     * server fact exactly like the flag: an opted-out account's urls are refused
-     * here whatever a client claims, and nothing that reaches this route — a second
-     * client, a replayed url, a bug in the renderer's `pixel` branch — can make the
-     * sender's server see a request the account's own settings forbid.
-     *
-     * It also keeps the tracker feed honest: `TrackerEventDTO.blocked` derives from
-     * these same two facts (see {@link listTrackerEvents}), so an image fetched
-     * under either grant is never reported to the user as "blocked" in the very
-     * feed whose subject is who tried to spy on them.
-     *
-     * 403 and not 404: the message is real and the caller owns it, and pretending
-     * otherwise would make a legitimate client's bug indistinguishable from an
-     * IDOR. `retryable: false` — no amount of retrying changes it; the client's
-     * remedy is `POST /messages/:id/load-remote`, which is a user action.
+     * AUTHORIZATION IS ENFORCED HERE, OR NOT AT ALL. Two grants, either sufficient, both SERVER
+     * facts: the reader pressed "Show images" for THIS message
+     * (`message_bodies.loaded_remote_content`), or the ACCOUNT loads images automatically (mail
+     * 0048: `account_settings.block_remote_images_at` NULL; an absent row IS the default). The
+     * second grant authorizes the shipped auto default; an opted-out account's urls are refused
+     * whatever a client claims. `TrackerEventDTO.blocked` derives from the same two facts, so a
+     * fetched image is never reported "blocked". 403 not 404 (the message is real and owned);
+     * `retryable: false` — the remedy is `POST /messages/:id/load-remote`.
      */
     const [body] = await ctx.db
       .select({ loaded: messageBodies.loadedRemoteContent })
@@ -280,29 +236,14 @@ export class PrivacyService {
     }
 
     /**
-     * ── THE PIXEL PREFERENCE IS ENFORCED BEFORE THE FETCH, FOR THE TRACKERS THE SERVER
-     *    KNOWS ─────────────────────────────────────────────────────────────────────────
-     *
-     * The client's own pixel refusal reads the message (declared 1×1s, beacon-shaped
-     * urls) and cannot know this list; a tracker url that declares no dimensions and
-     * wears no beacon path — an ESP's click/open host serving `r/abc.jpg` — sails past
-     * it and arrives here as "a picture". Classifying it AFTER `remote.fetch`, which is
-     * what this method used to do with the knowledge, refuses the caller the bytes and
-     * has already told the sender about the open — the one event "Block tracking pixels"
-     * exists to prevent, defeated for exactly the trackers we can name in advance.
-     *
-     * So a server-known tracker host or beacon-shaped url is refused the FETCH itself
-     * while the account's pixel switch stands (mail 0072), whatever the images grant
-     * says. The reader is handed the same transparent stub a fetched 1×1 gets — the
-     * client believed this was a picture, and a broken glyph would punish the reader
-     * for the sender's tracker — and the event is recorded so the feed can say who
-     * tried. An account that turned the switch OFF takes the fetch branch below,
-     * exactly as it asked to.
-     *
-     * The post-fetch dimension check stays: it is the half of the classification that
-     * needs the bytes (an unknown host's undeclared 1×1), and by then the open has been
-     * reported only for senders NO list could have named — the honest limit of the
-     * feature, which the switch's copy states.
+     * THE PIXEL PREFERENCE IS ENFORCED BEFORE THE FETCH, for the trackers the server knows. The
+     * client's own refusal cannot know this list; an ESP's click host serving `r/abc.jpg` arrives
+     * here as "a picture". Classifying AFTER the fetch has already told the sender about the open
+     * — the one event "Block tracking pixels" exists to prevent. So a known tracker host or
+     * beacon-shaped url is refused the FETCH while the pixel switch stands (mail 0072), whatever
+     * the images grant says; the reader gets the same transparent stub a fetched 1×1 gets, and
+     * the event is recorded so the feed can say who tried. The post-fetch dimension check stays:
+     * the half that needs the bytes — an unknown host's undeclared 1×1.
      */
     const host = hostOf(url);
     const trackerByUrl = isKnownTracker(host) || isBeaconUrl(url);
@@ -327,41 +268,14 @@ export class PrivacyService {
     // the pin the port would re-resolve the name and a rebinding server could send
     // the second lookup to a private address.
     /**
-     * ── A REDIRECT IS A HOP THROUGH THE GATE AGAIN, NOT A REFUSAL ────────────────────────
-     *
-     * This loop used to be a single fetch, and a 3xx was a hard refusal — the reasoning
-     * being that the `Location` names a url the gate never saw. That reasoning is right
-     * about the DANGER and wrong about the REMEDY: the answer to "nobody validated this
-     * url" is to validate it, which is the same gate, unchanged, run again.
-     *
-     * **What the refusal cost, measured against real mail.** Every remote image in an
-     * ordinary inbox failed this way. `services.google.com` serves a plain `http://` url
-     * that 301s to `https://`; `gstatic.com` 301s from the apex to `www.`; `slack.com` 302s
-     * to `a.slack-edge.com`; `www.facebook.com/ads/image` 302s to `fbcdn.net`. Those four
-     * shapes — scheme canonicalisation, apex-to-www, brand-to-CDN, id-to-CDN — are how
-     * ordinary marketing mail serves ordinary pictures. Refusing them did not block a single
-     * tracker; it blocked the pictures and left the trackers working, because a beacon points
-     * straight at its own host and needs no redirect.
-     *
-     * **The safety property is preserved exactly, because it is enforced per hop.** Every
-     * url this function connects to has passed {@link assertPublicHttpUrl} and is fetched
-     * PINNED to the addresses that gate resolved. Hop 2 is not trusted more than hop 1: it
-     * is refused for userinfo, odd ports, `.onion`/`.local` and any literal-or-resolved
-     * private address exactly as hop 1 is, and the DNS-rebinding window stays closed
-     * because the new pin comes from the new validation rather than from a re-resolve.
-     *
-     * Three further conditions, each load-bearing:
-     *
-     *  · **The scheme is re-checked.** `assertPublicHttpUrl` is an http(s) gate, but a
-     *    `Location: file:///etc/passwd` or `gopher://` must be refused as a MALFORMED hop
-     *    rather than reach it, so the same `^https?://` test the caller-supplied url gets is
-     *    applied to every `Location` after it is resolved against its base.
-     *  · **The tracker classification runs on every hop.** Without this, a redirect is a
-     *    clean bypass of the pixel switch: point at an innocuous host, 302 to the beacon,
-     *    and the gate that refuses known trackers pre-fetch never sees the tracker. The
-     *    per-hop check makes the redirect chain no weaker than a direct url.
-     *  · **The hop count is capped.** A redirect loop is otherwise an amplifier pointed at
-     *    us by anyone who can put an `<img>` in an email.
+     * A REDIRECT IS A HOP THROUGH THE GATE AGAIN, NOT A REFUSAL. A 3xx used to be refused because
+     * `Location` names a url the gate never saw; the remedy is to validate it — same gate, run
+     * again. Refusing blocked pictures, not trackers: scheme, apex-to-www and brand-to-CDN
+     * redirects are how ordinary mail serves images; a beacon points at its own host. Safety is
+     * enforced PER HOP: every url passes `assertPublicHttpUrl` and is fetched PINNED to the
+     * addresses that validation resolved. Plus: the scheme is re-checked (`Location: file://…` is
+     * refused before the gate); the tracker classification runs on every hop (else a 302 to the
+     * beacon bypasses the pixel switch); the hop count is capped (a loop is an amplifier).
      */
     let currentUrl = url;
     let currentHost = host;
@@ -590,24 +504,14 @@ export class PrivacyService {
       )!);
     }
 
-    // Join the message (sender + account scope) and its body (blocked flag).
-    //
-    // THE JOIN CARRIES ITS OWN ACCOUNT PREDICATE, and this comment used to say it did not need
-    // one: "the account filter on tracker_events already scopes; the join adds from_address."
-    // That is true of every row this service writes — both `trackerEvents` inserts run behind
-    // `requireOwnedMessage`, so the two account ids agree by construction today — and it is the
-    // wrong shape of argument for the invariant it is holding up. Account isolation is required
-    // to be STRUCTURAL rather than a projection someone remembers to keep narrow, and this
-    // projection reads a COUNTERPARTY ADDRESS off the joined row. A single inconsistent but
-    // schema-valid `tracker_events` row — a future writer, a backfill, a restore, a repair
-    // script — would put another account's sender address into this feed, and nothing in the
-    // query would object.
-    //
-    // The predicate is free: `tracker_events_account_message_idx` is already `(account_id,
-    // message_id)` and `messages` is reached by primary key, so this adds a comparison on a row
-    // the plan was fetching anyway. Correctness that costs nothing does not need a risk argument
-    // to justify it — it needs only that the alternative is a comment promising a property the
-    // SQL does not state.
+    // Join the message (sender + account scope) and its body (blocked flag). THE JOIN CARRIES ITS
+    // OWN ACCOUNT PREDICATE. Both `trackerEvents` inserts run behind `requireOwnedMessage`, so
+    // the ids agree by construction today — but isolation must be STRUCTURAL, and this projection
+    // reads a COUNTERPARTY ADDRESS off the joined row: one inconsistent, schema-valid
+    // `tracker_events` row (a future writer, a backfill, a restore) would put another account's
+    // sender address into this feed with nothing objecting. The predicate is free:
+    // `tracker_events_account_message_idx` is `(account_id, message_id)` and `messages` is
+    // reached by primary key — a comparison on a row the plan was fetching anyway.
     const rows = await ctx.db.select({
       id: trackerEvents.id,
       messageId: trackerEvents.messageId,
@@ -691,44 +595,26 @@ const REMOTE_TIMEOUT_MS = 8_000;
 const REMOTE_MAX_BYTES = 5 * 1024 * 1024;
 
 /**
- * THE LONGEST `?u=` THE IMAGE PROXY WILL PARSE.
- *
- * The value is sender-chosen — it comes out of a stranger's HTML — and it reaches `new URL()`,
- * the SSRF gate's host resolution, a DNS lookup, redirect handling and an outbound fetch. It had
- * no application ceiling at all, and the input-bounds census wrongly recorded it as bounded by
- * the request door: `JSON_BODY_MAX_BYTES` bounds a request BODY, and this is a query string on a
- * GET. What actually bounded it was whatever request-line limit the host in front happened to
- * impose, which is a different number on every deployment and none on a direct socket.
- *
- * 8 192 characters. Comfortably past every real image URL — the practical browser and proxy
- * ceiling for a whole request line has been ~8 KB for two decades, so a longer one is not
- * fetchable by anything else either — and small enough that parsing and resolving it is bounded
- * work. Applied to each REDIRECT target too: a redirect chain is the same value arriving from a
- * different party.
+ * THE LONGEST `?u=` THE IMAGE PROXY WILL PARSE. The value is sender-chosen — a stranger's HTML —
+ * and reaches `new URL()`, the SSRF gate's resolution, DNS, redirect handling and an outbound
+ * fetch. It had no application ceiling; the input-bounds census wrongly recorded it as bounded by
+ * `JSON_BODY_MAX_BYTES`, which bounds a request BODY, not a GET query string — the real bound was
+ * whatever request-line limit the host in front imposed, none on a direct socket. 8 192
+ * characters: past every real image URL (the practical browser/proxy request-line ceiling has
+ * been ~8 KB for two decades) and small enough that parsing and resolving is bounded work.
+ * Applied to each REDIRECT target too — the same value arriving from a different party.
  */
 export const PROXY_URL_MAX_CHARS = 8192;
 
 /**
- * Production {@link RemoteFetch}: a stdlib `http(s).request` PINNED to the address the SSRF gate
- * validated (see `pinned-fetch.ts`), forwarding NO client headers (no cookie, no referer, a
- * neutral UA only), so the upstream sender only ever sees OUR server's request from OUR chosen
- * address.
- *
- * **The pin is load-bearing, not defensive.** {@link assertPublicHttpUrl} can only ever validate
- * the name it was handed; a fetch that re-resolves that name would let a DNS-rebinding server send
- * the second lookup to `169.254.169.254` after the gate cleared a public one. Connecting only to
- * the pinned address is what removes that window.
- *
- * **This port never follows a redirect**, and with the stdlib client that is by construction — it
- * does not follow them at all. A `302 Location: http://169.254.169.254/` comes back as a bare 3xx
- * with an empty body and the `Location` string, and the SECOND request — if there is one — is made
- * by `proxyImage` only after that url has been through {@link assertPublicHttpUrl} and been pinned
- * to its own validated addresses. That split is the design: the port cannot open a socket to an
- * address the gate has not cleared, because it is never the thing that decides where to go next.
- *
- * The **timeout** and **size cap** are not tidiness either: without them one authenticated caller
- * can hold a serverless socket open indefinitely, or make us buffer a multi-gigabyte body into the
- * function's memory.
+ * Production `RemoteFetch`: a stdlib `http(s).request` PINNED to the address the SSRF gate
+ * validated (`pinned-fetch.ts`), forwarding NO client headers — no cookie, no referer, a neutral
+ * UA — so the sender sees only OUR server's request. The pin is load-bearing:
+ * `assertPublicHttpUrl` validates the name it was handed; a fetch that re-resolves lets a
+ * DNS-rebinding server send the second lookup to `169.254.169.254`. This port never follows a
+ * redirect: a 302 comes back as a bare 3xx with the `Location` string, and any SECOND request is
+ * made by `proxyImage` only after that url passed the gate and got its own pin. The timeout and
+ * size cap keep one caller from holding a serverless socket open or buffering gigabytes.
  */
 export const nodeRemoteFetch: RemoteFetch = makeNodeRemoteFetch();
 
