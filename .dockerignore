@@ -18,6 +18,13 @@
 !apps/*/package.json
 !packages/*/package.json
 
+# The patch files `pnpm-workspace.yaml` names under `patchedDependencies`. `pnpm install
+# --frozen-lockfile` applies them, so without this line the install inside the image dies on
+# ENOENT for a patch the lockfile requires — and nothing local can tell you, because a laptop has
+# the whole repository. `test/dockerignore-carries-patches.test.ts` derives the paths from
+# `pnpm-workspace.yaml` and fails if one of them is not admitted here.
+!patches
+
 # The four projects that are actually compiled and shipped. `packages/db-mail` joined when
 # the engine/cloud split made it a real workspace package: the db package's tsconfig
 # references it, so `tsc -b` inside the image fails with TS5083 without its sources — which is
