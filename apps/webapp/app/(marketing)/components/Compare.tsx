@@ -4,19 +4,14 @@ import { GITHUB_REPO_URL } from "../github";
 import { PROFILE_SPEC_URL } from "./GetOhmail";
 
 /**
- * The rows, in reading order. `open` leads: whether the code can be read at all is the
- * first fact about whose product it is, and every row under it is checkable BECAUSE of
- * it. `settings` sits between "where the organization lives" and "if you leave" because
- * it is the bridge between them: the rules and screening decisions live in the mailbox
- * itself (the portable organizer profile, plain JSON in a published format), which is
- * what makes the leave row true of the configuration and not only of the folders.
- * `desktop` replaced the old `offline` row: "offline & local" was only ever true of the
- * desktop app, so the row now names the thing it is about — a real mail client with the
- * engine inside, against a window around somebody's web app.
- *
- * Two rows carry a link, and each link is a contract with the public repository's
- * layout: the code itself, and the specification of the format the settings are stored
- * in (`docs/organizer-profile.md`, the same path the Get-ohmail close points at).
+ * The rows, in reading order. `open` leads: whether the code can be read at all is the first fact
+ * about whose product it is, and every row under it is checkable BECAUSE of it. `settings` sits
+ * between "where the organization lives" and "if you leave" because it is the bridge: the rules
+ * and screening decisions live in the mailbox itself (the portable organizer profile, plain JSON in
+ * a published format), which is what makes the leave row true of the configuration and not only
+ * the folders. `desktop` replaced the old `offline` row — "offline & local" was only ever true of
+ * the desktop app. Two rows carry a link, each a contract with the public repository's layout: the
+ * code itself, and `docs/organizer-profile.md` (the same path the Get-ohmail close points at).
  */
 const ROWS: ReadonlyArray<{ id: string; link?: { href: string; key: string } }> = [
   { id: "open", link: { href: GITHUB_REPO_URL, key: "openLink" } },
@@ -29,23 +24,14 @@ const ROWS: ReadonlyArray<{ id: string; link?: { href: string; key: string } }> 
 ];
 
 /**
- * The restrained us-vs-them table. Axis: ohmail works on the mailbox you
- * already own; the others add a layer you live inside. Hairline rows
- * (Blanc's deliberate hairlines, like the FAQ), zero bashing — every
- * cell is a checkable fact.
- *
- * ONE competitor column, deliberately generic ("Other similar products").
- * The table used to name products in two columns; the names were removed
- * from the whole landing deliberately — the argument is about the MODEL
- * (your mailbox vs. living inside theirs), and a name adds heat without
- * adding a fact. Each generic cell is phrased to be true of both shapes
- * that model takes: services your mail moves into, and overlays that only
- * work on a provider or two. `compare.note` still dates the comparison,
- * per each product class's own published documentation.
- *
- * Markup is column-label-per-cell (visually hidden on wide viewports,
- * shown on small ones) so the rows read correctly stacked at 390px and
- * in screen readers, without faking table semantics across breakpoints.
+ * The restrained us-vs-them table. Axis: ohmail works on the mailbox you already own; the others
+ * add a layer you live inside. Hairline rows, zero bashing — every cell is a checkable fact. ONE
+ * competitor column, deliberately generic ("Other similar products"): the table used to name
+ * products, and the names were removed from the whole landing — the argument is about the MODEL,
+ * and a name adds heat without adding a fact; each generic cell is phrased to be true of both
+ * shapes (services your mail moves into, overlays that only work on a provider or two).
+ * `compare.note` still dates the comparison. Markup is column-label-per-cell (visually hidden on
+ * wide viewports) so the rows read correctly stacked at 390px and in screen readers.
  */
 export function Compare() {
   const t = useTranslations("compare");

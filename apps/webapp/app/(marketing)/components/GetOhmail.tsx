@@ -25,15 +25,13 @@ export const PROFILE_SPEC_URL =
   "https://github.com/trafficflowhq/ohmail/blob/main/docs/organizer-profile.md";
 
 /**
- * The self-host icons — original stroke drawings on the landing's own 16-grid, in the
- * base layer's line weight (`svg.ic`: 1.3px, round caps and joins), like the feature
- * and comparison checkmarks. Each names the MACHINE its card is about, because the
- * block's lede says "pick by the machine you have": a closed box for a server you
- * rent or own, a house with rack slots for a box at home, a laptop broadcasting for
- * the desktop that is already here. They keep `ic` (they ARE stroke drawings) and
- * take their size from the scoped `.l-get-disc .l-sh-ic` rule — never a bare class,
- * which loses to the reset on specificity (see landing-story.test.ts's checkmark
- * guards for the incident this discipline comes from).
+ * The self-host icons — original stroke drawings on the landing's 16-grid, in the base layer's line
+ * weight (`svg.ic`: 1.3px, round caps and joins), like the feature checkmarks. Each names the
+ * MACHINE its card is about, because the lede says "pick by the machine you have": a closed box
+ * for a rented server, a house with rack slots for a box at home, a laptop broadcasting for the
+ * desktop already here. They keep `ic` and take their size from the scoped `.l-get-disc .l-sh-ic`
+ * rule — never a bare class, which loses to the reset on specificity (see landing-story.test.ts's
+ * checkmark guards for the incident this discipline comes from).
  */
 function ServerIcon() {
   return (
@@ -82,60 +80,33 @@ const SELF_HOST = [
 ] as const;
 
 /**
- * Get ohmail — run it yourself first, managed as the convenience.
- *
- * This is the section the nav's "Get ohmail." button lands on, and its order is a
- * decision, not a layout accident: the ways you run it YOURSELF come first and are
- * presented as complete products, because they are — the code is public under
- * AGPL-3.0 and the hosted service is built from the same repository. Managed hosting
- * follows, clearly separated and framed as exactly what it is: we run the same thing
- * for you, for a monthly price. The page never calls the paid tier "the real version"
- * because the free ones are not demos; saying so plainly IS the pitch.
- *
- * ── SELF-HOST IS ITS OWN TITLED BLOCK (owner ask, 2026-08-21) ───────────────────────
- *
- * "Self-host ohmail" covers exactly the three ways to run ohmail on hardware you own
- * — a server you rent or own, a home-server box (Umbrel), and the desktop serving
- * your other devices — and nothing else. The desktop app STANDALONE is not
- * self-hosting (nothing is hosted; it is an app), so it keeps its own home above the
- * block; the managed tier is the opposite of self-hosting and keeps its band below.
- * The block carries `id="selfhost"`, which is where the nav's "Self-host" item lands.
- *
- * Honesty in the three sentences, because each card gets exactly one:
- *  · The server card claims a compose file and no account — never prebuilt images or
- *    a pullable registry, which are not public yet (the guide stages that honestly).
- *  · The Umbrel card says "draft" in so many words; the guide separates what works
- *    from what is arriving.
- *  · The desktop card names the real pane (Settings → Devices, held in agreement
- *    with the settings catalogue by a guard) and keeps the honest constraint: only
- *    while the computer is awake.
- *
- * ── THE CLOSE IS THE FLAGSHIP CLAIM ─────────────────────────────────────────────────
- *
- * The section ends on the portable organizer profile, because it is what makes the
- * choice above safe to make casually: your settings are stored in the mailbox
- * itself, so moving between these options is reconnecting a mailbox, not migrating a
- * product. The claim names exactly what travels today — screener verdicts, rules,
- * notification choices, the away reply, tag names — never "all settings", and
- * `test/get-ohmail.test.ts` holds that list in agreement with the public README's own
- * "exactly what travels" sentence, which is the claim's source. Under the claim sits
- * its proof: the profile message itself, quoted verbatim (see the exhibit's comment
- * below and `profile-message.data.ts`).
- *
- * ── SHAPE ──────────────────────────────────────────────────────────────────────────
- *
- *  · One wide panel card for the desktop app; three lifted panel cards for the
- *    self-host ways; a flat tint band for managed — two registers, so the
- *    free/managed separation is visible before a word is read. The one full-bleed
- *    accent band on this page stays the trial's (its comment calls it the page's
- *    only change of surface); the managed band is the same quiet tint as the
- *    comparison table's goodwill close.
- *  · Each card carries ONE link. The desktop card points down at the download
- *    section that owns the platform buttons; the self-host cards point at the public
- *    repo's own documentation — the landing does not restate an operations guide.
- *  · The self-host icons sit in small tint discs — the same tint the nav's star
- *    capsule and the managed band already use, so the cards gain a face without the
- *    page gaining a material.
+ * Get ohmail — run it yourself first, managed as the convenience. The order is a decision: the ways you run it
+ * YOURSELF come first and are presented as complete products, because they are — the code is public under AGPL-3.0
+ * and the hosted service is built from the same repository; managed hosting follows, framed as exactly what it is.
+ * The free ones are not demos, and saying so plainly IS the pitch.
+ */
+
+/**
+ * "Self-host ohmail" is its own titled block (owner ask, 2026-08-21) covering exactly the three ways to run ohmail on
+ * hardware you own; the desktop app STANDALONE is not self-hosting and keeps its own home above, the managed tier its
+ * band below; the block carries `id="selfhost"`. Each card gets one honest sentence: the server card claims a compose
+ * file and no account — never prebuilt images, which are not public yet; the Umbrel card says "draft" in so many
+ * words; the desktop card names the real pane and keeps "only while the computer is awake".
+ */
+
+/**
+ * The close is the flagship claim: the portable organizer profile is what makes the choice above safe to make
+ * casually — moving between these options is reconnecting a mailbox, not migrating a product. The claim names exactly
+ * what travels today (screener verdicts, rules, notification choices, the away reply, tag names), never "all
+ * settings"; `test/get-ohmail.test.ts` holds that list in agreement with the public README's own sentence, and under
+ * the claim sits its proof — the profile message quoted verbatim (`profile-message.data.ts`).
+ */
+
+/**
+ * Shape: one wide panel card for the desktop, three lifted cards for self-host, a flat tint band for managed — two
+ * registers, so the separation is visible before a word is read; each card carries ONE link (the desktop card points
+ * at the download section, the self-host cards at the repo's own documentation); the icons sit in the same tint discs
+ * the nav's capsule uses, a face without a new material.
  */
 export function GetOhmail() {
   const t = useTranslations("get");

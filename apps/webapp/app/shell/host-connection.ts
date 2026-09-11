@@ -29,35 +29,25 @@ export interface HostConnection {
 }
 
 /**
- * HOW LONG AN `unknown` VERDICT IS ALLOWED TO STAY SILENT — three mirror polls.
- *
- * `unknown` means no pull has ever completed under this engine, which is TRUE for the first
- * seconds of every successful pairing. A sentence there would fire on every single first run,
- * announcing a failure that has not happened yet and is about to not happen — the fastest way to
- * teach somebody that this line does not mean anything.
- *
- * Three polls (`DEFAULT_CLOUD_POLL_MS` is 20 s) is long enough that a first pull has had three
- * chances and short enough that a person who pasted a link from a machine that is switched off is
- * not left looking at a blank window wondering. It is NOT the stale bound: `stale` has a
- * completed pull behind it and a real age to report, and its own five-minute rule already applies.
+ * How long an `unknown` verdict may stay silent — three mirror polls. `unknown` means no pull has
+ * ever completed under this engine, which is TRUE for the first seconds of every successful
+ * pairing; a sentence there would fire on every first run, announcing a failure about to not
+ * happen — the fastest way to teach somebody the line means nothing. Three polls
+ * (`DEFAULT_CLOUD_POLL_MS` is 20 s) gives a first pull three chances while not leaving somebody
+ * who pasted a link from a switched-off machine staring at a blank window. NOT the stale bound:
+ * `stale` has a completed pull behind it and its own five-minute rule.
  */
 export const HOST_UNKNOWN_GRACE_MS = 60_000;
 
 /**
- * IS AN `unknown` VERDICT OLD ENOUGH TO SAY SO? — a pure function of two instants.
- *
- * Pure, and separated from every clock, because it is the one rule here that a test can drive
- * exhaustively and the one that would otherwise be a condition inside a `useEffect` nobody can
- * reach. `firstUnknownAt` is when the CURRENT engine first answered `unknown` — it resets with the
- * engine, so a door change or a restart starts the grace again rather than inheriting a bound
- * measured against an engine that no longer exists.
- *
- * `null` means no `unknown` verdict has been recorded yet, which is not the same as one recorded
- * a moment ago: nothing has been observed, so nothing may be concluded, and the answer is false.
- *
- * The comparison is `>=` so the boundary is INSIDE the speaking side: at exactly sixty seconds the
- * three polls have had their chance. A `>` would leave one instant on which the rule says nothing,
- * which is unobservable in the app and is the kind of edge a table test is written to pin.
+ * Is an `unknown` verdict old enough to say so? — a pure function of two instants, separated from
+ * every clock so a test can drive the one rule that would otherwise be a condition inside a
+ * `useEffect` nobody can reach. `firstUnknownAt` is when the CURRENT engine first answered
+ * `unknown` — it resets with the engine, so a door change or restart starts the grace again rather
+ * than inheriting a bound measured against an engine that no longer exists. `null` means no
+ * `unknown` has been recorded yet — nothing observed, nothing concluded, answer false. The
+ * comparison is `>=` so the boundary is inside the speaking side: a `>` would leave one instant on
+ * which the rule says nothing, the kind of edge a table test pins.
  */
 export function unknownSpeaks(
   firstUnknownAt: number | null,

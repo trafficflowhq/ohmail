@@ -5,57 +5,28 @@ import { useTranslations } from "next-intl";
 import { DotLabel } from "./Wordmark";
 import { markTags } from "./Mark";
 
-/* ── the door paragraph ───────────────────────────────────────────────
-   The hero's third beat is one centred sentence again — the composition
-   this page shipped with, restored on the user's call. The three-statement
-   grid that replaced it read as a spec sheet; the paragraph reads as a
-   person explaining what the product does, which is the voice the rest of
-   the page is written in.
-
-   The load-bearing phrases carry a terracotta marker band that sweeps in
-   under them. Three things make that work rather than decorate, and all
-   three live outside this file: the element and the tag map are in
-   Mark.tsx, the material and the sweep are `.l-mk` in landing.css, and
-   which phrases are marked is `hero.door` in messages/en.json — so a
-   translation re-decides its own emphasis without touching a component.
-
-   ONE non-breaking space lives in that message, and it is deliberate:
-   "on the mailboxes". Left to the line breaker, 1440 and 768 both
-   broke it as "…real folders on / the mailboxes you already own" — the
-   marked phrase followed by a stranded preposition at the line end, which
-   is the one rag fault a sentence this size cannot hide. Binding the
-   three words moves the break to the phrase boundary instead, so the
-   marker's band always ends a line whole. It is a typographic decision
-   about THIS English sentence and it belongs in the message with the
-   sentence: a translation re-rags its own prose, and deleting the
-   character is how you undo it. `text-wrap: pretty` handles the rest. */
+/* The door paragraph — the hero's third beat is one centred sentence again (the three-statement
+   grid read as a spec sheet; the paragraph reads as a person explaining, the page's voice). The
+   load-bearing phrases carry a terracotta marker band that sweeps in under them; the element and
+   tag map are Mark.tsx, the material is `.l-mk` in landing.css, and WHICH phrases are marked is
+   `hero.door` in messages/en.json — a translation re-decides its own emphasis. ONE non-breaking
+   space lives in that message, deliberately ("on the mailboxes"): left to the line breaker, 1440
+   and 768 both stranded the preposition at the line end — binding the three words moves the break
+   to the phrase boundary so the marker's band always ends a line whole. It belongs in the message
+   with the sentence: a translation re-rags its own prose. `text-wrap: pretty` handles the rest. */
 
 /**
- * The hero lockup — "oh. consent-first email on your own mailboxes."
- *
- * The mark no longer stands on its own line. It opens the sentence as a
- * spoken beat: "oh." then, without a break, the claim — so the h1 reads as
- * one utterance and the terracotta period does the work a comma would
- * otherwise do badly ("oh.," stutters).
- *
- * The rag is explicit (one line per "\n" in the message), not left to the
- * line breaker, so the shape is the same at 390px and at 1600px. Measured
- * at the 76px display cut: "oh. consent-first email" is 723.2px and "on
- * your own mailboxes." is 750.5px — 3.6% apart, with the longer line last,
- * so the lockup reads as a widening statement rather than a taper. The
- * long line needs 750.5 of the 1016px measure, which is 26% of slack: a
- * wider fallback face (Segoe UI, ~6%) cannot force a third line. The breaks
- * live in the message so a translation can re-rag without touching this
- * file; the whitespace between the spans is dropped for layout (block
- * children of a block box) but survives in textContent, so copy-paste and
- * screen readers get one sentence.
- *
- * The former claim is not gone — it is the strapline under the lockup, set
- * small and lowercase, where it reads as the promise rather than the pitch.
- *
- * Parked alternates, still translated in messages/en.json:
- *   "headlineAlt1" — the longer "on the mailboxes you already own." rag
- *   "headlineAlt2" — the previous claim, if it ever wants the h1 back
+ * The hero lockup — "oh. consent-first email on your own mailboxes." The mark opens the sentence as a spoken beat
+ * rather than standing on its own line, so the h1 reads as one utterance and the terracotta period does the work a
+ * comma would do badly. The rag is explicit (one line per `\n` in the message), the same shape at 390px and 1600px:
+ * measured at the 76px cut the two lines are 3.6% apart with the longer last, so the lockup widens rather than
+ * tapers, and 26% of slack means a wider fallback face cannot force a third line.
+ */
+
+/**
+ * The breaks live in the message so a translation re-rags without touching this file; the whitespace between spans
+ * survives in textContent, so copy-paste and screen readers get one sentence. The former claim is the strapline under
+ * the lockup; parked alternates stay translated (`headlineAlt1`/`headlineAlt2`).
  */
 export function Hero() {
   const t = useTranslations("hero");

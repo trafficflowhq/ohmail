@@ -4,25 +4,18 @@ import { useCallback, useRef, useState, type CSSProperties, type PointerEvent as
 import { useTranslations } from "next-intl";
 
 /**
- * The hero split — the page's FIRST visual (OHMARCHY-PLAN.md §5): the same screen in
- * both faces at once, cut by a diagonal divider, so everyone gets the two-faces story
- * in one glance before the live demo below proves either of them.
- *
- * A DRAG-DIVIDER over the static floor: the ohmarchy capture sits above the paper one,
- * clipped along a slanted edge whose position is `--cut`; dragging (or pressing the
- * page anywhere on the figure, or arrow keys on the handle) moves the cut. With JS off
- * the default cut simply stands — the static split IS the designed fallback, not a
- * degraded one.
- *
- * Four captures, all from the automated pipeline (apps/webapp/scripts/landing-shots.mjs
- * shoots the live demo — the SAME screen, both faces, both schemes), swapped per scheme by
- * the `.is-light`/`.is-dark` rule the Views stills established. Both faces' images are
- * deliberately visible at once here — the one place on the page the face-visibility
- * mechanism must NOT apply.
- *
- * Sides are fixed — paper left, ohmarchy right — in both site faces: the figure is a
- * comparison, not a mirror of the current choice, and a stable geometry is what lets
- * the corner tags be read as labels rather than as state.
+ * The hero split — the page's first visual (OHMARCHY-PLAN.md §5): the same screen in both faces at once, cut by a
+ * diagonal divider, so everyone gets the two-faces story in one glance before the live demo proves either. A
+ * drag-divider over a static floor: the ohmarchy capture sits above the paper one, clipped along a slanted edge at
+ * `--cut`; dragging, pressing anywhere on the figure, or arrow keys on the handle move the cut — with JS off the
+ * default cut stands, the designed fallback.
+ */
+
+/**
+ * Four captures, all from the automated pipeline (`landing-shots.mjs` shoots the live demo, both faces, both
+ * schemes), swapped per scheme by the `.is-light`/`.is-dark` rule; both faces' images are deliberately visible at
+ * once — the one place the face-visibility mechanism must NOT apply. Sides are fixed (paper left, ohmarchy right) in
+ * both site faces: the figure is a comparison, not a mirror, and stable geometry lets the corner tags read as labels.
  */
 
 const CUT_DEFAULT = 56;
@@ -30,20 +23,14 @@ const CUT_MIN = 12;
 const CUT_MAX = 88;
 
 /**
- * How far a TOUCH has to travel before the gesture has declared itself (CSS px).
- *
- * `touch-action: pan-y` hands vertical panning to the browser, but the browser only
- * decides a gesture IS a pan after the first few moves — `pointerdown` has already
- * fired by then, and `pointercancel` arrives later still. So placing the cut on
- * pointerdown moved the divider under a finger that was only ever scrolling past a
- * figure which spans nearly the whole viewport at 390px — the narrowest width this
- * site is built to stay usable at, and the one where the trap is worst.
- *
- * Nothing moves on a touch press now. A horizontal run past this distance starts the
- * drag; a tap that never travels this far still places the cut on release, so the
- * press-to-place affordance is kept rather than traded away; a vertical pan resolves to
- * neither and the divider stays where it was. Mouse and pen keep the immediate
- * press-to-place — neither of them can steal a scroll.
+ * How far a TOUCH must travel before the gesture has declared itself (CSS px).
+ * `touch-action: pan-y` hands vertical panning to the browser, but the browser only decides a
+ * gesture IS a pan after the first few moves — `pointerdown` has already fired — so placing the
+ * cut on pointerdown moved the divider under a finger that was only scrolling past a figure
+ * spanning nearly the whole viewport at 390px. Nothing moves on a touch press now: a horizontal
+ * run past this distance starts the drag; a tap that never travels this far still places the cut
+ * on release; a vertical pan resolves to neither. Mouse and pen keep the immediate press-to-place
+ * — neither can steal a scroll.
  */
 const TOUCH_INTENT_PX = 8;
 

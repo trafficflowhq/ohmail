@@ -1,38 +1,18 @@
 /**
- * THE RUNTIME HALF OF THE ALLOW-LIST.
- *
- * `next.config.mjs` validates `TF_API_ORIGIN` against {@link ALLOWED_API_ORIGINS} at BUILD
- * time and fails the build on anything else. That is a real gate, and it is the only gate
- * the `/api/*` REWRITE needs: a rewrite destination is compiled into `routes-manifest.json`
- * by `next build`, so the value that shipped is the value that was reviewed.
- *
- * The SESSION GATE is not compiled. `middleware.ts` reads `process.env.TF_API_ORIGIN` in
- * the edge runtime — the middleware bundle contains the literal expression, not the value —
- * so the variable is re-read from the deployment's environment on every invocation. The
- * file used to say the opposite ("Next inlines it into the middleware bundle, so there is
- * no runtime lookup"), and that was measurably false: after a build with the variable set,
- * `.next/routes-manifest.json` carries the origin verbatim while `.next/server/middleware.js`
- * still carries `process.env.TF_API_ORIGIN??""`.
- *
- * What that bought an attacker with dashboard access, and no code change and no review:
- * change the variable, do not redeploy, and the gate's `fetch` — which carries the
- * visitor's LIVE session token as `Authorization: Bearer` (`session-gate.ts`) — goes to a
- * host of their choosing, while the rewrite stays pinned to the old value. A split brain in
- * which one half of the topology leaks credentials and the other half looks fine.
- *
- * So the runtime re-reads the allow-list too. This module is that allow-list, and it is
- * deliberately a plain, dependency-free, edge-safe module: `middleware.ts` can import it,
- * a unit test can drive it, and a drift guard asserts it has not drifted from
- * the compiled list in `next.config.mjs` (which cannot import TypeScript, which is the only
- * reason there are two copies at all).
- *
- * ## It NEVER throws
- *
- * `apiOrigin()` in `next.config.mjs` throws, because a bad value there must stop a build.
- * Here a bad value must stop a REQUEST, and the gate's entire contract is that every
- * failure answers `"marketing"` (`session-gate.ts` — "the landing is the state that is
- * never wrong"). A throw inside middleware is a 500 on the product's front door. So this
- * returns `null`, which `resolveSurface` already treats as "nothing can validate a token".
+ * The runtime half of the allow-list. `next.config.mjs` validates `TF_API_ORIGIN` at BUILD time, and that is the only
+ * gate the `/api/*` REWRITE needs — a rewrite destination is compiled into `routes-manifest.json`. The SESSION GATE
+ * is not compiled: `middleware.ts` reads `process.env.TF_API_ORIGIN` in the edge runtime, re-read per invocation
+ * (this file used to say the opposite, measurably false: after a build the manifest carries the origin verbatim while
+ * `middleware.js` still carries `process.env.TF_API_ORIGIN??""`).
+ */
+
+/**
+ * What that bought an attacker with dashboard access: change the variable, no redeploy, and the gate's `fetch` —
+ * carrying the visitor's LIVE session token as `Authorization: Bearer` — goes to a host of their choosing while the
+ * rewrite stays pinned. So the runtime re-reads the allow-list too; this module is that list, plain and edge-safe,
+ * with a drift guard against the compiled copy in `next.config.mjs` (which cannot import TypeScript — the only reason
+ * there are two). It NEVER throws: a bad value must stop a REQUEST, not the build — a throw inside middleware is a
+ * 500 on the front door, so this returns `null`, which `resolveSurface` treats as "nothing can validate a token".
  * Fail closed, toward the page that owes the viewer nothing.
  */
 
@@ -78,26 +58,18 @@ export function resolveApiOrigin(raw: string | undefined | null): string | null 
 }
 
 /**
- * The SELF-HOST session gate's API origin (`OHMAIL_INTERNAL_API_ORIGIN`) — the api container by
- * its in-network name, `http://api:8080` on the reference compose.
- *
- * A DIFFERENT resolver, on purpose, and reachable only from the self-host build: the middleware
- * selects it behind the COMPILED flavor (`NEXT_PUBLIC_OHMAIL_FLAVOR`, inlined at build), so a
- * managed deployment cannot read this variable at all — the dashboard-repoint attack the
- * allow-list above exists for needs a variable the managed bundle looks at, and this is not one.
- *
- * Why no allow-list here: on an operator's box there is no list to compile — the value names a
- * container on the operator's own compose network, chosen by the same person who sets
- * `DATABASE_URL` one stanza up, with the same authority over the whole install. And why `http`
- * on a non-loopback host is allowed: `api` is not loopback, the hop never leaves the compose
- * network, and demanding TLS between two containers on one bridge would make every install
- * carry an internal CA for a wire nobody else can see.
- *
- * The SHAPE checks stay exactly `resolveApiOrigin`'s, because they guard against the same
- * mistakes regardless of trust: a path would be concatenated in front of `/auth/session`,
- * credentials in the URL would ride on every request, and a value that does not parse is a
- * config error to fail closed on. Failure is `null` — the gate then answers the landing, the
- * page that owes nobody anything.
+ * The SELF-HOST session gate's API origin (`OHMAIL_INTERNAL_API_ORIGIN`) — the api container by its in-network name
+ * (`http://api:8080` on the reference compose). A different resolver on purpose, reachable only from the self-host
+ * build: the middleware selects it behind the COMPILED flavor, so a managed deployment cannot read this variable at
+ * all — the dashboard-repoint attack needs a variable the managed bundle looks at.
+ */
+
+/**
+ * No allow-list here: the value names a container on the operator's own compose network, chosen by the person who
+ * sets `DATABASE_URL`, and demanding TLS between two containers on one bridge would make every install carry an
+ * internal CA for a wire nobody else sees. The SHAPE checks stay `resolveApiOrigin`'s — a path would concatenate in
+ * front of `/auth/session`, credentials in the URL would ride every request. Failure is `null` — the gate answers the
+ * landing, the page that owes nobody anything.
  */
 export function resolveInternalApiOrigin(raw: string | undefined | null): string | null {
   const value = (raw ?? "").trim();

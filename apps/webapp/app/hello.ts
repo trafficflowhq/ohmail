@@ -1,28 +1,16 @@
 /**
- * `GET /hello` — the client half of the server's capability handshake.
- *
- * The endpoint exists so a client learns WHAT it is pointed at before any credential exists
- * (`packages/api/src/routes/hello.ts` — flavor, needsSetup, features), and this module is the
- * webapp's one reader of it. Two exports, and the split between them is the point:
- *
- *  · {@link SELF_HOST_BUILD} answers "what BUILD is this?" at COMPILE time. The flavor is a
- *    build arm (`OHMAIL_FLAVOR=selfhost` in `next.config.mjs`), inlined here as
- *    `NEXT_PUBLIC_OHMAIL_FLAVOR`, so on the managed deployment every branch guarded by it is a
- *    compiled-out constant — the managed bundle carries no self-host behaviour to reason about,
- *    and no page pays a network round-trip to learn a fact the build already settled. The web
- *    container and the server it fronts are deployed by the same compose, which is what makes
- *    the compiled answer safe: the flavor build arm exists precisely so the pair cannot
- *    disagree.
- *  · {@link serverHello} answers "what STATE is the server in?" at RUNTIME — `needsSetup` flips
- *    the moment the first account exists, so it can never be compiled in. Deliberately NOT
- *    cached, matching the endpoint's own `Cache-Control: no-store`: the callers are page mounts
- *    (the login screen's fresh-server check, the setup page's gate), each of which needs the
- *    present truth, and a memoised `needsSetup:true` would keep steering people into a setup
- *    ceremony that has already completed.
- *
- * Failure is an answer of `null`, never a throw: every caller treats "could not learn what the
- * server is" as "behave normally", because the normal surfaces (sign-in, the landing) are never
- * wrong — the same fail-closed grammar as `session-gate.ts`.
+ * `GET /hello` — the client half of the server's capability handshake; this module is the webapp's one reader of it.
+ * Two exports, and the split is the point: {@link SELF_HOST_BUILD} answers "what BUILD is this?" at COMPILE time
+ * (`OHMAIL_FLAVOR=selfhost`, inlined as `NEXT_PUBLIC_OHMAIL_FLAVOR`) — the managed bundle carries no self-host
+ * behaviour and no page pays a round trip for a fact the build settled; the web container and its server are deployed
+ * by one compose, which is what makes the compiled answer safe.
+ */
+
+/**
+ * {@link serverHello} answers "what STATE is the server in?" at RUNTIME — `needsSetup` flips when the first account
+ * exists, so it can never be compiled in, and it is deliberately NOT cached (matching the endpoint's `no-store`): a
+ * memoised `needsSetup:true` would keep steering people into a completed setup ceremony. Failure is `null`, never a
+ * throw: "could not learn what the server is" behaves normally, the fail-closed grammar of `session-gate.ts`.
  */
 import { api, apiConfigured, setAccountHeaderCapability } from "./api-client";
 
@@ -52,12 +40,10 @@ export interface ServerHello {
    * `ai` is the OPERATOR's key, not the account's switch: the server answers
    * `anthropicApiKey !== null`, so on a self-host deployment it is the difference between "the
    * operator has set a key and suggestions run" and "rules do all the filing". The first-run
-   * flow's provider step reads it to pick which of those two sentences is true; without it that
-   * step would have to guess, and both guesses are a claim about somebody else's server.
-   *
-   * The key has always been on the wire (`packages/api/src/routes/hello.ts` freezes the set as
-   * `{ sse, staging, ai, pairing }`); this interface simply did not name it, because until now
-   * nothing in the browser asked.
+   * flow's provider step reads it to pick which sentence is true; without it the step would guess,
+   * and both guesses are a claim about somebody else's server. The key has always been on the wire
+   * (`routes/hello.ts` freezes the set as `{ sse, staging, ai, pairing }`); this interface simply
+   * did not name it, because until now nothing in the browser asked.
    */
   /**
    * `accountHeader` is the one feature word this client acts on for SAFETY rather than for a
