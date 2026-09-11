@@ -625,128 +625,13 @@ async function moveDestinations(
 
 /**
  * ONE page of the Ohbox this pass may reconsider — LOCKED FOR UPDATE, oldest id first.
- *
- * ── THE CANDIDATE SET ──────────────────────────────────────────────────────────────────────
- *
- *  · `folder_state.desired_folder = 'INBOX'` — it is in the Ohbox. This is also the whole of the
- *    idempotency: a row this pass has already moved is desired into `ohmail/Screener` and drops
- *    out here, which is why a second run writes nothing whether or not the marker is set.
- *  · `messages.sensitivity_category IS NOT NULL` — the sensitivity verdict is the thing that
- *    overrode the gate, so a NULL category means this message reached the Ohbox on its own merits
- *    and was never touched by the defect. It bounds the pass to the damage.
- *
- * ── AND THE SIX THINGS THAT TAKE A MESSAGE BACK OUT OF IT ──────────────────────────────────
- *
- * The rule, stated once: **a message the user has expressed an intent about is not ours to
- * move.** Two of the predicates are copied from `listScreenerBacklog` because they are the same
- * rule in the other direction; the rest are this pass's own, because it is the first pass that can
- * take mail AWAY from a user rather than hand it to them. (It said FIVE until the decided-approval
- * arm below was added and the heading was not counted again — the numbered list has always had
- * six entries, `4b` included.)
- *
- *  1. `folder_state.last_set_by = 'us'` — a row set `external` is a placement the USER performed
- *     in their own mail client, and the folder reconciler already refuses to revert those. A row
- *     set `'peer'` is another install of this account's placement, recorded by a reader, and it is
- *     excluded here for the same reason: this pass runs unbidden. Only `rule-retro` admits it.
- *  2. no enabled, UN-NARROWED `rules` row for the sender or its domain — `POST /screener/:id`
- *     writes one per decide, so a sender carrying one has been ruled on and is not ours to
- *     re-route.
- *
- *     **THE WORD "UN-NARROWED" IS THE FIX, AND IT IS NOT A JUDGEMENT CALL — the schema settles
- *     it.** This predicate matched on `kind`/`match` alone, and its comment called that redundant
- *     ("a rule ALSO wins inside `evaluateRules`"). That held while a sender rule meant *all mail
- *     from this sender*. It stopped holding when rules gained `subject_contains` and
- *     `body_contains` (mail 0050, 0052), whose column comments state the semantics as an
- *     invariant: the term is a CONJUNCTION — *from this address AND with this in the subject/text*
- *     — and *"a present term can only make a rule fire LESS often than it did"*. A predicate that
- *     excluded every message from a narrowed sender therefore did the one thing that contract
- *     forbids: it let a rule change an outcome for mail it does not match. So a stranger's
- *     verification code from a sender the user wrote one narrow rule about was taken out of the
- *     candidate set in SQL, `evaluateRules` never saw it, and the completion marker certified the
- *     mailbox as corrected over it — permanently, because the marker is what stops the pass ever
- *     looking again.
- *
- *     The edit narrows the SQL rather than dropping it: bare rules are the overwhelming majority
- *     and the cost saving is real, while a narrowed sender's mail now reaches `evaluateRules`,
- *     which is the ONE implementation of what a rule matches. If the rule does fire for the
- *     message the evaluator answers `source: "rule"` and this pass ignores it — exactly what the
- *     old comment claimed and could not deliver. Putting the term match into SQL would be a
- *     second implementation of the matcher in a language that cannot run it, which is the thing
- *     the candidate query's own header refuses.
- *
- *     THE SWEEP, because the first list of affected sites was wrong in both directions, and the
- *     fix does NOT transfer to all of them. Every `kind = 'sender'` predicate in the tree was read.
- *
- *     **`apps/worker/src/screener-auto.ts` carries the identical predicate and is DELIBERATELY NOT
- *     narrowed** — the one place where copying this change breaks the thing it protects. That pass
- *     decides with `migrationBulkPlacement` and never calls `evaluateRules`, and its candidate row
- *     carries no body text to run one with. So narrowing there does not hand the question to the
- *     router, it discards it: a held message that DOES match the user's narrowed rule gets
- *     auto-moved to Reads or Receipts over the destination they wrote. The whole argument above
- *     rests on the evaluator being downstream; where it is not, the conservative predicate is the
- *     correct one. Its own comment carries the reasoning. (This was narrowed first and caught by
- *     review — worth recording, because the two passes look identical at the SQL and are not.)
- *
- *     `drizzle-repo.ts#listScreenerBacklog` has it too, was NOT in the first list, and IS narrowed
- *     — its consumers are expected to run the evaluator, and it has no caller at all today: the
- *     connect-time re-route it fed is retired. `ohbox-tidy.ts` was named in the first list and does
- *     not carry this predicate at all. `consent-cutline.ts` matches sender rules for a different
- *     question — "has this person engaged with this sender" for a consent COUNT — where a narrowed
- *     rule genuinely is evidence of engagement, so it is deliberately unchanged.
- *  3. no `message_states` row in a state other than `none` — reply-later, set-aside, bubbled-up
- *     and muted are the four ways the product lets someone TRIAGE a message, and yanking one out
- *     of a pile they built is the failure this predicate exists to prevent.
- *  4. no `drafts` row whose `in_reply_to_message_id` is this message — they are replying, or have
- *     replied, through ohmail.
- *  5. no message in the same THREAD sent from one of the account's own addresses — they replied
- *     from their own mail client, where no draft of ours is written. This is the only one of the
- *     three named user actions ("kept, replied to, triaged") that the tables above cannot see, and
- *     it is cheap: `messages_account_thread_idx` is `(account_id, thread_id)`.
- *
- * ── READ IS DELIBERATELY NOT ON THAT LIST ──────────────────────────────────────────────────
- *
- * A meaningful share of the candidates are read, and some carry a `flag_state` row this account
- * wrote. Neither
- * excludes them, and that is a decision rather than an oversight: **reading is not consent.** The
- * defect report that commissioned this pass is precisely an Ohbox full of *read* spam ("much
- * spam and ones
- * that should have been screened out"), so treating a read as an intent to keep would leave
- * behind precisely the mail this pass was commissioned to move. Nothing is deleted either way —
- * the message goes to the Screener, one click returns the whole sender, and the stored body is
- * already redacted because it was classified sensitive.
- *
- * ── AND THE LOCK ───────────────────────────────────────────────────────────────────────────
- *
- * `FOR UPDATE OF folder_state`, `of` the one table and not the whole join: `message_bodies` is on
- * the NULLABLE side of a LEFT JOIN, which Postgres refuses to lock, and locking `messages` would
- * serialize the pass against ordinary ingest for no benefit. A competing writer of the same row
- * blocks on it; when it proceeds it re-reads the committed row and — IF THIS PASS MOVED IT — finds
- * it no longer desired into `INBOX` and drops it, so a message is moved once and `change_log`
- * gains one `move` and not two. (TWO RUNS OF THIS PASS no longer reach that argument: since every
- * page opens by taking the mailbox row, a second run is serialized a statement earlier. The
- * writers this lock is for are the ones that take no mailbox row — see below.)
- *
- * A KEPT row is the other half and the claim does not extend to it: the winner wrote nothing, so
- * the row still matches and the loser examines it again. That costs a second evaluation of a
- * message neither run will move, and it is why the count a concurrent pair reports can exceed the
- * candidate set while the MOVES cannot.
- *
- * ── AND WHAT THIS LOCK IS STILL FOR, NOW THAT THE PAGE TAKES THE MAILBOX ROW FIRST ─────────
- *
- * Two RUNS of this pass no longer reach here at the same time: each page opens by taking the
- * mailbox row `FOR UPDATE`, so a second run is serialized a statement earlier and the
- * `sensitive-rescreen.pg.test.ts` concurrency case would now pass with this `FOR UPDATE`
- * removed. It is not decoration, and the reason is the OTHER writers of `folder_state`: the API's
- * move, the Screener's apply, `rule-retro`, `ohbox-tidy` and `screener-auto` take no mailbox row
- * on the way in, so nothing above serializes them against a page and this lock is the only thing
- * that makes a page's read-decide-write atomic against them. (The worker's reconciler is the
- * exception and is NOT in that list — its fenced write group takes `mailboxes FOR UPDATE` first,
- * which is the whole reason the page order had to move to match it. An earlier draft of this
- * paragraph put it in the list, and it would have made this comment contradict the lock-order
- * block a hundred lines up.) The case that matters in production is therefore one no test in this
- * file can express with two copies of the same pass. That
- * claim is `sensitive-rescreen.pg.test.ts` on real Postgres, because PGlite is single-connection
- * and `FOR UPDATE` there is a no-op that always succeeds.
+ * CANDIDATES: `desired_folder = 'INBOX'` (also the whole idempotency — a moved row drops out) AND
+ * `sensitivity_category IS NOT NULL`. EXCLUSIONS — a message the user expressed an intent about
+ * is not ours to move: `last_set_by = 'us'` only; no enabled UN-NARROWED sender/domain rule (a
+ * NARROWED rule's mail still reaches `evaluateRules`, the ONE matcher; `screener-auto.ts` keeps
+ * the broad predicate — it never calls the evaluator); no non-`none` triage row; no reply draft;
+ * no own-address reply in the thread. READ IS NOT AN EXCLUSION: reading is not consent. THE LOCK
+ * is for the writers that take no mailbox row; a KEPT row is re-examined by the loser.
  */
 async function selectCandidates(
   t: Tx,
