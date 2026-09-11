@@ -754,6 +754,13 @@ const TABLE = {
    */
   doorbellAria: (n: number, go: string): string =>
     `${n} new sender${n === 1 ? "" : "s"} waiting. ${go}`,
+  /**
+   * THE FACES THE STACK DID NOT DRAW — "+347". A figure, not a sentence, and it is in the deck
+   * rather than in the component for the reason every figure here is: a locale that writes its
+   * numbers differently owns this string too. The screen reader never hears it (the capsule's
+   * own label names the full count), so it is the one label here that is not read aloud.
+   */
+  doorbellMore: (n: number) => `+${n}`,
 
   /* --------------------------------------------------------- reads/receipts */
 

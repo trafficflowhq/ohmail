@@ -8,7 +8,6 @@
  */
 import { useEffect, useRef } from "react";
 import { Animated, Easing, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { Copy } from "../copy";
 import { sayArg } from "../refusal";
@@ -16,14 +15,15 @@ import { useTheme } from "../theme";
 import { useWorld, useWorldToast } from "../state/world";
 import { Icon } from "./Icon";
 import { Wordmark } from "./Icon";
-import { Tap, Txt } from "./base";
+import { Tap, Txt, useTopPad } from "./base";
+import { doorbellFaces } from "./doorbell-stack";
 import { UnsavedChanges } from "./UnsavedChanges";
 
 /* ----------------------------------------------------------------- top bar */
 
 export function TopBar({ trailing }: { trailing?: React.ReactNode }) {
   const t = useTheme();
-  const insets = useSafeAreaInsets();
+  const top = useTopPad(6);
   // THE FRESHNESS LABEL (INSTANT-ARCH §6.6): while the mirror on screen is stale, every tab
   // says so under the wordmark — "As of Fri 09:00 · catching up" — and says nothing once a
   // drain settles. In the shared chrome rather than any screen, the SyncBar lesson: a view can
@@ -38,7 +38,7 @@ export function TopBar({ trailing }: { trailing?: React.ReactNode }) {
     <View>
       <View
         style={{
-          paddingTop: insets.top + 6,
+          paddingTop: top,
           paddingBottom: 6,
           paddingHorizontal: 16,
           flexDirection: "row",
@@ -76,7 +76,7 @@ export function TopBar({ trailing }: { trailing?: React.ReactNode }) {
  */
 export function DetailBar({ title, right }: { title?: string; right?: React.ReactNode }) {
   const t = useTheme();
-  const insets = useSafeAreaInsets();
+  const top = useTopPad(6);
   const canBack = router.canGoBack();
   return (
     <View>
@@ -87,7 +87,7 @@ export function DetailBar({ title, right }: { title?: string; right?: React.Reac
         finds by accident. */}
     <View
       style={{
-        paddingTop: insets.top + 6,
+        paddingTop: top,
         paddingBottom: 8,
         paddingHorizontal: 10,
         flexDirection: "row",
@@ -130,9 +130,14 @@ export function DetailBar({ title, right }: { title?: string; right?: React.Reac
  * that says how many strangers are waiting and gets out of the way when none
  * are.
  */
-export function Doorbell({ initials, count }: { initials: string[]; count: number }) {
+export function Doorbell(
+  { initials, count, max }: { initials: string[]; count: number; max?: number },
+) {
   const t = useTheme();
   if (count === 0) return null;
+  // FOUR FACES AND A COUNT, the web's rule to the letter (`doorbell-stack.ts` holds it and the
+  // suite drives it). 351 waiting used to draw 351 letters straight off the right-hand edge.
+  const { shown, overflow } = doorbellFaces(initials, max);
   return (
     <Tap
       onPress={() => router.push("/screener")}
@@ -152,7 +157,7 @@ export function Doorbell({ initials, count }: { initials: string[]; count: numbe
       }}
     >
       <View style={{ flexDirection: "row" }}>
-        {initials.map((i, n) => (
+        {shown.map((i, n) => (
           <View
             key={`${i}-${n}`}
             style={[
@@ -173,6 +178,32 @@ export function Doorbell({ initials, count }: { initials: string[]; count: numbe
             </Txt>
           </View>
         ))}
+        {overflow > 0 ? (
+          /* The overflow counter is hidden from the screen reader: the capsule's own label
+             already names the FULL count, and a second number read out beside it would say the
+             same thing twice with a different figure. The web marks its chip `aria-hidden`. */
+          <View
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+            style={[
+              {
+                height: 26,
+                minWidth: 26,
+                paddingHorizontal: 5,
+                borderRadius: 13,
+                backgroundColor: t.c.float,
+                alignItems: "center",
+                justifyContent: "center",
+                marginLeft: -7,
+              },
+              t.lift("l0"),
+            ]}
+          >
+            <Txt variant="tagchip" tone="ink3">
+              {Copy.doorbellMore(overflow)}
+            </Txt>
+          </View>
+        ) : null}
       </View>
       <Txt variant="meta" tone="ink2" numberOfLines={1} style={{ flexShrink: 1 }}>
         <Txt variant="settingsLabel" tone="ink">

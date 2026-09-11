@@ -458,6 +458,8 @@ export const DE: Deck = {
   doorbellGo: "Screener",
   doorbellAria: (n: number, go: string): string =>
     (n === 1 ? `1 neuer Absender wartet. ${go}` : `${n} neue Absender warten. ${go}`),
+  /** The faces the stack did not draw. The figure is the same on both sides. */
+  doorbellMore: (n: number) => `+${n}`,
 
   /* --------------------------------------------------------- reads/receipts */
 

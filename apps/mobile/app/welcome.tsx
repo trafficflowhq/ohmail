@@ -20,7 +20,7 @@ import { Redirect, router } from "expo-router";
 import { Copy } from "../src/copy";
 import { useConnection } from "../src/net/connection";
 import { useTheme } from "../src/theme";
-import { Screen, Scroller, Txt } from "../src/ui/base";
+import { Screen, Scroller, Txt, useTopPad } from "../src/ui/base";
 import { Doors } from "../src/ui/Doors";
 import { Wordmark } from "../src/ui/Icon";
 import { useLocale } from "../src/i18n/LocaleProvider";
@@ -31,6 +31,10 @@ export default function WelcomeScreen() {
   useLocale();
   const conn = useConnection();
   const t = useTheme();
+  /* THE ONE ROUTE OUTSIDE THE CHROME, so it owes its own top inset. This was a fixed
+     `paddingTop: 28`, and on an iPhone the wordmark sat on the OS clock at every launch —
+     the signed-in bars have always paid it (`ui/chrome.tsx`). */
+  const top = useTopPad(28);
   if (conn.state.k === "live") return <Redirect href="/" />;
 
   return (
@@ -40,7 +44,7 @@ export default function WelcomeScreen() {
           the travel sentence do not fit a centred column on a small phone. A chooser whose third
           door is below the fold on a 5" screen would be a chooser with two doors. */}
       <Scroller>
-        <View style={{ paddingHorizontal: 16, paddingTop: 28, paddingBottom: 14, gap: 12 }}>
+        <View style={{ paddingHorizontal: 16, paddingTop: top, paddingBottom: 14, gap: 12 }}>
           <Wordmark color={t.c.ink} dot={t.c.accent} size={30} />
           <Txt variant="h2">{Copy.welcomeTitle}</Txt>
           {/* ONE LEAD, NOT TWO. `welcomeHow` said "No password is ever typed here" — true while

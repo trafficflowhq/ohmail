@@ -33,6 +33,7 @@ import {
   type ViewStyle,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { topPad } from "./safe-area";
 import { useTheme, type Theme } from "../theme";
 import { MIN_SLOP, hitSlopFor } from "../theme/tokens";
 import { Icon, type IconName } from "./Icon";
@@ -63,6 +64,17 @@ export function Txt({ variant = "body", tone = "ink", tabular, style, ...rest }:
       ]}
     />
   );
+}
+
+/* -------------------------------------------------------------- safe areas */
+
+/**
+ * {@link topPad} over the LIVE inset — what every top strip's `paddingTop` reads, in the chrome
+ * and in the one route that renders no bar of its own. The arithmetic lives in `safe-area.ts`
+ * so the suite can drive it at a real inset without a renderer.
+ */
+export function useTopPad(gap: number): number {
+  return topPad(useSafeAreaInsets().top, gap);
 }
 
 /* ---------------------------------------------------------------- surfaces */

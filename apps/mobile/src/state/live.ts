@@ -86,6 +86,7 @@ import {
 import { Copy } from "../copy";
 import { refuse, type RefusalArg } from "../refusal";
 import { folderLeafOf, folderUnreadCounts } from "./folders";
+import type { ScreeningAnswer } from "../net/consent";
 import {
   destDone,
   domainOf,
@@ -128,6 +129,18 @@ export interface WorldView {
    * and `replyAllRecipients`, whose degradation this ends.
    */
   ownAddresses?: readonly string[];
+  /**
+   * THE ACCOUNT'S CUTLINE ANSWER (`GET /consent` — `dormancyDays`, `screeningBaselineAt`,
+   * `screeningScope`), read by the world layer on the folders flag's own cadence, or `null`
+   * until a read succeeds this session.
+   *
+   * It is here because the cutline decides WHICH SENDERS ARE STILL WORTH A DECISION, and the
+   * server answers that question from `account_settings` while this client used to answer it
+   * from the engine's own default. Measured: six waiting senders on `GET /screener`, two on the
+   * phone's Screener. Absent ⇒ `null` ⇒ the unanswered posture in {@link presentedOf}, which
+   * files nothing into History.
+   */
+  screening?: ScreeningAnswer | null;
 }
 
 /** The phone's own zone, once — `Intl` on Hermes; UTC where the runtime cannot say. */
@@ -142,11 +155,47 @@ export function readerZone(): string {
 /**
  * The mirror with every message sitting where it is PRESENTED — the same projection the
  * webapp shell feeds its pile selectors (`AppShell` → `consentPartition` → `presentationReader`).
- * Default options: the phone has no `GET /consent` read yet, so the cutline runs on
- * `DEFAULT_DORMANCY_DAYS` with no baseline — the standalone desktop's own posture.
+ *
+ * ── THE CUTLINE TAKES THE ACCOUNT'S ANSWER, NOT THIS PACKAGE'S DEFAULT ────────────────────
+ *
+ * `screening` is `GET /consent`'s three fields and `ownAddresses` is `GET /mailboxes`'; both are
+ * facts the world layer already holds, and both used to stop here. The cutline then measured a
+ * 60-day window back from NOW with no baseline and no mode while the server measured the
+ * account's — six waiting senders on `GET /screener`, two on the phone — and, with no mailbox
+ * entity in this client's sync vocabulary, the reader's own mail could queue in their own
+ * Screener.
+ *
+ * ── `null` IS "NOT ANSWERED", AND IT FILES NOTHING INTO HISTORY ────────────────────────────
+ *
+ * There is no History surface on this phone, so a row the cutline retires is in NO list: the
+ * unanswered posture must never drop anybody. `all_time` is that posture — the server's own
+ * "hold every unruled sender whatever its date" — so a boot that has not yet been answered
+ * shows a superset and settles to the account's answer one round trip later. The other direction
+ * is unrecoverable by hand. (Residual, stated: a message with no `Date:` header still cannot
+ * make its sender active in `senderActivity`, where the server's `all_time` says `true`
+ * unconditionally. Unchanged by this and never a new drop.)
  */
-export function presentedOf(reader: EntityReader, now: Date, foldersEnabled = false): EntityReader {
-  return presentationReader(reader, consentPartition(reader, { now, foldersEnabled }));
+export function presentedOf(
+  reader: EntityReader, now: Date, foldersEnabled = false,
+  screening?: ScreeningAnswer | null,
+  ownAddresses?: readonly string[],
+): EntityReader {
+  const answered = screening ?? null;
+  return presentationReader(reader, consentPartition(reader, {
+    now,
+    foldersEnabled,
+    ...(answered === null
+      ? { screeningScope: "all_time" as const }
+      : {
+          ...(answered.dormancyDays === null ? {} : { dormancyDays: answered.dormancyDays }),
+          baselineAt: answered.baselineAt,
+          screeningScope: answered.scope,
+        }),
+    /* Absent ⇒ `consentPartition` falls back to the mirror's `mailbox` entities, and this
+       client's sync vocabulary carries none — so an empty set, which is what let the reader
+       appear in their own queue. Passed whenever the mailbox read has landed. */
+    ...(ownAddresses === undefined ? {} : { ownAddresses }),
+  }));
 }
 
 /* ───────────────────────────────────────────────────────────── row mapping */
@@ -851,8 +900,12 @@ export function livePiles(pres: EntityReader, v: WorldView): WorldPile[] {
 export function liveMessage(engine: OhmailEngine, id: string, v: WorldView): WorldMail | undefined {
   // The view's own folder flag rides into the projection — a folder-filed message opened from
   // the folder screen is otherwise a History drop (`placeOf` null ⇒ `get` answers undefined)
-  // and the reader says "no longer here" over mail the list just showed.
-  const pres = presentedOf(engine.read(), v.now, v.foldersEnabled === true);
+  // and the reader says "no longer here" over mail the list just showed. The CUTLINE answer
+  // rides in for exactly the same reason and it is the same failure: a row a list showed under
+  // the account's window must open under it too, never under this package's default.
+  const pres = presentedOf(
+    engine.read(), v.now, v.foldersEnabled === true, v.screening ?? null, v.ownAddresses,
+  );
   const m = pres.get<EngineMessage>("message", id);
   if (!m) return undefined;
   const row = toMail(pres, m, v);

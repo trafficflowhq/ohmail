@@ -46,6 +46,7 @@ import {
   writeFoldersEnabled,
   writeThemeFace,
   type FoldersConsent,
+  type ScreeningAnswer,
 } from "../net/consent";
 import { readMailboxes, type PhoneMailbox } from "../net/mailboxes";
 import { PHONE_CLAIM_NAME, organizesHere } from "../engine/standalone-door";
@@ -499,6 +500,16 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    */
   const [signatures, setSignatures] = useState<Readonly<Record<string, string>> | null>(null);
   /**
+   * THE ACCOUNT'S CUTLINE ANSWER, or `null` until a consent read succeeds this session. It rides
+   * the signatures' read and their exact rule (freshest-successful-read-wins, identity-gated):
+   * nothing on this phone writes it, and the three fields come off the same `GET /consent` body.
+   *
+   * `null` is "not answered", and `presentedOf` treats it as "file nobody into History" — this app
+   * has no History surface, so a retired row would be in no list at all. Reset on a session swap
+   * with the signatures: account A's window must not partition account B's mirror.
+   */
+  const [screening, setScreening] = useState<ScreeningAnswer | null>(null);
+  /**
    * THE ACCOUNT'S MAILBOXES, or `null` until a read SUCCEEDS this session (which is what
    * {@link World.mailboxes.known} publishes). Nothing on this phone ever writes a mailbox, so
    * freshest-successful-read-wins is the whole rule — the signatures' exact situation, and it
@@ -608,7 +619,10 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // freshest-successful-read-wins is the whole rule (`freshestRead`). Identity-gated like
     // `apply` — a superseded session's late answer applies nothing.
     const sigRead = freshestRead<FoldersConsent>((ans) => {
-      if (current.current === m) setSignatures(ans.signatures);
+      if (current.current !== m) return;
+      setSignatures(ans.signatures);
+      // The cutline half of the SAME answer — see `screening` above.
+      setScreening(ans.screening);
     });
     /* THE MAILBOX READ, built beside the folders machine and gated on the SAME identity: a
        superseded session's late answer applies nothing. Its own request rather than a field on
@@ -653,6 +667,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // (account A's signature must never dress account B's composer); the tracker itself is
     // rebuilt with the machine, so its tally starts over with it.
     setSignatures(null);
+    // …and the cutline answer, for the same reason: a window read off account A must never
+    // decide which of account B's senders are worth a decision.
+    setScreening(null);
     // The mailboxes are the outgoing session's answer, for the signatures' reason exactly:
     // account A's addresses must not make account B's reader recognisable, and its holder must
     // not name a banner over B's mail.
@@ -906,8 +923,10 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       // Before the first read this is `[]`, which is `NO_OWN_ADDRESSES` — the posture this
       // client had for its whole life, and the right answer for a phone that has not asked yet.
       ownAddresses: addressesNow.current,
+      // `null` until the consent read lands — the unanswered posture, which drops nobody.
+      screening,
     };
-    const pres = presentedOf(engine.read(), v.now, foldersOn);
+    const pres = presentedOf(engine.read(), v.now, foldersOn, screening, addressesNow.current);
     const ohbox = liveOhbox(pres, v);
     const reads = liveReads(pres, v);
     const receipts = liveReceipts(pres, v);
@@ -1033,7 +1052,15 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         pending: facePending,
         applyAll: applyFaceAllDevices,
       },
-      message: (id) => liveMessage(engine, id, { now: new Date(), zone, locale, foldersEnabled: foldersOn }),
+      /* THE SAME VIEW THE LISTS WERE DERIVED FROM, field for field. It used to carry the clock,
+         the language and the folders flag alone, so the reading screen projected the mirror under
+         a different cutline than the list that linked to it (a row the list showed could answer
+         "no longer here") and resolved reply-all against an EMPTY own-address set, which leaves
+         the reader in the audience of their own reply. */
+      message: (id) => liveMessage(engine, id, {
+        now: new Date(), zone, locale, foldersEnabled: foldersOn,
+        ownAddresses: addressesNow.current, screening,
+      }),
       sendOutcome: outcomeOf,
       actions,
     };
@@ -1045,8 +1072,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // failure sentence is part of what an unsettled screen renders.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, session, scopes, zone, locale, actions, version, outcomeSeq, outcomeOf, freshBeat,
-    foldersOn, foldersPending, setFoldersEnabled, signatures, conn.syncing, conn.syncError,
-    accountFace, accountFaceKnown, facePending, applyFaceAllDevices]);
+    foldersOn, foldersPending, setFoldersEnabled, signatures, screening, conn.syncing,
+    conn.syncError, accountFace, accountFaceKnown, facePending, applyFaceAllDevices]);
 
   /**
    * THE FRESHNESS WATCHER — the clock's other half, AFTER the memo because its sentinel IS the
