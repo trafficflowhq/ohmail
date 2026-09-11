@@ -2213,16 +2213,20 @@ export const RECONNECT_PROMISE_MS = 5 * 60_000;
  * phone with no engine, or a door whose first cycle has not run. A surface renders no sentence
  * for it, rather than "Connection lost" a second after the mailbox opened.
  *
+ * The discriminant is `kind` and not `say`: `say` is a RENDERED name on this app's own copy
+ * census (`refusal.ts` uses it for a sentence), so a union keyed on it reads as four English
+ * words sitting outside the deck.
+ *
  * `refused` is separated from `lost` because the remedies are opposite: an unreachable server is
  * being re-dialled and heals on its own, a rejected sign-in is not retried at all and needs a
  * person. The door's own refusal owns that sentence, so this answer exists to keep the freshness
  * line from claiming a reconnect nothing is attempting.
  */
 export type ConnectionSay =
-  | { readonly say: "reachable" }
-  | { readonly say: "refused" }
-  | { readonly say: "lost" }
-  | { readonly say: "gone"; readonly since: string };
+  | { readonly kind: "reachable" }
+  | { readonly kind: "refused" }
+  | { readonly kind: "lost" }
+  | { readonly kind: "gone"; readonly since: string };
 
 /**
  * THE ENGINE'S CONNECTION FACTS, READ AS ONE VERDICT — the door answers, this ranks.
@@ -2241,8 +2245,8 @@ export type ConnectionSay =
  * both are silent here rather than dressed as an outage.
  */
 export function connectionSaid(verdict: ConnectionSay | null): string | null {
-  if (verdict === null || verdict.say === "reachable" || verdict.say === "refused") return null;
-  return verdict.say === "lost" ? Copy.connectionLost : Copy.connectionGoneSince(verdict.since);
+  if (verdict === null || verdict.kind === "reachable" || verdict.kind === "refused") return null;
+  return verdict.kind === "lost" ? Copy.connectionLost : Copy.connectionGoneSince(verdict.since);
 }
 
 export function connectionSay(
@@ -2258,15 +2262,15 @@ export function connectionSay(
   /* RANKED ABOVE `reachable`, because a refused sign-in leaves the connection dead AND
      un-retried: both flags are set, and the arm that says "Reconnecting…" would be a promise
      nothing is keeping. */
-  if (here.signInRefused) return { say: "refused" };
-  if (here.reachable) return { say: "reachable" };
+  if (here.signInRefused) return { kind: "refused" };
+  if (here.reachable) return { kind: "reachable" };
   const stamp = here.unreachableSince;
-  if (stamp === null) return { say: "lost" };
+  if (stamp === null) return { kind: "lost" };
   const since = Date.parse(stamp);
-  if (Number.isNaN(since)) return { say: "lost" };
+  if (Number.isNaN(since)) return { kind: "lost" };
   return now.getTime() - since < RECONNECT_PROMISE_MS
-    ? { say: "lost" }
-    : { say: "gone", since: whenLabel(stamp, zone) };
+    ? { kind: "lost" }
+    : { kind: "gone", since: whenLabel(stamp, zone) };
 }
 
 
