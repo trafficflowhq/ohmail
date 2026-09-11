@@ -21,12 +21,19 @@ import { deriveMailState, deviceHoldings, seedGrowth, type MailStateInputs } fro
 
 let wireItems: unknown[] = [];
 
+/* BOTH READS, because `readMailboxFacts` takes the retrying one. A partial mock of this module
+   leaves the export `undefined` and the four cases below fail with a mock error rather than an
+   assertion — which says nothing about the count they are here to follow. The wrapper is
+   transparent for the one answer this file produces, so both arms serve the same body. */
+const wireAnswer = (): Response =>
+  new Response(JSON.stringify({ items: wireItems }), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+
 vi.mock("../src/bridge-fetch.js", () => ({
-  bridgeFetch: async () =>
-    new Response(JSON.stringify({ items: wireItems }), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    }),
+  bridgeFetch: async () => wireAnswer(),
+  retryingBridgeFetch: async () => wireAnswer(),
 }));
 
 const NOW = Date.parse("2026-08-21T17:00:00.000Z");
