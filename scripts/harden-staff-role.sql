@@ -785,6 +785,22 @@ REVOKE ALL ON public.platform_signals FROM ohmail_admin;
 GRANT SELECT (provider, project, window_start, requests, errors_5xx, truncated, fetched_at, sample_cause)
   ON public.platform_signals TO ohmail_admin;
 
+-- `api_faults` (cloud 0033) — one row per 5xx this deployment's own error envelope answered, the
+-- first-party half of `platform_signals` above.
+--
+-- SELECT ONLY, for that table's reason and on the same terms. The recorder writes through the
+-- API's and the worker's own runtime connections; this role reads, so that the console can render
+-- a failing route and the two alert rules can read their population.
+--
+-- Every column is a literal this repository chose or an integer: the MATCHED ROUTE's pattern and
+-- never a request target, the thrown value's CLASS and never its message, our own request id, the
+-- status, and which arm answered. No address, no parameter value, no `account_id` — the envelope
+-- records the fault ABOVE the session, so a request that failed for want of a connection has
+-- nothing resolved to attribute it to.
+REVOKE ALL ON public.api_faults FROM ohmail_admin;
+GRANT SELECT (id, at, route, method, status, error_class, request_id, arm)
+  ON public.api_faults TO ohmail_admin;
+
 -- ── 11. WHAT IS DELIBERATELY NOT GRANTED, and is enforced by the step-2 blanket revoke ────
 --
 --   messages            the ROW is the oracle; §4 has the argument
