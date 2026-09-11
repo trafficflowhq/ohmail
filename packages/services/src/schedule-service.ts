@@ -22,40 +22,14 @@ const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 export const SCHEDULE_MAX_AHEAD_MS = 365 * 24 * 60 * 60 * 1000;
 
 /**
- * ScheduleService — SEND LATER's two verbs (`POST` / `DELETE /drafts/:id/schedule`).
- *
- * A scheduled send is a DRAFT WITH AN APPOINTMENT, not a reservation: nothing here touches
- * `outbound_sends`, opens a network connection, or freezes an envelope. The draft row carries
- * `send_at` + `status = 'scheduled'` + a `send_key` minted NOW (see below), the worker's
- * scheduled-send pass claims due rows and runs the ordinary `SendService.send` with that key,
- * and the ordinary reservation machinery does everything it always does — which is the whole
- * design: one send pipeline, and the appointment is just a deferred press.
- *
- * ── THE KEY IS MINTED AT SCHEDULE TIME, AND THAT IS THE CRASH-SAFETY HINGE ─────────────────
- *
- * The worker may die anywhere between claiming a due row and finalizing its send. Its retry MUST
- * present the SAME Idempotency-Key, or `SendService.reserve` mints a second reservation and a
- * real person gets the mail twice. A key minted at claim time dies with the claimer; a key
- * persisted here, before any attempt exists, is exactly what the retry finds on the row.
- * Re-scheduling mints a fresh key — a new appointment is a new intent, and the old key's
- * reservation (if one ever came to exist) stays answerable under the old key alone.
- *
- * ── WHILE SCHEDULED, THE DRAFT IS FROZEN ───────────────────────────────────────────────────
- *
- * `DraftsService.update` and `remove` refuse a `scheduled` row (409, "cancel the schedule
- * first"), so what the worker sends is exactly what the user last saw when they pressed
- * "Send later" — the edit flow is cancel → edit → schedule again, which re-mints the key and
- * makes "an edited message sends only its final content" structural rather than a race to win.
- *
- * ── CANCEL IS RACE-SAFE AGAINST THE CLAIM, AND THE ROW LOCK IS THE MECHANISM ───────────────
- *
- * The worker's claim flips `status` 'scheduled' → 'draft' under the row lock (leaving `send_at`
- * standing as the recovery predicate). Cancel's UPDATE carries `status = 'scheduled'` in its
- * predicate and contends for the same lock, so exactly one of the two wins: cancel first ⇒ the
- * claim's due scan no longer matches and the mail NEVER leaves; claim first ⇒ cancel matches
- * zero rows, re-reads the settled row, and answers 409 "already being sent" — the honest
- * too-late answer, never a false "cancelled". `send-later-claim-race.pg.test.ts` pins both
- * orders against real Postgres.
+ * ScheduleService — SEND LATER's two verbs (`POST` / `DELETE /drafts/:id/schedule`). A scheduled
+ * send is a DRAFT WITH AN APPOINTMENT: `send_at` + `status = 'scheduled'` + a `send_key` minted
+ * NOW; the pass claims due rows and runs the ordinary `SendService.send` with that key. THE KEY
+ * IS MINTED AT SCHEDULE TIME — the crash-safety hinge: a retry MUST present the SAME
+ * Idempotency-Key or `reserve` delivers twice; a key persisted before any attempt is what the
+ * retry finds. WHILE SCHEDULED THE DRAFT IS FROZEN (`update`/`remove` 409), so the worker sends
+ * what the user last saw. CANCEL IS RACE-SAFE on the row lock: cancel first ⇒ never leaves; claim
+ * first ⇒ 409 "already being sent" (`send-later-claim-race.pg.test.ts` pins both).
  */
 export class ScheduleService {
   /** `POST /drafts/:id/schedule` — put an appointment on a draft (or move an existing one). */
@@ -101,23 +75,15 @@ export class ScheduleService {
           "This mailbox is disconnected and cannot send. Reconnect it, or pick another sender.",
         );
       }
-      /* -- A READER MAKES NO APPOINTMENTS (mail 0083) -------------------------------------
-       *
-       * An appointment is a promise to do something LATER, and the pass that keeps it lives
-       * behind the organizer gate. A reader's promise therefore cannot be kept — which is not a
-       * new hazard, it is the one `closeStoodDownAppointments` exists to clean up after, and this
-       * is the same defect closed one step earlier: refusing to MINT one a demotion would have to
-       * cancel.
-       *
-       * SENDING NOW is untouched and stays untouched: a reader may send, because a send is an
-       * APPEND to Sent that completes inside the request. `SendService` needs no role check at
-       * all — its refusal is on `disabled`, and a reader is `connected` — and that asymmetry is
-       * the whole distinction between doing something and promising to.
-       *
-       * INSIDE the transaction that takes the draft lock, so the check and the write see one
-       * snapshot. Placed AFTER the `disabled` refusal because a disconnected mailbox has a better
-       * sentence than a reader one: "reconnect it" is actionable, "another install organizes it"
-       * would be true and useless about a mailbox with no credentials.
+      /**
+       * A READER MAKES NO APPOINTMENTS (mail 0083). An appointment is a promise to do something
+       * LATER, and the pass that keeps it lives behind the organizer gate — a reader's promise
+       * cannot be kept; the defect `closeStoodDownAppointments` cleans up after, closed one step
+       * earlier. SENDING NOW stays untouched: a send is an APPEND to Sent completing inside the
+       * request — `SendService` refuses on `disabled`, and a reader is `connected`. INSIDE the
+       * transaction that takes the draft lock, so check and write see one snapshot; AFTER the
+       * `disabled` refusal — "reconnect it" is actionable, a reader sentence would be true and
+       * useless about a mailbox with no credentials.
        */
       await assertOrganizerRole(tx as unknown as Tx, dialect(ctx.db), ctx.accountId, d.mailboxId);
 
