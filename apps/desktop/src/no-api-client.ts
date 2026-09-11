@@ -837,6 +837,46 @@ export interface JunkPageWire {
     nextCursor: string | null;
 }
 
+/**
+ * The live Trash window's shapes and its two reads. `vite.config.ts` aliases the real module to
+ * this one, so a name missing here is an unresolved import and the desktop bundle fails to build
+ * on every platform — `test/no-api-client-census.test.ts` compares the two files' export names.
+ * The desktop reaches its own local engine and has no Cloud door for these routes, so the value
+ * export refuses like every other one here.
+ */
+export const trashWindow: {
+    list: (opts?: { cursor?: string }) => Promise<TrashWindowPageWire>;
+    body: (mailboxId: string, uid: number, uidValidity: string) => Promise<{
+        subject: string;
+        text: string;
+    }>;
+} = absent;
+
+export interface TrashWindowItemWire {
+    mailboxId: string;
+    uid: number;
+    uidValidity: string;
+    subject: string;
+    from: { name: string | null; address: string };
+    date: string | null;
+    messageIdHeader: string | null;
+    seen: boolean;
+    origin: "ohmail" | "provider";
+}
+
+export interface TrashWindowMailboxWire {
+    id: string;
+    address: string;
+    window: "ok" | "no_trash_folder" | "unreachable";
+    reset?: boolean;
+}
+
+export interface TrashWindowPageWire {
+    mailboxes: TrashWindowMailboxWire[];
+    items: TrashWindowItemWire[];
+    nextCursor: string | null;
+}
+
 export interface PublicKeyCredentialCreationOptionsJSON {
     challenge: string;
     rp: {
