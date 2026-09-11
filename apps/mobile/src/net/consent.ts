@@ -33,19 +33,13 @@ import type { ConnectedSession } from "./pairing.js";
 
 /**
  * THE ACCOUNT'S CUTLINE ANSWER — the three `GET /consent` fields that decide which senders are
- * still worth a decision (mail 0056 / 0083), carried here so the phone partitions its mirror the
- * way the server counted for it.
+ * still worth a decision (mail 0056 / 0083). Measured missing: `presentedOf` ran the same rule
+ * the server runs on the engine's own default window, so six waiting senders listed as two.
  *
- * It was measured missing: with `GET /screener` listing six waiting senders the phone's Screener
- * showed two, because `presentedOf` ran `consentPartition` on the engine's own default window
- * with no baseline and no mode while the server answered from `account_settings`. Both ends run
- * the same rule; only these inputs were absent.
- *
- * `dormancyDays: null` is "the account has not overridden the product default" — the wire always
- * sends a number, so `null` here is only ever an unreadable value. `baselineAt: null` is "this
- * account has never decided anything". `scope` is the MODE, and anything the wire spells that is
- * not exactly `all_time` reads as the window: screening everything is a lot of mail to unfile by
- * hand, so a bad value must fail narrow.
+ * `dormancyDays: null` is "no override" (the wire always sends a number, so it means unreadable);
+ * `baselineAt: null` is "this account has never decided anything"; `scope` is the MODE, and
+ * anything that is not exactly `all_time` reads as the window — screening everything is a lot of
+ * mail to unfile by hand, so a bad value must fail narrow.
  */
 export interface ScreeningAnswer {
   dormancyDays: number | null;

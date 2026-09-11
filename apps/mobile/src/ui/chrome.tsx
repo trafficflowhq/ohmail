@@ -8,6 +8,7 @@
  */
 import { useEffect, useRef } from "react";
 import { Animated, Easing, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { Copy } from "../copy";
 import { sayArg } from "../refusal";
