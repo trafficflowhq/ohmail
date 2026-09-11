@@ -1,52 +1,23 @@
 "use client";
 
 /**
- * THE SUBJECT-RULE SHEET — pressing a message's title offers a rule with TWO terms.
- *
- * `chrome.openSubjectRule` has been a declared seam since the reading-surface slice, with the title
- * rendered as a heading-styled button and nothing behind it. This is what it opens.
- *
- * ── WHY THE TITLE IS THE RIGHT PLACE FOR IT ─────────────────────────────────────────────────
- *
- * The gesture people already have is "click the sender, change where their mail goes". This is the
- * same gesture one level finer: the thing on screen that distinguishes the invoice from the nightly
- * alert is the SUBJECT, so the subject is the control. The two sheets are deliberately siblings —
- * same popover box, same destination list, same honest footer — because they answer the same
- * question about different halves of one message.
- *
- * ── WHAT IT REFUSES TO DO ───────────────────────────────────────────────────────────────────
- *
- *  · **No BLIND free text.** The exact-subject option is an EDITABLE match field now — owner
- *    request, 2026-08-26: detection finding nothing left "this exact subject" as the only door,
- *    and a recurring report whose subject varies by date needs a fragment. The original refusal
- *    ("`Alert` typed into a box also catches `Alert: your invoice is overdue`") is answered with
- *    measurement instead of prohibition: the count under the field re-runs the server's own test
- *    on every keystroke, and the field says so out loud when the fragment stops narrowing —
- *    matching ALL of the sender's mail here, or none of it. The detected token, when one exists,
- *    is still offered first and still never typed.
- *  · **No claim that mail moves back.** The rule is revocable at Settings → Rules, and revoking it
- *    does not un-file anything — `DELETE /rules/:id` touches the rules row and the change log and
- *    nothing else. So the way back offered here is the count and the choice BEFORE the press, which
- *    is the same construction `SenderMenu` uses and for the same reason.
- *  · **No second identical rule.** When one already files this address-and-term into the chosen
- *    pile, the sheet says so and writes nothing. A habit-press must not mint rows nobody can tell
- *    apart in the rules list.
- *
- * ── THE CONFIRM ROW STATES BOTH TERMS, AND THAT IS THE WHOLE POINT ──────────────────────────
- *
- * "from info@sichersatt.ch AND subject contains »[NinjaFirewall]« → Reads". A person about to narrow
- * a rule has to be able to read the conjunction, because the failure mode of this feature is a term
- * that is subtly wrong — one letter off, or looser than they think — and no toast afterwards can
- * repair a backlog that has already been re-filed.
- *
- * ── COPY ────────────────────────────────────────────────────────────────────────────────────
- *
- * Read through a SHIM (`copy` below): `messages/en.json` wins the moment a key exists there and the
- * fallback wording is the same sentence. It is a shim with one exit, not a second source of copy —
- * the same device `MessagePane` uses, for the same reason.
- *
- * It reuses `sender-sheet.css` verbatim (`.senderm`, `.sm-*`) rather than adding a stylesheet: the
- * two sheets are siblings and a second set of nearly-identical rules is how they drift apart.
+ * The subject-rule sheet — pressing a message's title offers a rule with two terms. The gesture
+ * people have is "click the sender, change where their mail goes"; this is the same gesture one
+ * level finer, and the two sheets are deliberate siblings (same popover box, destination list and
+ * honest footer — it reuses `sender-sheet.css` verbatim, because a second set of nearly-identical
+ * rules is how siblings drift). The confirm row states both terms ("from … AND subject contains …
+ * → Reads"): the failure mode is a term subtly wrong, and no toast can repair a re-filed backlog.
+ * Copy reads through a shim with one exit — `messages/en.json` wins the moment a key exists.
+ */
+
+/**
+ * What it refuses: no BLIND free text — the exact-subject option is an editable match field (owner
+ * request 2026-08-26) whose count re-runs the server's own test per keystroke and says out loud
+ * when the fragment stops narrowing (matching ALL of the sender's mail here, or none); the
+ * detected token is still offered first and never typed. No claim that mail moves back — revoking
+ * a rule un-files nothing (`DELETE /rules/:id` touches the rules row and the change log), so the
+ * way back is the count and the choice BEFORE the press. No second identical rule — the sheet says
+ * so and writes nothing: a habit-press must not mint rows nobody can tell apart.
  */
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
@@ -78,22 +49,14 @@ export interface SubjectRuleState {
 }
 
 /**
- * Which term the sheet is offering. Three choices:
- *
- *  · `token`   — the detected repeating token in the SUBJECT. Absent when nothing repeats.
- *  · `whole`   — the EDITABLE subject match, prefilled with this message's entire subject. Left
- *                untouched it is "this exact subject"; trimmed to a fragment it is the manual
- *                door (owner request 2026-08-26) for the tag detection could not find. The count
- *                under it is live — the same case-folded substring test the server applies —
- *                and the field states it plainly when the fragment matches ALL of the sender's
- *                mail here (not narrowing any more) or NONE of it.
- *  · `content` — the detected repeating token in the message TEXT (mail 0052). Absent when
- *                nothing repeats in the text the mirror holds. For the sender whose subjects are
- *                all alike and whose distinguishing text is in the body.
- *
- * `whole` is never the DEFAULT while a token exists, because a rule keyed on a whole subject
- * line catches less than the user usually means. `content` keeps the detected-never-typed
- * discipline, and a `null` detection simply does not render the option.
+ * Which term the sheet is offering. `token` — the detected repeating token in the SUBJECT, absent
+ * when nothing repeats. `whole` — the EDITABLE subject match, prefilled with the entire subject:
+ * untouched it is "this exact subject", trimmed it is the manual door (owner request 2026-08-26);
+ * the count under it is live — the same case-folded substring test the server applies — and the
+ * field says plainly when the fragment matches ALL of the sender's mail here or NONE of it.
+ * `content` — the detected token in the message TEXT (mail 0052), for the sender whose subjects are
+ * all alike. `whole` is never the default while a token exists — a whole-subject rule catches less
+ * than the user usually means; `content` keeps the detected-never-typed discipline.
  */
 type TermChoice = "token" | "whole" | "content";
 

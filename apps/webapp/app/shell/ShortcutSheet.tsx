@@ -1,16 +1,13 @@
 "use client";
 
 /**
- * The `?` sheet — every binding that is live right now, and nothing else.
- *
- * It renders `groupedBindings(useKeymap().bindings)` and holds no list of its own. That is
- * the property worth protecting: the previous "documentation" was a sentence in the (i)
- * panel that somebody typed once, and by the time this was written it named keys that had
- * moved and omitted the ones that had arrived. A sheet built from the dispatcher's own
- * table cannot do either. `test/keymap.test.ts` mutates the generation to watch it fail.
- *
- * A peek, not a mode: ANY key dismisses it and then does its normal job, so `?` `j` reads
- * the map and moves the cursor in two keystrokes.
+ * The `?` sheet — every binding that is live right now, and nothing else. It renders
+ * `groupedBindings(useKeymap().bindings)` and holds no list of its own: the previous
+ * "documentation" was a sentence somebody typed once, and by the time this was written it named
+ * keys that had moved and omitted ones that had arrived — a sheet built from the dispatcher's own
+ * table cannot do either (`test/keymap.test.ts` mutates the generation to watch it fail). A peek,
+ * not a mode: any key dismisses it and then does its normal job, so `?` `j` reads the map and
+ * moves the cursor in two keystrokes.
  */
 import { useEffect } from "react";
 import { useTranslations } from "next-intl";
@@ -51,25 +48,15 @@ export function ShortcutSheet({ open, onClose }: { open: boolean; onClose: () =>
 
   useEffect(() => {
     if (!open) return;
-    // Any keypress dismisses. The registry's own listener still runs the binding for that
-    // key — the sheet is in the way of nothing.
-    //
-    // ── EXCEPT A BARE MODIFIER, AND THAT EXCEPTION IS THE WHOLE OF THE TOGGLE ──────────
-    //
-    // "Any key dismisses and then does its normal job" is the peek design, and a modifier
-    // held down on its own has no normal job — it is the first half of a chord the user has
-    // not finished typing. Counting it as a dismissal broke `?` on every layout where `?`
-    // needs Shift, which is most of them: the chord arrives as TWO keydowns, `Shift` closed
-    // the sheet, and `?` then reached the registry toggle, found it closed, and re-opened
-    // it. Pressing `?` to close the sheet left the sheet open.
-    //
-    // Not cosmetic — the sheet is `position: fixed` over the whole deck, so a sheet that
-    // will not close swallows the click the user makes next. It ate the bulk bar's "Mark
-    // read" for weeks and was read as a bulk-selection bug.
-    //
-    // With modifiers ignored the chord behaves: `Shift` does nothing, then `?` both
-    // dismisses here and toggles in the registry — and those AGREE, because both are
-    // closing an open sheet.
+    // Any keypress dismisses; the registry's own listener still runs the binding — the sheet is in
+    // the way of nothing. EXCEPT a bare modifier, and that exception is the whole of the toggle: a
+    // held modifier has no normal job — it is the first half of an unfinished chord. Counting it as
+    // a dismissal broke `?` on every layout where `?` needs Shift: the chord arrives as two
+    // keydowns, `Shift` closed the sheet, and `?` reached the registry toggle, found it closed, and
+    // re-opened it — pressing `?` to close the sheet left it open. Not cosmetic: the sheet is
+    // `position: fixed` over the whole deck, so it swallowed the next click (it ate the bulk bar's
+    // "Mark read" for weeks, read as a bulk-selection bug). With modifiers ignored the chord
+    // behaves: `Shift` does nothing, then `?` both dismisses here and toggles in the registry.
     const onKey = (e: KeyboardEvent) => {
       if (MODIFIER_KEYS.has(e.key)) return;
       onClose();

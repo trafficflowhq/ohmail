@@ -1,54 +1,24 @@
 "use client";
 
 /**
- * THE SPATIAL MODEL — three focus zones, walked with the arrow keys.
- *
- *     menu rail   ←→   list   ←→   open message
- *
- * ← and → move BETWEEN zones, ↑/↓ move WITHIN one, Enter activates, Escape walks back left.
- * The list is the resting zone; the rail and the open message are places you step into and
- * out of. Every view that wants the model declares it with {@link useZoneNav}, exactly as
- * views declare their keys into the registry — this file adds NO listener of its own beyond
- * the two focus observers below, and every key it handles is an ordinary `KeyBinding`
- * dispatched by `keymap.tsx`, so the `?` sheet documents the zone keys because they exist
- * and existing single-key shortcuts keep their precedence over them (view layers are
- * consulted before these `global`-scope bindings).
- *
- * ── THE ZONE IS DERIVED FROM REAL FOCUS, NOT KEPT AS PARALLEL STATE ─────────────────────
- *
- * "Which zone am I in" has one honest answer: where the browser's focus actually is. A
- * stored zone flag would need resynchronising after every click, tap, Tab and programmatic
- * focus move, and each missed one would leave the arrows acting on a zone the user can see
- * they are not in. So the zone is COMPUTED — focus inside `.rail` is the rail, focus inside
- * the mounted view's open-message container (each view names its own, e.g.
- * `.view-ohbox .read-col`) is the reader, and everything else, `document.body` included, is
- * the list. Entering a zone is nothing more than moving real focus into it, which is also
- * the whole accessibility story: the rail rows and list rows are real `<button>`s, the
- * reading column is a labelled region with `tabIndex={-1}`, and a screen reader announces
- * every move because every move is a genuine focus change. `:focus-visible` (base.css)
- * paints the ring, in both themes, for free.
- *
- * Deriving from focus also self-guards the widths where a zone does not exist: `focus()`
- * on a `display:none` element is refused by the browser, so stepping into a hidden rail
- * (the sub-900px drawer) or a hidden reading column simply does not move — no media query
- * here, no second copy of the layout's breakpoints. Where the reading column is hidden the
- * view supplies `onHiddenEnter`, which is its deliberate open (the reader sheet), because
- * at that width "into the message" and "open the message" are the same request.
- *
- * ── TEXT INPUTS ARE NEVER TOUCHED ────────────────────────────────────────────────────────
- *
- * No binding here sets `inInput`, so the registry's typing guard applies: arrows inside
- * compose, search or any other field keep their native caret behaviour, and the zone model
- * only speaks when the rail, the list or the pane owns focus.
- *
- * ── READ-MARKING IS THE VIEW'S, ON THE SEAM THAT ALREADY SHIPPED ─────────────────────────
- *
- * Arrow selection in the Ohbox rides `selectByUser`, so the dwell guard (`DWELL_MS`,
- * `OhboxView.tsx` — armed on the cursor, cancelled by the next move, committed as a labelled
- * `"glance"` on departure) applies to a flick through five messages exactly as it applies to
- * j/k: nothing is marked until the reader actually stays. Stepping INTO the message with →
- * is explicit engagement, so the view arms its read in `onEnter` — the same arm an open
- * performs, never a second write path.
+ * The spatial model — three focus zones (menu rail ←→ list ←→ open message), walked with the
+ * arrows: ←/→ between zones, ↑/↓ within one, Enter activates, Escape walks back left. Views declare
+ * it with {@link useZoneNav}; every key is an ordinary `KeyBinding` dispatched by `keymap.tsx`, so
+ * the `?` sheet documents the zone keys and single-key shortcuts keep precedence. The zone is
+ * DERIVED from real focus, never parallel state: a stored flag needs resynchronising after every
+ * click and Tab, and each miss leaves the arrows acting on a zone the user can see they are not
+ * in. Every move is a genuine focus change (real `<button>`s, a labelled `tabIndex={-1}` region),
+ * which is the whole accessibility story.
+ */
+
+/**
+ * `focus()` on a `display:none` element is refused by the browser, so a hidden zone simply does
+ * not move — no second copy of the layout's breakpoints; where the reading column is hidden the
+ * view supplies `onHiddenEnter`, its deliberate open, because at that width "into the message"
+ * and "open the message" are the same request. No binding here sets `inInput`, so arrows in a
+ * field keep their native caret. Arrow selection rides `selectByUser`, so the dwell guard applies
+ * to a flick through five messages exactly as it applies to j/k; stepping INTO the message with →
+ * is explicit engagement, and the view arms its read in `onEnter` — never a second write path.
  */
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { useTranslations } from "next-intl";
@@ -64,15 +34,13 @@ import { isTypingTarget, useOptionalKeyBindings, type KeyBinding } from "./keyma
 export type Zone = "rail" | "list" | "reader" | "none";
 
 /**
- * How far one ↑/↓ press moves the open message, in px.
- *
- * 48 = three 16px text lines — Firefox's native arrow-scroll unit, within a few px of
- * Chrome's 40. Small enough that a held key reads as continuous text flow rather than
- * jumps, big enough that a single press visibly moves. Applied as an instant `scrollTop`
+ * How far one ↑/↓ press moves the open message, in px. 48 = three 16px text lines — Firefox's
+ * native arrow-scroll unit, within a few px of Chrome's 40: small enough that a held key reads as
+ * continuous flow, big enough that a single press visibly moves. Applied as an instant `scrollTop`
  * assignment (`MessagePane` prefers the same primitive) so key-repeat never queues smooth
- * animations against each other. A thread needs no extra "next message" step: the
- * conversation is one flat column of full-body panels in one scroller
- * (`ConversationPanels`), so scrolling past the end of one message IS arriving at the next.
+ * animations against each other. A thread needs no "next message" step: the conversation is one
+ * flat column of full-body panels in one scroller, so scrolling past the end of one message IS
+ * arriving at the next.
  */
 export const READER_SCROLL_STEP = 48;
 

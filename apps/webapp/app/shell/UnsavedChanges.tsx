@@ -10,34 +10,14 @@ import { useEngine, useAbandoned } from "./engine";
 import "./unsaved-changes.css";
 
 /**
- * THE CHANGES THAT DID NOT LAND — a strip that appears only when there are some, and a list
- * behind it offering the two answers a person actually has.
- *
- * ── WHY THIS IS A SEPARATE STRIP FROM THE SYNC BAR ─────────────────────────────────────────
- *
- * `SyncBar` returns null whenever the sync state has nothing to say, which is the ordinary healthy
- * case — and an abandoned change is most likely precisely THEN: syncing is fine, one verb the
- * server kept refusing is not. Folding this into that component would have hidden the notice in the
- * state where it matters most.
- *
- * ── WHY IT EXISTS AT ALL ───────────────────────────────────────────────────────────────────
- *
- * The engine used to retry a refused change for ever: no counter, no delay, no end, across
- * restarts. Bounding that (`OUTBOX_MAX_SERVER_FAILURES`) closes a loop and opens a worse question —
- * what happens to the work. A queue that silently drops what it gave up on is a data-loss feature
- * wearing a bug fix's clothes. So the verb survives, in its own collection, and this is the surface
- * that admits it: the change is gone from the screen it was made on, and here is what the server
- * said about it.
- *
- * ── THE TWO ANSWERS, AND WHY THERE IS NO THIRD ─────────────────────────────────────────────
- *
- * "Try again" re-queues under the ORIGINAL Idempotency-Key, so an attempt that actually committed
- * and only lost its response replays that response rather than doing the thing twice — a second
- * draft, or a second send, is exactly what a fresh key would buy. "Discard" throws it away.
- *
- * There is deliberately no "retry all": the reasons these failed are not necessarily the same
- * reason, and a button that re-queues eight verbs on one press is a button whose outcome nobody
- * can predict. One row, one decision.
+ * The changes that did not land — a strip that appears only when there are some, and the two answers a person
+ * actually has. Separate from `SyncBar` because that returns null when sync is healthy — and an abandoned change is
+ * most likely precisely then: syncing is fine, one verb the server kept refusing is not. It exists because the engine
+ * used to retry a refused change for ever; bounding that (`OUTBOX_MAX_SERVER_FAILURES`) opens a worse question — what
+ * happens to the work, and a queue that silently drops what it gave up on is data loss wearing a bug fix's clothes.
+ * "Try again" re-queues under the ORIGINAL Idempotency-Key, so an attempt that committed and lost its response
+ * replays rather than doing the thing twice; "Discard" throws it away. Deliberately no "retry all": the reasons
+ * differ, and a button re-queuing eight verbs on one press has an outcome nobody can predict. One row, one decision.
  */
 export function UnsavedChanges({ variant }: { variant: "shell" | "rail" }) {
   const engine = useEngine();
@@ -110,21 +90,13 @@ export function UnsavedChangesList({
   }, [onDiscard]);
 
   /**
-   * ── NOTHING TO SAY, NOTHING ON SCREEN — EXCEPT A RESULT THAT HAS NOT BEEN SAID YET ────────
-   *
-   * The absent-at-zero rule is right: a permanently-present strip reading "0 changes could not be
-   * saved" is a control that lies about the state it describes, which is why `MarkAllRead` works
-   * the same way.
-   *
-   * But it collided with the retry outcome, and the collision lost the one message that matters
-   * most. The retry's answer was rendered inside the row it belonged to — and a retry whose
-   * outcome is terminal REMOVES that row. So when the last record was retried and came back
-   * `send_unverified`, the component hit this return before it could say "check your Sent
-   * folder": the warning vanished, the record was gone, and nothing stopped a second send of mail
-   * that may already have left.
-   *
-   * So a pending sentence keeps the strip alive on its own. It outlives every row, because the
-   * outcome it carries is about work that no longer has one.
+   * Nothing to say, nothing on screen — except a result that has not been said yet. Absent-at-zero
+   * is right (a strip reading "0 changes could not be saved" lies about the state it describes),
+   * but it collided with the retry outcome: the retry's answer rendered inside the row it belonged
+   * to, and a terminal retry REMOVES that row — so a last record retried into `send_unverified` hit
+   * this return before it could say "check your Sent folder", and nothing stopped a second send of
+   * mail that may already have left. A pending sentence keeps the strip alive on its own; it
+   * outlives every row, because the outcome it carries is about work that no longer has one.
    */
   if (abandoned.length === 0 && said === null) return null;
 
