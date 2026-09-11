@@ -1,81 +1,12 @@
 /**
- * ═══ CEILINGS ON WHAT AN ARBITRARY MAIL SERVER MAY MAKE THIS PROCESS DO ═════════════════════
- *
- * The sibling rule for CALLER-chosen values — bounds on request input — closed the
- * class where a value **the caller chooses** reaches a query, a loop or a buffer before any
- * ceiling. This file is the same law aimed the other way: at values **the SERVER chooses**.
- *
- * ## Why the server is in the threat model by design, not by assumption
- *
- * The user names their own IMAP host. We do not run it, we do not vet it, and a mailbox does not
- * have to be malicious to be ruinous — a provider with a runaway folder table, a broken SEARCH,
- * or a link that has degraded to a byte a minute produces the same shapes an attacker would.
- * **And the worker is SHARED**: one connection's unbounded read is paid out of a process that
- * every other mailbox on the shard is also using. That is what separates this row from its
- * siblings — the blast radius is other people's mail, not the offending mailbox's.
- *
- * ## The one rule, and the one way it was being broken
- *
- * > **Bound the READ, not the RESULT.**
- *
- * Every instance in the row had a cap. Every cap was applied *after* the thing it was capping had
- * already been materialised, copied, sorted and retained. `searchFolderPage` is the clearest:
- * its docblock promised "never a fetch proportional to the match count", which was true of the
- * FETCH and false of the `[...found].sort()` one line above it. A cap downstream of the
- * allocation is documentation, not a bound.
- *
- * ## Three kinds of ceiling, because there are three kinds of unboundedness
- *
- *  1. **COUNT** — how many things the server may hand us (folders, UIDs, search hits).
- *  2. **SIZE** — how large one of those things may be (a folder path, a body past its own
- *     declared `RFC822.SIZE`).
- *  3. **TIME** — how long the server may take. This one is not optional and is not covered by
- *     any of the socket settings: {@link NetTimeouts.socketMs} is Node's INACTIVITY timer, so a
- *     server that emits one byte a minute resets it for ever and waits without bound. A count
- *     ceiling does not help either — the slow server is not sending too much, it is sending too
- *     slowly. Only a wall clock closes it.
- *
- * ## What a breach does, and why that is the whole isolation story
- *
- * It throws {@link ImapBoundExceeded}, and **the isolation is inherited rather than built here.**
- * The worker already attributes a throw out of `runSyncCycle` to the mailbox it came from: the
- * folder cursor is held, the cycle fails, the connection is closed and that mailbox accumulates
- * toward its ordinary quarantine cadence while every other mailbox on the shard proceeds
- * untouched (`apps/worker/src/index.ts`, the per-mailbox catch arm; `sync.ts`'s deferred-folder
- * rule). Crucially this error is **attributable BY CLASS to the mailbox** — it is not one of the
- * shared-service exemptions (`LeaderFencedError`, `LeaseUnavailableError`, a database fault)
- * that are rethrown so a shard-wide outage is not blamed on individual mailboxes. A server that
- * hands back a million folders IS this mailbox's problem, and saying so is correct.
- *
- * So the smallest true fix is a ceiling that FIRES, not a new scheduler. A per-mailbox time
- * budget in the worker's cycle loop was considered and deliberately not built:
- * {@link IMAP_CYCLE_DEADLINE_MS} is the same guarantee at the seam that already has the facts,
- * and rebuilding the scheduler to obtain it would be a much larger change for the same property.
- *
- * ## The residual, stated rather than discovered later
- *
- * `ImapFlow.list()` and `ImapFlow.search()` return ARRAYS. The driver materialises the whole
- * response inside itself before this code is given anything to look at, so for those two the
- * count ceilings here are — unavoidably, at this seam — applied to the driver's buffer rather
- * than to the socket. **{@link IMAP_READ_DEADLINE_MS} is what actually bounds them**, because a
- * response large enough to matter also takes time to deliver; the count ceiling's remaining job
- * is to stop US from copying, sorting and RETAINING that buffer, which is where the multiplier
- * was. Everything reached through `ImapFlow.fetch()` is an async iterable and IS bounded at the
- * read: {@link boundedCollect} stops consuming, so the array never grows past the ceiling.
- *
- * ## ABANDONING A READ IS NOT ENDING IT, AND THIS IS THE CORRECTION THAT MATTERS MOST
- *
- * Neither a deadline that fires mid-command nor a ceiling that breaks out of a `fetch()` generator
- * CANCELS anything. The driver keeps draining the response it was given and its command queue
- * stays owned by a read nobody is consuming, so the next command on that connection queues behind
- * it. **A ceiling that leaves the read running has not bounded the read — it has bounded the array
- * and moved the stall one command later, behind a reassuring log line.**
- *
- * This file's first version left the cleanup to a convention ("the caller closes the connection on
- * the way out"), which is true of the worker's per-mailbox catch arm and false in general: the
- * worker RETAINS an adapter across generic failures, and a truncating ceiling does not throw at
- * all. So every abandonment now retires the connection through `onAbandon`, at the point of
- * abandonment, by the code that decided to stop reading.
+ * Ceilings on what an arbitrary mail server may make this process do — the server-side twin of
+ * the request-input bounds. The host is user-named and the worker is shared, so one unbounded
+ * read is paid by every mailbox on the shard. The rule: bound the READ, not the RESULT — a cap
+ * applied after the response is materialised is documentation. Three kinds: COUNT, SIZE, TIME
+ * (the socket timeout is inactivity-based; only a wall clock stops a byte-a-minute server). A
+ * breach throws {@link ImapBoundExceeded}, attributable by class to the mailbox. {@link
+ * IMAP_READ_DEADLINE_MS} bounds the driver-materialised `list()`/`search()`; `fetch()` is bounded
+ * at the read by {@link boundedCollect}. Abandonment retires the connection.
  */
 
 /**
@@ -96,33 +27,15 @@ export type ImapBoundKind =
   | "read_deadline"
   | "cycle_deadline";
 
-/*
- * ── WHY THE TRUNCATING CEILINGS ARE NOT IN THAT UNION ──────────────────────────────────────
- *
- * {@link IMAP_FOLDER_PATH_MAX_CHARS} and {@link IMAP_ENVELOPE_ADDRESSES_MAX} are real ceilings
- * that DROP or TRUNCATE without ending the connection, so no `ImapBoundExceeded` is constructed
- * for them and they have no code here.
- *
- * TWO OTHERS HAVE LEFT THIS LIST, and each departure was a correction rather than a widening.
- * {@link IMAP_FLAG_SCAN_MAX_ROWS} truncated on a premise about `break` that proved false, and
- * refuses now. {@link IMAP_SAMPLE_MAX_ROWS} still truncates its ANSWER — a smaller sample is not a
- * wrong sample — but it abandons a running command to do it, which retires the connection, and a
- * retirement is reported. It needed a code of its own the moment that reporting became the way a
- * mailbox is marked: without one it borrowed `read_deadline`, claiming a clock had run out when
- * none had. `page_rows` exists for the same reason, for a server over-answering a bounded page.
- * **A code that names the wrong condition is worse than no code**, because it is the thing an
- * operator reads and the thing bound-specific handling branches on.
- *
- * They were in this union first, and the census next door
- * (`imap-bounds-census.test.ts`) failed on them: it asserts that every declared kind is actually
- * raised somewhere, and these could not be. That is the repository's own named hazard — a
- * type-level guard that silently does not guard — and a code an operator can grep for but never
- * see in a log is a small version of it. Removed rather than explained away.
- *
- * **The residual, stated:** a folder whose path is dropped for length is one folder the customer
- * does not get scanned, and nothing reports it (`passiveFolderReport().excluded` covers folders
- * the passive RULE declined, not ones dropped before it ran). At 1024 characters this is far past
- * any real folder name, so it is recorded as a known gap rather than given a reporting channel.
+/**
+ * Why the truncating ceilings are not in this union: {@link IMAP_FOLDER_PATH_MAX_CHARS} and
+ * {@link IMAP_ENVELOPE_ADDRESSES_MAX} drop or truncate without ending the connection, so no
+ * `ImapBoundExceeded` is constructed for them. {@link IMAP_FLAG_SCAN_MAX_ROWS} refuses now;
+ * {@link IMAP_SAMPLE_MAX_ROWS} truncates its answer but abandons a running command, and a
+ * retirement is reported — it needed its own code rather than borrowing `read_deadline`;
+ * `page_rows` covers a server over-answering a bounded page. The census
+ * (`imap-bounds-census.test.ts`) asserts every declared kind is raised somewhere. Residual: a
+ * folder dropped for path length is not reported — at 1024 characters, a known gap.
  */
 
 /**
@@ -190,143 +103,82 @@ export function boundFromEnv(
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
 /**
- * Folders one LIST response may name.
- *
- * The passive-folder ceilings ({@link DEFAULT_PASSIVE_FOLDERS_MAX} = 256) bound how many folders
- * are SCANNED, and they were doing that correctly. They do not bound how many are RECEIVED: every
- * listed folder was canonicalised into a fresh string, run through the exclusion rule, pushed to
- * an array, sorted, and both halves of the split retained on the adapter — all of it before the
- * 256 was consulted. A mailbox reporting 10^6 folders therefore cost ~10^6 strings and an
- * O(n log n) sort per LIST, and `foldersToScan` re-LISTs every cycle on a LIST-STATUS server.
- *
- * 10 000 is two orders of magnitude above the largest real mailbox measured here (~137 folders,
- * and 256 is already the scan ceiling), and far below the point where retaining the response
- * registers against the worker's memory budget. It exists to catch a runaway, not to second-guess
- * an unusual filer.
+ * Folders one LIST response may name. The passive-folder ceilings ({@link
+ * DEFAULT_PASSIVE_FOLDERS_MAX} = 256) bound how many folders are SCANNED, not how many are
+ * RECEIVED: every listed folder was canonicalised, filtered, pushed, sorted and retained before
+ * the 256 was consulted, so a mailbox reporting 10^6 folders cost ~10^6 strings and an O(n log n)
+ * sort per LIST. 10 000 is two orders of magnitude above the largest real mailbox measured (~137
+ * folders) and far below the worker's memory budget — it catches a runaway, not an unusual filer.
  */
 export const IMAP_LIST_MAX_FOLDERS = 10_000;
 
 /**
- * Characters in one folder path from the server.
- *
- * Paths are split, joined, regex-tested and used as Map keys on every cycle, and a folder name is
- * a value the server chooses with no protocol ceiling of its own. 1024 is well past any real
- * hierarchy (RFC 3501 sets no limit, but a path is a mailbox NAME; providers cap far lower) and
- * stops one absurd entry from becoming a per-cycle cost.
- *
- * The over-long entry is DROPPED, not fatal — see {@link boundListResponse}. A folder we cannot
- * sanely name is one folder the customer does not get scanned; refusing the whole LIST over it
- * would take the other 136 folders down with it, which is a worse answer to a stranger problem.
+ * Characters in one folder path from the server. Paths are split, joined, regex-tested and used
+ * as Map keys every cycle, and a folder name has no protocol ceiling of its own. 1024 is well
+ * past any real hierarchy and stops one absurd entry from becoming a per-cycle cost. The
+ * over-long entry is DROPPED, not fatal — see {@link boundListResponse}: refusing the whole LIST
+ * over one unnameable folder would take the other 136 down with it.
  */
 export const IMAP_FOLDER_PATH_MAX_CHARS = 1024;
 
 /**
- * UIDs one folder enumeration may collect.
- *
- * `enumerateUids` walked `1:*` and pushed every UID in the folder into an array — then
- * `new Set(...)` and a `.filter(...)` made two more copies of it — all BEFORE the batch budget
- * ({@link DEFAULT_SYNC_BATCH_MAX_MESSAGES} = 200) was consulted. The budget bounds the bodies
- * fetched, which is what the OOM outage was about, and it says nothing at all about the
- * enumeration that feeds it. A server claiming 10^8 messages in a folder spends ~10^8 numbers
- * across three containers before one message is fetched.
- *
- * 500 000 is chosen against the container rather than against a mailbox: at three retained
- * copies of a JS number set that is a few tens of MB — survivable, and inside the same order of
- * magnitude as {@link DEFAULT_SYNC_BATCH_MAX_BYTES}. Real mailboxes here are four to five orders
- * below it. A folder genuinely past it cannot be drained by this design anyway, and failing that
- * mailbox's cycle loudly is a better answer than a silent SIGKILL of the shard — which is the
- * outage this number exists because of.
+ * UIDs one folder enumeration may collect. `enumerateUids` pushed every UID in the folder into an
+ * array — then a `Set` and a `.filter` made two more copies — before the batch budget ({@link
+ * DEFAULT_SYNC_BATCH_MAX_MESSAGES} = 200) was consulted; that budget bounds bodies fetched, not
+ * the enumeration feeding it. A server claiming 10^8 messages spends ~10^8 numbers across three
+ * containers before one fetch. 500 000 is chosen against the container: a few tens of MB at three
+ * retained copies, the same order as {@link DEFAULT_SYNC_BATCH_MAX_BYTES}; real mailboxes sit
+ * four to five orders below. Failing loudly beats a silent SIGKILL of the shard.
  */
 export const IMAP_ENUM_MAX_UIDS = 500_000;
 
 /**
- * UIDs one SEARCH result may carry.
- *
- * `searchFolderPage` sorted the server's ENTIRE match set to take the newest 50 of it, and
- * `destinationLook` iterates its whole candidate set issuing a **full-body fetch per element**.
- * The first is O(n log n) in a number the server picks; the second is that number multiplied by
- * message bytes, which is the more expensive of the two by a wide margin.
- *
- * 50 000 is far above any honest answer to "messages in this folder matching this word" that a
- * 50-item page is about to be taken from, and far below a response that hurts.
+ * UIDs one SEARCH result may carry. `searchFolderPage` sorted the server's entire match set to
+ * take the newest 50, and `destinationLook` issues a full-body fetch per candidate — O(n log n)
+ * in a server-picked number, and that number times message bytes. 50 000 is far above any honest
+ * answer a 50-item page is taken from, and far below a response that hurts.
  */
 export const IMAP_SEARCH_MAX_UIDS = 50_000;
 
 /**
  * Message bodies the move's destination pre-check may download to disambiguate candidates.
- *
- * `destinationLook` fetches `source: true` **once per candidate** returned by a Message-ID
- * SEARCH, comparing fingerprints. Message-IDs are supposed to be unique, so the honest candidate
- * count is 0 or 1; 2 or 3 happens when a message was copied about. A server answering that SEARCH
- * with 10 000 UIDs turns one move into 10 000 full body downloads on the worker's shared
- * connection — the single worst count-to-bytes multiplier in the adapter.
- *
- * 32 is generous for the real cases and small enough that the worst case is bounded work rather
- * than an outage. Past it the move REFUSES rather than adopting: with more than 32 identically
- * identified candidates the pre-check cannot establish which message it is looking at, and
- * guessing is how a move lands on the wrong one.
+ * `destinationLook` fetches `source: true` once per candidate from a Message-ID SEARCH; the
+ * honest candidate count is 0 or 1, a few when a message was copied about. A server answering
+ * with 10 000 UIDs turns one move into 10 000 full-body downloads — the worst count-to-bytes
+ * multiplier in the adapter. Past 32 the move REFUSES rather than adopting: with that many
+ * identically identified candidates the pre-check cannot establish which message it is looking
+ * at, and guessing lands a move on the wrong one.
  */
 export const IMAP_CANDIDATE_BODY_PROBES_MAX = 32;
 
 /**
- * Rows the FLAG DRAIN may examine in one folder, in one pass.
- *
- * The drain's existing budget (`DEFAULT_SYNC_BATCH_MAX_FLAGS` and the per-folder share derived
- * from it) counts flag CHANGES, and the two dispositions that are not changes — an unknown UID,
- * and a row that agrees with the baseline — `continue` without spending any of it. Both are the
- * COMMON case: iCloud's `CHANGEDSINCE` is inert and answers with every message in the folder, so
- * on that provider a drain streams the whole folder and the budget never engages at all. A
- * ceiling on changes is not a ceiling on rows.
- *
- * ── IT WAS WRITTEN AS A DEGRADE, AND THE PREMISE FOR THAT WAS FALSE ────────────────────────
- *
- * The first version truncated: set the drain's `flagsTruncated`, break, let `FlagDrain.resumeUid`
- * continue on the next pass. The reasoning was sound about STATE — the resume point is real and no
- * flag can be lost — and wrong about the READ. **Breaking out of an ImapFlow async generator does
- * not cancel the FETCH.** The driver goes on draining the response, its command queue stays owned
- * by a read nobody is consuming, and the next folder's SELECT queues behind it — so a server
- * willing to stream indefinitely wedged the cycle anyway while the pass reported a tidy
- * truncation. **A bounded degrade that does not bound the read is not a degrade; it is the same
- * stall one command later, with a reassuring log line.**
- *
- * So this refuses, and the refusal retires the connection. A server that sends 100 000 rows for
- * one folder's flags is not one this connection can be handed on to. The drain's ORDINARY
- * truncation — its per-folder flag allowance — is untouched: that one stops after a few hundred
- * rows of a response the server is finishing normally, which is a different event.
- *
- * 100 000 is well above a legitimate folder scan's row count per pass and far below a stream that
- * costs the shared process anything.
+ * Rows the flag drain may examine in one folder, in one pass. The drain's budget counts flag
+ * CHANGES, and the two common dispositions — unknown UID, agrees-with-baseline — spend none of
+ * it; iCloud's inert `CHANGEDSINCE` answers with every message in the folder, so the budget never
+ * engages. The first version truncated and resumed — sound about state, wrong about the read:
+ * breaking out of an ImapFlow generator does not cancel the FETCH, the queue stays owned by a
+ * read nobody consumes, the next SELECT queues behind it. So this REFUSES and retires the
+ * connection; the drain's ordinary per-folder truncation is untouched. 100 000 is well above a
+ * legitimate scan, far below a stream that costs the shared process anything.
  */
 export const IMAP_FLAG_SCAN_MAX_ROWS = 100_000;
 
 /**
- * Rows a SAMPLE scan may examine — `sampleSenders` and `scanSentRecipients`.
- *
- * Both ask for an open-ended sequence range (`start:*`) and stop when they have collected `limit`
- * DISTINCT addresses. A server that answers with a million rows carrying the same address, or no
- * address at all, satisfies the exit condition never and the loop runs as long as the server
- * feels like talking.
- *
- * These TRUNCATE rather than refusing, because a sample is a sample: fewer messages examined is a
- * smaller sample and not a wrong answer. 10 000 is two orders of magnitude above the honest row
- * count (the range asks for at most `limit`, which defaults to 50 and 500).
+ * Rows a sample scan may examine — `sampleSenders` and `scanSentRecipients`. Both ask for an
+ * open-ended range and stop at `limit` DISTINCT addresses, so a server answering with a million
+ * rows of one address (or none) never satisfies the exit condition. These TRUNCATE rather than
+ * refuse: a smaller sample is not a wrong answer. 10 000 is two orders of magnitude above the
+ * honest row count (`limit` defaults to 50 and 500).
  */
 export const IMAP_SAMPLE_MAX_ROWS = 10_000;
 
 /**
- * Addresses read out of ONE message's envelope.
- *
- * `sampleSenders` and `scanSentRecipients` bound their OUTPUT (distinct addresses) and iterate
- * `[...to, ...cc, ...bcc]` of each message to produce it — a spread that materialises one
- * message's entire recipient list first. `scanSentRecipients`' own docblock says `limit` "bounds
- * BOTH the messages scanned and the addresses returned, so a single mail with a 4 000-address
- * To: header cannot turn a bounded scan into an unbounded result". That is true of the RESULT
- * and, once again, not of the READ: the 4 000 addresses are parsed and spread regardless.
- *
- * 1 000 is above any deliverable recipient list (providers cap RCPT counts far lower) and caps
- * the per-message work at a constant. Over-long lists are TRUNCATED rather than fatal: the
- * addresses beyond it are a sender's padding, not a mailbox fault, and the scan's answer is a
- * sample by construction.
+ * Addresses read out of one message's envelope. The samplers bound their OUTPUT and iterate
+ * `[...to, ...cc, ...bcc]` per message to produce it — a spread that materialises the whole
+ * recipient list first, so a 4 000-address To: header is parsed and spread regardless of the
+ * result cap. 1 000 is above any deliverable recipient list (providers cap RCPT far lower) and
+ * caps per-message work at a constant. Over-long lists are TRUNCATED, not fatal: the excess is a
+ * sender's padding, and the scan's answer is a sample by construction.
  */
 export const IMAP_ENVELOPE_ADDRESSES_MAX = 1_000;
 
@@ -335,22 +187,14 @@ export const IMAP_ENVELOPE_ADDRESSES_MAX = 1_000;
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
 /**
- * How far past its own declared `RFC822.SIZE` a message body stream may run before it is refused,
- * as a multiplier.
- *
- * **The batch byte budget trusts a number the server chose.** `fetchCapped` pre-fetches
- * `RFC822.SIZE`, refuses anything over {@link MAX_RAW_MESSAGE_BYTES}, and accumulates the
- * declared sizes against {@link DEFAULT_SYNC_BATCH_MAX_BYTES} — and then the body fetch that
- * follows has no byte accounting of its own at all. A server that answers `RFC822.SIZE 1` and
- * then streams ten gigabytes defeats every byte ceiling in the adapter while satisfying all of
- * them on paper. This is the literal-length arm of the row, and it is the one place where the
- * count ceilings are no defence whatever: one message is enough.
- *
- * A multiplier rather than an absolute, because the honest discrepancy is small and structural:
- * `RFC822.SIZE` is the size of the message as stored, and line-ending normalisation or a
- * re-encoding on the way out can legitimately move it by a few percent. 1.5× is far outside that
- * and far inside "the declared size was a fiction". The floor beside it exists because the
- * multiplier alone is useless against a declared size of 0 or 1.
+ * How far past its own declared `RFC822.SIZE` a body stream may run, as a multiplier. The batch
+ * byte budget trusts a server-chosen number: `fetchCapped` refuses anything over {@link
+ * MAX_RAW_MESSAGE_BYTES} and accumulates declared sizes against {@link
+ * DEFAULT_SYNC_BATCH_MAX_BYTES}, but the body fetch itself had no byte accounting — a server
+ * declaring `RFC822.SIZE 1` and streaming ten gigabytes satisfied every ceiling on paper. A
+ * multiplier because the honest discrepancy is small and structural (line-ending normalisation
+ * moves it a few percent); 1.5x is far outside that. The floor beside it exists because the
+ * multiplier is useless against a declared size of 0 or 1.
  */
 export const IMAP_BODY_OVERRUN_FACTOR = 1.5;
 
@@ -372,16 +216,12 @@ export function bodyOverrunCeiling(declared: number | undefined): number {
 }
 
 /**
- * Bytes one read of `ohmail/_meta` may accept across the whole window.
- *
- * The count ceiling on that folder bounds how MANY records come back and says nothing about how
- * large one of them is: the fold keeps each record's raw headers, and a single header block the
- * server chose the size of satisfies a count ceiling of 500 on its own. Whoever can append to
- * the folder picks which axis to spend, so both have to exist.
- *
- * 8 MiB against a legitimate population of a handful of records whose own payload ceiling is
- * 4 KiB — roughly four times the largest honest window, and far below where retaining it
- * registers against the shared worker's memory.
+ * Bytes one read of `ohmail/_meta` may accept across the whole window. The count ceiling bounds
+ * how MANY records come back, not how large one is: the fold keeps each record's raw headers, and
+ * one server-sized header block satisfies a count ceiling of 500 on its own — whoever can append
+ * to the folder picks which axis to spend. 8 MiB is roughly four times the largest honest window
+ * (a handful of records with a 4 KiB payload ceiling) and far below the shared worker's memory
+ * budget.
  */
 export const IMAP_META_BYTES_MAX = boundFromEnv("TF_IMAP_META_MAX_BYTES", 8 * 1024 * 1024);
 
@@ -390,18 +230,12 @@ export const IMAP_META_BYTES_MAX = boundFromEnv("TF_IMAP_META_MAX_BYTES", 8 * 10
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
 /**
- * Wall-clock ceiling on ONE adapter read against the server.
- *
- * **Nothing else in the stack bounds this.** `WORKER_NET_TIMEOUTS.socketMs` is 120 s of
- * INACTIVITY — Node resets it on every byte — so a server dribbling one byte a minute holds the
- * connection, the mailbox lock and this mailbox's slot in the shared process for ever while never
- * once being inactive. It is not sending too much, so no count ceiling sees it; it is not idle,
- * so no socket timer sees it. A wall clock is the only instrument that does.
- *
- * 180 s: comfortably above any legitimate metadata read (a 500 000-UID enumeration at this
- * module's ceiling is a few MB on the wire), comfortably below the 15-minute `sync_lag` alert, so
- * a provider that accepts a command and answers it glacially fails inside the window an operator
- * finds out in.
+ * Wall-clock ceiling on one adapter read. Nothing else in the stack bounds this:
+ * `WORKER_NET_TIMEOUTS.socketMs` is 120 s of INACTIVITY, reset on every byte, so a server
+ * dribbling one byte a minute holds the connection, the mailbox lock and the shared slot for ever
+ * while never being idle. No count ceiling sees it either — it is not sending too much, just too
+ * slowly. 180 s is comfortably above any legitimate metadata read and below the 15-minute
+ * `sync_lag` alert, so a glacial provider fails inside the window an operator finds out in.
  */
 export const IMAP_READ_DEADLINE_MS = 180_000;
 
@@ -417,19 +251,13 @@ export const IMAP_READ_DEADLINE_MS = 180_000;
 export const IMAP_META_DEADLINE_MS = boundFromEnv("TF_IMAP_META_DEADLINE_MS", 60_000);
 
 /**
- * Wall-clock ceiling on ONE WHOLE `changesSince` pass.
- *
- * {@link IMAP_READ_DEADLINE_MS} bounds one read, and a hostile server is under no obligation to
- * be slow only once: six watched folders plus a Sent scan, each stopping just short of the
- * per-read ceiling, is a cycle of twenty minutes — past the `sync_lag` alert, and twenty minutes
- * during which this mailbox holds a connection and a slot. The per-read ceiling composes badly
- * by construction, so the pass needs one of its own.
- *
- * 300 s is above the slowest legitimate first-sync pass measured here and below the alert. This
- * is the *per-mailbox time budget* the row asks for, placed at the adapter rather than in the
- * worker's cycle scheduler: `changesSince` is where the pass begins and ends and where the folder
- * loop already lives, so the budget is enforceable there with a clock and a check, while getting
- * the same property from the scheduler would mean rebuilding it.
+ * Wall-clock ceiling on one whole `changesSince` pass. {@link IMAP_READ_DEADLINE_MS} bounds one
+ * read, and a hostile server need not be slow only once: six watched folders plus a Sent scan,
+ * each just under the per-read ceiling, is a twenty-minute cycle — past the `sync_lag` alert,
+ * holding a connection and a slot throughout. 300 s is above the slowest legitimate first-sync
+ * pass measured and below the alert. Placed at the adapter rather than the worker's scheduler
+ * because `changesSince` is where the pass begins and ends — enforceable with a clock and a
+ * check, where the scheduler would need rebuilding.
  */
 export const IMAP_CYCLE_DEADLINE_MS = 300_000;
 
@@ -472,16 +300,12 @@ export class ImapDeadline {
   }
 
   /**
-   * Race a promise-shaped command against this clock.
-   *
-   * **This abandons a command the driver is still running**, so the connection is left poisoned —
-   * the identical trade `fetchPart` documents when it throws out of its own `for await`, and it
-   * is affordable for the same reason: the caller closes the connection on the way out. There is
-   * no way to bound `ImapFlow.list()` or `.search()` from here that does not have this shape;
-   * they return an already-materialised array.
-   *
-   * The timer is always cleared, including on the success path — a dangling 180 s timer per read
-   * would keep the process alive past its work.
+   * Race a promise-shaped command against this clock. This abandons a command the driver is still
+   * running, so the connection is left poisoned — the same trade `fetchPart` documents,
+   * affordable because the caller closes the connection on the way out. There is no way to bound
+   * `ImapFlow.list()` or `.search()` from here without this shape; they return an
+   * already-materialised array. The timer is always cleared, success path included — a dangling
+   * 180 s timer per read would keep the process alive past its work.
    */
   async race<T>(
     op: Promise<T>, folder?: string,
@@ -503,19 +327,13 @@ export class ImapDeadline {
         new Promise<never>((_resolve, reject) => {
           timer = setTimeout(
             () => {
-              // ── ABANDONING A COMMAND IS NOT THE SAME AS ENDING IT ────────────────────────
-              //
-              // The rejection below unblocks THIS caller and does nothing whatever to the
-              // command: `op` is still outstanding, ImapFlow's queue still belongs to it, and
-              // the server may still be filling it. An earlier version of this comment said the
-              // caller closes the connection on the way out, which is true of the worker's
-              // per-mailbox catch arm and NOT true of every caller — the worker retains an
-              // adapter across generic failures, so a later cycle could reuse a connection whose
-              // queue is owned by a command nobody is reading.
-              //
-              // So the connection is retired HERE, by the code that decided to stop reading,
-              // rather than left to a convention. A deadline breach means this connection is
-              // finished.
+              // Abandoning a command is not ending it: the rejection unblocks this caller and
+              // does nothing to `op` — ImapFlow's queue still belongs to it and the server may
+              // still be filling it. The caller does not always close the connection (the worker
+              // retains an adapter across generic failures), so a later cycle could reuse a
+              // connection whose queue is owned by a command nobody reads. The connection is
+              // therefore retired HERE, by the code that decided to stop reading. A deadline
+              // breach means this connection is finished.
               const because = new ImapBoundExceeded(
                 this.bound, this.budgetMs, this.budgetMs, folder,
               );
@@ -551,17 +369,13 @@ interface BoundedFetchBase<T, R> {
   deadline?: ImapDeadline;
   folder?: string;
   /**
-   * Retire the connection — the stream is being abandoned mid-command.
-   *
-   * `because` is the breach — the refusal the caller is about to see, or, for a truncating
-   * stop that raises nothing, the same object describing the ceiling that fired. It is always
-   * supplied: a retirement is reported, and a report naming the wrong condition is worse than
-   * no report at all.
-   *
-   * The argument is `notify`: TRUE when this function will NOT throw, so nothing else is going
-   * to report the retirement and the connection's owner has to be told directly. FALSE when it
-   * is about to throw, because then the throw IS the report — and a second, synthetic one
-   * would reset the caller's failure accounting instead of adding to it.
+   * Retire the connection — the stream is being abandoned mid-command. `because` is the breach
+   * the caller is about to see or, for a truncating stop that raises nothing, the same object
+   * describing the ceiling that fired; always supplied, because a retirement is reported and a
+   * report naming the wrong condition is worse than none. `notify` is TRUE when this function
+   * will not throw, so the connection's owner must be told directly; FALSE when it is about to
+   * throw — the throw is the report, and a second synthetic one would reset the caller's failure
+   * accounting.
    */
   onAbandon?: (notify: boolean, because: ImapBoundExceeded) => void;
   map: (item: T) => R;
@@ -596,35 +410,14 @@ export interface BoundedFetchResult<R> {
 }
 
 /**
- * Consume at most `max` items from a server-driven async iterable, checking the clock as it goes.
- *
- * **This is the one helper that bounds the READ rather than the result**, and it is why the
- * `ImapFlow.fetch()` paths are in better shape than the `list()`/`search()` ones: an async
- * iterable is pulled, so declining to pull is declining to receive. The array never grows past
- * the ceiling and the loop never runs past the clock.
- *
- * `onOverflow: "throw"` is the default and the right answer for anything whose completeness is
- * load-bearing — an enumeration that silently stopped early would read as "those messages were
- * expunged", which is the durable lie this adapter's `unanswered` handling exists to avoid.
- * `"stop"` is for genuine SAMPLES, where fewer items is a smaller sample and not a wrong answer.
- *
- * ── THE PULL IS RACED, NOT THE GAP BETWEEN PULLS, AND THE DIFFERENCE IS THE WHOLE GUARD ─────
- *
- * This was written as `for await (const item of src) { deadline.check() }`, and that check runs
- * **between items and nowhere else.** A `for await` suspends inside the iterator's `next()`, so a
- * server that starts a row and never finishes it parks the loop in a place the clock is never
- * consulted from — while still emitting enough bytes to reset the socket's inactivity timer. The
- * slow-loris defence this file is largely about was therefore defeated by the most obvious version
- * of a slow loris: not "one item per minute", but "one item, then nothing, for ever".
- *
- * Driving the iterator by hand and racing **each `next()`** is what closes it. The gap between
- * items and the wait *inside* an item are now the same thing to the clock.
- *
- * `onAbandon` retires the connection whenever this function stops consuming a stream the server
- * may still be filling — an overflow (either disposition) or a deadline. Breaking out of an
- * ImapFlow generator does NOT cancel the underlying FETCH: the driver keeps draining it, and the
- * next command on that connection queues behind a command nobody is reading. Truncation that
- * leaves the read running is not truncation.
+ * Consume at most `max` items from a server-driven async iterable, checking the clock as it goes
+ * — the one helper that bounds the READ: an iterable is pulled, so declining to pull is declining
+ * to receive. `onOverflow: "throw"` is the default where completeness is load-bearing (an
+ * enumeration stopping early would read as an expunge); `"stop"` is for genuine samples. Each
+ * `next()` is raced, not the gap between pulls: a `for await` suspends inside the iterator, so a
+ * server that starts a row and never finishes it parks the loop where the clock is never
+ * consulted. `onAbandon` retires the connection whenever this stops consuming — breaking out of
+ * an ImapFlow generator does not cancel the FETCH.
  */
 /**
  * THE ONE BOUNDED READ: count, bytes and wall clock on a server-driven stream.
@@ -700,16 +493,11 @@ export async function boundedCollect<T, R>(
 }
 
 /**
- * The smallest element, or `empty` for an empty array — **without a spread.**
- *
- * `Math.min(...xs)` passes one ARGUMENT per element, and the JavaScript engine throws
- * `RangeError: Maximum call stack size exceeded` at roughly 125 000 of them. That is comfortably
- * below {@link IMAP_ENUM_MAX_UIDS}, so a server could over-answer well inside the enumeration
- * ceiling and still crash the pass — a ceiling that admits arrays the code cannot then process is
- * a promise it does not keep, and raising what is admissible is what made the shape reachable.
- *
- * A helper rather than an inline loop because the next spread over a server-sized array should
- * have somewhere obvious to go.
+ * The smallest element, or `empty` for an empty array — without a spread. `Math.min(...xs)`
+ * passes one argument per element and throws `RangeError: Maximum call stack size exceeded`
+ * around 125 000 of them, comfortably below {@link IMAP_ENUM_MAX_UIDS} — a server could
+ * over-answer inside the enumeration ceiling and still crash the pass. A helper rather than an
+ * inline loop so the next spread over a server-sized array has somewhere obvious to go.
  */
 export function minOf(xs: readonly number[], empty: number): number {
   if (xs.length === 0) return empty;
