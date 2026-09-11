@@ -3521,20 +3521,20 @@ export function MessageBody({
   const sheets = okMail ? okMail.sheets : NO_SHEETS;
   const pixels = remote.filter((b) => b.pixel).length;
   /**
-   * Did the pictures actually load? Not the same question as `remoteLoaded`. `remoteLoaded` is
-   * the READER's answer — the stored flag, this session's press, the account's auto mode;
-   * whether anything then loaded is a second fact, and the bar is about that one: keying it on
-   * consent means a message can show blanked boxes while the bar says nothing. The two disagree
-   * exactly where the sanitizer was also given no proxy — a client with no image proxy (the
-   * demo, any build with no API) and the fail-closed branch where {@link proxyImgSource} cannot
-   * state a source the frame's policy would accept; in both, the pictures are counted in
-   * `mail.blocked` and must be reported as blocked. Reading `proxy` rather than re-deriving is
-   * what makes that impossible to get wrong — it is the value the rewrite was performed with.
-   * The measured case behind the second half: an app served from an IPv6 literal origin —
-   * `img-src http://[::1]:45365/api/img` refused BOTH a matching and a non-matching url in
-   * Chromium while `'self'` fetched both, and CSP3's `host-char` (ALPHA/DIGIT/"-") offers no
-   * spelling that works, so `null` is the only truthful answer. Production is a domain; this is
-   * a development topology.
+   * Did the pictures actually load? Not the same question as `remoteLoaded`. `remoteLoaded` is the READER's answer —
+   * the stored flag, this session's press, the account's auto mode; whether anything then loaded is a second fact,
+   * and the bar is about that one: keying it on consent means a message can show blanked boxes while the bar says
+   * nothing. The two disagree exactly where the sanitizer was also given no proxy — a client with no image proxy (the
+   * demo, any build with no API) and the fail-closed branch where {@link proxyImgSource} cannot state a source the
+   * frame's policy would accept; in both, the pictures are counted in `mail.blocked` and must be reported as blocked.
+   */
+
+  /**
+   * Reading `proxy` rather than re-deriving is what makes that impossible to get wrong — it is the value the rewrite
+   * was performed with. The measured case behind the second half: an app served from an IPv6 literal origin —
+   * `img-src http://[::1]:45365/api/img` refused BOTH a matching and a non-matching url in Chromium while `'self'`
+   * fetched both, and CSP3's `host-char` (ALPHA/DIGIT/"-") offers no spelling that works, so `null` is the only
+   * truthful answer. Production is a domain; this is a development topology.
    */
   const remoteShown = proxy !== null;
   // UNDER THE LOADED MODES THE BEACONS ALONE WERE REFUSED — and that refusal is still said, in a
