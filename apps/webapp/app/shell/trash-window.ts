@@ -33,7 +33,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createSessionBodyDoor, type SessionBodyHeld } from "@ohmail/client-engine";
 import {
   apiConfigured, trashWindow as trashWindowApi,
-  type TrashWindowItemWire, type TrashWindowMailboxWire,
+  type TrashWindowItemWire, type TrashWindowMailboxWire, type TrashWindowPageWire,
 } from "../api-client";
 
 /**
@@ -44,6 +44,27 @@ import {
 export const trashLiveKeyOf = (
   i: { mailboxId: string; uidValidity: string; uid: number },
 ): string => `${i.mailboxId}:${i.uidValidity}:${i.uid}`;
+
+/**
+ * THE TWO READS THIS WINDOW MAKES, behind one seam a host replaces with its own transport —
+ * the junk window's `JunkWire` rule, and what makes the section exist on the desktop at all: that build
+ * aliases the Cloud client to a refusing stub, so a hook reaching for it directly could only ever
+ * report "no server" (which is precisely what it did).
+ *
+ * GET-ONLY, AND THE ABSENCE IS THE CONTRACT: there are two reads here and there is no verb, on
+ * this seam or on any wire satisfying it. A message the provider filed in Trash has no origin
+ * recorded anywhere, so "put it back" would be ohmail choosing a folder for somebody else's mail.
+ */
+export interface TrashWire {
+  list(opts?: { cursor?: string }): Promise<TrashWindowPageWire>;
+  body(mailboxId: string, uid: number, uidValidity: string): Promise<{ subject: string; text: string }>;
+}
+
+/** The browser's wire: the Cloud client, verbatim. */
+const cloudWire: TrashWire = {
+  list: (opts) => trashWindowApi.list(opts),
+  body: (m, u, v) => trashWindowApi.body(m, u, v),
+};
 
 /** What one settled live-body ask holds — the route's own answer. */
 type TrashBodyWireAnswer = { subject: string; text: string };
@@ -73,9 +94,10 @@ export function trashReadVerbs(row: { live: boolean }): TrashReadVerbs {
 
 export interface TrashWindowControl {
   /**
-   * IS THERE A SERVER BEHIND THIS — `apiConfigured()`. The shell withholds the control from the
-   * view when it is false, and the hook fetches nothing: a build whose api client is a refusing
-   * stub would otherwise hold a permanent loading state over the section.
+   * IS THERE ANYTHING TO ASK — `apiConfigured()` for the browser's wire, `true` whenever a host
+   * handed one in ({@link TrashWire}), because a host wire IS the server. The shell withholds the
+   * control from the view when it is false and the hook fetches nothing: a build whose api client
+   * is a refusing stub would otherwise hold a permanent loading state over the section.
    */
   supported: boolean;
   /** The list read's own state. `failed` renders as failed, never as an empty folder. */
@@ -145,8 +167,9 @@ const liveOnly = (rows: TrashWindowItemWire[]): TrashWindowItemWire[] =>
  * the first page is read once on arrival and the whole state is dropped on leaving, because
  * these rows are off-mirror and stale the moment somebody walks away.
  */
-export function useTrashWindow(active: boolean): TrashWindowControl {
-  const supported = apiConfigured();
+export function useTrashWindow(active: boolean, hostWire?: TrashWire): TrashWindowControl {
+  const wire = hostWire ?? cloudWire;
+  const supported = hostWire !== undefined || apiConfigured();
   const [phase, setPhase] = useState<"loading" | "ready" | "failed">("loading");
   const [items, setItems] = useState<TrashWindowItemWire[]>([]);
   const [boxes, setBoxes] = useState<TrashWindowMailboxWire[]>([]);
@@ -177,7 +200,7 @@ export function useTrashWindow(active: boolean): TrashWindowControl {
     }
     const gen = ++generation.current;
     setPhase("loading");
-    void trashWindowApi.list().then(
+    void wire.list().then(
       (page) => {
         if (generation.current !== gen) return;
         setItems(liveOnly(page.items));
@@ -191,7 +214,7 @@ export function useTrashWindow(active: boolean): TrashWindowControl {
         setPhase("failed");
       },
     );
-  }, [supported]);
+  }, [supported, wire]);
 
   useEffect(() => {
     if (!active) {
@@ -219,7 +242,7 @@ export function useTrashWindow(active: boolean): TrashWindowControl {
   const loadOlder = useCallback(() => {
     if (nextCursor === null || olderLoading) return;
     setOlderLoading(true);
-    void trashWindowApi.list({ cursor: nextCursor }).then(
+    void wire.list({ cursor: nextCursor }).then(
       (page) => {
         setOlderLoading(false);
         /* AN EPOCH RESET IS A RESTART, NOT AN APPEND. The server states which mailbox's cursor it
@@ -244,7 +267,7 @@ export function useTrashWindow(active: boolean): TrashWindowControl {
         setOlderLoading(false);
       },
     );
-  }, [nextCursor, olderLoading, fetchFirst]);
+  }, [nextCursor, olderLoading, fetchFirst, wire]);
 
   const bodyFor = useCallback(
     (item: TrashWindowItemWire): TrashLiveBodyPhase => {
@@ -259,10 +282,10 @@ export function useTrashWindow(active: boolean): TrashWindowControl {
   const openBody = useCallback((item: TrashWindowItemWire, opts: { retry?: boolean } = {}) => {
     bodyDoor.open(
       trashLiveKeyOf(item),
-      () => trashWindowApi.body(item.mailboxId, item.uid, item.uidValidity),
+      () => wire.body(item.mailboxId, item.uid, item.uidValidity),
       opts,
     );
-  }, [bodyDoor]);
+  }, [bodyDoor, wire]);
 
   return {
     supported,

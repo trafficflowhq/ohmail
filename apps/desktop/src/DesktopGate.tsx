@@ -88,6 +88,7 @@ import { profileImportOverBridge } from "./local-profile-import.js";
 import { consentOverBridge, consentOverBridgeStandalone } from "./local-consent.js";
 import { olderBodyOverBridge } from "./local-older-body.js";
 import { junkOverBridge } from "./local-junk.js";
+import { trashOverBridge } from "./local-trash.js";
 import { cloudSuggestWire } from "./cloud-suggest.js";
 import { readAiStatus, type LocalAiStatus } from "./local-ai.js";
 import { AiProviderForm } from "./AiProviderForm.js";
@@ -1289,6 +1290,11 @@ export function DesktopGate() {
            `withoutFoldersFlag` strips this one FIELD out of it because the engine mounts no
            folder verb. `local-junk.ts` carries the argument. */
         {...{ junkWire: junkOverBridge }}
+        /* THE LIVE TRASH WINDOW's wire, on the same terms. Both doors serve `/trash/window*` —
+           the standalone one from `localRoutes`, the hosted one through the relay — and without a
+           wire the section reports "no server" and is withheld, which is what this window did.
+           Two reads and no verb; `local-trash.ts` carries the argument. */
+        {...{ trashWire: trashOverBridge }}
         /* SETTINGS → SUBSCRIPTION, SECURITY AND ACCOUNT — the three panes the web client has on a
            hosted account and this window did not, so its Settings nav was simply shorter with
            nothing on screen saying why. An absent entry does not read as "this is done elsewhere";

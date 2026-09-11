@@ -226,7 +226,7 @@ import { TagView } from "../views/TagView";
 import { FolderView } from "../views/FolderView";
 import { TrashView } from "../views/TrashView";
 import { useTrashPage } from "./trash-page";
-import { useTrashWindow } from "./trash-window";
+import { useTrashWindow, type TrashWire } from "./trash-window";
 import { TriageView } from "../views/TriageView";
 import { ComposeView } from "../views/ComposeView";
 import { DraftsView } from "../views/DraftsView";
@@ -812,6 +812,7 @@ export function AppShell({
   consentTransport,
   olderBodyWire,
   junkWire,
+  trashWire,
   suggestWire,
   firstRun,
   mailtoDraft,
@@ -1186,6 +1187,13 @@ export function AppShell({
    */
   junkWire?: JunkWire;
   /**
+   * THE LIVE TRASH WINDOW'S WIRE, on the same terms as {@link junkWire}: the desktop aliases the
+   * Cloud client to a refusing stub, so without a wire handed in the section reports "no server"
+   * and is withheld. Both desktop doors serve `/trash/window*` — the standalone one from
+   * `localRoutes`, the hosted one through the relay — so the wire is handed in on both.
+   */
+  trashWire?: TrashWire;
+  /**
    * THE SCREENER'S TWO SPEND CALLS, WHEN THE HOST HAS ITS OWN WIRE — the desktop on its HOSTED
    * door, and nobody else.
    *
@@ -1282,6 +1290,7 @@ export function AppShell({
             consentTransport={consentTransport}
             olderBodyWire={olderBodyWire}
             junkWire={junkWire}
+            trashWire={trashWire}
             suggestWire={suggestWire}
             firstRun={firstRun}
             mailtoDraft={mailtoDraft}
@@ -1330,7 +1339,7 @@ function MailStateHost({ probe, freshnessProbe, children }: { probe?: MailboxPro
   );
 }
 
-function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, aiSection, billingSection, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, notificationHost, screeningSection, screenerSuggest, awayTransport, awayIsLocal, awayOnHost, profileImportTransport, consentTransport, olderBodyWire, junkWire, suggestWire, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
+function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, aiSection, billingSection, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, notificationHost, screeningSection, screenerSuggest, awayTransport, awayIsLocal, awayOnHost, profileImportTransport, consentTransport, olderBodyWire, junkWire, trashWire, suggestWire, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
   /** The pull settle watch's read — the same probe `MailStateHost` above provides the strip. */
   mailboxFacts?: MailboxProbe;
   /** See `AppShell`'s prop of this name — absent withholds the organizer notice. */
@@ -1366,6 +1375,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   olderBodyWire?: OlderBodyWire;
   /** The Junk window's wire — see the outer prop of the same name. */
   junkWire?: JunkWire;
+  /** The live Trash window's wire — see the outer prop of the same name. */
+  trashWire?: TrashWire;
   suggestWire?: SuggestWire;
   /** The first-run stage's door — see the outer prop of the same name. */
   firstRun?: FirstRunHost;
@@ -2053,6 +2064,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    */
   const trashWindow = useTrashWindow(
     !demo && consent.foldersEnabled && !seedOwed && route.view === "trash",
+    trashWire,
   );
   const folderIdForOlder = route.view === "folder" ? (route.folderId ?? undefined) : undefined;
   /**
