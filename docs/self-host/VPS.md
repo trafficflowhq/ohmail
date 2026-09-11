@@ -562,3 +562,6 @@ storage lives elsewhere:
 - `https://mail.example.com/health` — answers only after the schema is
   verified and the key ring loads, so a 200 here means "migrated, keyed,
   serving".
+- `https://mail.example.com/version` — which build this install is running.
+  Dialled by its IP address, or by any name other than `OHMAIL_ORIGIN`, the box
+  answers this one path and refuses the rest with a 421 naming the origin.
