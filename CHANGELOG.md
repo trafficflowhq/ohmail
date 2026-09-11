@@ -13,6 +13,13 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Still to come
+
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
+
+## [0.16.2] — 2026-09-11
+
 ### A phone that organizes its own mailbox keeps it
 
 A phone can be the install that organizes a mailbox. Every install writes a record into the mailbox
@@ -336,11 +343,6 @@ The compose project name was fixed, so a second stack in a second directory was 
 and its first start took over the first install's containers and volumes. `OHMAIL_PROJECT` now
 names each stack, defaulting to the name existing installs already have. Changing it on a running
 install orphans that install's volumes, so choose it before first boot.
-
-### Still to come
-
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
 
 ## [0.16.1] — 2026-09-10
 
@@ -5807,7 +5809,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.16.1...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.16.2...HEAD
+[0.16.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.16.2
 [0.16.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.16.1
 [0.16.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.16.0
 [0.15.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.15.0
