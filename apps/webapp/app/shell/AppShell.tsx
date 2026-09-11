@@ -3125,32 +3125,28 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   );
 
   /**
-   * The body comes from REACT STATE, not from `readReplyDraft`. Private mode refuses the
-   * `localStorage` write, so re-reading the scratch buffer at press time would send an empty
-   * reply — or, with the empty guard in place, refuse to send at all — for anyone browsing
-   * privately. The editor is only reachable while `replyTo` is this message, so the guard
-   * below is a belt on the same waistband.
-   *
-   * ── AND IT NAMES A MAILBOX ONLY TO OVERRIDE ONE ─────────────────────────────────────────
-   *
-   * A reply sends from the mailbox the message arrived in, and `Engine.enrich` already derives
-   * that from the parent (`engine.ts:671`) — so the ordinary case adds NOTHING here and the
-   * envelope is unchanged. `mailboxId` is attached only when the resolved sender is NOT the
-   * parent's: the parent's mailbox is `disabled` or gone and `resolveReplyFrom` named a substitute
-   * (`InlineReply` SAYING SO on screen), or the reader picked a different address in the From
-   * selector (`replyFromId`). The wire and the sentence come from the same call over the same
-   * override, which is the point of it being a pure function.
-   *
-   * When nothing can be named the field stays off and `enrich` behaves exactly as before —
-   * `sendingMailboxId`'s newest-message guess is a COMPOSE fallback and must never reach a
-   * reply, where it would silently answer from an address the sender never wrote to.
-   *
-   * THE ENVELOPE READS `ownAddresses`, AND IT MUST BE THE CURRENT ONE. A callback that captured
-   * it once would answer with the identity the account had when that closure was made — on a
-   * cold tab the empty list, i.e. the unknown-reader envelope — for as long as the closure
-   * lived. `useStableCallback` is what makes that unrepresentable rather than a dependency
-   * array: the body is rebuilt every render and reached through a ref, so there is no capture
-   * to go stale and no list of names to keep in step with the reads above.
+   * The body comes from REACT STATE, not from `readReplyDraft`: private mode refuses the `localStorage` write, so
+   * re-reading the scratch buffer at press time would send an empty reply — or refuse to send at all — for anyone
+   * browsing privately. The editor is only reachable while `replyTo` is this message, so the guard below is a belt on
+   * the same waistband. It names a mailbox only to OVERRIDE one: a reply sends from the mailbox the message arrived
+   * in, already derived by `Engine.enrich` from the parent, so the ordinary case adds nothing. `mailboxId` is
+   * attached only when the resolved sender is NOT the parent's — the parent's mailbox is disabled or gone and
+   * `resolveReplyFrom` named a substitute (`InlineReply` saying so on screen), or the reader picked an address in the
+   * From selector (`replyFromId`); wire and sentence come from the same call over the same override.
+   */
+
+  /**
+   * When nothing can be named the field stays off — `sendingMailboxId`'s newest-message guess is a COMPOSE fallback
+   * and must never reach a reply.
+   */
+
+  /**
+   * The envelope reads `ownAddresses`, and it must be the CURRENT one: a callback that captured
+   * it once would answer with the identity the account had when the closure was made — on a
+   * cold tab the empty list, the unknown-reader envelope — for as long as the closure lived.
+   * `useStableCallback` makes that unrepresentable rather than a dependency array: the body is
+   * rebuilt every render and reached through a ref, so there is no capture to go stale and no
+   * list of names to keep in step with the reads above.
    */
   const sendReply = useStableCallback((messageId: string) => {
     if (messageId !== replyTo) return;
@@ -3350,39 +3346,30 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   }, [autosave.draftId, compose.sig]);
 
   /**
-   * THE DRAFTS LIST, and the two things a row can do.
-   *
-   * `draftsList` lists what the user can still act on: `draft` rows, plus `unverified` and
-   * stranded-`sending` ones — a send that did not confirm holds the only copy of its text, and
-   * a list that hid it made an undelivered message invisible on every surface. `sent` rows and
-   * live sends stay out (see the selector's own header).
-   *
-   * ── OPENING ONE ────────────────────────────────────────────────────────────────────────
-   *
-   * A draft that answers a message THIS DEVICE HOLDS opens in that message's own inline editor,
-   * where the conversation it belongs to is on screen. Anything else — a compose, or a reply
-   * whose parent has not synced here — opens in Compose. `repliesHere` is the same predicate the
-   * row is labelled from, so the badge and the destination cannot disagree.
-   *
-   * Opening a compose draft ADOPTS its id, so the very next autosave PATCHes the row that was
-   * opened rather than creating a second one beside it. Opening an UNCONFIRMED send does NOT
-   * adopt, and there are two of those with different endings. A row this browser holds no
-   * unresolved record for is STRANDED (another device sent it, or this browser's record was
-   * resolved): the server refuses to send a row past `draft` again, so the text is recovered into
-   * a fresh row — see `recoverySeed` — and the stranded one is discarded once the fresh send
-   * confirms. A row this browser IS still waiting on is PARKED: no fresh row, no fresh session,
-   * nothing discarded; the record's own identity is restored and Send stays refused with the
-   * warning. The parked branch below is the one that decides, and it decides from the record,
-   * never from the row's status.
-   *
-   * ── AND OPENING A REPLY DOES NOT ADOPT ─────────────────────────────────────────────────
-   *
-   * The inline reply editor has no autosave — it is a per-message scratch buffer — so there is
-   * nothing to adopt the id INTO, and adopting it into the COMPOSE hook would point the next
-   * compose at a reply row. The draft's text seeds the editor and the row stays as it is; sending
-   * the reply creates its own row, exactly as it did before. Stated because it is the one place
-   * the "one row birth-to-sent" rule does not yet reach, and a reader will otherwise assume it
-   * was an oversight.
+   * The drafts list, and the two things a row can do. `draftsList` lists what the user can
+   * still act on: `draft` rows, plus `unverified` and stranded-`sending` ones — a send that did
+   * not confirm holds the only copy of its text, and hiding it made an undelivered message
+   * invisible on every surface; `sent` rows and live sends stay out. Opening one: a draft that
+   * answers a message THIS DEVICE HOLDS opens in that message's inline editor, where its
+   * conversation is on screen; anything else opens in Compose. `repliesHere` is the same
+   * predicate the row is labelled from, so badge and destination cannot disagree.
+   */
+
+  /**
+   * Opening a compose draft ADOPTS its id, so the next autosave PUTs the opened row rather than creating a second
+   * beside it. Opening an UNCONFIRMED send does NOT adopt, with two endings: a row this browser holds no unresolved
+   * record for is STRANDED (another device sent it, or the record was resolved) — the server refuses to send a row
+   * past `draft` again, so the text is recovered into a fresh row (`recoverySeed`) and the stranded one discarded
+   * once the fresh send confirms; a row this browser IS still waiting on is PARKED — no fresh row, no fresh session,
+   * the record's identity restored and Send refused with the warning. The parked branch decides from the RECORD,
+   * never the row's status.
+   */
+
+  /**
+   * And opening a reply does not adopt: the inline editor has no autosave — a per-message scratch buffer — so there
+   * is nothing to adopt the id INTO, and adopting it into the COMPOSE hook would point the next compose at a reply
+   * row. The draft's text seeds the editor, the row stays, and sending creates its own row — stated because it is the
+   * one place the "one row birth-to-sent" rule does not yet reach.
    */
   const drafts = useMemo(() => draftsList(reader), [reader, version]);
   /**
@@ -3479,30 +3466,26 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
         // Plain text is the honest reading of what this client holds.
         html: "",
         fromMailboxId: d.mailboxId,
-        // NO `forwardOf`, and it cannot be otherwise: `forwardOf` rides the SEND request, never the
-        // draft row (`send-service.ts` reads it from the request body), so the `drafts` table has no
-        // column that could remember it and an `EngineDraft` carries nothing to read back. A forward
-        // abandoned to autosave and reopened from the drafts list is therefore a plain compose whose
-        // subject still says "Fwd:" — the original is not quoted into it. That is the honest reading
-        // of what the account stored, and it is preferable to the alternative on offer: quoting the
-        // original into the draft body at write time would put a copy of somebody else's message —
-        // possibly a redacted sensitive one — into a stored row, which is the exact thing the
-        // server-side quote exists to prevent. Recorded here because a reader will otherwise take it
-        // for an oversight, and because the fix is a schema change, not a line in this function.
-        //
-        // THE SIGNATURE BLOCK'S STATE survives exactly as far as this device knows it (review
-        // rounds 1–3). The `drafts` row stores the message's prose and no block state, so a
-        // draft reopened from ANOTHER device re-offers the block in its resting `following`
-        // state — visibly, below the editor, strikeable again; never silently inside the prose.
-        // On THIS device the state lives in the editor meta under the ROW's id (`draft:<id>` —
-        // see `ReplyEditorMeta`; the sync effect beside the autosave hook writes it), which is
-        // the one handle that survives a reload and names the same message: rounds 2–3 killed
-        // both weaker keys, the in-memory autosave id (empty after reload) and a content key
-        // (a rich draft's local text and server-derived text legitimately differ). The full
-        // cross-device fix is a drafts column — a schema change, recorded rather than smuggled.
-        // The meta lane leads (it survives a reload); the in-memory state is the fallback for
-        // the row autosave still holds, because storage can refuse (a private window) and a
-        // same-session reopen must not resurrect a struck block over a working editor.
+        // No `forwardOf`, and it cannot be otherwise: `forwardOf` rides the SEND request, never
+        // the draft row (`send-service.ts` reads it from the request body), so the `drafts`
+        // table has no column to remember it and an `EngineDraft` carries nothing to read back.
+        // A forward abandoned to autosave and reopened is therefore a plain compose whose
+        // subject still says "Fwd:" — the honest reading of what the account stored, and better
+        // than the alternative: quoting the original into the draft body would put a copy of
+        // somebody else's message — possibly a redacted sensitive one — into a stored row, the
+        // exact thing the server-side quote prevents. Recorded because the fix is a schema
+        // change, not a line in this function.
+
+        // The signature block's state survives exactly as far as this device knows it (review
+        // rounds 1–3). The `drafts` row stores prose and no block state, so a draft reopened
+        // from ANOTHER device re-offers the block in its resting `following` state — visibly,
+        // strikeable again, never silently inside the prose. On THIS device the state lives in
+        // the editor meta under the ROW's id (`draft:<id>`, see `ReplyEditorMeta`) — the one
+        // handle that survives a reload and names the same message; rounds 2–3 killed both
+        // weaker keys (the in-memory autosave id, empty after reload; a content key, since
+        // local and server-derived text legitimately differ). The meta lane leads; the
+        // in-memory state is the fallback for the row autosave still holds, because storage can
+        // refuse (a private window) and a same-session reopen must not resurrect a struck block.
         ...((): Partial<ComposeFields> => {
           if (d.status !== "draft") return {};
           // LIVE STATE IS AUTHORITATIVE for the row the composer still holds:
@@ -3566,43 +3549,37 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       if (!parked) clearComposeDraft();
       writeComposeDraft(seeded);
       if (parked) {
-        /* THE HELD MESSAGE, REOPENED AS ITSELF. No new row, no re-minted session, nothing
-           released and nothing deleted: the record still names this message, so `canSend` refuses
-           the press and the surface shows the sentence that is true about it.
+        /**
+         * The held message, reopened as itself. No new row, no re-minted session, nothing released and nothing
+         * deleted: the record still names this message, so `canSend` refuses the press and the surface shows the
+         * sentence that is true about it. Not adopted either, whatever the row's status: a row past `draft` refuses
+         * every PUT (`SendService` reserves only from `status='draft'`), and a row still at `draft` is deliberately
+         * not adopted, so this branch has ONE behaviour rather than two that differ by a status nobody on this path
+         * acts on.
+         */
 
-           NOT ADOPTED either, whatever the row's status. A row the server has moved past `draft`
-           refuses every PUT (`SendService` reserves only from `status='draft'`), and adopting it
-           would point autosave at that refusal; a row still at `draft` would be safe to adopt and
-           is deliberately not, so this branch has ONE behaviour rather than two that differ by a
-           status nobody on this path acts on. Autosave writing a fresh row later cannot unlock
-           anything, because the session is untouched and still names the record.
+        /**
+         * This is also where the recovery door used to be: a stranded `sending` row took a third branch that seeded
+         * the text into a FRESH row and sent that — invariant S(2) forbids it (the row whose send is most likely in
+         * flight is the last one to send again), and `holdOf` calls every non-`draft` status parked, so the branch is
+         * unreachable and gone rather than left as a dead arm.
+         */
 
-           THIS IS ALSO WHERE THE RECOVERY DOOR USED TO BE. A stranded `sending` row — a send whose
-           answer never arrived, its record swept or never written — took a third branch that
-           seeded the text into a FRESH row and sent that. Invariant S(2) forbids it: the row whose
-           send is most likely still in flight is the last one to send again, and the fresh key the
-           recovery minted is one the server cannot recognise. `holdOf` calls every non-`draft`
-           status parked, so that branch is unreachable and is gone rather than left as a dead arm.
+        /**
+         * The identity is RESTORED, not merely left alone. "Left alone" was true only for the door the user came
+         * through immediately: any door in between (writing to a contact, a mail link) legitimately mints a new
+         * session, so the browser arrives back holding NEITHER of the record's names — the park was recognised but
+         * presented under a session the record never heard of: no warning, Send live, one press, a second copy. So
+         * both names go back: the record's own session (what `canSend` compares against), and the row, HELD
+         * (`writeComposeRow`) and not adopted — the composer takes no row, so nothing PUTs to it and a Discard cannot
+         * delete it, while the save effect's create block reads the held id and mints nothing beside it.
+         */
 
-           ── THE IDENTITY IS RESTORED, NOT MERELY LEFT ALONE ─────────────────────────────────
-
-           "Left alone" was true only for the door the user came through immediately. Any door in
-           between — writing to a contact from their card, a mail link from outside the app —
-           legitimately starts a new message and mints a new session, so the browser arrives back
-           here holding NEITHER of the names the record carries. The park was then recognised and
-           the message presented under a session the record had never heard of: no warning, Send
-           live, one press, a second copy. So both names go back:
-
-            · the record's own session, which is what `canSend` compares the message against;
-            · the row, HELD (`writeComposeRow`) and not adopted — the composer takes no row, so
-              nothing PUTs to it and a Discard cannot delete it, while the save effect's create
-              block reads the held id and mints nothing beside it.
-
-           `autosave.release()` first, because it clears the held row on its way past and would
-           otherwise erase what is written next; it also disowns a create still in flight for the
-           message being left behind. A hold with no session of its own — a park by the row's
-           status, or a record that never had one — leaves the current session standing: it is
-           named by its row, which is the id being held. */
+        /**
+         * `autosave.release()` first, because it clears the held row on its way past and would otherwise erase what
+         * is written next; a hold with no session of its own leaves the current session standing — it is named by its
+         * row, which is the id being held.
+         */
         autosave.release();
         writeComposeRow(hold.kind === "parked" ? hold.draftId ?? d.id : d.id);
         if (hold.kind === "parked" && hold.session != null) writeComposeSession(hold.session);
