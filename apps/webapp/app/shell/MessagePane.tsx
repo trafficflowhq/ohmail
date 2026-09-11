@@ -1356,20 +1356,21 @@ export function MessagePane({
    */
 
   /**
-   * One pass is not enough any more. This ran once and stopped, on the premise "the
-   * conversation list is complete at first render" — true when a sibling rendered its snippet
-   * at final height, false once siblings started hydrating: `Conversation` asks for every
-   * sibling's body in a mount effect, each answer replaces two lines of snippet with a whole
-   * message, and the newest message walks back off the bottom as its older siblings grow above
-   * it — a thread opening at its OLDEST message, the exact defect this anchor prevents,
-   * restored through a door that did not exist when it was written. Sharper second arm: the
-   * walk requires an ancestor ALREADY overflowing — before the bodies land there may be nothing
-   * to scroll, the walk falls off the top, and no later event brings it back. So the anchor is
-   * re-applied while the conversation's box keeps changing size, and handed to the reader the
-   * moment they touch it (wheel, drag, key, press) — bounded by that handover and a timeout, so
-   * a thread that never settles cannot hold the scroller. `ResizeObserver`, not a hydration
-   * dependency: it fires on what actually invalidates the position (the stack got taller), so a
-   * body arriving without changing height costs nothing; guarded for environments without one.
+   * One pass is not enough any more. This ran once and stopped, on the premise "the conversation list is complete at
+   * first render" — true when a sibling rendered its snippet at final height, false once siblings started hydrating:
+   * `Conversation` asks for every sibling's body in a mount effect, each answer replaces two lines of snippet with a
+   * whole message, and the newest message walks back off the bottom as its older siblings grow above it — a thread
+   * opening at its OLDEST message, the exact defect this anchor prevents, restored through a door that did not exist
+   * when it was written.
+   */
+
+  /**
+   * Sharper second arm: the walk requires an ancestor ALREADY overflowing — before the bodies land there may be
+   * nothing to scroll, the walk falls off the top, and no later event brings it back. So the anchor is re-applied
+   * while the conversation's box keeps changing size, and handed to the reader the moment they touch it (wheel, drag,
+   * key, press) — bounded by that handover and a timeout, so a thread that never settles cannot hold the scroller.
+   * `ResizeObserver`, not a hydration dependency: it fires on what actually invalidates the position (the stack got
+   * taller), so a body arriving without changing height costs nothing; guarded for environments without one.
    */
   useLayoutEffect(() => {
     if (!showConversation) return;
@@ -1562,13 +1563,12 @@ export function MessagePane({
           no button rather than a dead one. `remoteLoaded` is the OR of three facts stored in
           different places: the server's `loadedRemoteContent` (images stay loaded across a
           reload), this session's press (they appear the moment it happens), and the account's
-          own setting (most readers never see the button). The mirror's body record is not
-          re-fetched on consent — `hydrateBody` returns early on a `ready` record — so without
-          the second term the button would write a row and change nothing on screen. `auto` is
-          the product default (mail 0048): it admits PICTURES through the proxy, and the
-          sanitizer still refuses the proxy to a beacon or a 1×1 in both modes. `onLoadRemote`
-          is withheld in auto mode, which removes the button: "Show images" over images already
-          showing is a control whose press does nothing. */}
+          own setting (most readers never see the button); without the second term the button
+          would write a row and change nothing on screen, since `hydrateBody` returns early on a
+          `ready` record. `auto` is the product default (mail 0048): it admits PICTURES through
+          the proxy, and the sanitizer still refuses the proxy to a beacon or a 1×1 in both
+          modes. `onLoadRemote` is withheld in auto mode, which removes the button: "Show
+          images" over images already showing is a control whose press does nothing. */}
       <MessageBody
         messageId={message.id}
         text={body.text}
@@ -1918,20 +1918,21 @@ export function MessagePane({
   }
 
   /**
-   * The thread does not route through `ReadingPane` — an article cannot wrap N panels. The
-   * wrapper below is the scrolling column: every message on the conversation is its own
-   * full-width, full-body panel (`.pm`), oldest first, on the canvas (`.read-col` drops its
-   * panel skin — `message.css`); no peek rows, no counts, no "show earlier" — every panel is
-   * the mail itself (`ConversationPanels`). No lede: the column opens on the oldest panel, and
-   * every panel prints its OWN subject (SUBJECT-D, `MessageHeader`) — the one-time thread
-   * heading is deleted, and with it the suppression that decided which panels earned a line.
-   * The FOCUSED panel is composed here (the protected rule decided first, the hydrated body,
-   * the attachment strip, the body-state line, the signal/tag marks — facts about THIS message,
-   * riding its panel now the lede is gone); `aria-current` marks it, the focus never remapped.
-   * The PILL and the reply dock are direct children of the wrapper, AFTER the panels, so
-   * `.msg-actions`' sticky rule pins the one bar at the foot and the editor docks under it.
-   * `role="group"` because `aria-label` on a bare div is ignored, and a `<section>` landmark
-   * would be too loud for one part of one view.
+   * The thread does not route through `ReadingPane` — an article cannot wrap N panels. The wrapper below is the
+   * scrolling column: every message on the conversation is its own full-width, full-body panel (`.pm`), oldest first,
+   * on the canvas (`.read-col` drops its panel skin — `message.css`); no peek rows, no counts, no "show earlier" —
+   * every panel is the mail itself (`ConversationPanels`). No lede: the column opens on the oldest panel, and every
+   * panel prints its OWN subject (SUBJECT-D, `MessageHeader`) — the one-time thread heading is deleted, and with it
+   * the suppression that decided which panels earned a line.
+   */
+
+  /**
+   * The FOCUSED panel is composed here (the protected rule decided first, the hydrated body, the attachment strip,
+   * the body-state line, the signal/tag marks — facts about THIS message, riding its panel now the lede is gone);
+   * `aria-current` marks it, the focus never remapped. The PILL and the reply dock are direct children of the
+   * wrapper, AFTER the panels, so `.msg-actions`' sticky rule pins the one bar at the foot and the editor docks under
+   * it. `role="group"` because `aria-label` on a bare div is ignored, and a `<section>` landmark would be too loud
+   * for one part of one view.
    */
   return (
     <div className="conv" role="group" aria-label={tc("conversationAria")} ref={convRef}>
