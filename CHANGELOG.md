@@ -31,6 +31,13 @@ Coming back asks the mailbox who holds it: free, and the phone takes it again; h
 computer or by ohmail Cloud, and the phone reads it instead. Nothing is taken from a machine that
 has it.
 
+### Send later on a phone
+
+A phone can organize a mailbox itself, and it organizes only while ohmail is running on it — so
+it cannot hold a message for a time you picked. Send later is not offered there, and the screen
+says where to set the time instead: a computer, or ohmail Cloud. A phone paired to either is
+unchanged, and a message already waiting for its time can still be cancelled on the phone.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
