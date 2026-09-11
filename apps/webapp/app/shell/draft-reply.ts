@@ -1,51 +1,19 @@
 "use client";
 
 /**
- * BUYING A DRAFTED REPLY — the control that names the cost before it spends, and hands the
- * answer to the editor rather than to the wire.
- *
- * ── WHAT THIS IS AND IS NOT ──────────────────────────────────────────────────────────────
- *
- * `POST /messages/:id/draft` has been live for a long time and nothing has ever called it.
- * The "Draft reply" verb navigated to Compose, which is the shape of a feature that was
- * planned and not connected: the route stores a `drafts` row and answers `202 {draftId}`, and
- * the surface had no way to ask for one or to show what came back.
- *
- * Two invariants decide everything about how this is built, and neither is negotiable:
- *
- *  · **Nothing sends.** AI proposes and the user decides; nothing leaves the account without an
- *    explicit act. The drafter produces text. It lands in the reply editor as
- *    editable content and stops there — no `mail_send`, and no triage change. A generated
- *    draft is not a sent reply, so it must not discharge the Reply Run's debt: that discharge
- *    is owned by `onSendSettled`, keyed on a SEND settling, and this module dispatches no
- *    mutation at all. There is deliberately nothing here to get wrong, which is the point.
- *  · **The cost is stated before it is taken** — no paid API call without the revenue for it
- *    behind it, and none without the person knowing the price. One draft is 15 credits — see
- *    {@link DRAFT_REPLY_COST_CREDITS}, and why it is no longer "one action". The
- *    figure is not computed from a balance this client happens to be holding — it is what the
- *    route charges, once per accepted request, and the sentence a person consents to says
- *    exactly that.
- *
- * ── WHY THE PRICE IS A CONSTANT HERE AND A SERVER ROUND TRIP IN THE SCREENER ─────────────
- *
- * `screener-suggest.ts` prices its batch with a dry run and refuses to guess, and the reason
- * is that the batch's SIZE is a question only the server can answer: which of these senders is
- * still held, whose mail is withheld from the model, whose answer has already been bought. A
- * price computed in the browser would be a second implementation of that eligibility rule.
- *
- * There is no such rule here. One press is one message and one draft; there is no set to
- * price and no eligibility to re-derive, so a dry run would be a network round trip that
- * always returns the same number. What the client must NOT do — and does not — is decide
- * whether the action is affordable or permitted. That stays entirely with the server, and its
- * refusal is rendered verbatim.
- *
- * ── THE ANSWER COMES BACK IN TWO STEPS, AND NOT THROUGH THE MIRROR ───────────────────────
- *
- * The 202 carries only `{draftId}`; the draft itself arrives in the client mirror on the next
- * `/sync` drain. Waiting for that would key a person's experience of pressing a button to the
- * sync scheduler's cadence, so the draft is read directly with `GET /drafts/:id` — a `read`
- * route that spends nothing. The row is written inside the request that answered 202, so it is
- * there. The mirror still converges; it is simply not the thing being waited on.
+ * Buying a drafted reply — the control that names the cost before it spends, and hands the answer to the editor
+ * rather than the wire. Two non-negotiable invariants: NOTHING SENDS — AI proposes and the user decides; the text
+ * lands in the reply editor and stops there — no `mail_send`, no triage change, and no discharge of the Reply Run's
+ * debt (that is `onSendSettled`'s, keyed on a SEND settling). And THE COST IS STATED BEFORE IT IS TAKEN — one draft
+ * is 15 credits ({@link DRAFT_REPLY_COST_CREDITS}), the figure the route charges, not one computed from a balance.
+ */
+
+/**
+ * The price is a constant here and a dry run in the Screener: the batch's size is a question only the server can
+ * answer, while one press here is one message — but the client never decides affordability; the server's refusal
+ * renders verbatim. The 202 carries only `{draftId}`; the draft is read directly with `GET /drafts/:id` (a `read`
+ * route that spends nothing) rather than waiting on the sync cadence — the mirror still converges, it is just not
+ * what is waited on.
  */
 
 import { useCallback, useRef, useState } from "react";
@@ -79,23 +47,14 @@ export interface DraftReplyControl {
 export type DraftedReply = RichValue;
 
 /**
- * WHAT ONE DRAFT COSTS: 15 CREDITS.
- *
- * This used to be `DRAFT_REPLY_COST_ACTIONS = 1`, and its comment argued that quoting the price
- * in AI ACTIONS rather than credits was the honest choice, because "credits are an internal
- * ledger unit nobody is quoted a plan in". Weighted debits inverted both halves of that: the plan
- * is sold in CREDITS now (1,000 / 2,000 / 4,000 on the card), and an action no longer has one
- * price — `AI_ACTION_WEIGHTS.debit_draft` is 15 against a classification's 1. The unit a person is
- * quoted and the unit the server charges are the same unit again, which is the only thing that
- * makes a client-side literal safe to state at all.
- *
- * A literal and not an import, because the webapp deliberately takes no dependency on
- * `@trafficflow/db` (`connect-gate-order.test.ts` asserts this source never names `PLAN_LIMITS`).
- * The drift that opens is closed the way the mailbox count is:
- * `test/landing-pricing-matches-plan-card.test.ts` reads this literal out of the source and
- * compares it to the server's `AI_ACTION_WEIGHTS.debit_draft`.
- *
- * `DraftingService` still spends exactly once per accepted request; only the size changed.
+ * What one draft costs: 15 credits. It used to be `DRAFT_REPLY_COST_ACTIONS = 1`, arguing that
+ * actions were the honest unit; weighted debits inverted both halves — the plan is sold in CREDITS
+ * (1,000 / 2,000 / 4,000 on the card) and an action no longer has one price
+ * (`AI_ACTION_WEIGHTS.debit_draft` is 15 against a classification's 1). The quoted unit and the
+ * charged unit are the same again, the only thing that makes a client literal safe. A literal, not
+ * an import: the webapp takes no dependency on `@trafficflow/db` (`connect-gate-order.test.ts`
+ * asserts it), and `test/landing-pricing-matches-plan-card.test.ts` reads this literal out of the
+ * source and compares it to the server's weight. `DraftingService` still spends once per request.
  */
 export const DRAFT_REPLY_COST_CREDITS = 15;
 

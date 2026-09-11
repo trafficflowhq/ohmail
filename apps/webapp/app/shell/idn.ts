@@ -1,55 +1,27 @@
 /**
- * INTERNATIONALIZED DOMAINS, FOR THE SCREEN ONLY.
- *
- * ── WHAT WAS WRONG ──────────────────────────────────────────────────────────────────────
- *
- * A mailbox on an internationalized domain — `sarada@müller.example` — is stored, sent and matched
- * in its A-label (punycode) form, because that is the only form SMTP envelopes, IMAP and DNS
- * accept. Every surface then printed that form verbatim: the compose From selector offered
- * `sarada@xn--mller-kva.example`, the list rows said it, Settings → Mailboxes said it. Nobody can
- * recognise their own mailbox in that, and nothing on screen explains the transformation.
- *
- * ── WHAT THIS IS, AND WHAT IT IS EMPHATICALLY NOT ───────────────────────────────────────
- *
- * {@link displayAddress} answers what a HUMAN should read. It is presentation, and it is applied
- * at render sites only — never before a mutation, a rule match, a screening identity, an avatar
- * hue, a dedup key, or anything that reaches SMTP/IMAP or the API. Those all keep the stored
- * A-label form, unchanged, for ever. The decode is one-way by design: no surface writes a decoded
- * string back anywhere, and the two places where an address is both shown and typed (the compose
- * recipient field, the mailbox connect form) are deliberately left alone — their content IS the
- * wire value.
- *
- * The LOCAL PART is never touched. SMTPUTF8 local parts exist, but they arrive as UTF-8 already;
- * there is no encoded form to undo, and guessing at one would corrupt a legitimate address.
- *
- * ── WHY A HAND-ROLLED DECODER ───────────────────────────────────────────────────────────
- *
- * `node:url`'s `domainToUnicode` is a Node API and this code runs in the browser bundle, where
- * there is no ToUnicode at all: `new URL(…)` applies ToASCII (it would hand back the punycode we
- * started with), and no other platform surface decodes an A-label. The alternative was a
- * dependency for forty lines of arithmetic that has not changed since RFC 3492 in 2003. So the
- * decoder is here, it is total (never throws, never reports failure by exception), and every
- * failure mode falls back to the RAW LABEL — an address a reader cannot recognise is a smaller
- * defect than an address that is wrong.
- *
- * ── SECURITY: THE HOMOGRAPH TRADEOFF, TAKEN DELIBERATELY ────────────────────────────────
- *
- * Rendering Unicode domains makes homograph confusion possible: `xn--80ak6aa92e.com` decodes to a
- * Cyrillic string that looks like `apple.com`. That risk is accepted here, and the reasoning is
- * that this is a MAIL CLIENT, not a URL bar. What is displayed is the domain of an address the
- * reader's own mailbox already received, or one they themselves connected — there is no
- * navigation, no credential prompt, and no origin decision hanging off the glyphs. A reader
- * deciding whether to trust a sender has the Screener, the rules and the full address in the
- * details block; a reader who cannot read their own domain has nothing.
- *
- * Confusability scoring (mixed-script detection, skeleton comparison) is NOT implemented and is
- * out of scope for this change. What IS enforced, because it is structural rather than a
- * judgement call, is that a decoded label may not smuggle in characters that change what the
- * address APPEARS TO BE: no ASCII, no label separators in any of their Unicode spellings, no
- * whitespace, no control characters, no bidi overrides. A label decoding to any of those is
- * rejected and shown raw. Without that rule a crafted label could decode to text containing "@"
- * or "." and impersonate a different domain entirely, which is a different and worse problem than
- * a lookalike letter.
+ * Internationalized domains, for the screen only. {@link displayAddress} answers what a HUMAN
+ * should read — applied at render sites only, never before a mutation, a rule match, a screening
+ * identity, a dedup key, or anything that reaches SMTP/IMAP or the API: those keep the stored
+ * A-label form for ever. The decode is one-way, and the two places an address is both shown and
+ * typed (compose recipients, the connect form) are left alone — their content IS the wire value.
+ */
+
+/**
+ * The LOCAL PART is never touched: SMTPUTF8 local parts arrive as UTF-8 already. Hand-rolled
+ * because the browser bundle has no ToUnicode (`new URL` applies ToASCII); the decoder is total —
+ * every failure falls back to the RAW label, since an unrecognisable address is a smaller defect
+ * than a wrong one.
+ */
+
+/**
+ * The homograph tradeoff, taken deliberately: rendering Unicode domains makes lookalike confusion
+ * possible, and that is accepted because this is a MAIL CLIENT, not a URL bar — no navigation, no
+ * credential prompt, no origin decision hangs off the glyphs, and the reader has the Screener, the
+ * rules and the full address in the details block. Confusability scoring is out of scope. What IS
+ * enforced, because it is structural: a decoded label may not smuggle characters that change what
+ * the address APPEARS TO BE — no ASCII, no label separators in any Unicode spelling, no whitespace,
+ * no controls, no bidi overrides; such a label is rejected and shown raw. Without that rule a
+ * crafted label could decode to text containing "@" or "." and impersonate a different domain.
  */
 
 const BASE = 36;
@@ -86,16 +58,13 @@ function adapt(delta: number, numPoints: number, firstTime: boolean): number {
 }
 
 /**
- * MAY THIS DECODED LABEL BE SHOWN? — the structural policy from the header, in one pass.
- *
- * The rule is deliberately narrow and is not a confusability judgement: an A-label's Unicode form
- * may contain LDH ASCII (which is all a punycode literal segment can legally hold) plus non-ASCII
- * that is neither a label separator in one of its Unicode spellings, nor whitespace, nor a control,
- * nor a bidi override. Anything else and the caller shows the raw `xn--…`.
- *
- * The **at least one non-ASCII** requirement is the other half. A label that decodes to pure ASCII
- * had no reason to be encoded — `xn--a.b-` decodes to `a.b`, which is two labels wearing the mask
- * of one — so a pure-ASCII decode is treated as malformed rather than displayed.
+ * May this decoded label be shown? — the structural policy from the header, in one pass. The rule
+ * is deliberately narrow and not a confusability judgement: an A-label's Unicode form may contain
+ * LDH ASCII (all a punycode literal segment can legally hold) plus non-ASCII that is neither a
+ * label separator in any Unicode spelling, nor whitespace, nor a control, nor a bidi override —
+ * anything else and the caller shows the raw `xn--…`. "At least one non-ASCII" is the other half:
+ * a label decoding to pure ASCII had no reason to be encoded (`xn--a.b-` decodes to `a.b`, two
+ * labels wearing the mask of one), so a pure-ASCII decode is treated as malformed.
  */
 function isDisplayable(decoded: string): boolean {
   let sawNonAscii = false;

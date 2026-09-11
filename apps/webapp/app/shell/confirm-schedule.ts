@@ -1,35 +1,17 @@
 /**
- * ═══ HOW LONG TO WAIT BEFORE ASKING "WHOSE MAILBOX IS THIS?" AGAIN ════════════════════════
- *
- * The session confirm is one `GET /auth/session`, and until this module existed a single
- * failure of it was rendered as a verdict about the account: "You are signed out." over a
- * live session, measured in production as a `503 db_busy` — the API's own name for a pooled
- * connection it could not get within its ceiling. That answer carries
- * `retryable: true` and `Retry-After: 5` and a message ending *"retry shortly"*, and the
- * shell answered it by telling the user they were signed out. `AUTH-FLICKER-DIAGNOSIS.md`
- * has the failing request and the eleven-case reproduction.
- *
- * So the shell retries. This file is the whole of WHEN, kept pure — no timers, no React, no
- * transport — so the arithmetic is testable without a clock and identical everywhere it is
- * read.
- *
- * ── THE CONSTANTS ARE CONSTANTS, AND THAT IS A DECISION ─────────────────────────────────────
- *
- * There is deliberately no injectable schedule: `EngineProvider` takes no `schedule` prop and
- * no `Partial<Schedule>` override. A configurable schedule with defaults means the shipped
- * numbers are the ones no test ever drives — the tests exercise the fast injected values and
- * the product runs the untested branch. This repository has already paid for that shape
- * (`failure-looks-like-healthy`: three reliability features shipped broken, each rendering as
- * its own healthy state). Tests here use fake timers against THESE numbers and assert the
- * bounds the jitter allows.
- *
- * ── FOUR ATTEMPTS, NOT "UNTIL IT WORKS" ────────────────────────────────────────────────────
- *
- * The confirm sits in front of the first paint of the product's front door, so the ladder has
- * to end. Four asks — one plus three retries — spans roughly 1–20 s of real waiting against
- * an unseeded schedule and up to ~30 s when the server named a long `Retry-After`. After the
- * fourth the shell says what is true (the check did not finish) rather than what is false
- * (the session ended). A person who is willing to wait longer presses Try again.
+ * How long to wait before asking "whose mailbox is this?" again. A single failed
+ * `GET /auth/session` used to render as a verdict — "You are signed out." over a live session,
+ * measured in production as a `503 db_busy` that carried `retryable: true` and `Retry-After: 5`
+ */
+
+/**
+ * (`AUTH-FLICKER-DIAGNOSIS.md`). So the shell retries, and this file is the whole of WHEN, kept
+ * pure — no timers, no React — so the arithmetic is testable without a clock. The constants are
+ * constants, deliberately: an injectable schedule means the shipped numbers are the ones no test
+ * drives (`failure-looks-like-healthy` is the paid-for lesson); tests use fake timers against
+ * THESE numbers. Four attempts, not "until it works": the confirm sits in front of first paint,
+ * so the ladder ends (~1–20 s, up to ~30 s under a long `Retry-After`) and after the fourth the
+ * shell says what is true — the check did not finish — with Try again for anybody willing to wait.
  */
 
 /** Asks in one ladder: the first, plus three retries. */
@@ -58,22 +40,14 @@ export const CONFIRM_SEED_MS = 600;
 export const CONFIRM_CAP_MS = 8_000;
 
 /**
- * How long to wait before retry number `attempt` (1 = the first retry).
- *
- * `retryAfterMs` is the server's own advice when it sent a `Retry-After`, and `null` when it
- * did not. It SEEDS the backoff rather than replacing it: a server that is busy now is likely
- * to be busy on the next ask too, so the doubling still applies on top of what it asked for,
- * and {@link CONFIRM_CAP_MS} still bounds the result.
- *
- * FULL JITTER on the whole delay — `× (0.5 + 0.5·random)`, so the answer is always in
- * `[delay/2, delay]`. Not decoration: every tab that woke together, or every tab reloaded
- * after an API deploy, is running this ladder against the same instance, and a fixed backoff
- * makes them all return at the same instant — which is the shape that keeps a starved pool
- * starved. `sync-scheduler.ts` jitters its own backoff for the same reason and records the
- * measurement behind it.
- *
- * Never returns 0: a caller that treats 0 as "ask immediately" would turn a clamped-to-zero
- * schedule into a hot loop against a server that just refused.
+ * How long to wait before retry number `attempt` (1 = the first retry). `retryAfterMs` is the
+ * server's own advice and SEEDS the backoff rather than replacing it: a server busy now is likely
+ * busy on the next ask, so the doubling applies on top and {@link CONFIRM_CAP_MS} still bounds the
+ * result. Full jitter on the whole delay (`× (0.5 + 0.5·random)`), not decoration: every tab that
+ * woke together or reloaded after a deploy runs this ladder against the same instance, and a fixed
+ * backoff returns them all at the same instant — the shape that keeps a starved pool starved
+ * (`sync-scheduler.ts` records the measurement). Never returns 0: a caller treating 0 as "ask
+ * immediately" would turn a clamped schedule into a hot loop against a server that just refused.
  */
 export function nextConfirmDelay(attempt: number, retryAfterMs: number | null): number {
   const base = retryAfterMs !== null && retryAfterMs > 0 ? retryAfterMs : CONFIRM_SEED_MS;

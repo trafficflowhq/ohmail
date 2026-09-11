@@ -1,56 +1,19 @@
 "use client";
 
 /**
- * A REQUESTED DELETE, ON DISK BEFORE THE WINDOW OPENS.
- *
- * ── THE DEFECT THIS CLOSES ─────────────────────────────────────────────────────────────────
- *
- * The undo window made the press reversible by not sending it yet, and for the length of that
- * window the ONLY record of the request was a `setTimeout` closure in one tab's event loop. Close
- * the tab, navigate away, or let the OS reclaim the process inside it, and a delete the person
- * asked for — and which the toast reported as done — simply never happened. The module header
- * named that hole and called it a follow-up; review ranked it MAJOR, correctly: it is silent, and
- * it is silent in the direction where the product did not do what it said it did.
- *
- * ── AND IT IS NO LONGER ONLY A DELETE ─────────────────────────────────────────────────────
- *
- * Restoring a message out of Trash is held by the same window, for the identical reason: there
- * is no un-restore on the wire, so the only undo this product can honour is a delayed commit.
- * One journal for both verbs — the hole is the same hole, and two journals would be two places
- * to get the `pagehide` commit right. Each row therefore says which verb it is, and a row that
- * does not say (every row a previous build wrote) is a delete. See {@link DeleteIntent.kind}.
- *
- * The names here still say "delete" — `armDeleteIntent`, `DELETE_INTENTS_PREFIX`, the storage
- * KEY. The prefix and the key are deliberately unchanged: renaming the key would orphan every
- * stranded row a previous build left in somebody's browser, which is the exact loss this file
- * exists to prevent, arriving through a rename.
- *
- * This is `screener-intents.ts`'s answer applied to the same shape, and it is the same answer
- * because it is the same problem — that file's own header states the class ("this product decides
- * in memory and persists afterwards"), met at the Screener's consent gate. Here it is met at the
- * delete key.
- *
- * ── WHICH WAY A CRASH RESOLVES, AND WHY THAT DIRECTION ─────────────────────────────────────
- *
- * TOWARD THE DELETE. The intent lands here synchronously, before the timer is armed; Undo removes
- * it; the commit removes it only once `engine.mutate` has settled, because the engine writes its
- * durable outbox entry ahead of the wire and from that moment the outbox is the record. A tab
- * killed inside the window therefore resolves one way: `pagehide` commits what it can, and
- * whatever that did not reach is replayed at the next launch.
- *
- * The alternative — discarding a delete the toast has already reported — is the product being
- * wrong about somebody's mail on the one gesture where being wrong is least recoverable. A delete
- * that lands thirty seconds late is a delete; a delete that evaporates is a lie the person will
- * only discover by noticing the message is still there. Chosen, not defaulted into.
- *
- * ── WHY `localStorage` ────────────────────────────────────────────────────────────────────
- *
- * Because it is SYNCHRONOUS: `setItem` has returned before the press handler does, and an
- * IndexedDB write is a promise a killed tab need never settle. Owner-keyed for
- * `screener-intents.ts`'s reason — the jar is per-ORIGIN, and one account's delete must never be
- * replayed by the next account to sign in on the same browser, nor by a sibling mailbox on a
- * standalone install that mounts one engine each. A jar that refuses (Safari private mode throws)
- * leaves the request exactly as durable as the tab, which is where it was before this file.
+ * A requested delete, on disk before the window opens. For the length of the undo window the only record of the
+ * request used to be a `setTimeout` closure — a tab closed inside it lost a delete the toast reported as done (review
+ * ranked it MAJOR: silent, in the direction where the product did not do what it said). No longer only a delete:
+ * restore-from-Trash is held by the same window (no un-restore on the wire either), one journal for both verbs; a row
+ * that does not say which is a delete ({@link DeleteIntent.kind}).
+ */
+
+/**
+ * The names and the storage KEY still say "delete" — renaming the key would orphan every stranded row a previous
+ * build left. A crash resolves TOWARD the delete: the intent lands synchronously before the timer, Undo removes it,
+ * the commit removes it once `engine.mutate` settles, `pagehide` commits what it can, survivors replay at launch — a
+ * delete thirty seconds late is a delete; one that evaporates is a lie. `localStorage` because it is synchronous,
+ * owner-keyed for `screener-intents.ts`'s reason; a refusing jar leaves the request exactly as durable as the tab.
  */
 
 import { durableRemove, durableSet, type DurableWrite } from "./durable";
@@ -72,24 +35,14 @@ export interface DeleteIntent {
   /** Epoch ms at the press, from the caller's clock. */
   at: number;
   /**
-   * WHICH VERB WAS HELD — and ABSENT means `delete`, which is the legacy shape.
-   *
-   * The window is not a delete's any more: restoring a message out of Trash is held the same
-   * way, for the same reason (there is no un-restore on the wire either, so the only undo this
-   * product can honour is a delayed commit). One journal for both, because the failure it
-   * exists to prevent is the same one — a tab closed inside the window losing a request the
-   * toast already reported.
-   *
-   * OPTIONAL rather than required, and that is a compatibility decision rather than laziness:
-   * every row a previous build wrote carries no `kind`, and a reader that demanded one would
-   * DROP those rows — losing exactly the deletes this journal exists to save, through the
-   * upgrade instead of through the crash. So absent reads as `delete`, which is what those
-   * rows are.
-   *
-   * A row whose `kind` this build does not recognise is DROPPED rather than guessed at. That
-   * is the opposite direction from the legacy shape and it is deliberate: an unknown verb names
-   * an action this build cannot perform, and replaying it as a delete would delete mail on the
-   * strength of a word we could not read.
+   * Which verb was held — and ABSENT means `delete`, the legacy shape. Restoring out of Trash is
+   * held by the same window for the same reason (no un-restore on the wire), one journal for both.
+   * OPTIONAL rather than required is a compatibility decision: every row a previous build wrote
+   * carries no `kind`, and a reader demanding one would DROP those rows — losing exactly the
+   * deletes this journal exists to save, through the upgrade instead of the crash. A row whose
+   * `kind` this build does not recognise is DROPPED rather than guessed at — the opposite
+   * direction, deliberately: an unknown verb names an action this build cannot perform, and
+   * replaying it as a delete would delete mail on the strength of a word we could not read.
    */
   kind?: HeldVerb;
 }

@@ -1,26 +1,15 @@
 /**
- * THE FIVE PILE NAMES, IN ONE TABLE, FOR EVERY SURFACE THAT SAYS ONE.
- *
- * `packages/ui` used to export `DECISION_LABEL` and `DECISION_DONE_LABEL` — two English records —
- * and eight surfaces read them. Five of those interpolated the English word into a TRANSLATED
- * sentence, so a German reader was told "Diesen Absender nach Receipts einsortieren" while the
- * rail beside it said "Belege", and the decision bar itself was English end to end. The catalogue
- * had the German the whole time (`screener.pile*`); nothing connected the two.
- *
- * So the records are gone and this is what replaced them: a table of KEYS, resolved against the
- * catalogue by whoever is rendering. Two forms, because the bar needs both and they differ in
- * exactly one entry:
- *
- *   · {@link PILE_KEY} is the PLACE ("Screened out" / "Aussortiert") — what a message's
- *     destination is called once it is there. Titles, toasts, keyboard hints, the ✓ half.
- *   · {@link PILE_VERB_KEY} is the ACT ("Screen out" / "Aussortieren") — what pressing does.
- *     Only the five capsule labels want this one.
- *
- * A table and not `t(\`pile${dest}\`)`: the destinations are a union, and an interpolated key is a
- * lookup no compiler can check — a sixth destination would render the literal `screener.pileFoo`
- * into a button rather than failing to build. (Moved here from `views/ScreenerView.tsx`, which
- * carried the same table and the same argument for it; the argument was right and the table was
- * in the wrong file.)
+ * The five pile names, in one table, for every surface that says one. `packages/ui` used to export two English
+ * records read by eight surfaces; five interpolated the English word into a translated sentence, so a German reader
+ * met "nach Receipts einsortieren" beside a rail saying "Belege" — the catalogue had the German the whole time
+ * (`screener.pile*`). This is the replacement: a table of KEYS, resolved by whoever renders.
+ */
+
+/**
+ * Two forms because the bar needs both: {@link PILE_KEY} is the PLACE ("Aussortiert") — titles, toasts, hints, the ✓
+ * half; {@link PILE_VERB_KEY} is the ACT ("Aussortieren") — the five capsule labels. A table and not
+ * `t(\`pile${dest}\`)`: an interpolated key is a lookup no compiler checks — a sixth destination would render the
+ * literal key path into a button rather than failing to build.
  */
 import { useMemo } from "react";
 import { useTranslations } from "next-intl";
@@ -64,15 +53,12 @@ export function pileNames(t: T): Record<DecisionDestination, string> {
 }
 
 /**
- * Every word the decision bar renders, built from the catalogue.
- *
- * `ruleTarget` is the address or domain the consequence line names — already display-decoded by
- * the caller, because what the rule is WRITTEN against is the stored address and what is SHOWN
- * may be its Unicode form (`idn.ts`).
- *
+ * Every word the decision bar renders, built from the catalogue. `ruleTarget` is the address or
+ * domain the consequence line names — already display-decoded by the caller, because what the rule
+ * is WRITTEN against is the stored address and what is SHOWN may be its Unicode form (`idn.ts`).
  * The ✓ half is supplied for exactly the destinations `DECISION_QUIET` does not name, from that
- * same set rather than from a second hand-written list: "a demoting destination has no read verb"
- * is one fact, and the day it moves it has to move once.
+ * same set rather than a second hand-written list: "a demoting destination has no read verb" is
+ * one fact, and the day it moves it has to move once.
  */
 export function useDecisionBarCopy(ruleTarget: string): DecisionBarCopy {
   const t = useTranslations("screener") as unknown as T;

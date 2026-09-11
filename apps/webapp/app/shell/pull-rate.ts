@@ -1,47 +1,17 @@
 /**
- * HOW FAST THE FIRST PULL IS GOING, AND HOW LONG IS LEFT — the two numbers the flow's pull
- * screen is allowed to say, and the rules that keep them from being invented.
- *
- * ── WHY THIS IS NOT `MirrorGrowth` ────────────────────────────────────────────────────────
- *
- * The ruling behind this screen says "rate from the client's rolling `MirrorGrowth`", and that
- * is where the search started. It cannot answer the question, for two structural reasons rather
- * than one missing field:
- *
- *  · `MirrorGrowth.added` is PER RUN, and a run ends after {@link GROWTH_WINDOW_MS} of quiet
- *    (`mail-state.ts`, `growthStep`: `continues` false ⇒ `added` restarts at the new rise). The
- *    worker's cycle is 60 s, so the middle of an ordinary import is a sequence of SHORT runs —
- *    the episode latch exists precisely because runs keep ending. A rate taken over `added`
- *    would therefore be a rate over the last burst, which is not the rate of the import.
- *  · It carries `lastRiseAt` and no run START instant, so even within one run there is nothing
- *    to divide by.
- *
- * Neither is a defect there: that struct answers "is an import happening", and it answers it
- * well. This one answers "how fast, and how much longer", which needs samples over time. It is
- * fed the SAME number — the mirror's row count — so the two can never disagree about what is
- * being measured.
- *
- * ── THE THREE RULES, WHICH ARE ALL THE SAME RULE ──────────────────────────────────────────
- *
- * Every claim this module makes has to survive being read by somebody watching a progress bar,
- * so each one refuses rather than guesses:
- *
- *  1. **No rate before {@link RATE_MIN_SPAN_MS} of samples.** Two observations a few seconds
- *     apart across a 60 s worker cycle measure the BURST, not the import. A drain lands in a
- *     fraction of the cycle and the rest of the cycle is idle, so a window that covers only the
- *     drain overstates the rate by the ratio of the cycle to the burst — and the ETA is wrong by
- *     that same ratio, in the direction that promises somebody their mail sooner than it can
- *     arrive. The screen says "working out how long this takes" until the window is real. The
- *     ruling names two minutes; that is {@link RATE_MIN_SPAN_MS}.
- *  2. **No ETA without a remaining count**, and no remaining count without the server's own
- *     total (`MailboxDTO.serverMessageCount`). An ETA over an invented denominator is the
- *     literal this whole surface exists to remove.
- *  3. **Nothing at all once the import is finished.** The stamp
- *     (`initialImportCompletedAt`) is the authority, checked by the caller; this module
- *     additionally refuses at a non-positive remainder, because the sum it divides is a floor
- *     that moves (see `MailboxDTO.serverMessageCount`) and can sit BELOW the mirror's count.
- *
- * Pure, no clock of its own, no React: every rule above is one test with a fabricated `now`.
+ * How fast the first pull is going, and how long is left — the two numbers the flow's pull screen may say. Not
+ * `MirrorGrowth`: that answers "is an import happening" — its `added` is per RUN (a run ends after {@link
+ * GROWTH_WINDOW_MS} of quiet, and the worker's 60 s cycle makes an import a sequence of short runs) and it carries no
+ * run start to divide by. This module needs samples over time and is fed the SAME number — the mirror's row count —
+ * so the two cannot disagree.
+ */
+
+/**
+ * Three rules, all one rule (refuse rather than guess): no rate before {@link RATE_MIN_SPAN_MS} of samples — a window
+ * covering only the drain burst overstates the rate by cycle/burst, promising mail sooner than it can arrive; no ETA
+ * without a remaining count, and none without the server's own total (`MailboxDTO.serverMessageCount`) — an invented
+ * denominator is the literal this surface exists to remove; nothing at all once the import is finished (the stamp is
+ * the authority, and a non-positive remainder refuses too). Pure — every rule is one test with a fabricated `now`.
  */
 
 /**
@@ -65,16 +35,13 @@ export interface PullSample {
 }
 
 /**
- * Fold one observation in, dropping samples that have fallen out of the window.
- *
- * A COUNT THAT FELL is kept as an ordinary sample and never special-cased. `growthStep` treats a
- * fall as "not a rise" because it is answering a yes/no question about arrival; here a fall is a
- * real thing that happened to the mirror — a Screener backfill moving mail out of it — and
- * pretending otherwise would make the rate say the import is faster than the mirror is actually
- * filling. {@link pullRate} refuses a non-positive delta, which is the honest consequence.
- *
- * Samples at the SAME instant collapse to the latest: two reads in one millisecond are one
- * observation, and keeping both would put a zero-length span in the window.
+ * Fold one observation in, dropping samples that fell out of the window. A count that FELL is kept
+ * as an ordinary sample, never special-cased: `growthStep` treats a fall as "not a rise" because
+ * it answers a yes/no question about arrival; here a fall is a real thing that happened to the
+ * mirror (a Screener backfill moving mail out), and pretending otherwise would make the rate say
+ * the import is faster than the mirror is filling — {@link pullRate} refuses a non-positive delta,
+ * the honest consequence. Samples at the same instant collapse to the latest: two reads in one
+ * millisecond are one observation, and keeping both puts a zero-length span in the window.
  */
 export function pullSampleStep(prev: PullSample[], count: number, now: number): PullSample[] {
   const kept = prev.filter((s) => now - s.at <= RATE_WINDOW_MS && s.at !== now);
