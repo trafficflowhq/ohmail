@@ -1962,7 +1962,7 @@ export class MailboxService {
        * the two-sided argument and states why the account row is read FIRST: it is the head of
        * the global lock order, and a fence in the middle of a writer would be the deadlock pair.
        */
-      await fenceErasedAccount(tx as unknown as Tx, ctx.accountId);
+      await fenceErasedAccount(tx as unknown as Tx, dialect(ctx.db), ctx.accountId);
       /* The account's thread-structure lock, BEFORE the mailbox row and only when erasing.
        * `deleteAccount` takes it before `mailboxes` too, so both sweeps acquire in one order and
        * neither can be the other's deadlock partner; the disconnect path touches no message or
