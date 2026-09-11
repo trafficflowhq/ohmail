@@ -15,6 +15,11 @@
  * fourth that refuses. That is the whole reason this is a registry and not a `require`: a Metro
  * `require` of a module a build does not carry is FATAL and cannot be caught, so "try to load it and
  * see" is not available on this platform.
+ *
+ * BEFORE THE FIRST RENDER, and that is a requirement rather than a preference: the chooser reads
+ * this at render time and holds no subscription, so an engine registered after the door list is
+ * drawn leaves a build that HAS an engine showing three doors until something else re-renders.
+ * Register it where the app composes, above the router.
  */
 import type { StartPhoneEngine } from "./standalone-door";
 
