@@ -382,6 +382,9 @@ export {
   // The eager recent-window hydration bounds. Exported so the guards read the shipped numbers.
   EAGER_BODIES_MAX,
   EAGER_BODIES_SLICE,
+  // The ceiling on hydrated bodies held at once, for the same reason: a guard that hand-copies it
+  // goes green against a shipped value it has never seen.
+  BODY_CACHE_MAX,
   // How long an optimistic Sent copy (and its seeded attachment list) stands before the TTL
   // sweep. Exported so the seed-lifecycle guards read the shipped number, not a copy.
   OPTIMISTIC_SENT_TTL_MS,

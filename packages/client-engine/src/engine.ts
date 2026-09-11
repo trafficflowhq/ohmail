@@ -1546,6 +1546,25 @@ const MAX_CONCURRENT_BODIES = 4;
 export const RENDERED_PINS = 64;
 
 /**
+ * HOW MANY HYDRATED BODIES THE MIRROR KEEPS — the bound on the reading session's memory.
+ *
+ * A `message_body` is client-local, so `/sync` can never remove one; before the window reached the
+ * desktop nothing removed one at all, and a session's bodies grew for as long as it stayed open.
+ * Each is a whole mail: measured at 57 KB apiece on realistic HTML with an inline image, so the
+ * eager pass's thousand alone is 54.5 MB and a long reading session was unbounded.
+ *
+ * THE BOUND IS THE EAGER WINDOW, AND NOT {@link RENDERED_PINS}, BECAUSE OF A LOOP. An evicted body
+ * is an ABSENT record, which `bodyPlan` reads as "never asked" — correct, and what lets the next
+ * open re-fetch it from the store on this machine. But `prefetchRecentBodies` asks for the newest
+ * {@link EAGER_BODIES_MAX} after every settled drain, so a bound below that would have the eager
+ * pass re-fetching what the evictor had just dropped, for ever. Sized here so the two agree: the
+ * steady state after an eager pass is exactly full, nothing is dropped that the pass will
+ * immediately ask for again, and a reader who opens more than this many messages in one session
+ * pays for the most recent thousand rather than for all of them.
+ */
+export const BODY_CACHE_MAX = EAGER_BODIES_MAX;
+
+/**
  * HOW LONG AN OPTIMISTIC SENT COPY STANDS before it is dropped on TTL alone. The overlay's real job is to bridge the
  * gap between "the server confirmed the send" and "the worker's Sent-folder watch ingested the copy", which is
  * normally minutes; {@link OhmailEngine.reconcileOptimisticSent} drops it the moment the real row arrives, so this
@@ -1711,6 +1730,20 @@ export class OhmailEngine {
    * {@link OhmailEngine.hydrateBody}, which is the call every reading surface already makes.
    */
   private readonly renderedIds = new Set<string>();
+
+  /**
+   * Hydrated bodies in read order, newest last — the LRU the {@link BODY_CACHE_MAX} trim evicts
+   * from. Separate from `renderedIds`, which is a 64-deep hold for the windowed prune: this one is
+   * as deep as the body cache and is the only thing that knows which mail was read longest ago.
+   */
+  private readonly bodyRecency = new Set<string>();
+
+  /**
+   * One trim at a time. Body batches run concurrently (four slots), so two `putBodies` can reach
+   * the trim together, read the same `held` list and both choose the same victims — the second
+   * commit would then delete rows the first already took and over-evict by its whole batch.
+   */
+  private trimmingBodies = false;
   /**
    * In-flight body fetches, and the ones waiting for a slot. See {@link bodySlot}.
    *
@@ -2793,6 +2826,9 @@ export class OhmailEngine {
    * re-opened is held again rather than ageing out mid-read.
    */
   private noteRendered(messageId: string): void {
+    // A rendered message is also the most recently READ body, so the two orders move together —
+    // otherwise the trim would evict the body of a message the reader just opened.
+    this.touchBody(messageId);
     this.renderedIds.delete(messageId);
     this.renderedIds.add(messageId);
     while (this.renderedIds.size > RENDERED_PINS) {
@@ -3527,7 +3563,9 @@ export class OhmailEngine {
 
   private async putBody(messageId: string, record: MessageBodyRecord | null): Promise<void> {
     await this.store.putLocal("message_body", messageId, record);
+    if (record?.state === "ready") this.touchBody(messageId);
     this.notify();
+    await this.trimBodyCache();
   }
 
   /**
@@ -3549,7 +3587,53 @@ export class OhmailEngine {
       entries.map((e) => ({ type: "message_body", id: e.id, entity: e.record })),
       [],
     );
+    for (const e of entries) if (e.record?.state === "ready") this.touchBody(e.id);
     this.notify();
+    await this.trimBodyCache();
+  }
+
+  /** Newest last. A re-read moves an id back to the newest end, exactly as `noteRendered` does. */
+  private touchBody(messageId: string): void {
+    this.bodyRecency.delete(messageId);
+    this.bodyRecency.add(messageId);
+  }
+
+  /**
+   * DROP THE LEAST RECENTLY READ BODIES BACK TO {@link BODY_CACHE_MAX}.
+   *
+   * A DELETE and not a tombstone: an absent record is "never asked", so the next open re-fetches
+   * the body from the store on this machine, while a tombstone would read as "asked, and there is
+   * nothing" and the mail would render empty for ever. Never evicts a message the reader is looking
+   * at — `renderedIds` is the same hold that keeps the windowed prune off those rows — and one
+   * `commitLocal` for the lot, so a trim costs one derivation rather than one per body.
+   */
+  private async trimBodyCache(): Promise<void> {
+    if (this.trimmingBodies) return; // a concurrent batch is already trimming — see the latch
+    if (this.bodyRecency.size <= BODY_CACHE_MAX) return;
+    /**
+     * COUNTED FROM THE RECENCY INDEX, NEVER FROM A STORE SCAN. `entries("message_body")` goes
+     * through `bucketsOf`, which rebuilds every type bucket whenever the version has moved — and
+     * the write that brought us here just moved it. Scanning per body would put the O(N) cost back
+     * that batching the writes removed.
+     */
+    const victims: string[] = [];
+    const owed = this.bodyRecency.size - BODY_CACHE_MAX;
+    for (const id of this.bodyRecency) {
+      if (victims.length >= owed) break;
+      // Never the mail under the reader's eyes: the same hold that keeps the windowed prune off
+      // those rows (`renderedIds`). A pinned id stays and a later one is evicted in its place.
+      if (this.renderedIds.has(id)) continue;
+      victims.push(id);
+    }
+    if (victims.length === 0) return;
+    this.trimmingBodies = true;
+    try {
+      await this.store.commitLocal([], victims.map((id) => ({ type: "message_body", id })));
+      for (const id of victims) this.bodyRecency.delete(id);
+      this.notify();
+    } finally {
+      this.trimmingBodies = false;
+    }
   }
 
   /**

@@ -89,6 +89,13 @@ mod omarchy;
 #[cfg(feature = "local-engine")]
 mod omarchy_core;
 mod updater;
+// WHAT THE RENDERER COSTS. `engine_vitals` measures the sidecar, which is the process that
+// behaved correctly; the webview was never measured and that is where a 4.1 GB session went.
+// Feature-gated with the engine because it
+// writes to the engine's own log; Tauri-free otherwise, so its tests need no toolchain beyond
+// cargo and it reads a fixture /proc tree rather than the real one.
+#[cfg(feature = "local-engine")]
+mod vitals;
 
 fn main() {
     let mut builder = tauri::Builder::default();
@@ -139,6 +146,13 @@ fn main() {
 
     // The one unrequested request this binary makes. Spawned, so nothing here waits on a feed.
     updater::on_launch(app.handle());
+
+    // The renderer's own vitals, every five minutes beside the engine's. It starts after the
+    // window exists so the first pass can find the webview's processes, and it volunteers them
+    // to the kernel's OOM killer: when this app is the heaviest thing on the machine, it should
+    // be what gets reclaimed rather than whichever neighbour was most polite.
+    #[cfg(feature = "local-engine")]
+    vitals::start();
 
     app.run(move |_app, _event| {
         // The close/quit policy is `host::lifecycle_action` — ONE function, tested against the
