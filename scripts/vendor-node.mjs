@@ -5,6 +5,7 @@
  *
  *     node scripts/vendor-node.mjs                        # this machine's platform
  *     node scripts/vendor-node.mjs --platform linux       # darwin | linux | linux-arm64 | windows
+ *     OHMAIL_NODE_ARCHIVES=<dir> node scripts/vendor-node.mjs   # offline: nothing is downloaded
  *
  * ── WHY THIS IS A SCRIPT AND NOT A PARAGRAPH ──────────────────────────────────────────────
  *
@@ -53,6 +54,20 @@
  * two are separate targets here rather than one target with a switch, for exactly the reason the
  * three platforms are — the only cheap thing this script can prove about a runtime is that it RAN,
  * and that proof exists only on the machine it was fetched for.
+ *
+ * ── THE OFFLINE ARM, AND WHY THE DIGESTS ARE PINNED IN THIS FILE ──────────────────────────
+ *
+ * A sandboxed packaging build (Flathub is the case that forced this) resolves only DECLARED,
+ * checksummed sources: it has no network at the moment the app is built, so a step that fetches
+ * `SHASUMS256.txt` cannot run there at all. `OHMAIL_NODE_ARCHIVES` names a directory holding the
+ * release archives already, and in that mode nothing is downloaded — not the archive, not the
+ * manifest.
+ *
+ * Which means the manifest cannot be the authority any more, so PINS below is: the digests of the
+ * pinned release, in the repository, moving only when somebody bumps VERSION on purpose. The
+ * online arm keeps fetching and verifying against the release's own manifest AND asserts the pin
+ * agrees with it, because a pinned list nothing compares is a second truth that drifts quietly
+ * until the first offline build — which would then refuse a correct archive.
  */
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -67,6 +82,28 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
  * `latest` redirect happened to serve on the day a release was cut. */
 export const VERSION = process.env.OHMAIL_NODE_VERSION ?? "v22.23.2";
 const DIST = `https://nodejs.org/dist/${VERSION}`;
+
+/**
+ * THE PINNED RELEASE'S OWN DIGESTS, keyed by version so a bump cannot inherit the old ones.
+ *
+ * Copied from `https://nodejs.org/dist/<version>/SHASUMS256.txt` — every archive `PLATFORMS` below
+ * can ask for. The offline arm has nothing else to verify against; the online arm checks these
+ * against the manifest it fetches, so a wrong pin is a refusal at the next ordinary build rather
+ * than a surprise the first time somebody builds without a network.
+ */
+const PINS = {
+  "v22.23.2": {
+    "node-v22.23.2-darwin-arm64.tar.gz": "61130f394c1630d211dd50aecc4353d379480f36d3ac913cd85dbba1aed585c6",
+    "node-v22.23.2-darwin-x64.tar.gz": "58e99022c2ff89395576cc7fd4d98cea24bb68081475d5f88b801ee8729fb026",
+    "node-v22.23.2-linux-x64.tar.xz": "d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307",
+    "node-v22.23.2-linux-arm64.tar.xz": "fff4078c5def658577f92c88db7db3bc0072924bfb93fe52c1e744a54e94abb8",
+    "node-v22.23.2-win-x64.zip": "1177b4137ba5adaa56354ae40f1080c7450e8ae09cecb47da459d1c52ac99f97",
+  },
+};
+
+/* Set = offline. Unset = the ordinary download. A directory rather than a file because macOS needs
+ * two archives and a caller should not have to know that. */
+const ARCHIVE_DIR = process.env.OHMAIL_NODE_ARCHIVES ?? null;
 
 const OUT_DIR = path.join(ROOT, "build", "vendor");
 
@@ -214,36 +251,71 @@ const OUT_LICENSE = path.join(OUT_DIR, "node.LICENSE");
 
 const work = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "ohmail-node-"));
 
-say(`vendor-node: ${VERSION} for ${target}`);
+say(`vendor-node: ${VERSION} for ${target}${ARCHIVE_DIR ? " (offline)" : ""}`);
 
-/* The release manifest first, so a bad download is caught before it is unpacked rather than after it
- * has been turned into a binary inside an app. */
-const shasums = path.join(work, "SHASUMS256.txt");
-curl(`${DIST}/SHASUMS256.txt`, shasums);
-const expected = new Map(
-  fs.readFileSync(shasums, "utf8").split("\n")
-    .map((l) => l.trim().split(/\s+/))
-    .filter((p) => p.length === 2)
-    .map(([hash, name]) => [name, hash]),
-);
-if (expected.size === 0) die(`${DIST}/SHASUMS256.txt listed no files — refusing to guess`);
+const pinned = PINS[VERSION] ?? null;
+
+/* The release manifest, ONLINE ONLY, and still first: a bad download is caught before it is
+ * unpacked rather than after it has been turned into a binary inside an app. Offline there is no
+ * manifest to read, which is why PINS exists. */
+let expected = new Map();
+if (!ARCHIVE_DIR) {
+  const shasums = path.join(work, "SHASUMS256.txt");
+  curl(`${DIST}/SHASUMS256.txt`, shasums);
+  expected = new Map(
+    fs.readFileSync(shasums, "utf8").split("\n")
+      .map((l) => l.trim().split(/\s+/))
+      .filter((p) => p.length === 2)
+      .map(([hash, name]) => [name, hash]),
+  );
+  if (expected.size === 0) die(`${DIST}/SHASUMS256.txt listed no files — refusing to guess`);
+} else if (!pinned) {
+  die(`no pinned sha256 digests for ${VERSION}, so it cannot be built offline: OHMAIL_NODE_ARCHIVES\n` +
+      `  is set and the release manifest is exactly what that mode cannot fetch. Add ${VERSION}'s\n` +
+      `  digests to PINS in this file (${DIST}/SHASUMS256.txt), or unset OHMAIL_NODE_ARCHIVES.`);
+}
 
 const binaries = [];
 let licenceFrom = null;
 for (const name of spec.archives) {
-  const want = expected.get(name);
-  if (!want) die(`${name} is not listed in the release's SHASUMS256.txt`);
-
+  const pin = pinned?.[name];
   const archive = path.join(work, name);
-  curl(`${DIST}/${name}`, archive);
+  let want;
+
+  if (ARCHIVE_DIR) {
+    /* The file is named, not searched for: a directory holding the wrong release's archive would
+     * otherwise report "missing" for a file that is sitting right there under another version. */
+    const supplied = path.join(ARCHIVE_DIR, name);
+    if (!pin) die(`${name} has no pinned sha256 for ${VERSION} — refusing to accept it unverified`);
+    if (!fs.existsSync(supplied)) {
+      die(`offline (OHMAIL_NODE_ARCHIVES=${ARCHIVE_DIR}): expected ${name} in that directory.\n` +
+          `  Nothing is downloaded in this mode — put the file there, or unset the variable.`);
+    }
+    /* Copied in rather than read in place: extraction runs with a RELATIVE name in `work` (see TAR
+     * above), and the supplied directory stays untouched. */
+    fs.copyFileSync(supplied, archive);
+    want = pin;
+  } else {
+    want = expected.get(name);
+    if (!want) die(`${name} is not listed in the release's SHASUMS256.txt`);
+    /* The pin is checked against the manifest, not instead of it. This is the only thing that keeps
+     * PINS from drifting: without it a wrong pin stays invisible until an offline build refuses a
+     * correct archive, with the manifest nowhere in reach to explain it. */
+    if (pin && pin !== want) {
+      die(`the pinned sha256 for ${name} is not the one the release publishes.\n` +
+          `  PINS says   ${pin}\n  release says ${want}\n` +
+          `  Fix PINS in this file from ${DIST}/SHASUMS256.txt; an offline build verifies against PINS alone.`);
+    }
+    curl(`${DIST}/${name}`, archive);
+  }
 
   const got = sha256(archive);
   if (got !== want) {
-    die(`${name} does not match the release checksum.\n` +
+    die(`${name} does not match the ${ARCHIVE_DIR ? "pinned" : "release"} checksum.\n` +
         `  expected ${want}\n  got      ${got}\n` +
         `  Refusing to build an app around a runtime whose bytes are not the published ones.`);
   }
-  say(`  ${name}  sha256 ok`);
+  say(`  ${name}  sha256 ok${ARCHIVE_DIR ? " (pinned)" : ""}`);
 
   execFileSync(TAR, [...spec.unpack, name], { cwd: work });
   const binary = path.join(work, spec.binary(name));

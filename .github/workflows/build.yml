@@ -160,9 +160,15 @@ jobs:
           rustc --version
           node --version
 
-      - name: npm install
+      # `npm ci` and not `npm install`: apps/desktop carries its own committed
+      # package-lock.json, so every builder resolves the tree this app was
+      # tested against rather than whatever its ranges resolve to today — and a
+      # build with no network can resolve it at all. `npm install` would
+      # quietly rewrite a lock that had drifted from the manifest; `npm ci`
+      # refuses it.
+      - name: Install the desktop tree from its lockfile
         working-directory: apps/desktop
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       - name: tsc --noEmit
         working-directory: apps/desktop
@@ -488,9 +494,15 @@ jobs:
           rustc --version
           node --version
 
-      - name: npm install
+      # `npm ci` and not `npm install`: apps/desktop carries its own committed
+      # package-lock.json, so every builder resolves the tree this app was
+      # tested against rather than whatever its ranges resolve to today — and a
+      # build with no network can resolve it at all. `npm install` would
+      # quietly rewrite a lock that had drifted from the manifest; `npm ci`
+      # refuses it.
+      - name: Install the desktop tree from its lockfile
         working-directory: apps/desktop
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       - name: tsc --noEmit
         working-directory: apps/desktop
@@ -801,9 +813,15 @@ jobs:
           rustc --version
           node --version
 
-      - name: npm install
+      # `npm ci` and not `npm install`: apps/desktop carries its own committed
+      # package-lock.json, so every builder resolves the tree this app was
+      # tested against rather than whatever its ranges resolve to today — and a
+      # build with no network can resolve it at all. `npm install` would
+      # quietly rewrite a lock that had drifted from the manifest; `npm ci`
+      # refuses it.
+      - name: Install the desktop tree from its lockfile
         working-directory: apps/desktop
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       - name: tsc --noEmit
         working-directory: apps/desktop
@@ -1601,9 +1619,15 @@ jobs:
           node --version
           uname -m
 
-      - name: npm install
+      # `npm ci` and not `npm install`: apps/desktop carries its own committed
+      # package-lock.json, so every builder resolves the tree this app was
+      # tested against rather than whatever its ranges resolve to today — and a
+      # build with no network can resolve it at all. `npm install` would
+      # quietly rewrite a lock that had drifted from the manifest; `npm ci`
+      # refuses it.
+      - name: Install the desktop tree from its lockfile
         working-directory: apps/desktop
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       - name: tsc --noEmit
         working-directory: apps/desktop
@@ -2624,9 +2648,9 @@ jobs:
       # `apps/desktop` only, and no workspace: the Vite config aliases every
       # `@ohmail/*` specifier straight at a source path, which is why the three
       # platform jobs install exactly this and nothing else.
-      - name: npm install
+      - name: Install the desktop tree from its lockfile
         working-directory: apps/desktop
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       - name: Build the engine-bearing UI bundle
         working-directory: apps/desktop

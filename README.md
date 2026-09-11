@@ -670,7 +670,7 @@ empty and you connect. The demo lives at ohmail.app/demo.)
 
 ```bash
 cd apps/desktop
-npm install
+npm ci                   # apps/desktop has its own lockfile
 npm run ui:build:engine  # → dist/, the bundle the app embeds
 npm run smoke            # → SMOKE OK — renders, offline audit included
 ```
@@ -690,6 +690,11 @@ node scripts/verify-engine-boot.mjs
 # The official Node build for this platform, checked against nodejs.org's own
 # SHASUMS256.txt before it is unpacked. A mismatch is a refusal, not a warning.
 node scripts/vendor-node.mjs
+
+# Building with no network? Put the release archives in a directory and name it:
+# nothing is downloaded, and the bytes are checked against the digests pinned in
+# the script.
+OHMAIL_NODE_ARCHIVES=/path/to/archives node scripts/vendor-node.mjs
 
 # And the app itself.
 cd apps/desktop && npm run app:build:engine

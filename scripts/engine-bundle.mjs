@@ -7,7 +7,8 @@
  * it directly, or import {@link buildEngine} to build the same artifact and get its inputs back for
  * inspection.
  *
- *     D=$(mktemp -d) && (cd $D && npm install --no-save esbuild@0.24.0)
+ *     node scripts/engine-bundle.mjs                        # esbuild from the workspace, if it has it
+ *     D=$(mktemp -d) && (cd $D && npm install --no-save esbuild@0.24.0)   # or from anywhere
  *     OHMAIL_ESBUILD_FROM=$D node scripts/engine-bundle.mjs
  *
  * ── WHY A BUNDLE AND NOT A `dist/` TREE ───────────────────────────────────────────────────
@@ -74,20 +75,24 @@ export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
  * esbuild's output is deterministic for a GIVEN version, but it is NOT stable across versions — a
  * later esbuild can lay the same module graph out differently. The engine bundle is meant to be
  * reproducible from the published source: a public runner and a local build must produce byte-equal
- * output, which they can only do if both run the same esbuild. Nothing else pins it — the pin used
- * to live in a comment — so it is checked here. Bump it deliberately, in ONE place, when the engine
- * is meant to move; a silent drift is the "absent config picks a version" hazard the whole
- * lockfile-and-pin story exists to close.
+ * output, which they can only do if both run the same esbuild. Bump it deliberately, in ONE place,
+ * when the engine is meant to move; a silent drift is the "absent config picks a version" hazard the
+ * whole lockfile-and-pin story exists to close.
+ *
+ * EXACT, not a major/minor range: esbuild's layout can move within a minor, and "byte-equal" is the
+ * whole claim. The root manifest pins the same string, so the two cannot disagree without this
+ * refusing.
  */
 export const EXPECTED_ESBUILD = "0.24.0";
 
 /**
- * esbuild, WITHOUT adding it to the workspace.
+ * esbuild, from two places in one order.
  *
- * A bundler is a build-time tool rather than something the product ships, and in a monorepo every
- * dependency install risks leaving the module tree half-written for whoever else is working in it.
- * So the resolution is explicit: `OHMAIL_ESBUILD_FROM` names a directory that has one installed,
- * and the workspace is tried as well for the case where somebody has legitimately added it.
+ * `OHMAIL_ESBUILD_FROM` names a directory that has one installed and is tried FIRST — it is what
+ * lets a checkout build the engine without esbuild in its own module tree. The workspace is tried
+ * second, for a tree that declares it: a build that resolves the bundler from its own installed
+ * dependencies needs no network at the moment it runs, which is the only way a sandboxed packaging
+ * build can produce this artifact at all.
  *
  * `NODE_PATH` is deliberately not the mechanism: node ignores it for ESM `import`, which is a
  * pleasant half-hour to discover from `ERR_MODULE_NOT_FOUND` alone.
@@ -114,8 +119,8 @@ export async function loadEsbuild(root = ROOT) {
     return mod;
   }
   throw new Error(
-    "esbuild was not found. It is not a workspace dependency on purpose — install it somewhere " +
-    "harmless and point at it:\n\n" +
+    `esbuild was not found, and the engine is built with exactly ${EXPECTED_ESBUILD}. Either install ` +
+    "it in this tree, or install it somewhere harmless and point at it:\n\n" +
     `    D=$(mktemp -d) && (cd $D && npm install --no-save esbuild@${EXPECTED_ESBUILD})\n` +
     "    OHMAIL_ESBUILD_FROM=$D node scripts/engine-bundle.mjs\n",
   );

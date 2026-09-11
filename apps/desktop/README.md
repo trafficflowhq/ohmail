@@ -33,7 +33,7 @@ command that selects all three (the Cargo feature, the UI flag and the resource
 config) and is what CI runs.
 
 ```bash
-npm install                 # in apps/desktop (pnpm install at the monorepo root works too)
+npm ci                      # in apps/desktop, from its own package-lock.json
 npm run ui:build:engine     # → dist/  (the bundle Tauri embeds)
 npm run smoke               # → SMOKE OK (39 checks, engine)
 npx tauri build --debug     # → src-tauri/target/debug/bundle/…
