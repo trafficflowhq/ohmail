@@ -136,7 +136,8 @@ export function estimateWireBytes(rows: ReadonlyArray<KnownLocator>): number {
  *  · pure reads — they write nothing at all;
  *  · `mailbox_folders` (`upsertMailboxFolder`), `message_failures` (`recordMessageFailure`,
  *    `claimMessageFailures`, `resolveMessageFailure`), `audit_log`, `change_log`, `threads`,
- *    `routing_decisions`, `approvals`, `contacts`, `message_bodies`, `attachments` — different
+ *    `routing_decisions`, `approvals`, `contacts`, `message_bodies`, `attachments`,
+ *    `learning_signals` / `graduations` / `rules` (`recordExternalOverride`) — different
  *    tables entirely;
  *  · `upsertFolderState` / `completeFolderState` / `setFolderConflict` / `deferFolderReconcile` —
  *    `folder_state`, which this projection does not join. `completeFolderState` is the conditional
@@ -207,6 +208,14 @@ export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
   // landed UNCLASSIFIED and the guard suite sat red in HEAD for a day, the third time the
   // dirty-by-default rule did its job late; classified at the 0.12.0 release gate.
   "lockAccountThreadStructure",
+  // the route-override seam's predicate: it READS `messages.from_address` and writes
+  // `learning_signals`, the `graduations` counters and `rules.enabled/demotions` — three tables
+  // this projection does not touch, and neither projected `messages` column (`unread`,
+  // `message_id_header`) is written by it. It sits on the ingest path's `adopt_external` arm,
+  // inside the fenced transaction whose repo IS the watched one, so it runs on every externally
+  // observed move: unclassified it would drop the memo once per adoption and re-read the whole
+  // mailbox's locators.
+  "recordExternalOverride",
   // the pass-through
   "transaction",
 ]);
