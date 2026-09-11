@@ -410,31 +410,29 @@ export function useComposeAutosave(opts: {
     // A RECIPIENT IS NOT A MESSAGE — see {@link worthCreating}. Only the create arm; an existing
     // row keeps saving whatever the form holds, empty subject and body included.
     if (draftId === null && !worthCreating(fields)) return;
-    /* NOTHING IS WRITTEN AT ALL FOR A MESSAGE THIS BROWSER IS ALREADY WAITING ON — see
-       `holdOf`. A create is a SECOND row for a message the durable record already names, and
-       that is the reload half of the duplicate: park a send from a saved draft, reload, and the
-       pause that followed minted `d2` while the record still named `d1`.
+    /**
+     * Nothing is written at all for a message this browser is already waiting on — see `holdOf`. A create is a SECOND
+     * row for a message the durable record already names (park a send from a saved draft, reload, and the next pause
+     * minted `d2` while the record named `d1`). And not only the create — measured live on the release candidate: the
+     * door that opens a new compose mints an empty row at once, so the hook holds THAT row when the parked message is
+     * reopened, and the pause wrote the parked message's text into the DOOR'S row with a PUT. The parked row was
+     * never touched, so Send lit up and one press delivered a second copy. The reopen releases that row (`AppShell`);
+     * this is the same refusal at the layer the write happens in, so a door that forgets to release cannot reach the
+     * wire.
+     */
 
-       AND NOT ONLY THE CREATE, which is what this said and where it was wrong. Measured live on
-       the release candidate: the door that opens a new compose (a contact's Write) MINTS AN EMPTY
-       ROW at once, so the hook is holding THAT row when the parked message is reopened; the pause
-       that followed wrote the parked message's subject and body into the DOOR'S row with a PUT.
-       The parked row itself was never touched — a guard that only watched writes to it saw
-       nothing — while the composer was working on a row the record does not name, so Send lit up
-       and one press delivered a second copy. The reopen releases that row (`AppShell`), and this
-       is the same refusal at the layer the write actually happens in, so a door that forgets to
-       release cannot reach the wire.
+    /**
+     * It reads the PERSISTED row, not this hook's state — the persisted row is what the door writes and the reopen
+     * restores.
+     */
 
-       It reads the PERSISTED row, not this hook's state: the persisted row is the message the
-       surface is holding, which is exactly what the door writes and what the reopen restores.
-
-       `parked`, NOT "anything but free", and the difference is a compose that can still save. A
-       row the MIRROR cannot name — deleted on another device, or a mirror that has not finished
-       loading — answers `unknown`, and refusing the write on it would stall the surface for good:
-       nothing would ever be written to the account again while that id sat in storage. The
-       measured duplicate is not that case, it is the RECORD arm (a send this browser is waiting
-       on, named by its session), which `parked` covers. Invariant S(4)'s fail-closed arms are the
-       RECOVERIES — adopt, discard, re-mint — and each of them refuses `unknown` on its own line. */
+    /* `parked`, NOT "anything but free" — the difference is a compose that can still save. A
+       row the MIRROR cannot name (deleted on another device, or a mirror still loading) answers
+       `unknown`, and refusing the write on it would stall the surface for good: nothing would
+       ever be written to the account again while that id sat in storage. The measured duplicate
+       is the RECORD arm (a send this browser is waiting on, named by its session), which
+       `parked` covers. Invariant S(4)'s fail-closed arms are the RECOVERIES — adopt, discard,
+       re-mint — and each refuses `unknown` on its own line. */
     if (holdOf(engine, {
       lane: COMPOSE_SEND_KEY, draftId: readComposeRow(), session: composeSessionId(),
     }).kind === "parked") return;

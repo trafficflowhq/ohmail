@@ -432,26 +432,18 @@ export function fullDateTime(m: Pick<EngineMessage, "date">): string {
 }
 
 /**
- * ═══ A LIST ROW'S STAMP, BOTH FORMS AND THE FLIP BETWEEN THEM ═══════════════════════════════
- *
- * `MessageRow`'s three stamp props in one call, the way {@link avatarOf} is its two circle props:
- * a view spreads this where it used to pass `time={displayTime(m, now)}`, and the rule for which
- * form is on screen, which is on hover, and whether the date may be pressed at all lives HERE
- * rather than seven times over.
- *
- * WHICH FORM IS SHOWN is the caller's `absolute` — one boolean the shell owns for the whole
- * session, so every row in the list (and the open message with them) flips together and none of
- * them holds a state of its own. The TITLE is always the other one: relative on screen names the
- * exact instant on hover, absolute on screen names the relative one, so hovering says something
- * new either way.
- *
- * ── A MESSAGE WITH NO `Date:` HEADER GETS NO FLIP, AND THAT IS THE POINT ────────────────────
- *
- * Spam and scripts routinely omit the header, and `fullDateTime` answers "" for one because there
- * is no instant to name (the same "" `displayTime` answers). Such a row has ONE form, so it is
- * handed no title and no `onToggleTime` — a date that cannot be exact must not offer to be. This
- * is also the production path that keeps `MessageRow`'s unwired branch honest rather than
- * theoretical.
+ * A list row's stamp, both forms and the flip between them — `MessageRow`'s three stamp props in one call, the way
+ * {@link avatarOf} is its two circle props: a view spreads this where it used to pass `time={displayTime(m, now)}`,
+ * and the rule for which form is on screen, which is on hover, and whether the date may be pressed lives here rather
+ * than seven times over. Which form is shown is the caller's `absolute` — one boolean the shell owns for the whole
+ * session, so every row (and the open message) flips together and none holds its own state. The title is always the
+ * other form, so hovering says something new either way. A message with no `Date:` header gets no flip:
+ * `fullDateTime` answers "" (no instant to name), so the row is handed no title and no `onToggleTime` — a date that
+ * cannot be exact must not offer to be.
+ */
+
+/**
+ * This is also the production path that keeps `MessageRow`'s unwired branch honest.
  */
 export interface RowStampProps {
   /** What the row shows — the relative form, or the absolute one once the list is flipped. */

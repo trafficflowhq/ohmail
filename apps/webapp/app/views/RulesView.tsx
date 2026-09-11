@@ -375,19 +375,15 @@ export function RulesView({ rules, onRevoke, onRetarget }: RulesViewProps) {
         ) : (
           <div className="rules-list">
             {/* The rows above and below the window, as reserved height — empty elements rather
-                than a margin, so the scroller's scroll height and scrollbar are what they would
-                be with every row mounted. `aria-hidden` because this is geometry.
-
-                THE OPEN CONFIRM IS THE ONE NON-ROW CHILD (SET-M4). It renders directly under
-                its target row, so the disclosure is read AT the rule it is about instead of at
-                the top of a list the reader then scrolls away from — and Cancel leaves them
-                exactly where they were. The spacers do not account for its height, on purpose:
-                a per-row bookkeeping scheme would re-couple the window to variable heights,
-                which is the oscillation `useListWindow` exists to avoid. The error this
-                tolerates is bounded by ONE confirm's height (~2 rows) regardless of list
-                length, and the 8-row overscan covers it; when the row scrolls out of the
-                window the confirm unmounts with it and returns when it does — the `open` state
-                is unaffected. */}
+                than a margin, so the scroller's scroll height and scrollbar match every row
+                mounted; `aria-hidden` because this is geometry. The open confirm is the one
+                non-row child (SET-M4), rendered directly under its target row so the disclosure
+                is read AT the rule it is about, and Cancel leaves the reader in place. The
+                spacers ignore its height on purpose: per-row bookkeeping would re-couple the
+                window to variable heights, the oscillation `useListWindow` avoids. The error is
+                bounded by one confirm's height (~2 rows) and the 8-row overscan covers it; when
+                the row scrolls out, the confirm unmounts and returns with it — `open` state
+                unaffected. */}
             {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
             {filtered.slice(win.start, win.end).map((rule) => {
               const what = whatOf(rule);

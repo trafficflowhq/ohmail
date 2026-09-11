@@ -223,25 +223,21 @@ function openAwaySettings(): void {
 /**
  * The line itself. Presentational on purpose: whether there is anything to say — and on which
  * install — is the shell's call (`useAwayNotice` plus the `noticeSection` gate in `AppShell`),
- * so this component renders unconditionally what it is handed and holds no state of its own.
- *
- * `role="status"`: the responder being on is exactly the kind of ambient fact a screen reader
- * should hear once and not be interrupted by.
- *
- * IT IS A STANDING PANE, NOT A SUBLINE — the `Banner` primitive (`packages/ui`). Every other
- * line in the header slot announces a CHANGE and can be made to go — the organizer notice keeps a
- * "Mark read" that ends it. This one states a condition that holds until its owner ends it, and it
- * was reported from real use as reading like one more pile description, which is the one thing it
- * is not. The box is the difference; the words are unchanged.
- *
- * AND IT IS THE LIST'S FIRST BLOCK, NOT THE HEADER'S LAST LINE. Rendered through `OhboxView`'s
- * `standingNotice` slot — inside the scroller — so the banner's one media rule can give it both
- * forms: pinned at the top of the list on a desktop, where a standing fact belongs in view; in the
- * flow on a phone, read at the top and gone with the first swipe, where the same line pinned
- * would be a toolbar taking a third of the screen. The offer and the organizer notice stay in the
- * header slot — they must not scroll away, and they must not displace the doorbell.
- *
- * `ohx-away` is a hook for tests and the fit harness; nothing styles it.
+ * so this renders unconditionally what it is handed and holds no state. `role="status"`: the
+ * responder being on is an ambient fact a screen reader should hear once. It is a standing pane,
+ * not a subline — the `Banner` primitive (`packages/ui`): every other header line announces a
+ * CHANGE and can be made to go, while this states a condition that holds until its owner ends
+ * it, and it read like one more pile description without the box.
+ */
+
+/**
+ * And it is the list's first block, not the header's last line — rendered through `OhboxView`'s
+ * `standingNotice` slot, inside the scroller, so the banner's one media rule gives it both
+ * forms: pinned at the top of the list on a desktop, in the flow on a phone (read at the top,
+ * gone with the first swipe — pinned there it would be a toolbar taking a third of the screen).
+ * The offer and the organizer notice stay in the header slot: they must not scroll away, and
+ * they must not displace the doorbell. `ohx-away` is a hook for tests and the fit harness;
+ * nothing styles it.
  */
 /** The pile word for each answered folder, as the sentence's own clause needs it. */
 const NOTICE_PILE_LABEL = {

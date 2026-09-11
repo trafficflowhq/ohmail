@@ -168,37 +168,25 @@ export function useDraftReply(opts: {
 }
 
 /**
- * The SERVER's own sentence — or an honest one when the server did not give one.
- *
- * ── WHY A 500 NEEDS ITS OWN ARM ────────────────────────────────────────────────────────────
- *
- * Every refusal on this path was written to be read: "no AI actions remain on this account" (402),
- * "cannot AI-draft a sensitive message" (422), "this deployment has no AI drafter connected" (503).
- * Passing those through verbatim is right, and it is why this function is a one-liner.
- *
- * An unhandled fault is not one of them. The envelope for a 500 is
- * `{"error":{"code":"internal","message":"internal error"}}`, and quoting that puts the words
- * "internal error" in front of a person as though the app were explaining itself. That is what this
- * surface did while `GET /drafts/:id` answered 500 to an id it could not parse: the button failed,
- * said nothing usable, and re-offered itself — which is a surface that invites pressing again
- * rather than one that explains. The server half of that defect is fixed (a malformed id is now a
- * 400 with a real sentence); this arm is for the next unmodelled fault, because there will be one.
- *
- * ── THE TEST IS THE `code`, NOT THE STATUS, AND I GOT THAT WRONG FIRST ─────────────────────
- *
- * The obvious rule is `status >= 500`. It is wrong, and `draft-reply.test.tsx` said so within a
- * minute: this route's "this deployment has no AI drafter connected" is a **503**, and it is one of
- * the most useful sentences on the path — an operator can act on it and a person understands it.
- * Swallowing it would have replaced a good sentence with a vaguer one and called that an
- * improvement.
- *
- * So the test is the CODE. `errorResponse("internal", …)` is the API's envelope for a throw nobody
- * modelled — the only case where the message is machine noise — and every deliberate refusal on
- * this path carries a code of its own. An empty message is caught too, because a blank notice is
- * the same failure with fewer characters.
- *
- * `status === 0` is the transport's own code for "we never reached ohmail", which already carries a
- * true sentence from `api-client` and is left alone.
+ * The server's own sentence — or an honest one when the server did not give one. Every refusal on this path was
+ * written to be read: "no AI actions remain on this account" (402), "cannot AI-draft a sensitive message" (422),
+ * "this deployment has no AI drafter connected" (503) — passed through verbatim. An unhandled fault is not one of
+ * them: a 500's envelope is `{"error":{"code":"internal","message":"internal error"}}`, and quoting it puts "internal
+ * error" in front of a person as though the app were explaining itself — which this surface did while `GET
+ * /drafts/:id` answered 500 to an id it could not parse: the button failed, said nothing usable, and re-offered
+ * itself. The server half is fixed (a malformed id is now a 400 with a real sentence); this arm is for the next
+ * unmodelled fault.
+ */
+
+/**
+ * The test is the `code`, not the status. The obvious rule — `status >= 500` — is wrong, and
+ * `draft-reply.test.tsx` said so within a minute: "this deployment has no AI drafter connected"
+ * is a 503 and one of the most useful sentences on the path. `errorResponse("internal", …)` is
+ * the API's envelope for a throw nobody modelled — the only case where the message is machine
+ * noise — and every deliberate refusal carries a code of its own. An empty message is caught
+ * too: a blank notice is the same failure with fewer characters. `status === 0` is the
+ * transport's own "we never reached ohmail", already a true sentence from `api-client`, and is
+ * left alone.
  */
 export function messageFor(err: unknown, fallback: string, opaque: string): string {
   if (!(err instanceof ApiError)) return fallback;

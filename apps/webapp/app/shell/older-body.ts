@@ -85,31 +85,24 @@ function resting(text: string, state: MessageBody["state"], withheld?: WithheldM
 }
 
 /**
- * @param active `false` on the demo — a self-contained surface makes no external request, and
- * its fixture rows carry their bodies anyway.
- * @param transport A host's own wire — the desktop's hosted door hands in its bridge. Absent ⇒
- * the browser's Cloud client where one is configured (`apiConfigured()` is answered HERE, by the
- * module that owns the client — the shared shell never imports it; the desktop's alias stubs it
- * to false, so a desktop build that forgets to inject simply has no door rather than a broken
- * one). Must be stable-ish: it is read through a ref, `consent-state.ts`'s rule.
- * @param mayRead Asked immediately before every request, never cached. `false` ⇒ the ask fails
- * rather than being skipped, which is the difference between a row that says "couldn't load" and
- * one that sits on its snippet with no explanation and no retry.
- *
- * ── WHY THIS DOOR NEEDS ITS OWN ANSWER ──────────────────────────────────────────────────────
- *
- * Every other read in this app reaches the server through the engine's adapter, which the
- * mirror's sync gate wraps — so when the browser's session turns out to belong to a different
- * account than the mirror on screen, those reads refuse in one place. This door does not: it is
- * a bare `api()` call, because a reach-past row is by definition not in the mirror and the
- * engine's body machinery answers `skip` for it.
- *
- * That made it the widest of the doors, not the narrowest. The rows it opens come from
- * `useOlderMail`'s LIST, which under a foreign session is a list of that account's mail — so the
- * id handed here is valid, the request succeeds, and the pane renders somebody else's message in
- * full. The caller supplies the predicate (`syncIdentityOf`, `sync-scheduler.ts`); this file
- * stays free of any opinion about sessions, which is what keeps it usable by the desktop's
- * hosted door.
+ * @param active `false` on the demo — a self-contained surface makes no external request, and its fixture rows carry
+ * their bodies anyway. @param transport A host's own wire — the desktop's hosted door hands in its bridge. Absent ⇒
+ * the browser's Cloud client where one is configured (`apiConfigured()` is answered HERE, by the module that owns the
+ * client — the shared shell never imports it; the desktop's alias stubs it to false). Read through a ref,
+ * `consent-state.ts`'s rule. @param mayRead Asked immediately before every request, never cached. `false` ⇒ the ask
+ * FAILS rather than being skipped — the difference between a row that says "couldn't load" and one that sits on its
+ * snippet with no explanation and no retry.
+ */
+
+/**
+ * Why this door needs its own answer: every other read reaches the server through the engine's
+ * adapter, which the mirror's sync gate wraps — when the browser's session belongs to a
+ * different account than the mirror on screen, those reads refuse in one place. This door is a
+ * bare `api()` call, because a reach-past row is by definition not in the mirror. That made it
+ * the widest door: under a foreign session `useOlderMail`'s list is that account's mail, the id
+ * handed here is valid, the request succeeds, and the pane renders somebody else's message in
+ * full. So the caller supplies the predicate (`syncIdentityOf`, `sync-scheduler.ts`); this file
+ * stays free of any opinion about sessions, which keeps it usable by the desktop's hosted door.
  */
 export function useOlderBody(
   active: boolean,

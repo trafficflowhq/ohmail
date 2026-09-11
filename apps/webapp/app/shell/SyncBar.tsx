@@ -406,40 +406,24 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean): 
 }
 
 /**
- * The strip's leading mark — an envelope, a warning, or, while work is genuinely in flight,
- * a spinner.
- *
- * ── WHY THE BUSY STATES GET A SPINNER AND NOT AN ENVELOPE ───────────────────────────────
- *
- * `importing` and `awaiting` are the two states that report WORK, and both can sit for
- * minutes. A static ✉ beside a number that changes once every eight seconds reads as a frozen
- * screen — reported from live use on a full mailbox — because between drains
- * nothing on the strip moves at all. The spinner is the one element here that is continuously
- * true: it says a process is running without claiming to know how far along it is.
- *
- * INDETERMINATE ON PURPOSE, AND IT STAYS THAT WAY NOW THAT A TOTAL EXISTS. `/sync` answers
- * `hasMore` as a boolean, so the SHAPE OF THE DRAIN is still unknowable from the loop itself;
- * what {@link MailState.total} adds is a count of the account's mail, which is a different fact
- * measured at a different moment. Two numbers read seconds apart may be quoted side by side —
- * "N of M" is two measurements and reads as two — but they may not be turned into one
- * percentage or one filled track, which claims a single continuous progression the client cannot
- * see. So the spinner still carries exactly the knowledge available, and the numbers sit beside
- * it as text.
- *
- * ── WHY `mbx-spin`, A CLASS THE SETTINGS ROWS OWN ───────────────────────────────────────
- *
- * Deliberate reuse. `(product)/mailbox/MailboxSection.tsx:428` already renders this exact
- * spinner for this exact fact — "this mailbox is syncing" — so styling a second one here would
- * be two spellings of one event, the drift this file's own header argues against. It is
- * layout-independent (a fixed 11 px ring), built from `--hair`/`--accent`, and its
- * `prefers-reduced-motion` answer already exists at `app.css:1657`: the ring stays, the
- * rotation stops, so the affordance survives without motion. The class NAME is the only wart —
- * `mbx-` means the Settings block. It wants renaming to a shared `.spin`, which is a change to
- * `app.css`, and is owed.
- *
- * `aria-hidden` on all three forms. The strip is a `role="status"` region that already
- * announces its sentence, and an indeterminate spinner has no value a screen reader could
- * report; announcing it would add noise, not information.
+ * The strip's leading mark — an envelope, a warning, or, while work is genuinely in flight, a spinner. `importing`
+ * and `awaiting` report WORK and can sit for minutes; a static ✉ beside a number that changes every eight seconds
+ * reads as a frozen screen (reported from live use on a full mailbox). The spinner is the one element continuously
+ * true: a process is running, with no claim about how far along. Indeterminate on purpose, even now that a total
+ * exists: `/sync` answers `hasMore` as a boolean, so the shape of the drain is unknowable from the loop; {@link
+ * MailState.total} is a different fact measured at a different moment. Two numbers may be quoted side by side — "N of
+ * M" reads as two measurements — but never turned into one percentage or filled track, which claims a continuous
+ * progression the client cannot see.
+ */
+
+/**
+ * `mbx-spin` is a class the Settings rows own, reused deliberately: `(product)/mailbox/MailboxSection.tsx:428`
+ * already renders this exact spinner for this exact fact, so styling a second one would be two spellings of one
+ * event. It is layout-independent (a fixed 11 px ring, `--hair`/`--accent`), and its `prefers-reduced-motion` answer
+ * exists at `app.css:1657`: the ring stays, the rotation stops. The class NAME is the only wart — `mbx-` means the
+ * Settings block; renaming to a shared `.spin` is a change to `app.css`, and is owed. `aria-hidden` on all three
+ * forms: the strip is a `role="status"` region that already announces its sentence, and an indeterminate spinner has
+ * no value a screen reader could report.
  */
 function Glyph({ warn = false, busy = false }: { warn?: boolean; busy?: boolean }) {
   if (busy) return <Spinner className="mbx-spin" />;
