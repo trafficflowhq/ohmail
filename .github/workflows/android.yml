@@ -143,6 +143,26 @@ jobs:
           EXPO_NO_TELEMETRY: "1"
         run: npx expo prebuild --platform android --no-install
 
+      # THE HEAP THE TWO PACKAGING TASKS NEED, written into the project the prebuild just
+      # generated. Expo's template sets `-Xmx2048m -XX:MaxMetaspaceSize=512m`, and packaging the
+      # APK and the bundle in ONE invocation exhausts it: `packageRelease` and
+      # `packageReleaseBundle` both failed with `Java heap space` against a max heap the log named
+      # as 2 GiB. The daemon reads `gradle.properties`, not the client's environment, so the knob
+      # belongs in the file; and the edit is ASSERTED, because a knob that did not land looks
+      # exactly like the failure it was meant to fix.
+      - name: The Gradle heap the two packaging tasks need
+        working-directory: apps/mobile/android
+        run: |
+          set -euo pipefail
+          sed -i 's|^org\.gradle\.jvmargs=.*|org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8|' gradle.properties
+          n=$(grep -c '^org\.gradle\.jvmargs=-Xmx4g' gradle.properties || true)
+          if [ "$n" -ne 1 ]; then
+            echo "the heap line did not land; gradle.properties says:"
+            grep -a '^org\.gradle\.jvmargs' gradle.properties || echo "  (no org.gradle.jvmargs line at all)"
+            exit 1
+          fi
+          grep -a '^org\.gradle\.jvmargs' gradle.properties
+
       # ONE invocation, both packagings. The release variant has a single R8 run behind both
       # tasks, and R8 writes ONE `mapping.txt`; as two separate Gradle commands, whichever ran
       # last would own that file and a release page could end up carrying an artifact beside a
@@ -314,6 +334,26 @@ jobs:
           CI: "1"
           EXPO_NO_TELEMETRY: "1"
         run: npx expo prebuild --platform android --no-install
+
+      # THE HEAP THE TWO PACKAGING TASKS NEED, written into the project the prebuild just
+      # generated. Expo's template sets `-Xmx2048m -XX:MaxMetaspaceSize=512m`, and packaging the
+      # APK and the bundle in ONE invocation exhausts it: `packageRelease` and
+      # `packageReleaseBundle` both failed with `Java heap space` against a max heap the log named
+      # as 2 GiB. The daemon reads `gradle.properties`, not the client's environment, so the knob
+      # belongs in the file; and the edit is ASSERTED, because a knob that did not land looks
+      # exactly like the failure it was meant to fix.
+      - name: The Gradle heap the two packaging tasks need
+        working-directory: apps/mobile/android
+        run: |
+          set -euo pipefail
+          sed -i 's|^org\.gradle\.jvmargs=.*|org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8|' gradle.properties
+          n=$(grep -c '^org\.gradle\.jvmargs=-Xmx4g' gradle.properties || true)
+          if [ "$n" -ne 1 ]; then
+            echo "the heap line did not land; gradle.properties says:"
+            grep -a '^org\.gradle\.jvmargs' gradle.properties || echo "  (no org.gradle.jvmargs line at all)"
+            exit 1
+          fi
+          grep -a '^org\.gradle\.jvmargs' gradle.properties
 
       # ONE invocation, both packagings — see the build check above for why the two tasks must
       # not be two Gradle commands. This is the tag path, so both artifacts here are published:
