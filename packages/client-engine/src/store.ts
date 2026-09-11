@@ -68,35 +68,25 @@ export interface MirrorStore extends EntityReader {
   getMeta<T = unknown>(key: string): T | undefined;
   setMeta(key: string, value: unknown): Promise<void>;
   /**
-   * HARD-DELETE records the client has chosen not to keep — the windowed-store eviction pass.
-   *
-   * ## HARD DELETE, NOT A TOMBSTONE, AND THAT IS THE WHOLE DESIGN
-   *
-   * Every other removal in this file writes `entity: null` at the deleting change's seq, because
-   * the seq guard in `applyToRecords` is what makes a replayed page converge. A prune is the
-   * opposite case: the row is being dropped for LOCAL storage reasons, the server still has it,
-   * and the client wants it BACK the moment it becomes interesting again. A tombstone would carry
-   * a seq, and the seq guard would then refuse every later delta at or below it — so an update to
-   * a pruned message would be silently dropped and the row would stay invisible forever.
-   *
-   * Deleting the record outright leaves NO seq to guard against, so the next `/sync` change that
-   * mentions the id re-materializes it. That is sound only because `/sync` changes carry FULL
-   * DTOs (contract §3.1 — `entity` is the whole resource, not a patch), so a plain `update` is
-   * enough to rebuild a row from nothing. `applyToRecords`'s `create|update` branch upserts the
-   * carried entity without consulting what was there before, which is exactly what is needed.
-   *
-   * ## `message_body` CASCADES
-   *
-   * Raw body text must not sit at rest without the message it belongs to. A
+   * Hard-delete records the client has chosen not to keep — the windowed-store eviction pass. Hard delete, NOT a
+   * tombstone, and that is the whole design: every other removal writes `entity: null` at the deleting change's seq,
+   * because the seq guard in `applyToRecords` makes a replayed page converge. A prune is the opposite case — the row
+   * is dropped for LOCAL storage reasons, the server still has it, and the client wants it back the moment it is
+   * interesting again. A tombstone would carry a seq, and the guard would then refuse every later delta at or below
+   * it: an update to a pruned message silently dropped, the row invisible forever. Deleting outright leaves no seq to
+   * guard, so the next `/sync` change naming the id re-materializes it — sound only because `/sync` changes carry
+   * FULL DTOs (contract §3.1), so `applyToRecords`'s upsert rebuilds a row from nothing.
+   */
+
+  /**
+   * `message_body` cascades: raw body text must not sit at rest without its message. A
    * `message_body` is client-local — `/sync` has no vocabulary for it, so nothing else will ever
-   * remove one — and it is the single largest thing the mirror holds. Pruning a `message` without
-   * its body would evict the row and keep the payload, which inverts the point of the pass. So
-   * the cascade is structural here, exactly as it is in {@link cascadeLocalDeletes}, rather than
-   * a rule each caller has to remember.
-   *
-   * `maxSeq()` and the cursor are NOT touched. Pruning is a statement about local storage, never
-   * about how much of the log this client has seen; moving either backwards would re-request
-   * deltas already applied to the rows that were kept.
+   * remove one — and it is the largest thing the mirror holds; pruning a `message` without its
+   * body would evict the row and keep the payload. The cascade is structural here, exactly as
+   * in {@link cascadeLocalDeletes}, rather than a rule each caller remembers. `maxSeq()` and
+   * the cursor are NOT touched: pruning is a statement about local storage, never about how
+   * much of the log this client has seen, and moving either backwards would re-request deltas
+   * already applied to the kept rows.
    */
   prune(keys: ReadonlyArray<{ type: string; id: string }>): Promise<void>;
   /**
@@ -109,30 +99,20 @@ export interface MirrorStore extends EntityReader {
   pruneSerialized(keys: ReadonlyArray<{ type: string; id: string }>): Promise<void>;
 
   /**
-   * ── THE OUTBOX'S OWN WRITE: ATOMIC ACROSS KEYS, AND WRITE-THEN-PUBLISH ───────────────────
-   *
-   * Every put and every delete lands, or none does — one storage transaction — and **memory
-   * changes only once that transaction has completed**. On rejection nothing in memory moved and
-   * nothing entered the unflushed set.
-   *
-   * That inversion is the whole point, and it is why this exists beside `putLocal` rather than
-   * replacing it. `putLocal` is memory-FIRST: it sets the record, bumps the version and then
-   * awaits the flush, so a rejected write leaves the row live in memory and in `unflushed`, where
-   * the next unrelated flush persists it. For a /sync row that is correct — the row is
-   * re-derivable from the server and the durable cursor must never run ahead of its rows, which is
-   * what carry-forward guarantees. For the OUTBOX it is exactly wrong: a queued verb derives from
-   * nothing, it IS the user's intent, and its Idempotency-Key is the only thing standing between
-   * "retry" and "second delivery". A row that is live in memory but not on disk is a verb that
-   * will be dispatched and then forgotten by the next boot — which is how a fresh key, and a
-   * second delivery, happen.
-   *
-   * Atomic ACROSS KEYS because the outbox's transitions move a record between two collections.
-   * Abandoning is "write the abandoned row, delete the live row"; as two calls it has a window in
-   * which both exist or neither does, and no ordering of the two removes it. As one transaction
-   * there is no window.
-   *
-   * Refuses any put with `seq !== 0`, and takes no cursor and no meta: it cannot move the sync
-   * cursor even by mistake — the same statement `purge` already makes.
+   * The outbox's own write: atomic across keys, and write-then-publish. Every put and delete lands or none does — one
+   * storage transaction — and memory changes only once it has committed; on rejection nothing in memory moved and
+   * nothing entered the unflushed set. That inversion is why this exists beside `putLocal` rather than replacing it:
+   * `putLocal` is memory-first (set, bump, then flush), which is correct for a /sync row — re-derivable, with
+   * carry-forward keeping the durable cursor behind its rows. For the OUTBOX it is exactly wrong: a queued verb
+   * derives from nothing, it IS the user's intent, and its Idempotency-Key is the only thing between "retry" and
+   * "second delivery" — a row live in memory but not on disk is a verb dispatched and then forgotten by the next
+   * boot, which is how a fresh key and a second delivery happen.
+   */
+
+  /**
+   * Atomic ACROSS KEYS because transitions move a record between two collections (abandoning writes one row and
+   * deletes another; two calls leave a window, one transaction leaves none). Refuses any put with `seq !== 0`, takes
+   * no cursor and no meta: it cannot move the sync cursor even by mistake — the same statement `purge` makes.
    */
   commitLocal(
     puts: ReadonlyArray<{ type: string; id: string; entity: unknown }>,
@@ -164,46 +144,35 @@ export abstract class BaseMirrorStore implements MirrorStore {
   protected highSeq = 0;
   protected ver = 0;
 
-  /* ══════════════════════════════════════════════════════════════════════════════════════════
-     THE PERSISTENCE CONTRACT — *the durable cursor moves only after the page it covers is
-     durably committed.*
+  /**
+   * THE PERSISTENCE CONTRACT — the durable cursor moves only after the page it covers is durably committed. What was
+   * wrong: `applyResponse` advanced the in-memory cursor and records, THEN awaited a persist that can fail. IndexedDB
+   * makes the single failed flush harmless (page and cursor land in one transaction or neither does); the NEXT one
+   * was not — on retry `applyToRecords` refuses the same-seq changes (the seq guard doing its job), the dirty set is
+   * empty, and the flush writes the newer cursor over a disk that never received the earlier page's rows. Reload, and
+   * the mirror asks `/sync` for changes after a cursor whose rows it does not hold — permanently, since deltas are
+   * only sent once. Nothing in memory is ever wrong, which is why no assertion about the reader could see it: the
+   * defect is a claim about DISK, visible only after a restart.
+   */
 
-     ── WHAT WAS WRONG, AND WHY EVERY TEST WAS GREEN OVER IT ────────────────────────────────
+  /**
+   * The contract: a record applied in memory is UNFLUSHED until a `persist` that carried it has resolved. The
+   * unflushed set survives a failed flush and rides the next one, so a cursor is never written without every row it
+   * covers in the same transaction. Two consequences: the in-memory cursor is deliberately NOT rolled back on a
+   * failed flush — it is what the next `/sync` asks from, memory genuinely holds the page, and rolling it back would
+   * re-request a page the seq guard would refuse, which is how the hole was reachable in the first place (what must
+   * not run ahead is the DURABLE cursor, and now it cannot). And a repeatedly failing flush accumulates — bounded by
+   * the mirror itself, and the alternative is dropping a row on the floor.
+   */
 
-     `applyResponse` advanced the in-memory cursor and the in-memory records and THEN awaited a
-     persist that can fail. IndexedDB gives the write itself atomicity — page and cursor land in
-     one transaction or neither does — so the single failed flush was harmless. The next one was
-     not: on the retry `applyToRecords` REFUSES the same-seq changes (that is the seq guard doing
-     its job), so the dirty set is empty, and the flush writes the NEWER cursor over a disk that
-     never received the earlier page's rows. Reload, and the mirror asks `/sync` for changes after
-     a cursor whose rows it does not hold. The gap is permanent: deltas are only ever sent once.
-
-     Nothing in memory is wrong at any point, which is exactly why no assertion about the reader
-     could see it — the defect is a claim about DISK, and it only becomes visible after a restart.
-
-     ── THE CONTRACT ────────────────────────────────────────────────────────────────────────
-
-     A record applied in memory is UNFLUSHED until a `persist` that carried it has resolved. The
-     unflushed set survives a failed flush and rides the next one, so a cursor is never written
-     without every row it covers going with it, in the same transaction. Two consequences worth
-     stating because they are the ones a reader will want:
-
-      · The in-memory cursor is deliberately NOT rolled back on a failed flush. It is what the
-        next `/sync` asks from, and memory genuinely holds the page; rolling it back would
-        re-request a page the seq guard would then refuse, which is how the hole was reachable in
-        the first place. What must not run ahead is the DURABLE cursor, and it now cannot.
-      · A flush that fails repeatedly accumulates. That is bounded by the mirror itself — the
-        records are already in memory — and the alternative is dropping a row on the floor.
-
-     ── AND THE WIPE OWES THE SAME PROMISE ──────────────────────────────────────────────────
-
-     `resetForBootstrap` cleared memory and then awaited a wipe that can fail. On failure the disk
-     kept the OLD rows while memory was empty, the 410 re-bootstrap then wrote a fresh cursor over
-     them, and mail the server had deleted came back on the next restart and stayed. So a failed
-     wipe is REMEMBERED (`wipeOwed`) and retried ahead of the next flush; until it succeeds nothing
-     is written at all, which is the safe direction — a mirror that cannot clear itself must not
-     advance past the state it failed to clear.
-     ══════════════════════════════════════════════════════════════════════════════════════════ */
+  /*
+   * The wipe owes the same promise. `resetForBootstrap` cleared memory and then awaited a wipe
+   * that can fail: on failure the disk kept the OLD rows while memory was empty, the 410
+   * re-bootstrap wrote a fresh cursor over them, and mail the server had deleted came back on
+   * the next restart and stayed. So a failed wipe is REMEMBERED (`wipeOwed`) and retried ahead
+   * of the next flush; until it succeeds nothing is written at all — the safe direction, since
+   * a mirror that cannot clear itself must not advance past the state it failed to clear.
+   */
 
   /** Records applied in memory whose flush has not yet resolved, newest per key. */
   private readonly unflushed = new Map<string, MirrorRecord>();
@@ -338,40 +307,29 @@ export abstract class BaseMirrorStore implements MirrorStore {
   }
 
   /**
-   * ANOTHER TAB WIPED THE DATABASE UNDER US. ADOPT ITS BASELINE INSTEAD OF WRITING OVER IT.
-   *
-   * ── THE DEFECT: ONE TAB'S WIPE, ANOTHER TAB'S CURSOR ─────────────────────────────────────
-   *
-   * The mirror is per ACCOUNT, not per tab: two tabs signed into one account open the same
-   * IndexedDB database. A `410` in tab A calls {@link resetForBootstrap}, which empties that
-   * shared database. Tab B knows nothing about it — its memory still holds the whole mirror and a
-   * cursor at, say, seq 9 000 — so tab B's very next flush writes its dirty page AND that cursor
-   * onto the wiped baseline. On disk: a handful of rows under a cursor that claims nine thousand
-   * seqs' worth. Every one of those deltas has already been sent and `/sync` sends a delta once,
-   * so the hole is permanent and the next boot renders a truncated mailbox that looks healthy.
-   *
-   * This is the SAME defect as arm 1 — the cursor advancing on an intent rather than on a fact —
-   * with the fact falsified by a different process rather than by a failed write. So it needs the
-   * same kind of answer, and a purely in-memory one cannot give it: nothing in tab B's memory is
-   * wrong, and there is no moment at which tab B could have noticed. The fence therefore lives in
-   * the WRITE TRANSACTION (a generation stamp read where the write happens, see
-   * {@link MirrorGenerationChanged}), which is the only place the two tabs are serialized.
-   *
-   * ── WHAT RECOVERY MEANS, AND WHY IT IS NOT AN ERROR ──────────────────────────────────────
-   *
-   * The disk is now a fresh, empty mirror at cursor "0", and tab A is already re-bootstrapping it.
-   * The honest thing for tab B is to BE that mirror: drop the state the wipe disowned, present
-   * itself as cold, and let its own next drain re-bootstrap. Reporting a write failure instead
-   * would be false — nothing failed — and rolling back only the cursor would leave memory holding
-   * rows the disk does not have, which is arm 1 again from the other side.
-   *
-   * **The client-local records survive, and that is the one carve-out.** They live at seq 0
-   * ({@link MirrorStore.putLocal}) and the DURABLE OUTBOX is one of them: a wipe is a statement
-   * about the CURSOR, never about the user's queued intents — exactly the rule the engine's own
-   * `410` branch already writes down when it carries the outbox rows through
-   * `resetForBootstrap`. They are re-persisted here onto the new baseline, so a kill immediately
-   * after the fence still finds them on the next boot. A re-persist that fails leaves them in the
-   * unflushed set and the next flush carries them, which is the contract above doing its job.
+   * Another tab wiped the database under us — adopt its baseline instead of writing over it. The mirror is per
+   * ACCOUNT, not per tab: a `410` in tab A calls {@link resetForBootstrap} and empties the shared database while tab
+   * B's memory still holds the whole mirror and a cursor at, say, seq 9 000. Tab B's next flush would write its dirty
+   * page AND that cursor onto the wiped baseline: a handful of rows under a cursor claiming nine thousand seqs, a
+   * permanent hole (`/sync` sends a delta once), and a truncated mailbox that looks healthy. It is the same defect as
+   * arm 1 — the cursor advancing on an intent rather than a fact — falsified by another process instead of a failed
+   * write, and no in-memory answer exists: nothing in tab B's memory is wrong.
+   */
+
+  /**
+   * So the fence lives in the WRITE TRANSACTION (a generation stamp read where the write happens, {@link
+   * MirrorGenerationChanged}) — the only place the tabs are serialized.
+   */
+
+  /**
+   * Recovery is not an error: the disk is now a fresh mirror at cursor "0" and tab A is already re-bootstrapping it,
+   * so the honest thing for tab B is to BE that mirror — drop the disowned state, present itself as cold, let its
+   * next drain re-bootstrap. Reporting a write failure would be false (nothing failed), and rolling back only the
+   * cursor is arm 1 from the other side. The client-local records survive, and that is the one carve-out: they live
+   * at seq 0 ({@link MirrorStore.putLocal}) and the durable outbox is one of them — a wipe is a statement about the
+   * CURSOR, never about the user's queued intents, the same rule the engine's own `410` branch writes down. They are
+   * re-persisted onto the new baseline, so a kill right after the fence still finds them on the next boot; a failed
+   * re-persist leaves them in the unflushed set for the next flush — the contract above doing its job.
    */
   private async adoptWipedBaseline(): Promise<void> {
     const kept: MirrorRecord[] = [];
@@ -469,35 +427,29 @@ export abstract class BaseMirrorStore implements MirrorStore {
   }
 
   /**
-   * A META WRITE IS NOT AN ENTITY CHANGE, so it does not bump {@link version}.
-   *
-   * `version()` is documented one line up as the stamp that says a DERIVED CACHE is stale, and
-   * every consumer of it derives over entities: the shell re-runs `consentPartition`, the
-   * presentation projection and all four pile selectors whenever this number moves
-   * (`useEngineVersion` → `useSyncExternalStore`), and `messagesByDateDesc` throws away its
-   * shared order. The whole namespace is two keys — `LAST_DRAIN_AT_META` for
-   * {@link OhmailEngine.freshness} and the stale-resume verdict, `SNAPSHOT_PREFIX_SEQ_META` for the
-   * bootstrap's own bookkeeping — and `idb.ts`/`sql-store.ts` both keep their internal keys out of
-   * it precisely so a selector can never reach one.
-   *
-   * **"Nothing reads meta" is what this said, and it is NOT true**, so the argument is stated the
-   * way it actually holds. `apps/mobile/src/state/live.ts`'s `mirrorSettled` reads
-   * `getMeta(LAST_DRAIN_AT_META)` directly, and the phone's world memo
-   * (`apps/mobile/src/state/world.tsx`) calls it per derivation. What matters is that it does not
-   * derive that value THROUGH `version()`: it re-reads the store on each pass, and the pass is
-   * triggered by `conn.syncing`, which flips at the same settle. So the phone's settled state and
-   * its staleness label still clear in the render they always did — but they now rest on one
-   * trigger rather than two, and `world.tsx`'s comment beside that dependency array says so.
-   *
-   * The cost of bumping was not theoretical. `OhmailEngine.drain()` stamps the completion time
-   * here at the end of EVERY drain, including the overwhelmingly common one that carried no
-   * changes at all — so an idle desktop window over a large mailbox re-derived and
-   * re-rendered the entire mirror once every eight seconds, for ever, to record a timestamp
-   * nothing on screen reads through this stamp.
-   *
-   * The freshness label is unaffected and that is the point of separating the two: the drain
-   * announces its settle with its own `notify()`, and `useFreshness` subscribes to notifies
-   * rather than to this number, so "as of 14:32 · catching up" still clears at the settle.
+   * A meta write is not an entity change, so it does not bump {@link version}. `version()` is the stamp that says a
+   * derived cache is stale, and every consumer derives over entities: the shell re-runs `consentPartition`, the
+   * projection and all four pile selectors when it moves, and `messagesByDateDesc` drops its shared order. The
+   * namespace is two keys — `LAST_DRAIN_AT_META` for {@link OhmailEngine.freshness} and the stale-resume verdict,
+   * `SNAPSHOT_PREFIX_SEQ_META` for the bootstrap's bookkeeping — and `idb.ts`/`sql-store.ts` keep their internal keys
+   * out of it so a selector can never reach one.
+   */
+
+  /**
+   * The cost of bumping was measured: `drain()` stamps the completion time after EVERY drain, including the common
+   * empty one, so an idle desktop window over a large mailbox re-derived and re-rendered the entire mirror every
+   * eight seconds to record a timestamp nothing on screen reads through this stamp.
+   */
+
+  /**
+   * "Nothing reads meta" is what this said, and it is NOT true: `apps/mobile/src/state/live.ts`'s
+   * `mirrorSettled` reads `getMeta(LAST_DRAIN_AT_META)` directly, and the phone's world memo
+   * (`apps/mobile/src/state/world.tsx`) calls it per derivation. What matters is that it does
+   * not derive that value THROUGH `version()`: it re-reads the store on each pass, triggered by
+   * `conn.syncing`, which flips at the same settle — one trigger rather than two, noted beside
+   * that dependency array. The freshness label is likewise unaffected: the drain announces its
+   * settle with its own `notify()`, and `useFreshness` subscribes to notifies rather than to
+   * this number, so "as of 14:32 · catching up" still clears at the settle.
    */
   async setMeta(key: string, value: unknown): Promise<void> {
     this.meta.set(key, value);
@@ -505,33 +457,24 @@ export abstract class BaseMirrorStore implements MirrorStore {
   }
 
   /**
-   * A DELETED — OR NEWLY PROTECTED — MESSAGE SHEDS ITS HYDRATED BODY.
-   *
-   * `message_body` is client-local, so `/sync` can never delete or overwrite one — the property
-   * that makes a delta unable to wipe a body mid-read. The flip side is that nothing ELSE will
-   * ever remove one either, so the two transitions that must not leave the raw text behind have
-   * to be cascaded here or it sits in IndexedDB (and, through {@link SearchIndex}, the local
-   * search index) unreferenced and unreachable:
-   *
-   *  · a `message` DELETE — the FULL TEXT of a deleted message would otherwise survive forever,
-   *    un-evicted and undeletable through any path the product offers, against the promise that
-   *    a person's mail is theirs to delete; and
-   *  · a `message` that BECOMES PROTECTED — a body cached while the message was ordinary, then
-   *    flipped sensitive by a server-side redaction pass or a late reclassification, is the raw
-   *    secret sensitive mail is stored redacted to avoid, reproduced on the client.
-   *    `hydrateBody` refuses to cache one going
-   *    forward; this purges one already cached. The protected test reads the POST-APPLY mirror
-   *    state — this method runs after `applyToRecords` has mutated the map — so a replayed or
-   *    older-seq update that did NOT win cannot trigger a purge, and no false `message` delete is
-   *    emitted (the message is not deleted; its DTO stays, only the local body goes).
-   *
-   * So the cascade is structural rather than a cleanup somebody runs: the tombstones join the
-   * page's own dirty set and land in the SAME `persist` flush, which is the atomicity contract
-   * §3.3 step 3 already gives the cursor. A crash between the two is not a state this can be in.
-   *
-   * It is one pass over the changes, and it touches the map only for ids that actually have a
-   * live body — on the ordinary drain (nothing deleted, nothing newly protected, or such changes
-   * for messages nobody opened) it allocates nothing.
+   * A deleted — or newly protected — message sheds its hydrated body. `message_body` is
+   * client-local, so `/sync` can never delete or overwrite one; the flip side is that nothing
+   * else will remove one either, so two transitions must cascade here or the raw text sits in
+   * IndexedDB (and the local search index) unreferenced: a `message` DELETE — the full text of a
+   * deleted message would otherwise survive forever, against the promise that a person's mail is
+   * theirs to delete — and a message that BECOMES PROTECTED, where a body cached while the
+   * message was ordinary is the raw secret sensitive mail is stored redacted to avoid
+   * (`hydrateBody` refuses to cache one going forward; this purges one already cached).
+   */
+
+  /**
+   * The protected test reads the POST-APPLY mirror state — this runs after `applyToRecords` has
+   * mutated the map — so a replayed or older-seq update that did not win cannot trigger a purge,
+   * and no false `message` delete is emitted (the DTO stays; only the local body goes). The
+   * cascade is structural rather than a cleanup somebody runs: the tombstones join the page's
+   * own dirty set and land in the SAME `persist` flush — the atomicity contract §3.3 step 3
+   * already gives the cursor. One pass over the changes, touching the map only for ids with a
+   * live body; the ordinary drain allocates nothing.
    */
   private cascadeLocalDeletes(changes: SyncChange[], applied: MirrorRecord[]): MirrorRecord[] {
     // ONLY CHANGES THAT WON THE SEQ GUARD MAY CASCADE. `applied` is `applyToRecords`' own dirty
@@ -590,28 +533,18 @@ export abstract class BaseMirrorStore implements MirrorStore {
    * wipe stands, or the write lands on a baseline that is about to be cleared.
    */
   /**
-   * ── THE DURABLE-WRITE LANE: `commitLocal` AND `resetForBootstrap` NEVER INTERLEAVE ───────────
-   *
-   * They are the store's two write-then-publish operations and they contradict each other. A
-   * reset decides WHICH rows survive by reading `records`; a commit does not appear in `records`
-   * until its transaction has already committed to disk. Run them concurrently and this happens:
-   *
-   *   1. a send's `commitLocal` opens its transaction — memory deliberately unchanged;
-   *   2. a 410 arrives and `resetForBootstrap` snapshots `records`, which does not hold the send;
-   *   3. the send's transaction commits and publishes to memory;
-   *   4. the wipe runs with the SNAPSHOT and re-puts only what it saw — the send's row is gone
-   *      from disk while sitting in memory, and `putOutbox` already answered success;
-   *   5. the send reaches the server; a kill before the answer leaves a reboot with no key, and
-   *      the next press mints a fresh one and can deliver the message twice.
-   *
-   * Sequencing is the fix rather than re-reading before the clear, because a re-read only narrows
-   * the window: the commit can always land in whatever gap is left between the last read and the
-   * clear. Ordering removes the gap instead of shrinking it. Whichever runs first, the other sees
-   * a settled world — a commit that finished is IN the snapshot, and one that had not started
-   * writes onto the new baseline afterwards, where the generation fence already expects it.
-   *
-   * The same promise-chain shape as the engine's outbox lane, and for the same reason: callers
-   * queue rather than being refused.
+   * The durable-write lane: `commitLocal` and `resetForBootstrap` never interleave. They are the store's two
+   * write-then-publish operations and they contradict each other — a reset decides which rows survive by reading
+   * `records`, and a commit does not appear in `records` until its transaction has committed. Run concurrently: a
+   * send's `commitLocal` opens its transaction; a 410 makes `resetForBootstrap` snapshot `records`, which does not
+   * hold the send; the commit lands and publishes; the wipe re-puts only its snapshot — the send's row is gone from
+   * disk while `putOutbox` already answered success, and a kill before the server's answer lets the next press mint a
+   * fresh key and deliver twice. Sequencing is the fix rather than re-reading before the clear, because a re-read
+   * only narrows the window; ordering removes it. Whichever runs first, the other sees a settled world.
+   */
+
+  /**
+   * Same promise-chain shape as the engine's outbox lane: callers queue rather than being refused.
    */
   private writeChain: Promise<unknown> = Promise.resolve();
 
