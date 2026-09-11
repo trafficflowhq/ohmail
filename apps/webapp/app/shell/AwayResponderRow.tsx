@@ -1,71 +1,33 @@
 "use client";
 
 /**
- * THE AWAY RESPONDER — the control for the one thing this product does that sends mail on its own.
- *
- * Until this existed the responder had a table, a REST endpoint and no surface: `PUT
- * /away-responder` was reachable only by hand, and nothing read what it stored. So this is the
- * whole of the configuration, deliberately small — the switch, what it says, and WHO gets it.
- *
- * ── WHY IT IS A FORM WITH A SAVE, AND NOT FIVE LIVE CONTROLS ─────────────────────────────────
- *
- * Every other control in Settings writes on the press: a switch flips, a dial moves, one field
- * changes. This one does not, and the ORIGINAL reason has since been engineered away — which is
- * worth recording, because it is no longer the reason.
- *
- * It used to be that `updatedAt` was the responder's "enablement episode", the key the at-most-once
- * record was filed under, so every save re-armed a reply to every correspondent already answered
- * and a debounced autosave would have minted one episode per keystroke pause. That is fixed rather
- * than mitigated: the window's floor is `enabled_at`, which moves only on OFF → ON, and
- * `throttle='per_message'` is keyed by a HASH OF THE TEXT. Saving without editing now changes
- * nothing about who gets answered.
- *
- * The form stays a form for a plainer reason: `PUT /away-responder` is a FULL REPLACE, and the
- * message is prose. A live-saving textarea would write a half-typed sentence into mail that goes
- * out in somebody's name while they are not looking. One explicit press is one decision about what
- * strangers will read.
- *
- * ── THE AUDIENCE IS THE CONTROL THAT MATTERS, AND ITS DEFAULT IS THE NARROW ONE ──────────────
- *
- * "People I've let in" answers only senders already past the Screener. "Everyone who writes"
- * includes a first-contact stranger still waiting there — which tells them the address is live,
- * attended, and that its owner is somewhere else this week. That is a disclosure, so it is a choice
- * somebody makes rather than a default they inherit, and the copy says which is which without
- * scolding anybody for picking the wider one.
- *
- * ── AND THE RATE IS THE CONTROL THAT WAS MISSING ─────────────────────────────────────────────
- *
- * "Each person is answered once per enablement" used to be a consequence of the schema that nobody
- * had chosen and nobody could change. It is a setting now — every message, once per text, once a
- * day (the default), once a week — because the right answer differs by why somebody is away: a day
- * out of the office and a month on sabbatical are not the same promise to make to a correspondent
- * who writes every morning.
- *
- * ── AND WHICH MAIL — THE SCOPE'S OTHER HALF, BETWEEN WHO AND HOW OFTEN ───────────────────────
- *
- * "Who gets a reply" is a fact about a SENDER, true from the day they were let in; it says nothing
- * about where their later mail lands, and a shop let in for one receipt was being answered from
- * Reads six months on. So there is a second question on this pane — which piles get a reply — and
- * it stands BETWEEN the audience and the rate because that is the order the Ohbox banner reads the
- * three in: "people you've let in whose mail lands in Ohbox get a reply at most once a day". The
- * offered set is the ENGINE's (`AWAY_ANSWERABLE_PILES`, named through `AWAY_PILE_VIEW`); nothing
- * here lists a pile by hand, so what the control offers and what the pass acts on are one object.
- *
- * The full never-list — mailing lists, no-reply addresses, security mail, receipts, spam, senders
- * screened out, the account's own addresses, bounced addresses — is the gloss beside that control's
- * label: stated once, in full, where the person asking WHICH mail is answered is the person asking
- * what never is. NONE OF IT IS ENFORCED HERE — the suppressions are
- * `packages/core/src/away-eligibility.ts`'s and this component only reports them. So that sentence
- * is a claim about somebody else's code, which makes it the one thing in this file that can go
- * quietly false: if a guard is ever relaxed, it has to be edited in the same change, and a promise
- * of protection may never be added there before the guard exists.
- *
- * ── COPY IS A SHIM, ON PURPOSE ───────────────────────────────────────────────────────────────
- *
- * Its copy lives in the `away` namespace of `messages/en.json`, like every other user-visible
- * string in this app. It used to be a local `COPY` constant — "a deliberate, temporary shim so the
- * control can ship in one slice" — and the German translation is what came to collect it: a shim is
- * a surface the catalogue cannot reach, so it is a surface that stays English for ever.
+ * The away responder — the control for the one thing this product does that sends mail on its own:
+ * the switch, what it says, and who gets it. A form with a Save, not five live controls. The original
+ * reason is engineered away and recorded because it is no longer the reason: `updatedAt` used to be
+ * the enablement episode, so every save re-armed a reply to everyone already answered — now the
+ * window's floor is `enabled_at` (moves only on OFF → ON) and `throttle='per_message'` is keyed by a
+ * hash of the text, so saving without editing changes nothing about who gets answered. The form stays
+ * a form because `PUT /away-responder` is a full replace and the message is prose: a live-saving
+ * textarea would write a half-typed sentence into mail that goes out in somebody's name.
+ */
+
+/**
+ * The audience is the control that matters and its default is the narrow one: "People I've let in"
+ * answers only senders past the Screener; "Everyone who writes" tells a first-contact stranger the
+ * address is live, attended, and its owner elsewhere — a disclosure, so a choice, never a default.
+ * The rate is a setting now (every message, once per text, once a day — the default — once a week).
+ * Which piles get a reply stands between audience and rate, the order the Ohbox banner reads the
+ * three in; the offered set is the engine's (`AWAY_ANSWERABLE_PILES` via `AWAY_PILE_VIEW`), so what
+ * the control offers and what the pass acts on are one object.
+ */
+
+/**
+ * The never-list gloss (mailing lists, no-reply, security mail, receipts, spam, screened-out senders,
+ * the account's own addresses, bounces) is a claim about somebody else's code: the suppressions are
+ * `packages/core/src/away-eligibility.ts`'s and this component only reports them — if a guard is ever
+ * relaxed the gloss must be edited in the same change, and a promise of protection may never be added
+ * here before the guard exists. Copy lives in the `away` namespace of `messages/en.json`: a local
+ * `COPY` shim is a surface the catalogue cannot reach, which the German translation came to collect.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -166,24 +128,14 @@ export const AWAY_COPY = {
 type Audience = AwayResponderWire["audience"];
 
 /**
- * WHERE THE ROW IS READ AND WRITTEN — the two calls, as a seam, because two installs reach the
- * same account's row down two different wires.
- *
- * A BROWSER TAB opens a socket to the hosted API, which is exactly what `app/api-client`'s `away`
- * is, and that stays the default so no caller in this app has to say so.
- *
- * THE DESKTOP CANNOT. Its content policy forbids the window opening a socket at all, and the Cloud
- * client is not compiled into that build — `apps/desktop/vite.config.ts` aliases this module's
- * `../api-client` to a stub whose every value export refuses. Both of its doors therefore send the
- * request down the pipe to the mail engine on this machine, and what the engine does with it
- * differs: on the HOSTED door it forwards to the account with the bearer, so the row is the hosted
- * account's; on the STANDALONE door it answers out of the database on this machine, and the drain
- * in that same engine is what sends. Same endpoint, same fields, same control — see {@link local}
- * for the one sentence that differs.
- *
- * So the transport is a parameter and everything else here is shared. A second copy of this control
- * for the desktop would be a second definition of what the responder stores and what its copy
- * promises, on the one surface in the product that decides what strangers are told.
+ * Where the row is read and written — two installs reach the same account's row down two wires. A
+ * browser tab talks to the hosted API (`app/api-client`'s `away`, the default). The desktop cannot:
+ * its content policy forbids the window opening a socket and the Cloud client is not compiled into
+ * that build (`apps/desktop/vite.config.ts` aliases `../api-client` to a refusing stub), so both of
+ * its doors send the request down the pipe to the engine on this machine — the hosted door forwards
+ * with the bearer, the standalone door answers from the local database and its drain sends. The
+ * transport is a parameter; everything else is shared, because a second copy of this control would
+ * be a second definition of what strangers are told. See {@link local} for the sentence that differs.
  */
 export interface AwayTransport {
   state: () => Promise<AwayResponderWire>;
@@ -275,32 +227,22 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
   /** The two calls, or the hosted client. See {@link AwayTransport}. */
   transport?: AwayTransport;
   /**
-   * IS THIS THE STANDALONE DOOR? — decides one sentence, and only that.
-   *
-   * On a standalone install the replies are sent by the engine on THIS machine, which runs only
-   * while the window is open. The control is otherwise identical (same row, same endpoint shape,
-   * same stored fields), so this is a note and not a mode — but it is a note the pane may not omit:
-   * offering a responder that silently does nothing overnight, under copy written for a door that
-   * never sleeps, is the control lying about what it does.
-   *
-   * Defaults to false, which is the HOSTED reading, and that default is safe in the direction that
-   * matters: a hosted pane that wrongly showed the note would understate a promise it does keep,
-   * and the caller that would have to get it wrong (`DesktopGate`) reads it from `awayDoorFor`.
+   * Is this the standalone door? — decides one sentence, only that. On a standalone install the
+   * replies are sent by the engine on THIS machine, which runs only while the window is open; the
+   * control is otherwise identical, but the pane may not omit the note — offering a responder that
+   * silently does nothing overnight, under copy written for a door that never sleeps, is the control
+   * lying. Defaults to false (the hosted reading), safe in the direction that matters: a hosted pane
+   * wrongly showing the note would understate a promise it does keep. `DesktopGate` reads it from
+   * `awayDoorFor`.
    */
   local?: boolean;
   /**
-   * THE OTHER COMPUTER THIS INSTALL IS PAIRED TO, when it is — the THIRD promise, and it is a
-   * name rather than a third boolean for the reason the sentence needs one.
-   *
-   * A paired desktop's responder is the HOST's row and the host's drain sends from it. So neither
-   * of the two sentences above is true here: the hosted one promises an always-on service, and
-   * `localNote` names THIS computer while the machine that has to be awake is the other one.
-   * Naming it is the whole content of the difference — "while ohmail is open on {host}" tells
-   * somebody which machine to leave running, and "on this computer" tells them the wrong one.
-   *
-   * `null` is the resting state and covers both other doors. When it is set it WINS over `local`:
-   * `awayDoorFor` answers exactly one arm, so the two can never both be true in this app, and a
-   * caller that got that wrong would be showing two promises about one responder.
+   * The other computer this install is paired to, when it is — a name, not a third boolean, because
+   * the sentence needs one. A paired desktop's responder is the HOST's row and the host's drain
+   * sends from it, so neither sentence above is true here: "while ohmail is open on {host}" tells
+   * somebody which machine to leave running; "on this computer" tells them the wrong one. `null` is
+   * the resting state and covers both other doors. Set, it wins over `local`: `awayDoorFor` answers
+   * exactly one arm, so the two can never both be true in this app.
    */
   host?: string | null;
 } = {}) {
@@ -326,15 +268,11 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
     "idle" | "saved" | "asked" | "applied" | "changedElsewhere" | "failed" | "expired"
   >("idle");
   /**
-   * THE READ CAME BACK REFUSED — and this is a state rather than silence BECAUSE THE CONTROL HAS
-   * ITS OWN PANE NOW.
-   *
-   * As the last row of the Screener pane, a failed load could render nothing: the four controls
-   * above it still filled the screen, and an absent row was the honest "no configuration to show".
-   * On its own pane, nothing means a nav entry that opens a blank rectangle — which reads as an
-   * app that lost something. So the pane says which of the two it is. It still never draws the
-   * CONTROLS on a failed read, for the reason the load effect gives: a resting OFF switch shown to
-   * somebody whose responder is ON is a lie about mail going out.
+   * The read came back refused — a state rather than silence because the control has its own pane
+   * now. As the last row of the Screener pane a failed load could render nothing; on its own pane,
+   * nothing is a nav entry that opens a blank rectangle, which reads as an app that lost something.
+   * So the pane says which of the two it is. It still never draws the controls on a failed read: a
+   * resting OFF switch shown to somebody whose responder is ON is a lie about mail going out.
    */
   const [unreachable, setUnreachable] = useState(false);
   /** The end-date picker: open, and the control it hangs from — the resurface chooser's idiom. */
@@ -432,24 +370,14 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
   const effective = awayEffectivePiles(draft.piles, draft.audience);
 
   /**
-   * WAIT FOR THE ORGANIZING MACHINE TO APPLY THE REQUEST — and stop waiting.
-   *
-   * ── WHY A POLL AT ALL, AND WHY A BOUNDED ONE ────────────────────────────────────────────────
-   *
-   * The row's own state is the account's, and on a reader it is refreshed from the organizer's
-   * published profile by the sync loop. So the answer arrives at `GET /away-responder` on its own;
-   * what was missing was anything here that asked again. The discriminator this pane already
-   * carries is `updatedAt`: the 202 answers the row UNCHANGED, so the first read whose `updatedAt`
-   * differs is the organizer's write.
-   *
-   * BOUNDED, on purpose. An unbounded poll on a settings row is a timer nobody switches off, and
-   * a pane left open overnight would keep asking for ever about a request that may have been
-   * refused. {@link ASKED_POLL_MAX} attempts at {@link ASKED_POLL_MS} is a few minutes — several
-   * organizer cycles — after which `asked` simply stands, which is still the true sentence: the
-   * request is waiting. Coming back to the pane re-reads on mount.
-   *
-   * A read that throws is not a state: the request may still land, so the attempt is spent and the
-   * wait continues rather than turning a transient refusal into "that did not save".
+   * Wait for the organizing machine to apply the request — and stop waiting. The row's state is the
+   * account's, refreshed on a reader from the organizer's published profile by the sync loop, so the
+   * answer arrives at `GET /away-responder` on its own; what was missing was anything here that
+   * asked again. The discriminator is `updatedAt`: the 202 answers the row unchanged, so the first
+   * read whose `updatedAt` differs is the organizer's write. Bounded — {@link ASKED_POLL_MAX}
+   * attempts at {@link ASKED_POLL_MS} is a few minutes, several organizer cycles, after which
+   * `asked` simply stands (still true: the request is waiting); coming back re-reads on mount. A
+   * read that throws is not a state: the attempt is spent and the wait continues.
    */
   const watchForApplied = (askedAt: string | null, asked: Draft, gen: number): void => {
     let left = ASKED_POLL_MAX;
@@ -598,31 +526,16 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
           />
         }
       />
-      {/* WHICH MAIL — see the header. A checkbox group in the choice list's own dress (`.set-choice`:
-          one card per option, the accent wash on a ticked one), under the field grammar (label above,
-          hint below), because two options with a consequence each are a list and not a segmented
-          range. Native checkboxes: Space toggles, the group is named by its label for a reader.
-
-          THE OHBOX CANNOT BE SWITCHED OFF HERE — a responder answering nothing is not a responder —
-          so its box is checked and disabled whenever the stored scope holds it. It is NOT forced on:
-          the column's CHECK admits a scope without the Ohbox (reachable through the API), and drawing
-          a tick over a stored scope that lacks it would state a reply is going out to mail that gets
-          none — the exact false claim `awayScopeKey` exists to keep out of the banner. A stored scope
-          without the Ohbox shows the box unticked and pressable, so the way back to the default is
-          one press; `pileOhboxNote` is drawn only while it is true.
-
-          The never-list is the gloss beside the label (placement `chip`, so the glyph sits on the
-          label's line, and bound to the label's last word by a no-break space so a wrapping label
-          never leaves the glyph alone on a line — measured at 360px in German). Its whole sentence
-          is the trigger's accessible name. The group's OWN name is the label alone — the gloss
-          stands outside the labelling span so a reader is not handed the exclusion list as the
-          group's title — and its description is the note below the options.
-
-          THE NOTE IS MICROCOPY, NOT A FIELD HINT. `.set-field-hint` takes the phone input floor
-          (16px below 640px) because it stands under a text input of that size; under two option
-          cards it outweighed every other line on the pane — measured at 360 and 390. So it is the
-          pane's own `set-note-inline`, the size the audience's and the standalone door's notes take,
-          and it stands after the field so the rate row below still draws its rule. */}
+      {/* Which mail — see the header. A checkbox group in the choice list's own dress (`.set-choice`),
+          under the field grammar, because two options with a consequence each are a list, not a
+          segmented range. The Ohbox cannot be switched off here — a responder answering nothing is not
+          a responder — so its box is checked and disabled whenever the stored scope holds it, and NOT
+          forced on: a scope without the Ohbox is reachable through the API, and drawing a tick over it
+          would state a reply goes out to mail that gets none (`awayScopeKey`'s exact false claim);
+          such a scope shows the box unticked and pressable. The never-list is the gloss beside the
+          label, bound by a no-break space so a wrapping label never strands the glyph (measured at
+          360px in German); the group's own name is the label alone. The note is microcopy
+          (`set-note-inline`), not a field hint — `.set-field-hint` takes the phone input floor. */}
       <div className="set-field" role="group" aria-labelledby="away-piles-label" aria-describedby="away-piles-note">
         <span className="set-field-label">
           <span id="away-piles-label">{t("pilesLabel")}</span>
