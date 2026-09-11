@@ -75,17 +75,14 @@ export interface ResendAlertSinkConfig {
 }
 
 /**
- * How long one notification's Idempotency-Key stays stable across delivery retries.
- *
- * The failure this closes: a POST the provider ACCEPTED whose response was lost
- * looks like a failure to this sink, `runAlertPass` releases its claim, and the worker's 60 s
- * cadence sends another mail — per minute, for as long as the response path is broken. The
- * design direction stands (a duplicate page beats a swallowed one — the pass's own header),
- * so the key is BUCKETED rather than per-notification-forever: retries inside one window
- * dedupe on the provider, and the inverse hazard — a stored key blocking a page that never
- * actually sent — is bounded to one bucket before a fresh key retries cleanly. Ten minutes:
- * an order larger than the retry cadence, an order smaller than the one-hour repeat, so
- * neither the storm nor the block can reach the interval a human perceives.
+ * How long one notification's Idempotency-Key stays stable across delivery retries. The failure
+ * this closes: a POST the provider accepted whose response was lost looks like a failure, the
+ * pass releases its claim, and the cadence sends another mail — per minute, for as long as the
+ * response path is broken. The design direction stands (a duplicate page beats a swallowed one),
+ * so the key is bucketed rather than per-notification-forever: retries inside one window dedupe
+ * on the provider, and the inverse hazard — a stored key blocking a page that never sent — is
+ * bounded to one bucket. Ten minutes: an order larger than the retry cadence, an order smaller
+ * than the one-hour repeat.
  */
 export const ALERT_IDEMPOTENCY_BUCKET_MS = 10 * 60 * 1000;
 
@@ -132,17 +129,14 @@ function asText(v: unknown): string {
 }
 
 /**
- * One plain address, structurally: exactly one `@` (both classes exclude it), a dotted
- * domain, and none of the characters a quoted env value, a display-name form, or a list has.
- *
- * Two review findings shaped this, pulling in opposite directions. An APOSTROPHE inside the
- * local part is legal mail (`o'connor@…`) and the first validator's blanket quote-ban built a
- * permanently-refusing sink from a valid address — with the webhook arm already dead, a pager
- * that never pages, reached through correct configuration. Meanwhile two `@`s, a dotless
- * domain, separators and escapes all PASSED it, surfacing as endless provider refusals
- * instead of a named `TF_ALERT_EMAIL` fault. So: apostrophes allowed inside the local part
- * only (surrounding ones are still the env trap, checked separately), and the structure is
- * pinned here at build time, like the webhook URL's parse.
+ * One plain address, structurally: exactly one `@`, a dotted domain, and none of the characters a
+ * quoted env value, a display-name form, or a list has. Two review findings pulled in opposite
+ * directions: an apostrophe inside the local part is legal mail, and the first validator's
+ * blanket quote-ban built a permanently-refusing sink from a valid address — with the webhook arm
+ * already dead, a pager that never pages, reached through correct configuration. Meanwhile two
+ * `@`s, a dotless domain, separators and escapes all passed it, surfacing as endless provider
+ * refusals instead of a named `TF_ALERT_EMAIL` fault. So: apostrophes allowed inside the local
+ * part only, and the structure is pinned at build time, like the webhook URL's parse.
  */
 const SINGLE_ADDRESS = /^[^\s@,;<>"\\]+@[^\s@,;<>"'\\]+\.[^\s@,;<>"'\\.]+$/;
 

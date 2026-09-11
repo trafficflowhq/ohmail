@@ -151,33 +151,13 @@ export const DENIED_SQLSTATE = "42501";
 export const CONTENT_BLIND_PROBE = "select subject from messages where false";
 
 /**
- * The bite tests, in order. Three statements, and every one of them must raise
- * {@link DENIED_SQLSTATE}.
- *
- * `message_bodies` is here BY NAME because it is the relation the Critical finding escaped
- * through: a role denied `messages.subject` and granted `message_bodies` passed the original
- * probe and served the console. The census would catch it now regardless; this makes the
- * headline case a one-statement answer that does not depend on the census being right.
- *
- * ── `select count(*) from messages` — the row-existence oracle ─────────────────────────────
- *
- * The third bite NAMES NO COLUMN, on purpose, and that is the whole reason it exists. Every
- * other check on this path — both other bites, and the census, which is built out of
- * `has_column_privilege` — asks "which COLUMNS can this role read". The row-existence oracle
- * is not a column
- * finding: staff resolved the target's `mailbox_id`, counted rows in `messages` for it, sent a
- * probe carrying a chosen Message-ID and watched the count move. `count(*)` requires only that
- * the relation be readable AT ALL.
- *
- * A role granted `SELECT (id) ON messages` "to make a join work" would pass both other bites
- * and would be caught by the census — but the census's answer is one row among four hundred,
- * and this one is a single statement whose failure says the sentence out loud. It is also the
- * check that a future re-widening trips FIRST.
- *
- * No `WHERE false` here, and that is deliberate: `WHERE false` lets the planner answer without
- * touching the relation, which is exactly what makes the other two cheap, but a privilege
- * refusal on `count(*)` also arrives at plan time — the permission check is on the relation,
- * not on the rows — so the statement is as cheap and strictly stronger.
+ * The bite tests, in order; every one must raise {@link DENIED_SQLSTATE}. `message_bodies` is
+ * here by name because it is the relation the Critical finding escaped through: a role denied
+ * `messages.subject` and granted `message_bodies` passed the original probe. The third bite,
+ * `select count(*) from messages`, names no column on purpose: the row-existence oracle is not a
+ * column finding — staff could count rows for a mailbox, send a probe with a chosen Message-ID,
+ * and watch the count move. No `WHERE false` on it: a privilege refusal on `count(*)` arrives at
+ * plan time anyway, so it is as cheap and strictly stronger.
  */
 export const CONTENT_BITE_TESTS: ReadonlyArray<readonly [string, string]> = [
   ["messages.subject", CONTENT_BLIND_PROBE],
@@ -241,23 +221,14 @@ async function bite(
 }
 
 /**
- * ATTEST that `db` is connected as a role whose EFFECTIVE capabilities are a subset of the
- * staff allowlist, and throw {@link NotContentBlindError} if they are not.
- *
- * Two mechanisms, in this order and both required:
- *
- *  1. {@link CONTENT_BITE_TESTS} — `messages.subject`, `message_bodies` and
- *     `count(*) from messages` must all raise 42501. Fast, and the pasted-runtime-credentials
- *     accident produces a one-line answer. The third names no column, which is what makes it
- *     able to see the row-existence oracle at all.
- *  2. {@link STAFF_CAPABILITY_SQL} — the census. Every column, table privilege, sequence,
- *     schema, role membership, role attribute, relation ownership and SECURITY DEFINER
- *     routine the role can reach, compared to {@link STAFF_SELECT_GRANTS} and its siblings.
- *     Excess refuses the brand and names itself. (Shortfall does not — see
- *     {@link staffCapabilityExcess} for why that asymmetry is the fail-closed direction.)
- *
- * Exported so the pg guard can call it directly against a role it chose, which is what makes
- * "delete the attestation" observable as a red test rather than as a silent widening.
+ * Attest that `db` is connected as a role whose effective capabilities are a subset of the staff
+ * allowlist; throw {@link NotContentBlindError} otherwise. Two mechanisms, in order, both
+ * required: {@link CONTENT_BITE_TESTS} — all three must raise 42501, fast, and the
+ * pasted-runtime-credentials accident gets a one-line answer; then {@link STAFF_CAPABILITY_SQL} —
+ * the census, compared to {@link STAFF_SELECT_GRANTS}; excess refuses the brand and names itself
+ * (shortfall does not — {@link staffCapabilityExcess} explains the asymmetry). Exported so the pg
+ * guard can call it against a role it chose — "delete the attestation" is a red test, not a
+ * silent widening.
  */
 export async function assertContentBlind(
   db: Pick<PostgresJsDatabase<typeof schema>, "execute">,
@@ -347,25 +318,14 @@ export function resetAdminDbs(): void {
 }
 
 /**
- * The boot attestation's outcome as a SHORT, non-throwing, disclosure-safe string,
- * for `/health` to publish beside `adminFault`.
- *
- * The census + bite tests that {@link adminDbFor} runs used to surface ONLY as a per-request
- * 503 the first time a staff route was hit: a wrong-but-plausible role — an equivalently-spelled
- * over-privileged `DATABASE_URL_ADMIN` — left `/health` green and the console dark until someone
- * loaded it. There is no disclosure either way (the handle refuses to mint, so nothing leaks),
- * but the diagnostic cost was real. This lets `/health` name it minutes earlier, at 200.
- *
- * It AWAITS the memoised factory, so it pays the four probe round trips only on the FIRST call
- * per cold instance (success is cached; failure is not, and is retried) and is instant
- * thereafter — the same lazy handle a staff request would build, not a second connection. It
- * NEVER throws and NEVER makes `/health` fatal: the return is the reason string or null.
- *
- * Disclosure-safe by construction:
- *  · a {@link NotContentBlindError} carries only `pg_catalog` identifiers (a schema, a relation,
- *    a column, a privilege verb) — `describeCapability`'s output, quotable verbatim; and
- *  · any OTHER failure (an unreachable blind host, say) is collapsed to a fixed string, because
- *    a driver message can name the host and the role and this value is published.
+ * The boot attestation's outcome as a short, non-throwing, disclosure-safe string for `/health`
+ * to publish beside `adminFault`. The census used to surface only as a per-request 503 the first
+ * time a staff route was hit: a wrong-but-plausible role left `/health` green and the console
+ * dark until someone loaded it. It awaits the memoised factory, so it pays the probe round trips
+ * only on the first call per cold instance (success cached, failure retried), never throws, and
+ * never makes `/health` fatal. Disclosure-safe by construction: a {@link NotContentBlindError}
+ * carries only `pg_catalog` identifiers, and any other failure collapses to a fixed string — a
+ * driver message can name the host and role, and this value is published.
  */
 export async function attestStaffDbFault(
   handle: () => Promise<AdminDb>,

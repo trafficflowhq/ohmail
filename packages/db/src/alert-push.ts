@@ -108,35 +108,14 @@ const BOT_TOKEN = /^\d{5,}:[A-Za-z0-9_-]{30,}$/;
 const CHAT_ID = /^(?:-?\d{1,20}|@[A-Za-z][A-Za-z0-9_]{4,31})$/;
 
 /**
- * What redaction scrubs beyond the endpoint itself.
- *
- * The same reasoning `alert-mail.ts` records for its own shapes: exact-string replacement
- * misses every variant this sink did not configure — a rotated token the API echoes back, or a
- * whole URL quoted inside an error body that {@link redactEndpoint} did not match verbatim.
- * Anything SHAPED like a bot token goes, whether or not it is ours.
- *
- * ── NO BOUNDARY ASSERTIONS AT ALL, AND TWO REVIEWS WENT INTO THAT SENTENCE ──────────────
- *
- * Every boundary written here has leaked a credential, so the pattern now has none.
- *
- *  1. `\b` on the right. The secret half may legally END IN A HYPHEN, which is not a word
- *     character, so a trailing `\b` needs a word character next and an echoed token before a
- *     quote or at end-of-string has none. Mostly survivable — the quantifier is greedy, so the
- *     engine backtracks one character and still redacts the secret — but NOT at the pattern's
- *     own `{30,}` floor, where dropping the final hyphen breaks the quantifier and the match
- *     fails at every start position, redacting nothing.
- *  2. `(?<![A-Za-z0-9_:-])` on the left, the fix for (1). Worse: it excludes the two commonest
- *     DELIMITERS in error prose, so `token:<token>` and `bot-<token>` matched nothing, and
- *     because every interior start position is preceded by a digit the whole token survived.
- *     Measured across 21 shapes: this leaked 12 of them, including a bare `x<token>`.
- *
- * A left boundary cannot be right, because whatever it excludes is a character somebody's
- * error prose will glue the token to. And it is not needed: the tail is GREEDY over the token
- * character class, so a match always extends to the end of the run — a trailing hyphen
- * included — whether or not anything asserts it. Starting mid-run costs at most a few leading
- * digits of the BOT ID, which is not the secret. Over-redaction is the safe direction here;
- * `redactEndpoint` cannot cover any of this, because it looks for the whole endpoint URL and
- * an echoed token is not a substring of that.
+ * What redaction scrubs beyond the endpoint — anything shaped like a bot token, ours or not:
+ * exact-string replacement misses a rotated token the API echoes back. No boundary assertions at
+ * all; every boundary written here leaked. `\b` on the right: the secret may legally end in a
+ * hyphen, and at the `{30,}` floor dropping it breaks the quantifier and redacts nothing. A left
+ * lookbehind excludes the commonest delimiters in error prose (`token:<token>` matched nothing —
+ * 12 of 21 shapes leaked). A left boundary cannot be right, and it is not needed: the tail is
+ * greedy, so a match extends to the end of the run; starting mid-run costs a few leading digits
+ * of the bot id, not the secret. Over-redaction is the safe direction.
  */
 const TOKEN_SHAPE = /\d{5,}:[A-Za-z0-9_-]{30,}/g;
 

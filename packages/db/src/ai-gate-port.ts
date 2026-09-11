@@ -1,48 +1,32 @@
 /**
- * THE AI SPEND GATE, AS A PORT — the shapes a caller needs to ask permission, and nothing that
- * decides.
- *
- * Metered AI is a hosted concern: it needs a subscription, a credit ledger and the tables behind
- * both. A local install has none of those and asks no one's permission — it runs against its
- * owner's own model key or no model at all. But the code that CALLS the gate is the same code in
- * both deployments: the ingest pipeline, the Screener, the drafting path. Those modules must be
- * able to say "I may be handed a gate, and here is what I will ask it" without depending on the
- * implementation that answers.
- *
- * So this file is the question and `ai-gate.ts` is the answer. Everything that constructs a gate,
- * reads entitlements, writes a ledger row or knows what an action costs stays there. Nothing here
- * has a default: a deployment that supplies no gate supplies no gate, and every caller already
- * treats that as "skip the AI" rather than as "proceed unmetered".
- *
- * `ai-gate.ts` re-exports these names, so no existing import moves.
+ * The AI spend gate, as a port — the shapes a caller needs to ask permission, nothing that
+ * decides. Metered AI is a hosted concern; a local install asks no one. But the code that calls
+ * the gate is the same in both deployments — ingest, the Screener, drafting — and must say "I may
+ * be handed a gate, and here is what I will ask it" without depending on the implementation. This
+ * file is the question; `ai-gate.ts` is the answer — construction, entitlements, ledger writes
+ * and pricing stay there. Nothing here has a default: no gate means "skip the AI", never "proceed
+ * unmetered". `ai-gate.ts` re-exports these names, so no import moves.
  */
 
 /**
- * Why an entitlement decision came out the way it did.
- *
- * It lives here rather than with the subscription logic because {@link AiRefusalReason} is built
- * from it and a caller must be able to name a refusal without reaching for the billing module.
- * One definition, imported back by that module — the alternative is two unions that agree until
- * somebody adds a state to one of them.
- *
- * These strings are already visible to any client that receives a refusal, so naming them here
- * discloses nothing that a refused request does not.
+ * Why an entitlement decision came out the way it did. It lives here rather than with the
+ * subscription logic because {@link AiRefusalReason} is built from it and a caller must be able
+ * to name a refusal without reaching for the billing module — one definition, imported back by
+ * that module; the alternative is two unions that agree until somebody adds a state to one. These
+ * strings are already visible to any client that receives a refusal, so naming them here
+ * discloses nothing a refused request does not.
  */
 export const ENTITLEMENT_REASONS = [
   "suspended", "no_subscription", "trialing", "active",
   "past_due_grace", "past_due", "unpaid", "canceled", "paused",
-  /*
-   * The account owner's own AI switch, off. Unlike every other member, it is not a subscription
-   * state at all — which is exactly why it is here rather than only in {@link AiRefusalReason}.
-   *
-   * `entitlementsFor` may be handed the switch, and when it is, its `aiEnabled` is the FULL
-   * spendability predicate rather than the subscription's half of it. Without a word for this
-   * case that boolean could only go false with a reason describing a perfectly healthy
-   * subscription, and a surface reading it would explain a refusal by offering a plan the
-   * customer already has. The gate keeps answering it from its own short-circuit read, which is
-   * why the two do not disagree: same string, same meaning, one produced before the subscription
-   * read and one after.
-   */
+  // The account owner's own AI switch, off. Unlike every other member it is not a subscription
+  // state at all — which is why it is here rather than only in {@link AiRefusalReason}.
+  // `entitlementsFor` may be handed the switch, and then its `aiEnabled` is the full spendability
+  // predicate rather than the subscription's half; without a word for this case that boolean
+  // could only go false with a reason describing a healthy subscription, and a surface would
+  // explain a refusal by offering a plan the customer already has. The gate keeps answering it
+  // from its own short-circuit read — same string, same meaning, one produced before the
+  // subscription read and one after.
   "ai_disabled",
 ] as const;
 
@@ -75,50 +59,28 @@ export function isAiRefusalReason(value: unknown): value is AiRefusalReason {
 }
 
 /**
- * The FULL answer to "may this account spend?", for callers that can act on the difference.
- *
- * {@link AiCreditGate.tryDebit}'s boolean is this type with the detail thrown away, and that loss
- * is fine where there is exactly one thing to do with a no (skip the AI). It is NOT fine on a
- * request path, where collapsing a database FAULT into the same `false` as an empty balance makes
- * the server answer "insufficient credits" — a demand for money — to a fully funded customer
- * whose only problem is that a ledger connection dropped.
- *
- *  · `permitted: true` — proceed. `charged` says whether THIS attempt moved money (`false` ⇒ a
- *    free retry of an attempt already open), and `attempt` is the ledger source actually used,
- *    which is what a refund must name.
- *  · `refusal: "state"` — the subscription may not spend at all; `reason` says which state.
- *  · `refusal: "quantity"` — the plan could spend, but the balance is empty.
- *  · `refusal: "fault"` — we do not know, because something broke. Never a payment demand.
- *  · `refusal: "inflight"` — nothing is wrong at all: another caller holds the exclusive claim on
- *    this exact work and is running the model for it right now. See below.
+ * The full answer to "may this account spend?", for callers that can act on the difference.
+ * `tryDebit`'s boolean is this type with the detail thrown away — fine with exactly one thing to
+ * do with a no, not fine on a request path, where collapsing a database fault into the same
+ * `false` as an empty balance answers "insufficient credits" to a fully funded customer whose
+ * ledger connection dropped. `permitted: true` — proceed (`charged`: did this attempt move money;
+ * `attempt`: the ledger source a refund must name). `"state"` — the subscription may not spend.
+ * `"quantity"` — the balance is empty. `"fault"` — we do not know; never a payment demand.
+ * `"inflight"` — another caller holds the exclusive claim.
  */
 export type AiSpendOutcome =
   | { permitted: true; charged: boolean; attempt: string }
   | { permitted: false; refusal: "state" | "quantity"; reason: AiRefusalReason }
   | { permitted: false; refusal: "fault"; error: unknown }
-  /*
-   * NOT A REFUSAL OF THE ACCOUNT — A REFUSAL OF THE DUPLICATE, and the distinction is the whole
-   * of the exclusive-claim fix.
-   *
-   * The gate used to answer a second concurrent caller `permitted: true, charged: false`, which
-   * is the right answer to *"is this work paid for?"* and the wrong answer to *"should I call the
-   * model?"* — the first caller is still inside its own call, so proceeding buys a second paid
-   * call for one credit. On an exclusive gate that caller is told this instead.
-   *
-   * Three obligations follow for anyone handling it, and each of them has been got wrong once:
-   *
-   *  · **never charge for it, and never demand payment because of it.** The account is fully
-   *    funded and its subscription is healthy; a 402 here would be a bill for someone else's
-   *    concurrency. It is not `quantity` and it is not `state`;
-   *  · **it is per-SOURCE, not per-account.** A batch loop must move to its next item rather than
-   *    stop the run — every other refusal applies to every remaining item and this one applies to
-   *    exactly one;
-   *  · **it is transient by construction.** The holder finishes or its claim expires (bounded by
-   *    `AI_CLAIM_TTL_MS`), so retrying is the correct instruction to give a caller — and the
-   *    retry is free, because the holder's charge is what pays for it.
-   *
-   * `source` is echoed back so a caller can wait on, or re-read, the work it names.
-   */
+  // Not a refusal of the account — a refusal of the duplicate, the whole of the exclusive-claim
+  // fix. The gate used to answer a second concurrent caller `permitted: true, charged: false` —
+  // the right answer to "is this work paid for?" and the wrong one to "should I call the model?":
+  // the first caller is still inside its own call, so proceeding buys a second paid call for one
+  // credit. Three obligations, each got wrong once: never charge for it, never demand payment
+  // because of it (not `quantity`, not `state`); it is per-source, not per-account — a batch loop
+  // moves to its next item rather than stopping; it is transient by construction — the holder
+  // finishes or its claim expires (`AI_CLAIM_TTL_MS`), so retrying is the correct instruction and
+  // the retry is free. `source` is echoed back so a caller can wait on the work it names.
   | { permitted: false; refusal: "inflight"; source: string };
 
 /**
@@ -130,16 +92,13 @@ export type AiSpendOutcome =
  */
 export interface AiCreditGate {
   /**
-   * Does this gate SERIALIZE callers with an exclusive claim, or only price them?
-   *
-   * It is on the port because a WRAPPER has to know. A decorator that can answer `permitted` on
-   * its own — `withSetupPool` is the one that exists — must extend the claim rather than answer
-   * around it, and reading the property off the gate it wraps is what makes that impossible to
-   * get wrong. The alternative, a second `exclusive` flag passed to the wrapper beside the gate,
-   * is a flag two call sites can disagree with; that disagreement was a real defect, in which
-   * setup-funded Screener spends skipped the claim entirely and one credit bought as many
-   * provider calls as a caller could overlap.
-   *
+   * Does this gate serialize callers with an exclusive claim, or only price them? On the port
+   * because a wrapper has to know: a decorator that can answer `permitted` on its own
+   * (`withSetupPool` is the one that exists) must extend the claim rather than answer around it,
+   * and reading the property off the wrapped gate makes that impossible to get wrong. The
+   * alternative — a second `exclusive` flag passed beside the gate — is a flag two call sites can
+   * disagree with; that disagreement was a real defect, in which setup-funded Screener spends
+   * skipped the claim and one credit bought as many provider calls as a caller could overlap.
    * Absent or `false` ⇒ no claim is taken and {@link AiCreditGate.release} is a no-op.
    */
   readonly exclusive?: boolean;
@@ -154,85 +113,44 @@ export interface AiCreditGate {
    */
   tryDebit(source: string, meta?: Record<string, unknown>): Promise<boolean>;
   /**
-   * The same decision, undiminished — {@link AiSpendOutcome} instead of a boolean.
-   *
-   * ONE implementation backs both: `tryDebit` is `(await spend(…)).permitted`. That is
-   * deliberate, because two methods that each decided for themselves is precisely how a request
-   * path and a background worker end up disagreeing about a customer's money.
-   *
-   * Use this wherever the difference between "you are out of credits", "your subscription cannot
-   * spend" and "our database is unwell" changes what the caller should do — which in practice
-   * means every request path. **Never throws.**
+   * The same decision, undiminished — {@link AiSpendOutcome} instead of a boolean. One
+   * implementation backs both: `tryDebit` is `(await spend(…)).permitted`, deliberately, because
+   * two methods that each decided for themselves is how a request path and a background worker
+   * end up disagreeing about a customer's money. Use this wherever the difference between "you
+   * are out of credits", "your subscription cannot spend" and "our database is unwell" changes
+   * what the caller should do — in practice every request path. Never throws.
    */
   spend(source: string, meta?: Record<string, unknown>): Promise<AiSpendOutcome>;
   /**
-   * Reverse a charge THIS gate made, because the model call it paid for threw.
-   *
-   * A no-op unless this gate instance actually charged an attempt for `source` in its most recent
-   * decision about it. Two different things are being excluded, and both matter:
-   *
-   *  · a duplicate outcome charged nothing, so refunding it would reverse an EARLIER attempt
-   *    whose work may well have been delivered — a charge taken for one run being handed back
-   *    because a later reprocessing of the same message failed. The in-process marker is cleared
-   *    on every non-charging decision, so it cannot outlive the attempt that set it;
-   *  · a gate rebuilt after a process restart never charged anything, so it refunds nothing. That
-   *    is safe rather than lossy: an un-refunded charge leaves its attempt OPEN, and the retries
-   *    of an open attempt are free.
-   *
-   * Replay-safe and exactly-once by construction, and — like `tryDebit` — **never throws**: it is
-   * called from a catch block whose job is to rethrow the original error, and a failed refund
-   * must not replace the diagnosis with itself. A refund that fails keeps its marker, so a later
-   * call can reissue it.
+   * Reverse a charge THIS gate made, because the model call it paid for threw. A no-op unless
+   * this instance charged an attempt for `source` in its most recent decision: a duplicate
+   * outcome charged nothing, so refunding it would reverse an earlier attempt whose work may have
+   * been delivered (the marker clears on every non-charging decision); a gate rebuilt after a
+   * restart never charged, so it refunds nothing — safe: an un-refunded charge leaves its attempt
+   * open, and retries of an open attempt are free. Exactly-once by construction, and never
+   * throws: it runs in a catch block whose job is to rethrow the original error; a failed refund
+   * keeps its marker for a later reissue.
    */
   refund(source: string, meta?: Record<string, unknown>): Promise<void>;
   /**
-   * Reverse a NAMED ATTEMPT, for a caller that holds its identity from its own {@link spend}.
-   *
-   * ## Why {@link AiCreditGate.refund} cannot serve this caller
-   *
-   * `refund` is guarded by an in-process marker, and that marker CLEARS on every non-charging
-   * decision, including a duplicate. That is correct for the call sites it was built for, and it
-   * makes `refund` useless for a retrying background caller, whose sequence is exactly:
-   *
-   *   cycle 1: `spend` ⇒ permitted, charged (marker set) → the model faults → rethrow
-   *   cycle 2: `spend` ⇒ duplicate, NOT charged (**marker cleared**) → the model faults again →
-   *            the caller gives up, and the message is filed on rules alone, for good
-   *
-   * At that last moment the charge from cycle 1 has bought nothing and never will, so it must
-   * come back — but `refund(source)` finds no marker and silently does nothing. The customer
-   * keeps a charge for work that was abandoned. This method exists so that caller can name the
-   * attempt it was told it charged, rather than asking a guard that has already been consumed.
-   *
-   * ## Why bypassing the marker is still safe
-   *
-   * The marker was only ever the FIRST of three exactly-once layers, and the other two are in the
-   * database and do not care who asks: a uniqueness constraint on the refund's own ledger source
-   * makes a repeat a duplicate rather than a second payout, and a trigger refuses any refund that
-   * does not name a real debit on this account — so a refund of nothing, and a refund of a
-   * refund, are both database errors. The caller's obligation is the one the name states: pass an
-   * `attempt` that {@link spend} returned to THIS process with `charged: true`, and pass it once
-   * per abandonment.
-   *
-   * Like `refund`, it **never throws** — it is called from failure handling, and a failed reversal
-   * must not replace the diagnosis with itself.
+   * Reverse a charge THIS gate made, because the model call it paid for threw. A no-op unless
+   * this instance charged an attempt for `source` in its most recent decision: a duplicate
+   * outcome charged nothing, so refunding it would reverse an earlier attempt whose work may have
+   * been delivered; a gate rebuilt after a restart never charged, so it refunds nothing — safe:
+   * an un-refunded charge leaves its attempt open, and retries of an open attempt are free.
+   * Exactly-once by construction, and never throws: it runs in a catch block whose job is to
+   * rethrow the original error; a failed refund keeps its marker for reissue.
    */
   refundAttempt(attempt: string, meta?: Record<string, unknown>): Promise<void>;
   /**
-   * THE WORK IS OVER — give up the exclusive claim {@link spend} took for `source`.
-   *
-   * Call it when the model call ends, **whichever way it ended**. Releasing after a failure is as
-   * important as after a success: the charge stays (an open attempt is what makes the retry free)
-   * and a claim left behind would make that free retry wait out the TTL for nothing.
-   *
-   * OPTIONAL on the port, and deliberately so. A gate with no exclusivity has nothing to release,
-   * and the narrow test doubles this port exists to admit (`{ tryDebit: async () => false }`)
-   * must stay valid — a required method here would have been a compile error in every one of them
-   * and bought nothing. Call it as `await gate.release?.(source)`.
-   *
-   * Forgetting it is bounded rather than fatal: the claim expires on its own and the next caller
-   * takes it over, so the cost is at most one TTL of exclusivity on one source and never any
-   * money. Like `refund`, it **never throws** — it runs in `finally` blocks whose job is to let
-   * the original outcome through.
+   * The work is over — give up the exclusive claim {@link spend} took for `source`. Call it when
+   * the model call ends, whichever way it ended: releasing after a failure matters as much as
+   * after a success — the charge stays (an open attempt is what makes the retry free), and a
+   * claim left behind would make that free retry wait out the TTL for nothing. Optional on the
+   * port, deliberately: a gate with no exclusivity has nothing to release, and the narrow test
+   * doubles this port admits (`{ tryDebit: async () => false }`) must stay valid. Call as `await
+   * gate.release?.(source)`. Forgetting it is bounded: the claim expires on its own — at most one
+   * TTL of exclusivity, never any money. Never throws: it runs in `finally` blocks.
    */
   release?(source: string): Promise<void>;
 }

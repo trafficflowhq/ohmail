@@ -1,19 +1,12 @@
 /**
- * `@trafficflow/db/admin` — the OPERATIONAL half of this package: schema migration,
- * search-extension provisioning, and the verified production setup command.
- *
- * It is a separate entry point on purpose. These modules pull `node:fs` (reading the
- * drizzle journal and the SQL files), drizzle's migrator, and the whole production
- * verification path — none of which any request ever executes. While they were re-exported
- * from the package ROOT, every import of `@trafficflow/db` dragged them in, which on
- * `apps/api-vercel` meant the serverless catch-all bundled the migrator and traced the
- * migration directory: cold-start work and bundle weight for code that only a human
- * operator runs, and a `Module not found: '../drizzle'` class of build hazard for a host
- * that migrates nothing.
- *
- * Runtime code imports `@trafficflow/db`. Tests, CLIs and provisioning import
- * `@trafficflow/db/admin`. If a runtime module ever needs something from here, that is the
- * signal to question the requirement, not to widen the root export.
+ * `@trafficflow/db/admin` — the operational half: schema migration, search-extension
+ * provisioning, the verified production setup. A separate entry point: these modules pull
+ * `node:fs`, drizzle's migrator, and the verification path — nothing any request executes.
+ * Re-exported from the root, every import dragged them in: cold-start work and bundle weight on
+ * the serverless host, and a `Module not found: '../drizzle'` build hazard for a host that
+ * migrates nothing. Runtime code imports `@trafficflow/db`; tests, CLIs and provisioning import
+ * `@trafficflow/db/admin`. A runtime module needing something here is a signal to question the
+ * requirement, not widen the root.
  */
 export { ensureHotPathIndexes, HOT_PATH_INDEXES } from "./hot-path-indexes.js";
 export {
