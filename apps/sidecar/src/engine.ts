@@ -123,7 +123,7 @@ import type { ProfileIo } from "@trafficflow/core/adapters/organizer-profile";
 // THE SYMMETRIC-TAKEOVER REQUEST DRAIN (0.14.1), from the worker's own subpath for
 // the same reason `OrganizerProfileSync` is: one implementation of "apply a reader's decision" or
 // "carry this install's own decisions to the mailbox", not a second one that could disagree with
-// what the hosted worker does. See `apps/worker/package.json`'s `//request-drain` note.
+// what the hosted worker does.
 import {
   applyMetaRequests, driveOutstandingRequests, settleOwnOutstandingRequests,
 } from "@trafficflow/worker/request-drain";

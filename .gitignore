@@ -12,15 +12,13 @@ build/
 shots/
 
 # The app (apps/desktop): npm deps, the UI bundle, Rust output, and the ACL
-# schemas tauri-build regenerates on every compile. The Tauri lockfile is the
-# one npm regenerates in apps/desktop; the ROOT package-lock.json is published
-# on purpose — `npm ci` in every CI job installs from it — so it must NOT be
-# ignored.
+# schemas tauri-build regenerates on every compile. Neither package-lock.json is
+# ignored — the root one and apps/desktop's own are both committed, and `npm ci`
+# in every CI job installs from them with no network.
 node_modules/
 apps/desktop/dist/
 apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/gen/
-apps/desktop/package-lock.json
 
 
 # macOS
