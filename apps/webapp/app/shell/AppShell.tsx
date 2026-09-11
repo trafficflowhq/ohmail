@@ -5184,37 +5184,25 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
 
 
   /**
-   * ESCAPE HAS ONE OWNER, and this ORDERED LIST is it.
-   *
-   * Before the registry, Escape was handled by `Reader` (close), `AppShell` (the (i)
-   * panel), `OhboxView` (clear the selection), `ScreenerView` (leave the mobile preview)
-   * and the palette input — five listeners with no agreed order, which is why the reply
-   * editor could not simply add a sixth. `Reader` now takes `closeOnEscape={false}` and
-   * this closes the innermost thing that is open.
-   *
-   * ── IT USED TO BE TWO LISTS, AND THAT WAS THE BUG UNDERNEATH ───────────────────────
-   *
-   * An `if/else if` cascade decided WHAT Escape closes, and a parallel boolean expression
-   * beside it decided WHETHER Escape was live at all. Two enumerations of the same eight
-   * overlays, and every new overlay had to be added to both — a drift the type system
-   * cannot see, in the binding whose whole job is precedence. One array now answers both
-   * questions: `find` gives the innermost open overlay, and its absence IS "nothing is
-   * open". Adding an overlay is one line in one place, and forgetting it makes Escape
-   * inert for that overlay, which is visible on first use rather than subtly wrong.
-   *
-   * Order is innermost-first and is the list's own order — the palette sits over the sheet,
-   * which sits over a popover, which sits over the reader.
-   *
-   * ── AND IT IS NOT THE DESTRUCTIVE-KEY GATE, WHICH IT BRIEFLY WAS ───────────────────
-   *
-   * Backspace/Delete read this array for one revision, on the reasoning that the one list
-   * of what Escape closes is the one list of what is open. The premise was false: this
-   * enumerates the overlays THE SHELL OWNS, and first run was never in it (Escape is not
-   * how you leave first run) while a message More menu CANNOT be — its open state lives
-   * inside the component, below the shell. Both were reachable: Delete fired under them.
-   * The gate asks the DOM instead (`modal-gate.ts#isModalOpen`), which is the only form of
-   * the question a surface added later answers without anybody editing a list. This array
-   * is Escape's, and only Escape's.
+   * Escape has one owner, and this ordered list is it. Before the registry, Escape was handled by `Reader` (close),
+   * `AppShell` (the (i) panel), `OhboxView` (clear the selection), `ScreenerView` (leave the mobile preview) and the
+   * palette input — five listeners with no agreed order, why the reply editor could not simply add a sixth. `Reader`
+   * takes `closeOnEscape={false}` and this closes the innermost thing that is open. It used to be TWO lists — an
+   * `if/else if` cascade deciding WHAT Escape closes and a parallel boolean deciding WHETHER it was live — two
+   * enumerations of the same eight overlays, a drift the type system cannot see. One array answers both: `find` gives
+   * the innermost open overlay, and its absence IS "nothing is open"; forgetting a new overlay makes Escape inert for
+   * it, visible on first use rather than subtly wrong. Order is innermost-first, the list's own order.
+   */
+
+  /**
+   * It is not the destructive-key gate, which it briefly was: Backspace/Delete read this array
+   * for one revision, reasoning that the one list of what Escape closes is the one list of what
+   * is open. False premise — this enumerates the overlays THE SHELL OWNS: first run was never
+   * in it (Escape is not how you leave first run) while a message More menu CANNOT be (its open
+   * state lives inside the component, below the shell); both were reachable, and Delete fired
+   * under them. The gate asks the DOM instead (`modal-gate.ts#isModalOpen`) — the only form of
+   * the question a surface added later answers without anybody editing a list. This array is
+   * Escape's, and only Escape's.
    */
   const escapeLayers: Array<[open: boolean, close: () => void]> = [
     [palette.open, palette.closePalette],
@@ -5246,34 +5234,21 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   const closeInnermost = escapeLayers.find(([open]) => open)?.[1] ?? null;
 
   /**
-   * AN OPEN OVERLAY OWNS ESCAPE WHILE IT IS OPEN.
-   *
-   * ── WHAT WAS WRONG ─────────────────────────────────────────────────────────────────
-   *
-   * The Ohbox's "clear the selection" is a VIEW binding and Escape's cascade was a GLOBAL
-   * one, so a picked set outranked the cascade UNCONDITIONALLY: with two rows selected,
-   * Escape cleared the selection instead of closing the `?` sheet, the ⌘K palette or the
-   * screening popover the user was actually looking at. It had been patched once, for the
-   * reply editor only, by teaching the Ohbox's binding to stand down when
-   * `chrome.replyTo != null` — a predicate in a view, naming one shell overlay out of
-   * eight. That is the shape that rots: the view cannot see the other seven, and the next
-   * overlay added would not be in the condition either.
-   *
-   * ── THE RULE ───────────────────────────────────────────────────────────────────────
-   *
-   * A third scope, ABOVE view layers (`keymap.tsx`), holding exactly one binding: Escape,
-   * live only while something is open. So the precedence is stated as what it actually is
-   * — an open overlay is inner to a selection — instead of being re-derived per case:
-   *
-   *   · nothing open  ⇒ this is disabled, the registry falls through to the view layer,
-   *                     and Escape clears the selection exactly as before;
-   *   · anything open ⇒ this wins over every view binding there will ever be, closes the
-   *                     innermost overlay, and the selection survives untouched.
-   *
-   * It cannot rot the way the per-case predicate did, because no view names an overlay any
-   * more and this binding names none either: it is gated by `escapeLayers` above, the same
-   * single list that decides what Escape closes. An overlay that Escape can close is
-   * therefore an overlay that outranks a selection, by construction and not by memory.
+   * An open overlay owns Escape while it is open. The Ohbox's "clear the selection" is a VIEW binding and Escape's
+   * cascade was a GLOBAL one, so a picked set outranked the cascade unconditionally: with two rows selected, Escape
+   * cleared the selection instead of closing the `?` sheet, the ⌘K palette or the screening popover the user was
+   * looking at. It had been patched once, for the reply editor only, by teaching the Ohbox's binding to stand down
+   * when `chrome.replyTo != null` — a predicate in a view naming one shell overlay out of eight, the shape that rots.
+   * The rule: a third scope, ABOVE view layers (`keymap.tsx`), holding exactly one binding — Escape, live only while
+   * something is open.
+   */
+
+  /**
+   * Nothing open ⇒ disabled, the registry falls through and Escape clears the selection as before; anything open ⇒
+   * this wins over every view binding there will ever be, closes the innermost overlay, and the selection survives.
+   * It cannot rot the way the per-case predicate did: no view names an overlay and this binding names none — it is
+   * gated by `escapeLayers`, the same single list that decides what Escape closes, so an overlay Escape can close
+   * outranks a selection by construction.
    */
   useKeyBindings(
     [
@@ -5315,33 +5290,24 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   }, [theme.layout]);
 
   /**
-   * THE LAYOUT-CYCLE RECONCILE (review finding, round 1). The narrow-only surfaces — the reader
-   * sheet and the Screener's full preview — exist because the column they duplicate is off
-   * screen; a layout change that BRINGS the column back would otherwise leave them standing
-   * fixed over the very split they duplicate (the double-render defect `enterReader`'s one
-   * gate exists to prevent). Asked with the NEW layout's own answer
-   * (`readColumnHiddenFor`), because the attribute stamp lands in the provider's effect,
-   * which runs after this one.
-   *
-   * ON THE TRANSITION ONLY (review finding, round 2): a sheet can stand at a WIDE width by
-   * design — `openMessage` raises it for a message no standing column can show (an
-   * archive-only search hit, a parked message from History) — and a wide→wide cycle must
-   * not take the only visible copy of a message away. So the clear fires exactly when this
-   * cycle turns a hidden column into a standing one; every other direction is left as a
-   * window resize across the breakpoint leaves it.
-   *
-   * BOTH ANSWERS AT THE CURRENT WIDTH (review finding, round 3). What is remembered across
-   * cycles is the previous LAYOUT, never its answer: this effect only re-runs when the
-   * layout changes, so a remembered boolean describes the viewport as it was at the last
-   * cycle, and any resize since makes it a lie. The measured hole: mount classic at 1280
-   * (column standing → `false` remembered), resize to 800 where classic hides the column
-   * and a reader sheet legitimately opens, then press `w` — Zero at 800 stands both tiles,
-   * so the new answer is "standing", but the stale `false` reads the cycle as standing→
-   * standing and skips the clear, leaving the sheet fixed over the very column it
-   * duplicates. Asking `readColumnHiddenFor` for BOTH layouts here evaluates both against
-   * the width the visitor is actually at (the function matches its media query at call
-   * time), which makes the comparison a question about the layouts alone and removes the
-   * time dependency that produced the bug.
+   * The layout-cycle reconcile (review, rounds 1–3). The narrow-only surfaces — the reader sheet, the Screener's full
+   * preview — exist because the column they duplicate is off screen; a layout change that brings the column back
+   * would leave them standing fixed over the very split they duplicate. Asked with the NEW layout's own answer
+   * (`readColumnHiddenFor`), because the attribute stamp lands in the provider's effect, which runs after this one.
+   * On the TRANSITION only (round 2): a sheet can stand at a wide width by design — `openMessage` raises it for a
+   * message no standing column can show — and a wide→wide cycle must not take the only visible copy of a message
+   * away; the clear fires exactly when this cycle turns a hidden column into a standing one.
+   */
+
+  /**
+   * Both answers at the CURRENT width (round 3). What is remembered across cycles is the previous LAYOUT, never its
+   * answer: this effect re-runs only when the layout changes, so a remembered boolean describes the viewport as it
+   * was at the last cycle, and any resize since makes it a lie. The measured hole: mount classic at 1280 (column
+   * standing, `false` remembered), resize to 800 where classic hides the column and a sheet legitimately opens, press
+   * `w` — Zero at 800 stands both tiles, but the stale `false` reads the cycle as standing→standing and skips the
+   * clear, leaving the sheet fixed over the very column it duplicates. Asking `readColumnHiddenFor` for BOTH layouts
+   * evaluates both against the width the visitor is actually at (the function matches its media query at call time),
+   * removing the time dependency that produced the bug.
    */
   const prevCycleLayout = useRef<"classic" | "zero" | null>(null);
   useEffect(() => {
@@ -5497,36 +5463,25 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     },
     {
       /**
-       * FORWARD — `⇧F`, and NOT the `f` a mail client usually gives it.
-       *
-       * `f` is taken, by the Reply Run over the Answer Later pile (declared above, and again in
-       * `TriageView`), and moving a shipped chord to make room for a new one is the more expensive
-       * change of the two. `⇧F` is the shifted variant of a bare letter that already means
-       * something adjacent, which is the convention `⇧R` (reply all) and `⇧U` set — so it reads as
-       * "the other thing F does" rather than as an arbitrary pick, and the `?` sheet prints it
-       * beside `r` and `⇧R` in the same `message` group.
-       *
-       * Its `disabled` carries the SAME TWO predicates the bar's button does
-       * (`MessagePane.ActionBar#canForward`) — `sensitivity.no_forward`, which the send path
-       * answers with a 403, and the mirror, because `openForward` below reads the row out of the
-       * engine and returns silently when it is absent. So the key and the control appear and
-       * disappear together: the discipline `⇧R` keeps against `replyAllRecipients`, and the reason
-       * the pill's keycap can be generated from this registry rather than typed at the call site.
-       *
-       * NOT a toggle — see `openForward`, which answers a refused message with a toast that a
-       * second-press-closes verb would swallow.
-       *
-       * ── WHERE IT IS LIVE, AND WHERE IT IS NOT ────────────────────────────────────────────
-       *
-       * `focused` is the reader (over any view), the Ohbox, Reads and Receipts. On a WIDE split in
-       * Triage, Folder, Tag or History the message on screen is that view's own local cursor,
-       * which the shell cannot see — so this binding is inert there while the pill still prints
-       * the keycap. That is not specific to Forward: `r`, `⇧R`, `a`, `e`, `b`, `s`, `t`, `m` and
-       * `d` are all inert on those three of the four views for the same reason, and `TriageView`
-       * is the one that already fixes it by declaring its own bindings over `shown` ("views
-       * declare their own"). Forward joins that list THERE rather than adding a fourth silent
-       * chord; Folder, Tag and History declare no message verbs at all, which is a pre-existing
-       * gap across every verb and not this one's to close.
+       * Forward — `⇧F`, and not the `f` a mail client usually gives it: `f` is taken, by the Reply Run over the
+       * Answer Later pile, and moving a shipped chord is the more expensive change. `⇧F` is the shifted variant of a
+       * bare letter that already means something adjacent — the convention `⇧R` and `⇧U` set — and the `?` sheet
+       * prints it beside `r` and `⇧R`. Its `disabled` carries the SAME two predicates the bar's button does
+       * (`MessagePane.ActionBar#canForward`): `sensitivity.no_forward`, which the send path answers with a 403, and
+       * the mirror, because `openForward` reads the row out of the engine and returns silently when absent — so key
+       * and control appear and disappear together, the reason the pill's keycap can be generated from this registry.
+       * Not a toggle — `openForward` answers a refused message with a toast a second-press-closes verb would swallow.
+       */
+
+      /**
+       * Where it is live: `focused` is the reader (over any view), the Ohbox, Reads and
+       * Receipts. On a wide split in Triage, Folder, Tag or History the message on screen is
+       * that view's own local cursor, which the shell cannot see — so this binding is inert
+       * there while the pill still prints the keycap. Not specific to Forward: `r`, `⇧R`, `a`,
+       * `e`, `b`, `s`, `t`, `m` and `d` are all inert on those views for the same reason, and
+       * `TriageView` already fixes it by declaring its own bindings over `shown`; Forward joins
+       * that list THERE. Folder, Tag and History declare no message verbs at all — a
+       * pre-existing gap across every verb, not this one's to close.
        */
       chord: "shift+f",
       group: "message",
