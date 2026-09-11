@@ -1,48 +1,12 @@
 /**
- * THE OAuth APPLICATION REGISTRATION STORE (cloud 0009) — one resolver, two hosts, one precedence
- * rule.
- *
- * The hosted deployment signs its Microsoft consent flow with an Entra application registration: a
- * client id, a confidential client secret, a tenant, the redirect URIs registered in Azure, and the
- * scopes. TWO processes read it and they must never disagree:
- *
- *   · `packages/api` — mints the authorize URL (`POST /mailboxes/oauth/microsoft/start`) and
- *     redeems the authorization code (the callback). It needs the id, the secret, the tenant and
- *     the redirect URI.
- *   · `apps/worker` — refreshes access tokens for every oauth mailbox, for ever. It needs the id,
- *     the secret and the default tenant.
- *
- * If those two resolve differently, the symptom is a mailbox that onboards successfully and then
- * quarantines on its first refresh — a failure with two plausible wrong explanations (a bad
- * consent, a dead token) and one true one nobody looks for. So the resolution is ONE function here,
- * called by both, and neither host re-derives it.
- *
- * ── THE PRECEDENCE RULE, AND WHY THERE IS NO FIELD-LEVEL FALLBACK ─────────────────────────
- *
- * A ROW WINS WHOLE, OR ENV WINS WHOLE. There is no interleaving, and that is a decision rather
- * than a simplification:
- *
- *  · A row that exists is the authority, INCLUDING when `enabled` is false. Falling back to env
- *    for a disabled row would make the console's off switch bypassable by an environment variable
- *    nobody looked at — the switch would read as a control and not be one.
- *  · A row with a NULL `client_secret_enc` does NOT borrow `MS_OAUTH_CLIENT_SECRET`. Mixing the two
- *    sources means "which secret is live?" has no answer an operator can read off one screen, and
- *    the answer matters most at exactly the moment it is hardest to get: a rotation that half
- *    landed. A registration is entered whole, and an incomplete row is reported as incomplete.
- *  · ENV is the BOOTSTRAP, not a peer. It is what makes the first deploy work with no row at all,
- *    and it is the way back in for an operator locked out of the console.
- *
- * {@link ResolvedOAuthConfig.source} publishes which of the three states answered, and the admin
- * console renders it, so the precedence is visible rather than inferred.
- *
- * ── NO KEY MATERIAL, AND NO `@trafficflow/core` IMPORT ────────────────────────────────────
- *
- * The client secret is a KEK envelope, so resolving one means decrypting. This module takes
- * {@link Decrypt} as a PARAMETER instead of importing a `KeyProvider`: `packages/db` does not
- * depend on `packages/core`, and adding that edge for one function would put the crypto module in
- * the import closure of every consumer of this package. Each host passes its own
- * `keyProvider.decrypt` bound — the API's per-invocation one, the worker's process one — which is
- * also what makes a fake trivial in a test.
+ * The OAuth application registration store (cloud 0009) — one resolver, two hosts, one precedence
+ * rule. The API mints the authorize URL and redeems the code; the worker refreshes tokens
+ * forever. Resolve differently and a mailbox onboards, then quarantines on its first refresh — so
+ * the resolution is ONE function, called by both. A ROW WINS WHOLE, OR ENV WINS WHOLE: a disabled
+ * row must not be bypassable by an env var, and a NULL secret must not borrow the env secret, or
+ * "which secret is live?" has no readable answer during a half-landed rotation. ENV is the
+ * BOOTSTRAP, not a peer; `source` names which state answered. No key material: {@link Decrypt} is
+ * a parameter — `packages/db` does not depend on `packages/core`.
  */
 import { and, eq } from "drizzle-orm";
 import { oauthProviderConfig } from "./schema-cloud.js";
