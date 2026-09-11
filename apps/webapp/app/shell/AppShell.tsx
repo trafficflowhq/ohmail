@@ -7045,21 +7045,21 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                 tags={tags}
                 now={now}
                 /**
-                 * The reader, IN PLACE — not `openMessage`, and the difference is a defect
-                 * rather than a preference: `openMessage` answers "open it where it lives", and
-                 * where a History message lives is the INBOX — it would navigate to the Ohbox
-                 * and select a row that is not in the Ohbox's list, because the whole point of
-                 * History is that this message does not present there. The reader takes an id
-                 * and reads straight from the mirror, so it works for a message belonging to no
-                 * pile. `setReaderFor` and not `enterReader`: in the SOLO list there is no
-                 * reading column at any width, so the sheet is the only reading surface — the
-                 * gate that suppresses the sheet where a column exists would leave the solo
-                 * list unable to open anything; the split layout reads in its column, the sheet
-                 * its mobile fallback. Either way the body hydrates through the
-                 * `readerFor`-keyed effect above. It is what makes decide-on-encounter work:
-                 * the pane renders the full body and thread, and the sender menu inside offers
-                 * the screening decision with the sender's count and the explicit retro-apply,
-                 * reached from the mail that prompted the thought.
+                 * The reader, IN PLACE — not `openMessage`, and the difference is a defect rather than a preference:
+                 * `openMessage` answers "open it where it lives", and where a History message lives is the INBOX — it
+                 * would navigate to the Ohbox and select a row that is not in the Ohbox's list, because the whole
+                 * point of History is that this message does not present there. The reader takes an id and reads
+                 * straight from the mirror, so it works for a message belonging to no pile.
+                 */
+
+                /**
+                 * `setReaderFor` and not `enterReader`: in the SOLO list there is no reading column at any width, so
+                 * the sheet is the only reading surface — the gate that suppresses the sheet where a column exists
+                 * would leave the solo list unable to open anything; the split layout reads in its column, the sheet
+                 * its mobile fallback. Either way the body hydrates through the `readerFor`-keyed effect above. It is
+                 * what makes decide-on-encounter work: the pane renders the full body and thread, and the sender menu
+                 * inside offers the screening decision with the sender's count and the explicit retro-apply, reached
+                 * from the mail that prompted the thought.
                  */
                 onOpen={(m) => setReaderFor(m.id)}
                 /* The split reading column hydrates its own selection, the way ReadsView does. */
@@ -7771,12 +7771,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
           demo); `route.firstRun`, the person asked for it — the stage never opens itself, since
           a dialog appearing over somebody's mail unbidden is the thing every entry point is
           written to avoid; `onboardingFacts`, `GET /mailboxes` has answered — null is "we
-          cannot see", and the flow's second row reads a null mailbox as "none connected", which
-          over an unreachable API would open setup on an account with five mailboxes; and
-          `consent.known`, `GET /consent` has answered — `onboardingCompletedAt` RESTS null,
-          meaning "never been through setup". The last two are the same rule twice: this
-          overlay's resting inputs both read as "nothing has happened yet", so it may only be
-          drawn on answers, never on defaults. */}
+          cannot see", and over an unreachable API a null mailbox reads as "none connected",
+          opening setup on an account with five mailboxes; and `consent.known`, `GET /consent`
+          has answered — `onboardingCompletedAt` RESTS null, meaning "never been through setup".
+          The last two are one rule twice: the overlay's resting inputs both read as "nothing
+          has happened yet", so it may only be drawn on answers, never on defaults. */}
       {firstRun && route.firstRun && onboardingFacts && consent.known ? (
         <FirstRun
           host={firstRun}
