@@ -3162,6 +3162,33 @@ export class OhmailEngine {
   }
 
   /**
+   * ONE MARKER FOR A WHOLE BATCH — the chunk twin of {@link markLoading}.
+   *
+   * A body used to be written twice per id (this marker, then the answer), so a 20-id chunk cost
+   * 40 whole-mirror derivations; a batch now costs two, whatever its size. A `ready` body is
+   * skipped exactly as it is above, and a chunk in which every id is already ready commits nothing
+   * and bumps nothing. Swallowed for `markLoading`'s reason: a mirror that cannot hold a marker
+   * can still hold the answer, so the fetch goes ahead either way.
+   */
+  private async markLoadingBatch(
+    chunk: ReadonlyArray<{ id: string; held: MessageBodyRecord | undefined }>,
+  ): Promise<void> {
+    const markers = chunk
+      .filter((c) => c.held?.state !== "ready")
+      .map((c) => ({
+        id: c.id,
+        record: {
+          messageId: c.id, state: "loading" as const, text: "", html: null, loadedRemoteContent: false,
+        },
+      }));
+    try {
+      await this.putBodies(markers);
+    } catch {
+      /* the mirror refused the markers; ask anyway — see above, never rethrow */
+    }
+  }
+
+  /**
    * One request for a whole conversation. Opening a thread needs every sibling's body, and the surface used to ask
    * one at a time through a four-wide limiter — eight siblings were eight requests, the last two not even STARTING
    * until a round trip finished, and the reader watched the conversation assemble in steps; the batch route answers
@@ -3251,7 +3278,7 @@ export class OhmailEngine {
     for (let i = 0; i < take.length; i += BODIES_IDS_MAX) {
       const chunk = take.slice(i, i + BODIES_IDS_MAX);
       const chunkIds = chunk.map((c) => c.id);
-      const run = Promise.all(chunk.map((c) => this.markLoading(c.id, c.held)))
+      const run = this.markLoadingBatch(chunk)
         .then(() => this.bodySlot(false, () => this.fetchBodiesInto(chunkIds, fetchBodies, opts.stopped), chunkIds))
         .finally(() => {
           for (const id of chunkIds) this.bodyRequests.delete(id);
@@ -3281,28 +3308,31 @@ export class OhmailEngine {
     try {
       rows = await fetchBodies(ids);
     } catch (err) {
-      await Promise.all(ids.map((id) => this.failBody(id, err)));
+      await this.failBodies(ids, err);
       return;
     }
     // `null` ⇒ this adapter serves no bodies. Same meaning and same handling as `fetchBody`'s
     // `null`: tombstone the markers rather than leave a surface saying "loading…" for ever.
     if (rows === null) {
-      for (const id of ids) {
-        try { await this.putBody(id, null); } catch { /* the mirror refused; nothing to report */ }
-      }
+      // One bump for the whole batch — see `putBodies`. Swallowed as the per-id write was.
+      try { await this.putBodies(ids.map((id) => ({ id, record: null }))); } catch { /* the mirror refused; nothing to report */ }
       return;
     }
     const byId = new Map(rows.map((r) => [r.messageId, r]));
     const missing: string[] = [];
+    // COLLECTED, THEN COMMITTED ONCE. This loop used to `await putBody` per id, which bumped the
+    // mirror version and re-derived the whole mailbox once per body.
+    const answered: Array<{ id: string; record: MessageBodyRecord | null }> = [];
     for (const id of ids) {
       const wire = byId.get(id);
       if (wire === undefined) { missing.push(id); continue; }
-      try {
-        // The same record `fetchBodyInto` writes, field for field — including the `?? null`
-        // normalisations, which are about the KEY existing rather than about the value. See
-        // there: a record that could leave `html` absent lands back in the re-read branch and
-        // polls for ever.
-        await this.putBody(id, {
+      // The same record `fetchBodyInto` writes, field for field — including the `?? null`
+      // normalisations, which are about the KEY existing rather than about the value. See
+      // there: a record that could leave `html` absent lands back in the re-read branch and
+      // polls for ever.
+      answered.push({
+        id,
+        record: {
           messageId: id,
           state: "ready",
           text: wire.text,
@@ -3315,10 +3345,15 @@ export class OhmailEngine {
           // such build ever touched, which is what makes the pre-slice heal terminate. The batch
           // path and the single path must agree; see `MessageBodyRecord.withheld`.
           withheld: withheldMarkerOf(wire.withheld),
-        });
-      } catch (err) {
-        await this.failBody(id, err);
-      }
+        },
+      });
+    }
+    try {
+      await this.putBodies(answered);
+    } catch (err) {
+      // The commit is all-or-nothing, so a refusal leaves NONE of them written — every id the
+      // batch answered gets the `failed` record it would have got asking alone.
+      await this.failBodies(answered.map((a) => a.id), err);
     }
     /*
      * THE PER-ID TAIL, AND IT IS INTERRUPTIBLE. "Shorter than asked" is a normal answer — the
@@ -3468,19 +3503,24 @@ export class OhmailEngine {
    */
   private async failBody(messageId: string, err: unknown): Promise<void> {
     try {
-      await this.putBody(messageId, {
-        messageId,
-        state: "failed",
-        text: "",
-        html: null,
-        loadedRemoteContent: false,
-        error: err instanceof Error ? err.message : String(err),
-        // WHEN, so a reload can tell this failure apart from one this session already made and
-        // refused to repeat. See {@link MessageBodyRecord.failedAt} and `bodyPlan`'s failed arm.
-        failedAt: this.now().getTime(),
-      });
+      await this.putBody(messageId, this.failedBodyRecord(messageId, err));
     } catch {
       /* the mirror refused the failure record too; see above — never rethrow */
+    }
+  }
+
+  /**
+   * A WHOLE BATCH'S REFUSAL, UNDER ONE BUMP. One request carried every id, so its throw is each
+   * of their refusals — and writing them one at a time would re-derive the mailbox once per id on
+   * the arm that is already going badly. Swallowed for {@link failBody}'s reason: this reaches the
+   * same mirror that may be the thing failing, and a throw here would escape into an unhandled
+   * rejection over somebody's mailbox.
+   */
+  private async failBodies(ids: ReadonlyArray<string>, err: unknown): Promise<void> {
+    try {
+      await this.putBodies(ids.map((id) => ({ id, record: this.failedBodyRecord(id, err) })));
+    } catch {
+      /* the mirror refused the failure records too; see above — never rethrow */
     }
   }
 
@@ -3488,6 +3528,47 @@ export class OhmailEngine {
   private async putBody(messageId: string, record: MessageBodyRecord | null): Promise<void> {
     await this.store.putLocal("message_body", messageId, record);
     this.notify();
+  }
+
+  /**
+   * MANY BODIES, ONE VERSION BUMP — the batch twin of {@link putBody}.
+   *
+   * Every `putLocal` bumps the mirror version and every `notify` re-runs the shell's whole-mirror
+   * derivations, so a per-body write makes the eager pass a derivation storm: measured on a large
+   * mailbox, every body was written twice and every write cost a whole-mirror pass — minutes of one
+   * core, and resident memory from 177 MB to 1.5 GB. `commitLocal` already writes an
+   * array under one `ver++`, so a batch costs one pass whatever its size. An empty batch writes
+   * nothing and bumps nothing — `commitLocal` returns early, which is what keeps a chunk whose
+   * every id was skipped from re-deriving the mailbox.
+   */
+  private async putBodies(
+    entries: ReadonlyArray<{ id: string; record: MessageBodyRecord | null }>,
+  ): Promise<void> {
+    if (entries.length === 0) return;
+    await this.store.commitLocal(
+      entries.map((e) => ({ type: "message_body", id: e.id, entity: e.record })),
+      [],
+    );
+    this.notify();
+  }
+
+  /**
+   * The `failed` record, without writing it — so the batch arm can commit many under one bump and
+   * the single arm can keep its own guarded write. See {@link failBody} for why that write is
+   * swallowed.
+   */
+  private failedBodyRecord(messageId: string, err: unknown): MessageBodyRecord {
+    return {
+      messageId,
+      state: "failed",
+      text: "",
+      html: null,
+      loadedRemoteContent: false,
+      error: err instanceof Error ? err.message : String(err),
+      // WHEN, so a reload can tell this failure apart from one this session already made and
+      // refused to repeat. See {@link MessageBodyRecord.failedAt} and `bodyPlan`'s failed arm.
+      failedAt: this.now().getTime(),
+    };
   }
 
   // ── optimistic mutations ─────────────────────────────────────────────────
