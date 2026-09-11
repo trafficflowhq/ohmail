@@ -68,15 +68,24 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 let FACTS: MailboxFacts[] | null = null;
 let refreshed = 0;
 
-vi.mock("../../webapp/app/shell/MailStateProvider", () => ({
-  useMailState: () => ({
-    state: { key: "quiet", clock: false, settled: true },
-    mailboxes: FACTS,
-    mirrored: 0,
-    freshness: { state: "current" },
-    refresh: () => { refreshed += 1; },
-  }),
-}));
+vi.mock("../../webapp/app/shell/MailStateProvider", async () => {
+  /* THE WHOLE MODULE, then the overrides: a factory that NAMES its exports leaves the
+     others `undefined`, and the day a pane under test reads one the rig fails as a
+     TypeError rather than as the assertion. */
+  const real = await vi.importActual<typeof import("../../webapp/app/shell/MailStateProvider")>(
+    "../../webapp/app/shell/MailStateProvider",
+  );
+  return {
+    ...real,
+    useMailState: () => ({
+      state: { key: "quiet", clock: false, settled: true },
+      mailboxes: FACTS,
+      mirrored: 0,
+      freshness: { state: "current" },
+      refresh: () => { refreshed += 1; },
+    }),
+  };
+});
 
 /** Every request the pane put down the pipe, in order — the route is half of what is under test. */
 let bridged: { url: string; method: string; body?: string }[] = [];
@@ -84,12 +93,22 @@ let bridgeReply: () => Response = () =>
   new Response(JSON.stringify({ outcome: "authorized", previousReason: "organized_elsewhere:local" }),
     { status: 200, headers: { "content-type": "application/json" } });
 
-vi.mock("../src/bridge-fetch.js", () => ({
-  bridgeFetch: async (url: string, init?: { method?: string; body?: string }) => {
-    bridged.push({ url, method: init?.method ?? "GET", ...(init?.body ? { body: init.body } : {}) });
-    return bridgeReply();
-  },
-}));
+vi.mock("../src/bridge-fetch.js", async () => {
+  /* THE WHOLE MODULE, then the overrides. A factory that NAMES its exports leaves every
+     other one `undefined`, so the day a consumer here starts importing one the rig fails as
+     a TypeError three frames down instead of as the assertion under test. Spreading
+     `importActual` cannot half-apply. */
+  const real = await vi.importActual<typeof import("../src/bridge-fetch.js")>(
+    "../src/bridge-fetch.js",
+  );
+  return {
+    ...real,
+    bridgeFetch: async (url: string, init?: { method?: string; body?: string }) => {
+      bridged.push({ url, method: init?.method ?? "GET", ...(init?.body ? { body: init.body } : {}) });
+      return bridgeReply();
+    },
+  };
+});
 
 /**
  * THE REQUESTS MINUS THE PANE'S STANDING POLL — which is what "the press wrote something" means.

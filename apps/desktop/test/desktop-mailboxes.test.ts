@@ -72,15 +72,24 @@ let MAIL_STATE: { key: string; clock: boolean; settled: boolean } =
  */
 let FRESHNESS: { state: "unknown" | "stale" | "current" } = { state: "current" };
 
-vi.mock("../../webapp/app/shell/MailStateProvider", () => ({
-  useMailState: () => ({
-    state: MAIL_STATE,
-    mailboxes: FACTS,
-    mirrored: MIRRORED,
-    freshness: FRESHNESS,
-    refresh: () => { refreshed += 1; },
-  }),
-}));
+vi.mock("../../webapp/app/shell/MailStateProvider", async () => {
+  /* THE WHOLE MODULE, then the overrides: a factory that NAMES its exports leaves the
+     others `undefined`, and the day a pane under test reads one the rig fails as a
+     TypeError rather than as the assertion. */
+  const real = await vi.importActual<typeof import("../../webapp/app/shell/MailStateProvider")>(
+    "../../webapp/app/shell/MailStateProvider",
+  );
+  return {
+    ...real,
+    useMailState: () => ({
+      state: MAIL_STATE,
+      mailboxes: FACTS,
+      mirrored: MIRRORED,
+      freshness: FRESHNESS,
+      refresh: () => { refreshed += 1; },
+    }),
+  };
+});
 
 /** What the bridge answered, per request. Set by the cases that press "Sync now". */
 let bridgeReply: () => Response | Promise<Response> = () => new Response(null, { status: 202 });
@@ -142,32 +151,42 @@ let logoutReply: () => Promise<{ state: string; mode?: string | null }> =
 /** The engine states the pane published upward — the gate's `onStatus`. */
 let published: { state: string; mode?: string | null }[] = [];
 
-vi.mock("../src/bridge-fetch.js", () => ({
-  bridgeFetch: async (url: string, init?: { method?: string }) => {
-    bridged.push({ url, method: init?.method ?? "GET" });
-    return bridgeReply();
-  },
-  /* THE RETRYING READ, which is what the pane's two roster polls take. Recorded on the SAME
-     list as the bare bridge, so every case below counts the polls exactly as it did — the
-     wrapper is transparent for every answer this file produces, and the wait it takes on a 503
-     is `retrying-read.test.ts`'s subject, not this file's. A partial mock would leave the
-     export `undefined` and fail 82 cases with a mock error rather than an assertion. */
-  retryingBridgeFetch: async (url: string, init?: { method?: string }) => {
-    bridged.push({ url, method: init?.method ?? "GET" });
-    return bridgeReply();
-  },
-  /* THE SHELL'S OWN SIGN-OUT, which the pane runs after removing the LAST mailbox. Mocked here
-     rather than through `__TAURI_INTERNALS__` because that is where the real one lives — the
-     module is already replaced for `bridgeFetch`, and a partial mock would leave this export
-     `undefined`, which fails as a TypeError rather than as the assertion under test. */
-  engineLogout: async () => {
-    shellCommands.push("engine_logout");
-    /* `logoutFails` is the earlier cases' way of driving the arm where the removal landed and the
-       door configuration could not be cleared — the same arm `logoutReply` can throw for. */
-    if (logoutFails !== null) throw new Error(logoutFails);
-    return logoutReply();
-  },
-}));
+vi.mock("../src/bridge-fetch.js", async () => {
+  /* THE WHOLE MODULE, then the overrides. A factory that NAMES its exports leaves every
+     other one `undefined`, so the day a consumer here starts importing one the rig fails as
+     a TypeError three frames down instead of as the assertion under test. Spreading
+     `importActual` cannot half-apply. */
+  const real = await vi.importActual<typeof import("../src/bridge-fetch.js")>(
+    "../src/bridge-fetch.js",
+  );
+  return {
+    ...real,
+    bridgeFetch: async (url: string, init?: { method?: string }) => {
+      bridged.push({ url, method: init?.method ?? "GET" });
+      return bridgeReply();
+    },
+    /* THE RETRYING READ, which is what the pane's two roster polls take. Recorded on the SAME
+       list as the bare bridge, so every case below counts the polls exactly as it did — the
+       wrapper is transparent for every answer this file produces, and the wait it takes on a 503
+       is `retrying-read.test.ts`'s subject, not this file's. A partial mock would leave the
+       export `undefined` and fail 82 cases with a mock error rather than an assertion. */
+    retryingBridgeFetch: async (url: string, init?: { method?: string }) => {
+      bridged.push({ url, method: init?.method ?? "GET" });
+      return bridgeReply();
+    },
+    /* THE SHELL'S OWN SIGN-OUT, which the pane runs after removing the LAST mailbox. Mocked here
+       rather than through `__TAURI_INTERNALS__` because that is where the real one lives — the
+       module is already replaced for `bridgeFetch`, and a partial mock would leave this export
+       `undefined`, which fails as a TypeError rather than as the assertion under test. */
+    engineLogout: async () => {
+      shellCommands.push("engine_logout");
+      /* `logoutFails` is the earlier cases' way of driving the arm where the removal landed and the
+         door configuration could not be cleared — the same arm `logoutReply` can throw for. */
+      if (logoutFails !== null) throw new Error(logoutFails);
+      return logoutReply();
+    },
+  };
+});
 
 /** Every command the window sent the shell, in order. The bridge is not otherwise exercised. */
 let invoked: { command: string; payload?: Record<string, unknown> }[] = [];

@@ -189,10 +189,20 @@ const wireAnswer = (): Response =>
     headers: { "content-type": "application/json" },
   });
 
-vi.mock("../src/bridge-fetch.js", () => ({
-  bridgeFetch: async () => wireAnswer(),
-  retryingBridgeFetch: async () => wireAnswer(),
-}));
+vi.mock("../src/bridge-fetch.js", async () => {
+  /* THE WHOLE MODULE, then the overrides. A factory that NAMES its exports leaves every
+     other one `undefined`, so the day a consumer here starts importing one the rig fails as
+     a TypeError three frames down instead of as the assertion under test. Spreading
+     `importActual` cannot half-apply. */
+  const real = await vi.importActual<typeof import("../src/bridge-fetch.js")>(
+    "../src/bridge-fetch.js",
+  );
+  return {
+    ...real,
+    bridgeFetch: async () => wireAnswer(),
+    retryingBridgeFetch: async () => wireAnswer(),
+  };
+});
 
 const WIRE_ROW = {
   id: "mbx-1",
