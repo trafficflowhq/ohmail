@@ -1523,11 +1523,14 @@ export class MailboxService {
       /* The account's thread-structure lock, BEFORE the mailbox row and only when erasing.
        * `deleteAccount` takes it before `mailboxes` too, so both sweeps acquire in one order and
        * neither can be the other's deadlock partner; the disconnect path touches no message or
-       * thread row and pays nothing. */
+       * thread row and pays nothing.
+       *
+       * THROUGH THE SEAM, like the fence above, because this file runs on the device store too:
+       * raw, it is not a statement that store refuses but a METHOD its handle does not have, so
+       * an erasing removal on a phone threw and rolled back. The device arm is a no-op — one
+       * serialized writer is the ordering this lock buys on the server. */
       if (opts.erase) {
-        await tx.execute(
-          sql`select pg_advisory_xact_lock(${ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS}, hashtext(${ctx.accountId}))`,
-        );
+        await dialect(ctx.db).advisoryLock(tx, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, ctx.accountId);
       }
       const row = await this.ownedRowOn(tx, ctx, id, { forUpdate: true }); // 404 if not owned
       /* ── THE SECOND CONFIRMATION, CHECKED AGAINST THE ROW AND NOT AGAINST A FLAG ────────
