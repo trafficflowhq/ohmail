@@ -33,14 +33,35 @@ export interface SettingsRowProps {
   leading?: ReactNode;
 }
 
-/** One settings row: label block left, value or control right. */
+/**
+ * One settings row: label block left, value or control right.
+ *
+ * THE DESCRIPTION IS REFERENCED, NOT MERELY RENDERED. A bare `<span>` beside the `<b>` is dropped
+ * by the Linux WebKit mapping: the label block arrived as a `section` whose text was the label
+ * alone, so the update row's whole state ("… is ready. ohmail restarts to finish.") was in no
+ * node, no name and no description, while the same markup IS exposed through UIA on Windows. So
+ * the label NAMES the row and the sentence DESCRIBES it, both by id. `group`, not `region`: a
+ * pane holds ten rows and ten landmarks is noise, and WebKitGTK maps a group to a named `panel`
+ * carrying the sentence BOTH as its description and in its own Text interface. `aria-describedby`
+ * on the control was measured and rejected — it reaches the description only, and a row can have
+ * no control at all. The id is emitted only with a sentence: a reference to nothing is a
+ * description a reader is promised and does not get.
+ */
 export function SettingsRow({ label, description, value, control, leading }: SettingsRowProps) {
+  const id = useId();
+  const labelId = `${id}-label`;
+  const descId = `${id}-desc`;
   return (
-    <div className="set-row">
+    <div
+      className="set-row"
+      role="group"
+      aria-labelledby={labelId}
+      aria-describedby={description ? descId : undefined}
+    >
       {leading}
       <div className="lab">
-        <b>{label}</b>
-        {description ? <span>{description}</span> : null}
+        <b id={labelId}>{label}</b>
+        {description ? <span id={descId}>{description}</span> : null}
       </div>
       {/* ── THE VALUE CELL IS THE ROW'S STATE, AND IT HAS TO BE IN THE TREE ──────────────────
           A bare `<span>` of text inside a `<div>` is dropped by the Linux WebKit mapping: an
