@@ -157,18 +157,31 @@ export function readerZone(): string {
  * — a 60-day window back from now against the server's own, six waiting senders listed and two
  * shown, and the reader queueing in their own Screener.
  *
- * `null` is NOT ANSWERED and files nobody into History: there is no History surface on this
- * phone, so a retired row is in no list at all, and a boot shows a superset until the answer
- * lands. (Residual: an undated message cannot make its sender active even under `all_time`,
- * where the server says `true` unconditionally. Unchanged here, and never a new drop.)
+ * `null` is NOT ANSWERED and files nobody into History: every undecided sender stays at the gate
+ * until the account's answer lands, so a boot shows a superset rather than a drop. (Residual: an
+ * undated message cannot make its sender active even under `all_time`, where the server says
+ * `true` unconditionally. Unchanged here, and never a new drop.)
  */
-export function presentedOf(
+export interface PresentedWorld {
+  /** The projection the pile selectors read — History's rows are absent from its `message` list. */
+  reader: EntityReader;
+  /** History's own contents, newest first — the SAME partition's other arm. */
+  history: readonly EngineMessage[];
+}
+
+/**
+ * ONE PARTITION, TWO ARMS — the Screener's waiting senders and History's retired mail are the
+ * two sides of a single `consentPartition` call, so the two lists cannot disagree about a
+ * sender. Partitioning twice (once for the projection, once for History) would be one rule read
+ * at two clocks, which is a sender in both lists or in neither.
+ */
+export function presentedWorld(
   reader: EntityReader, now: Date, foldersEnabled = false,
   screening?: ScreeningAnswer | null,
   ownAddresses?: readonly string[],
-): EntityReader {
+): PresentedWorld {
   const answered = screening ?? null;
-  return presentationReader(reader, consentPartition(reader, {
+  const partition = consentPartition(reader, {
     now,
     foldersEnabled,
     ...(answered === null
@@ -182,7 +195,17 @@ export function presentedOf(
        client's sync vocabulary carries none — so an empty set, which is what let the reader
        appear in their own queue. Passed whenever the mailbox read has landed. */
     ...(ownAddresses === undefined ? {} : { ownAddresses }),
-  }));
+  });
+  return { reader: presentationReader(reader, partition), history: partition.history };
+}
+
+/** The projection alone — {@link presentedWorld}'s first arm, for a caller with no History list. */
+export function presentedOf(
+  reader: EntityReader, now: Date, foldersEnabled = false,
+  screening?: ScreeningAnswer | null,
+  ownAddresses?: readonly string[],
+): EntityReader {
+  return presentedWorld(reader, now, foldersEnabled, screening, ownAddresses).reader;
 }
 
 /* ───────────────────────────────────────────────────────────── row mapping */
@@ -877,6 +900,34 @@ export function livePiles(pres: EntityReader, v: WorldView): WorldPile[] {
   }));
 }
 
+export interface WorldHistory {
+  /** Newest first — the partition's own order, never re-sorted here. */
+  items: WorldMail[];
+  total: number;
+}
+
+/**
+ * HISTORY — the retired arm of {@link presentedWorld}, as rows.
+ *
+ * It takes the RAW mirror's reader, not the projection: the projection deletes these messages
+ * from its `message` list (that is what makes History a presentation rather than a folder), so a
+ * body, a thread or a triage claim read through it would come back empty. Every row is stamped
+ * `physicalFolder` before mapping — the webapp shell's own line — so `toMail` reports the server
+ * folder as the row's `folder`, and `historyPlace` states it on the row: History shows mail
+ * somewhere other than where it lives, and it has to say so.
+ */
+export function liveHistory(
+  raw: EntityReader, history: readonly EngineMessage[], v: WorldView,
+): WorldHistory {
+  const items = history.map((m) => {
+    const stamped: EngineMessage = { ...m, physicalFolder: m.folder };
+    const row = toMail(raw, stamped, v);
+    row.historyPlace = physicalFolderOf(stamped);
+    return row;
+  });
+  return { items, total: items.length };
+}
+
 /**
  * The reading view's row: the mirror's message with its body resolved (`bodyOf` — hydrated
  * text once `hydrateBody` lands, honest `bodyState` until then), its conversation as the
@@ -890,12 +941,23 @@ export function liveMessage(engine: OhmailEngine, id: string, v: WorldView): Wor
   // and the reader says "no longer here" over mail the list just showed. The CUTLINE answer
   // rides in for exactly the same reason and it is the same failure: a row a list showed under
   // the account's window must open under it too, never under this package's default.
-  const pres = presentedOf(
+  const world = presentedWorld(
     engine.read(), v.now, v.foldersEnabled === true, v.screening ?? null, v.ownAddresses,
   );
-  const m = pres.get<EngineMessage>("message", id);
+  /* A HISTORY ROW OPENS FROM THE RAW MIRROR, the same answer the webapp's reader gives it
+     (`AppShell`'s `setReaderFor`, not `openMessage`). The projection has no such message — that
+     is History's whole definition — so reading the body and the thread through it would answer
+     "no longer here" over mail the list is showing. Same partition, so the two cannot disagree
+     about which rows take this arm. */
+  const projected = world.reader.get<EngineMessage>("message", id);
+  const retired = projected ? undefined : world.history.find((h) => h.id === id);
+  const m = projected ?? (retired ? { ...retired, physicalFolder: retired.folder } : undefined);
   if (!m) return undefined;
+  const pres = projected ? world.reader : engine.read();
   const row = toMail(pres, m, v);
+  // The place the reader arrived through, on the row that carries no other honest one: the
+  // message screen titles itself History off this, where `place` would say Ohbox.
+  if (retired) row.historyPlace = physicalFolderOf(m);
   row.earlier = threadOf(pres, id)
     .filter((member) => member.id !== id)
     .map((member) => ({

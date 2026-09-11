@@ -938,6 +938,27 @@ const TABLE = {
     "This phone mirrors your server's recent mail. The folder itself lives on your mail server and may hold older mail there.",
 
   /*
+   * HISTORY — the webapp's `history` namespace, word for word (`test/copy-parity.test.ts` holds
+   * the equalities). ONE key for the place's name, because the browser says "History" in all
+   * three of its own (`rail.history`, `history.title`, `history.placeChip`) and a reader who
+   * learned the word there must meet it here. No count anywhere near it: History is all read by
+   * construction, so a badge would claim attention nothing in it wants.
+   */
+  history: "History",
+  historyNavSub: "Old mail from senders you never screened",
+  historyMeta: (n: number) => `${n} message${n === 1 ? "" : "s"}`,
+  historyExplainer: "Mail from people you never screened, who haven't written in a while.",
+  historyExplainerMore:
+    "It's all read, so nothing here is waiting on you. It hasn't moved — each message is still where your mail server keeps it.",
+  historyExplainerMoreLabel: "What History holds, and where it lives",
+  historyEmptyTitle: "Nothing has settled here yet.",
+  historyEmptyHint:
+    "History holds old mail from senders you never made a decision about. If one of them writes again, they go to the Screener and bring this mail with them.",
+  /* The phone's own tail, in `folderTail`'s shape and for its reason: this build has no
+     reach-past, so the count is what is on THIS PHONE and never a claim about the mailbox. */
+  historyTail: (n: number) => `${n} message${n === 1 ? "" : "s"} in History on this phone.`,
+
+  /*
    * THE FOLDER VERBS — stage 2 (FOLDERS-SPEC.md §18), the webapp rail's own strings
    * (`en.json` rail.folder*), so create / rename / delete are named the same on the phone as
    * in the browser; `test/folders-parity.test.ts` holds the equalities, ICU shapes resolved.

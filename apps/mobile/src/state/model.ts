@@ -63,6 +63,16 @@ export interface Mail {
   amount?: string;
   protected?: ProtectedInfo;
   /**
+   * WHERE THIS MAIL ACTUALLY IS, set exactly when the surface showing it is HISTORY.
+   *
+   * History is a presentation over the mailbox rather than a folder, so nothing in it has moved:
+   * the row wears the server's own folder as its place chip, and the message screen titles itself
+   * History off this field's presence (`place` would say Ohbox about mail that is not there).
+   * Absent everywhere else — every other list on this phone groups BY location, so there is
+   * nothing for a chip to correct.
+   */
+  historyPlace?: string;
+  /**
    * The rest of the conversation, oldest → newest, excluding this message.
    * Rendered in full in the reading view — never summarised into a count.
    */

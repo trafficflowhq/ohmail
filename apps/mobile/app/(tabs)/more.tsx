@@ -97,6 +97,20 @@ export default function MoreScreen() {
 
           <Rule inset={20} />
 
+          {/* HISTORY — where the browser's rail puts it: first of the utility rows, above
+              Drafts and Trash and below the piles/folders. NO COUNT, deliberately: History is
+              all read by construction (an unread message makes its sender active, so it queues
+              in the Screener instead), so a number here would claim attention nothing in it
+              wants. Shown unconditionally, unlike Scheduled below — this is a PLACE the mailbox
+              always has, and hiding it on zero would be the phone asserting an empty History
+              from a mirror that may simply not have synced. */}
+          <Nav
+            label={Copy.history}
+            sub={Copy.historyNavSub}
+            onPress={() => router.push("/history")}
+            chevron
+          />
+
           {/* SCHEDULED (Send later, mail 0077) — its own destination, in the rail's idiom.
               Present while the account HOLDS an appointment, and also while the mirror has
               never settled: a row hidden on zero would otherwise assert "nothing scheduled"
@@ -140,11 +154,14 @@ export default function MoreScreen() {
 
 function Nav({
   label,
+  sub,
   count,
   chevron,
   onPress,
 }: {
   label: string;
+  /** The rail's own second line, where the browser carries one (`rail.historyTitle`). */
+  sub?: string;
   count?: number;
   chevron?: boolean;
   onPress: () => void;
@@ -154,7 +171,11 @@ function Nav({
     <TapRow
       onPress={onPress}
       accessibilityRole="link"
-      accessibilityLabel={count === undefined ? label : Copy.ariaLabelCount(label, count)}
+      accessibilityLabel={
+        sub !== undefined
+          ? Copy.ariaLabelDetail(label, sub)
+          : count === undefined ? label : Copy.ariaLabelCount(label, count)
+      }
       style={{
         marginHorizontal: 8,
         paddingHorizontal: 12,
@@ -165,7 +186,14 @@ function Nav({
         gap: 10,
       }}
     >
-      <Txt variant="navLabel">{label}</Txt>
+      <View style={{ flexShrink: 1 }}>
+        <Txt variant="navLabel">{label}</Txt>
+        {sub ? (
+          <Txt variant="caption" tone="ink3" numberOfLines={2} style={{ marginTop: 2 }}>
+            {sub}
+          </Txt>
+        ) : null}
+      </View>
       <View style={{ flex: 1 }} />
       {count !== undefined ? (
         <Txt variant="caption" tone="ink3" tabular>

@@ -101,8 +101,11 @@ function MessageBody() {
   return (
     <Screen>
       {/* A message in one of the user's OWN folders is titled by that folder's leaf — the
-          place-name fallback would say "Ohbox" about mail that is not there. */}
-      <DetailBar title={m.folderLeaf ?? placeName(m.place)} />
+          place-name fallback would say "Ohbox" about mail that is not there. A History message
+          is titled History for the same reason: it presents in no pile, so `place` falls to the
+          Ohbox default and would name a place this mail is not in. The row's own chip states
+          where it actually is (`MailRow`, off `historyPlace`). */}
+      <DetailBar title={m.historyPlace ? Copy.history : m.folderLeaf ?? placeName(m.place)} />
       {/* `.msg{padding:20px 20px 40px}` in the ≤900px block — the message needs
           air above the from-line, or the back bar reads as part of the mail. */}
       <Scroller contentStyle={{ paddingHorizontal: 0 }}>

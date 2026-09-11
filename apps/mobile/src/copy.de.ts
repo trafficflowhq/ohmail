@@ -581,6 +581,19 @@ export const DE: Deck = {
   folderEmptyHint:
     "Dieses Telefon spiegelt die neuere Post deines Servers. Der Ordner selbst liegt auf deinem Mailserver und kann dort ältere Post enthalten.",
 
+  history: "Historie",
+  historyNavSub: "Alte Post von Absendern, die du nie entschieden hast",
+  historyMeta: (n: number) => `${n === 1 ? "1 Nachricht" : `${n} Nachrichten`}`,
+  historyExplainer: "Post von Leuten, die du nie gescreent hast und die sich lange nicht gemeldet haben.",
+  historyExplainerMore:
+    "Alles ist gelesen, hier wartet also nichts auf dich. Verschoben wurde nichts — jede Nachricht liegt weiter dort, wo dein Mailserver sie hat.",
+  historyExplainerMoreLabel: "Was in der Historie liegt, und wo es liegt",
+  historyEmptyTitle: "Hier hat sich noch nichts abgelegt.",
+  historyEmptyHint:
+    "In der Historie liegt alte Post von Absendern, über die du nie entschieden hast. Schreibt einer davon wieder, landet er im Screener und bringt diese Post mit.",
+  historyTail: (n: number) =>
+    `${n === 1 ? "1 Nachricht" : `${n} Nachrichten`} in der Historie auf diesem Telefon.`,
+
   folderNew: "Neuer Ordner",
   folderNewSub: "Neuer Unterordner",
   ariaLabelCount: (label: string, count: number): string => `${label}, ${count}`,

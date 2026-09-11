@@ -62,6 +62,7 @@ import {
   liveFolder,
   liveFolders,
   liveFolderUnread,
+  liveHistory,
   liveMessage,
   liveOhbox,
   livePiles,
@@ -72,7 +73,7 @@ import {
   liveTags,
   mirrorSettled,
   phoneOrganizer,
-  presentedOf,
+  presentedWorld,
   scheduleLabel,
   staleAsOf,
   readerZone,
@@ -83,6 +84,7 @@ import {
   type AbandonedMutation,
   type MutationResult,
   type WorldActions,
+  type WorldHistory,
   type PhoneOrganizer,
   type WorldMail,
   type WorldPile,
@@ -93,8 +95,8 @@ import {
 import type { Scope } from "./model";
 
 export type {
-  FolderEntity, MoveTarget, PhoneOrganizer, ScreenerRow, WorldActions, WorldMail, WorldPile,
-  WorldScheduled, WorldTag,
+  FolderEntity, MoveTarget, PhoneOrganizer, ScreenerRow, WorldActions, WorldHistory, WorldMail,
+  WorldPile, WorldScheduled, WorldTag,
 } from "./live";
 
 export interface World {
@@ -216,6 +218,19 @@ export interface World {
     meta: string;
   };
   screener: { waiting: ScreenerRow[]; screened: ScreenerRow[]; spam: ScreenerRow[]; meta: string };
+  /**
+   * HISTORY — mail from senders nobody ever decided about, who then went quiet.
+   *
+   * The OTHER ARM of the partition that fills `screener.waiting`, derived from the same
+   * `presentedWorld` call so a sender is in exactly one of the two. Before this existed the
+   * phone's projection deleted these rows and the phone had no surface to find them in — the
+   * retired half of a mailbox was in no list at all.
+   *
+   * `meta` is the browser's own count line. No badge and no unread number anywhere: History is
+   * all read by construction (an unread message makes its sender active, so it queues in the
+   * Screener instead), which is why the nav entry beside it carries no count.
+   */
+  history: WorldHistory & { meta: string };
   piles: WorldPile[];
   pilesMeta: string;
   /** The account's tags, for the message screen's tag sheet — the mirror's `tag` entities. */
@@ -398,6 +413,7 @@ function emptyWorld(actions: WorldActions): World {
     reads: { items: [], waterlineAboveId: null, waterLabel: Copy.waterline, newCount: 0, meta: "" },
     receipts: { groups: [], waterlineAboveId: null, waterLabel: Copy.waterline, total: 0, newCount: 0, meta: "" },
     screener: { waiting: [], screened: [], spam: [], meta: "" },
+    history: { items: [], total: 0, meta: "" },
     piles: [],
     pilesMeta: "",
     tags: [],
@@ -504,9 +520,10 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    * the signatures' read and their exact rule (freshest-successful-read-wins, identity-gated):
    * nothing on this phone writes it, and the three fields come off the same `GET /consent` body.
    *
-   * `null` is "not answered", and `presentedOf` treats it as "file nobody into History" — this app
-   * has no History surface, so a retired row would be in no list at all. Reset on a session swap
-   * with the signatures: account A's window must not partition account B's mirror.
+   * `null` is "not answered", and `presentedWorld` treats it as "file nobody into History": until
+   * the account's own answer lands, every undecided sender stays at the gate rather than being
+   * retired by a window nobody asked for. Reset on a session swap with the signatures: account
+   * A's window must not partition account B's mirror.
    */
   const [screening, setScreening] = useState<ScreeningAnswer | null>(null);
   /**
@@ -926,11 +943,18 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       // `null` until the consent read lands — the unanswered posture, which drops nobody.
       screening,
     };
-    const pres = presentedOf(engine.read(), v.now, foldersOn, screening, addressesNow.current);
+    /* ONE partition, both arms (`live.ts#presentedWorld`): `world.reader` is the projection the
+       piles group over, `world.history` is the mail the cutline retired. Two calls would be one
+       rule read at two clocks — a sender in both lists, or in neither. */
+    const world = presentedWorld(engine.read(), v.now, foldersOn, screening, addressesNow.current);
+    const pres = world.reader;
     const ohbox = liveOhbox(pres, v);
     const reads = liveReads(pres, v);
     const receipts = liveReceipts(pres, v);
     const screener = liveScreener(pres, v, scopes);
+    /* The RAW mirror, not `pres`: the projection deletes History's rows, which is what makes
+       History a presentation rather than a folder. See `liveHistory`. */
+    const history = liveHistory(engine.read(), world.history, v);
     const piles = livePiles(pres, v);
     const pileTotal = piles.reduce((n, p) => n + p.items.length, 0);
     return {
@@ -1014,6 +1038,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         ...screener,
         meta: Copy.metaWaiting(screener.waiting.length),
       },
+      history: { ...history, meta: Copy.historyMeta(history.total) },
       piles,
       pilesMeta: Copy.metaItems(pileTotal),
       // The RAW mirror, like the webapp's `reader.list<TagDTO>("tag")` — tags are not projected.

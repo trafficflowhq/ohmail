@@ -17,7 +17,7 @@ export function MailRow({ m, onPress }: { m: Mail; onPress: () => void }) {
   const seen = !m.unread;
   const thread = m.earlier.length > 0 ? m.earlier.length + 1 : 0;
   const preview = m.protected ? Copy.protectedPreview : (m.snippet ?? firstLine(m.body));
-  const badges = !!m.protected || !!m.trackerNote || thread > 1;
+  const badges = !!m.protected || !!m.trackerNote || thread > 1 || !!m.historyPlace;
 
   return (
     <TapRow
@@ -81,6 +81,9 @@ export function MailRow({ m, onPress }: { m: Mail; onPress: () => void }) {
             </Badge>
           ) : null}
           {thread > 1 ? <Badge>{thread}</Badge> : null}
+          {/* WHERE IT ACTUALLY IS — a History row only. Not a pile label: History is not a
+              folder, and the only honest badge is the server's own (the webapp row's `place`). */}
+          {m.historyPlace ? <Badge tone="place">{m.historyPlace}</Badge> : null}
           {m.trackerNote ? <Badge icon="shield">{trackerShort(m.trackerNote)}</Badge> : null}
         </View>
       ) : null}
