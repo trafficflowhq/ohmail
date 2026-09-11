@@ -148,18 +148,13 @@ export const adminRoutesGroup: Route[] = adminRoutes;
 export const adminStaffRoutesGroup: Route[] = adminStaffRoutes;
 
 /**
- * The admin WRITES (3): `POST /admin/accounts/suspend` · `/admin/accounts/resume` ·
- * `/admin/mailboxes/resync`.
- *
- * A separate group from the reads AND from the staff sign-in, because it is the only surface
- * authorised by the shared secret PLUS a live staff session together: the secret proves the
- * proxy, the session names the actor an `audit_log` row blames. `admin-actions.ts` is the file
- * `admin.ts` §2's ceiling paragraph is amended to point at. All `unauthenticated` (ANONYMOUS_
- * PIPELINE resolves no customer session); all idempotent.
- *
- * The third (mail 0039) clears a quarantined mailbox's durable retry backoff. It is the first one
- * here that targets a MAILBOX rather than an account, and its body id is `mailboxId` for that
- * reason — the id a write validates is not interchangeable between them.
+ * The admin writes (3): suspend, resume, and the mailbox resync release. A separate group from
+ * the reads and the staff sign-in because it is the only surface authorised by the shared secret
+ * plus a live staff session together: the secret proves the proxy, the session names the actor an
+ * `audit_log` row blames. All `unauthenticated` (the anonymous pipeline resolves no customer
+ * session); all idempotent. The third (mail 0039) clears a quarantined mailbox's durable retry
+ * backoff and is the first to target a mailbox rather than an account — its body id is
+ * `mailboxId` for that reason.
  */
 export const adminActionRoutesGroup: Route[] = adminActionRoutes;
 
@@ -194,33 +189,13 @@ export const consentRoutesGroup: Route[] = consentRoutes;
 export const waitlistRoutesGroup: Route[] = waitlistRoutes;
 
 /**
- * The full route table. `apps/web` and tests mount
- * this into `createApp`. Route `options` (public/stepUp/raw/idempotent) drive the pipeline.
- *
- * Served now: auth 20 · sync/push 4 · mailboxes 6 (read+resync + create/update/
- * delete) · messages 5 · threads 4 · rules 5 · screener 2 · approvals 2 · triage&views 4 ·
- * search 1 · privacy 4 · contacts&notes 9 · snippets 5 · notify-rules 3 · away-responder 2 ·
- * attachments&files 6 · kb 5 · drafts 4 · workflows 9,
- * plus `GET /health`, billing 4, the 3 internal alert routes, the public
- * `POST /waitlist`, and the 6 admin reads.
- *
- * **The MEASURED length of this array is 143** (141 + the two admin WRITE routes,
- * `POST /admin/accounts/{suspend,resume}`) at the time that sentence was written; it is 169 now
- * (the last four are the pairing ceremony's, mounted for managed device pairing).
- * Cloud 0009 added five: three for the Microsoft consent ceremony (`POST …/oauth/microsoft/start`,
- * `GET …/callback`, `POST …/complete`) and two for the admin registration surface
- * (`POST /admin/oauth/microsoft`, `…/save`).
- * It is stated here as a number somebody has
- * actually read, because the previous version of this sentence claimed **117** and was wrong —
- * and two binding project documents quoted **122** from it, so one stale comment became three
- * stale claims. The per-group tally above is the original DESIGN count and
- * has drifted from every one of those groups; trust `apiRoutes.length`, which the enrollment
- * sweep and the `test/spend-gate.test.ts` census both assert against directly rather than restating.
- *
- * Every entry declares `cost` ({@link CostClass}), which is a REQUIRED field: adding a
- * route without saying what it causes does not compile, and `withSpendGate` refuses an
- * undeclared one at runtime for an unverified account. The 3 mailbox mutations are additionally
- * step-up-gated and write envelope-encrypted credentials into `mailbox_credentials`.
+ * The full route table; `apps/web` and tests mount it into `createApp`, and route `options` drive
+ * the pipeline. No count is written here: an earlier sentence claimed one, was wrong, and two
+ * documents quoted it — trust `apiRoutes.length`, which the enrollment sweep and the
+ * `test/spend-gate.test.ts` census assert against directly. Every entry declares `cost` ({@link
+ * CostClass}), a required field: adding a route without saying what it causes does not compile,
+ * and `withSpendGate` refuses an undeclared one at runtime. The three mailbox mutations are
+ * additionally step-up-gated and write envelope-encrypted credentials.
  */
 export const apiRoutes: Route[] = [
   ...healthRoutes,

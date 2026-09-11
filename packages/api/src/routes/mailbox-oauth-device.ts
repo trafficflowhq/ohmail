@@ -21,81 +21,24 @@ import type { Route } from "../router.js";
 import { mailbox, readBody } from "./shared.js";
 
 /**
- * THE DEVICE-CODE DOOR (RFC 8628) — how an install that is not ohmail.app connects an
- * Outlook / Microsoft 365 mailbox, in TWO routes.
- *
- * ══ WHY THIS DOOR EXISTS AT ALL ════════════════════════════════════════════════════════════
- *
- * The redirect ceremony next door turns on a redirect URI registered with Microsoft. That value is
- * per-deployment: an install serving `mail.example.invalid` cannot use `ohmail.app`'s, because
- * Microsoft would deliver the consent to somebody else's server. So an operator's options were to
- * register their own Entra application — real work, and a hard stop for anyone whose organisation
- * will not let them — or to route their users' tokens through somebody else's infrastructure, which
- * is not on the table: no stranger's refresh token transits our servers.
- *
- * The device grant removes the choice. There is NO redirect URI. This server asks Microsoft for a
- * code, shows the person a short code and a URL, they approve in whatever browser they like, and the
- * tokens are issued straight to THIS server over its own back channel. Nothing about the exchange
- * touches anyone else's infrastructure.
- *
- * ══ WHY TWO ROUTES, AND WHY THE SECOND ONE IS POLLED RATHER THAN HELD ══════════════════════
- *
- *  1. **`POST …/device/start`** — mints the grant, seals the `device_code`, and returns the two
- *     values that go on screen (`userCode`, `verificationUri`) plus the deadline and the interval.
- *  2. **`POST …/device/poll`** — ONE poll per request, resumable, driven by the client.
- *
- * The obvious alternative is a single route that runs the whole loop server-side and answers when
- * the person has approved. It is wrong here for three separate reasons, and the first is fatal on
- * its own: the grant lives about fifteen minutes, so that request holds a connection open for up to
- * fifteen minutes — past every serverless function limit, and on a long-running server it is a
- * request per pending ceremony that no operator can see and no user can cancel. Second, the screen
- * has to show a live countdown and the code, so the client is polling for state regardless. Third, a
- * held request that dies — a proxy timeout, a laptop lid — takes the only reference to the grant
- * with it, while a polled ceremony survives in the database and can simply be polled again.
- *
- * ══ WHAT MAKES THE POLL SAFE, GIVEN IT RUNS ~180 TIMES PER CEREMONY ════════════════════════
- *
- * Three things, and none of them is the client's good behaviour:
- *
- *  · **The ceremony is READ WITHOUT BEING SPENT.** `readDeviceCeremony` is a SELECT. The single-use
- *    claim happens only on a terminal verdict (granted / declined / expired). A consuming read here
- *    would make the FIRST poll destroy the grant, and it would present as "that code is no longer
- *    valid" to somebody who had just typed it correctly.
- *  · **The interval is enforced server-side, atomically.** `leaseDeviceCeremonyPoll` puts
- *    `last_polled_at <= now - poll_interval_ms` in the UPDATE's own predicate, so an early poll —
- *    or a second browser tab — is refused WITHOUT a request to Microsoft. This matters more than a
- *    per-account rate limit would: the client id is SHARED by every install using the public
- *    registration, so one caller hammering it is a throttle every other operator feels, arriving as
- *    an unexplained failure somewhere else entirely.
- *  · **`slow_down` accumulates in the row.** RFC 8628 §3.5 requires the increase to be cumulative,
- *    and across a stateless poll route the only place that arithmetic can live is the ceremony.
- *
- * ══ THE PUBLIC CLIENT IS A DIFFERENT REGISTRATION, NOT A DIFFERENT MODE ════════════════════
- *
- * `deps.msDevice` is read here and `deps.msOAuth` is NOT, ever, in either direction. A confidential
- * application's client id fails the device grant outright — the grant carries no secret, so Entra
- * answers `unauthorized_client` — which means falling back to the redirect flow's client id would
- * turn a complete, working BYO registration into a device door that always fails. The two ids live
- * in two variables and each door reads its own.
- *
- * ══ WHAT IS NEVER LOGGED HERE ══════════════════════════════════════════════════════════════
- *
- * No line in this file prints the `device_code`, an access token, a refresh token, an `id_token`, or
- * Microsoft's `error_description`. The `user_code` and the verification URI are the only ceremony
- * values that ever leave, and they are what the person is being asked to read off their screen.
+ * The device-code door (RFC 8628) — how a non-hosted install connects a Microsoft 365 mailbox.
+ * The redirect ceremony needs a per-deployment redirect URI; the device grant has none — this
+ * server asks for a code, shows a short code and a URL, and the tokens come straight back. Two
+ * routes (start mints; poll is one poll per request): a held request would hold a connection for
+ * minutes and its death takes the only reference to the grant. Safe under ~180 polls: the
+ * ceremony is read without being spent; the interval is enforced server-side atomically (the
+ * client id is shared by every install); `slow_down` accumulates in the row. `deps.msDevice` is
+ * read, `deps.msOAuth` never. Nothing prints the `device_code`, a token, or `error_description`.
  */
 
 /**
- * THE MAILBOX PROVIDER PRESET, SERVER-SIDE — the same values the redirect ceremony fixes, and fixed
- * here for the same reason.
- *
- * The client does not get to name the IMAP or SMTP host for an oauth mailbox: the provider is
- * determined by the token issuer, so a host from the body would be an argument with exactly one
- * correct value and a request supplying a different one would be an attempt to point the dialler
- * somewhere on the strength of a token that could not authenticate there anyway.
- *
- * The SCOPE host and the IMAP host differ on purpose (`outlook.office.com` vs
- * `outlook.office365.com`); the second is the legacy alias and is what IMAP actually answers on.
+ * The mailbox provider preset, server-side — the same values the redirect ceremony fixes, for the
+ * same reason: the client does not get to name the IMAP or SMTP host for an oauth mailbox. The
+ * provider is determined by the token issuer, so a host from the body would be an argument with
+ * exactly one correct value, and a different one is an attempt to point the dialler somewhere on
+ * the strength of a token that could not authenticate there. The scope host and the IMAP host
+ * differ on purpose (`outlook.office.com` vs `outlook.office365.com`); the second is the legacy
+ * alias IMAP answers on.
  */
 const MS_MAILBOX_PRESET = {
   provider: "microsoft",
@@ -118,17 +61,13 @@ const tokenFetch = (deps: ApiDeps): FetchLike =>
   deps.oauthFetch ?? (globalThis.fetch as unknown as FetchLike);
 
 /**
- * IS THE DEVICE DOOR ARMED — the ONE predicate, shared with the capability read.
- *
- * `GET /mailboxes/oauth/microsoft/availability` publishes this as `device`, and both routes below
- * gate on the identical expression, so a button can never be shown for a press that then 503s. It
- * collapses the registration to a boolean before anything can leave the process: the client id and
- * the tenant never reach a browser.
- *
- * It lives in `packages/core` (`deviceFlowAvailable`) rather than here so the availability handler
- * next door can call it without importing this module — which would put the device handlers into the
- * module graph of every composition that mounts the redirect ceremony, including the hosted one that
- * deliberately does not serve them.
+ * Is the device door armed — the one predicate, shared with the capability read. `GET
+ * /mailboxes/oauth/microsoft/availability` publishes this as `device`, and both routes gate on
+ * the identical expression, so a button can never be shown for a press that then 503s. It
+ * collapses the registration to a boolean before anything leaves the process: the client id and
+ * tenant never reach a browser. It lives in `packages/core` (`deviceFlowAvailable`) so the
+ * availability handler can call it without importing this module — which would put the device
+ * handlers into every composition that mounts the redirect ceremony.
  */
 export function microsoftDeviceAvailable(client: MicrosoftDeviceClient | undefined): boolean {
   return deviceFlowAvailable(client);
@@ -150,18 +89,12 @@ const deviceUnconfigured = (): ServiceError => new ServiceError(
 );
 
 /**
- * The OTHER way the door can be dark, and it needs its own sentence.
- *
- * `deviceFlowAvailable` is false for two different configurations: no client id at all, and a client
- * id present beside a tenant that could not be a tenant. Reporting both as `device_client_missing`
- * tells an operator who HAS set the client id to go and set the client id — a remedy that is not
- * merely unhelpful but actively misleading, because they will look at the one variable that is
- * already correct and conclude the feature is broken.
- *
- * So the two are distinguished, and this one names the variable that is actually wrong. (The URL
- * builders in `packages/core` throw their own `OAuthConfigError` on a bad tenant quoting
- * `MS_OAUTH_TENANT` — the confidential door's name — which is why the gate here is checked BEFORE
- * anything reaches them: this is the door whose tenant variable is `MS_DEVICE_TENANT`.)
+ * The other way the door can be dark, and it needs its own sentence: `deviceFlowAvailable` is
+ * false for no client id at all AND for a client id beside a tenant that could not be a tenant.
+ * Reporting both as `device_client_missing` tells an operator who HAS set the client id to set
+ * the client id — actively misleading. So the two are distinguished, and this one names the
+ * variable that is wrong (`MS_DEVICE_TENANT`; the URL builders throw quoting `MS_OAUTH_TENANT`,
+ * the confidential door's name, which is why this gate runs before anything reaches them).
  */
 const deviceTenantInvalid = (): ServiceError => new ServiceError(
   "oauth_device_unconfigured", 503,
@@ -196,18 +129,13 @@ export const mailboxDeviceOAuthRoutes: Route[] = [
     pattern: "/mailboxes/oauth/microsoft/device/start",
     relay: true,
     /**
-     * `work`, the same class as `POST /mailboxes` and as the redirect ceremony's `start`, and for
-     * the same reason: what this begins ends in a stored credential and a full sync of somebody's
-     * mailbox. It therefore REFUSES AN UNVERIFIED ACCOUNT — an account whose address is unproven
-     * must not be able to make this process mint state and POST to a third party.
-     *
-     * NO `stepUp`, on the redirect ceremony's argument verbatim: step-up proves somebody is at the
-     * keyboard, and this ceremony proves it far more strongly one step later — the approval is an
-     * interactive sign-in to Microsoft with that account's own MFA, and the address comes from the
-     * token Microsoft issues rather than from anything the caller typed. A stolen session that
-     * reaches this route gets a short code and nothing else; it cannot finish without also
-     * completing a Microsoft sign-in, and if it does, what it attaches is the attacker's own
-     * mailbox.
+     * `work`, the same class as `POST /mailboxes` and the redirect ceremony's start: what this
+     * begins ends in a stored credential and a full sync of somebody's mailbox, so it refuses an
+     * unverified account. No `stepUp`, on the redirect ceremony's argument verbatim: step-up
+     * proves somebody is at the keyboard, and this ceremony proves it more strongly one step
+     * later — the approval is an interactive Microsoft sign-in with that account's own MFA, and
+     * the address comes from the token Microsoft issues. A stolen session gets a short code and
+     * nothing else; if it finishes, what it attaches is the attacker's own mailbox.
      */
     cost: "work",
     handler: async (req, deps) => {
@@ -312,19 +240,15 @@ export const mailboxDeviceOAuthRoutes: Route[] = [
       const found = await readDeviceCeremony(deps.db, { state, now: deps.now() });
       if (found.outcome === "unknown") throw ceremonyUnknown();
 
-      // ── (2) THE ACCOUNT MATCH, BEFORE ANY DECISION AND BEFORE ANY SPEND. ────────────────────
-      //
-      // The ceremony row is the only thing that knows which account began the flow; the session is
-      // the only thing that knows who is polling it. A mailbox may only ever be attached to the
-      // account that asked for it.
-      //
-      // NOTE what is NOT done here, and why: a cross-account poll does NOT claim the ceremony.
-      // The redirect flow burns a stolen `state` because there the consume has already happened by
-      // the time the accounts are compared, and burning it is the right direction for a value that
-      // rides in a URL through a third party. This value never leaves this origin, and a claim on
-      // mismatch would hand any authenticated account a way to kill another account's live
-      // ceremony by guessing — one poll, no Microsoft round trip, ceremony dead. So the answer is
-      // a refusal and the legitimate owner's ceremony survives it.
+      // (2) The account match, before any decision and before any spend. The ceremony row is the
+      // only thing that knows which account began the flow; the session is the only thing that
+      // knows who is polling. A mailbox may only be attached to the account that asked. Note what
+      // is NOT done: a cross-account poll does not claim the ceremony. The redirect flow burns a
+      // stolen `state` because there the consume already happened and the value rides a URL
+      // through a third party; this value never leaves this origin, and a claim on mismatch would
+      // hand any authenticated account a way to kill another account's live ceremony by guessing
+      // — one poll, no Microsoft round trip. The answer is a refusal, and the account's own ceremony
+      // survives it.
       if (found.row.accountId !== ctx.accountId) {
         throw new ServiceError(
           "forbidden", 403,
@@ -396,21 +320,15 @@ export const mailboxDeviceOAuthRoutes: Route[] = [
           }, { status: 200 });
 
         case "slow_down": {
-          /*
-           * NOT a terminal verdict — it claims nothing.
-           *
-           * The increment is applied IN THE DATABASE (`LEAST(poll_interval_ms + step, ceiling)`)
-           * rather than computed here and assigned, because computing it here loses increments and
-           * the losing case is ordinary: two polls one interval apart, the first still waiting on
-           * Microsoft, both read the same interval, both are told `slow_down`, and both write the
-           * same widened value — two instructions to slow down producing one five-second increase.
-           * RFC 8628 §3.5 requires the increase to be CUMULATIVE, and the client id it protects is
-           * shared with every other install using the public registration.
-           *
-           * The step and the ceiling are the token client's constants, passed in rather than
-           * restated, so there is one definition of "five seconds, up to a minute". What comes back
-           * is what the ROW now holds, which is what the client is told to wait — not this
-           * process's guess at it.
+          /**
+           * Not a terminal verdict — it claims nothing. The increment is applied in the database
+           * (`LEAST(poll_interval_ms + step, ceiling)`) rather than computed here, because
+           * computing here loses increments in the ordinary case: two polls one interval apart
+           * both read the same interval, both are told `slow_down`, both write the same widened
+           * value — two instructions producing one increase. RFC 8628 §3.5 requires the increase
+           * to be cumulative, and the client id it protects is shared with every install using
+           * the public registration. The step and ceiling are the token client's constants; what
+           * comes back is what the row now holds.
            */
           const widened = await noteDeviceCeremonySlowDown(deps.db, {
             state, stepMs: SLOW_DOWN_STEP_MS, ceilingMs: MAX_POLL_INTERVAL_MS,
@@ -436,17 +354,14 @@ export const mailboxDeviceOAuthRoutes: Route[] = [
         case "granted": {
           const tokens = verdict.tokens;
 
-          /*
-           * THE CLAIM, BEFORE THE MAILBOX IS WRITTEN AND AFTER THE TOKENS ARE IN HAND.
-           *
+          /**
+           * The claim, before the mailbox is written and after the tokens are in hand.
            * `claimDeviceCeremony` is the single-use UPDATE, so exactly one caller proceeds past
-           * this line for a given ceremony. Two polls that both somehow obtained tokens produce one
-           * winner; the loser discards what it holds — the same user's own tokens, never stored,
-           * never logged — and is answered as an unknown ceremony.
-           *
-           * The alternative ordering (claim, then exchange) trades that narrow race for a worse
-           * failure: a claim followed by an exchange that fails leaves somebody with a burnt
-           * ceremony and a Microsoft screen that said yes.
+           * this line: two polls that both obtained tokens produce one winner, and the loser
+           * discards what it holds — the same user's own tokens, never stored, never logged — and
+           * is answered as an unknown ceremony. The other ordering (claim, then exchange) trades
+           * that narrow race for a worse failure: a claim followed by a failed exchange leaves
+           * somebody with a burnt ceremony and a Microsoft screen that said yes.
            */
           const claimed = await claimDeviceCeremony(deps.db, { state, now: deps.now() });
           if (claimed.outcome === "unknown") throw ceremonyUnknown();

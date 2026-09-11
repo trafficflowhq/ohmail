@@ -83,18 +83,13 @@ import { mailbox, readBody } from "./shared.js";
  */
 
 /**
- * THE MAILBOX PROVIDER PRESET, SERVER-SIDE.
- *
- * The client does NOT get to name the IMAP or SMTP host for an oauth mailbox, unlike the password
- * form where a person may legitimately be connecting an unusual server. Here the provider is fixed
- * by the token issuer — a Microsoft refresh token is only good against Microsoft's servers — so
- * accepting a host from the body would be accepting an argument with exactly one correct value, and
- * a request that supplied a different one would be a same-account attempt to point our dialler at
- * an arbitrary host on the strength of a token that could not authenticate there anyway. Fixed
- * here; mirrors `apps/webapp/app/shell/providers.ts`'s `microsoft` preset.
- *
- * Note the SCOPE host and the IMAP host differ on purpose (`outlook.office.com` vs
- * `outlook.office365.com`) — see `MS_MAIL_SCOPE` in `packages/core/src/oauth/microsoft.ts`.
+ * The mailbox provider preset, server-side. The client does not get to name the IMAP or SMTP host
+ * for an oauth mailbox, unlike the password form where an unusual server is legitimate: the
+ * provider is fixed by the token issuer — a Microsoft refresh token is only good against
+ * Microsoft's servers — so a host from the body would be an argument with one correct value, and
+ * a different one an attempt to point our dialler at an arbitrary host. Mirrors the webapp's
+ * `microsoft` preset. The scope host and the IMAP host differ on purpose — see `MS_MAIL_SCOPE` in
+ * `packages/core/src/oauth/microsoft.ts`.
  */
 const MS_MAILBOX_PRESET = {
   provider: "microsoft",
@@ -103,55 +98,27 @@ const MS_MAILBOX_PRESET = {
 } as const;
 
 /**
- * WHERE THE BOUNCE SENDS THE BROWSER — the app's ONE PUBLIC URL, and no longer `/mailbox`.
- *
- * `?settings=mailboxes` opens the Settings pane the outcome belongs on (`SettingsView` reads it),
- * and `#/settings` is the hash route the shell already understands (`shell/routing.ts`). The
- * client strips the query from the address bar once it has read it, so a shared or bookmarked URL
- * carries no ceremony parameters.
- *
- * ── WHY `/` AND NOT `/mailbox`, WHICH IS WHAT SHIPPED ────────────────────────────────────────
- *
- * `/mailbox` is an INTERNAL rewrite target. `apps/webapp/app/session-gate.ts` says so in as many
- * words — *"Never a URL a human types or a link points at"* — and `middleware.ts` answers a direct
- * request for it with a **308 back to `/`**. The bounce was precisely such a link, so every consent
- * ran through an extra redirect, and that hop is where the ceremony was lost: the 308's `Location`
- * is `/?…` with **no fragment**, so `#/settings` survives only if the browser re-applies the
- * request URI's fragment to the redirect target. That inheritance is a SHOULD, not a MUST, and the
- * fragment is the only thing that selects the view — `parseHash("")` is `ohbox`. A browser that
- * dropped it put the user on the Ohbox with the ceremony parameters sitting unread in the query,
- * which is exactly what production showed: consent granted, the ceremony row
- * still `consumed_at IS NULL`, and no mailbox.
- *
- * One hop, to the only address the app actually has. The client no longer depends on the fragment
- * surviving either (`(product)/mailbox/oauth-return.ts` re-derives the route from the query, which
- * every hop preserves), so this is the belt and that is the braces.
+ * Where the bounce sends the browser — the app's one public URL, no longer `/mailbox`.
+ * `?settings=mailboxes` opens the right pane; `#/settings` is the hash route; the client strips
+ * the query once read. `/mailbox` is an internal rewrite target the middleware 308s back to `/`,
+ * and the 308's `Location` carries no fragment — fragment inheritance on redirect is a SHOULD,
+ * and the fragment selected the view, so a browser that dropped it left the ceremony parameters
+ * unread: consent granted, row unconsumed, no mailbox. One hop, to the only address the app has;
+ * the client also re-derives the route from the query (`oauth-return.ts`), which every hop
+ * preserves.
  */
 export const OAUTH_RETURN_PATH = "/";
 const OAUTH_RETURN_HASH = "#/settings";
 
 /**
- * WHAT THE BOUNCE MAY PUT IN A URL, as a closed set — and it is deliberately SHORT.
- *
- * A CODE and never a sentence, the rule `MailboxErrorCode` follows: one vocabulary, one set of
- * translated sentences in `en.json` (`mailboxes.oauth_*`), and no chance of Microsoft's own prose —
- * which carries request ids, timestamps and sometimes the callback URI — ending up in a URL a user
- * can paste into a support ticket.
- *
- * ── AND THIS IS THE ONLY PLACE THE CLIENT OWNS THE COPY. THAT SPLIT IS NOT AN INCONSISTENCY ──
- *
- * Everything `POST …/complete` refuses — an expired ceremony, a cross-account state, an unusable
- * registration, a rejected exchange, a failed probe — comes back as a JSON `ServiceError`, and the
- * SERVER owns those sentences, exactly as everywhere else in this API. `api-client.ts`'s header is
- * explicit that re-deriving them in the client is how somebody is told they are out of mailbox slots
- * when the real problem is an unpaid subscription.
- *
- * The BOUNCE cannot work that way: it is a 303, there is no body to put a sentence in, and the only
- * channel is the URL — which must not carry prose. So these four, and ONLY these four, have client
- * copy. An earlier draft listed every refusal in this type and shipped an `en.json` key for each,
- * which meant two sets of sentences for one set of failures — the exact duplication
- * `MailboxProbeVerdict`'s note about a "parallel vocabulary" refuses. The list is now what the
- * bounce can actually emit, and `bounceUrl` is typed on it so inventing a fifth is a compile error.
+ * What the bounce may put in a URL, as a closed set — deliberately short. A code and never a
+ * sentence, the `MailboxErrorCode` rule: one vocabulary, translated sentences in `en.json`
+ * (`mailboxes.oauth_*`), and no chance of Microsoft's own prose — request ids, timestamps,
+ * sometimes the callback URI — in a URL a user pastes into a ticket. This is the only place the
+ * client owns the copy, and the split is not an inconsistency: everything `complete` refuses
+ * comes back as a JSON `ServiceError` whose sentences the server owns; the bounce is a 303 with
+ * no body, and the URL must not carry prose. The list is what the bounce can actually emit, and
+ * `bounceUrl` is typed on it, so inventing a fifth is a compile error.
  */
 export type OAuthOutcomeCode =
   /** From `classifyConsentFailure` — the provider's own error redirect. */
@@ -160,35 +127,13 @@ export type OAuthOutcomeCode =
   | "state_invalid";
 
 /**
- * `code` and `state` as they may appear in a URL, and NOTHING ELSE MAY.
- *
- * The bounce reflects both of these into a `Location` header, and `complete` accepts both from a body.
- * That is the one place in this flow where a value Microsoft — or anybody who can craft a link to the
- * callback — supplies is written into a response header.
- *
- * THE ESCAPING IS NOT WHAT THIS BUYS, and saying so keeps the guard honest: `url.searchParams.set`
- * percent-encodes whatever it is given, so a CR/LF or a `&` could not terminate the header or append
- * a parameter even without this check. What it buys is a REFUSAL instead of a reflection — a value
- * that could not possibly be a Microsoft `state` or `code` is not passed on to the app to be tried,
- * and the length cap keeps unbounded input out of a response header regardless of how a future
- * caller assembles it. base64url plus the characters Microsoft actually uses (`.`, `-`, `_`, `~`).
- *
- * A value that fails this is not passed on and not partially cleaned: the bounce redirects with
- * `state_invalid`, which is the same answer a forged `state` gets, because that is what it is.
- *
- * ── TWO CAPS, BECAUSE THE TWO VALUES ARE NOT THE SAME SIZE ──────────────────────────────────
- *
- * A `state` is ours: `oauthState(randomBytes)` emits 43 base64url characters, so 512 is already two
- * orders of magnitude of headroom and anything longer is not a state we issued.
- *
- * A `code` is Microsoft's, and its length is not ours to bound tightly. Codes from the v2.0 endpoint
- * for a work or school account are long — comfortably over a kilobyte — and they grow with the
- * tenant's configuration, so a single cap sized for both is a cap that eventually refuses a genuine
- * consent. It did so as `2048`, and the failure was silent in the worst way: the bounce answers a
- * legitimate code with `state_invalid`, which renders as *"That Outlook connection link is no longer
- * valid"* — the sentence for a forged or replayed value, shown to somebody whose consent had just
- * succeeded. The cap is a BOUND, not the security control (percent-encoding is what stops a value
- * from breaking out of the header — see above), so it is sized to be generous and still finite.
+ * `code` and `state` as they may appear in a URL, and nothing else may. The escaping is not what
+ * this buys — `searchParams.set` percent-encodes regardless — it buys a refusal instead of a
+ * reflection, and the cap keeps unbounded input out of a response header. A failing value gets
+ * `state_invalid`, the same answer a forged `state` gets. Two caps because the values differ in
+ * size: a `state` is ours (43 characters; 512 is generous), a `code` is Microsoft's and grows
+ * with tenant configuration — a 2048 cap refused a genuine consent, silently, as the sentence for
+ * a forged value. The cap is a bound, not the security control.
  */
 const URL_SAFE_STATE = /^[A-Za-z0-9._~-]{1,512}$/;
 const URL_SAFE_CODE = /^[A-Za-z0-9._~-]{1,8192}$/;
@@ -233,17 +178,12 @@ function bounceUrl(
 }
 
 /**
- * 303, and 303 specifically.
- *
- * The callback is a GET, so 302 would also work — but the client-side step that follows is a POST,
- * and 303 is the status whose meaning is "the result of this is at another URI, fetch it with GET"
- * regardless of the original method. Using it here keeps the callback's answer correct if the
- * response mode ever changes to `form_post` (which would make this a POST) instead of silently
- * re-submitting the body to the app origin.
- *
- * `Cache-Control: no-store` because the Location carries single-use ceremony parameters, and
- * `Referrer-Policy: no-referrer` so the app page does not forward the callback URL — which contains
- * the authorization code — to anything it loads.
+ * 303, and 303 specifically. The callback is a GET so 302 would work — but 303's meaning is "the
+ * result is at another URI, fetch it with GET" regardless of the original method, which keeps the
+ * answer correct if the response mode ever changes to `form_post`. `Cache-Control: no-store`
+ * because the Location carries single-use ceremony parameters, and `Referrer-Policy: no-referrer`
+ * so the app page does not forward the callback URL — which contains the authorization code — to
+ * anything it loads.
  */
 function seeOther(location: string): Response {
   return new Response(null, {
@@ -268,15 +208,12 @@ async function resolveConfig(deps: ApiDeps): Promise<ResolvedOAuthConfig> {
 }
 
 /**
- * EXACTLY WHAT `POST …/start` WILL ACCEPT — the one predicate the webapp reads to decide whether to
- * offer the Outlook door.
- *
- * `cfg.enabled` is already the resolver's whole verdict (a client id, a secret, a tenant and an
- * `https` redirect all present, and the operator's switch on); the redirect and the tenant are
- * re-checked here so THIS expression and the gate in `…/start` below are the same three clauses,
- * and a button can never be shown for a press that would then 503. It is the boolean the capability
- * read publishes, and it is the only thing about the registration that ever reaches a browser — no
- * client id, no tenant, no secret, no redirect URI.
+ * Exactly what `POST …/start` will accept — the one predicate the webapp reads to decide whether
+ * to offer the Outlook door. `cfg.enabled` is already the resolver's whole verdict; the redirect
+ * and the tenant are re-checked here so this expression and the gate in `…/start` are the same
+ * three clauses, and a button can never be shown for a press that would 503. It is the boolean
+ * the capability read publishes, and the only thing about the registration that ever reaches a
+ * browser — no client id, no tenant, no secret, no redirect URI.
  */
 export function microsoftOAuthAvailable(cfg: ResolvedOAuthConfig): boolean {
   return cfg.enabled && webRedirectUri(cfg) !== null && MS_TENANT_RE.test(cfg.tenant);
@@ -343,30 +280,14 @@ interface StartBody {
 export const mailboxOAuthRoutes: Route[] = [
   {
     /**
-     * IS THE OUTLOOK DOOR ARMED ON THIS DEPLOYMENT — the one bit the webapp needs to decide whether
-     * to render the "Connect Outlook" and "Reconnect Microsoft" affordances, so a dormant
-     * registration shows no button that answers 503 when pressed.
-     *
-     * `cost: "read"`, behind a session like every other mailbox read: only the signed-in settings
-     * pane asks, and there is no reason to let an anonymous caller enumerate a deployment's config
-     * state. The BODY is TWO BOOLEANS and nothing else — the resolvers behind them hold the client
-     * ids, the tenants and the decrypted secret, and each predicate collapses all of that before it
-     * can leave the process.
-     *
-     * ── `device` IS THE SECOND DOOR, AND IT JOINED THIS PAYLOAD RATHER THAN GETTING ITS OWN ──
-     *
-     * This route was built with "a whole payload rather than a bare boolean so a later capability
-     * can join it without a second round trip" written on it, and the device-code door is that
-     * capability. The pane has to know which of the two Microsoft ceremonies this deployment can
-     * run BEFORE it renders anything, so the alternative was a second request whose answer is
-     * meaningless without this one's.
-     *
-     * `available` is the REDIRECT ceremony (a confidential registration with an https callback);
-     * `device` is the device-code flow (a separate public client, and the routes for it are mounted
-     * only by the self-host composition). They are independent: an install may have neither, either,
-     * or both. On the hosted deployment `device` is always `false`, because nothing there populates
-     * `deps.msDevice` and nothing there mounts the routes it would advertise — which is why the
-     * managed host reads no environment variable for it.
+     * Is the Outlook door armed — the one bit the webapp needs to render the Connect/Reconnect
+     * affordances, so a dormant registration shows no button that 503s. `cost: "read"`, behind a
+     * session: no reason to let an anonymous caller enumerate config state. The body is two
+     * booleans and nothing else. `device` joined this payload rather than getting its own route —
+     * the pane must know which of the two Microsoft ceremonies this deployment runs before
+     * rendering. `available` is the redirect ceremony; `device` the device-code flow (a separate
+     * public client, self-host only); independent. On the hosted deployment `device` is always
+     * `false`.
      */
     method: "GET",
     pattern: "/mailboxes/oauth/microsoft/availability",
@@ -391,22 +312,14 @@ export const mailboxOAuthRoutes: Route[] = [
     pattern: "/mailboxes/oauth/microsoft/start",
     relay: true,
     /**
-     * `work`, and the same class as `POST /mailboxes` for the same reason: what this begins is a
-     * ceremony that ends in a stored credential and a full sync of somebody's mailbox. It therefore
-     * REFUSES AN UNVERIFIED ACCOUNT — `withSpendGate` reads this field — and that refusal is a
-     * deliberate change to the spend gate's frozen census (a suite pins it), not an
-     * accident of the class: an account whose address is unproven must not be able to make this
-     * process mint state, POST to a third party and open an IMAP connection.
-     *
-     * NO `stepUp`. `POST /mailboxes` carries one and this does not, and the difference is not
-     * laziness: step-up proves a person is at the keyboard, and this ceremony proves the same thing
-     * far more strongly one step later — the consent screen is an interactive sign-in to Microsoft,
-     * with that account's own MFA, and the address is taken from the token it issues rather than
-     * from anything the caller typed. A stolen session that reaches this route gets an authorize URL
-     * and nothing else; it cannot complete the ceremony without also completing a Microsoft
-     * sign-in, and if it does, what it attaches is the attacker's own mailbox. Adding step-up here
-     * would gate the whole ceremony (the callback needs a row only this route writes), so this is a
-     * real choice and it is recorded as one.
+     * `work`, `POST /mailboxes`' class: what this begins ends in a stored credential and a full
+     * sync, so it refuses an unverified account (the spend-census change is deliberate and
+     * pinned). No `stepUp`, and it is not laziness: step-up proves a person is at the keyboard,
+     * and this ceremony proves it more strongly one step later — the consent screen is an
+     * interactive Microsoft sign-in with that account's own MFA, and the address is taken from
+     * the token it issues. A stolen session gets an authorize URL and nothing else; if it
+     * completes, it attaches the attacker's own mailbox. Step-up here would gate the whole
+     * ceremony, so this is a real choice, recorded.
      */
     cost: "work",
     handler: async (req, deps) => {
@@ -485,16 +398,13 @@ export const mailboxOAuthRoutes: Route[] = [
     pattern: "/mailboxes/oauth/microsoft/callback",
     relay: true,
     /**
-     * `unauthenticated`, and `public` — the census requires the pair and both are TRUE of this
-     * handler rather than convenient for it. It resolves no session (it cannot: the Strict cookie is
-     * withheld on this navigation), it reads nothing, it writes nothing, and it decides nothing
-     * about any account. Its whole output is a `Location` on an origin taken from config.
-     *
-     * NOT `anonymous`. `withSession` on the `public` path never 401s — it populates a session if a
-     * credential happens to be present and shrugs otherwise — and keeping it means a request that
-     * DOES arrive with a session (a same-site retry, a client that navigated here itself) is
-     * observable rather than silently discarded. The cost is one query on a path that runs once per
-     * consent, which is not the `/health` argument for skipping it.
+     * `unauthenticated`, and `public` — the census requires the pair and both are true of this
+     * handler: it resolves no session (the Strict cookie is withheld on this navigation), reads
+     * nothing, writes nothing, decides nothing about any account; its whole output is a
+     * `Location` on an origin from config. Not `anonymous`: `withSession` on the public path
+     * never 401s — it populates a session if a credential happens to be present — and keeping it
+     * means a request that does arrive with a session (a same-site retry) is observable rather
+     * than silently discarded. The cost is one query on a path that runs once per consent.
      */
     cost: "unauthenticated",
     options: { public: true, raw: true },
