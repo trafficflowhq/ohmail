@@ -301,17 +301,13 @@ export class ActiveAddressDuplicatesError extends Error {
 }
 
 /**
- * The PRE-MIGRATION GUARD. Called by `runMigrations` before the mail pass.
- *
- * Returns after ONE catalog query when `0021`'s index already exists — which makes duplicates
- * unrepresentable and this check moot for the rest of that database's life — and after two when
- * there is no `mailboxes.status` column to check, the state of every fresh provision and every
- * PGlite unit database. Both conditions are read from the catalog, never from
- * `__drizzle_migrations`: a database whose `0021` row exists but whose index somebody dropped
- * by hand is exactly a database that must be checked.
- *
- * It is a REFUSAL and not a repair, deliberately. A migration command that silently fixed data
- * would be the same defect as the prelude with better manners.
+ * The pre-migration guard, called by `runMigrations` before the mail pass. Returns after ONE
+ * catalog query when 0021's index already exists (duplicates are then unrepresentable), and after
+ * two when there is no `mailboxes.status` column — every fresh provision and every PGlite unit
+ * database. Both conditions are read from the CATALOG, never from `__drizzle_migrations`: a
+ * database whose 0021 row exists but whose index somebody dropped by hand is exactly a database
+ * that must be checked. It is a REFUSAL and not a repair, deliberately: a migration command that
+ * silently fixed data would be the same defect as the prelude with better manners.
  */
 export async function assertNoActiveAddressDuplicates(
   db: SqlExecutor, now: Date = new Date(),
@@ -337,38 +333,14 @@ interface TxExecutor extends SqlExecutor {
 }
 
 /**
- * Resolve every duplicate group, keeping EXACTLY the rows the caller named.
- *
- * ── IT REFUSES BEFORE IT WRITES ─────────────────────────────────────────────────────────
- *
- * Every group must be covered by exactly one id in `keeps`, and every id in `keeps` must name
- * a row in some group. A missing keeper, two keepers for one group, or an id that is not a
- * duplicate at all aborts the whole call with nothing written — partial resolution across a set
- * of groups is a worse state than none, because the operator no longer knows what is left.
- *
- * ── AND IT IS WRITER-SAFE, WHICH THE PRELUDE IS NOT (0021 review #4) ────────────────────
- *
- * The re-read inside the transaction takes `SELECT … FOR UPDATE` on every row of every group
- * before deciding anything. That is what closes the race the review named: a credential PATCH
- * that read a loser BEFORE this ran would otherwise commit its upsert AFTER the row was
- * disabled, leaving a disabled tombstone that still holds a credential — the exact state
- * `0021`'s own comment claims it prevents. `MailboxService.update` now takes the same row lock
- * before writing a credential and refuses to write one onto a disabled mailbox, so the two
- * serialize in either order and neither order produces that state.
- *
- * What the lock deliberately does NOT do is stop a concurrent `POST /mailboxes` from creating a
- * BRAND-NEW duplicate after the snapshot — an unborn row cannot be locked, which is precisely
- * the situation (the index that would express "this row must not exist twice" is the thing not
- * built yet). No attempt is made to close it. The safety net is that
- * {@link assertNoActiveAddressDuplicates} runs again at the START of the next `runMigrations`:
- * a duplicate born during resolution refuses the migration a second time rather than reaching
- * `CREATE UNIQUE INDEX`. Loud and re-runnable is the correct direction for a tool whose
- * alternative is deleting the wrong credential.
- *
- * Rows are locked in `id` order. `MailboxService` locks exactly one row per call and so cannot
- * deadlock against anything; the ordering is what keeps two concurrent resolver runs (two
- * operators, or a retry overlapping its predecessor) from taking a group's rows in opposite
- * orders and waiting on each other.
+ * Resolve every duplicate group, keeping EXACTLY the rows the caller named. It refuses before it
+ * writes: every group covered by exactly one id in `keeps`, every id naming a row in some group —
+ * anything else aborts with nothing written. Writer-safe: the re-read takes `SELECT … FOR UPDATE`
+ * on every row before deciding, closing the race where a credential PATCH that read a loser
+ * commits AFTER the row was disabled; `MailboxService.update` takes the same lock, so the two
+ * serialize in either order. A concurrent `POST /mailboxes` can still create a brand-new
+ * duplicate (an unborn row cannot be locked); the net is the guard re-running at the next
+ * `runMigrations`. Rows are locked in `id` order so two resolver runs cannot deadlock.
  */
 export async function resolveActiveAddressDuplicates(
   db: TxExecutor, keeps: readonly string[], now: Date = new Date(),

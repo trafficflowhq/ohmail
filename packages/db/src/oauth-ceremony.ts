@@ -1,43 +1,12 @@
 /**
- * THE MAILBOX OAuth CEREMONY STORE (cloud 0009) — mint, consume ONCE, prune.
- *
- * Three statements, beside the table they run against, for the reason `suspension.ts` gives about
- * itself: the single-use consumption is the security property of the whole redirect flow, and a
- * property expressed as "every caller remembers to write the predicate" is not a property. There is
- * one writer of `consumed_at` and it is {@link consumeOAuthCeremony}.
- *
- * ── THE CONSUME IS ONE UPDATE, AND THAT IS THE ENTIRE REPLAY DEFENCE ──────────────────────
- *
- *     UPDATE mailbox_oauth_ceremonies
- *        SET consumed_at = now
- *      WHERE state = $1 AND consumed_at IS NULL
- *   RETURNING …
- *
- * Not `SELECT … then UPDATE`. Two browsers replaying one authorization code — a double-clicked
- * consent, a prefetching client, an attacker resubmitting a captured redirect — arrive as two
- * UPDATEs on ONE ROW. Postgres serializes them on the row lock: the first sets `consumed_at` and
- * returns the row, the second re-evaluates `consumed_at IS NULL` against the committed value, finds
- * it false, and returns ZERO rows. There is no window between the read and the write for the second
- * one to occupy, which is exactly what a read-then-write version would create.
- *
- * **PGlite cannot see this.** A single-connection in-process engine has nothing to interleave, so
- * the read-then-write version passes there identically. The guard is
- * `test/oauth-ceremony.pg.test.ts` against real Postgres on :5433, which fires N
- * concurrent consumes of one state and asserts exactly one winner.
- *
- * ── THE TTL IS CHECKED AFTER THE CONSUME, NOT INSIDE IT ───────────────────────────────────
- *
- * `AND created_at > $now - $ttl` in the UPDATE would be tidier and it is wrong for this flow: an
- * expired row would return zero rows, which is the SAME answer as a replayed state and as a state
- * that never existed. Those need different sentences — "that took too long, start again" is
- * actionable, "that link is not valid" is not — so the age is judged on the RETURNED row.
- *
- * The row is still consumed on the expired path, deliberately: an aged-out state is dead for good
- * rather than dead until the clock is nudged.
- *
- * A state that matched no row and a state that was already spent are the SAME answer
- * (`"unknown"`), and that is also deliberate: distinguishing them would turn the callback into an
- * oracle for whether a given 256-bit value was ever issued.
+ * The mailbox OAuth ceremony store (cloud 0009) — mint, consume ONCE, prune. One writer of
+ * `consumed_at`: {@link consumeOAuthCeremony}. The consume is ONE UPDATE (`SET consumed_at WHERE
+ * state = $1 AND consumed_at IS NULL RETURNING`) — the entire replay defence: two browsers
+ * replaying one code arrive as two UPDATEs on one row, and the second matches nothing. PGlite
+ * cannot see this; the pg test fires N concurrent consumes and asserts one winner. The TTL is
+ * checked AFTER the consume — an expired row inside the predicate would answer like a replayed
+ * state, and the two need different sentences; the row is still consumed when expired.
+ * No-such-state and already-spent are the SAME answer, or the callback becomes an oracle.
  */
 import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
 import { mailboxOauthCeremonies, mailboxOauthDeviceCeremonies } from "./schema-cloud.js";
@@ -164,44 +133,25 @@ export async function pruneOAuthCeremonies(
   await tx.delete(mailboxOauthCeremonies).where(lt(mailboxOauthCeremonies.createdAt, cutoff));
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════════════════════
- * THE DEVICE-CODE CEREMONY (cloud 0027) — mint, READ WITHOUT CONSUMING, lease a poll, claim ONCE.
- *
- * ── THE ONE PROPERTY THAT IS DIFFERENT, STATED BEFORE ANYTHING ELSE ────────────────────────
- *
- * Everything above this line is built on the rule that a ceremony is spent by the request that
- * reads it. THIS FLOW CANNOT WORK THAT WAY. A person is being asked to walk to a browser, type a
- * short code and approve a sign-in; the ceremony is polled every few seconds for up to fifteen
- * minutes, and every one of those polls must find the row still live. A consuming read here would
- * make the FIRST poll destroy the grant, and the failure would present as "that code is no longer
- * valid" to somebody who typed it correctly seconds earlier.
- *
- * So the arms are separated and neither one can do the other's job:
- *
- *   · {@link readDeviceCeremony}      SELECT. Writes NOTHING. Called on every poll.
- *   · {@link leaseDeviceCeremonyPoll} Writes `last_polled_at` ONLY. Never `consumed_at`.
- *   · {@link claimDeviceCeremony}     The consume-once UPDATE. Called on a TERMINAL verdict only.
- *
- * The redirect flow's arm above is untouched by all of this: it has no non-consuming read, and
- * {@link consumeOAuthCeremony} remains the only writer of `mailbox_oauth_ceremonies.consumed_at`.
- * The two tables are separate precisely so that "may this be read without being spent" has one
- * answer per flow rather than a parameter, because a parameter defaulted the wrong way — or passed
- * by a caller who copied the neighbouring call site — reintroduces the whole failure.
- *
- * The three terminal verdicts are GRANTED, DECLINED and EXPIRED. Each one claims. A pending poll
- * and a `slow_down` claim nothing, which is the entire point.
- * ═══════════════════════════════════════════════════════════════════════════════════════════ */
+/**
+ * The device-code ceremony (cloud 0027) — mint, READ WITHOUT CONSUMING, lease a poll, claim ONCE.
+ * The redirect flow spends a ceremony on read; this flow cannot — the ceremony is polled every
+ * few seconds while a person types a code in a browser, and a consuming read would make the FIRST
+ * poll destroy the grant. The arms are separated: {@link readDeviceCeremony} SELECTs and writes
+ * nothing; {@link leaseDeviceCeremonyPoll} writes `last_polled_at` only; {@link
+ * claimDeviceCeremony} is the consume-once UPDATE, on a TERMINAL verdict only (granted, declined,
+ * expired — pending and `slow_down` claim nothing). Two separate tables, so "may this be read
+ * without being spent" has one answer per flow rather than a parameter.
+ */
 
 /**
- * How long a device ceremony row is KEPT. One hour, matching the redirect ceremony's retention for
- * the same reason: long enough to explain a support question, short enough that the table is bounded
- * by the last hour of connect attempts rather than by all of history.
- *
- * There is deliberately no TTL constant beside it. The redirect ceremony needs one because nothing
- * in its row says when the authorization code dies; a device ceremony carries Microsoft's own
- * `expires_in` as `grant_expires_at`, so its deadline is a stored fact rather than a policy this
- * module gets to choose. Inventing a second, shorter TTL here would cut a person's approval window
- * short for no reason a reader could find.
+ * How long a device ceremony row is KEPT — one hour, matching the redirect ceremony's retention:
+ * long enough to explain a support question, short enough that the table is bounded by the last
+ * hour of connect attempts. There is deliberately no TTL constant beside it: the redirect
+ * ceremony needs one because nothing in its row says when the authorization code dies, while a
+ * device ceremony carries Microsoft's own `expires_in` as `grant_expires_at` — the deadline is a
+ * stored fact, not a policy this module chooses. A second, shorter TTL here would cut a person's
+ * approval window short for no reason a reader could find.
  */
 export const DEVICE_CEREMONY_RETENTION_MS = 60 * 60_000;
 
@@ -282,17 +232,14 @@ export type ReadDeviceCeremonyOutcome =
   | { outcome: "unknown" };
 
 /**
- * READ A DEVICE CEREMONY WITHOUT SPENDING IT. This is the arm the whole flow turns on.
- *
- * A plain SELECT, and the absence of a write is the property — not an optimisation. It is called on
- * every poll for as long as the grant lives, and the day it starts writing `consumed_at` is the day
- * the first poll kills the ceremony. The device-ceremony suite, which runs against a real
- * Postgres rather than an in-process stand-in, pins that in both directions: N sequential reads all succeed and leave `consumed_at` NULL, and the redirect
- * flow's own consume-once concurrency guard still holds beside it.
- *
- * An already-claimed row reads as `"unknown"`, not as `"consumed"`: once a ceremony has reached a
- * terminal verdict there is nothing further any caller may do with it, and a distinct answer would
- * only tell a stranger that this particular value had once been real.
+ * Read a device ceremony WITHOUT spending it — the arm the whole flow turns on. A plain SELECT,
+ * and the absence of a write is the property, not an optimisation: it is called on every poll,
+ * and the day it writes `consumed_at` is the day the first poll kills the ceremony. The
+ * device-ceremony suite, on real Postgres, pins both directions: N sequential reads succeed and
+ * leave `consumed_at` NULL, and the redirect flow's consume-once guard still holds beside it. An
+ * already-claimed row reads as `"unknown"`, not `"consumed"`: a terminal ceremony has nothing
+ * further any caller may do, and a distinct answer would only tell a stranger the value was once
+ * real.
  */
 export async function readDeviceCeremony(
   tx: Tx, input: { state: string; now: Date },
@@ -317,24 +264,14 @@ export async function readDeviceCeremony(
 }
 
 /**
- * TAKE THE POLL SLOT, OR BE DENIED — one UPDATE, and the fence that protects a SHARED client id.
- *
- * ── WHY THE FENCE IS SERVER-SIDE AND ATOMIC ────────────────────────────────────────────────
- *
- * The interval belongs to Microsoft (RFC 8628 §3.5 — and `slow_down` increases it cumulatively),
- * and the client id being throttled is shared by every install using the public registration. So
- * "poll no faster than the interval" cannot be a client-side courtesy: a client that ignored it, or
- * two browser tabs on the same ceremony, would degrade the flow for every other operator using that
- * registration, and the throttle would arrive as an unexplained failure somewhere else entirely.
- *
- * `last_polled_at <= now - poll_interval_ms` is therefore IN THE PREDICATE. Two concurrent polls
- * arrive as two UPDATEs on one row; Postgres serializes them, the second re-evaluates the predicate
- * against the committed `last_polled_at` and matches nothing. A read-then-write version of this
- * check has a window exactly the width of a round trip to Microsoft, which is precisely the window
- * two tabs would occupy.
- *
- * It sets `last_polled_at` and NOTHING ELSE. It cannot claim a ceremony: `consumed_at` is not in its
- * `SET`, and the only function that writes that column is {@link claimDeviceCeremony}.
+ * Take the poll slot or be denied — one UPDATE, and the fence that protects a SHARED client id.
+ * The interval belongs to Microsoft (RFC 8628 §3.5, cumulative on `slow_down`), and the throttled
+ * client id is shared by every install using the public registration, so the fence cannot be
+ * client-side courtesy. `last_polled_at <= now - poll_interval_ms` is IN THE PREDICATE: two
+ * concurrent polls arrive as two UPDATEs on one row, and the second re-evaluates against the
+ * committed value and matches nothing — a read-then-write version has a window the width of a
+ * round trip to Microsoft. It sets `last_polled_at` and NOTHING ELSE: the only writer of
+ * `consumed_at` is {@link claimDeviceCeremony}.
  */
 export async function leaseDeviceCeremonyPoll(
   tx: Tx, input: { state: string; now: Date },
@@ -347,26 +284,15 @@ export async function leaseDeviceCeremonyPoll(
       isNull(mailboxOauthDeviceCeremonies.consumedAt),
       or(
         isNull(mailboxOauthDeviceCeremonies.lastPolledAt),
-        /*
-         * Interval arithmetic in SQL rather than in JS, because the comparison has to happen inside
-         * the same statement as the write for the fence to be atomic at all. `poll_interval_ms` is
-         * the row's own current value, so a `slow_down` that widened it takes effect on the very
-         * next poll without this caller having to know it happened.
-         *
-         * THE ADDITION IS ON THE LEFT — "the due moment has arrived" — and not `now - interval` on
-         * the right, deliberately. With the subtraction on the right Postgres has an untyped
-         * parameter minus an interval and infers the parameter as an INTERVAL, then refuses the
-         * whole predicate with `operator does not exist: timestamp with time zone <= interval`.
-         *
-         * AND THE INSTANT IS BOUND AS AN ISO STRING WITH AN EXPLICIT CAST, not as a `Date`. This is
-         * a HAND-WRITTEN fragment, so nothing types the placeholder the way the query builder types
-         * its own columns — the driver is handed a bare parameter and has to guess. postgres.js
-         * refuses outright (`The "string" argument must be of type string … Received an instance of
-         * Date`), which means every poll on a real deployment would have thrown. **PGlite accepts
-         * the `Date` happily**, so the whole route was green in the API suite and broken in
-         * production; the device-ceremony suite against a real Postgres is what found it. `::timestamptz`
-         * leaves the driver nothing to infer and the comparison exactly as intended.
-         */
+        // Interval arithmetic in SQL, inside the same statement as the write, so the fence is
+        // atomic; `poll_interval_ms` is the row's own value, so a `slow_down` that widened it
+        // takes effect on the next poll. The ADDITION is on the LEFT ("the due moment has
+        // arrived"): with `now - interval` on the right, Postgres infers the untyped parameter as
+        // an INTERVAL and refuses the whole predicate. And the instant is bound as an ISO string
+        // with `::timestamptz`, not a `Date`: this is a hand-written fragment, so nothing types
+        // the placeholder — postgres.js refuses a `Date` outright, while PGlite accepts it
+        // happily, so the route was green in the API suite and broken in production; the
+        // real-Postgres suite found it.
         sql`${mailboxOauthDeviceCeremonies.lastPolledAt} + (${mailboxOauthDeviceCeremonies.pollIntervalMs} * interval '1 millisecond') <= ${input.now.toISOString()}::timestamptz`,
       ),
     ))
@@ -375,33 +301,14 @@ export async function leaseDeviceCeremonyPoll(
 }
 
 /**
- * WIDEN THE INTERVAL AFTER A `slow_down` — cumulative, and stored because it has to survive the
- * request.
- *
- * RFC 8628 §3.5 requires the interval to grow by five seconds each time Microsoft says `slow_down`,
- * and NOT to reset on the next poll. Across a stateless poll route the only place that arithmetic
- * can live is the row: a caller holding it in memory is a caller that forgets it between requests,
- * and a client asked to carry it is a client that can simply not.
- *
- * ── THE INCREMENT IS APPLIED IN SQL, NOT COMPUTED AND ASSIGNED ────────────────────────────
- *
- * An earlier version took an absolute `pollIntervalMs` from the caller, which the caller had
- * derived from the interval it read at the start of its own poll. That LOSES INCREMENTS under
- * concurrency, and the case is ordinary rather than exotic: two polls one interval apart, the first
- * still waiting on Microsoft, both read 5 000, both are told `slow_down`, and both assign 10 000 —
- * so two `slow_down` responses produce one five-second increase instead of two. The next poll is
- * then permitted earlier than Microsoft's cumulative answers require, against a client id shared
- * with every other install using the public registration.
- *
- * `poll_interval_ms = LEAST(poll_interval_ms + step, ceiling)` makes it read-modify-write inside one
- * statement, so Postgres serializes the two on the row and the second increments the first's
- * committed value. The RETURNING clause hands the effective interval back, so the route reports what
- * the row now actually holds rather than what it guessed.
- *
- * The step and the ceiling are the caller's (the token client owns RFC 8628 §3.5's five seconds and
- * the upper bound); the ARITHMETIC is the database's. Writes `poll_interval_ms` only — never
- * `consumed_at`, because a `slow_down` is not a terminal verdict, it is an instruction to keep going
- * more slowly.
+ * Widen the interval after a `slow_down`. RFC 8628 §3.5 grows the interval five seconds per
+ * `slow_down`, cumulatively; on a stateless poll route the only place that arithmetic can live is
+ * the row. Applied IN SQL: an absolute value derived from the caller's own read LOSES increments
+ * under concurrency — two polls both read 5 000, both assign 10 000, so two responses produce one
+ * increase. `LEAST(poll_interval_ms + step, ceiling)` is read-modify-write in one statement, so
+ * the second increments the first's committed value; RETURNING hands back what the row now holds.
+ * The step and ceiling are the caller's; the arithmetic is the database's. Writes
+ * `poll_interval_ms` only — a `slow_down` is not a terminal verdict.
  */
 export async function noteDeviceCeremonySlowDown(
   tx: Tx, input: { state: string; stepMs: number; ceilingMs: number },
@@ -420,26 +327,14 @@ export async function noteDeviceCeremonySlowDown(
 }
 
 /**
- * SPEND A DEVICE CEREMONY EXACTLY ONCE — the single-use write, on a TERMINAL VERDICT ONLY.
- *
- * The same statement shape as {@link consumeOAuthCeremony} and the same property:
- * `UPDATE … SET consumed_at = now WHERE state = $1 AND consumed_at IS NULL RETURNING …`, so N
- * concurrent callers produce exactly one winner with no read-then-write window between them.
- *
- * ── WHERE IT IS CALLED FROM, AND WHY NOT EARLIER ───────────────────────────────────────────
- *
- * On `granted`, `declined` and `expired`, and on nothing else. Claiming BEFORE the poll would be
- * the tidier-looking design and it is the bug this whole arm exists to avoid: the overwhelmingly
- * common poll result is `authorization_pending`, so a claim-first poll route would spend the
- * ceremony on its first attempt and every subsequent poll would report a grant that is very much
- * alive as gone.
- *
- * On `granted` the claim happens AFTER the token exchange, which leaves one narrow race worth
- * naming rather than hiding: two polls could in principle both be handed tokens by Microsoft, and
- * only one of them will win this UPDATE. The loser discards the tokens it holds — they are the same
- * user's own, never stored, never logged — and is answered as an unknown ceremony. The alternative
- * ordering (claim, then exchange) trades that for a worse failure: a claim followed by an exchange
- * that fails leaves the person with a burnt ceremony and a Microsoft screen that said yes.
+ * Spend a device ceremony exactly once — the single-use write, on a TERMINAL verdict only. The
+ * same statement shape as {@link consumeOAuthCeremony}, so N concurrent callers produce one
+ * winner. Called on `granted`, `declined` and `expired`, nothing else: claiming BEFORE the poll
+ * looks tidier and is the bug this arm avoids — the common result is `authorization_pending`, and
+ * a claim-first route would spend the ceremony on its first attempt. On `granted` the claim
+ * happens AFTER the token exchange — one narrow race, named: two polls can both be handed tokens;
+ * the loser discards its set and is answered unknown. The reverse ordering is worse: a claim
+ * followed by a failed exchange leaves a burnt ceremony and a Microsoft screen that said yes.
  */
 export async function claimDeviceCeremony(
   tx: Tx, input: { state: string; now: Date },

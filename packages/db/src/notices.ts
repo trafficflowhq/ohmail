@@ -1,36 +1,12 @@
 /**
- * THE ONE PLACE A POSTGRES NOTICE IS ALLOWED TO GO.
- *
- * postgres.js defaults `onnotice` to console, so every client that omits it writes the driver's raw
- * notice OBJECT to stdout. Observed in a live worker drain:
- *
- *   { severity: 'NOTICE', code: '54000', message: 'word is too long to be indexed',
- *     detail: 'Words longer than 2047 characters are ignored.', file: 'ts_parse.c' }
- *
- * None of the hardened logger's structure — no `ts=`, no `service=`, no `event=`. The log drain is a
- * CONTROLLED surface precisely because hostile input can choose what lands in it, and a Postgres
- * notice is an uncontrolled path into it — the same hazard as any other unstructured value reaching it.
- *
- * ── WHY ONLY `severity` AND `code` CROSS THIS BOUNDARY ──────────────────────────────────────────
- *
- * Not caution — precedent. A mutation test established that the driver's own prose must not reach
- * the drain: logging `err.cause.message` under an allow-listed field went red with "the driver's
- * error MESSAGE reached the log drain", and logging `serverResponseCode` went red with "an
- * attacker-chosen serverResponseCode reached the log drain". A notice's `message`/`detail`/`hint`
- * are the same category and can carry ROW VALUES — a `RAISE NOTICE` in any function, or constraint
- * prose naming the offending value. `severity` and `code` are closed vocabularies defined by
- * Postgres, so they are facts ABOUT the notice rather than content FROM it.
- *
- * The consequence is deliberate and worth stating: this DISCARDS diagnostics. The 54000 notice above
- * would survive here only as `{severity: 'NOTICE', code: '54000'}`. That is the correct trade — the
- * alternative on offer was not "structured detail", it was the raw object on stdout.
- *
- * ── WHY A SINK AND NOT A LOGGER IMPORT ─────────────────────────────────────────────────────────
- *
- * `packages/core` imports `@trafficflow/db` (see `adapters/drizzle-repo.ts`), so core → db. This
- * package therefore CANNOT import core's hardened logger without creating a cycle. The host that
- * owns a logger injects it once at boot; until it does, notices are dropped. Dropping is not a
- * silent failure mode here — it is strictly better than the default, which is the bug.
+ * The ONE place a Postgres notice is allowed to go. postgres.js defaults `onnotice` to console:
+ * omit it and the driver's raw notice OBJECT lands on stdout (observed live). The log drain is a
+ * CONTROLLED surface, and a notice is an uncontrolled path into it. Only `severity` and `code`
+ * cross — closed vocabularies defined by Postgres, facts ABOUT the notice rather than content
+ * FROM it; `message`/`detail`/`hint` can carry ROW VALUES. This DISCARDS diagnostics,
+ * deliberately: the alternative on offer was the raw object on stdout. A SINK, not a logger
+ * import: core → db, so importing core's logger would be a cycle; the host injects one at boot,
+ * and until then notices are dropped — strictly better than the default.
  */
 
 /** The closed set of facts about a notice that may leave this module. */
@@ -68,15 +44,13 @@ export interface NoticeLogger {
 }
 
 /**
- * Build the sink a host installs at boot: `setNoticeSink(noticeSinkFor(log))`.
- *
- * ONE mapping, in one place, rather than each host writing its own closure — N call sites each
- * remembering the grammar is exactly the drift this prevents, and the field list here is a privacy
- * boundary, not a formatting preference. `severity` and `code` are both already on the logger's `ALLOWED_FIELDS`.
- *
- * `info` and not `debug` for the non-warning case, deliberately: a dropped-by-default channel that
- * logs at debug is indistinguishable from one that is broken, and the live check for this slice is
- * "a structured `pg_notice` appears", which needs the line to actually ship.
+ * Build the sink a host installs at boot: `setNoticeSink(noticeSinkFor(log))`. ONE mapping in one
+ * place rather than each host writing its own closure — N call sites each remembering the grammar
+ * is the drift this prevents, and the field list is a privacy boundary, not formatting;
+ * `severity` and `code` are already on the logger's `ALLOWED_FIELDS`. `info`, not `debug`, for
+ * the non-warning case: a dropped-by-default channel that logs at debug is indistinguishable from
+ * a broken one, and the live check for this path is "a structured `pg_notice` appears", which
+ * needs the line to ship.
  */
 export function noticeSinkFor(log: NoticeLogger): NoticeSink {
   return (facts) => {

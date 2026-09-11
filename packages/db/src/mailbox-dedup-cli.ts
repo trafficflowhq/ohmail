@@ -9,38 +9,14 @@ import { assertExpectedHost, assertSessionUrl, PROD_DB_HOST_ENV } from "./setup-
 import { onNotice } from "./notices.js";
 
 /**
- * `pnpm db:mailboxes:dedup` — the operator's half of {@link findActiveAddressDuplicates}.
- *
- * Two modes, and the default is the harmless one:
- *
- *   pnpm db:mailboxes:dedup                          → REPORT. Prints every duplicate group with
- *                                                      the evidence for each row and exits 1 if
- *                                                      any exist. Writes nothing.
- *   pnpm db:mailboxes:dedup --keep <id> [--keep …]   → RESOLVE. Disables every active row in a
- *                                                      group except the one named, and deletes
- *                                                      the losers' credentials.
- *
- * Naming the keepers IS the confirmation — there is no `--yes` and no automatic winner. The
- * reasoning is in `mailbox-dedup.ts`: a rule that picks for you is how mail migration 0021 came
- * to prefer a dead row over a working one, and the improvement over "keep the oldest" is not a
- * better guess but no guess.
- *
- * It lives in its OWN file rather than at the bottom of `mailbox-dedup.ts` to keep the module
- * graph acyclic: `migrate.ts` imports the checker, this imports the checker AND `setup-prod.ts`
- * (for the two URL guards), and `setup-prod.ts` imports `migrate.ts`.
- *
- * ── THE TARGET DATABASE COMES FROM THE ENVIRONMENT, NOT FROM `--url` ────────────────────
- *
- * An architecture review asked for an explicit `--url` here, to keep this away from the trap
- * `migrate.ts` records: the deleted `pnpm --filter @trafficflow/db migrate` read a generic
- * ambient `DATABASE_URL`, accepted a POOLER string, and provisioned quietly wrong databases.
- * That trap is real and it is closed here by a different mechanism — `assertSessionUrl`
- * (pooler refused) plus a REQUIRED `TF_PROD_DB_HOST` pin compared to the URL's hostname before
- * a connection is opened. `--url` was not adopted because it collides with an explicit standing
- * decision one file over (`setup-prod.ts`): a connection string on argv lands in shell history
- * and in `ps` output, and this command needs a superuser-ish DSN for a production database. So:
- * the specific hazard the review named is handled, and the credential does not go on the
- * command line. Both guards are the same two `db:setup:prod` uses, deliberately.
+ * `pnpm db:mailboxes:dedup` — the operator's half of {@link findActiveAddressDuplicates}. Default
+ * mode REPORTS: prints every duplicate group with its evidence and exits 1 if any exist, writing
+ * nothing; `--keep <id>` RESOLVES — disables every other active row in the group and deletes the
+ * losers' credentials. Naming the keepers IS the confirmation — no `--yes`, no automatic winner:
+ * a rule that picks for you is how mail 0021 came to prefer a dead row over a working one. Its
+ * own file keeps the module graph acyclic. The target database comes from the ENVIRONMENT, not
+ * `--url`: `assertSessionUrl` refuses a pooler and `TF_PROD_DB_HOST` pins the hostname, while a
+ * DSN on argv would land in shell history and `ps` — the same two guards `db:setup:prod` uses.
  */
 
 export interface DedupCliArgs {
@@ -142,23 +118,14 @@ async function main(): Promise<number> {
 }
 
 /**
- * `pathToFileURL` and NOT `file://${process.argv[1]}`: the latter is false for any path needing
- * percent-encoding, so on a checkout under a directory with a SPACE (this one) the script would
- * exit 0 having done nothing at all — a lesson already paid for once; `setup-prod.ts` carries the same note.
- *
- * `process.exitCode` and NOT `process.exit()`, which is the shape `provision-staff-role.ts`
- * already uses. `console.log`/`console.error` QUEUE when the destination is a pipe, and
- * `process.exit` discards whatever has not drained — measured, not assumed:
- * `node -e 'console.log("x".repeat(120000)); process.exit(0)' | wc -c` emits 65536 of 120001 here.
- * On a terminal nobody sees it; on a pipe the line lost is the one naming the duplicate group or
- * the failure. The queue only exists while that pipe is NON-BLOCKING, so `tsx` masks this entry
- * point today — its `esbuild` transform subprocess inherits stderr, which puts the pipe back into
- * blocking mode. `setup-prod-cli.ts` carries the mechanism in full and
- * `test/cli-exit-drain.test.ts` switches the masking off, which is the only way the shape below
- * can be shown to be what delivers the line. Setting the code instead of forcing the exit
- * leaves the pending write holding the loop open until it has actually left the process.
- *
- * `.then`, NOT top-level `await`, and that is deliberate — see the note in `setup-prod.ts`.
+ * `pathToFileURL`, NOT `file://${process.argv[1]}`: the latter is false for any path needing
+ * percent-encoding — a checkout under a directory with a SPACE exits 0 having done nothing;
+ * `setup-prod.ts` carries the same note. `process.exitCode`, NOT `process.exit()`: `console.log`
+ * QUEUES when the destination is a pipe, and `process.exit` discards what has not drained —
+ * measured: `node -e 'console.log("x".repeat(120000)); process.exit(0)' | wc -c` emits 65536 of
+ * 120001. The line lost is the one naming the duplicate group. `tsx` masks this today (its
+ * esbuild subprocess puts the pipe back into blocking mode); `test/cli-exit-drain.test.ts`
+ * switches the masking off. `.then`, not top-level `await` — see `setup-prod.ts`.
  */
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   void main()

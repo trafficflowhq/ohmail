@@ -33,14 +33,12 @@ export interface MailboxResyncOutcome {
 /**
  * Release a quarantined mailbox: clear its durable retry backoff so the leader re-dials on its
  * next roster pass. Idempotent — a second call, or a call against a mailbox with no backoff,
- * returns `changed: false` and writes no audit row.
- *
- * `SELECT … FOR UPDATE` is the concurrency guard, and it is a row lock rather than a bare
- * `UPDATE … WHERE retry_after IS NOT NULL RETURNING` for one reason: the outcome has to carry the
- * backoff that WAS in force, and Postgres `RETURNING` gives the NEW value of an updated column,
- * so a guard-in-the-statement would have reported `null` for the value it just cleared. With the
- * lock, two operators clicking at once serialize: one releases and writes one audit row, the
- * other reads NULL and gets `changed: false`.
+ * returns `changed: false` and writes no audit row. `SELECT … FOR UPDATE` rather than a guarded
+ * `UPDATE … RETURNING` for one reason: the outcome has to carry the backoff that WAS in force,
+ * and `RETURNING` gives the NEW value of an updated column — a guard-in-the-statement would
+ * report `null` for the value it just cleared. With the lock, two operators clicking at once
+ * serialize: one releases and writes one audit row, the other reads NULL and gets `changed:
+ * false`.
  */
 export async function resyncMailbox(db: Tx, input: MailboxResyncWrite): Promise<MailboxResyncOutcome> {
   const { mailboxId, staffId, note, now } = input;
