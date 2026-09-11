@@ -1,48 +1,12 @@
 /**
- * THE OPERATOR RE-SCREEN PATH (mail 0030).
- *
- * The forward fix stopped `pipeline.ts:393` letting a sender-chosen subject or body carry a
- * stranger past the consent gate. It is forward-looking only. This runs the correction over mail
- * that was already filed:
- *
- *   pnpm -F @trafficflow/services exec tsx src/sensitive-rescreen-cli.ts plan
- *   pnpm -F @trafficflow/services exec tsx src/sensitive-rescreen-cli.ts apply [--mailbox <uuid>]
- *
- * ── WHY A COMMAND AND NOT A SCHEDULED PASS ────────────────────────────────────────────────
- *
- * Two reasons, and the first is a wall rather than a preference.
- *
- * The worker's dependency test (`FORBIDDEN_IN_SRC`) forbids every file under `apps/worker/src`
- * from importing `@trafficflow/services`: a load-bearing boundary, not a stylistic one — services is
- * an API-host concern and is **not installed in the worker's image**, so an accidental import
- * resolves through the vitest alias, passes the whole suite, and fails only in production. The
- * pass lives in this package, so there is no attach seam it can be called from. Moving it into
- * `packages/core` to get around that would put a one-time historical correction into the library
- * both engines share for ever.
- *
- * The second: this is one-time work over somebody's everyday mailbox. It should be run
- * deliberately, with `plan` read first, by somebody who can see the counts before and after —
- * not discovered mid-attach by a worker that then reports it in a log line. `invite-cli.ts` is
- * here for the same reason.
- *
- * ── IT MOVES NO MAIL ──────────────────────────────────────────────────────────────────────
- *
- * `apply` writes `folder_state.desired_folder` and a `move` change and stops. No IMAP connection
- * is opened by this process, by the pass, or by anything either of them calls — the mailbox is
- * the master: the worker's reconcile pass performs the physical move on its next cycle. If the worker is
- * down, nothing happens until it is back — which is the correct failure mode, not a bug.
- *
- * ── ENVIRONMENT ───────────────────────────────────────────────────────────────────────────
- *
- *   DATABASE_URL_SESSION   required (from the operator's secrets file — never git). The SESSION URL and
- *                          not the pooled one: this walks the whole Ohbox in a paged
- *                          transaction loop, which is exactly the shape a transaction pooler
- *                          mishandles.
- *
- * `plan` is READ-ONLY and is the command to run first. It reports, per mailbox, how many rows the
- * pass would examine and what the re-evaluation decides for each — including how many STAY,
- * because a known sender's login code belongs in the Ohbox and a plan that reports zero of those
- * is a plan worth questioning before applying.
+ * THE OPERATOR RE-SCREEN PATH (mail 0030). The forward fix stopped a sender-chosen subject or
+ * body carrying a stranger past the consent gate; this runs the correction over mail already
+ * filed: `plan`, then `apply [--mailbox <uuid>]`. A COMMAND, NOT A SCHEDULED PASS: the worker may
+ * not import `@trafficflow/services`, and one-time work over somebody's mailbox is run
+ * deliberately, `plan` read first. IT MOVES NO MAIL: `apply` writes `folder_state.desired_folder`
+ * plus a `move` change; the reconcile pass performs the physical move. `DATABASE_URL_SESSION`
+ * required — the paged loop is what a transaction pooler mishandles. `plan` is READ-ONLY and
+ * reports what the re-evaluation decides, including how many STAY.
  */
 import { pathToFileURL } from "node:url";
 import { and, eq, sql } from "drizzle-orm";
@@ -240,16 +204,12 @@ async function run(db: Db, args: Args, dryRun: boolean): Promise<void> {
     }
     if (r.truncated) {
       // THREE STOP REASONS, AND THEY TELL THE OPERATOR DIFFERENT THINGS ABOUT THE NEXT RUN.
-      // Collapsing them into one "run it again to resume" line was a false statement in two of
-      // the three: a disturbed run DISCARDS its position on purpose, and a mailbox that was
-      // deleted has no next run at all.
-      //
-      // READ BACK FROM THE DATABASE, not from the selection snapshot. `mb.marker` was read when
-      // the targets were chosen and is stale by now: under `--force` another operator can stamp
-      // the mailbox between the two, and a stamped mailbox stores no position — so the snapshot
-      // would say a resume point was stored when none is there. (It is also why this is not
-      // keyed on `args.force`: that flag sweeps stamped AND unstamped mailboxes, and only a
-      // stamped one declines to store.) One extra read on the truncated path only.
+      // Collapsing them into one "run it again to resume" line was false in two of the three: a
+      // disturbed run DISCARDS its position on purpose, and a deleted mailbox has no next run.
+      // READ BACK FROM THE DATABASE, not the selection snapshot: `mb.marker` was read when
+      // targets were chosen and is stale — under `--force` another operator can stamp the mailbox
+      // in between, and a stamped mailbox stores no position, so the snapshot would claim a
+      // resume point that is not there. One extra read on the truncated path only.
       const stored = await storedCursor(db, mb.id);
       const head = r.stoppedBecause === "mailbox_gone"
         ? "  the mailbox was DELETED while the pass was walking it. Nothing was stamped.\n"
