@@ -38,13 +38,14 @@ function msg(id: string, i: number): EngineMessage {
   // Every row is older than the window, so only the `minRows` floor can hold anything back.
   const date = new Date(NOW.getTime() - (i + 1) * 400 * 86_400_000).toISOString();
   return {
+    id,
     accountId: "acct", mailboxId: "mb", threadId: null, messageIdHeader: null,
     subject: `Subject ${id}`, from: { name: null, address: "sender@example.test" },
     to: [], cc: [], date, folder: "INBOX", snippet: `snippet ${id}`, unread: false,
     hasAttachments: false, attachmentCount: 0,
     sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
     triage: null, labels: [], remoteContent: "none", updatedAt: date,
-  } as EngineMessage;
+  };
 }
 
 /** Drain `n` messages through an engine built the way the desktop window builds its own. */
@@ -77,8 +78,8 @@ async function mirrorAfterImport(n: number, policy: typeof DESKTOP_WINDOW | unde
     ...(policy ? { storePolicy: policy } : {}),
   });
   await engine.start();
-  while (served < n) await engine.drain();
-  await engine.drain();
+  while (served < n) await engine.syncOnce();
+  await engine.syncOnce();
   return engine.read().list<EngineMessage>("message").length;
 }
 

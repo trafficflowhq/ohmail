@@ -551,7 +551,7 @@ describe("the Rust side", () => {
    * describe would stay green while the shell grew a capability. Adding a file therefore fails
    * this test until somebody decides which rules it lives under.
    */
-  it("is these eighteen files and no others", () => {
+  it("is these twenty files and no others", () => {
     const files = fs.readdirSync(path.join(APP, "src-tauri/src")).sort();
     expect(files).toEqual([
       // Which door this install came in by, and the environment each one composes. Compiled only
@@ -601,6 +601,16 @@ describe("the Rust side", () => {
       "omarchy_core_tests.rs",
       "updater.rs",
       "updater_tests.rs",
+      // WHAT THE RENDERER COSTS. `engine_vitals` measures the sidecar, which is the process that
+      // behaved correctly; the webview was never measured, and that is where a 4.1 GB session
+      // went while ohmail's own telemetry stayed flat. Reports each WebKit child's RSS every five
+      // minutes in the engine's own log shape, one `renderer_memory_high` line per crossing of
+      // the budget, and on Linux raises the children's `oom_score_adj` so the kernel reclaims
+      // THIS app rather than a neighbour. Compiled only under `local-engine` (it writes to that
+      // log); Tauri-free otherwise, and its tests read a fixture `/proc` tree rather than the
+      // real one so they need no privileges and run anywhere.
+      "vitals.rs",
+      "vitals_tests.rs",
     ]);
   });
 
@@ -646,6 +656,11 @@ describe("the Rust side", () => {
     // invocation, no tray, and no start-at-login registration — a capability compiled out, not
     // a branch not taken.
     expect(main).toMatch(/#\[cfg\(feature = "local-engine"\)\]\s*\nmod host;/);
+    // `vitals.rs` behind the same gate: it reads the process table and RAISES `oom_score_adj` on
+    // this app's webview children. Both are capabilities, and the preview — which has no engine
+    // and no mailbox to grow — must carry neither. It also writes to the engine's own log, which
+    // is the other reason it cannot be compiled without it.
+    expect(main).toMatch(/#\[cfg\(feature = "local-engine"\)\]\s*\nmod vitals;/);
     // `default` exists and is empty. A missing `[features]` block would also match "not
     // enabled", and would be a different fact.
     expect(cargo).toMatch(/^default = \[\]$/m);
