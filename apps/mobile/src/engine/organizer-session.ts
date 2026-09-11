@@ -195,13 +195,36 @@ export interface StandDownHolder {
  * own state: the map is empty until the first gated cycle, and reading that as "nothing
  * organizes this mailbox" would put a false sentence on screen a second after the door opened.
  */
-export function standaloneHere():
-  { id: string | null; address: string; organizing: boolean | null; heldBy: StandDownHolder | null }
-  | null {
+export interface StandaloneHere {
+  readonly id: string | null;
+  readonly address: string;
+  readonly organizing: boolean | null;
+  readonly heldBy: StandDownHolder | null;
+  /** `null` until the engine has said — see the body. */
+  readonly reachable: boolean | null;
+  /** ISO 8601, or `null` while reachable. The FIRST observation of the current outage. */
+  readonly unreachableSince: string | null;
+  /** The server answered and rejected the sign-in — not an outage, and not retried. */
+  readonly signInRefused: boolean;
+}
+
+export function standaloneHere(): StandaloneHere | null {
   const held = door;
   if (held === null) return null;
   let organizing: boolean | null = null;
   let id: string | null = null;
+  /**
+   * AND WHETHER THE MAIL SERVER CAN BE REACHED AT ALL — read in the SAME pass, from the same
+   * `runtimes()` answer, because two reads would be two clocks: a panel saying "Organizing" over
+   * a connection this call had already found dead is the pair disagreeing with itself.
+   *
+   * `reachable: null` is "the engine has not said yet", exactly as `organizing: null` is — the
+   * map is empty until the first cycle, and reading that as "unreachable" would put
+   * "Connection lost" on screen a second after the door opened.
+   */
+  let reachable: boolean | null = null;
+  let unreachableSince: string | null = null;
+  let signInRefused = false;
   /**
    * WHO HOLDS THE MAILBOX WHEN THIS INSTALL DOES NOT — the engine's own peek at the claim.
    *
@@ -211,7 +234,10 @@ export function standaloneHere():
    */
   let heldBy: StandDownHolder | null = null;
   try {
-    const entries = Object.entries(held.runtimes().organizer);
+    /* ONE read of the engine's answer, and both halves off it: `runtimes()` is a snapshot per
+       call, so asking twice is asking two different moments. */
+    const reported = held.runtimes();
+    const entries = Object.entries(reported.organizer);
     /* ONE MAILBOX ON THIS PHONE is the fourth door's own ruled line and the door carries one
        address, so this asks "does this install organize the mailbox it opened" and any entry
        saying so is that. */
@@ -241,12 +267,26 @@ export function standaloneHere():
      * picking the first of several would consent for whichever came back first.
      */
     if (entries.length === 1) id = entries[0]![0];
+    /* ONE MAILBOX ON THIS PHONE, so any entry is the answer — the same reading `organizing`
+       takes above. Unreachable wins over reachable where a build ever holds more than one: the
+       sentence is about mail not arriving, and saying nothing because one of two links is up
+       would be the silence this whole field exists to end. */
+    const conn = Object.values(reported.connection);
+    if (conn.length > 0) {
+      reachable = conn.every((c) => c.reachable);
+      signInRefused = conn.some((c) => c.signInRefused);
+      const since = conn
+        .map((c) => c.unreachableSince)
+        .filter((d): d is Date => d instanceof Date)
+        .sort((a, b) => a.getTime() - b.getTime())[0];
+      unreachableSince = since === undefined ? null : since.toISOString();
+    }
   } catch {
     /* An unreadable runtime is "has not said", never "does not organize" — the background half
        takes the same reading, and for the same reason: a momentary failure must not end
        somebody's organizing on screen. */
   }
-  return { id, address: held.address, organizing, heldBy };
+  return { id, address: held.address, organizing, heldBy, reachable, unreachableSince, signInRefused };
 }
 
 /**

@@ -260,6 +260,9 @@ export const DE: Deck = {
   staleAsOf: (time: string) => `Stand ${time} · wird nachgeholt`,
   staleAsOfIdle: (time: string) => `Stand ${time}`,
 
+  connectionLost: "Verbindung verloren. Verbinde neu …",
+  connectionGoneSince: (time: string) => `Seit ${time} keine Verbindung`,
+
   pairingBusy: "Wird gekoppelt…",
   pairedOk: "Gekoppelt. Deine Post wird synchronisiert.",
 

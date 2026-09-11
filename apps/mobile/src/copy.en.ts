@@ -434,6 +434,15 @@ const TABLE = {
   staleAsOf: (time: string) => `As of ${time} · catching up`,
   staleAsOfIdle: (time: string) => `As of ${time}`,
 
+  /* THE CONNECTION IS GONE, and it outranks the freshness label above rather than sitting
+     beside it: a lost link is WHY the mirror is stale, and two lines would say one thing twice.
+     The first is the honest state while the engine re-dials (the phone ladder is
+     5/15/30/60 s, its last step repeating); the second replaces it once the outage passes five
+     minutes, because by then "Reconnecting…" is a promise nobody should keep waiting on.
+     `time` arrives sentence-ready from the world layer, like the stale label's. */
+  connectionLost: "Connection lost. Reconnecting…",
+  connectionGoneSince: (time: string) => `Couldn't reconnect since ${time}`,
+
   pairingBusy: "Pairing…",
   pairedOk: "Paired. Syncing your mail.",
 

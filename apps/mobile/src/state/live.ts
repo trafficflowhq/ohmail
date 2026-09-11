@@ -2196,6 +2196,79 @@ export function staleAsOf(
   return f.state === "stale" && f.asOf !== null ? whenLabel(f.asOf, zone) : null;
 }
 
+/**
+ * HOW LONG AN OUTAGE RUNS BEFORE THE SENTENCE STOPS PROMISING A RECONNECT (ruled, 2026-09-11).
+ *
+ * Under it the app says it is re-dialling, which is true: the phone profile's ladder is
+ * 5/15/30/60 s and its last step REPEATS, so it never runs out — "the ladder is exhausted" is a
+ * condition that cannot arrive on a phone, and the wall clock is the only honest trigger. Past
+ * it, five minutes of failed dials is no longer a reconnect somebody should keep waiting for.
+ */
+export const RECONNECT_PROMISE_MS = 5 * 60_000;
+
+/**
+ * WHAT THE CONNECTION IS DOING, as one of three answers a surface can render.
+ *
+ * `null` is the fourth and it is the important one: nothing has said yet — a paired session, a
+ * phone with no engine, or a door whose first cycle has not run. A surface renders no sentence
+ * for it, rather than "Connection lost" a second after the mailbox opened.
+ *
+ * `refused` is separated from `lost` because the remedies are opposite: an unreachable server is
+ * being re-dialled and heals on its own, a rejected sign-in is not retried at all and needs a
+ * person. The door's own refusal owns that sentence, so this answer exists to keep the freshness
+ * line from claiming a reconnect nothing is attempting.
+ */
+export type ConnectionSay =
+  | { readonly say: "reachable" }
+  | { readonly say: "refused" }
+  | { readonly say: "lost" }
+  | { readonly say: "gone"; readonly since: string };
+
+/**
+ * THE ENGINE'S CONNECTION FACTS, READ AS ONE VERDICT — the door answers, this ranks.
+ *
+ * Only `gone` carries a time, and only because only its sentence names one. It is
+ * sentence-ready in the reader's zone, on {@link staleAsOf}'s rule that the world layer hands
+ * the chrome words and not instants. An outage with NO stamped instant stays `lost` however
+ * long it runs — the second sentence is "since <time>", and there is no time to name.
+ */
+/**
+ * THE SENTENCE FOR A VERDICT, or `null` where a surface says nothing — ONE ranking, two surfaces.
+ *
+ * The top bar and Settings → This phone both render it, and they must not disagree: two copies of
+ * this `if` is how one of them ends up still promising a reconnect. `reachable` is the healthy
+ * state and `refused` is the door's own refusal — an answered no that nothing is re-dialling — so
+ * both are silent here rather than dressed as an outage.
+ */
+export function connectionSaid(verdict: ConnectionSay | null): string | null {
+  if (verdict === null || verdict.say === "reachable" || verdict.say === "refused") return null;
+  return verdict.say === "lost" ? Copy.connectionLost : Copy.connectionGoneSince(verdict.since);
+}
+
+export function connectionSay(
+  here: {
+    reachable: boolean | null;
+    unreachableSince: string | null;
+    signInRefused: boolean;
+  } | null,
+  now: Date,
+  zone: string,
+): ConnectionSay | null {
+  if (here === null || here.reachable === null) return null;
+  /* RANKED ABOVE `reachable`, because a refused sign-in leaves the connection dead AND
+     un-retried: both flags are set, and the arm that says "Reconnecting…" would be a promise
+     nothing is keeping. */
+  if (here.signInRefused) return { say: "refused" };
+  if (here.reachable) return { say: "reachable" };
+  const stamp = here.unreachableSince;
+  if (stamp === null) return { say: "lost" };
+  const since = Date.parse(stamp);
+  if (Number.isNaN(since)) return { say: "lost" };
+  return now.getTime() - since < RECONNECT_PROMISE_MS
+    ? { say: "lost" }
+    : { say: "gone", since: whenLabel(stamp, zone) };
+}
+
 
 /* Re-exported so the world layer and the suite spell the vocabulary identically. `FolderEntity`
  * rides through here because `live.ts` is the one state module on the engine's import

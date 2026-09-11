@@ -83,11 +83,28 @@ export interface StandaloneEngine {
    * `Nothing organizes this mailbox` about a mailbox another machine holds. `reason` is the fact
    * "somebody else has it"; `heldBy` is who, where the claim said.
    */
-  runtimes(): { organizer: Record<string, {
-    organizing: boolean;
-    heldBy: string | null;
-    reason: string | null;
-  }> };
+  runtimes(): {
+    organizer: Record<string, {
+      organizing: boolean;
+      heldBy: string | null;
+      reason: string | null;
+    }>;
+    /**
+     * CAN THIS INSTALL REACH THE MAIL SERVER RIGHT NOW — the engine's own connection facts, which
+     * this type did not carry while the engine had been serving them all along.
+     *
+     * `organizer` answers who files the mailbox; this answers whether anything can. The two are
+     * different questions with different remedies, and dropping this half is why the phone's only
+     * sentence during a measured 2 min 27 s outage was "As of 19:42 · catching up" — true, and
+     * useless. `unreachableSince` is the FIRST observation of the current outage, never the
+     * latest attempt.
+     */
+    connection: Record<string, {
+      reachable: boolean;
+      unreachableSince: Date | null;
+      signInRefused: boolean;
+    }>;
+  };
 }
 
 /**

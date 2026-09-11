@@ -24,6 +24,7 @@ import {
 } from "../src/theme";
 import { usePrefs } from "../src/state/store";
 import { useWorld } from "../src/state/world";
+import { connectionSaid } from "../src/state/live";
 import { Button, Chip, Panel, Rule, Screen, Scroller, Section, TapRow, Txt } from "../src/ui/base";
 import { Sheet, SheetRow } from "../src/ui/Sheet";
 import { phoneEngineStart } from "../src/engine/engine-artifact";
@@ -366,6 +367,10 @@ function ThisPhonePanel() {
   const here = standaloneHere();
   /* Only where there is a door to have asked — a paired session's panel says nothing of it. */
   const consentRefusal = here === null ? null : organizeRefusal();
+  /* THE SAME VERDICT AND THE SAME SENTENCE THE CHROME RENDERS, from the world rather than
+     re-derived here: one ranking, so the top bar and this panel cannot disagree about whether
+     the link is gone. */
+  const outage = connectionSaid(w.boot.connection);
   const cards: readonly { key: string; address: string; claim: PhoneClaim }[] = here !== null
     ? [{
         key: HERE_CARD,
@@ -418,6 +423,14 @@ function ThisPhonePanel() {
                 <Txt variant="note" tone="ink2">
                   {claimNoteLine(claim, Platform.OS)}
                 </Txt>
+                {/* THE CONNECTION, WHERE SOMEBODY ASKING "IS MY MAIL BEING FILED?" IS LOOKING.
+                    The chip above answers who ORGANIZES the mailbox; this answers whether
+                    anything can reach it. Both, because they are true at once: this phone is
+                    still the organizer of a mailbox whose server it cannot dial, and a panel
+                    that showed only the first read `Organizing` through a measured outage. */}
+                {outage === null ? null : (
+                  <Txt variant="note" tone="ink2" accessibilityRole="alert">{outage}</Txt>
+                )}
                 {/* BATTERY SAVER, SAID WHERE THE PLATFORM RULE IS — and only once the background
                     half has actually met it. `organizerRestrictedSaid` is the record
                     `announceRestricted` writes; the deck's own note says this app organizes while

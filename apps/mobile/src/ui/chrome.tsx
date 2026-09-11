@@ -14,6 +14,7 @@ import { Copy } from "../copy";
 import { sayArg } from "../refusal";
 import { useTheme } from "../theme";
 import { useWorld, useWorldToast } from "../state/world";
+import { connectionSaid } from "../state/live";
 import { Icon } from "./Icon";
 import { Wordmark } from "./Icon";
 import { Tap, Txt, useTopPad } from "./base";
@@ -35,6 +36,11 @@ export function TopBar({ trailing }: { trailing?: React.ReactNode }) {
   // call by ranking its failure arms above the stale arm.
   const boot = useWorld().boot;
   const stale = boot.staleAsOf;
+  /* THE CONNECTION OUTRANKS THE FRESHNESS LABEL, and replaces it rather than stacking under it:
+     a link that is gone is WHY the mirror is stale, so two lines would say one thing twice and
+     the weaker of them would be the one claiming "catching up". The wording and which verdicts
+     are silent are `connectionSaid`'s, shared with the Settings panel. */
+  const outage = connectionSaid(boot.connection);
   return (
     <View>
       <View
@@ -51,7 +57,16 @@ export function TopBar({ trailing }: { trailing?: React.ReactNode }) {
         <View style={{ flex: 1 }} />
         {trailing}
       </View>
-      {stale !== null ? (
+      {outage !== null ? (
+        <Txt
+          variant="meta"
+          tone="ink3"
+          accessibilityRole="alert"
+          style={{ paddingHorizontal: 16, paddingBottom: 4 }}
+        >
+          {outage}
+        </Txt>
+      ) : stale !== null ? (
         <Txt
           variant="meta"
           tone="ink3"

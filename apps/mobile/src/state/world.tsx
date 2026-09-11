@@ -33,6 +33,11 @@ import {
 } from "../net/consent";
 import { readMailboxes, type PhoneMailbox } from "../net/mailboxes";
 import { PHONE_CLAIM_NAME, organizesHere } from "../engine/standalone-door";
+/* THE DOOR ANSWERING FOR ITSELF, with no request — `organizer-session.ts` holds the one engine
+   this process runs and `standaloneHere` is its read. The state module reaches into `engine/`
+   for exactly this and nothing else: the alternative is a second copy of the connection facts
+   kept in React, and a second copy is a second writer. */
+import { standaloneHere } from "../engine/organizer-session";
 import { readFolderSummary } from "../net/folder-ops";
 import * as Crypto from "expo-crypto";
 import type { FaceName } from "../theme/face";
@@ -40,6 +45,7 @@ import { faceScope } from "./face-scope";
 import { foldersFlag, freshestRead } from "./folders-flag";
 import { usePrefs } from "./store";
 import {
+  connectionSay,
   flushQueued,
   liveActions,
   liveFolder,
@@ -74,6 +80,7 @@ import {
   type WorldScheduled,
   type WorldTag,
   type WorldView,
+  type ConnectionSay,
 } from "./live";
 import type { Scope } from "./model";
 
@@ -103,6 +110,16 @@ export interface World {
      * settles; the derivation clears it in the same world re-derive that applies the drain.
      */
     staleAsOf: string | null;
+    /**
+     * WHETHER THE MAIL SERVER CAN BE REACHED — the engine's own answer, ranked into one verdict
+     * (`live.ts#connectionSay`). `null` is "nothing has said": a paired session, a build with no
+     * engine, or a door whose first cycle has not run.
+     *
+     * It sits beside `staleAsOf` because it OUTRANKS it on screen. Through the whole outage
+     * device run 2 measured, the only sentence anywhere was "As of 19:42 · catching up" — true,
+     * and the reader could not learn from it that nothing was dialling.
+     */
+    connection: ConnectionSay | null;
   };
   /**
    * Changes the server would not take — the phone's half of the web's "could not be saved"
@@ -358,10 +375,20 @@ const NO_ACTIONS: WorldActions = {
 
 const EMPTY_ABANDONED: readonly AbandonedMutation[] = Object.freeze([]);
 
+/**
+ * HOW OFTEN THE LIVE-VERDICT WATCHER RE-READS — the engine's own poll cadence.
+ *
+ * Both verdicts it watches change with no store write and no state flip, so this interval is the
+ * only thing that notices them. It is the poll's cadence rather than a minute because the phone
+ * calls a connection dead in 45 s, and a sentence a minute behind that detection is a sentence
+ * arriving after the person has already put the phone down.
+ */
+const LIVE_VERDICT_BEAT_MS = 15_000;
+
 function emptyWorld(actions: WorldActions): World {
   return {
     live: false,
-    boot: { settled: false, syncFailure: null, staleAsOf: null },
+    boot: { settled: false, syncFailure: null, staleAsOf: null, connection: null },
     // Nothing is queued on the empty world, so nothing was given up on. `EMPTY_ABANDONED` rather
     // than a fresh `[]`: this object is compared by identity in places, and a new array per call
     // is the same re-render trap `useAbandoned` avoids on the web.
@@ -928,6 +955,11 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         // prevent it. The appearing direction is time's alone — a phone sitting open crosses
         // the threshold with no store write — so `freshBeat` ticks when the verdict changes.
         staleAsOf: staleAsOf(engine, zone),
+        /* THE DOOR'S OWN WORD, re-read per derivation like the two above. It is NOT in this
+           memo's dependency array and cannot be: `standaloneHere` reads module state, not React
+           state, so there is nothing here to depend on. The watcher below is what re-derives
+           when it moves — the same one the stale label uses, the same beat, one writer. */
+        connection: connectionSay(standaloneHere(), v.now, zone),
       },
       abandoned: engine.abandoned(),
       worldKey: session.ownerKey,
@@ -1043,23 +1075,60 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   /**
    * The freshness watcher — the clock's other half, after the memo because its sentinel IS the
    * memo's own output. It compares what the engine would say now against what the world
-   * rendered (`boot.staleAsOf`), at arm time and then each minute, bumping `freshBeat` only on
-   * a difference. Three held properties: both sides come from one derivation, so a stamp that
-   * formats identically cannot hide a transition; a healthy drain's stamp churn re-renders
-   * nothing (while current the rendered label is null); a current→stale flip between render
-   * and effect cannot be swallowed — the comparison is against the rendered value, never a
-   * ref seeded from the live verdict. RN pauses background timers; the next tick re-derives.
+   * rendered (`boot.staleAsOf`), at arm time and then each minute, and bumps `freshBeat` only
+   * on a difference. Three defects shaped this exact form:
+   *
+   *  · round 2 — no formatted-label ambiguity is possible: both sides of the comparison come
+   *    from the same derivation, so "a different stamp that happens to format identically"
+   *    cannot make a real transition invisible. (The parenthetical here used to add "a stamp
+   *    change requires a drain, which re-derives through `version` anyway", and that is no longer
+   *    true: writing the completion stamp does not bump the mirror version —
+   *    `packages/client-engine/src/store.ts`. The argument never needed it. Both sides still come
+   *    from one derivation, and the minute tick below is what re-reads; the removed clause only
+   *    ever said the re-read would also happen sooner.)
+   *  · round 3 — a healthy drain's stamp churn re-arms and re-renders NOTHING: while current,
+   *    the rendered label is null across every drain, the dep does not move, and the check
+   *    compares null with null;
+   *  · round 4 — a transition can never be swallowed UNRENDERED: a ref seeded from the live
+   *    verdict could adopt a current→stale flip that happened between render and effect and
+   *    then never announce it; comparing against the RENDERED value makes that impossible by
+   *    construction — the check at arm time closes the same race.
+   *
+   * RN pauses timers in the background; on return, the next tick or the foreground drain
+   * re-derives, whichever lands first. A bump re-derives the memo, the dep follows, the
+   * re-armed check finds both sides equal, and the loop terminates in one step.
+   *
+   * ── AND THE CONNECTION VERDICT RIDES THE SAME WATCHER, DELIBERATELY ─────────────────────
+   *
+   * A lost link moves no store version, fails no app-level drain round (the mirror is served by
+   * the engine in this process and answers happily) and flips no connection state — so without
+   * this it would reach no screen at all, which is the whole of the measured defect. Same
+   * effect, same beat, same rendered-value sentinel: a SECOND beat would be a second writer of
+   * one derived world, and the two could disagree about which render is current.
+   *
+   * The interval is the ENGINE'S POLL CADENCE and no longer a minute. The stale label is
+   * unaffected — it bumps only on a difference, so the extra comparisons are no-ops — and the
+   * connection sentence must not wait a minute behind a detection that now fires in 45 s.
    */
   const renderedStale = world.boot.staleAsOf;
+  /* The verdict's own SHAPE, not the object: `connectionSay` answers a fresh record per call, so
+     comparing references would bump the beat on every tick and re-derive the whole world four
+     times a minute over a healthy link. */
+  const renderedConnection = JSON.stringify(world.boot.connection);
   useEffect(() => {
     if (engine === null) return;
     const check = (): void => {
-      if (staleAsOf(engine, zone) !== renderedStale) setFreshBeat((n) => n + 1);
+      const staleMoved = staleAsOf(engine, zone) !== renderedStale;
+      const connMoved =
+        JSON.stringify(connectionSay(standaloneHere(), new Date(), zone)) !== renderedConnection;
+      /* ONE bump for either, so the loop still terminates in one step: the re-derive re-reads
+         BOTH verdicts, and the re-armed check finds both sides equal. */
+      if (staleMoved || connMoved) setFreshBeat((n) => n + 1);
     };
     check();
-    const id = setInterval(check, 60_000);
+    const id = setInterval(check, LIVE_VERDICT_BEAT_MS);
     return () => clearInterval(id);
-  }, [engine, zone, renderedStale]);
+  }, [engine, zone, renderedStale, renderedConnection]);
 
   return (
     <WorldContext.Provider value={world}>
