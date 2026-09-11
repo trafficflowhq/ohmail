@@ -7,118 +7,14 @@ import {
 } from "./meta-memo.js";
 
 /**
- * THE PORTABLE ORGANIZER PROFILE — how a mailbox carries its own organizer configuration.
- *
- * The organizer lease beside this module answers "WHO organizes this mailbox"; this document
- * answers "HOW this mailbox wants to be organized". Both live in the same unsubscribed
- * `ohmail/_meta` folder, because the mailbox is the only medium every deployment shares: a
- * desktop install, the hosted service and a self-hosted server can never query each other's
- * databases, but they all read the same folder. Connect the same mailbox from any of them and
- * the configuration is waiting — no export step, no transfer flow, no account linkage.
- *
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *  THE DOCUMENT FORMAT — public, versioned, and FROZEN at v1
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *
- * This section is the format's specification. The format is deliberately public: the point of
- * storing configuration in the user's own mailbox is that it stays THEIRS — move between ohmail
- * deployments and it travels; stop using ohmail entirely and it is still there, in the mailbox,
- * as JSON anything can parse.
- *
- * One RFC822 message in `ohmail/_meta`:
- *
- *   · Header `X-Ohmail-Profile: 1` — the discriminator. A message WITHOUT it is not a profile
- *     and is invisible to this module (the organizer lease's claim messages live in the same
- *     folder and carry `X-Ohmail-Lease: 1` instead; each module ignores the other's records).
- *   · Header `X-Ohmail-Install-Id` — WHICH organizer wrote this copy. Transport bookkeeping,
- *     not configuration: it lets an organizer recognise its own previous write, and it is
- *     deliberately a header rather than a JSON field so the document itself stays free of
- *     anything install-specific.
- *   · A plain-text body: a short human preamble (for whoever finds the message in an ordinary
- *     mail client), then the JSON document. A reader takes the substring from the body's first
- *     `{` to its last `}` — the preamble is guaranteed not to contain `{`.
- *
- * The JSON document, version 1:
- *
- *   {
- *     "v": 1,                          // format version. REQUIRED. See versioning below.
- *     "updatedAt": "<ISO 8601>",       // when this copy was written, by the writer's clock
- *     "producer": {                    // which kind of organizer wrote it — provenance, not identity
- *       "kind": "local" | "cloud" | …, // an open set; readers must tolerate unknown kinds
- *       "version": "<build label>"
- *     },
- *     "screener": [                    // senders this mailbox has SCREENED IN (admitted)
- *       { "address": "<sender email, lowercased>", "name": "<display name, optional>" }
- *     ],
- *     "rules": [                       // where mail from matched senders is filed
- *       {
- *         "kind": "sender" | "domain" | "header",
- *         "match": "<address | domain | header spec>",
- *         "destination": "<canonical folder NAME, e.g. ohmail/Reads>",
- *         "priority": 0,
- *         "enabled": true,
- *         "provenance": "manual" | "migrated" | "promoted" | "seeded-from-sent",
- *         "subjectContains": "<optional narrowing term>",
- *         "bodyContains": "<optional narrowing term>"
- *       }
- *     ],
- *     "notifyRules": [                 // senders/threads opted back INTO notifications
- *       { "kind": "sender" | …, "target": "<spec>" }
- *     ],
- *     "awayResponder": {               // the single per-mailbox autoresponder, or null
- *       "enabled": false,
- *       "body": "<string or null>",
- *       "startsAt": "<ISO 8601 or null>",
- *       "endsAt": "<ISO 8601 or null>",
- *       "audience": "screened_in" | "everyone",
- *       "throttle": "per_day" | …,     // absent in a document written before 0087
- *       "piles": ["INBOX", …]          // WHICH piles it answers. OPTIONAL: absent is UNSTATED —
- *     },                               // a reader keeps its own scope — and `[]` answers nobody.
- *     "tagNames": ["<tag name>", …],   // the names of this mailbox's tags
- *     "signature": "<string or null>"  // absent in a document written before mail 0094
- *   }
- *
- * ── NATURAL KEYS ONLY, AND THAT IS A RULE, NOT A STYLE ─────────────────────────────────────
- *
- * Every entry is keyed by what it MEANS — a sender address, a folder name, a tag name — never by
- * an internal row id. A row id names a row in one deployment's database; the document has to be
- * readable by a deployment that has never seen that database, and by software that is not ohmail
- * at all. Screened-OUT senders are not a separate section: a screen-out is recorded as a rule
- * whose destination is `ohmail/Screened`, because that is what the decision durably IS.
- *
- * ── VERSIONING: TOLERANT FORWARD, HONEST ABOUT NEWER ───────────────────────────────────────
- *
- *  · A reader IGNORES unknown fields at every level. A v1 reader handed a v1 document that a
- *    later build decorated with extra fields reads the fields it knows and drops the rest —
- *    that is what lets a 0.9.x desktop and a HEAD server read each other's documents.
- *  · A reader REFUSES only a document whose `v` is greater than the version it implements, and
- *    the refusal is a typed `newer` result, never an error: the caller says "written by a newer
- *    ohmail" and leaves the document alone. {@link writeOrganizerProfile} enforces the leaving-
- *    alone: an organizer that finds a newer document in the folder will not overwrite it, because
- *    it cannot represent fields it does not know and a rewrite would silently drop them.
- *  · Absence of the document ⇒ defaults. A missing profile is a mailbox that has not stored one,
- *    never an error, and deleting the message only resets ohmail's settings for the mailbox.
- *
- * ── NEVER SECRETS ───────────────────────────────────────────────────────────────────────────
- *
- * No credential, token or key of any kind is ever part of this document — not the mailbox
- * password (the organizer holds it, the document does not), not API keys, not KEK material.
- * The serializers in the composition layer read ONLY the configuration columns named above, and
- * the suite pins the document's exact key census so a new field is a reviewed decision, not a
- * drive-by. The document also carries no adaptive state (learning signals, graduations) — v1 is
- * the human-made configuration and nothing inferred.
- *
- * ── UPDATE = APPEND NEW + EXPUNGE OLD — THE LEASE'S DANCE, FOR THE LEASE'S REASON ───────────
- *
- * IMAP has no in-place update. The new copy is APPENDED FIRST and the old copies expunged after,
- * so a crash between the two steps leaves TWO documents rather than none; readers coalesce by
- * `updatedAt` (newest wins) and the writer's next update cleans up the extras. Exactly one
- * current profile message is the steady state.
- *
- * Only the ACTIVE organizer writes — the organizer lease already serializes writers, so
- * last-incumbent-wins and no merge algorithm exists. This module does not check the lease; the
- * compositions call it only from inside a cycle the lease gate has already admitted, which is the
- * same single-writer discipline every other organizer-side write rides.
+ * The portable organizer profile — how a mailbox carries its own organizer configuration. The
+ * lease answers WHO organizes; this document answers HOW, in the same `ohmail/_meta`. One RFC822
+ * message: `X-Ohmail-Profile: 1` discriminates, `X-Ohmail-Install-Id` names the writer, the body
+ * is a human preamble plus the JSON document. Format v1, public and FROZEN: natural keys only,
+ * never a row id; a screen-out is a rule to `ohmail/Screened`. Unknown fields are ignored; only a
+ * greater `v` is refused, as a typed `newer` result the writer will not overwrite; absence means
+ * defaults. Never secrets, never adaptive state. Update = append new, THEN expunge old; readers
+ * coalesce by `updatedAt`. Only the active organizer writes.
  */
 
 /** The profile format version this build writes and fully understands. */
@@ -153,20 +49,15 @@ const H = {
  * direction — hence the header block only, matched case-insensitively, with no other condition.
  */
 function looksLikeProfile(raw: string): boolean {
-  /* The header block ends at the first blank line; a mention in the BODY is not a discriminator.
-   *
-   * ── AND THE NAME IS ANCHORED AT A LINE START, NOT MERELY PRESENT ────────────────────────────
-   *
-   * A substring test accepts a header whose name merely ENDS with ours — `Not-X-Ohmail-Profile:`
-   * or `X-Forwarded-X-Ohmail-Profile:` — which the parser then rejects, so each one costs a slot
-   * in a retention window that is supposed to be spent on real documents. Enough of them and the
-   * current document is evicted by messages that were never candidates, which is the same lie by
-   * another route: "no settings have been published" about a mailbox that has some.
-   *
-   * A header name begins at the start of a line by definition (a continuation line begins with
-   * whitespace and is part of the value above it), so that is what is matched. Still
-   * case-insensitive, still nothing else — the parser remains the only thing that decides what a
-   * record MEANS. */
+  /**
+   * The header block ends at the first blank line; a mention in the BODY is not a discriminator.
+   * And the name is anchored at a line start, not merely present: a substring test accepts
+   * `Not-X-Ohmail-Profile:` or `X-Forwarded-X-Ohmail-Profile:`, which the parser then rejects —
+   * each costing a slot in a retention window meant for real documents, until the current
+   * document is evicted by messages that were never candidates: "no settings have been published"
+   * about a mailbox that has some. A header name begins at a line start by definition; still
+   * case-insensitive, and the parser remains the only thing that decides what a record MEANS.
+   */
   const sep = /\r?\n\r?\n/.exec(raw);
   const head = sep ? raw.slice(0, sep.index) : raw;
   const anchored = new RegExp(`(^|\\r?\\n)${H.profile.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:`, "i");
@@ -199,19 +90,14 @@ export interface ProfileNotifyRuleEntry {
 }
 
 /**
- * The single per-mailbox autoresponder. Timestamps are ISO 8601 strings or null.
- *
- * `subject` is GONE (mail 0087): the responder is reply-only and derives `Re: <what they wrote>`,
- * so there is no subject to travel. A document written by an older ohmail still carries the field
- * and the parser simply does not read it — an unknown key is not an error in this format, which is
- * what makes the removal safe in both directions. `throttle` is new and defaults to `'per_day'` for
- * a document that predates it, which is the rate every row migrated by 0087 carries.
- *
- * `PROFILE_VERSION` deliberately does NOT move for this. The envelope's version is about what a
- * reader must UNDERSTAND to apply a document safely, and both changes are backward- and
- * forward-compatible at the field level: an old reader ignores `throttle` and applies the rest
- * correctly, a new reader defaults it. Bumping would make every older install refuse a document it
- * can read perfectly well, which is the opposite of what the version is for.
+ * The single per-mailbox autoresponder. Timestamps are ISO 8601 strings or null. `subject` is
+ * GONE (mail 0087): the responder is reply-only and derives `Re: <what they wrote>`; an older
+ * document still carries the field and the parser does not read it — an unknown key is not an
+ * error, which makes the removal safe in both directions. `throttle` is new and defaults to
+ * `'per_day'` for a document predating it, the rate every migrated row carries. `PROFILE_VERSION`
+ * deliberately does NOT move: the envelope's version is about what a reader must understand to
+ * apply a document safely, and both changes are field-level compatible — bumping would make older
+ * installs refuse a document they can read perfectly well.
  */
 export interface ProfileAwayResponder {
   enabled: boolean;
@@ -240,23 +126,13 @@ export interface OrganizerProfilePayload {
   awayResponder: ProfileAwayResponder | null;
   tagNames: string[];
   /**
-   * THE MAILBOX'S SIGNATURE (mail 0094) — `mailboxes.signature`, the text appended to outgoing
-   * mail from this address.
-   *
-   * It travels for the same reason the away-responder body does: it is per-mailbox configuration
-   * that the ORGANIZER applies, so an install that only reads the mailbox has to be able to see
-   * what it currently is rather than showing its own copy, which nothing acts on.
-   *
-   * `null` is "no signature", and ABSENT — a document written before this field — parses to
-   * `null` as well. The two are deliberately not distinguished here, unlike `throttle` above where
-   * the distinction is load-bearing: there is no third state a signature could be in, and a
-   * reader that treated "absent" as "unknown" would have nothing better to do with it.
-   *
-   * `PROFILE_VERSION` does NOT move for this, on the same argument mail 0087's `throttle` records:
-   * the envelope's version is about what a reader must UNDERSTAND to apply a document safely, and
-   * this is backward- and forward-compatible at the field level. An older reader ignores the key
-   * and applies the rest correctly; a newer one defaults it. Bumping would make every older
-   * install refuse a document it can read perfectly well.
+   * The mailbox's signature (mail 0094) — `mailboxes.signature`, the text appended to outgoing
+   * mail from this address. It travels for the away-responder body's reason: per-mailbox
+   * configuration the ORGANIZER applies, so a read-only install must see what it currently is.
+   * `null` is no signature, and ABSENT parses to `null` too — deliberately not distinguished,
+   * unlike `throttle`, because a signature has no third state and "unknown" would buy nothing.
+   * `PROFILE_VERSION` does not move, on mail 0087's argument: field-level compatible in both
+   * directions, and a bump would make older installs refuse a document they can read.
    */
   signature: string | null;
 }
@@ -288,55 +164,14 @@ export function isEmptyProfilePayload(p: OrganizerProfilePayload): boolean {
  * by the natural keys makes the fingerprint a function of the configuration and of nothing else.
  */
 /**
- * ORDER TWO STRINGS THE SAME WAY ON EVERY MACHINE.
- *
- * `localeCompare` is a LOCALE-DEPENDENT collation, and every comparator in this file used it.
- * That is a defect rather than a style question, because of what these orderings feed:
- * {@link canonicalizeProfilePayload} exists so that a fingerprint is a function of the
- * CONFIGURATION and of nothing else, and {@link profileFingerprint} hashes its output. Two
- * installs holding byte-identical configuration, on runtimes whose collation differs, would
- * therefore produce DIFFERENT fingerprints — and the fingerprint is compared ACROSS INSTALLS
- * (see `writeOrganizerProfile`'s unseen-foreign check). A document that is in fact identical to
- * ours would read as a stranger's on every takeover, and the write would be refused for ever.
- *
- * Dormant while every host is a full-icu Node, and dormant is not fixed: it is one small-icu
- * build, one `--without-intl`, or one runtime with a different ICU version away from being live,
- * and the symptom would be a mailbox that cannot be taken over with nothing in any log saying
- * why.
- *
- * `rules.ts` already states this rule for the same reason, on the tie-break that decides which
- * of two rules wins: *"`id` is the final NON-SEMANTIC tie-break and is compared with `<`/`>`
- * rather than `localeCompare`: a locale-dependent collation is not a stable order across two
- * machines."* This is that rule applied to the file it was written about.
- *
- * ── AND THESE COMPARATORS ARE STILL NOT TOTAL ORDERS, ON PURPOSE ──────────────────────────
- *
- * Each sorts on the natural keys and stops, so two records agreeing on those keys and differing
- * elsewhere compare EQUAL — and `sort` is stable, so their canonical form is the order they
- * arrived in. The fingerprint of such a document therefore still depends on input order. That is
- * a real defect — two installs holding the same records in a different order can compute
- * different fingerprints for the same document — and it is NOT fixed here.
- *
- * Adding a final tie-break — the record's own JSON, say — is one line and was written, measured
- * and reverted. It changes the CANONICAL FORM, and the canonical form is what the fingerprint is
- * taken over: every document with a tie that any earlier build has already written into somebody's
- * mailbox would re-fingerprint under the new rule, so an install running the new code reads a
- * document it wrote itself last week as a stranger's. Under measurement it destabilised a live
- * behaviour — the worker's import hold stopped arming, red on two runs of three under an
- * exclusive database.
- *
- * So this is a FORMAT MIGRATION and not a comparator change: it needs a versioned canonical form
- * and a reader that accepts both. Out of scope for a reconnect lane, and written down rather than
- * done badly.
- *
- * ── WHAT THIS ORDER IS, EXACTLY ───────────────────────────────────────────────────────────
- *
- * UTF-16 CODE UNIT order — what `<` and `>` do on JavaScript strings. It is not identical to
- * UTF-8 byte order (they disagree only above U+FFFF, where surrogates sort below U+E000–U+FFFF),
- * and the difference does not matter here: the property required is that EVERY runtime produces
- * the SAME order, and code-unit comparison is defined by the language rather than by ICU data.
- * Naming it precisely rather than calling it "byte order" is the point — a comment that
- * overstates what a comparator does is the next person's wrong assumption.
+ * Order two strings the same way on every machine. `localeCompare` is locale-dependent, and these
+ * orderings feed {@link canonicalizeProfilePayload}, whose output {@link profileFingerprint}
+ * hashes and compares ACROSS INSTALLS — different ICU, different fingerprint, every takeover
+ * refused for ever. UTF-16 CODE UNIT order — defined by the language, not ICU. The comparators
+ * are still not total orders, on purpose: a tied document's fingerprint depends on input order. A
+ * final tie-break was written, measured and REVERTED: it changes the canonical form, so every
+ * already-written tied document re-fingerprints and an install reads its own document as a
+ * stranger's — a format migration, not a comparator change.
  */
 function byCodeUnit(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
@@ -702,17 +537,14 @@ export type ProfileOp = "ensure_meta" | "list_profiles" | "append_profile" | "re
  * the ONLY value that may be read as "there is no profile here".
  */
 /**
- * THE UID THE SERVER GAVE OUR OWN SETTINGS DOCUMENT WHEN WE WROTE IT.
- *
- * The settings walk has the lease's problem in its own door: it covers a fixed distance below the
- * top of the uid space, and churn moves the records further from that top without limit. Past the
- * budget every window is empty, and because "could not ask" now correctly refuses rather than
- * reading the folder an unbounded way, the result is a mailbox whose published settings are
- * permanently unavailable. Refusing is right; never recovering is not.
- *
- * Keyed on the connection for the reasons written beside the lease's: a folder path is identical
- * across mailboxes, and a fresh io is built per call. A hint, never evidence — the document is
- * still read from the folder and parsed like any other.
+ * The uid the server gave our own settings document when we wrote it. The settings walk has the
+ * lease's problem at its own door: it covers a fixed distance below the top of the uid space, and
+ * churn moves the records further from the top without limit — past the budget every window is
+ * empty, and since could-not-ask now correctly refuses, the result is a mailbox whose published
+ * settings are permanently unavailable. Refusing is right; never recovering is not. Keyed on the
+ * connection for the lease's reasons: a folder path is identical across mailboxes, a fresh io is
+ * built per call. A hint, never evidence — the document is still read from the folder and parsed
+ * like any other.
  */
 /**
  * THE FOLDER'S GENERATION, which is what says whether a remembered uid still means anything.
@@ -766,21 +598,14 @@ export interface RawProfileMessage {
   ref: unknown;
   raw: string;
   /**
-   * THE FOLDER'S GENERATION THIS MESSAGE'S `ref` WAS READ UNDER — required, never optional.
-   *
-   * `ref` is a uid, and a remembered uid is a fact only under the UIDVALIDITY it was read under: a
-   * server that renumbers a folder re-issues the same small integers to different messages, so a
-   * uid carried without its generation is a confident pointer at whatever now holds that number.
-   *
-   * It is REQUIRED rather than optional because the failure of the optional form is silent. A
-   * caller that omitted it would produce a `found` result whose locator looks usable and is not,
-   * and the code downstream cannot tell that case from a genuine `null` (which means "the
-   * generation could not be learned" and correctly reads as unusable). `undefined` would make
-   * "nobody supplied one" and "the server did not say" the same value.
-   *
-   * The io stamps every message in one call from ONE `generationOf(client)` taken inside the same
-   * mailbox lock as the fetch, so the pair is consistent by construction rather than by a caller
-   * remembering to ask at the right moment.
+   * The folder's generation this message's `ref` was read under — REQUIRED, never optional. A
+   * remembered uid is a fact only under its UIDVALIDITY: a renumbered folder re-issues the same
+   * small integers to different messages. Required because the optional form fails silently: a
+   * caller omitting it would produce a `found` result whose locator looks usable and is not,
+   * indistinguishable from a genuine `null` ("the generation could not be learned", which
+   * correctly reads unusable). The io stamps every message in one call from ONE
+   * `generationOf(client)` taken inside the same mailbox lock as the fetch, so the pair is
+   * consistent by construction.
    */
   generation: Generation;
 }
@@ -926,42 +751,14 @@ export function makeProfileIo(
     },
 
     /**
-     * ══════════════════════════════════════════════════════════════════════════════════════════
-     *  THE SAME FOLDER, THE SAME BOUND — and this read is the expensive one
-     * ══════════════════════════════════════════════════════════════════════════════════════════
-     *
-     * `ohmail/_meta` is shared with the lease, whose own read is bounded newest-first
-     * (`organizer-lease.ts#readMetaFolderWindow`). This one was NOT, and it is the costlier of the
-     * two on both axes: it asks for FULL SOURCES rather than headers, buffers them into an array,
-     * and runs on the organizer's hot paths — once per attach for the hold, once per cycle for the
-     * routing question. So a folder anyone with APPEND rights can write to decided how much work
-     * every cycle did AND how much memory it took, which is precisely the defect the lease's bound
-     * removed, with bodies instead of headers. The per-document ceiling is checked by the PARSER,
-     * after the bytes are already in hand, so it never bounded this.
-     *
-     * It is a second loop rather than a call to the shared one because the shared one fetches
-     * HEADERS and this needs SOURCES — the two ask the server for different things. What is shared
-     * is the rule, and it is spelled the same way on purpose: newest-first, one ceiling, and the
-     * empty-folder defence.
-     *
-     * NEWEST-FIRST is not a preference here either. The profile is a document the organizer
-     * APPENDS, newest wins, so everything this read is about is at the END of the folder — a
-     * ceiling that kept the oldest records would hide the current document behind whatever else
-     * accumulated after it, and the caller would read "no settings have been published" for a
-     * mailbox that has some.
-     *
-     * TRUNCATION IS NOT REFUSED HERE, unlike the record drains. The question this read answers is
-     * "what is the newest document", and the newest-first window answers it by construction
-     * whenever the document is inside the window. The residual is the lease's: a document older
-     * than the last {@link PROFILE_MESSAGES_MAX_PER_FETCH} appends is not seen.
-     *
-     * ── AND A CACHED ZERO IS NOT A KNOWN ZERO ────────────────────────────────────────────────
-     *
-     * This read consulted `client.mailbox.exists` directly. That is a CACHE a connection updates
-     * only from untagged responses, and `getMailboxLock` does not re-SELECT a folder that is
-     * already selected — measured against a real server, it stayed 0 for ten seconds after another
-     * connection appended. Three reads in the lease were corrected for this; this was the fourth
-     * and was missed. A stale zero here reads as "nobody has published settings for this mailbox".
+     * The same folder, the same bound — and this read is the expensive one: FULL SOURCES rather
+     * than headers, buffered, on the organizer's hot paths; the per-document ceiling is checked
+     * by the parser after the bytes are in hand, so it never bounded this. A second loop because
+     * the shared one fetches HEADERS; what is shared is the rule: newest-first, one ceiling, the
+     * empty-folder defence. Newest-first because the profile is appended and newest wins.
+     * Truncation is NOT refused: a newest-first window answers "what is the newest document"
+     * whenever it is inside. A cached zero is not a known zero: `exists` stayed 0 for ten seconds
+     * after another connection appended — the missed fourth of the lease's corrected reads.
      */
     async listProfileMessages(opts?: { complete?: boolean }): Promise<RawProfileMessage[]> {
       // Resolved ONCE and reused for both the lock and the count probe, so the two can never name
@@ -981,19 +778,16 @@ export function makeProfileIo(
          * The same `generationOf(client)` the memo read below already uses, so a document's
          * locator and the anchor written from it can never disagree about the epoch. */
         const generation = generationOf(client);
-        /* ── A NOOP CANNOT PROVE A REFRESH, SO NOTHING HERE RESTS ON ONE ────────────────────
-         *
-         * This NOOP'd and treated the call resolving as proof the cached count was current. The
-         * library discards the command's own result (`imap-flow.js` 1.5.0: `async noop() { await
-         * this.run('NOOP'); }`), so a REFUSED noop resolves exactly like an accepted one and
-         * "refreshed" was inferred from the absence of a throw.
-         *
-         * Here that meant a stale cached zero could be trusted and the read return "no settings
-         * have been published" for a mailbox that has some. The count is asked for outright
-         * instead: {@link lastSequence} issues a STATUS naming the folder, which is answered on an
-         * empty folder as readily as a full one — so unlike the FETCH probe this replaced, it needs
-         * no zero check in front of it. The connection's cached `exists` is consulted only where
-         * the server cannot be asked at all. */
+        /**
+         * A NOOP cannot prove a refresh, so nothing here rests on one. imapflow discards the
+         * command's own result, so a REFUSED noop resolves exactly like an accepted one, and
+         * "refreshed" was inferred from the absence of a throw — a stale cached zero could be
+         * trusted and the read return "no settings have been published" for a mailbox that has
+         * some. The count is asked for outright instead: {@link lastSequence} issues a STATUS
+         * naming the folder, answered on an empty folder as readily as a full one, so it needs no
+         * zero check in front. The cached `exists` is consulted only where the server cannot be
+         * asked at all.
+         */
         const selected = client.mailbox;
         const cached = typeof selected === "object" && selected !== null ? selected.exists : undefined;
         const probed = await lastSequence(client, metaPath);
@@ -1003,66 +797,37 @@ export function makeProfileIo(
         if (probed === 0) return out;
         if (probed === undefined && cached === 0) return out;
         const total = probed;
-        /* ── BOTH AXES, AND BOTH EVICT FROM THE FRONT ──────────────────────────────────────
-         *
-         * `bytes` is not a second thought about the same bound: the count ceiling stops many small
-         * messages and the byte one stops a few enormous ones, and whoever can append picks
-         * whichever is cheaper.
-         *
-         * NEITHER MAY `break`. The window arrives oldest-first within its range, so stopping on a
-         * ceiling keeps the OLDEST records — the exact inversion this read was bounded to remove,
-         * reintroduced by the bound itself. The count ceiling could not reach it on the
-         * known-count path (the range already starts at the right place), but the BYTE ceiling
-         * could, and cheaply: one large append early in the window and the read returns everything
-         * except the current document, reporting "no settings have been published" for a mailbox
-         * that has some.
-         *
-         * So each message is pushed and then the oldest are dropped until both ceilings hold, with
-         * the evicted bytes subtracted — a sliding window rather than a stopping point.
-         *
-         * `win.length > 1` on the byte arm keeps the newest message even when it ALONE is over the
-         * ceiling: a document too large to be worth reading is the PARSER's refusal to make
-         * ({@link PROFILE_DOC_MAX_BYTES}), and silently returning nothing for it would be the same
-         * "no settings published" lie by another route. */
-        /* ── THE CEILINGS ARE SPENT ON PROFILE RECORDS, NOT ON WHATEVER SHARES THE FOLDER ─────
-         *
-         * `ohmail/_meta` also holds the lease's claims, and anyone with APPEND rights can put
-         * anything else in it. Counting those against these ceilings meant five hundred later
-         * newsletters could evict the current document — and this list is not only what a READ
-         * returns. {@link writeOrganizerProfile} makes its `newer` and `foreign` refusals from it,
-         * and those refusals are the whole reason a build that cannot represent a v2 document will
-         * not overwrite one. An evicted v2 is not a document missing from a read; it is an older
-         * organizer appending v1 over settings it never saw, with every later read then agreeing
-         * that the rollback is current. Silent, durable, and in the customer's own mailbox.
-         *
-         * So the retention test is applied AFTER the discriminator. A flood of non-profile messages
-         * now costs transfer and nothing else. */
+        /**
+         * Both axes, and both evict from the FRONT. The count ceiling stops many small messages,
+         * the byte one a few enormous ones. Neither may `break`: the window arrives oldest-first,
+         * so stopping on a ceiling keeps the OLDEST records — one large early append would return
+         * everything except the current document. Each message is pushed and the oldest dropped
+         * until both ceilings hold — a sliding window. `win.length > 1` on the byte arm keeps the
+         * newest message even when it alone is over the ceiling: an oversized document is the
+         * PARSER's refusal ({@link PROFILE_DOC_MAX_BYTES}); returning nothing would be the same
+         * lie by another route.
+         */
+        /**
+         * The ceilings are spent on PROFILE records, not on whatever shares the folder. Counting
+         * the lease's claims and stranger appends meant five hundred later newsletters could
+         * evict the current document — and this list also feeds {@link writeOrganizerProfile}'s
+         * `newer` and `foreign` refusals, the whole reason an older build will not overwrite a v2
+         * document. An evicted v2 is an older organizer appending v1 over settings it never saw,
+         * every later read agreeing the rollback is current — silent, durable, in the customer's
+         * own mailbox. The retention test runs AFTER the discriminator; a flood costs transfer
+         * and nothing else.
+         */
         const complete = opts?.complete === true;
 
         /**
-         * ── EVERY SOURCE THIS ADAPTER READS COMES THROUGH HERE, AND IT ALWAYS RANGES ────────
-         *
-         * ONE reply, asked for as `BODY.PEEK[]<0.N>`, so the server sends at most N bytes
-         * whatever the message weighs. Three separate places used to fetch source and only one
-         * of them was bounded, which is why the transport bound was reported closed twice while
-         * two routes to an unbounded transfer stayed open.
-         *
-         * THE SERVER'S SIZE CLAIM IS UNTRUSTED INPUT. The size pass is a PREFILTER — it lets an
-         * obviously huge record be skipped without asking for it at all — and it is not a bound,
-         * because a server free to answer `RFC822.SIZE: 1` is free to then send ten megabytes.
-         * Anything that decides what to transfer from a number the same server supplied is
-         * trusting the thing it is defending against. So measured and unmeasured are fetched the
-         * same way, and the reported size never decides the range.
-         *
-         * N IS THE REMAINING BUDGET PLUS ONE, which makes the answer exact rather than merely
-         * cautious: a reply SHORTER than N is the whole document and safe to parse, and a reply
-         * of exactly N means the message did not fit and is refused unparsed. Asking for exactly
-         * the budget cannot tell a document that fits precisely from one that overruns.
-         *
-         * ONE AT A TIME, because the caller must charge each reply to the budget BEFORE the next
-         * range is computed. Fetching a batch together hands every message in it the same nearly
-         * full range, so a hundred individually-legal replies transfer a hundred times the
-         * budget — the aggregate defeated by the very bound that was supposed to hold it.
+         * Every source this adapter reads comes through here, and it always RANGES: one reply
+         * asked as `BODY.PEEK[]<0.N>`, so the server sends at most N bytes whatever the message
+         * weighs. The server's size claim is untrusted: the size pass is a prefilter, never a
+         * bound — a server free to answer `RFC822.SIZE: 1` is free to send ten megabytes — so the
+         * reported size never decides the range. N is the remaining budget PLUS ONE, making the
+         * answer exact: shorter than N is the whole document; exactly N did not fit and is
+         * refused unparsed. One at a time, because each reply is charged before the next range is
+         * computed — a batch hands every message the same nearly-full range.
          */
         const fetchSourceBounded = async (
           messageset: string,
@@ -1093,31 +858,14 @@ export function makeProfileIo(
          * "there are none" and must never be read as one.
          */
         /**
-         * ── SEARCHED IN DESCENDING UID WINDOWS, LIKE THE LEASE'S ─────────────────────────────
-         *
-         * A bare header search is answered with however many uids the server chooses to name, and
-         * that whole array lands here before any ceiling of ours runs — capping it afterwards
-         * bounds the FETCH and nothing else. The lease learned this and windowed its search; this
-         * one was left as the last unbounded reply in the module.
-         *
-         * Each window can name at most one uid per number in it, so every reply is bounded by
-         * construction, and descending because a read wants the NEWEST settings and stops when it
-         * has enough. The top comes from a STATUS on the folder rather than the connection's
-         * cached mailbox object — the same rule and for the same reason: a stale ceiling puts
-         * every window below the records that matter, and here that renders as a mailbox whose
-         * published settings have vanished.
-         *
-         * ── "COULD NOT ASK" IS NOT "THERE IS NOTHING" ──────────────────────────────────────
-         *
-         * No search, a refused search, no ceiling to walk down from, or a folder too sparse to
-         * finish inside the window budget all used to return the same `null` an empty folder
-         * would, and the caller answered it by reading the folder a different, unbounded way.
-         * That path could return nothing for a folder that plainly holds a document, and nothing
-         * is what erases: the read reported no profile at all, and a mailbox's published settings
-         * stopped applying without one thing logging a fault.
-         *
-         * So the ask reports which of the two happened. `unknown` refuses this mailbox's cycle
-         * and says why; only `uids` — including an empty one — is allowed to decide anything.
+         * Searched in descending uid windows, like the lease's: a bare header search lands
+         * however many uids the server chooses before any ceiling of ours runs. Each window is
+         * bounded by construction; descending because a read wants the NEWEST settings. The top
+         * comes from a STATUS, never the cached mailbox object. Could-not-ask is not
+         * there-is-nothing: no search, a refused search, or a too-sparse folder all returned the
+         * `null` an empty folder would, and the unbounded fallback could return nothing for a
+         * folder plainly holding a document — settings lapsed silently. The ask reports which
+         * happened: `unknown` refuses the cycle; only `uids` may decide anything.
          */
         const profileUids = async (c: ProfileImapClient): Promise<ProfileUidAsk> => {
           if (typeof c.search !== "function" || typeof c.status !== "function") {
@@ -1175,17 +923,16 @@ export function makeProfileIo(
             }
             hi = lo - 1;
           }
-          /* ── THE BUDGET RAN OUT, AND A RECORD IN HAND IS ALREADY THE ANSWER ────────────────
-           *
-           * The question is "what is the NEWEST document", and a walk from the top answers it the
-           * moment it holds a profile record: everything above was searched. Refusing here threw
-           * that answer away — and `ohmail/_meta` also carries the lease's claims, so its uid
-           * space climbs per heartbeat while the folder stays small, and past 10 000 uids every
-           * read of a readable document refused with the document in `out`. An EMPTY `out` is
-           * still a refusal: nothing was found and something may lie below.
-           *
-           * The gap walk below covers what the budget could not reach, down to `bottom` — uid 1
-           * when there is no memo, which was unreachable while it also required an anchor. */
+          /**
+           * The budget ran out, and a record in hand is already the answer: the question is "what
+           * is the NEWEST document", and a walk from the top answers it the moment it holds a
+           * profile record — everything above was searched. Refusing here threw that answer away,
+           * and `ohmail/_meta` also carries the lease's claims, so its uid space climbs per
+           * heartbeat while the folder stays small: past 10 000 uids every read of a readable
+           * document refused with the document in `out`. An EMPTY `out` is still a refusal —
+           * nothing was found and something may lie below. The gap walk covers what the budget
+           * could not reach, down to uid 1 when there is no memo.
+           */
           if (out.length > 0) return { kind: "uids", uids: out.sort((a, b) => a - b) };
           const floor = hi + 1;
           if (bottom < floor) {
@@ -1230,21 +977,16 @@ export function makeProfileIo(
               if (typeof m.size === "number") sizes.set(m.uid, m.size);
             }
           }
-          /* ── A REPORTED SIZE ORDERS THE WORK; IT NEVER DECIDES A REFUSAL ────────────────────
-           *
-           * The prefilter used to add reported sizes up and refuse a COMPLETE scan when the total
-           * crossed the budget — before a single byte had been fetched. That hands the decision to
-           * the server: one answering `RFC822.SIZE` in gigabytes for records that are actually
-           * tiny makes a perfectly readable folder refuse, and a settings write that refuses is a
-           * person's rules not applying. The same number was already established as untrusted in
-           * the other direction, where a server under-reports to get an oversized message through;
-           * it cannot be authority for one direction and a lie in the other.
-           *
-           * Sizes are a HINT now, and the only thing they are allowed to affect is ORDER — cheap
-           * records first, so the budget buys as many real documents as it can before it runs out.
-           * Every refusal below is decided by bytes that actually arrived, through the ranged
-           * fetch. The COUNT ceiling stays here because a count is this module's own arithmetic
-           * over records it asked for, not a number the server volunteered about their size. */
+          /**
+           * A reported size orders the work; it never decides a refusal. The prefilter used to
+           * sum reported sizes and refuse a COMPLETE scan before a byte was fetched — handing the
+           * decision to the server: gigabyte answers for tiny records make a readable folder
+           * refuse, and a refused settings write is a person's rules not applying. The same
+           * number is already untrusted the other way; it cannot be authority in one direction
+           * and a lie in the other. Sizes affect only ORDER — cheap records first. Every refusal
+           * is decided by bytes that arrived; the COUNT ceiling stays, being this module's own
+           * arithmetic.
+           */
           const chosen: number[] = [];
           for (const uid of [...capped].reverse()) {
             if (chosen.length >= PROFILE_MESSAGES_MAX_PER_FETCH) {
@@ -1285,19 +1027,16 @@ export function makeProfileIo(
                   { op: "list_profiles" },
                 );
               }
-            /* ── SKIPPED, BUT NEVER SILENTLY: SEE THE REFUSAL AFTER THE LOOP ──────────────
-             *
-             * An over-budget record cannot be parsed, because it was never fully transferred —
-             * that is the point of the range. On a READ, skipping one is right when there is
-             * something else to answer with: an old enormous document would have been evicted by
-             * the ceiling anyway, and the newest one is what a read wants.
-             *
-             * What must not happen is a read that skips the ONLY candidate and returns an empty
-             * list, because every caller reads that as "no settings have been published" and
-             * routes a person's mail by local defaults. The old contract kept such a record so the
-             * PARSER could refuse it out loud; once the document is deliberately never transferred
-             * whole, that is no longer available, and the honest equivalent is a refusal from
-             * here. Counted, and acted on below. */
+            /**
+             * Skipped, but never silently — see the refusal after the loop. An over-budget record
+             * cannot be parsed, because it was never fully transferred; on a read, skipping one
+             * is right while something else can answer. What must not happen is skipping the ONLY
+             * candidate and returning an empty list, which every caller reads as "no settings
+             * have been published" and routes a person's mail by local defaults. The old contract
+             * kept such a record for the parser to refuse out loud; once the document is
+             * deliberately never transferred whole, the honest equivalent is a refusal from here
+             * — counted, and acted on below.
+             */
             oversized += 1;
               continue;
             }
@@ -1338,64 +1077,37 @@ export function makeProfileIo(
           return { win, seen: capped.length };
         };
 
-        /* ── A REFUSAL CANNOT BE MADE FROM A WINDOW ───────────────────────────────────────────
-         *
-         * Filtering the ceilings to profile records keeps a flood from EVICTING the document, but
-         * it cannot put back one the RANGE never delivered. A newest-first window starts partway
-         * down the folder, so a document with more than a ceiling's worth of messages appended
-         * after it is not merely dropped — it is never fetched, and no amount of retention policy
-         * changes that.
-         *
-         * For a read that is fine: the newest document is the current one, and that is what a read
-         * wants. For {@link writeOrganizerProfile} it is not, because its `newer` and `foreign`
-         * checks are refusals — they must be made against EVERY document in the folder, and a
-         * refusal that silently did not look is indistinguishable from one that looked and found
-         * nothing. That is the difference between "we did not overwrite the v2 settings" and "we
-         * overwrote settings we never saw".
-         *
-         * So the write asks for a complete scan. The cost is transfer of one folder on a settings
-         * write — rare, and never on the per-cycle path the bound was introduced to protect —
-         * while retention stays bounded by the ceilings above, which is where the memory risk was.
+        /**
+         * A refusal cannot be made from a window: filtering the ceilings stops a flood from
+         * EVICTING the document, and cannot put back one the RANGE never delivered. Fine for a
+         * read — the newest document is the current one. Not for {@link writeOrganizerProfile}:
+         * its `newer` and `foreign` checks must run against EVERY document in the folder — a
+         * refusal that silently did not look is indistinguishable from one that found nothing,
+         * the difference between "we did not overwrite the v2 settings" and "we overwrote
+         * settings we never saw". So the write asks for a complete scan: one folder's transfer on
+         * a rare write; retention stays bounded, where the memory risk was.
          */
-        /* ── ASK THE SERVER WHICH MESSAGES ARE SETTINGS, RATHER THAN WHERE THEY MIGHT BE ────
-         *
-         * The retention below spends its ceilings on profile records, which stops a flood from
-         * EVICTING the current document. It cannot put back one the RANGE never asked for, and
-         * the range was computed over ALL messages: `total - PROFILE_MESSAGES_MAX_PER_FETCH + 1`
-         * counts backwards through claims, acknowledgements and whatever else shares the folder.
-         * A settings document with a ceiling's worth of later messages on top of it therefore sat
-         * outside the window entirely — and the read reported "no settings have been published"
-         * for a mailbox that has some. The organizer taking the mailbox over then routes mail by
-         * local defaults until the next complete write refuses, which is a person's rules silently
-         * not applied rather than an error anybody sees.
-         *
-         * Only settings records carry the discriminator, so a header SEARCH answers the question
-         * the window was approximating: complete for profiles by construction and independent of
-         * position. The same medicine as the lease's claim set, for the same reason.
-         *
-         * ── AND THE BYTES ARE BOUNDED BEFORE THEY ARE DELIVERED, NOT AFTER ─────────────────
-         *
-         * The byte ceiling was applied to `m.source` — which the library has already buffered in
-         * full by the time it is measured. Measuring afterwards bounds what is RETAINED and
-         * nothing about what is transferred, so a single hostile literal could exhaust the process
-         * before any ceiling was consulted; and every non-profile message in the range was
-         * converted to a string and discarded without ever entering the counter. Sizes come first
-         * now, in their own cheap pass, and source is fetched only for the records that survive
-         * both ceilings.
+        /**
+         * Ask the server which messages are settings, rather than where they might be. The range
+         * counted backwards through claims and acks, so a settings document with a ceiling's
+         * worth of later messages on top sat outside the window and the read reported "no
+         * settings have been published" — the next organizer routes by local defaults, a person's
+         * rules silently not applied. Only settings records carry the discriminator, so a header
+         * SEARCH is complete for profiles by construction. And the bytes are bounded before
+         * delivery: the byte ceiling was applied to `m.source`, already buffered whole; sizes
+         * come first in a cheap pass, source fetched only for survivors of both ceilings.
          */
         const searched = await profileUids(client);
-        /* ── A FAILED ASK REFUSES THE CYCLE; IT DOES NOT PICK A DIFFERENT WAY TO LOOK ────────
-         *
-         * The fallback here read the folder by sequence range, unbounded, and returned whatever
-         * survived two ceilings. For a folder holding a valid document below a flood of ordinary
-         * mail that is an EMPTY result — and an empty result is indistinguishable from a mailbox
-         * that never published settings, so the effective profile lapsed silently and no fault
-         * was recorded anywhere. A read that cannot be bounded is not a cheaper read; it is a
-         * different question, and its answer was being used for this one.
-         *
-         * Settings failing is a logged mailbox fault and the next cycle tries again — the class
-         * below says so in as many words. That is the correct outcome for "could not ask", and
-         * it costs a cycle rather than a person's rules. */
+        /**
+         * A failed ask refuses the cycle; it does not pick a different way to look. The fallback
+         * read the folder by sequence range, unbounded, and returned whatever survived two
+         * ceilings — for a folder holding a valid document below a flood, an EMPTY result,
+         * indistinguishable from a mailbox that never published settings: the effective profile
+         * lapsed silently with no fault recorded. A read that cannot be bounded is a different
+         * question, and its answer was being used for this one. Settings failing is a logged
+         * mailbox fault and the next cycle retries — costing a cycle rather than a person's
+         * rules.
+         */
         if (searched.kind === "unknown") {
           throw new ProfileUnavailableError(
             `the profile records in ${META_FOLDER} could not be enumerated: ${searched.why}`,
@@ -1484,17 +1196,13 @@ export function makeProfileIo(
     },
   };
 
-  /*
-   * ── THE READ GETS A WALL CLOCK; THE WRITES DELIBERATELY DO NOT ──────────────────────────────
-   *
-   * One budget for the whole read rather than one per round trip, because this read is a walk —
-   * a STATUS, a windowed SEARCH and a source fetch per record — and per-command clocks compose
-   * into a total nobody bounded. Nothing else here sees a slow server: the socket's timer is an
-   * inactivity timer, and a reply arriving a byte at a time resets it for ever.
-   *
-   * A breach abandons a command the driver is still running, so the connection is finished. Both
-   * callers close it — the worker's per-mailbox catch arm, and the API door's force-close — and
-   * an abandoned APPEND could still land, which is why the writes are not raced.
+  /**
+   * The read gets a wall clock; the writes deliberately do not. One budget for the whole read
+   * rather than one per round trip, because this read is a walk — a STATUS, a windowed SEARCH, a
+   * source fetch per record — and per-command clocks compose into a total nobody bounded; the
+   * socket's timer is inactivity-based and a byte-at-a-time reply resets it for ever. A breach
+   * abandons a command the driver is still running, so the connection is finished — both callers
+   * close it — and an abandoned APPEND could still land, which is why the writes are not raced.
    */
   return {
     ...io,
@@ -1507,34 +1215,24 @@ export function makeProfileIo(
 // ── READ ────────────────────────────────────────────────────────────────────────────────────
 
 /**
- * What a read of the folder found. The caller's vocabulary for the whole feature:
- *
- *   `found`      — a readable document. `doc` is it; `installId` is who wrote it (or null).
- *   `none`       — no profile message at all. Defaults apply; never an error.
- *   `newer`      — the newest thing in the folder was written by a later format. The caller
- *                  must not overwrite it and cannot import from it; the honest surface is
- *                  "written by a newer ohmail".
- *   `unreadable` — only corrupt profile message(s). Reported, and replaceable by the next
- *                  write: a corrupt copy of our own bookkeeping carries nothing recoverable.
+ * What a read of the folder found — the caller's vocabulary for the whole feature: `found` — a
+ * readable document; `doc` is it, `installId` who wrote it (or null). `none` — no profile message
+ * at all; defaults apply, never an error. `newer` — the newest thing was written by a later
+ * format; the caller must not overwrite it and cannot import from it: "written by a newer
+ * ohmail". `unreadable` — only corrupt profile message(s); reported, and replaceable by the next
+ * write, since a corrupt copy of our own bookkeeping carries nothing recoverable.
  */
 export type ProfileReadResult =
   | {
     state: "found"; doc: OrganizerProfileDoc; installId: string | null; ref: unknown;
     /**
-     * THE GENERATION `ref` WAS READ UNDER (mail 0094's mirror writer needs it).
-     *
-     * `ref` alone is a uid, and storing one without its generation is the defect this pair exists
-     * to prevent — a renumbered folder makes the memo a stale fact the code then trusts. A caller
-     * that wants to REMEMBER where this document was has to store both, and this is the only
-     * place it can get a generation that is actually the one the uid was read under.
-     *
-     * Fetching a generation separately at the call site is NOT equivalent and is the manufactured
-     * pair: the reader's own adapter selects other folders between calls, so a generation read
-     * after the fact may describe a different folder entirely, and one read before may be stale by
-     * the time the uid is issued. This value comes from the same lock as the fetch.
-     *
-     * `null` means the server did not report one, which reads as "this locator is not usable" and
-     * never as "any generation will do".
+     * The generation `ref` was read under (mail 0094's mirror writer needs it). `ref` alone is a
+     * uid, and storing one without its generation is the defect this pair prevents. A caller that
+     * wants to REMEMBER where this document was must store both, and this is the only source
+     * actually paired with the uid: fetching one separately is the manufactured pair — the
+     * adapter selects other folders between calls. This value comes from the same lock as the
+     * fetch. `null` means the server did not report one — an unusable locator, never "any
+     * generation will do".
      */
     generation: Generation;
     /**
@@ -1559,65 +1257,36 @@ export type ProfileReadResult =
  * loss.
  */
 /**
- * THE LARGEST PROFILE MESSAGE THIS BUILD WILL PARSE.
- *
- * The document is the message BODY, fetched as a full source, and `parseProfileMessage` hands it
- * to `JSON.parse`. Nothing bounded that: a mailbox is a medium anybody with the credentials can
- * write to, and a 500 MB message in `ohmail/_meta` was a 500 MB string, a parse of it, and then
- * a canonical sort and re-serialization of the result — all inside one `GET
- * /mailboxes/:id/profile-import`. The per-list COUNT ceilings (`PROFILE_IMPORT_MAX`) run after
- * the parse and so bound the transaction and not the read, which is this slice's own shape one
- * layer up: the ceiling is applied to the RESULT and not to the READ.
- *
- * ── WHY IT IS GENEROUS AND NOT TIGHT ─────────────────────────────────────────────────────
- *
- * ohmail writes this message itself. A ceiling under what the product emits would turn a heavy
- * user's own saved settings into `unreadable` — the mistake this slice made four separate times
- * in its first attempts, always by writing the bound from a comment instead of from the code
- * that produces the value. So the number is not an estimate of a typical profile; it is a
- * multiple of the largest document the import would ever ACCEPT, which is what
- * `PROFILE_IMPORT_MAX` describes — its four per-list ceilings, at a generous 512 bytes an entry,
- * come to roughly 15 MB in total, and a document larger than the import's own ceiling is one
- * `apply` refuses anyway.
- *
- * 64 MiB is therefore >4x the largest useful document and still FINITE, which is the whole
- * property being bought. It is not a claim that 64 MiB is reasonable to hold — it is the
- * statement that an unbounded read is not, and per-entry string ceilings (which would let this
- * be tight rather than generous) are still owed by the unbounded-read work this does not close.
+ * The largest profile message this build will parse. The document is the body, handed to
+ * `JSON.parse`, and nothing bounded that: a 500 MB message in `ohmail/_meta` was a 500 MB string,
+ * a parse, and a canonical re-serialization, all inside one request; the per-list COUNT ceilings
+ * run after the parse, bounding the transaction and not the read. Generous, not tight, because
+ * ohmail writes this message itself and a ceiling under what the product emits would turn a heavy
+ * user's own settings into `unreadable`: the number is a multiple of the largest document the
+ * import would ever ACCEPT (`PROFILE_IMPORT_MAX`'s four ceilings come to roughly 15 MB). 64 MiB
+ * is >4x the largest useful document and still FINITE, which is the property being bought.
  */
 export const PROFILE_DOC_MAX_BYTES = 64 * 1024 * 1024;
 
 /**
- * THE CEILING ON ONE READ OF `ohmail/_meta` FOR PROFILE DOCUMENTS — a different bound from the one
- * above, and the difference is the whole reason both exist.
- *
- * {@link PROFILE_DOC_MAX_BYTES} bounds ONE DOCUMENT and is checked by the parser, after the bytes
- * are in hand. It therefore says nothing about how many messages are fetched and buffered, which is
- * what an attacker with APPEND rights on the folder actually chooses. This bounds that.
- *
- * Deliberately the same number as the lease's own ceiling: it is one folder, the legitimate
- * population is the same handful of records, and two different ceilings on one folder is two
- * numbers to keep in step for no benefit.
+ * The ceiling on one read of `ohmail/_meta` for profile documents — a different bound from the
+ * one above, and the difference is why both exist: {@link PROFILE_DOC_MAX_BYTES} bounds ONE
+ * DOCUMENT and is checked by the parser after the bytes are in hand, so it says nothing about how
+ * many messages are fetched and buffered — which is what an attacker with APPEND rights actually
+ * chooses. Deliberately the same number as the lease's ceiling: one folder, the same handful of
+ * legitimate records, and two different ceilings on one folder is two numbers to keep in step for
+ * no benefit.
  */
 export const PROFILE_MESSAGES_MAX_PER_FETCH = 500;
 
 /**
- * THE OTHER AXIS OF THE SAME READ — and a count ceiling alone does not bound it.
- *
- * This read asks for FULL SOURCES. A ceiling on the NUMBER of messages therefore bounds the count
- * and says nothing about the bytes: at {@link PROFILE_DOC_MAX_BYTES} apiece, a window's worth of
- * documents is measured in gigabytes, all of it buffered into one array before any of it is parsed.
- * Whoever can append to the folder chooses which of the two ceilings to spend, so both have to
- * exist — the count stops many small messages, this stops a few enormous ones.
- *
- * Generous against the legitimate population, which is ONE current document plus whatever has not
- * been collected yet, and far below anything that threatens the process.
- *
- * **It is a bound on what is KEPT, not a point at which the read stops** — and the difference is
- * the whole of it. The window arrives OLDEST FIRST within its range (a sequence range always does),
- * so stopping the loop on either ceiling keeps the oldest records and drops the newest — which is
- * the current document. One large append early in the window would have been enough to make the
- * read report "no settings have been published" for a mailbox that has some. So a message past
+ * The other axis of the same read — a count ceiling alone does not bound it. This read asks for
+ * FULL SOURCES: at {@link PROFILE_DOC_MAX_BYTES} apiece a window's worth is gigabytes, buffered
+ * into one array before any parse. Whoever can append chooses which ceiling to spend, so both
+ * exist — the count stops many small messages, this stops a few enormous ones. Generous against
+ * the legitimate population (one current document plus uncollected residue), far below anything
+ * that threatens the process. A bound on what is KEPT, not a stopping point: the window arrives
+ * oldest-first, so stopping keeps the oldest and drops the current document — a message past
  * either ceiling EVICTS FROM THE FRONT instead.
  */
 export const PROFILE_BYTES_MAX_PER_FETCH = 128 * 1024 * 1024;
@@ -1666,23 +1335,15 @@ export async function readOrganizerProfile(io: ProfileIo): Promise<ProfileReadRe
 
   if (records.length === 0) return { state: "none" };
 
-  /* ── THE CALL'S GENERATION, AND IT MUST BE ONE ────────────────────────────────────────────
-   *
-   * Every message in one `listProfileMessages()` comes from one SELECT of one folder on one
-   * connection, so they share one generation. Reading it off the messages rather than asking the
-   * connection again is the whole point: the value that reaches `found` is then the one the uids
-   * were actually issued under, not one fetched after the adapter moved on.
-   *
-   * A set reporting MORE THAN ONE distinct generation is not a folder state — it is evidence that
-   * whatever produced these messages is manufacturing the pair, which is the defect this field
-   * exists to prevent. Refused as unreadable rather than resolved by picking one: picking would
-   * hand back a locator that looks usable and is not, which is the failure that reports itself as
-   * health.
-   *
-   * Normalised through `generationOf`'s own vocabulary — anything that is not a number or a bigint
-   * is `null`, meaning "the server did not say", which reads as an unusable locator and never as
-   * "any generation will do". So an io that supplies nothing degrades to unusable rather than to
-   * wrong.
+  /**
+   * The call's generation, and it must be ONE. Every message in one `listProfileMessages()` comes
+   * from one SELECT of one folder on one connection, so they share one generation; reading it off
+   * the messages rather than asking the connection again is the point — the value reaching
+   * `found` is the one the uids were actually issued under. A set reporting more than one
+   * distinct generation is not a folder state — it is evidence the producer is manufacturing the
+   * pair, refused as unreadable rather than resolved by picking one: picking hands back a locator
+   * that looks usable and is not. Anything that is not a number or bigint is `null` — "the server
+   * did not say", an unusable locator, never "any generation will do".
    */
   const generations = new Set(messages.map((m) => (
     typeof m.generation === "number" || typeof m.generation === "bigint" ? m.generation : null
@@ -1719,27 +1380,16 @@ export async function readOrganizerProfile(io: ProfileIo): Promise<ProfileReadRe
        that is not stable across machines is not a tie-break. */
     const byDoc = byCodeUnit(JSON.stringify(b.doc), JSON.stringify(a.doc));
     if (byDoc !== 0) return byDoc;
-    /* IDENTICAL TIMESTAMP AND IDENTICAL DOCUMENT, DIFFERENT RECORDS — the residue of two installs
-       writing the same configuration, which is an ordinary state rather than a corrupt one. The
-       comparator returned 0 here, so which record won depended on the order the FOLDER happened
-       to list them in, and the winner's `installId` is what decides whether a reader treats the
-       document as its own or as a stranger's. Two installs reading one folder could disagree.
-       Deterministic now — and by the RIGHT key, which is the point below.
-    
-       ── THE NEWEST APPEND WINS, WHICH IS WHAT "NEWEST" ALREADY MEANT ──────────────────────
-    
-       Ordered by `ref` DESCENDING, not by `installId`. The ref is the message's UID, and the
-       write dance is append-then-expunge, so a higher UID IS a later write: when the timestamps
-       tie, the folder's own arrival order is the only remaining fact about which document is
-       newer, and it is a fact rather than a coin toss.
-    
-       An earlier revision of this tie-break sorted by `installId` ascending, which is
-       deterministic and MEANS NOTHING — and it silently changed which record won. The worker's
-       own suite caught it: a reader promoted in place stopped arming its import hold, because the
-       foreign document it was supposed to surface lost a tie to ours on a string comparison. A
-       deterministic order that answers the wrong question is not an improvement on an
-       undetermined one. `installId` stays as the final total-order tie-break, where it decides
-       nothing anybody can observe. */
+    /**
+     * Identical timestamp and identical document, different records — two installs writing the
+     * same configuration. The comparator returned 0, so the winner depended on folder listing
+     * order, and the winner's `installId` decides whether a reader treats the document as its own
+     * or a stranger's. Deterministic now, by the RIGHT key: `ref` DESCENDING — the ref is the uid
+     * and the dance is append-then-expunge, so a higher uid IS a later write. An earlier
+     * tie-break sorted by `installId` — deterministic and meaning nothing — and silently changed
+     * which record won: a promoted reader stopped arming its import hold. `installId` stays as
+     * the final tie-break, where it decides nothing observable.
+     */
     const refA = Number(a.ref);
     const refB = Number(b.ref);
     if (Number.isFinite(refA) && Number.isFinite(refB) && refA !== refB) return refB - refA;
@@ -1790,24 +1440,14 @@ export type WriteProfileResult =
   | { written: false; reason: "foreign"; doc: OrganizerProfileDoc; installId: string | null };
 
 /**
- * WRITE THE CURRENT PROFILE — append the new copy, then expunge the old ones.
- *
- * **That order is load-bearing**, exactly as it is for the claim: expunging first means a crash
- * in between leaves the mailbox with NO profile, which reads to every later connect as "this
- * mailbox stored no settings". Appending first leaves two, which readers coalesce and the next
- * write cleans up.
- *
- * What is expunged: every OTHER message that parses as a profile record — our older copies,
- * previous organizers' copies (last-incumbent-wins: the lease has already serialized writers,
- * so the incumbent's document is the mailbox's truth), and corrupt copies. What is NEVER
- * touched: any message that is not a profile record — the organizer lease's claims live in this
- * same folder and `parseProfileMessage` returns `null` for them, so they cannot enter the
- * removal set by construction.
- *
- * The one refusal: a document from a NEWER format anywhere in the folder. This build cannot
- * represent what it cannot read, so overwriting would silently drop the fields a newer producer
- * wrote. The caller surfaces "written by a newer ohmail" and keeps its local state; nothing is
- * lost in either direction.
+ * Write the current profile — append the new copy, THEN expunge the old ones. The order is
+ * load-bearing, as for the claim: expunging first means a crash leaves NO profile, which reads as
+ * "this mailbox stored no settings"; appending first leaves two, which readers coalesce.
+ * Expunged: every other message that parses as a profile record — our older copies, previous
+ * organizers' (last-incumbent-wins), corrupt copies. Never touched: anything that is not a
+ * profile record — the lease's claims cannot enter the removal set by construction. The one
+ * refusal: a NEWER-format document anywhere in the folder — the caller surfaces "written by a
+ * newer ohmail" and keeps its local state.
  */
 export async function writeOrganizerProfile(input: WriteProfileInput): Promise<WriteProfileResult> {
   const { io, doc, installId } = input;

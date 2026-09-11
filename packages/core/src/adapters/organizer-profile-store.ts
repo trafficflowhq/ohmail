@@ -7,41 +7,25 @@ import {
 import type { OrganizerProfilePayload } from "./organizer-profile.js";
 
 /**
- * THE SERIALIZER — the organizer's store, read into the profile document's payload.
- *
- * It reads ONLY configuration: the screened-in senders (`contacts` — a row there IS the
- * screener's "yes"; the "no" is durably a rule whose destination is `ohmail/Screened`, so it
- * travels in `rules`), the rules by their natural keys, the notification opt-ins, the single
- * autoresponder row, and the tag names. Deliberately NOT read: anything adaptive (rule hit
- * counts, retro-apply state, learning signals) and anything secret — there is no credential
- * column in any query below, and the worker's suite pins the serialized document's exact key
- * census so a new field is a reviewed decision.
- *
- * ── WHY IT LIVES HERE AND NOT IN THE WRITE-BEHIND COMPOSITION ──────────────────────────────
- *
- * It was the write-behind's private serializer while the organizer was its only caller. The
- * import surface is the second one: deciding whether a found document is ALREADY what the local
- * store says — and so needs no import prompt at all — is the same question the write-behind's
- * dirty check asks, and it has to be answered from the same serialization or the two callers
- * disagree about one store. The write-behind runs in the organizer processes; the import surface
- * runs in the API's service layer, which may not import an application — so the one serializer
- * sits below both, beside the document format it feeds. `drizzle-repo.ts` is the precedent for a
- * core adapter that reads the database directly.
+ * The serializer — the organizer's store, read into the profile document's payload. It reads ONLY
+ * configuration: screened-in senders (`contacts` — a row there IS the screener's yes; the no
+ * travels in `rules` as a `ohmail/Screened` destination), rules by natural keys, notification
+ * opt-ins, the single autoresponder row, tag names. Deliberately not read: anything adaptive and
+ * anything secret — no credential column appears in any query, and the worker's suite pins the
+ * document's exact key census so a new field is a reviewed decision. It sits below both callers —
+ * the organizer's write-behind and the API's import surface — because "is the found document
+ * already what the local store says" must be answered from the same serialization both use.
  */
 export async function serializeOrganizerProfile(
   db: Tx, accountId: string,
   /**
-   * THE MAILBOX, and it is why this function stopped being account-scoped (mail 0094).
-   *
-   * Everything else here belongs to the ACCOUNT — contacts, rules, notify rules, the responder,
-   * the tags — and `signature` does not: it is `mailboxes.signature`, the text appended to mail
-   * sent FROM THIS ADDRESS, and a person with two mailboxes has two of them. Serializing one
-   * account-wide would publish one mailbox's sign-off into the other's document.
-   *
-   * Required rather than optional for the reason the capability argument next door is: an
-   * optional mailbox would have to default to "no signature", and a caller that forgot it would
-   * publish a document that silently drops the field. The republish then reads as the person
-   * having cleared their signature, which is a change nobody made.
+   * The mailbox, and it is why this function stopped being account-scoped (mail 0094). Everything
+   * else here belongs to the ACCOUNT; `signature` does not — it is `mailboxes.signature`, the
+   * text appended to mail sent from this address, and a person with two mailboxes has two of
+   * them: serializing one account-wide would publish one mailbox's sign-off into the other's
+   * document. Required rather than optional: an optional mailbox would default to no signature,
+   * and a caller that forgot it would publish a document that silently drops the field — the
+   * republish then reads as the person having cleared their signature.
    */
   mailboxId: string,
 ): Promise<OrganizerProfilePayload> {
