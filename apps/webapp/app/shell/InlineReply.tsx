@@ -1,44 +1,14 @@
 "use client";
 
 /**
- * REPLYING INSIDE THE MESSAGE.
- *
- * Three requirements that are really one: a reply belongs inside the message it answers.
- * Compose opened a dialog the keyboard could not leave; it took the message off the screen at
- * the moment you started answering it; and the conversation has to stay scrollable while you
- * write.
- *
- * Reply used to navigate `#/ohbox` → `#/compose`: the message you were answering left the
- * screen at the exact moment you started answering it. This renders inside
- * `<article class="msg">`, so the subject, the sender line and the body stay exactly where
- * they were and the editor opens underneath them.
- *
- * ── THE CONVERSATION IS ABOVE IT, AND IT IS NOT THIS COMPONENT'S ────────────────────────
- *
- * And the editor must not repeat the message that is already on screen.
- *
- * This used to render a `.reply-context` scroller of its own — the whole conversation,
- * oldest first, 190px tall, including the message being answered. `MessagePane` stood its
- * own copy down while that was up, so the LIST was never doubled; the focused message's body
- * was, once as the pane's `.msg-body` and once inside the quote. The reader got the same mail
- * twice in one scrolling column and had to scroll past a duplicate to reach the textarea.
- *
- * So the ownership inverted: the pane keeps the conversation in full message anatomy and
- * this is head + textarea + actions + status, scrolled into view on open. "Scroll through
- * the actual email conversation" is answered by the actual conversation — which is what the
- * request said — rather than by a quote of it in a nested scroller.
- *
- * NOTHING ABOUT THE PAYLOAD CHANGED. Sending was, and is, `{inReplyTo, body}` with `body`
- * exactly what was typed (`http-adapter.ts` `mailSend`). There has never been a quoted
- * original in outgoing mail and this change did not add one: the parent's text in the payload
- * is how a `no_forward` message's redacted body would leave the account, and sensitive mail is
- * never forwarded.
- * What the editor shows and what it sends are two different questions, and only the first
- * one moved.
- *
- * The draft is kept in `localStorage`, per message: this is the client's own scratch
- * buffer, not an IMAP draft. Server-side drafts are a later phase and belong on the mailbox
- * itself; nothing here claims they already exist.
+ * Replying inside the message. Reply used to navigate `#/ohbox` → `#/compose`, taking the message off
+ * the screen at the moment you started answering it; this renders inside `<article class="msg">`, so
+ * the subject, sender line and body stay put and the editor opens underneath. The conversation above
+ * is the pane's, not this component's — an earlier `.reply-context` scroller repeated the focused
+ * body, and the reader scrolled past a duplicate to reach the textarea — so this is head + textarea +
+ * actions + status, scrolled into view on open. The payload never changed: sending is
+ * `{inReplyTo, body}` with `body` exactly what was typed (`http-adapter.ts` `mailSend`); no quoted
+ * original leaves the account. The draft is the client's own `localStorage` scratch per message.
  */
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
@@ -113,18 +83,12 @@ export interface DraftReplyChrome {
 }
 
 /**
- * ── THE PANEL'S HEIGHT IS THE USER'S, WITHIN BOUNDS ─────────────────────────────────────────
- *
- * The grip on the panel's top edge sets an explicit height; these are the bounds every path to
- * that height goes through — the drag, the keyboard arrows on the separator, and the stored
- * value read back on the next open (a height dragged on a tall window must not reopen taller
- * than the window someone has now).
- *
- * The floor keeps the chrome usable — head, toolbar, a sliver of body, actions. The ceiling is
- * the VIEWPORT'S, minus air, because a panel taller than the screen is chrome nobody can reach:
- * the exact defect the fixed-chrome layout exists to remove, reintroduced by a drag. The CSS
- * `max-height` on `.reply` states the same bound declaratively; this clamp is what keeps the
- * inline style honest before the stylesheet ever has to catch it.
+ * The panel's height is the user's, within bounds — the drag, the keyboard arrows on the separator,
+ * and the stored value read back on the next open all go through this clamp (a height dragged on a
+ * tall window must not reopen taller than the window someone has now). The floor keeps the chrome
+ * usable; the ceiling is the viewport's minus air, because a panel taller than the screen is chrome
+ * nobody can reach. The CSS `max-height` on `.reply` states the same bound declaratively; this clamp
+ * keeps the inline style honest before the stylesheet has to catch it.
  */
 export const REPLY_PANEL_MIN_PX = 220;
 export const REPLY_PANEL_VIEWPORT_MARGIN_PX = 48;
@@ -210,16 +174,12 @@ export function InlineReply({
   onClose: () => void;
   onSend: () => void;
   /**
-   * THE AI DRAFTER'S OFFER, rendered above the editor the draft lands in.
-   *
-   * Deliberately not a modal. Compose was moved out of a dialog because the keyboard could
-   * not leave it, and a purchase confirmation is exactly the shape that would put one back —
-   * over the message being answered, at the moment of answering it. It is also where it
-   * belongs: what is being bought is text for THIS editor, so the price and the destination
-   * are on screen together and cancelling leaves the half-written reply untouched.
-   *
-   * Optional, because this component is mounted bare in more than one harness and in the
-   * desktop shell, where there is no drafter to offer.
+   * The AI drafter's offer, rendered above the editor the draft lands in. Deliberately not a modal:
+   * compose was moved out of a dialog because the keyboard could not leave it, and a purchase
+   * confirmation would put one back over the message being answered. What is being bought is text for
+   * this editor, so the price and the destination share the screen and cancelling leaves the
+   * half-written reply untouched. Optional, because this component is mounted bare in more than one
+   * harness and in the desktop shell, where there is no drafter to offer.
    */
   draftReply?: DraftReplyChrome;
   /**
@@ -327,19 +287,13 @@ export function InlineReply({
   const box = useRef<HTMLDivElement>(null);
 
   /**
-   * ── DRAG-TO-RESIZE ─────────────────────────────────────────────────────────────────────
-   *
-   * `null` means nobody has dragged this session and the stylesheet's default posture stands
-   * (`.reply` in app.css: a clamp between its floor and the viewport bound). A number is the
-   * user's height, clamped through {@link clampReplyHeight} on every write AND on the read
-   * back, and mirrored to `sessionStorage` so reopening the editor keeps the posture.
-   *
-   * The inline style sets BOTH `height` and `min-height`: the stylesheet's default floor is
-   * taller than the drag floor, and `min-height` outranks `height` in CSS — without the
-   * override a panel dragged small would silently spring back to the default.
-   *
-   * No transition and no animation ride the drag — direct manipulation is its own motion, so
-   * there is nothing here for `prefers-reduced-motion` to have to neutralize.
+   * Drag-to-resize. `null` means nobody has dragged this session and the stylesheet's default posture
+   * stands (`.reply` in app.css); a number is the user's height, clamped through
+   * {@link clampReplyHeight} on every write and on the read back, and mirrored to `sessionStorage` so
+   * reopening keeps the posture. The inline style sets both `height` and `min-height`: the default
+   * floor is taller than the drag floor and `min-height` outranks `height`, so without the override a
+   * panel dragged small would spring back. No transition rides the drag — direct manipulation is its
+   * own motion, so there is nothing for `prefers-reduced-motion` to neutralize.
    */
   const [panelPx, setPanelPx] = useState<number | null>(() =>
     typeof window === "undefined" ? null : readStoredReplyHeight(),
@@ -391,24 +345,14 @@ export function InlineReply({
   };
 
   /**
-   * WHICH ADDRESS IS ANSWERING.
-   *
-   * A reply goes out from the mailbox the message ARRIVED in — `Engine.enrich` has always
-   * derived that from the parent (`engine.ts:671`) and this change does not touch it. What it
-   * changes is that the editor now says so, and that the one case where the default is not
-   * available is stated instead of discovered afterwards.
-   *
-   * The SAME pure call `AppShell.sendReply` makes, over the same options, so the sentence below
-   * and the id on the wire are one decision. `resolveReplyFrom` returns nothing at all when the
-   * facts cannot be seen (Desktop, demo, a pane mounted with no provider) — and no line is
-   * rendered then, because a From line is a claim.
-   *
-   * THE MIRROR'S `"mailbox"` ENTITIES ARE DELIBERATELY NOT CONSULTED HERE, though Compose does
-   * use them. Reading them needs `useEngine()`, which throws outside an `EngineProvider`, and
-   * this component is mounted bare in more than one harness. The trade is honest rather than
-   * merely convenient: the fixture rows carry no status, so on the demo and the Desktop they
-   * could only ever repeat the parent's own mailbox — the substitution, which is the whole
-   * reason this line is worth rendering on a reply, is a fact only `GET /mailboxes` holds.
+   * Which address is answering. A reply goes out from the mailbox the message arrived in
+   * (`Engine.enrich` derives it from the parent); the editor now says so. The same pure call
+   * `AppShell.sendReply` makes, over the same options, so the sentence and the id on the wire are one
+   * decision; `resolveReplyFrom` returns nothing when the facts cannot be seen (Desktop, demo, a pane
+   * mounted with no provider) and no line renders — a From line is a claim. The mirror's `"mailbox"`
+   * entities are deliberately not consulted: reading them needs `useEngine()`, which throws outside
+   * an `EngineProvider`, and the substitution this line exists to show is a fact only
+   * `GET /mailboxes` holds — the fixture rows carry no status.
    */
   const facts = useMailboxFacts();
   const options = facts ? optionsFromFacts(facts) : [];
@@ -432,19 +376,13 @@ export function InlineReply({
   const target = recipients?.[0] ?? null;
 
   /**
-   * ── THE SUBJECT, EDITABLE IN PLACE (replies only) ────────────────────────────────────────
-   *
-   * A reply's subject used to be invisible here — derived at send (`Re:` + the parent's, the
-   * `replySubject` rule) and never shown. It now renders as CALM PLAIN TEXT in the head: not a
-   * form field, because on almost every reply it is a fact rather than a decision. Clicking it
-   * edits it in place, and editing exposes the FULL subject — the `Re:` prefix is part of the
-   * text, handled (derived exactly once, never re-stacked) rather than fought (locked or
-   * stripped behind the reader's back).
-   *
-   * The VALUE lives on the shell (`subjectEdit`, mounted-twice rule); only "is the input open"
-   * is local, and it closes when the editor retargets. Threading never depends on this text:
-   * the server sends `In-Reply-To`/`References` from the parent row whatever the subject says
-   * (`send-service.ts`), so ohmail keeps the conversation whole and no warning is owed.
+   * The subject, editable in place (replies only). Derived at send (`Re:` + the parent's, the
+   * `replySubject` rule), it renders as plain text in the head — on almost every reply it is a fact,
+   * not a decision. Clicking edits it in place and exposes the full subject: the `Re:` prefix is part
+   * of the text, derived exactly once and never re-stacked. The value lives on the shell
+   * (`subjectEdit`, mounted-twice rule); only "is the input open" is local, and it closes when the
+   * editor retargets. Threading never depends on this text — the server sends
+   * `In-Reply-To`/`References` from the parent row whatever the subject says (`send-service.ts`).
    */
   const outgoingSubject = subjectEdit ?? replySubject(message.subject);
   const [editingSubject, setEditingSubject] = useState(false);
@@ -468,17 +406,13 @@ export function InlineReply({
     r.name ?? displayAddress(r.address);
 
   /**
-   * THE AUDIENCE IS ALWAYS EDITABLE. The head that names it is a BUTTON, and pressing it
-   * turns the computed audience into three editable recipient rows (To, Cc, Bcc — the same
-   * chip field every compose surface uses), prefilled with EXACTLY what the head claimed:
-   * `formatRecipientLine` over the same `all`/`recipients` the sentences above rendered.
-   * From that press on the user's strings are the envelope (`replyEnvelopePlan`), free-form —
-   * remove the sender, add a Cc, blind-copy somebody; a reply's computed audience is a
-   * default, not a cage.
-   *
-   * Untouched (`envelope === null`), NOTHING changed: the head renders as before and the
-   * wire carries the computed envelope byte-for-byte — `test/inline-reply.test.ts` pins the
-   * mutation's exact key set for that case.
+   * The audience is always editable. The head that names it is a button; pressing it turns the
+   * computed audience into three editable recipient rows (To, Cc, Bcc — the same chip field every
+   * compose surface uses), prefilled with exactly what the head claimed (`formatRecipientLine` over
+   * the same `all`/`recipients` the sentences rendered). From that press the user's strings are the
+   * envelope (`replyEnvelopePlan`) — a reply's computed audience is a default, not a cage. Untouched
+   * (`envelope === null`) nothing changes: the wire carries the computed envelope byte-for-byte, and
+   * `test/inline-reply.test.ts` pins the mutation's exact key set for that case.
    */
   const expand = onEnvelope === undefined
     ? undefined
@@ -501,34 +435,14 @@ export function InlineReply({
       };
 
   /**
-   * BRING THE EDITOR TO THE READER.
-   *
-   * The conversation above is no longer a bounded 190px quote — it is the real thread, as
-   * tall as it is, inside the column that scrolls (`.read-col` / `.reader`; the conversation
-   * deliberately has no scroller of its own, see `app.css`). On a deep thread the editor can
-   * therefore open below the fold, and an editor nobody can see is the compose dialog's
-   * failure wearing different clothes.
-   *
-   * `focus()` alone already scrolls in a browser, which is exactly why the scroll is stated
-   * separately: that is a side effect of focusing rather than an intent, and what it brings
-   * into view is the CARET — so a tall editor could arrive with its head and its `to` line
-   * still above the fold. The BOX is scrolled `block: "end"`, so it is the editor's BOTTOM edge
-   * — the Send/Cancel actions row — that lands on screen, not merely its nearest edge (which on
-   * a tall editor was its head, leaving the actions still below the fold). This is the
-   * narrow-viewport and reader-overlay path; at split width with room the dock is sticky
-   * (`reader.css`) and the editor never leaves the screen to begin with.
-   *
-   * `scrollIntoView` is optional-chained on the METHOD, not only the node: jsdom does not
-   * implement it (see `test/body-open.test.ts`, which stubs it for the views that call it
-   * unguarded), and the suites that drive the whole shell must not have to patch the DOM in
-   * order to open a reply editor.
-   *
-   * THE FOCUS IS THE EDITOR'S OWN JOB NOW, and the `key` below is what makes that correct.
-   * `RichEditor` focuses on mount when `autoFocus` is set, and keying it on the message id
-   * remounts it when the pane swaps to a different message — which is also what gives the new
-   * message its own empty document rather than the previous one's, and its own undo history.
-   * Reaching in through the editor handle instead would race: `immediatelyRender: false` means
-   * there is no editor at all during the commit this effect runs in.
+   * Bring the editor to the reader. The conversation is the real thread inside the scrolling column (no
+   * scroller of its own — app.css), so on a deep thread the editor can open below the fold. `focus()` scrolls
+   * only the caret, so the box is scrolled separately with `block: "end"`: the bottom edge — the Send/Cancel
+   * row — lands on screen, not merely the head. `scrollIntoView` is optional-chained on the method, not only
+   * the node; jsdom lacks it (see `test/body-open.test.ts`). Focus is the editor's own job: `RichEditor`
+   * focuses on mount with `autoFocus`, and keying it on the message id remounts it when the pane swaps — a new
+   * message gets its own empty document and undo history. Reaching in through the handle would race:
+   * `immediatelyRender: false` means there is no editor at all during the commit this effect runs in.
    */
   useEffect(() => {
     box.current?.scrollIntoView?.({ block: "end" });
@@ -613,17 +527,13 @@ export function InlineReply({
   ) : null;
 
   /**
-   * FROM, INSIDE THE OPENED RECIPIENTS STACK — the first row, in the compose header's own
-   * `.c-field` grammar, so From, To, Cc and Bcc share ONE label gutter and one input line.
-   *
-   * It used to stay a caption BELOW the stack while the envelope was open, which broke twice
-   * at once: the caption's inline label put the From value at a different indent than every
-   * other row's, and opening Cc/Bcc grew the stack above it — inside the old scrolling dock
-   * that pushed the From line below the fold, which reads as the row DISAPPEARING the moment
-   * Cc/Bcc are switched on. As a `flex: none` row of the pinned chrome it can no longer be
-   * displaced by anything the stack does. Rendered exactly when the collapsed caption would
-   * have been (`from.address !== null` — a From line is a claim), with the same substitution
-   * note beside it.
+   * From, inside the opened recipients stack — the first row, in the compose header's own `.c-field`
+   * grammar, so From, To, Cc and Bcc share one label gutter and one input line. As a caption below the
+   * stack it broke twice at once: the inline label put the value at a different indent than every
+   * other row, and opening Cc/Bcc grew the stack above it inside the old scrolling dock — the From
+   * line read as disappearing the moment Cc/Bcc switched on. As a `flex: none` row of the pinned
+   * chrome nothing the stack does can displace it. Rendered exactly when the collapsed caption would
+   * have been (`from.address !== null` — a From line is a claim), with the same substitution note.
    */
   const fromRow = from.address !== null ? (
     <div className="c-field reply-from-row">

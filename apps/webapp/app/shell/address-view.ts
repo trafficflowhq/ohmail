@@ -1,54 +1,24 @@
 "use client";
 
 /**
- * ═══ EVERYTHING FROM AND TO ONE ADDRESS — the seam the address view is built on ════════════
- *
- * `#/address/<addr>` shows one list: mail that address sent, and mail sent to it, newest first,
- * with a toggle that narrows to either direction. This module is the WHOLE of what the view and
- * the address controls consume — the two halves are composed here rather than in the view, for
- * the reason the halves are unequal:
- *
- *   · THE DEVICE answers all three directions, instantly, from the mirror it already holds
- *     (`SearchIndex.messagesWith` — exact lowercased postings over `from.address`, `to[]` and
- *     `cc[]`).
- *   · THE ARCHIVE answers ONE — `from` — and refuses the other two by name.
- *
- * That asymmetry is not a temporary rough edge to be smoothed over in the view; it is a fact
- * about the database, and a view that hid it would state something false. On the server the
- * recipients are two JSONB columns (`messages.to_addresses` / `.cc_addresses`) with no index on
- * either, and it is not merely slow: measured with `EXPLAIN (ANALYZE, BUFFERS)` on 20 000 rows,
- * `lower(from_address) = $1` is an index scan on `messages_account_from_addr_idx` at four
- * buffers, every spelling of the recipient predicate is a sequential scan, and putting the two
- * in ONE `or` predicate loses the sender index as well. A recipient index is a migration with a
- * backfill and is not this change.
- *
- * So {@link AddressView.coverage} exists, and it is the field the view must render a sentence
- * from. `senders-only` means: these archive rows are mail this address SENT, and mail sent TO it
- * that is older than this device's mirror is not in this list and we know it. The alternative —
- * appending the from-half under a toggle that says "To them" — is a claim about the whole
- * archive that is false by exactly the recipients, with a 200 and nothing on screen to say so.
- *
- * ── WHY THE TOGGLE NEVER REACHES THE WIRE ─────────────────────────────────────────────────
- *
- * One archive request per opened view, for `from`, whatever the toggle says. Switching to "To
- * them" changes what is SHOWN; it is not a new question for a door that cannot answer it, and
- * making it one would spend a round trip to be refused. `OhmailEngine.searchAddressServer` takes
- * no direction for the same reason.
- *
- * ── WHAT THIS MODULE DEPENDS ON THAT IS NOT OBVIOUS ───────────────────────────────────────
- *
- * **Mail this account SENT is in the mirror**, and the "To them" direction is mostly worthless
- * without it. It is there, and it is worth naming because the shape suggests otherwise: a sent
- * copy's folder is `"Sent"`, which is NOT one of the six `Folder` members and matches no pile
- * view, so it is invisible everywhere a surface reads the mirror BY PILE. It reaches the mirror
- * anyway — `recordSent` (`packages/core/src/sent-record.ts`) writes a real `messages` row
- * through the ordinary ingest path for every send, the Sent-folder watch is the backstop behind
- * it, and `/sync`'s snapshot selects on account and `deleted_at is null` with NO folder filter
- * (`packages/services/src/sync-service.ts`). `messagesWith` therefore selects on the from/to/cc
- * FIELDS and never on the folder — anything reaching the mirror by folder would miss every
- * message this account ever sent. Both halves of that are covered: one case asserts the sync
- * snapshot emits a message whose folder is outside the six-member union, and another asserts the
- * selector returns such a row and labels it through `folderLeaf`.
+ * Everything from and to one address. `#/address/<addr>` shows mail the address sent and mail sent to
+ * it, newest first, with a direction toggle; this module is the whole of what the view consumes. The
+ * halves are unequal: the device answers all directions from the mirror (`SearchIndex.messagesWith`,
+ * lowercased postings over `from.address`, `to[]`, `cc[]`); the archive answers only `from` — the
+ * recipients are two unindexed JSONB columns, and a recipient index is a migration with a backfill,
+ * not this change. So {@link AddressView.coverage} is the field the view must render a sentence from:
+ * `senders-only` means mail sent TO the address older than this mirror is missing and we know it. The
+ * toggle never reaches the wire — one archive request per opened view, for `from`, whatever it says.
+ */
+
+/**
+ * A dependency that is not obvious: mail this account SENT is in the mirror, although its folder is
+ * `"Sent"` — outside the six `Folder` members, so it matches no pile view. It arrives anyway:
+ * `recordSent` (`packages/core/src/sent-record.ts`) writes a real `messages` row through ordinary
+ * ingest, the Sent-folder watch is the backstop, and `/sync`'s snapshot filters on account and
+ * `deleted_at is null` with no folder filter (`packages/services/src/sync-service.ts`) —
+ * `messagesWith` selects on the from/to/cc fields, never the folder. Covered both ways: one case
+ * asserts the snapshot emits a folder outside the union, another that the selector labels such a row.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -71,15 +41,12 @@ export const DEFAULT_ADDRESS_DIRECTION: AddressDirection = "any";
 export const ADDRESS_DIRECTIONS: readonly AddressDirection[] = ["any", "from", "to"];
 
 /**
- * WHAT THE ARCHIVE PASS IS DOING FOR THE ADDRESS CURRENTLY OPEN.
- *
- * `unavailable` is a first-class answer and not a failure: the demo has no server and the
- * desktop tier has no Cloud, so "there is no archive behind this client" and "the archive has
- * not answered yet" and "the archive refused" are three different true sentences, and a view
- * that renders any two of them identically is lying about one.
- *
- * `direction` on `ready` is the direction the SERVER answered, which is not necessarily the one
- * on screen. See {@link AddressView.coverage}.
+ * What the archive pass is doing for the address currently open. `unavailable` is a first-class
+ * answer, not a failure: the demo has no server and the desktop tier has no Cloud, so "there is no
+ * archive behind this client", "the archive has not answered yet" and "the archive refused" are
+ * three different true sentences, and a view that renders any two identically is lying about one.
+ * `direction` on `ready` is the direction the server answered, which is not necessarily the one on
+ * screen — see {@link AddressView.coverage}.
  */
 export type AddressArchive =
   | { state: "searching" }
@@ -94,18 +61,13 @@ export type AddressArchive =
   | { state: "unavailable" };
 
 /**
- * DOES THE ARCHIVE'S ANSWER COVER THE DIRECTION ON SCREEN?
- *
- * A derived, two-member field rather than something the view works out from `direction` and the
- * toggle. It is derived HERE because getting it wrong is silent: the archive answers `from`
- * always, so a view comparing nothing at all renders the from-half under "To them" and the
- * numbers add up.
- *
- *  · `complete` — the archive answered the direction being shown (the toggle is "From them", or
- *    the archive is unavailable/failed and the view is stating that instead).
- *  · `senders-only` — the archive answered `from` while the view is showing "All" or "To them".
- *    The view MUST say so: mail sent TO this address, older than this device's mirror, is not in
- *    the list. The sentence belongs to the view; the fact belongs here.
+ * Does the archive's answer cover the direction on screen? Derived here rather than worked out by the
+ * view, because getting it wrong is silent: the archive answers `from` always, so a view comparing
+ * nothing renders the from-half under "To them" and the numbers add up. `complete` — the archive
+ * answered the direction being shown (or is unavailable/failed and the view states that instead).
+ * `senders-only` — the archive answered `from` while the view shows "All" or "To them"; the view
+ * must say that mail sent TO this address, older than this device's mirror, is not in the list. The
+ * sentence belongs to the view; the fact belongs here.
  */
 export type AddressCoverage = "complete" | "senders-only";
 
@@ -119,18 +81,12 @@ export interface AddressHit {
 /** What the view renders. The designer's AddressView consumes exactly this and nothing else. */
 export interface AddressView {
   /**
-   * Device rows first, then the archive's extras where they answer the direction on screen,
-   * each half newest-first.
-   *
-   * NOT ONE RE-SORTED LIST, and that is deliberate: the device holds every direction and the
-   * archive holds one, so interleaving by date would mix a complete answer with a partial one
-   * into a single timeline in which the reader cannot tell which rows could be missing. The
-   * device's half is the list; the archive's half completes it from behind, which is also the
-   * order the two arrive in.
-   *
-   * The archive's half is present under `any` and under the direction the archive itself
-   * answered, and ABSENT otherwise — under "To them" against a sender-only archive this is the
-   * device's rows alone. See the memo for why that gate lives here as well as in the view.
+   * Device rows first, then the archive's extras where they answer the direction on screen, each half
+   * newest-first. Not one re-sorted list, deliberately: the device holds every direction and the
+   * archive holds one, so interleaving by date would mix a complete answer with a partial one into a
+   * timeline where the reader cannot tell which rows could be missing. The archive's half is present
+   * under `any` and under the direction the archive itself answered, absent otherwise — under
+   * "To them" against a sender-only archive this is the device's rows alone.
    */
   items: AddressHit[];
   /** Per-direction counts over the DEVICE's mirror. `any` is the union — never `from + to`. */
@@ -141,19 +97,12 @@ export interface AddressView {
 }
 
 /**
- * THE HREF FOR ONE ADDRESS — every control that prints an address navigates through this.
- *
- * A DELEGATION to the router's own {@link addressHash} and deliberately not a second
- * `encodeURIComponent` call. The router owns the hash format: it splits a path on `/` to find
- * the `m/<id>` open-message tail (so a `/` in a quoted local part would become a path boundary),
- * `parseHash` decodes the segment, and `canonicalHash` re-encodes it to decide whether the
- * address bar needs rewriting. Three spellings that agree today are three that can drift, and
- * the drift is invisible: `normalizedHash` would rewrite the bar on every render of a link that
- * was already right, truncating the address it was correcting.
- *
- * The case is NOT folded. Matching is `lower()`-insensitive at both doors, so folding here would
- * only make the URL disagree with the address printed beside it — and the address as the sender
- * wrote it is the one worth putting in a link somebody may read.
+ * The href for one address — every control that prints an address navigates through this. A
+ * delegation to the router's own {@link addressHash}, deliberately not a second `encodeURIComponent`
+ * call: the router owns the hash format, and three spellings that agree today can drift invisibly —
+ * `normalizedHash` would rewrite the bar on every render of a link that was already right. The case
+ * is not folded: matching is `lower()`-insensitive at both doors, and the address as the sender wrote
+ * it is the one worth putting in a link somebody may read.
  */
 export function addressHref(address: string): string {
   return addressHash(address);
@@ -176,21 +125,13 @@ export function messagesWith(
 }
 
 /**
- * THE WHOLE VIEW — the device half now, the archive's half when it lands.
- *
- * `version` is the mirror's change stamp and is a dependency for the reason `SearchView`'s local
- * pass takes it: the engine's index is cached on that stamp, so a mirror that moves (a drain, a
- * send, a delete) must re-derive the list rather than keep showing what was true a moment ago.
- *
- * The archive pass is keyed by the ADDRESS it answers, and an answer for an address the reader
- * has since navigated away from is DISCARDED rather than rendered. Two passes over one screen
- * means the slow one can land after the question changed, and showing it would attach one
- * person's mail to another person's name — which on this view is worse than on the search box,
- * because the header states whose mail this is.
- *
- * There is NO debounce. An address view is opened by a click, not typed into, so there is one
- * request per opened view already — the thing `SearchView`'s 250 ms exists to prevent (a request
- * per keystroke) cannot happen here, and a delay would only make the archive land later.
+ * The whole view — the device half now, the archive's half when it lands. `version` is the mirror's
+ * change stamp and a dependency for the reason `SearchView`'s local pass takes it: the engine's index
+ * is cached on that stamp, so a mirror that moves must re-derive the list. The archive pass is keyed
+ * by the address it answers, and an answer for an address the reader has navigated away from is
+ * discarded — showing it would attach one person's mail to another person's name, worse here than on
+ * the search box because the header states whose mail this is. No debounce: an address view is opened
+ * by a click, not typed into, so there is already one request per opened view.
  */
 export function useAddressView({
   engine,
@@ -213,16 +154,12 @@ export function useAddressView({
 
   const [pass, setPass] = useState<{ address: string; outcome: AddressArchive } | null>(null);
   /**
-   * A HUMAN PRESS ON A FAILED PASS, and nothing else, re-issues the request.
-   *
-   * A counter rather than a boolean: two presses on a door that keeps refusing must be two
-   * requests, and a boolean's second press is a no-op that reads on screen as the button being
-   * dead. It is a dependency of the effect below, which is the whole mechanism — the retry is
-   * the ordinary pass run again, so it cannot drift from the first one.
-   *
-   * There is deliberately no automatic re-ask. A failed archive pass is one door refusing, and
-   * re-asking it on a timer turns one person's outage into a request per second from every open
-   * view; the reader decides.
+   * A human press on a failed pass, and nothing else, re-issues the request. A counter rather than a
+   * boolean: two presses on a door that keeps refusing must be two requests — a boolean's second
+   * press is a no-op that reads as the button being dead. It is a dependency of the effect below, so
+   * the retry is the ordinary pass run again and cannot drift from it. Deliberately no automatic
+   * re-ask: a failed pass is one door refusing, and a timer turns one person's outage into a request
+   * per second from every open view; the reader decides.
    */
   const [retryTick, setRetryTick] = useState(0);
   const available = engine.serverAddressSearchAvailable();
@@ -285,23 +222,14 @@ export function useAddressView({
     const rows: AddressHit[] = device.items.map((hit) => ({ hit, archiveOnly: false }));
     if (archive.state !== "ready") return rows;
     /**
-     * THE ARCHIVE'S ROWS ONLY WHERE THEY ARE AN ANSWER TO THE QUESTION ON SCREEN.
-     *
-     * The archive answers ONE direction. Its rows belong in a list showing everything, and in a
-     * list showing exactly the direction it answered — nowhere else. Appending them under every
-     * direction, which this did, put mail the address SENT into a list titled "To them": the
-     * precise false claim this module's header warns against, arriving with a 200 and a count
-     * that adds up.
-     *
-     * `direction === archive.direction` rather than the literal `"from"`, so this needs no edit
-     * on the day the recipient index lands: the archive starts answering a wider direction and
-     * its rows appear under that one on their own. It is also the conservative side of the
-     * comparison — an archive answering `any` under a screen showing `from` contributes nothing
-     * rather than contributing rows that may be to-only.
-     *
-     * The view applies the same rule to what it RENDERS, and the two are not redundant: this one
-     * decides what the contract yields, and it is the one whose absence is silent, because a
-     * caller reading `items` has nothing to compare against.
+     * The archive's rows only where they answer the question on screen. The archive answers one
+     * direction; its rows belong in a list showing everything or exactly that direction — nowhere
+     * else. Appending them under every direction put mail the address SENT into a list titled
+     * "To them": the false claim this module's header warns against, arriving with a 200.
+     * `direction === archive.direction` rather than the literal `"from"`, so the day the recipient
+     * index lands this needs no edit — and it is the conservative side: an archive answering `any`
+     * under a screen showing `from` contributes nothing. The view applies the same rule to what it
+     * renders; this one decides what the contract yields, and its absence is the silent one.
      */
     if (!(direction === "any" || direction === archive.direction)) return rows;
     const held = new Set(device.items.map((h) => h.message.id));
@@ -321,15 +249,12 @@ export function useAddressView({
    * `complete` on its own and the view's caveat disappears without a code change here.
    */
   /**
-   * A BLANK ADDRESS IS NOT A QUESTION, so it has no shortfall — its own case, and not folded in
-   * with "the archive answered everything asked of it".
-   *
-   * Without it the rule reads `ready` + `from` against a toggle of `any` and answers
-   * `senders-only`, so a view would print "the archive cannot be searched by recipient yet" over
-   * a screen with no subject and no rows. `total === 0` is deliberately NOT the test: a real
-   * address with nothing in the from-half still HAS the shortfall — mail sent to that person may
-   * be in the archive and this door cannot see it — so keying on emptiness would hide the caveat
-   * in exactly the case a reader most needs it.
+   * A blank address is not a question, so it has no shortfall — its own case, not folded into "the
+   * archive answered everything asked of it". Without it the rule reads `ready` + `from` against a
+   * toggle of `any` and answers `senders-only`, printing "the archive cannot be searched by recipient
+   * yet" over a screen with no subject and no rows. `total === 0` is deliberately not the test: a
+   * real address with nothing in the from-half still has the shortfall — mail sent to that person may
+   * be in the archive — so keying on emptiness would hide the caveat exactly where it is most needed.
    */
   const asked = address.trim() !== "";
   const coverage: AddressCoverage =
