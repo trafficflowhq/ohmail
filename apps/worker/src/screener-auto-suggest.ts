@@ -363,143 +363,177 @@ export async function screenerAutoSuggestPass(
      * to serve for free.
      */
     let chargedAttempt: string | undefined;
-    /** Give the claim back; reverse the charge only when told to. */
+    /**
+     * THE CLAIM THIS CANDIDATE HOLDS, and the latch that makes the release ONE call.
+     *
+     * `claimed` is set only where the gate hands the claim over — `ok` and `duplicate`. An
+     * `inflight` names ANOTHER holder (the person pressing Suggest for this sender) and every
+     * refusal holds nothing, so releasing on those paths would give away a claim this pass never
+     * took and let a second model call be bought for one credit. `released` is set before the
+     * await, so a release that faults is reported rather than retried.
+     */
+    let claimed = false;
+    let released = false;
+    /**
+     * DOES THE ONE RELEASE REVERSE THE CHARGE — the already-advised path, and nothing else.
+     *
+     * The answer the three named releases gave, unchanged: a sender advised between the candidate
+     * query and the claim is refunded; a fault is not, because the charge buys a free retry next
+     * cycle over the same message and that is the claim this pass's caller already makes.
+     */
+    let refundOnRelease = false;
+    /** Give the claim back, once; reverse the charge only when told to. */
     const releaseClaim = async (refund: boolean): Promise<void> => {
-      if (!gate) return;
+      if (!gate || !claimed || released) return;
+      released = true;
       const meta = { messageId: c.messageId };
       await gate.release(accountId, refund && chargedAttempt !== undefined
         ? { action: "screener", attemptKey, refund: true, attempt: chargedAttempt, meta }
         : { action: "screener", attemptKey, refund: false, meta });
     };
-    if (gate) {
-      const outcome = await gate.spend(accountId, "screener", attemptKey, { messageId: c.messageId });
-      // ── SOMEBODY IS ALREADY BUYING THIS ONE: SKIP THE CANDIDATE, NOT THE PASS ─────────────
+    try {
+      if (gate) {
+        const outcome = await gate.spend(accountId, "screener", attemptKey, { messageId: c.messageId });
+        // ── SOMEBODY IS ALREADY BUYING THIS ONE: SKIP THE CANDIDATE, NOT THE PASS ─────────────
+        //
+        // `continue`, where every other refusal below `break`s, and the difference is the whole
+        // reason this branch is separate. The other three are properties of the ACCOUNT — an empty
+        // balance, a subscription that may not spend, an unwell ledger — so every remaining
+        // candidate would be refused for the same reason and continuing is N useless round trips.
+        // This one is a property of ONE MESSAGE: the user is pressing Suggest for that sender in
+        // their browser right now, which is precisely the collision SEC3-MONEY-1 named and which
+        // needs no unusual behaviour from anybody, since this pass and that surface select the same
+        // representative held message by construction. The other candidates are unaffected.
+        //
+        // Nothing is lost by skipping: the request path is buying the verdict and storing it, and
+        // `selectCandidates` filters out messages that have one — so the next cycle simply does not
+        // see this candidate again. And it is NOT counted in `stopped`, because the pass was not
+        // stopped and reporting it as such would make a healthy cycle read as a refusal.
+        if (outcome.verdict === "inflight") {
+          log.info("screener_auto_suggest_inflight", { accountId, messageId: c.messageId });
+          continue;
+        }
+        if (outcome.verdict !== "ok" && outcome.verdict !== "duplicate") {
+          // FIRST REFUSAL STOPS THE ACCOUNT'S PASS FOR THIS CYCLE. Every remaining candidate would be
+          // refused for the same reason — the balance, the subscription state, or the ledger — so
+          // continuing would be N useless round trips per cycle, for ever, on every empty account.
+          // One refused call per opted-in account per cycle is the bound this gives.
+          result.stopped = outcome.verdict === "insufficient"
+            ? "out_of_credits"
+            : outcome.verdict === "refused" && outcome.reason === "ai_disabled"
+              ? "ai_disabled"
+              : "spend_unavailable";
+          break;
+        }
+        // THE CLAIM IS THIS PASS'S FROM HERE, and only from here: `ok` and `duplicate` are the two
+        // verdicts that hand it over, and the door below gives back nothing without this line.
+        claimed = true;
+        // Recorded, not yet counted: `result.charged` is added to below, once this candidate is past
+        // the entitlement re-check, because a charge that is handed straight back moved nothing.
+        if (outcome.verdict === "ok") chargedAttempt = outcome.attempt;
+      }
+
+      // ── THE ENTITLEMENT, RE-ASKED INSIDE THE EXCLUSIVE REGION (SEC3-MONEY-1, SEC3-MONEY-3) ────
       //
-      // `continue`, where every other refusal below `break`s, and the difference is the whole
-      // reason this branch is separate. The other three are properties of the ACCOUNT — an empty
-      // balance, a subscription that may not spend, an unwell ledger — so every remaining
-      // candidate would be refused for the same reason and continuing is N useless round trips.
-      // This one is a property of ONE MESSAGE: the user is pressing Suggest for that sender in
-      // their browser right now, which is precisely the collision SEC3-MONEY-1 named and which
-      // needs no unusual behaviour from anybody, since this pass and that surface select the same
-      // representative held message by construction. The other candidates are unaffected.
+      // `selectCandidates` ran once at the top of this pass, so every answer it gave is as old as
+      // the query. A caller that advised this SENDER after that — the user's press, the client's
+      // on-open batch, another host's pass — leaves this loop holding a candidate list that predates
+      // the answer, and the claim cannot help: it has been released, correctly, because the work is
+      // over. So the question is asked again here, where it sees everything any earlier holder
+      // committed.
       //
-      // Nothing is lost by skipping: the request path is buying the verdict and storing it, and
-      // `selectCandidates` filters out messages that have one — so the next cycle simply does not
-      // see this candidate again. And it is NOT counted in `stopped`, because the pass was not
-      // stopped and reporting it as such would make a healthy cycle read as a refusal.
-      if (outcome.verdict === "inflight") {
-        log.info("screener_auto_suggest_inflight", { accountId, messageId: c.messageId });
+      // **BY SENDER, AND UNCONDITIONALLY — both halves are corrections.** It used to ask about the
+      // MESSAGE and only when the gate answered `duplicate`, on the reasoning that a `charged: true`
+      // is a fresh attempt and therefore a purchase of a NEW verdict. That reasoning is right for the
+      // pressed path (a person asking again about mail the model has not read) and wrong here, where
+      // nobody asked: two hosts whose candidate queries picked DIFFERENT representatives for one
+      // sender hold two different ledger sources, so neither is a duplicate of the other and both
+      // would charge. Asking per sender closes it; asking on every outcome is what makes the answer
+      // reachable when this caller is the one that charged.
+      //
+      // THE CHARGE COMES BACK. `refundAttempt` and not `refund`: the marker `refund` consults is
+      // cleared by any non-charging decision, and what is held here is the attempt id this pass was
+      // told it charged, which is the stronger claim. Exactly-once is the ledger's — `UNIQUE
+      // (account_id, refund:<attempt>)` plus the refund-origin trigger — so a retry of this line
+      // cannot pay twice.
+      if (await hasScreenerSuggestionForSender(db, accountId, c.fromAddress)) {
+        if (chargedAttempt !== undefined) {
+          log.info("screener_auto_suggest_sender_already_advised",
+            { accountId, messageId: c.messageId, refunded: chargedAttempt });
+        }
+        // THE ONE EXIT THAT REVERSES THE CHARGE. The door below names the attempt this pass was
+        // told it charged, which is the stronger claim than any in-process marker: exactly-once is
+        // the ledger's, so a retry cannot pay twice.
+        refundOnRelease = true;
         continue;
       }
-      if (outcome.verdict !== "ok" && outcome.verdict !== "duplicate") {
-        // FIRST REFUSAL STOPS THE ACCOUNT'S PASS FOR THIS CYCLE. Every remaining candidate would be
-        // refused for the same reason — the balance, the subscription state, or the ledger — so
-        // continuing would be N useless round trips per cycle, for ever, on every empty account.
-        // One refused call per opted-in account per cycle is the bound this gives.
-        result.stopped = outcome.verdict === "insufficient"
-          ? "out_of_credits"
-          : outcome.verdict === "refused" && outcome.reason === "ai_disabled"
-            ? "ai_disabled"
-            : "spend_unavailable";
+      // `+= the weight` and not `++`: the field is credits, and `spend()` moves that many per
+      // call. A `charged: false` is a free retry of an attempt already on record — reporting it as
+      // spend would say the account paid twice for one message. This pass books `debit_classify`,
+      // weight 1; naming the weight is what keeps the tally right now that prices are per-reason.
+      if (chargedAttempt !== undefined) result.charged += AI_ACTION_WEIGHTS.debit_classify;
+
+      let verdict;
+      try {
+        verdict = await askScreeningQuestion(classifier, {
+          fromAddress: c.fromAddress,
+          subject: c.subject,
+          snippet: c.snippet,
+          ...(deps.ohboxBar ? { ohboxBar: deps.ohboxBar } : {}),
+        });
+      } catch (err) {
+        // STOP, where the user-pressed path CONTINUES — and the difference is that nobody is
+        // waiting here. There, a person has paid for a set and the remaining senders may still
+        // succeed; here a model fault is almost always the whole endpoint, and pressing on would
+        // charge the rest of the batch against an outage every cycle.
+        //
+        // **THE CHARGE IS NOT REFUNDED, AND THE REASON GIVEN HERE USED TO BE FALSE FOR THIS PASS.**
+        // It read: "the ledger source is the message, so the next cycle's attempt over it answers
+        // `duplicate` and the retry is free". True only while the representative does not move — and
+        // a sender who sends again during an outage moves it, so the "free retry" was a fresh source
+        // and a second charge, once per cycle for as long as the model was down. What makes the
+        // retry free now is the candidate query: the sender is unadvised, so the next cycle asks
+        // about their CURRENT representative, and the fault charge that bought nothing is bounded
+        // to one per cycle by the stop below and to a handful in total by the classifier's own fault
+        // gate (`classifierForCycle` withholds the port after repeated faults, and an absent port
+        // means this pass does not run).
+        //
+        // It is the ONLY stop an unmetered host has, and it carries the same bound there: the local
+        // engine hands in a classifier that is itself withheld after repeated faults, so a model
+        // server somebody quit costs one call on the first drain and none on the drains after it.
+        log.warn("screener_auto_suggest_model_failed", { accountId, messageId: c.messageId, err });
+        // The claim goes back unrefunded at the door below, for the reason the request path gives:
+        // the charge stands and buys a free retry next cycle, and a claim left behind would make
+        // that retry wait out the TTL first.
+        result.stopped = "model_unavailable";
         break;
       }
-      // Recorded, not yet counted: `result.charged` is added to below, once this candidate is past
-      // the entitlement re-check, because a charge that is handed straight back moved nothing.
-      if (outcome.verdict === "ok") chargedAttempt = outcome.attempt;
-    }
 
-    // ── THE ENTITLEMENT, RE-ASKED INSIDE THE EXCLUSIVE REGION (SEC3-MONEY-1, SEC3-MONEY-3) ────
-    //
-    // `selectCandidates` ran once at the top of this pass, so every answer it gave is as old as
-    // the query. A caller that advised this SENDER after that — the user's press, the client's
-    // on-open batch, another host's pass — leaves this loop holding a candidate list that predates
-    // the answer, and the claim cannot help: it has been released, correctly, because the work is
-    // over. So the question is asked again here, where it sees everything any earlier holder
-    // committed.
-    //
-    // **BY SENDER, AND UNCONDITIONALLY — both halves are corrections.** It used to ask about the
-    // MESSAGE and only when the gate answered `duplicate`, on the reasoning that a `charged: true`
-    // is a fresh attempt and therefore a purchase of a NEW verdict. That reasoning is right for the
-    // pressed path (a person asking again about mail the model has not read) and wrong here, where
-    // nobody asked: two hosts whose candidate queries picked DIFFERENT representatives for one
-    // sender hold two different ledger sources, so neither is a duplicate of the other and both
-    // would charge. Asking per sender closes it; asking on every outcome is what makes the answer
-    // reachable when this caller is the one that charged.
-    //
-    // THE CHARGE COMES BACK. `refundAttempt` and not `refund`: the marker `refund` consults is
-    // cleared by any non-charging decision, and what is held here is the attempt id this pass was
-    // told it charged, which is the stronger claim. Exactly-once is the ledger's — `UNIQUE
-    // (account_id, refund:<attempt>)` plus the refund-origin trigger — so a retry of this line
-    // cannot pay twice.
-    if (await hasScreenerSuggestionForSender(db, accountId, c.fromAddress)) {
-      if (chargedAttempt !== undefined) {
-        log.info("screener_auto_suggest_sender_already_advised",
-          { accountId, messageId: c.messageId, refunded: chargedAttempt });
-      }
-      // One call gives the claim back AND reverses the charge, if this pass made one. The
-      // reversal names the attempt this pass was told it charged, which is the stronger claim
-      // than any in-process marker: exactly-once is the ledger's, so a retry cannot pay twice.
-      await releaseClaim(true);
-      continue;
-    }
-    // `+= the weight` and not `++`: the field is credits, and `spend()` moves that many per
-    // call. A `charged: false` is a free retry of an attempt already on record — reporting it as
-    // spend would say the account paid twice for one message. This pass books `debit_classify`,
-    // weight 1; naming the weight is what keeps the tally right now that prices are per-reason.
-    if (chargedAttempt !== undefined) result.charged += AI_ACTION_WEIGHTS.debit_classify;
-
-    let verdict;
-    try {
-      verdict = await askScreeningQuestion(classifier, {
-        fromAddress: c.fromAddress,
-        subject: c.subject,
-        snippet: c.snippet,
-        ...(deps.ohboxBar ? { ohboxBar: deps.ohboxBar } : {}),
+      await storeScreenerSuggestion(db, {
+        accountId,
+        messageId: c.messageId,
+        destination: verdict.destination,
+        confidence: verdict.confidence,
+        rationale: verdict.rationale,
+        spam: verdict.spam,
       });
-    } catch (err) {
-      // STOP, where the user-pressed path CONTINUES — and the difference is that nobody is
-      // waiting here. There, a person has paid for a set and the remaining senders may still
-      // succeed; here a model fault is almost always the whole endpoint, and pressing on would
-      // charge the rest of the batch against an outage every cycle.
-      //
-      // **THE CHARGE IS NOT REFUNDED, AND THE REASON GIVEN HERE USED TO BE FALSE FOR THIS PASS.**
-      // It read: "the ledger source is the message, so the next cycle's attempt over it answers
-      // `duplicate` and the retry is free". True only while the representative does not move — and
-      // a sender who sends again during an outage moves it, so the "free retry" was a fresh source
-      // and a second charge, once per cycle for as long as the model was down. What makes the
-      // retry free now is the candidate query: the sender is unadvised, so the next cycle asks
-      // about their CURRENT representative, and the fault charge that bought nothing is bounded
-      // to one per cycle by the stop below and to a handful in total by the classifier's own fault
-      // gate (`classifierForCycle` withholds the port after repeated faults, and an absent port
-      // means this pass does not run).
-      //
-      // It is the ONLY stop an unmetered host has, and it carries the same bound there: the local
-      // engine hands in a classifier that is itself withheld after repeated faults, so a model
-      // server somebody quit costs one call on the first drain and none on the drains after it.
-      log.warn("screener_auto_suggest_model_failed", { accountId, messageId: c.messageId, err });
-      // The claim goes back before the pass stops, for the reason the request path gives: the
-      // charge stands and buys a free retry next cycle, and a claim left behind would make that
-      // retry wait out the TTL first.
-      await releaseClaim(false);
-      result.stopped = "model_unavailable";
-      break;
+      result.bought++;
+    } finally {
+      // ONE DOOR, AND AFTER THE STORE. Every exit from this candidate leaves through here — the
+      // two `continue`s, the two `break`s, a throw from the entitlement re-check or the store,
+      // and any exit added later — because a release written on the exits somebody had in mind is
+      // not a release the next exit has, and a claim left behind answers the next cycle
+      // `inflight` on a message nobody worked on until the TTL runs out. Never earlier than the
+      // store: between a release and the insert there is a window with no suggestion on record
+      // and nothing holding the source, where a request is told `duplicate` — already paid for,
+      // proceed — and buys the model a second time. A release that faults is reported once and
+      // never retried, and it never replaces the error this candidate is already carrying.
+      try {
+        await releaseClaim(refundOnRelease);
+      } catch (err) {
+        log.warn("screener_auto_suggest_release_failed", { accountId, messageId: c.messageId, err });
+      }
     }
-
-    await storeScreenerSuggestion(db, {
-      accountId,
-      messageId: c.messageId,
-      destination: verdict.destination,
-      confidence: verdict.confidence,
-      rationale: verdict.rationale,
-      spam: verdict.spam,
-    });
-    // RELEASED AFTER THE STORE AND NEVER BEFORE IT. Between a release and the insert there is a
-    // window with no suggestion on record and nothing holding the source, and a request landing
-    // in it would be told `duplicate` — already paid for, proceed — and call the model a second
-    // time. That is the defect this claim exists to stop, narrower and harder to see.
-    await releaseClaim(false);
-    result.bought++;
   }
 
   if (result.bought > 0 || result.stopped) {
