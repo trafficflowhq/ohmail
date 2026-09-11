@@ -89,24 +89,16 @@ export function Facets({ groups, onPick, className }: FacetsProps) {
   );
 }
 
-/* ── `SearchHit` IS RETIRED, AND `search.css` IS NOT ───────────────────────────────────────
- *
- * There was a `SearchHit` here: one `<button class="hit">` holding a who/where line and a
- * subject. No product surface ever rendered it. The webapp's own result row grew a second
- * control — the sender's address, which opens everything from and to that address — and a
+/*
+ * `SearchHit` is retired, and `search.css` is not. `SearchHit` was one `<button class="hit">`
+ * with a who/where line and a subject; no product surface ever rendered it. The webapp's row
+ * grew a second control — the sender's address, which opens everything from and to it — and a
  * button may not hold interactive content, so the shipped row is a `<div class="hit">` with a
- * stretched `<button class="hit-open">` inside it. That row is `SearchHitRow` in
- * `apps/webapp/app/views/SearchView.tsx`, and this component could not become it without
- * becoming a different component.
- *
- * An export with no consumer is a claim that outlives the code: it compiles, the smoke test
- * renders it, the showcase advertises it as the way this design system draws a result, and
- * nobody can reach it in the product. So it is deleted rather than left as a second answer to
- * a question the product has already answered once.
- *
- * `search.css` stays and is still imported below. Its `.hit` rules — the radius, the padding,
- * the hover lift, `.who` / `.where` / `.subj` / `mark` — are what the webapp's row is built on,
- * and it reaches them through this file's import of `SearchBox`. Deleting the stylesheet with
- * the component would have taken the ground out from under the shipped row, which is the kind of
- * deletion that renders as a design regression with every test green.
+ * stretched `<button class="hit-open">` inside (`SearchHitRow` in
+ * `apps/webapp/app/views/SearchView.tsx`). An export with no consumer is a claim that outlives
+ * the code — compiled, smoke-tested, advertised by the showcase, unreachable in the product —
+ * so it is deleted rather than left as a second answer. `search.css` stays and is still
+ * imported below: its `.hit` / `.who` / `.where` / `.subj` / `mark` rules are what the webapp's
+ * row is built on, reached through this file's import — deleting it with the component would
+ * render as a design regression with every test green.
  */
