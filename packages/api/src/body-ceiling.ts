@@ -1,117 +1,24 @@
 import { matchRoute, type Route } from "./router.js";
 
 /**
- * WHAT MAY THIS REQUEST'S BODY WEIGH — decided from the ROUTE, before a byte is read.
- *
- * ── THE DEFECT THIS CLOSES ────────────────────────────────────────────────────────────────
- *
- * Both hosts canonicalize the request path and then buffer the whole body
- * (`apps/server/src/handler.ts`, `apps/api-vercel/src/prefix.ts`: `await req.arrayBuffer()` for
- * every non-GET). That buffer is allocated BEFORE route matching and long before
- * authentication, against ONE ceiling that is the largest any route could ever need — 50 MiB on
- * the self-host adapter. So an anonymous client that never presents a credential, and never
- * names a path this API serves, can make the process allocate 50 MiB per connection and hold it
- * for the length of the transfer. N connections is N × 50 MiB of a long-running process's heap,
- * and the request that pays for it is refused a moment later with a 404.
- *
- * The ceiling was not wrong; it was UNCONDITIONAL. It exists for exactly one route
- * ({@link LARGE_BODY_ROUTES}) and was being applied to all of them, including the ones that do
- * not exist.
- *
- * ── THE RULE ─────────────────────────────────────────────────────────────────────────────
- *
- * The path is enough to decide this, and the path costs nothing: `matchRoute` reads the URL and
- * no body at all. So the door matches first and buffers second, under the ceiling THAT route
- * declares:
- *
- *   · no route matches the method+path  ⇒ **0 bytes**. Nothing is read. `app.handle` matches the
- *     same table a moment later and answers its own 404/405, which is byte-identical to what it
- *     answered before — the handler never ran, so a body nobody was going to read is not missed.
- *   · GET / HEAD                        ⇒ **0 bytes**, as before.
- *   · a route in {@link LARGE_BODY_ROUTES} ⇒ the host's large ceiling, its own number.
- *   · everything else                   ⇒ {@link JSON_BODY_MAX_BYTES}.
- *
- * ── WHY THE LARGE SET IS A LIST AND NOT A ROUTE FLAG ──────────────────────────────────────
- *
- * A `bodyMax` on {@link RouteOptions} would be OPTIONAL, and an optional bound is the shape
- * `router.ts` already argues against for `cost`: *"opt-IN, so route 125 was ungated by default
- * and 122 of 124 routes were ungated in fact"*. Here the default is the SAFE direction — a route
- * that declares nothing gets the small ceiling — so the risk runs the other way: a genuinely
- * large route added later would be refused at {@link JSON_BODY_MAX_BYTES}. That fails LOUDLY (a
- * 413 naming the limit on the developer's first send) rather than quietly, which is the right way
- * round.
- *
- * And the list is not trusted on its own word: `input-bounds-census.test.ts` derives the set of
- * routes whose handler decodes inline bytes from the handlers' own source and asserts it equals
- * this constant, in both directions. A new route that takes `contentBase64` and is not listed
- * here reddens the build; a listed route that stops taking bytes reddens it too.
+ * What may this request's body weigh — decided from the route, before a byte is read. Both hosts
+ * used to buffer the whole body before route matching against the largest ceiling any route could
+ * need, so an anonymous client naming no served path could cost 50 MiB of heap per connection.
+ * The path decides: no route ⇒ 0 bytes (the 404/405 is unchanged); GET/HEAD ⇒ 0; a route in
+ * LARGE_BODY_ROUTES ⇒ the host's large ceiling; else JSON_BODY_MAX_BYTES. A list, not a route
+ * flag: an undeclared route gets the small ceiling and fails loudly with a 413, and
+ * `input-bounds-census.test.ts` derives the byte-carrying set from handler source both ways.
  */
 
 /**
- * The ceiling for every route that carries a JSON body — every route but one.
- *
- * `POST /drafts/:id/send` carries JSON too; it is the exception because its JSON contains
- * attachment BYTES, and it gets the host's own large number instead. See
- * {@link LARGE_BODY_ROUTES}.
- *
- * ── THE NUMBER IS DERIVED FROM THE LARGEST BODY THE TABLE ITSELF DECLARES LEGAL ───────────
- *
- * A door ceiling under the largest request the routes accept would refuse a request the service
- * was going to serve — a 413 for a correct call, which is a worse failure than the one being
- * fixed because it is silent about which of the two limits it broke. So the number is the worst
- * LEGAL body plus headroom, and `input-bounds-census.test.ts` recomputes that product from the
- * constants and fails if a future bump makes them collide:
- *
- *   · `POST /drafts` — `DRAFT_HTML_CAP_BYTES` (256 KiB), the request's recipient TOTAL at
- *     `DRAFT_MAX_RECIPIENTS` × (`RECIPIENT_ADDRESS_MAX_CHARS` + `RECIPIENT_NAME_MAX_CHARS`), and
- *     `DRAFT_SUBJECT_MAX_CHARS`. This is the largest. The recipient factor is ONE and not three
- *     because `DraftsService.boundRecipientTotal` bounds to/cc/bcc together — which it does
- *     BECAUSE of this arithmetic: per-field, at the send ceiling, the product was 4 832 016 and
- *     no door both admitted it and was worth having.
- *   · `PATCH /consent/settings` — `SETTINGS_MAX_MAILBOX_ENTRIES` signatures at
- *     `MAILBOX_SIGNATURE_MAX_CHARS` (10 000) each.
- *   · `PATCH /messages` — the largest COUNT-shaped body, `MARK_SEEN_MAX_IDS` message ids.
- *
- * **Every character is counted at SIX bytes, not four.** UTF-8's own maximum is four, but
- * `JSON.stringify` escapes a control character as `\u00xx` — six wire bytes for one character that every
- * validator here accepts. Two review rounds corrected this number: the first found the
- * four-byte factor, the second found it applied to the recipient strings and not to the html.
- * A formula that undercounts the worst legal body certifies a compatibility the door does not
- * have, which is worse than not checking at all.
- *
- * 4 MiB clears the largest (≈2.56 MB, `POST /drafts`) with real headroom, and is still 12x
- * under what the
- * self-host door used to admit from an anonymous caller who had named no route at all.
- *
- * **AND IT MUST STAY UNDER THE SMALLEST DOOR IN THE FLEET, which is not ours.** The managed host
- * is capped by the platform at {@link HOSTED_LARGE_BODY_MAX_BYTES} — 4.5 MB — whatever this
- * constant says. A number above that would certify a compatibility the deployment does not have:
- * the request would die at the platform edge with an error neither host wrote, and this door
- * would never see it. The census asserts the ordering (worst legal body < this < the platform's
- * ceiling) rather than leaving it to whoever next raises a field cap.
- *
- * **`POST /consent/seed` is deliberately NOT in that product, and the reason is worth stating.**
- * Its `SEED_MAX_ADDRESSES` ceiling is a coarse count whose job is to stop an unbounded list being
- * folded before the review intersects it; the number of BYTES that list weighs is this door's
- * question, not that ceiling's. A confirmation of 50 000 maximal addr-specs is 16 MB and is
- * refused here, by a 413 that names this limit in bytes — which is the actionable answer for a
- * request whose problem is its size. The two bound different things and whichever binds first
- * says so in its own units.
- *
- * ── AND IT IS A BACKSTOP, NOT THE BOUND ──────────────────────────────────────────────────
- *
- * Every field that reaches a query, a loop or a per-row predicate with a cost PROPORTIONAL to
- * its size carries its own named ceiling (see the census). What this number closes is the class
- * of value that has no per-field bound of its own — a snippet's text, a note's body, a mailbox's
- * signature.
- *
- * **Two of the examples this used to give were wrong, and the correction is the point.** It
- * named a KB entry's `content` and a workflow step's `args` as values whose *"only sink is one
- * column write"*. Neither is: KB content is indexed and read back by `KbService.retrieve`'s
- * tsquery and trigram arms, and a step's `args` are resolved and executed by the worker. They are
- * still bounded by this door and by nothing else — that part was true — but calling their column
- * the terminal sink understates what they reach, and an understated sink is how a value stops
- * getting a bound of its own. The census's `door:` entries name the real downstream sink for each.
+ * The ceiling for every JSON-body route — every route but one (`POST /drafts/:id/send` carries
+ * attachment bytes; see LARGE_BODY_ROUTES). Derived from the largest body the table declares
+ * legal so the door never refuses a request the service would serve: `POST /drafts` is the
+ * largest (`DRAFT_HTML_CAP_BYTES`, the bounded recipient total, `DRAFT_SUBJECT_MAX_CHARS`);
+ * `input-bounds-census.test.ts` recomputes the product. Every character counts at six bytes —
+ * `JSON.stringify` escapes a control character as six wire bytes. 4 MiB clears the largest legal
+ * body and stays under the platform's 4.5 MB; the census asserts the ordering. A backstop: every
+ * size-proportional field has its own named ceiling.
  */
 export const JSON_BODY_MAX_BYTES = 4 * 1024 * 1024;
 
@@ -158,21 +65,14 @@ export function bodyCeilingFor(
 }
 
 /**
- * Read at most `maxBytes` of `req`'s body, or throw {@link BodyOverCeilingError}.
- *
- * ── WHY THIS IS NOT `req.arrayBuffer()` WITH A CHECK AFTERWARDS ───────────────────────────
- *
- * A check afterwards is a check on bytes already in the heap, which is precisely the cost being
- * refused. The declared `Content-Length` is consulted first — that refuses an honest oversized
- * request for nothing — and then the stream is counted as it arrives, because a chunked body
- * may declare no length at all or declare one that is a lie. The running total is compared
- * BEFORE the chunk is retained, so the peak is one chunk over the ceiling and never the whole
- * body.
- *
- * A `null` body is `undefined`, never a zero-length buffer: undici gives a Request constructed
- * with an empty body a non-null `body`, and `withRequestGuard` then demands a `Content-Type`
- * from a legitimately body-less `POST /auth/logout`. Both hosts' `normalizeRequest` already
- * carried that rule; it is kept here verbatim rather than restated at each call site.
+ * Read at most `maxBytes` of `req`'s body, or throw {@link BodyOverCeilingError}. Not
+ * `req.arrayBuffer()` with a check afterwards — that checks bytes already in the heap, which
+ * is the cost being refused. The declared `Content-Length` is consulted first, then the stream
+ * is counted as it arrives (a chunked body may declare no length, or lie); the total is
+ * compared before the chunk is retained, so the peak is one chunk over the ceiling. A `null`
+ * body is `undefined`, never a zero-length buffer: undici gives an empty-body Request a
+ * non-null `body`, and `withRequestGuard` would then demand a `Content-Type` from a
+ * legitimately body-less `POST /auth/logout`.
  */
 export async function readBodyWithin(
   req: Request, maxBytes: number,

@@ -27,15 +27,12 @@ export interface RecordIdempotentInput {
 }
 
 /**
- * CLAIM the idempotency record. Called by a mutation's service INSIDE its tx so the stored
- * response commits atomically with the write — closing the commit-then-crash
- * re-execution window.
- *
- * Returns **false** when a concurrent transaction already committed this key, which is not
- * a curiosity to ignore: the caller MUST then abort its transaction so its duplicate effect
- * rolls back and the request replays the winner's response. See `claimIdempotencyKey` in
- * `packages/db` for the full argument — `ON CONFLICT DO NOTHING` with an ignored result was
- * a genuine double-effect bug (two workflow runs from one key).
+ * Claim the idempotency record. Called by a mutation's service inside its tx so the stored
+ * response commits atomically with the write — closing the commit-then-crash re-execution
+ * window. Returns false when a concurrent transaction already committed this key, and the
+ * caller must then abort its transaction so its duplicate effect rolls back and the request
+ * replays the winner's response. See `claimIdempotencyKey` in `packages/db` — `ON CONFLICT
+ * DO NOTHING` with an ignored result was a genuine double-effect bug.
  */
 export async function recordIdempotent(tx: Tx, i: RecordIdempotentInput): Promise<boolean> {
   return claimIdempotencyKey(tx, {

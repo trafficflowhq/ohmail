@@ -36,25 +36,14 @@ import type { ProbeHostGuard } from "./imap-probe.js";
 import type { EntitlementsComposition } from "@trafficflow/db";
 
 /**
- * HOW A HOST ADMITS AN IMAP CONNECTION, as a port rather than as an import.
- *
- * `acquireImapSlot`/`releaseImapSlot` count through a per-address attempt counter, and that table
- * is created by the CLOUD migration journal. Two consequences, and the second is the one that made
- * this a port:
- *
- *  · A local install's database is built from the MAIL journal alone, so the table is not there.
- *    Both call sites — the add-time probe and the attachment adapter — are mounted by the local
- *    API, so a desktop user fetching an attachment was reaching a counter over a table that does
- *    not exist. That is a defect this seam fixes, not one it introduces.
- *  · The desktop engine is bundled from these modules and is SHIPPED. A static import of the
- *    counter puts `@trafficflow/db/cloud` — billing, the ledger, the staff handle, the whole
- *    hosted schema — into the artifact, whatever the code does at runtime.
- *
- * REQUIRED, with no default, deliberately. A default of "always admit" would silently uncap a
- * hosted deployment that forgot to wire it, which is the failure the counter exists to prevent;
- * a default of the db-backed pair would reinstate the import edge. Each host says what it means:
- * the hosted API passes the counter, and `apps/sidecar` passes an always-admit with its reason
- * written next to it.
+ * How a host admits an IMAP connection, as a port rather than an import.
+ * `acquireImapSlot`/`releaseImapSlot` count through a table created by the cloud journal, and
+ * a local install's database is built from the mail journal alone — a desktop attachment
+ * fetch was reaching a counter over a table that does not exist. A static import would also
+ * pull `@trafficflow/db/cloud` — the whole hosted schema — into the shipped engine artifact.
+ * Required, with no default: "always admit" would silently uncap a hosted deployment that
+ * forgot to wire it, and a db-backed default would reinstate the import edge. Each host says
+ * what it means — the hosted API passes the counter, `apps/sidecar` an always-admit.
  */
 export interface ImapAdmissionPort {
   /** `false` means REFUSE — the caller must not dial. Throwing means the counter itself failed. */
@@ -75,24 +64,14 @@ export interface StagedUploadGrantWire {
 }
 
 /**
- * HOW A HOST STAGES ATTACHMENT BYTES OUT OF THE REQUEST BODY — a port, and OPTIONAL, and the
- * optionality is the security property rather than a convenience.
- *
- * Attachment bytes used to ride the send request base64-encoded, which bound every hosted send to
- * the serverless body limit and made the compose surface promise 3 MB whatever the sender's own
- * submission server announced. A host that has object storage behind it supplies this port; the
- * browser then uploads directly and the send carries a reference.
- *
- * **A LOCAL INSTALL MUST NOT SUPPLY IT, AND STRUCTURALLY CANNOT WANT TO.** Its send handler runs in
- * the same process as its own SMTP dial — there is no request body between the compose form and
- * the wire, so there is nothing to stage around — and staging would mean a standalone desktop
- * install sending somebody's attachment bytes to the hosted service's storage. Absent, the mint
- * route is not mounted at all (it is on the hosted route table only) and `SendService` refuses a
- * request that names staged references rather than sending a message without its files.
- *
- * Declared HERE rather than in `deps-cloud.ts` because `routes/drafts.ts` is the ONE send handler
- * and both hosts compile it: the shared handler has to be able to say it may be handed this, and
- * the local composition's answer is `undefined`.
+ * How a host stages attachment bytes out of the request body — a port, optional, and the
+ * optionality is the security property. Bytes used to ride the send request base64-encoded,
+ * binding every hosted send to the serverless body limit. A host with object storage supplies
+ * this; the browser uploads directly and the send carries a reference. A local install must
+ * not supply it: its send handler runs in the same process as its own SMTP dial (nothing to
+ * stage around), and staging would send a standalone install's bytes to the hosted service's
+ * storage. Absent, the mint route is not mounted and `SendService` refuses staged references.
+ * Declared here because `routes/drafts.ts` is the one send handler both hosts compile.
  */
 export interface AttachmentStagingPort {
   /** Mint one ticket + upload grant. Writes the row BEFORE the object can exist; see the service. */
@@ -135,22 +114,14 @@ export type AttachmentStagingFactory = (db: Db) => AttachmentStagingPort;
 export interface ApiServices {
   sync?: SyncService;
   /**
-   * The session LIFECYCLE — refresh rotation with reuse detection, logout, the device list and
-   * its revoke, and `establishPairedDevice` (what the pairing redeem mints through). OPTIONAL,
-   * in the same grammar as `unsubscribe`: absence is a first-class state, and every route that
-   * reads it answers a clean refusal rather than 500ing into a stack.
-   *
-   * Declared HERE — the mail-half surface — as the CARVED base class, not the full ceremony
-   * (Phase 3). Two different hosts fill it:
-   *  · every HOSTED composition puts its full `AuthService` here, which `extends`
-   *    `SessionLifecycle`, so the twenty ceremony routes keep working through the accessor in
-   *    `routes/shared-cloud.ts` and nothing hosted changes shape;
-   *  · the LOCAL engine puts a bare `SessionLifecycle` over its own store here, which is what
-   *    lets the desktop-as-host door pair devices, rotate their bearer pairs and revoke them
-   *    WITHOUT the ceremony, the Cloud schema, or the barrel's side effects entering the
-   *    shipped bundle.
-   * Session RESOLUTION is unaffected either way — `withSession` calls the standalone
-   * `resolveSession` against the `sessions` table, never this member.
+   * The session lifecycle — refresh rotation with reuse detection, logout, the device list
+   * and its revoke, and `establishPairedDevice`. Optional in `unsubscribe`'s grammar: absence
+   * is a first-class state and every route that reads it answers a clean refusal. Declared
+   * here as the carved base class, not the full ceremony. Hosted compositions put their full
+   * `AuthService` here (it `extends` `SessionLifecycle`, so the ceremony routes keep working
+   * through `routes/shared-cloud.ts`); the local engine puts a bare `SessionLifecycle` over
+   * its own store, pairing devices without the ceremony or the Cloud schema entering the
+   * bundle. Session resolution is unaffected: `withSession` calls `resolveSession`, never this.
    */
   auth?: SessionLifecycle;
   /**
@@ -251,17 +222,14 @@ export interface ApiServices {
    * a call site an `action` and a bare attempt key. `spendOf` in `routes/shared.ts` is where the
    * three states — a port, `UNMETERED`, and an unfinished composition — are told apart. */
   /**
-   * WHO ANSWERS "may this account use the service, and within what limits" — an entitlements
-   * port, or the literal `UNMETERED` for a host that operates no such program.
-   *
-   * Declared here rather than in `deps-cloud.ts` because EVERY host fills it: the desktop engine
-   * and the self-host server say `UNMETERED` out loud, which is the distinction the member exists
-   * to keep (absent is a composition nobody finished; unmetered is a deployment that means it).
-   * Absent therefore gates nothing and offers no manage link — see `entitlementsOf` in
-   * `routes/shared.ts`, which is where the three states are told apart.
-   *
-   * `entitlementsPort` and not `entitlements`: the shorter name is the hosted billing SERVICE
-   * (`deps-cloud.ts`), which still exists while the state it holds has not moved.
+   * Who answers "may this account use the service, and within what limits" — an entitlements
+   * port, or the literal `UNMETERED` for a host that operates no such program. Declared here
+   * rather than `deps-cloud.ts` because every host fills it: the desktop engine and the
+   * self-host server say `UNMETERED` out loud, which is the distinction the member keeps —
+   * absent is a composition nobody finished, unmetered is a deployment that means it. Absent
+   * gates nothing and offers no manage link (`entitlementsOf` in `routes/shared.ts` tells the
+   * three states apart). `entitlementsPort`, not `entitlements` — the shorter name is the
+   * hosted billing service in `deps-cloud.ts`.
    */
   entitlementsPort?: EntitlementsComposition;
   // Gated idempotent send. The route reads `Idempotency-Key` itself (400 if absent)
@@ -282,20 +250,14 @@ export interface ApiServices {
   // inject a fake/GreenMail spy here to count `send` calls + drive `messageInSent`.
   sendAdapter?: OpenSendAdapter;
   /**
-   * THIS HOST'S PLATFORM CEILING on total attachment bytes in one send — or `null` for a host that
-   * has none, which is the local engine.
-   *
-   * It is deps-level rather than a route constant because `routes/drafts.ts` is the ONE send
-   * handler and both hosts mount it. The hosted deployment declares
-   * `SEND_ATTACHMENT_MAX_TOTAL_BYTES` — its serverless body limit expressed in raw bytes. A local
-   * install declares `null`: it runs `SendService` in the same process as its own SMTP dial, so
-   * nothing between the compose form and the wire imposes a request-body limit and the only
-   * ceiling that exists is the mail server's own (`mailboxes.smtp_max_size_bytes`, mail 0055).
-   *
-   * ABSENT is neither of those — it is a host that has not been read, and
-   * {@link SendDeps.surfaceMaxTotalBytes} resolves it to the same 3 MB constant rather than to
-   * "unbounded". Both live hosts declare themselves, so the absent case is what a NEW host gets
-   * before anybody has thought about it, and it is deliberately the strict branch.
+   * This host's platform ceiling on total attachment bytes in one send — or `null` for a host
+   * that has none, which is the local engine. Deps-level rather than a route constant because
+   * `routes/drafts.ts` is the one send handler and both hosts mount it. The hosted deployment
+   * declares `SEND_ATTACHMENT_MAX_TOTAL_BYTES` (its serverless body limit in raw bytes); a
+   * local install declares `null` — the only ceiling is the mail server's own
+   * (`mailboxes.smtp_max_size_bytes`, mail 0055). Absent is neither: a host that has not been
+   * read, which {@link SendDeps.surfaceMaxTotalBytes} resolves to the same 3 MB constant
+   * rather than to "unbounded" — the strict branch, deliberately.
    */
   sendSurfaceMaxTotalBytes?: number | null;
   /**
@@ -304,32 +266,26 @@ export interface ApiServices {
    */
   attachmentStaging?: AttachmentStagingFactory;
   /**
-   * THE ACCOUNT'S MANAGED STORAGE CAP, as the send route's sent-copy projection needs it.
-   *
+   * The account's managed storage cap, as the send route's sent-copy projection needs it.
    * Declared by every live host: the hosted deployment resolves it from the subscription row
    * (`storageCapOf`), the local engine and the self-host server type `UNMETERED_STORAGE_CAP`.
-   * ABSENT is a host nobody has read, and it resolves to REFUSAL, not to unmetered — the route
-   * substitutes a resolver that throws, which costs exactly the sent-copy projection
-   * (swallow-and-log; the send answered `sent` already, and the worker's Sent-folder pass
-   * remains the metered backstop). The same "somebody has to type the empty set" rule as
-   * `trustedAuthservIds`: for a storage cap the absent-config default is the dangerous branch.
+   * Absent is a host nobody has read, and it resolves to refusal, not to unmetered — the
+   * route substitutes a resolver that throws, costing exactly the sent-copy projection
+   * (swallow-and-log; the send answered `sent` already, and the worker's Sent-folder pass is
+   * the metered backstop). For a storage cap the absent-config default is the dangerous branch.
    */
   storageCapOf?: (ctx: ServiceContext) => Promise<StorageCap>;
 }
 
 /**
- * Injectable SSE configuration. Prod defaults keep a `/events` connection
- * bounded; tests pass tiny values for deterministic frames. The poll uses a DISCRETE query
- * (borrow-and-release), holding no DB connection between polls.
- *
- * `enabled` and the two caps are COST controls, not ergonomics. On a
+ * Injectable SSE configuration. Prod defaults keep a `/events` connection bounded; tests pass
+ * tiny values for deterministic frames. The poll uses a discrete borrow-and-release query,
+ * holding no DB connection between polls. `enabled` and the two caps are cost controls: on a
  * per-invocation-second platform every open `/events` tab is a live function for its whole
- * lifetime, reconnecting forever, and nothing in the protocol asks the client's permission:
- * one page in a loop, or a client build with the flag flipped on, is an unbounded bill and a
- * pooler-exhaustion vector at the same time. Beta therefore ships SSE **off server-side**
- * (the client already treats it as a lossy, content-free wake signal, so `GET /sync` polling
- * is a complete substitute) and, when it is turned on, refuses to open more than
- * `maxPerAccount` streams from one account or `maxPerInstance` in one warm instance.
+ * lifetime, reconnecting forever — one page in a loop is an unbounded bill and a
+ * pooler-exhaustion vector. SSE ships off server-side (the client treats it as a lossy,
+ * content-free wake signal, so `GET /sync` polling is a complete substitute); turned on, the
+ * route refuses more than `maxPerAccount` streams per account or `maxPerInstance` per instance.
  */
 export interface SseConfig {
   heartbeatMs: number;
@@ -358,47 +314,28 @@ export const DEFAULT_SSE: SseConfig = {
 };
 
 /**
- * THE PER-INSTANCE `change_log` WAKE FAN-OUT — what turns `GET /events` from a poll relay into
- * a push relay.
- *
- * The host that can hold a `LISTEN` builds ONE of these per warm instance — one session-mode
- * Postgres connection, never one per stream; session slots are pinned backends and the scarce
- * resource — and every open `/events` stream on the instance subscribes its account
- * here. A NOTIFY from `recordChanges` (`packages/db/src/change-log.ts`, CHANGE_LOG_CHANNEL)
- * fans out in process to exactly the streams whose account it names.
- *
- * IT IS A HINT, NOT A DEPENDENCY, on both sides of this interface:
- *
- *  · A host with no hub (`deps.changeWake` absent — the local sidecar host, a deployment with
- *    no session-mode URL, every existing test) gets the route's own serialized poll loop and
- *    nothing else, which is exactly the pre-hub behaviour.
- *  · A hub whose LISTEN is down delivers nothing and the poll still carries the stream. The
- *    route never asks the hub whether it is healthy; missed wakes are indistinguishable from
- *    quiet, and the poll is what bounds the staleness either way.
- *
- * `subscribe` MUST NOT THROW (a broken hub is a hub that delivers nothing), and the returned
- * unsubscribe must be idempotent — the route calls it from `stop()`, which can run twice
- * (lifetime close racing a client cancel).
+ * The per-instance `change_log` wake fan-out — what turns `GET /events` from a poll relay
+ * into a push relay. The host that can hold a LISTEN builds one per warm instance — one
+ * session-mode connection, never one per stream — and every open `/events` stream subscribes
+ * its account; a NOTIFY from `recordChanges` (`packages/db/src/change-log.ts`) fans out in
+ * process. A hint, not a dependency, on both sides: a host with no hub gets the route's own
+ * poll loop (the pre-hub behaviour), and a hub whose LISTEN is down delivers nothing while
+ * the poll bounds the staleness. `subscribe` must not throw, and the returned unsubscribe
+ * must be idempotent — the route calls it from `stop()`, which can run twice.
  */
 export interface ChangeWakeHub {
   subscribe(accountId: string, onWake: (seq: bigint) => void): () => void;
 }
 
 /**
- * ONE PAGER ARM'S STANDING VERDICT, as `GET /health` publishes it.
- *
- * A structural MIRROR of `AlertSinkHealth` (`packages/db/src/alerts.ts`) and deliberately not an
- * import of it: this file is compiled by every host, the shipped local engine included, and that
- * type belongs to the hosted half. The mirror cannot drift silently, because the projector that
- * fills it (`apiAlertSinkSummary`, on the Cloud side where BOTH types are nameable) is annotated
- * with this one — a renamed field or a new outcome code fails to compile there rather than
- * changing what an endpoint publishes.
- *
- * The projection is written out field by field rather than forwarded, and that is load-bearing
- * rather than tidy. Structural assignability accepts a WIDER object, and `JSON.stringify`
- * publishes what an object actually holds, not what its type says — so forwarding `sinkHealthOf`'s
- * rows would put any field a later edit adds to `AlertSinkHealth` onto an endpoint anybody can
- * read, a vendor's own error sentence among the candidates.
+ * One pager arm's standing verdict, as `GET /health` publishes it. A structural mirror of
+ * `AlertSinkHealth` (`packages/db/src/alerts.ts`), deliberately not an import: this file is
+ * compiled by every host, the shipped local engine included, and that type belongs to the
+ * hosted half. The mirror cannot drift silently — the projector that fills it
+ * (`apiAlertSinkSummary`) is annotated with this type. The projection is written field by
+ * field, and that is load-bearing: structural assignability accepts a wider object and
+ * `JSON.stringify` publishes what an object holds — forwarding rows would put a later-added
+ * field, a vendor's own error sentence among the candidates, onto a public endpoint.
  */
 export interface AlertArmHealth {
   /** The sink's name (`"webhook"`, `"telegram"`, `"mail"`). Not an endpoint and not a credential. */
@@ -422,66 +359,46 @@ export interface AlertArmHealth {
  */
 export interface AlertSinkSummary {
   /**
-   * Every CONFIGURED arm, in composition order.
-   *
-   * `[]` is a statement, not an absence: this host has no way to page anybody. Exactly ONE entry
-   * is the single-vendor pager — the state that delivers every page correctly right up to its
-   * vendor's outage and then delivers nothing, with no failed delivery to escalate and no arm
-   * left to carry the escalation.
-   *
-   * Instance-INDEPENDENT: it is the composition, so the names and the count read the same from
-   * any instance of this deployment.
+   * Every configured arm, in composition order. `[]` is a statement, not an absence: this
+   * host has no way to page anybody. Exactly one entry is the single-vendor pager — the
+   * state that delivers every page correctly right up to its vendor's outage and then
+   * delivers nothing, with no failed delivery to escalate and no arm left to carry the
+   * escalation. Instance-independent: it is the composition, so the names and the count read
+   * the same from any instance of this deployment.
    */
   arms: AlertArmHealth[];
   /**
-   * How many alert passes THIS INSTANCE has RUN.
-   *
-   * The per-arm counters in {@link AlertSinkSummary.arms} are the delivery streak of one warm
-   * instance, so a cold one reports `attempts: 0` for an arm that has been delivering for
-   * months. That is the difference between "never exercised" and "never exercised HERE", and
-   * without this number the first reading is the one an operator would take. `passes: 0` says
-   * the counters beside it are cold rather than that the pager is dead.
-   *
-   * RUN, not "completed", and the distinction is load-bearing in one direction only: a pass
-   * counts from the moment it could mutate the streak, so a pass that mutated the arms and then
-   * failed is counted. Counting completions instead let a supported failure — the notification
-   * claim's settle UPDATE failing after delivery — publish fresh per-arm counters beside
-   * `passes: 0`, i.e. the qualifier declaring its own neighbours cold. The residual looseness
-   * runs the harmless way: a pass that died before it reached the arms is also counted, so
-   * `passes` can over-report activity but can never under-report it.
+   * How many alert passes this instance has run. The per-arm counters in
+   * {@link AlertSinkSummary.arms} are one warm instance's delivery streak, so a cold instance
+   * reports `attempts: 0` for an arm that has delivered for months; `passes: 0` says the
+   * counters beside it are cold rather than that the pager is dead. Run, not "completed": a
+   * pass counts from the moment it could mutate the streak, so a pass that mutated the arms
+   * and then failed is counted — counting completions let a supported failure publish fresh
+   * per-arm counters beside `passes: 0`. The residual looseness runs the harmless way:
+   * `passes` can over-report activity, never under-report it.
    */
   passes: number;
 }
 
 /**
- * What `GET /health` publishes about the host itself.
- *
- * `kek` is the {@link KekEnvIdentity} — `{ active, count, fingerprint }` — and it is
- * the SAME object, from the SAME `kekEnvIdentity()` in `@trafficflow/core`, that the
- * worker renders at its own `/health`. That is the point: a KEK that differs between the
- * API host and the worker makes every `mailbox_credentials` row undecryptable on one of
- * them, with no error until a mailbox is touched. Comparing the two `/health`
- * responses must be sufficient to see it, and all THREE fields must match — the
- * fingerprint covers the whole ring, `active` is what new writes persist as `key_version`.
- *
- * Absent on `ApiDeps`, the route falls back to `kekEnvIdentity(process.env)` and
+ * What `GET /health` publishes about the host itself. `kek` is the {@link KekEnvIdentity} —
+ * `{ active, count, fingerprint }` — the same object, from the same `kekEnvIdentity()` in
+ * `@trafficflow/core`, that the worker renders at its own `/health`. That is the point: a KEK
+ * that differs between the API host and the worker makes every `mailbox_credentials` row
+ * undecryptable on one of them, with no error until a mailbox is touched. Comparing the two
+ * `/health` responses must be sufficient to see it, and all three fields must match. Absent
+ * on `ApiDeps`, the route falls back to `kekEnvIdentity(process.env)` and
  * {@link API_VERSION}, so a host that forgets to inject still reports truthfully.
  */
 /**
- * WHERE {@link HealthConfig.version} came from, ordered by how tightly each is bound to the
- * artifact rather than by how the environment happens to list them — same four values and same
- * meaning as the worker's `BuildIdentitySource` (`apps/worker/src/build-version.ts`):
- * `"platform"` (the hosting platform's own git metadata — nothing can make it disagree with
- * what is running), `"file"` (a build-identity file written into the deployed tree, so it is an
- * input to the artifact rather than state beside it), `"variable"` (an operator-set project
- * variable that lives beside the artifact and can go stale the moment a later build fails while
- * the old one keeps serving), or `"none"` (nothing said).
- *
- * A Vercel deploy from a `git archive` extraction carries no
- * `.git`, so the platform sets no commit sha and every host used to fall straight through to
- * `TF_BUILD_VERSION` — a pinned project variable nobody updates on every deploy — with `version`
- * presenting that stale label as confidently as a sha read out of the artifact. The source is
- * published beside the value so a consumer can tell the two apart.
+ * Where {@link HealthConfig.version} came from, ordered by how tightly each is bound to the
+ * artifact — same four values and meaning as the worker's `BuildIdentitySource`
+ * (`apps/worker/src/build-version.ts`): `"platform"` (the platform's own git metadata),
+ * `"file"` (a build-identity file written into the deployed tree — an input to the artifact),
+ * `"variable"` (an operator-set project variable that can go stale while an old build keeps
+ * serving), `"none"`. A deploy from a `git archive` extraction carries no `.git`, so the
+ * platform sets no sha and the host falls through; the source is published beside the value
+ * so a consumer can tell a stale label from an identity read out of the artifact.
  */
 export type BuildIdentitySource = "platform" | "file" | "variable" | "none";
 
@@ -495,19 +412,14 @@ export interface HealthConfig {
    */
   buildSource?: BuildIdentitySource | null;
   /**
-   * WHICH SCHEMA THIS HOST IS SUPPOSED TO HAVE. Absent means both journals, which is every
-   * hosted deployment.
-   *
-   * `"mail"` is the LOCAL engine: it migrates the mail journal alone and has no billing ledger,
-   * no passkey challenge store and no staff directory — nor should it, they belong to a service its
-   * owner has no account with. Probed against the full set it answers `503 schema_incomplete` on
-   * every request for ever, which reads as "somebody forgot to migrate" about a database that is
-   * complete for what it is.
-   *
-   * Declared by the host rather than sniffed from the database, deliberately: inferring the tier
-   * from what is missing would make a genuinely half-migrated hosted deployment — the reachable
-   * mail-committed/cloud-failed state — indistinguishable from a healthy desktop install, and
-   * that is the exact state the probe exists to catch.
+   * Which schema this host is supposed to have. Absent means both journals — every hosted
+   * deployment. `"mail"` is the local engine: it migrates the mail journal alone and has no
+   * billing ledger, no passkey challenge store, no staff directory; probed against the full
+   * set it would answer `503 schema_incomplete` forever about a database that is complete for
+   * what it is. Declared by the host rather than sniffed from the database: inferring the
+   * tier from what is missing would make a genuinely half-migrated hosted deployment — the
+   * reachable mail-committed/cloud-failed state — indistinguishable from a healthy desktop
+   * install, the exact state the probe exists to catch.
    */
   schemaTier?: "all" | "mail";
   /** Absent ⇒ this host has no usable KEK; see {@link HealthConfig.kekError}. */
@@ -530,143 +442,80 @@ export interface HealthConfig {
    */
   buildError?: string | null;
   /**
-   * Why this deployment has no STAFF surface, or null when it has one.
-   *
-   * Present ⇒ `/health` publishes `adminFault: <reason>` and every `/admin/*` route answers
-   * 404. It is the only channel that can say so: with the surface unarmed there is no admin
-   * endpoint left to report its own absence, and the console renders six error panels that
-   * name a network failure rather than the configuration that caused it.
-   *
-   * **It does NOT make `/health` answer 503, and that is deliberate.** `healthFault` is for
-   * faults that make the deployment unfit to serve USERS — a wrong database, an unusable KEK,
-   * an unidentifiable build. An unarmed staff console is not one: 503 here would take the
-   * product out of rotation over the configuration of an internal tool, which is precisely the
-   * failure `loadAlertsConfig` refuses by name ("an observability feature causing the outage it
-   * exists to report"). The fault is named, loudly, in a body an operator reads with one curl.
+   * Why this deployment has no staff surface, or null when it has one. Present ⇒ `/health`
+   * publishes `adminFault: <reason>` and every `/admin/*` route answers 404 — the only
+   * channel that can say so, since an unarmed surface has no endpoint left to report its own
+   * absence. It does not make `/health` answer 503, deliberately: `healthFault` is for faults
+   * that make the deployment unfit to serve users (a wrong database, an unusable KEK); an
+   * unarmed staff console is not one, and a 503 would take the product out of rotation over
+   * an internal tool's configuration. The fault is named in a body one curl reads.
    */
   adminError?: string | null;
   /**
-   * RUN THE CONTENT-BLIND ATTESTATION AND PUBLISH ITS RESULT, non-fatally.
-   *
-   * A capability, not a value: `/health` calls it and merges a `staffDbFault` string when it
-   * returns one. It awaits the memoised staff-handle factory, so it pays the census + bite
-   * round trips only on the first `/health` per cold instance and is instant thereafter; it
-   * never throws and never makes `/health` 503 — an over-privileged `DATABASE_URL_ADMIN` is a
-   * dark console, not a reason to take the product host out of rotation, exactly as
-   * {@link HealthConfig.adminError} is.
-   *
-   * It is the counterpart to `adminError`: that names the STATIC refusals (missing var, equal to
-   * the runtime URL, unusable for serverless), which are visible at boot; this names the one an
-   * absent-var check cannot see — a plausible role whose EFFECTIVE privileges exceed the
-   * allowlist — which previously surfaced only as a per-request 503 the first time the console
-   * was loaded. Absent on hosts with no blind connection (desktop, an unarmed deployment).
+   * Why this deployment has no staff surface, or null when it has one. Present ⇒ `/health`
+   * publishes `adminFault: <reason>` and every `/admin/*` route answers 404 — the only
+   * channel left, since an unarmed surface has no endpoint to report its own absence. It
+   * does not make `/health` answer 503: `healthFault` is for faults that make the deployment
+   * unfit to serve users (a wrong database, an unusable KEK); an unarmed staff console is
+   * not one, and a 503 would take the product out of rotation over an internal tool's
+   * configuration. The fault is named in a body one curl reads.
    */
   staffDbAttestation?: (() => Promise<string | null>) | null;
   /**
-   * **THE PAGER IS CONFIGURED AND CANNOT RUN.**
-   *
-   * Present ⇒ `/health` publishes `alertsFault: <reason>` and the three `/internal/alerts*`
-   * routes answer 503 `alerts_db_unarmed`. Set by the host when its alerting block is armed and
-   * the content-blind connection is not — the state that used to be reported, if at all, as a
-   * CONSOLE fault, which is a different sentence: "the admin console is off" is a Monday
-   * problem, "nothing is watching the worker" is an outage nobody is paged for.
-   *
-   * **It does NOT make `/health` answer 503**, for the same reason {@link
-   * HealthConfig.adminError} does not, only more so: this field exists precisely because the
-   * observability configuration is broken, and taking the product out of rotation over it would
-   * be the observability feature causing the outage it exists to report.
-   *
-   * The reporting is three-ring and this is only the first: the routes answer non-2xx, so the
-   * scheduled CI health check's `curl --fail-with-body` goes red and mails the operator without
-   * anything in this repo having to work, and the hosted API's build configuration refuses to
-   * build a production host that could reach the state at all.
+   * Run the content-blind attestation and publish its result, non-fatally. A capability, not
+   * a value: `/health` calls it and merges a `staffDbFault` string when one returns. It
+   * awaits the memoised staff-handle factory (census + bite round trips on the first
+   * `/health` per cold instance only), never throws, and never makes `/health` 503 — an
+   * over-privileged `DATABASE_URL_ADMIN` is a dark console, not a reason to take the product
+   * out of rotation. The counterpart to `adminError`: that names the static refusals visible
+   * at boot; this names what an absent-var check cannot see — a plausible role whose
+   * effective privileges exceed the allowlist. Absent on hosts with no blind connection.
    */
   alertsError?: string | null;
   /**
-   * **WHICH PROVIDER FAMILY THIS HOST'S RUNTIME CONNECTION BELONGS TO.**
-   *
-   * One of the fixed strings `providerFamily` returns (`packages/db/src/session-url.ts`),
-   * including `"unrecognized"`. Not a fault, and it never makes `/health` answer 503.
-   *
-   * It exists because the connection guards it accompanies **stopped guarding for a day and
-   * nothing reported it.** Those guards recognised a managed Postgres connection by matching the
-   * hostname of the provider in use at the time; the day the deployment moved to a different
-   * provider, every one of them became unconditionally true-negative. Every unit test that
-   * covered them stayed green, because every fixture named the old provider — a test cannot know
-   * that a deployment changed provider. This field can: `"unrecognized"` on the live host says
-   * the refusals have become decoration, which turns the existing "read `/health` after a
-   * deploy" step into the tripwire instead of something an operator has to remember at the next
-   * migration.
-   *
-   * Safe to publish for `kek`'s reason: it is an IDENTITY, one of three fixed strings. It carries
-   * no host, no port, no role and no credential — the connection string's message is never
-   * forwarded here precisely because it does.
+   * The pager is configured and cannot run. Present ⇒ `/health` publishes
+   * `alertsFault: <reason>` and the three `/internal/alerts*` routes answer 503
+   * `alerts_db_unarmed`. Set when the alerting block is armed and the content-blind
+   * connection is not — "the console is off" is a Monday problem, "nothing is watching the
+   * worker" is an outage nobody is paged for. It does not make `/health` 503, for
+   * {@link HealthConfig.adminError}'s reason, only more so. Three rings: the routes answer
+   * non-2xx so the scheduled CI health check goes red and mails the operator, and the hosted
+   * API's build configuration refuses to build a production host that could reach the state.
    */
   dbProvider?: string | null;
   /**
-   * **WHICH BILLING COMPOSITION THIS HOST IS SERVING.** One of two fixed strings, on
-   * `dbProvider`'s exact pattern: an injected identity, never a fault, never a 503.
-   *
-   *  · `"plane"`        — this host reaches a billing service over HTTP;
-   *  · `"unconfigured"` — no billing service is configured and `/billing/*` answers 503.
-   *
-   * It exists because the failure mode of a configuration change here is CAMOUFLAGED: a host
-   * that lost its entitlements URL degrades to unmetered, which is also a legitimate
-   * deployment, so nothing else distinguishes "self-hosted" from "misconfigured by the last
-   * deploy". Two spaced `/health` reads after any deploy catch it through this field. Published
-   * on the unhealthy branches too — a dark host is exactly when the marker is worth most.
-   *
-   * Safe to publish for `dbProvider`'s reason: fixed strings only, no URL, no secret.
+   * Which provider family this host's runtime connection belongs to — one of the fixed
+   * strings `providerFamily` returns (`packages/db/src/session-url.ts`), `"unrecognized"`
+   * included. Not a fault, never a 503. The connection guards it accompanies once recognised
+   * a managed Postgres by the then-current provider's hostname — a provider move made every
+   * guard unconditionally true-negative while every fixture stayed green. `"unrecognized"`
+   * on the live host says the refusals have become decoration, turning "read `/health` after
+   * a deploy" into the tripwire. Safe to publish: an identity, one of three fixed strings —
+   * no host, no port, no role, no credential.
    */
   entitlements?: "configured" | "unmetered" | null;
-  /**
-   * **EVERY CONFIGURED PAGER ARM ON THIS HOST, AND WHETHER IT IS ACTUALLY DELIVERING.**
-   *
-   * A capability, not a value, for the inverse of {@link HealthConfig.staffDbAttestation}'s
-   * reason: this one is a pure MEMORY read — `/health` still touches no database — but the memory
-   * is the alert driver's own delivery streak, which lives in the route module that mutates it.
-   * Deriving the summary at call time is what stops it from drifting from the streak the pass
-   * actually wrote, which is the same rule the worker's `/health` states about `sinkHealthOf`.
-   *
-   * ── WHY A SERVERLESS HOST NEEDED THIS, WHEN THE WORKER DID NOT ──────────────────────────
-   *
-   * The worker names its arms in its startup line and warns when there is exactly one, because
-   * one arm is a single point of failure that usually works. A serverless host has no startup
-   * line, so that announcement had no equivalent here: the per-arm health existed only on the
-   * `/internal/alerts` response, behind the scheduler's credential, in a body nobody reads
-   * unless they are already debugging. And this host is the ONLY observer of a dead worker, so
-   * its own arms going quiet is the version of the fault that coincides with the outage the arms
-   * exist to report.
-   *
-   * ABSENT (desktop, any host that injects nothing) means "no pager here by construction" and
-   * publishes no key at all. Present with `arms: []` is the opposite claim: this deployment is
-   * meant to page and cannot. That state is otherwise camouflaged, which is why the hosted host
-   * injects unconditionally — {@link HealthConfig.alertsError} only fires when the alert
-   * credential IS configured, so a deployment that lost `TF_ALERT_SECRET` reads exactly like a
-   * healthy one.
-   *
-   * NO VENDOR PROSE. Names, closed codes, counts and timestamps, per {@link AlertArmHealth} —
-   * the sink's own error sentence is unbounded third-party text and stays in the log line, where
-   * a drain gates it. This endpoint is reachable by anyone.
-   */
+/**
+ * Every configured pager arm on this host, and whether it is actually delivering. A capability,
+ * not a value: the memory is the alert driver's own delivery streak, in the route module that
+ * mutates it, and deriving the summary at call time stops it drifting from the streak the pass
+ * wrote. The worker names its arms in a startup line; a serverless host has none, and it is the
+ * only observer of a dead worker. Absent means no pager by construction and publishes no key;
+ * present with `arms: []` is the opposite claim — meant to page and cannot — so the hosted host
+ * injects unconditionally. No vendor prose: names, closed codes, counts and timestamps only; this
+ * endpoint is reachable by anyone.
+ */
   alertSinks?: (() => AlertSinkSummary) | null;
 }
 
 /**
  * What `GET /hello` publishes about the host — server identity and capability negotiation.
- *
- * The route serves this descriptor VERBATIM (plus the constant `product` and a defaulted
- * `apiVersion`), so each composition states its own truth at its composition root, exactly as
- * {@link HealthConfig} is injected: the hosted deployment says `"managed"`, a standalone server
- * says `"selfhost"`, the desktop engine says `"local"`. There is no environment fallback and no
- * sniffing — a host that injects nothing gets a 503 from the route rather than a guessed flavor,
- * because a capability answer that guesses is worse than none: a client's server picker trusts
- * this endpoint to decide which ceremonies exist here.
- *
- * Every field is a CAPABILITY, never a configuration echo: which sign-in ceremonies this server
- * offers, which optional surfaces answer, whether the first account still has to be created.
- * Nothing here is per-account and nothing here is a secret — the endpoint is unauthenticated by
- * design, so the descriptor must hold nothing an anonymous stranger may not learn.
+ * The route serves this descriptor verbatim (plus the constant `product` and a defaulted
+ * `apiVersion`), so each composition states its own truth at its composition root: the
+ * hosted deployment says `"managed"`, a standalone server `"selfhost"`, the desktop engine
+ * `"local"`. No environment fallback and no sniffing — a host that injects nothing gets a
+ * 503 rather than a guessed flavor, because a client's server picker trusts this endpoint to
+ * decide which ceremonies exist here. Every field is a capability, never a configuration
+ * echo; nothing here is per-account or secret — the endpoint is unauthenticated by design.
  */
 export interface HelloConfig {
   /**
@@ -805,41 +654,25 @@ export interface ApiDeps {
    */
   changeWake?: ChangeWakeHub | null;
   /**
-   * THE VERIFIED-ADDRESS PRODUCT POLICY — does this composition require a PROVEN address
-   * before the costly route classes (`work`, `connection`, `paid` — everything outside
-   * `UNVERIFIED_MAY_REACH`)? Consumed by exactly one thing: `withSpendGate`.
-   *
-   * A composition-root decision, not a route option, because the honest answer differs by
-   * deployment while the route table is identical everywhere. The hosted service requires it —
-   * an unverified account must not be able to generate meaningful cost against OUR bill — and
-   * states `true` explicitly. An operator-run standalone server may compose it OFF: there the
-   * IMAP credential a mailbox add presents already proves mailbox ownership, the account email
-   * is a login identifier on a box the operator pays for, and accounts arriving through a
-   * pairing invite legitimately start unverified (see `routes/self-host.ts`, obligation 4).
-   *
-   * ABSENT ⇒ REQUIRE, and only the exact boolean `false` relaxes. The default direction is
-   * non-negotiable: a host that never heard of this field must get the strict gate, because an
-   * absent config value that relaxes a gate is a misconfiguration that presents as working. A
-   * garbage value from a JavaScript composition root is treated as absent for the same reason
-   * an unrecognised `CostClass` is refused.
+   * The verified-address product policy — does this composition require a proven address
+   * before the costly route classes (`work`, `connection`, `paid`)? Consumed by exactly one
+   * thing: `withSpendGate`. A composition-root decision, not a route option: the hosted
+   * service requires it (an unverified account must not generate cost against our bill) and
+   * states `true`; an operator-run standalone server may compose it off — there the IMAP
+   * credential already proves mailbox ownership (`routes/self-host.ts`, obligation 4).
+   * Absent ⇒ require, and only the exact boolean `false` relaxes: an absent value that
+   * relaxes a gate is a misconfiguration that presents as working. Garbage is absent.
    */
   requireVerifiedForProduct?: boolean;
   /**
-   * Whether the `tf_session` COOKIE is an accepted credential on this deployment.
-   * Default (absent or true) is the historical behaviour: cookie OR bearer.
-   *
-   * `false` makes the host BEARER-ONLY — `readSessionToken` ignores the cookie
-   * entirely, so an ambient cookie cannot authenticate a request. That is the whole
-   * mechanism behind `api.ohmail.app`: it is the native/desktop surface, reached by
-   * clients that hold a bearer token from the OAuth2 PKCE flow and that are not
-   * browsers, so there is no ambient credential to be abused cross-site and
-   * `withCsrf` becomes a no-op BY CONSTRUCTION (`via` can never be `"cookie"`).
-   * `api.ohmail.app` — the host the webapp's same-origin rewrite proxies to — keeps
-   * cookies, because there the cookie is genuinely first-party.
-   *
-   * Note it is not merely "prefer bearer": a request presenting BOTH is treated as
-   * bearer-only, and a request presenting only a cookie is 401, not 403 — it carries
-   * no credential this deployment recognises.
+   * Whether the `tf_session` cookie is an accepted credential on this deployment. Default
+   * (absent or true) is cookie OR bearer. `false` makes the host bearer-only —
+   * `readSessionToken` ignores the cookie entirely, so an ambient cookie cannot authenticate
+   * a request. That is the mechanism behind the native/desktop surface: its clients hold a
+   * bearer token from the OAuth2 PKCE flow and are not browsers, so `withCsrf` is a no-op by
+   * construction (`via` can never be `"cookie"`). Not merely "prefer bearer": a request
+   * presenting both is treated as bearer-only, and a cookie-only request is 401, not 403 —
+   * it carries no credential this deployment recognises.
    */
   allowCookieAuth?: boolean;
   /** What `GET /health` reports about this host (version + KEK ring identity). */
@@ -850,35 +683,23 @@ export interface ApiDeps {
    */
   hello?: HelloConfig;
   /**
-   * This deployment's VAPID **public** key, base64url — what `GET /push/vapid-key` serves.
-   *
-   * ── WHY THE PUBLIC HALF AND ONLY THE PUBLIC HALF LIVES HERE ─────────────────────────────
-   *
-   * A UnifiedPush connector cannot register without one: it hands the key to the device's
-   * distributor and thereafter renders only messages signed by the matching private key. So the
-   * phone has to be able to ASK, and this is what it asks. The private half is read by the
-   * organizer and by nothing else — no request handler has any business being able to sign a
-   * wake, and keeping the signing key out of the serverless surface entirely is cheaper than
-   * auditing that nothing there reaches for it.
-   *
-   * ABSENT or `null` means this host has no keypair, and the route answers `{ publicKey: null }`
-   * — a real answer, not an error. It is what a self-host that has not configured one says, and
-   * the app turns it into a sentence rather than a dead switch. Deliberately NOT a `/hello`
-   * feature flag: a boolean there and a key here could disagree, and then a client would be told
-   * the capability exists by one route and refused it by the other.
+   * This deployment's VAPID public key, base64url — what `GET /push/vapid-key` serves. A
+   * UnifiedPush connector cannot register without one, so the phone has to be able to ask.
+   * The private half is read by the organizer and nothing else: no request handler has any
+   * business signing a wake, and keeping the signing key out of the serverless surface is
+   * cheaper than auditing that nothing there reaches for it. Absent or `null` means this host
+   * has no keypair and the route answers `{ publicKey: null }` — a real answer, not an error.
+   * Deliberately not a `/hello` feature flag: a boolean there and a key here could disagree,
+   * and a client would be told the capability exists by one route and refused it by the other.
    */
   vapidPublicKey?: string | null;
   /**
-   * The structured logger for THIS request.
-   *
-   * `withRequestId` binds `requestId` onto it, so every line a handler or middleware writes
-   * downstream carries the id the client also received in `x-request-id`. That is the whole
-   * point: a user reporting "my send failed at 14:32" hands over one value that selects
-   * every line of that request.
-   *
-   * Optional and defaulting to {@link silentLogger}: a route table must not print to a
-   * host's stdout because the host forgot to inject one, and no test should have to mute a
-   * global. A hosted deployment injects a real logger.
+   * The structured logger for this request. `withRequestId` binds `requestId` onto it, so
+   * every line a handler or middleware writes downstream carries the id the client also
+   * received in `x-request-id` — a user reporting "my send failed at 14:32" hands over one
+   * value that selects every line of that request. Optional and defaulting to
+   * {@link silentLogger}: a route table must not print to a host's stdout because the host
+   * forgot to inject a logger, and no test should have to mute a global.
    */
   logger?: Logger;
   /** See {@link ApiFaultLogPort}. */

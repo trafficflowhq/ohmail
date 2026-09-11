@@ -7,29 +7,14 @@ import type {
 import type { FetchLike, MicrosoftDeviceClient } from "@trafficflow/core";
 
 /**
- * THE HOSTED HALF OF THE DEPENDENCY SURFACE, declared where only a hosted build will see it.
- *
- * `deps.ts` describes what any host of this route table must supply. Most of it is the mail half
- * and is the same everywhere; a few members exist only where there are accounts to administer
- * and a pager to answer. Those members name the identity ceremony, the funnel and the
- * content-blind operator connection — modules a local install neither has nor may have.
- *
- * They were declared in `deps.ts` itself, which meant the file every host compiles named all four
- * of them. A type-only reference emits nothing, and it is still a private module named in source
- * and an import a public checkout could not resolve. So they are declared HERE and merged into the
- * interfaces next door.
- *
- * ── WHAT THIS DOES NOT CHANGE ─────────────────────────────────────────────────────────────
- *
- * Nothing about the hosted deployment: it loads the package barrel, the barrel names this module,
- * and every hosted route sees exactly the members it always saw. And nothing about the SAFETY of
- * an absent member — each one is optional and each one's absence already selects the refusing
- * branch (a 404 for a surface nobody armed, a 503 for a pager that cannot reach its database).
- * That grammar is unchanged; only where the members are declared has moved.
- *
- * A local build never loads this module, so its `ApiDeps` genuinely has no operator connection —
- * not "has one that is undefined". Code assuming otherwise fails to compile rather than failing
- * at request time.
+ * The hosted half of the dependency surface, declared where only a hosted build will see it.
+ * `deps.ts` describes what any host of this route table must supply; the members here exist
+ * only where there are accounts to administer and a pager to answer. Declared here and merged
+ * into the interfaces next door so the file every host compiles does not name modules a
+ * public checkout cannot resolve. Nothing changes for the hosted deployment (the barrel names
+ * this module), and absence stays safe — each member is optional and absence selects the
+ * refusing branch. A local build never loads this module, so its `ApiDeps` genuinely has no
+ * operator connection; code assuming otherwise fails to compile.
  */
 declare module "./deps.js" {
   interface ApiServices {
@@ -55,19 +40,14 @@ declare module "./deps.js" {
     // `mailed: false`, so `apps/api-vercel` builds one unconditionally.
     waitlist?: WaitlistService;
     /**
-     * WHAT THE PLATFORM SERVED — the read port behind `GET /internal/platform-signals/run`.
-     *
-     * OPTIONAL, and the three-way distinction it preserves is the whole reason this slot exists
-     * rather than the pass reading `process.env`:
-     *
-     *  · **no port** — nobody wired the question. The desktop engine, a self-host box. `200
-     *    {skipped}`, nothing written.
-     *  · **a port answering `unconfigured`** — we asked and there is no platform token. This is
-     *    production's state today, and it is what the board renders as "5xx: not measured".
-     *  · **a port answering `rows`** — a real measurement, and a `0` in it is a real zero.
-     *
-     * The first two both write nothing, so only a typed seam can tell them apart — and the third
-     * is the only one that may ever put a number on a screen.
+     * What the platform served — the read port behind `GET /internal/platform-signals/run`.
+     * Optional, and the three-way distinction is the reason this slot exists rather than the
+     * pass reading `process.env`:
+     *  · no port — nobody wired the question (desktop, self-host): `200 {skipped}`;
+     *  · a port answering `unconfigured` — we asked, there is no platform token; the board
+     *    renders "5xx: not measured";
+     *  · a port answering `rows` — a real measurement, and a `0` in it is a real zero.
+     * The first two both write nothing, so only a typed seam can tell them apart.
      */
     platformSignals?: PlatformSignalPort;
   }
@@ -88,62 +68,36 @@ declare module "./deps.js" {
      */
     admin?: AdminConfig;
     /**
-     * THE CONTENT-BLIND CONNECTION every staff surface reads on — staff tooling must be
-     * structurally unable to read mail content, not merely trusted not to.
-     *
-     * A FACTORY and not a handle, because minting one is an `await`: `adminDbFor` probes the
-     * connection (`SELECT subject FROM messages WHERE false` must raise 42501) before it will
-     * brand it, and `buildDeps` is synchronous and runs on the path of every request. The probe
-     * result is cached per cold instance, so the cost is one round trip on the first staff
-     * request an instance serves and nothing thereafter.
-     *
-     * ABSENT ⇒ every `/admin/*` route answers **404**, exactly as a missing secret does, and the
-     * three `/internal/alerts*` routes answer **503 `alerts_db_unarmed`**. The two answers differ
-     * on purpose: a console nobody armed is an intentionally absent surface, while a
-     * PAGER that is configured and cannot reach a database is broken, and a dead-man's switch
-     * that 404s is indistinguishable from one that was never meant to exist.
-     *
-     * There is deliberately no fallback to {@link ApiDeps.db}: "absent configuration selects the
-     * dangerous branch" is this repository's recurring failure shape, and here the dangerous
-     * branch is the handle that can read every account's mail.
-     *
-     * A REJECTED promise ⇒ 503. That is the case a presence check cannot see — the runtime URL
-     * pasted into `DATABASE_URL_ADMIN` — and it is why the probe exists at all.
+     * The content-blind connection every staff surface reads on — staff tooling must be
+     * structurally unable to read mail content, not merely trusted not to. A factory, not a
+     * handle: minting one is an `await` (`adminDbFor` requires `SELECT subject FROM messages
+     * WHERE false` to raise 42501 before branding it), cached per cold instance. Absent ⇒
+     * `/admin/*` answers 404 and `/internal/alerts*` answers 503 `alerts_db_unarmed` —
+     * different on purpose: an unarmed console is intentionally absent, a configured pager
+     * that cannot reach its database is broken. Deliberately no fallback to
+     * {@link ApiDeps.db} — that handle can read every account's mail. A rejected promise ⇒ 503.
      */
     adminDb?: () => Promise<AdminDb>;
     /**
-     * The ENV BOOTSTRAP for the Microsoft application registration, resolved by the
-     * host from its own environment and passed in. ABSENT ⇒ this host has no env fallback, so the
-     * `oauth_provider_config` row is the only source and a deployment with neither answers
-     * "not configured" rather than throwing.
-     *
-     * It is here and not read from `process.env` in the route for the reason {@link AdminConfig}
-     * gives: a route that reaches into the environment makes every test of it depend on the
-     * runner's ambient variables and makes a host unable to state what it is configured with. The
-     * ACCEPTED VARIABLE NAMES — and the `MICROSOFT_*` aliases — live in one place
-     * (`msOAuthEnv`, `packages/db/src/oauth-config.ts`), which both this host and the worker call,
-     * so the two cannot accept different sets.
-     *
-     * The client SECRET is in here. It is never logged (`log.ts` redacts on the `secret` substring),
-     * never projected by any route, and never returned to the admin console — which reads
-     * `secretSet: boolean` and nothing else.
+     * The env bootstrap for the Microsoft application registration, resolved by the host and
+     * passed in. Absent ⇒ no env fallback: the `oauth_provider_config` row is the only source
+     * and a deployment with neither answers "not configured" rather than throwing. Not read
+     * from `process.env` in the route, for {@link AdminConfig}'s reason. The accepted
+     * variable names — `MICROSOFT_*` aliases included — live in `msOAuthEnv`
+     * (`packages/db/src/oauth-config.ts`), called by this host and the worker, so the two
+     * cannot accept different sets. The client secret is in here: never logged (`log.ts`
+     * redacts on the `secret` substring); the admin console reads `secretSet` and nothing else.
      */
     msOAuth?: MsOAuthBootstrap;
     /**
-     * THE PUBLIC CLIENT THE DEVICE-CODE FLOW RUNS AS — a SEPARATE registration, and absent on every
-     * composition that does not mount the device routes.
-     *
-     * It is not a fallback for {@link msOAuth} and must never be resolved from it: a confidential
-     * application's client id is refused outright on the device grant (`unauthorized_client`,
-     * because that grant carries no secret), so an operator who has set up their own confidential
-     * registration has NOT thereby armed this door. There is no secret field, because a public
-     * registration has none and `clientAuthFields` refuses one on that arm.
-     *
-     * ABSENT ⇒ the device door is dark: `GET …/availability` reports `device: false`, and the two
-     * device routes answer 503 with the reason named. That is the state of every hosted deployment,
-     * whose composition mounts neither the routes nor this field — which is why there is no
-     * environment variable for it there. A variable that does nothing is the reassuring
-     * half-sentence that becomes a support question.
+     * The public client the device-code flow runs as — a separate registration, absent on
+     * every composition that does not mount the device routes. Not a fallback for
+     * {@link msOAuth} and never resolved from it: a confidential application's client id is
+     * refused outright on the device grant (`unauthorized_client` — that grant carries no
+     * secret), so an operator's confidential registration has not thereby armed this door.
+     * No secret field: a public registration has none and `clientAuthFields` refuses one.
+     * Absent ⇒ the device door is dark: `GET …/availability` reports `device: false` and the
+     * two device routes answer 503 with the reason named.
      */
     msDevice?: MicrosoftDeviceClient;
     /**
@@ -155,14 +109,12 @@ declare module "./deps.js" {
      */
     appOrigin?: string;
     /**
-     * HOW THIS HOST REACHES MICROSOFT'S TOKEN ENDPOINT — an injected port, exactly as
-     * `RemoteFetch`, `HostResolver`, `OneClickPost` and `DraftPort` are, and for the same reason:
-     * the suite performs zero external requests by design, and a guard whose result comes from
-     * "that hostname does not resolve in CI" is a guard whose exit code comes from the harness rather
-     * than from reality.
-     *
-     * ABSENT ⇒ `globalThis.fetch`, which is what every deployment uses. A test injects a fake token
-     * endpoint and can then drive the arms that matter: a rotated refresh token, an `invalid_client`,
+     * How this host reaches Microsoft's token endpoint — an injected port, exactly as
+     * `RemoteFetch`, `HostResolver`, `OneClickPost` and `DraftPort` are: the suite performs
+     * zero external requests by design, and a guard whose result comes from "that hostname
+     * does not resolve in CI" gets its exit code from the harness rather than reality.
+     * Absent ⇒ `globalThis.fetch`, which every deployment uses. A test injects a fake token
+     * endpoint and drives the arms that matter: a rotated refresh token, `invalid_client`,
      * a 5xx, an `id_token` with no address claim, a grant with no `offline_access`.
      */
     oauthFetch?: FetchLike;
@@ -170,21 +122,13 @@ declare module "./deps.js" {
 }
 
 /**
- * What the six `GET /admin/*` reads need. Built by the HOST from its environment, never read
- * from `process.env` inside a route.
- *
- * ── ONE SECRET, AND WHAT THAT BUYS AND COSTS ──────────────────────────────────────────────
- * The caller is the admin console's own SERVER-SIDE proxy — not a browser and not a
- * person: the secret never leaves the two deployments that hold it.
- * There is no session to resolve, and inventing a staff account would mean a phishable
- * credential in `users` plus a role column this read surface has no business adding.
- *
- * What it does NOT buy: an identity. No per-person revocation, no actor to record, no read
- * audit. That is precisely why this surface ships the READS and no write — a write needs a
- * name to put in the `audit_log` row, and a shared secret has none.
- *
- * It MUST be a different value from {@link AlertsConfig.secret}: sharing them would mean
- * rotating the pager revokes staff access, and rotating staff access silences the pager.
+ * What the six `GET /admin/*` reads need. Built by the host from its environment, never read
+ * from `process.env` inside a route. One secret: the caller is the admin console's own
+ * server-side proxy — not a browser, not a person — so the secret never leaves the two
+ * deployments that hold it. What it does not buy is an identity: no per-person revocation, no
+ * actor to record — which is why this surface ships the reads and no write (a write needs a
+ * name for the `audit_log` row). It must differ from {@link AlertsConfig.secret}: sharing
+ * them would mean rotating the pager revokes staff access and vice versa.
  */
 export interface AdminConfig {
   /**
@@ -222,20 +166,14 @@ export interface AlertsConfig {
    */
   secret: string;
   /**
-   * The PLATFORM SCHEDULER's own secret — Vercel's `CRON_SECRET`, which it presents as
+   * The platform scheduler's own secret — Vercel's `CRON_SECRET`, presented as
    * `Authorization: Bearer <CRON_SECRET>` on every cron invocation. Accepted by
-   * `GET /internal/alerts/run` only, and compared with the same constant-time compare.
-   *
-   * A SECOND credential rather than a requirement that the operator paste
-   * {@link AlertsConfig.secret} into Vercel's box, because these have different lifetimes:
-   * `CRON_SECRET` belongs to one deployment's scheduler, while the alert secret is also held
-   * by GitHub Actions. One value in two places means rotating either one silences a driver
-   * nobody was thinking about — the failure `AdminConfig` refuses outright. Both grant the
-   * SAME capability (run the pass), so unlike the admin/alert pair there is nothing to gain
-   * from forbidding them to be equal, and nothing lost if an operator sets them the same.
-   *
-   * Absent ⇒ only {@link AlertsConfig.secret} is accepted, which is the correct state for a
-   * host with no platform cron.
+   * `GET /internal/alerts/run` only, compared with the same constant-time compare. A second
+   * credential rather than pasting {@link AlertsConfig.secret} into the platform's box,
+   * because the lifetimes differ: `CRON_SECRET` belongs to one deployment's scheduler, the
+   * alert secret is also held by the scheduled CI workflow. Both grant the same capability,
+   * so nothing is lost if an operator sets them equal. Absent ⇒ only
+   * {@link AlertsConfig.secret} is accepted — correct for a host with no platform cron.
    */
   cronSecret?: string;
   /** Sinks that actually reach a human. Empty ⇒ the response reports `undeliverable: true`. */

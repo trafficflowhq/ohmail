@@ -4,22 +4,14 @@ import { openMailboxImap, type OpenAdapterOptions, type OpenedMailboxImap } from
 import type { ApiDeps } from "./deps.js";
 
 /**
- * ═══ EVERY API-SIDE IMAP DIAL RUNS UNDER ONE BUDGET AND ENDS ITS SOCKET ═════════════════════
- *
- * A door here dials a mail server nobody vetted, on a request a signed-in caller can repeat.
- * Three of them had no wall clock: they dialled, read, and put the socket down in a `finally`
- * with `close()` — a graceful LOGOUT, which the driver QUEUES BEHIND the command that is
- * hanging. So a server that accepts a command and never answers held the connection, the
- * mailbox's slot in the shared per-mailbox cap, and the request's own invocation, and the
- * teardown written to release them waited in the same queue.
- *
- * Nothing else in the stack sees it. `PROBE_TIMEOUTS.socketMs` and its siblings are Node's
- * INACTIVITY timers, reset by every byte, so a reply arriving a byte a minute is never idle.
- *
- * Two rules, and they are one mechanism: ONE budget for dial and read together, and a breach
- * DESTROYS the socket (`forceClose`) rather than asking it politely to end. The destroy is what
- * makes holding the slot until the socket is down affordable — a graceful close on a hung
- * connection is unbounded, and that is why the release used to be allowed to run first.
+ * Every API-side IMAP dial runs under one budget and ends its socket. A door here dials a
+ * mail server nobody vetted, on a request a signed-in caller can repeat, and a graceful
+ * `close()` is a LOGOUT the driver queues behind the command that is hanging — a server that
+ * accepts a command and never answers held the connection, the mailbox's slot in the shared
+ * cap, and the invocation, while the teardown waited in the same queue. The socket timeouts
+ * are inactivity timers, reset by every byte, so a reply arriving a byte a minute is never
+ * idle. Two rules, one mechanism: one budget for dial and read together, and a breach
+ * destroys the socket (`forceClose`) — that is what makes holding the slot affordable.
  */
 
 /**

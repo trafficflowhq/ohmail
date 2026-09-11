@@ -6,58 +6,24 @@ import type { ApiDeps } from "./deps.js";
 import { imapAdmission } from "./routes/shared.js";
 
 /**
- * Build the API's `openAdapter` for on-demand attachment fetch. Mirrors the
- * sync worker's creds boundary WITHOUT importing the worker: it reads the
- * mailbox's `mailbox_credentials` (envelope-encrypted at rest), decrypts the
- * IMAP secret via `deps.keyProvider`, and constructs a connected `ImapAdapter`.
- * The returned handle exposes just `fetchPart` + `close` (the AttachmentAdapter
- * seam) — the bytes it fetches are NEVER persisted server-side (§13.2/§14).
- *
- * ── IT IS ALSO THE ONLY PLACE THAT CAN COUNT THE CONNECTIONS ───────────────────────────────
- *
- * This function used to construct an adapter and LOG IN per request with no cap of any kind, so a
- * verified account could open unlimited concurrent IMAP logins against its own provider. The
- * worker holds one persistent connection per mailbox on top of whatever this opens, and nothing
- * was shared between the two processes.
- *
- * The consequence is not a failed download, which is what makes it worth this much code. Providers
- * cap concurrent connections per account — iCloud notably low — and imapflow marks EVERY failure of
- * the LOGIN command with `authenticationFailed = true`
- * (`imapflow/lib/commands/login.js:38`, unconditional in the catch). The sync worker's
- * `classifyMailboxError` read that flag FIRST and answered `"auth"`; the client renders `err_auth`
- * as "Sync failed — the mailbox rejected the password"; three consecutive failures detach the
- * mailbox. So an attachment burst told the user their password was wrong and quarantined a mailbox
- * whose password was fine. That classifier has since been reordered to try the structural evidence
- * before the flag, which narrows the misread for the failures a provider names — it does not
- * remove the reason to cap the connections in the first place.
- *
- * The cap lives HERE and not in `AttachmentsService` for two reasons. Connection admission is IMAP
- * knowledge, and that service's contract is that it never dials IMAP and knows nothing about hosts
- * — every test injects a fake adapter through this same seam. And both callers reach IMAP through
- * `openAdapter`: `fetchBytes` once, `downloadAll` once per mailbox group. A release keyed to
- * `close()` is therefore correct for all three byte routes with no service change at all.
- *
- * A consequence worth stating so nobody "fixes" it: a test that injects its own `openAdapter`
- * bypasses the cap entirely, by design. The cap's own tests drive this function directly instead,
- * asserting that simultaneous opens on one mailbox never exceed the cap, that a close returns its
- * slot, that a double close does not hand one back twice, and that two different mailboxes never
- * contend; the shared counter underneath is exercised against real Postgres for the concurrent
- * cases, including the reclaim of a slot leaked by a killed invocation.
+ * Build the API's `openAdapter` for on-demand attachment fetch. Mirrors the sync worker's creds
+ * boundary without importing the worker: reads `mailbox_credentials`, decrypts via
+ * `deps.keyProvider`, returns a connected `ImapAdapter` exposing `fetchPart` + `close`; bytes are
+ * never persisted server-side. Also the only place that can count connections: providers cap
+ * concurrent logins per account, and imapflow marks every LOGIN failure `authenticationFailed`,
+ * so an uncapped burst once read as a wrong password. The cap lives here, not in
+ * `AttachmentsService` (which never dials IMAP); every caller comes through `openAdapter`. A test
+ * injecting its own `openAdapter` bypasses the cap by design — the cap's tests drive this file.
  */
 
 /**
- * HOW MANY CONCURRENT IMAP CONNECTIONS THE API MAY HOLD FOR ONE MAILBOX.
- *
- * Two, and the number is a budget shared with the worker rather than an independent allowance:
- * the worker already holds one persistent connection per mailbox, so the deployment's real
- * footprint is 3 in the steady state (and up to 5 across a counter window roll — see
- * `IMAP_ADMISSION_WINDOW_MS`). Providers publish little, but the low end of what mainstream IMAP
- * servers accept per account is around ten, so this leaves room for the user's own mail clients,
- * which are the connections we are a guest alongside and must never crowd out.
- *
- * Two rather than one because attachment fetches are user-initiated and interactive: one would
- * serialise a person clicking two files in a row behind a download that may take seconds, which is
- * the trade this cap must not make.
+ * How many concurrent IMAP connections the API may hold for one mailbox. Two, a budget shared
+ * with the worker rather than an independent allowance: the worker holds one persistent
+ * connection per mailbox, so the deployment's steady-state footprint is 3 (up to 5 across a
+ * counter window roll — see `IMAP_ADMISSION_WINDOW_MS`). The low end of what mainstream IMAP
+ * servers accept per account is around ten, so this leaves room for the user's own mail
+ * clients, which we are a guest alongside. Two rather than one because attachment fetches are
+ * interactive: one would serialise a person clicking two files behind a slow download.
  */
 export const MAX_IMAP_PER_MAILBOX = 2;
 
@@ -79,15 +45,12 @@ export interface OpenAdapterOptions {
 }
 
 /**
- * THE PER-INSTANCE HALF OF THE CAP.
- *
- * MODULE level, not inside {@link makeOpenAdapter}: the routes call `makeOpenAdapter(deps)` inside
- * each handler, so anything held in that closure would be per-request and would count nothing.
- * This is the same shape `routes/events.ts` uses for its SSE stream counters.
- *
- * It exists alongside the database counter rather than instead of it. This one is exact and free
- * and gives the waiters FIFO order; it bounds one warm instance, which on a serverless host is not
- * the same as bounding the account. The database counter is what makes the bound global.
+ * The per-instance half of the cap. Module level, not inside {@link makeOpenAdapter}: the
+ * routes call `makeOpenAdapter(deps)` per handler, so closure state would be per-request and
+ * would count nothing (the same shape `routes/events.ts` uses for its SSE counters). It exists
+ * alongside the database counter rather than instead of it: this one is exact, free, and gives
+ * waiters FIFO order, but bounds one warm instance only; the database counter makes the bound
+ * global.
  */
 interface MailboxGate {
   held: number;
@@ -187,20 +150,13 @@ export interface OpenedMailboxImap {
 }
 
 /**
- * Open the mailbox's stored IMAP login, under the connection cap.
- *
- * ── EXTRACTED SO THE SECOND CALLER INHERITS THE CAP RATHER THAN RE-DERIVING IT ─────────────
- *
- * This was the body of {@link makeOpenAdapter}, and it stayed private for as long as attachments
- * were the only reason the API dialled IMAP. The organizer peek is the second reason, and the
- * dangerous version of adding it is a second `new ImapAdapter(...)` somewhere else: it would be
- * correct on the day it was written and invisible to every one of the cap's tests, so a mailbox's
- * real concurrent-connection count would quietly stop matching the number this module documents.
- * The cap is not a nicety — the failure it prevents is a provider refusing the LOGIN, which
- * `classifyMailboxError` has historically reported to the user as a wrong password.
- *
- * So: one place decrypts a credential and opens a socket, and every caller queues in the same
- * line. {@link makeOpenAdapter} is now a narrowing wrapper over this.
+ * Open the mailbox's stored IMAP login, under the connection cap. Extracted so the second
+ * caller (the organizer peek) inherits the cap rather than re-deriving it: a second
+ * `new ImapAdapter(...)` elsewhere would be invisible to the cap's tests and quietly break the
+ * connection budget this module documents — the failure it prevents is a provider refusing the
+ * LOGIN, historically reported to the user as a wrong password. One place decrypts a
+ * credential and opens a socket, and every caller queues in the same line;
+ * {@link makeOpenAdapter} is a narrowing wrapper over this.
  */
 export async function openMailboxImap(
   deps: ApiDeps, mailboxId: string, opts: OpenAdapterOptions = {},
