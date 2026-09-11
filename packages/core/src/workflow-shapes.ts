@@ -1,26 +1,11 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// The workflow tool ALLOWLIST + step/trigger shapes, and the two storage-boundary
-// validators the rules engine runs before a workflow is persisted.
-//
-// SECURITY INVARIANT: a workflow step may declare EXACTLY one of three typed,
-// reversible tools — `file_message` (desired-state move), `draft_reply` (a STORED,
-// never-sent draft), `add_kb_entry` (a KB write). There is deliberately NO `send`,
-// `forward`, or any exfiltrating tool: `validateSteps` REJECTS any step whose
-// `tool` is outside `ALLOWED_TOOLS`, so a workflow can NEVER be persisted with a
-// step that would send or forward mail. This validator is the storage-boundary gate
-// WorkflowsService.create/update run before any INSERT.
-//
-// ── WHY THIS IS A LEAF, AND NOT UNDER `ai/` ──────────────────────────────────
-//
-// This module names no model and carries no prompt: it is the step/trigger grammar
-// plus the two validators. It is mail-half code — the rules engine and the storage
-// gate use it — so the local mail engine legitimately carries it, and `@trafficflow/
-// core/mail` re-exports it. It used to live under `ai/workflows/`, next to the
-// proposer and the workflow runner that DO call a model; a bundle census that (correctly)
-// treats everything under `ai/` as the private model half then could not tell this
-// apart from a prompt. It is a leaf here so that `core/dist/ai/` is, without
-// exception, the private half — and the one grammar the mail engine needs is not.
-// ─────────────────────────────────────────────────────────────────────────────
+// The workflow tool ALLOWLIST + step/trigger shapes, and the two storage-boundary validators the
+// rules engine runs before a workflow is persisted. SECURITY INVARIANT: a step may declare
+// exactly one of three typed, reversible tools — `file_message`, `draft_reply` (stored, never
+// sent), `add_kb_entry`. There is deliberately NO `send` or `forward`: `validateSteps` rejects
+// any tool outside `ALLOWED_TOOLS`, so a workflow can never be persisted with a step that would
+// exfiltrate mail. A leaf, not under `ai/`: it names no model and carries no prompt — mail-half
+// code the rules engine and storage gate use, re-exported by `@trafficflow/core/mail` — so
+// `core/dist/ai/` stays, without exception, the private half.
 
 /** The three — and only three — tools a workflow step may declare. */
 export type ToolName = "file_message" | "draft_reply" | "add_kb_entry";
@@ -29,24 +14,14 @@ export type ToolName = "file_message" | "draft_reply" | "add_kb_entry";
 export const ALLOWED_TOOLS: readonly ToolName[] = ["file_message", "draft_reply", "add_kb_entry"];
 
 /**
- * HOW MANY STEPS ONE WORKFLOW MAY DECLARE.
- *
- * `validateSteps` checked each step's tool against {@link ALLOWED_TOOLS} and its `args` shape,
- * and never looked at `steps.length` — so `POST /workflows` would store an array of any size and
- * one `POST /workflows/:id/run` made the SHARED worker execute every element of it to
- * completion. The tool allowlist bounded what a step may DO; nothing bounded how many.
- *
- * 25. A workflow is a hand-authored automation over a mail rule — file it, draft a reply, write
- * a KB note — and three tools do not compose into a long program. The number is set an order of
- * magnitude above the largest plausible hand-written one so that no real workflow meets it, and
- * two orders below what would make one run's execution time interesting to a caller.
- *
- * **Refused at WRITE time, which is the earlier of the two places it could be.** A cap enforced
- * by the runner would leave an oversized workflow stored and refused once per run, discovered
- * from the worker's logs; refused here, the request that names 10 000 steps is the one that
- * learns the limit. This is the CEILING half only — the per-run step
- * budget and wall-clock deadline that row also asks for belong to the worker's own scheduling
- * and are not this constant.
+ * How many steps one workflow may declare. `validateSteps` checked each step's tool and `args`
+ * shape and never `steps.length`, so `POST /workflows` stored an array of any size and one run
+ * made the SHARED worker execute all of it. 25: a workflow is a hand-authored automation over a
+ * mail rule, and three tools do not compose into a long program — an order of magnitude above the
+ * largest plausible hand-written one. Refused at WRITE time: a runner-enforced cap would leave an
+ * oversized workflow stored and refused once per run; refused here, the request naming 10 000
+ * steps is the one that learns the limit. The CEILING half only — the per-run budget and deadline
+ * belong to the worker's scheduling.
  */
 export const MAX_WORKFLOW_STEPS = 25;
 
@@ -66,16 +41,13 @@ export type WorkflowInverse =
   | { tool: "add_kb_entry"; kbEntryId: string };
 
 /**
- * A recurring, redaction-safe routing pattern: METADATA ONLY.
- *
- * The fields below are the COMPLETE allowed surface, and that completeness is enforced at the
- * boundary that serializes one — there is deliberately no body, snippet or subject field, so raw
- * content cannot be serialized into a model request even by mistake. The assembling caller
- * additionally excludes any pattern whose underlying messages are flagged sensitive.
- *
- * It is declared here rather than beside the proposer that reasons over it because the shape is
- * also what the transport layer serializes to a client, and that path is mail-half code. The
- * allowlist that polices the shape stays with the proposer, where the serialization happens.
+ * A recurring, redaction-safe routing pattern: METADATA ONLY. The fields below are the COMPLETE
+ * allowed surface, enforced at the boundary that serializes one — deliberately no body, snippet
+ * or subject field, so raw content cannot reach a model request even by mistake; the assembling
+ * caller additionally excludes any pattern whose underlying messages are flagged sensitive.
+ * Declared here rather than beside the proposer because the shape is also what the transport
+ * layer serializes to a client, and that path is mail-half code; the allowlist that polices the
+ * shape stays with the proposer, where the serialization happens.
  */
 export interface WorkflowPattern {
   /** The pattern axis: 'sender' (a specific address) or 'domain' (a whole domain). */
