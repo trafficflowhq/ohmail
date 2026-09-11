@@ -4,31 +4,16 @@ import type { ServiceContext } from "./context.js";
 import { dialect, type Dialect } from "@trafficflow/db/dialect";
 import { activeSenderExpr, anyOf, resolveCutline } from "@trafficflow/db";
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════
-   THE CUTLINE, SERVER-SIDE — how many senders are still owed a decision.
-
-   The client computes this over its own mirror, because that is where the Screener is drawn
-   from. This is the same question asked of the database, for the callers that have no mirror:
-   anything that wants to know whether an account still has screening work waiting.
-
-   The two must agree, and they are two implementations, so `consent-cutline.pg.test.ts` runs
-   both over the same rows and requires the same answer. That is the only thing standing between
-   them and the ordinary fate of a rule written twice.
-
-   ── WHAT COUNTS AS A DECISION ────────────────────────────────────────────────────────────
-
-   An enabled rule naming the sender or their domain, whose destination is not the Screener
-   itself. A rule pointing AT the Screener says "keep holding this one", which is the absence of
-   a decision written down, and reading it as one would exempt that sender from the cutline for
-   ever.
-
-   ── AND WHAT THE WINDOW IS MEASURED FROM ─────────────────────────────────────────────────
-
-   `now`, until the account has a `screening_baseline_at` (mail 0056); that instant afterwards.
-   See {@link CutlineOptions.baselineAt}, and the client's `ConsentOptions.baselineAt` for the
-   full argument — the two files implement one rule and the parity test is what keeps them from
-   drifting.
-   ══════════════════════════════════════════════════════════════════════════════════════════ */
+/**
+ * The cutline, server-side — how many senders are still owed a decision. The client computes this
+ * over its own mirror; this asks the database, for callers with no mirror. Two implementations of
+ * one rule, so `consent-cutline.pg.test.ts` runs both over the same rows and requires the same
+ * answer. A DECISION is an enabled rule naming the sender or their domain whose destination is
+ * not the Screener itself: a rule pointing AT the Screener is the absence of a decision, and
+ * reading it as one would exempt that sender for ever. The window is measured from `now` until
+ * the account has a `screening_baseline_at` (mail 0056), that instant afterwards — see {@link
+ * CutlineOptions.baselineAt}.
+ */
 
 /**
  * Days of quiet before a sender stops being asked about. MUST equal the client engine's
@@ -49,28 +34,14 @@ const PRESENTED_FOLDERS = [
 ];
 
 /**
- * The two folders a message can sit in without any decision standing behind it.
- *
- * MUST equal the client engine's `UNDECIDED_RESIDENCES`, and it is the half of the rule this
- * file did not have. `inbound` admitted all six presented folders and classified every sender in
- * them, so a sender whose only mail is in Reads, Receipts, Screened or Quarantine — mail somebody
- * has already filed — was counted as still owed a decision. Measured against the client over the
- * same rows: three active undecided senders here, one there.
- *
- * The client is the one that matches the written design, and says so at the bail it takes:
- * *"Mail anywhere else — Reads, Receipts, Screened, Quarantine — is already where somebody put
- * it. An explicit placement is itself an answer."* `GET /consent` reports this number to the
- * user, so the server counting people nobody will ever be asked about is a number nobody can act
- * on: the queue will never contain them.
- *
- * ── AND WHY THIS IS NOT SIMPLY `AND fs.desired_folder IN (…)` ON `inbound` ─────────────────
- *
- * That would restrict the ACTIVITY test as well, and the client does not. `senderActivity` runs
- * over every presented folder before the residence bail is reached, so a sender with old read
- * mail at the gate and unread mail in Reads is ACTIVE on the client. Narrowing `inbound` would
- * make the server call them dormant — trading one disagreement for another, in a case the
- * parity fixture would not have shown either. So the six-folder scan stays, and the residence
- * test is a per-sender flag applied at the count.
+ * The two folders a message can sit in without any decision behind it. MUST equal the client
+ * engine's `UNDECIDED_RESIDENCES` — the half this file lacked: `inbound` admitted all six
+ * presented folders, so a sender whose only mail is in Reads, Receipts, Screened or Quarantine
+ * counted as owed a decision (measured: three active undecided senders here, one on the client).
+ * An explicit placement is itself an answer. NOT simply `AND fs.desired_folder IN (…)` on
+ * `inbound` — that would restrict the ACTIVITY test too: `senderActivity` runs over every
+ * presented folder, so a sender with old mail at the gate and unread mail in Reads is ACTIVE. The
+ * six-folder scan stays; the residence test is a per-sender flag at the count.
  */
 const UNDECIDED_RESIDENCES = ["INBOX", "ohmail/Screener"];
 
@@ -96,17 +67,14 @@ export interface CutlineOptions {
   /** Days. Defaults to {@link DEFAULT_DORMANCY_DAYS}. */
   dormancyDays?: number;
   /**
-   * WHEN THIS ACCOUNT FINISHED SCREENING ITS BACKLOG (`account_settings.screening_baseline_at`,
-   * mail 0056), or `null`/absent for an account that has never decided anything.
-   *
-   * The client engine's `ConsentOptions.baselineAt` carries the whole argument — the resurrection
-   * it stops, why the narrowing is gated on the baseline being PRESENT rather than folded into a
-   * `?? now()` default, and why that distinction is a live account's Screener queue. **Both files
-   * must implement the same rule and `consent-cutline.pg.test.ts` runs them over the same rows;
-   * this one is the SQL half and nothing about it may be reasoned about separately.**
-   *
-   * `null`/absent ⇒ cutoff `now - dormancyDays` and unread outranking age ⇒ byte-identical counts
-   * to before this field existed.
+   * When this account finished screening its backlog (`account_settings.screening_baseline_at`,
+   * mail 0056), or `null`/absent for an account that has never decided anything. The client
+   * engine's `ConsentOptions.baselineAt` carries the whole argument — the resurrection it stops,
+   * and why the narrowing is gated on the baseline being PRESENT rather than folded into a `??
+   * now()` default. Both files implement one rule and `consent-cutline.pg.test.ts` runs them over
+   * the same rows; this is the SQL half and nothing about it may be reasoned about separately.
+   * `null`/absent means cutoff `now - dormancyDays` with unread outranking age — byte-identical
+   * counts to before the field existed.
    */
   baselineAt?: Date | null;
   /**
@@ -160,15 +128,13 @@ export async function cutlineCounts(
   const undecidedResidences = sql`(${sql.join(UNDECIDED_RESIDENCES.map((f) => sql`${f}`), sql`, `)})`;
 
   /**
-   * FOUR CONSTRUCTS HERE SPELL DIFFERENTLY ON THE TWO STORES, and three of them were invisible to
-   * the construct census until this file was read: `bool_or`, `position(x IN y)` and
-   * `substring(x FROM n)` are SQL SYNTAX whose separator is a keyword, so no list of function
-   * names could ever have matched them.
-   *
-   * `bool_or` needs no member — `max(case when … then 1 else 0 end) = 1` is the same question in
-   * a spelling both stores accept, and a member for something already expressible on both would
-   * be a third dialect nobody tests. The other two do: the server's take keywords where this
-   * store takes commas, and `strpos` puts its arguments in the opposite order.
+   * Four constructs here spell differently on the two stores, and three were invisible to the
+   * construct census until this file was read: `bool_or`, `position(x IN y)` and `substring(x
+   * FROM n)` are SQL SYNTAX whose separator is a keyword, so no list of function names could
+   * match them. `bool_or` needs no dialect member — `max(case when … then 1 else 0 end) = 1` is
+   * the same question in a spelling both stores accept, and a member for something already
+   * expressible on both would be a third dialect nobody tests. The other two do: the server's
+   * take keywords where this store takes commas, and `strpos` reverses the argument order.
    */
   const d = dialect(ctx.db);
   // `anyOf` and the ACTIVE test come from `@trafficflow/db#screener-cutline`, which owns the rule
@@ -242,14 +208,11 @@ export async function cutlineCounts(
 }
 
 /**
- * IS THERE SCREENING WORK WAITING? The honest form of "is the backlog empty".
- *
- * The predicate this replaces asked whether any mail was sitting in the Screener FOLDER, which
- * answers a different question: after a migration, a mailbox can hold thousands of messages
- * there from senders nobody will ever be asked about, because they went quiet years ago. That
- * reads as a permanent backlog and never empties.
- *
- * Dormant senders are not work. Only a sender with unread or recent mail and no decision behind
+ * Is there screening work waiting? The honest form of "is the backlog empty". The predicate this
+ * replaces asked whether any mail sat in the Screener FOLDER, which answers a different question:
+ * after a migration that folder can hold thousands of messages from senders nobody will ever be
+ * asked about, because they went quiet years ago — a permanent backlog that never empties.
+ * Dormant senders are not work; only a sender with unread or recent mail and no decision behind
  * them is.
  */
 export async function hasUndecidedActiveSenders(

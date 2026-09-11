@@ -11,61 +11,25 @@ import {
 import { dialect } from "@trafficflow/db/dialect";
 import type { Db } from "./context.js";
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════
-   THE AWAY RESPONDER'S PASS — reply-only, throttled per person, on all three hosts
-   ══════════════════════════════════════════════════════════════════════════════════════════
-
-   ── WHY IT MOVED OUT OF THE WORKER, AND WHAT THAT FIXED ─────────────────────────────────────
-
-   It was `apps/worker/src/away-responder.ts`, and the honest reading of the evidence is that IT
-   HAD ALMOST CERTAINLY NEVER DELIVERED A SINGLE REPLY. `apps/worker/src/smtp-size.ts` measured
-   that the sync host's platform blocks outbound SMTP submission at the port level — twelve hosts,
-   every dial a timeout, IMAP to the same host 300 ms — and the pass sent through the worker's
-   attached adapter. Every one of those dials threw; every throw KEPT the at-most-once claim (the
-   correct answer to an ambiguous SMTP failure, and the wrong outcome when the failure is
-   deterministic); and so each correspondent was silenced for the rest of the episode by a send
-   that never left the building. No `away_responder_pass sent>0` line has ever been recorded.
-
-   So the pass runs where a send can actually happen: the API host on Cloud, the drain on a
-   standalone desktop, the send clock on a self-host. One implementation, the three hosts the
-   scheduled-send pass already runs on, sending through the adapter each of them already builds.
-
-   ── THE SAFETY ARGUMENT, WHICH IS THE WHOLE OF THIS FILE ────────────────────────────────────
-
-   An away reply is mail leaving somebody's mailbox in their name while they are not looking, so
-   the rule that nothing is sent unless the person asked for it has to be answered head-on rather
-   than exempted. It is answered by what the instruction IS: a DETERMINISTIC standing order —
-   this exact text, written in advance by the person whose mailbox it is, to correspondents
-   matching a stated audience, at a stated rate, for a stated period. The pass composes nothing,
-   chooses no words, and consults no classifier. Turning the responder on IS the authorisation.
-
-   What that requires in exchange is that the instruction cannot reach anyone its owner did not
-   mean and cannot fire more often than they said. Those are two different mechanisms and they are
-   deliberately in two different places:
-
-     WHO      `awayEligibility` in `@trafficflow/core` — a pure function over one row, so every
-              guard is a branch a table test can reach and watch fail. Not in this file.
-     HOW OFTEN the atomic upsert below. A property of the database, not of this control flow.
-
-   ── REPLY-ONLY (owner requirement) ──────────────────────────────────────────────────────────
-
-   The responder has no subject of its own any more. It answers with `Re: <what they wrote>`,
-   `In-Reply-To` and `References` pointing at their message, so the reply lands in the thread they
-   started rather than arriving as a new message with a subject they never saw. `replySubject` is
-   the client's own implementation, promoted to core for this: one encoding of "`Re: ` exactly
-   once", or the one reply nobody reads before it leaves is the one that ships `Re: RE: Re:`.
-   ══════════════════════════════════════════════════════════════════════════════════════════ */
+/**
+ * The away responder's pass — reply-only, throttled per person, on all three hosts. It moved out
+ * of the worker because the sync host's platform blocks outbound SMTP at the port level, so the
+ * worker pass had almost certainly never delivered a reply. It now runs where a send can happen:
+ * the API host on Cloud, the drain on a standalone desktop, the self-host send clock. Safety: an
+ * away reply is a DETERMINISTIC standing order — exact text, written in advance, to a stated
+ * audience, at a stated rate; the pass composes nothing. WHO is `awayEligibility` in core (pure,
+ * table-testable); HOW OFTEN is the atomic upsert below. Reply-only: `Re: <what they wrote>` with
+ * `In-Reply-To`/`References`, via `replySubject`.
+ */
 
 /**
- * Replies one INVOCATION may send, across every account it serves.
- *
- * Five, and it is a cap on OUTBOUND MAIL rather than on database work — a different kind of budget
- * from the sibling passes'. It bounds the damage a misconfiguration can do before anybody notices,
- * and it is sized for the host with the least room: the hosted route runs inside a serverless
- * invocation with a 60-second ceiling, and each reply is an SMTP dial plus an IMAP append to the
- * user's own servers (seconds each, unbounded in the tail). A genuine away period answers a handful
- * of people per minute; an account that hits this ceiling every cycle is a fact worth reading in
- * the log rather than a throughput problem to tune away.
+ * Replies one INVOCATION may send, across every account it serves. Five — a cap on OUTBOUND MAIL
+ * rather than database work: it bounds what a misconfiguration can do before anybody notices,
+ * sized for the host with the least room (the hosted route runs in a serverless invocation with a
+ * 60-second ceiling, and each reply is an SMTP dial plus an IMAP append, seconds each, unbounded
+ * in the tail). A genuine away period answers a handful of people per minute; an account hitting
+ * this ceiling every cycle is a fact worth reading in the log, not a throughput problem to tune
+ * away.
  */
 export const AWAY_SENDS_PER_RUN = 5;
 
@@ -117,56 +81,38 @@ const defaultLog = createLogger({ service: "away-responder" });
 
 export interface AwayResponderPassDeps {
   /**
-   * STOP BEFORE THE NEXT DELIVERY — a predicate this pass consults between rows.
-   *
-   * A pass that has begun is not entitled to finish. On the desktop the mailbox can change hands
-   * mid-pass: the socket dies, a re-dial re-reads the organizer lease, and a stranger's claim is
-   * found — while this loop is still holding rows it claimed under the old answer. Sending them
-   * duplicates the real organizer's reply, from an install the mailbox no longer belongs to, and
-   * no amount of checking BEFORE the pass can see it because the change happens during.
-   *
-   * Answering `true` stops the loop where it stands. Rows already claimed are left to the
-   * reconciler, which is the same recovery any crash mid-pass takes; nothing new is invented for
-   * this case. Absent means "never cancel", so every hosted caller is unchanged.
+   * Stop before the next delivery — a predicate this pass consults between rows. A pass that has
+   * begun is not entitled to finish: on the desktop the mailbox can change hands MID-PASS (the
+   * socket dies, a re-dial re-reads the organizer lease, a stranger's claim is found) while this
+   * loop still holds rows claimed under the old answer — sending them duplicates the real
+   * organizer's reply from an install the mailbox no longer belongs to, and no check BEFORE the
+   * pass can see it. `true` stops the loop where it stands; claimed rows are left to the
+   * reconciler, the same recovery any crash takes. Absent means "never cancel", so every hosted
+   * caller is unchanged.
    */
   cancelled?: () => boolean;
 
   /** The send transport — `makeSendAdapter` on the hosted and self-hosted hosts, the local dial on the desktop. */
   openSendAdapter: OpenSendAdapter;
   /**
-   * MAY THIS ACCOUNT'S AUTOMATION STILL FIRE? — the suspension gate, INJECTED for
-   * `ScheduledSendPassDeps.accountEligible`'s reason verbatim: the fact lives in the cloud half
-   * (`account_suspensions`) and this pass ships in the desktop engine bundle, which may not name a
-   * cloud table. The hosted route and the self-host clock inject the real read; the standalone door
-   * injects nothing, which resolves to ELIGIBLE — its store has no suspension concept and the
-   * machine's own login is the boundary.
-   *
-   * Consulted BEFORE this account's candidates are read, so a suspended account's mail is not even
-   * examined and no ledger row is written for it: nothing is decided, and the replies are sent
-   * promptly once the suspension lifts rather than being permanently recorded as suppressed.
-   *
-   * It is handed the SAME handle this pass is running on. Unlike the scheduled pass's, this call is
-   * NOT inside a claim transaction — the claim here is per-reply and opens later — so there is no
-   * deadlock rule to observe. The signature matches the sibling's anyway, so one injector serves
-   * both and neither host has to remember which shape it is passing.
+   * May this account's automation still fire? — the suspension gate, INJECTED: the fact lives in
+   * the cloud half (`account_suspensions`) and this pass ships in the desktop engine bundle,
+   * which may not name a cloud table. The hosted route and self-host clock inject the real read;
+   * the standalone door injects nothing, which resolves to ELIGIBLE. Consulted BEFORE the
+   * candidates are read, so a suspended account's mail is not examined and no ledger row is
+   * written: replies go out promptly once the suspension lifts. Not inside a claim transaction —
+   * the claim here is per-reply — but the signature matches the scheduled pass's, so one injector
+   * serves both.
    */
   accountEligible?: (accountId: string, db: Db) => Promise<boolean>;
   /**
-   * WHICH MAILBOXES THIS PASS MAY ANSWER FOR — absent means ALL of them, which is the hosted
-   * clock's shape.
-   *
-   * The organizer JOIN below already refuses a mailbox this install merely READS, so this filter is
-   * not what makes a reader silent. It exists for the standalone desktop's shape after multi-mailbox:
-   * the drain calls this pass once PER RUNTIME, and without the narrowing each organizing runtime
-   * would scan and claim for every other organizing mailbox in the same install. The UNIQUE makes
-   * that harmless — one of them wins the reservation and the rest read zero rows — but it is N times
-   * the work and a log nobody can attribute to a mailbox.
-   *
-   * AN EMPTY ARRAY MEANS NONE, and is not the same as absent — the "absent config selects the
-   * dangerous branch" shape, separated deliberately rather than collapsed by a truthiness test.
-   * `undefined` is "no filter"; `[]` is "this caller has no mailboxes to answer for", which must
-   * answer NOTHING. Folding them would make a desktop install with no organizing runtime behave
-   * like the hosted clock and answer mail for every mailbox in the store.
+   * Which mailboxes this pass may answer for — absent means ALL, the hosted clock's shape. The
+   * organizer JOIN already refuses a mailbox this install merely reads; this exists for the
+   * standalone desktop: the drain calls the pass once PER RUNTIME, and without narrowing each
+   * organizing runtime would scan and claim for every other one. AN EMPTY ARRAY MEANS NONE, not
+   * absent: `undefined` is "no filter"; `[]` is "this caller has no mailboxes", which must answer
+   * NOTHING. Folding them would make an install with no organizing runtime answer mail for every
+   * mailbox in the store.
    */
   mailboxIds?: readonly string[];
   log?: Logger;
@@ -311,61 +257,32 @@ export async function runAwayResponderPass(
 }
 
 /**
- * THE PROBE — every responder that is LIVE right now, in one indexed read.
- *
- * `enabled_at IS NOT NULL` is required and not merely read: it is the floor's first half, and
- * treating a NULL as "the beginning of time" would answer the entire stored backlog the moment
- * such a row appeared.
- *
- * ── AND THERE IS A WRITER THAT PRODUCES ONE, WHICH THIS COMMENT USED TO DENY ───────────────
- *
- * It said the state was one "that no writer since produces". That is false during a rolling
- * deploy, and 0087 GUARANTEES the window exists — it promises an API one version older keeps
- * working, and that older `put` neither inserts nor sets `enabled_at`, which has no column
- * DEFAULT. Concrete sequence: 0087 applies; somebody whose responder is off (so `enabled_at` is
- * NULL, which is what `nextEnabledAt` writes) saves `enabled: true` against an instance still on
- * the previous build; the row is enabled with a NULL instant; and this probe would exclude it
- * FOR EVER — no error, no self-heal, a responder silently dead for the whole trip.
- *
- * So the pass heals it: {@link healMissingEnabledAt} stamps `now()` on exactly that shape before
- * the probe runs. `now()` and not `updated_at`, because the safe reading of "we do not know when
- * this was switched on" is "it is switched on as of this instant" — the run that heals answers no
- * backlog, and the next one answers ordinarily.
- *
- * NOTHING IS COMPOSED HERE. A responder with no body is not a responder with a default — it is an
- * unfinished one, and inventing text would put words nobody wrote into mail sent in their name.
- * The Settings form requires it; this is the same requirement where it cannot be bypassed. The
- * SUBJECT is deliberately not consulted at all any more: the reply derives its own.
+ * The probe — every responder that is LIVE right now, one indexed read. `enabled_at IS NOT NULL`
+ * is required: treating NULL as "the beginning of time" would answer the entire stored backlog. A
+ * writer CAN produce that shape — during a rolling deploy an older API saves `enabled: true`
+ * without writing `enabled_at`, and the probe would exclude the row FOR EVER: a responder
+ * silently dead. So {@link healMissingEnabledAt} stamps `now()` on exactly that shape first — the
+ * healing run answers no backlog. Nothing is composed here: a responder with no body is
+ * unfinished, not defaulted — inventing text would put words nobody wrote into mail sent in their
+ * name.
  */
 /**
- * STAMP AN ENABLEMENT INSTANT ON A ROW THAT IS ENABLED WITHOUT ONE.
- *
- * The rolling-deploy shape described on {@link liveResponders}: an API one version older enables a
- * responder without writing `enabled_at`, and the probe would then exclude the row for ever. One
- * guarded UPDATE per run, matching nothing on a healthy deployment.
- *
- * `now` rather than `updated_at`: a row healed here answers NO backlog, because its floor is the
- * instant of the heal. That is the same direction every other absent-evidence decision in this
- * feature takes — an unanswered correspondent is recoverable, a stranger answered from a window
- * nobody chose is not.
+ * Stamp an enablement instant on a row that is enabled without one — the rolling-deploy shape
+ * described on {@link liveResponders}: an older API enables a responder without writing
+ * `enabled_at`, and the probe would exclude the row for ever. One guarded UPDATE per run,
+ * matching nothing on a healthy deployment. `now` rather than `updated_at`: a row healed here
+ * answers NO backlog, because its floor is the instant of the heal — the same direction every
+ * absent-evidence decision in this feature takes: an unanswered correspondent is recoverable, a
+ * stranger answered from a window nobody chose is not.
  */
 /**
- * SWITCH OFF EVERY RESPONDER WHOSE END DATE HAS PASSED — one guarded UPDATE per run, matching
- * nothing once it has run.
- *
- * `ends_at` already ends the answering window (the probe's `endsAt >= now`), so this changes no
- * mail. What it changes is the STATE somebody reads and what a later re-enable does: without it the
- * row stays `enabled` for ever with a window nobody is in, so the switch says "On" while nothing is
- * sent, and extending the date months later would answer everything that arrived in between —
- * `enabled_at` only moves on OFF → ON.
- *
- * So the write is the same one `put` makes when a person switches the responder off: `enabled`
- * false, `enabled_at` null (its invariant), and `ends_at` cleared so a later "on" is an open-ended
- * responder rather than one that is instantly expired again. Idempotent by the WHERE: the second
- * pass matches nothing, which is what makes "exactly once" a property of the statement rather than
- * of a flag. Narrowed by the caller's mailboxes exactly as the probe is — turning somebody's
- * responder off is a product state change, and a drain that named its own mailbox must not make it
- * for an account it was not asked about.
+ * Switch off every responder whose end date has passed — one guarded UPDATE per run, matching
+ * nothing once run. `ends_at` already ends the answering window, so this changes no mail; it
+ * changes the STATE somebody reads and what a re-enable does: without it the switch says "On"
+ * while nothing is sent, and extending the date months later would answer everything in between
+ * (`enabled_at` only moves on OFF → ON). The write is `put`'s own switch-off: `enabled` false,
+ * `enabled_at` null, `ends_at` cleared. Idempotent by the WHERE; narrowed by the caller's
+ * mailboxes exactly as the probe is.
  */
 async function expireEndedResponders(
   db: Db, at: Date, mailboxIds: readonly string[] | undefined, log: Logger,
@@ -425,25 +342,16 @@ async function liveResponders(
       // literal for one instant: the server's cast, unchanged, and this store's epoch millisecond.
       or(isNull(awayResponders.startsAt), sql`${awayResponders.startsAt} <= ${d.ts(at)}`)!,
       or(isNull(awayResponders.endsAt), sql`${awayResponders.endsAt} >= ${d.ts(at)}`)!,
-      /* ── THE MAILBOX NARROWING REACHES THE PROBE, NOT ONLY THE CANDIDATES ────────────────
-       *
-       * This used to be discarded here (`void mailboxIds`) on the reasoning that the narrowing is
-       * about candidates. That was wrong in two ways, one of them only visible against a real
-       * database.
-       *
-       * Cheaply: a caller that named its mailboxes was still made to read up to
-       * `AWAY_ACCOUNTS_PER_RUN` responders belonging to accounts it did not ask about, and then run
-       * a full candidate query for each of them — every one returning nothing, because the
-       * candidate filter excluded them anyway.
-       *
-       * And correctly: the probe is a PAGE. Ordered and capped, it can exclude the very account the
-       * caller named — which is not hypothetical, it is what the shared test Postgres does today
-       * (70 live responders, all with older `enabled_at` than a freshly seeded one, against a cap
-       * of 50). A sidecar drain naming its own mailbox would be silently served nothing on any
-       * store holding more live responders than the cap.
-       *
-       * So the page is drawn from the accounts that own the named mailboxes. Absent ⇒ every account,
-       * which is the hosted clock's shape and unchanged. */
+      /**
+       * The mailbox narrowing reaches the PROBE, not only the candidates. It used to be discarded
+       * here (`void mailboxIds`). Cheaply wrong: a caller naming its mailboxes still read up to
+       * `AWAY_ACCOUNTS_PER_RUN` responders for accounts it did not ask about and ran a full
+       * candidate query for each. And correctly wrong: the probe is a PAGE — ordered and capped,
+       * it can exclude the very account the caller named (the shared test store shows it today:
+       * 70 live responders older than a freshly seeded one, cap 50), so a drain naming its own
+       * mailbox would be silently served nothing. The page is now drawn from the accounts owning
+       * the named mailboxes; absent means every account, the hosted clock's shape.
+       */
       ...(mailboxIds === undefined ? [] : [exists(
         (db as unknown as Tx).select({ one: sql`1` }).from(mailboxes).where(and(
           eq(mailboxes.accountId, awayResponders.accountId),
@@ -525,24 +433,16 @@ async function answerForAccount(
 
   const textHash = awayTextHash(responder.body);
 
-  // ── ELIGIBILITY FIRST, THE ADAPTER ONLY FOR WHAT SURVIVES IT ─────────────────────────────
-  //
-  // The order here was the other way round and it was wrong in a way this file's own header
-  // claimed it was not. `awayEligibility` needs no network, no adapter and no clock, but it used to
-  // be reached only INSIDE the `try` that follows a successful `openSendAdapter` — so a mailbox
-  // whose factory throws (no credentials, disconnected since the mail arrived, a standalone install
-  // with no submission server) left ALL of its candidates deferred with no ledger row.
-  //
-  // That is a starvation shape, not merely a wasted run: `readCandidates` is oldest-first with a
-  // fixed `limit`, and the ledger anti-join is the only thing that removes a row from the set. Those
-  // undecidable candidates therefore occupy the oldest page of every subsequent run for ever, and
-  // once there are `batch` of them NOTHING behind them on that account is examined again —
-  // including candidates on a different, perfectly healthy mailbox — the pass starved by its own
-  // away arm, reintroduced by the ordering, in the function whose header says the design avoids it.
-  //
-  // So: decide every candidate first (a suppression writes its ledger row and leaves the set
-  // permanently, whether or not this mailbox can dial), and open a transport LAZILY, only when a
-  // candidate has actually survived to the point of needing one.
+  // Eligibility FIRST, the adapter only for what survives it. The order was reversed and wrong:
+  // `awayEligibility` needs no network, but it was reached only inside the `try` following a
+  // successful `openSendAdapter` — so a mailbox whose factory throws (no credentials,
+  // disconnected, a standalone install with no submission server) left ALL its candidates
+  // deferred with no ledger row. That is starvation, not waste: `readCandidates` is oldest-first
+  // with a fixed limit and the ledger anti-join is the only thing that removes a row, so
+  // undecidable candidates pin the oldest page of every later run — once there are `batch` of
+  // them, nothing behind them on the account is examined again, including a healthy mailbox's
+  // candidates. So: decide every candidate first (a suppression writes its ledger row and leaves
+  // the set permanently), open a transport LAZILY, only when a candidate survives to needing one.
   const byMailbox = new Map<string, Candidate[]>();
   for (const c of candidates) {
     const held = byMailbox.get(c.mailboxId);
@@ -608,45 +508,14 @@ async function answerForAccount(
 }
 
 /**
- * WHICH CORRESPONDENTS' ADDRESSES ARE DEAD — read the bounces that came back for this account's
- * own away replies and stamp `away_sender_state.undeliverable_at`. Returns how many were newly
- * marked.
- *
- * ── THE STATE THIS FIXES ────────────────────────────────────────────────────────────────────
- *
- * A responder wrote to an address that does not accept mail. The bounce arrived in its owner's own
- * Ohbox, and nothing recorded what it MEANT — so the next message from the same correspondent
- * produced another reply and another bounce, once per throttle interval for the length of the trip.
- * The bounce itself is harmless (a delivery report is refused as a candidate in its own right);
- * the missing fact is the problem.
- *
- * ── HOW A BOUNCE IS TIED TO THE REPLY IT IS ABOUT ───────────────────────────────────────────
- *
- * By the MINTED Message-ID. Every reply is sent with a `<uuid@domain>` this pass minted and
- * recorded on the ledger row before it dialled — that column exists so a delivered copy is
- * attributable — and a delivery report quotes the failed message's id in `In-Reply-To` or
- * `References`. So the join is ledger.minted_message_id ⊂ bounce.in-reply-to/references, and the
- * address marked is the LEDGER ROW's `sender`: the person the failed reply was addressed to, never
- * the mailer-daemon that reported it.
- *
- * ── AND WHY THE DELIVERY-REPORT TEST IS NOT OPTIONAL ────────────────────────────────────────
- *
- * A HUMAN who replies to an away reply also carries `In-Reply-To: <the minted id>`. On the id
- * alone, answering "thanks, have a good trip" would mark that person's address dead and silence
- * them for the rest of the trip — a live correspondent lost to a courtesy. So a matched id is only
- * half the test; the message must also BE a delivery report, and that question is asked through
- * `isDeliveryReport` — the same function the eligibility rule uses, because two encodings of "is
- * this a bounce" would disagree the first time a sender folded the `Content-Type` header, and this
- * is the direction that disagreement fails in.
- *
- * The id match is done in SQL (it is a substring test over an indexed, account-scoped set) and the
- * report shape in TypeScript (it is a policy, and the shared one). Neither half decides alone.
- *
- * ── IT NEVER THROWS AND NEVER BLOCKS A REPLY ────────────────────────────────────────────────
- *
- * A fault here means this run does not LEARN something; it must not mean the run does not answer
- * anybody. So the whole thing is contained and returns 0 on a throw — the same per-account
- * containment `answerForAccount`'s caller applies, one level in.
+ * Which correspondents' addresses are DEAD — read the bounces from this account's own away
+ * replies and stamp `away_sender_state.undeliverable_at`. Without it, a reply to a dead address
+ * bounced, nothing recorded what it meant, and the next message produced another reply and
+ * bounce, per throttle interval. The tie is the MINTED Message-ID on the ledger row; a delivery
+ * report quotes it in `In-Reply-To`/`References`, and the address marked is the LEDGER row's
+ * `sender`, never the mailer-daemon. The report test is not optional: a HUMAN reply also carries
+ * the minted id, so the message must also BE a report (`isDeliveryReport`). It never blocks a
+ * reply: a fault means this run does not learn — 0 on a throw.
  */
 async function markUndeliverableFromBounces(
   db: Db, accountId: string, at: Date, log: Logger,
@@ -733,29 +602,14 @@ async function markUndeliverableFromBounces(
 }
 
 /**
- * THE CANDIDATE QUERY — and every predicate in it is candidacy, never a suppression.
- *
- * The distinction is `screener-auto.ts`'s rule and it decides what belongs here: a guard in the
- * WHERE clause cannot be watched to fail, so anything that DECIDES about a row in hand lives in
- * `awayEligibility` where a table test can delete it. What lives here is what makes a row a
- * candidate at all — and those have a failure mode the loop cannot fix, because a row held in the
- * loop writes no ledger row, stays in the window for ever, and pins the oldest page of every
- * subsequent run, so the pass stops converging and a genuine arrival behind them is never seen.
- *
- *   floor        `created_at > floor AND date >= floor`. The ingest clock LIES about history —
- *                `insertMessage` omits `createdAt`, so a first-time backfill stamps years-old mail
- *                with the ingest instant, inside any live window — so the message's own stated send
- *                time is required as well. A NULL `date` fails the comparison and is out: not
- *                provably new, and absent evidence may not select the branch that sends mail.
- *   placement    `last_set_by <> 'external'` — a placement authored outside ohmail is not an
- *                arrival. A row with NO placement stays a candidate (placement lands in the same
- *                transaction as the message), and the audience guard treats it as un-admitted.
- *   ledger       `LEFT JOIN away_replies … WHERE ar.id IS NULL` — a decided candidate leaves the
- *                set permanently. This is what makes the pass converge.
- *   organizer    `JOIN mailboxes ON organizer_role='organizer' AND status='connected'`. A READER
- *                never replies. Its own claim would be a second responder on one mailbox, and a
- *                stranger writing once would get two identical replies from the same person — one
- *                of them from a machine that was told to stop organizing the mailbox.
+ * The candidate query — every predicate is CANDIDACY, never a suppression (a guard in the WHERE
+ * cannot be watched to fail; what DECIDES lives in `awayEligibility`). A row held in the loop
+ * writes no ledger row, pins the oldest page, and the pass stops converging. floor: `created_at >
+ * floor AND date >= floor` — the ingest clock lies about history (a backfill stamps years-old
+ * mail with the ingest instant), so the message's own send time is required; NULL `date` is out.
+ * placement: `last_set_by <> 'external'` — an external placement is not an arrival. ledger: the
+ * anti-join — a decided candidate leaves the set permanently. organizer:
+ * `organizer_role='organizer' AND status='connected'` — a READER never replies.
  */
 async function readCandidates(
   db: Db, responder: LiveResponder, mailboxIds: readonly string[] | undefined, batch: number,
@@ -772,18 +626,13 @@ async function readCandidates(
     desiredFolder: folderState.desiredFolder,
     ownAddress: mailboxes.address,
     /**
-     * IS THIS CORRESPONDENT'S ADDRESS DEAD? — one correlated EXISTS over the sender state, decided
-     * in SQL and handed over as a plain boolean.
-     *
-     * A LEFT JOIN on `away_sender_state` would have been the obvious shape and it is the wrong
-     * one: that table is also the THROTTLE's row, so the join would multiply nothing but would put
-     * a column on this query whose absence (a sender never answered before) is indistinguishable
-     * from a present row with a null stamp. An EXISTS answers the one question asked — is there a
-     * row for this sender carrying a bounce — and a sender with no row at all is correctly `false`.
-     *
-     * Matched on the NORMALISED address, because that is what the reservation writes: `sender` is
-     * always `awayNormalizeAddress(from_address)`, so the comparison is `lower(trim(…))` on both
-     * sides or a correspondent who wrote from two spellings of one address is two people.
+     * Is this correspondent's address dead? — one correlated EXISTS over the sender state,
+     * decided in SQL. A LEFT JOIN would be the obvious and wrong shape: that table is also the
+     * THROTTLE's row, so the join would put a column here whose absence (a sender never answered)
+     * is indistinguishable from a present row with a null stamp. An EXISTS answers the one
+     * question asked, and a sender with no row is correctly `false`. Matched on the NORMALISED
+     * address, because that is what the reservation writes: `lower(trim(…))` on both sides, or a
+     * correspondent who wrote from two spellings of one address is two people.
      */
     senderUndeliverable: sql<boolean>`EXISTS (
       SELECT 1 FROM ${awaySenderState} AS ss
@@ -792,18 +641,14 @@ async function readCandidates(
          AND ss.undeliverable_at IS NOT NULL
     )`.as("sender_undeliverable"),
     /**
-     * HAS THIS CORRESPONDENT ALREADY HEARD FROM THIS MAILBOX ABOUT THIS THREAD? — one correlated
-     * EXISTS, decided in SQL and handed to `awayEligibility` as a plain boolean.
-     *
-     * "Own-authored" is `from_address` being one of this account's own addresses, which is the only
-     * durable record of authorship there is: ingest sees the Sent copy of everything the account
-     * sends, so a manual reply the person typed themselves and an earlier automatic reply from any
-     * install both land as a message in the thread whose author is us. `date >= candidate.date`
-     * scopes it to a reply TO this message rather than to any earlier traffic in a long thread.
-     *
-     * It covers the case the ledger cannot: the ledger is per-install, so an install that took over
-     * mid-window has no row for a reply another install sent — but that reply is in the mailbox,
-     * and this sees it.
+     * Has this correspondent already heard from this mailbox about this thread? — one correlated
+     * EXISTS, handed to `awayEligibility` as a boolean. "Own-authored" is `from_address` being
+     * one of the account's own addresses — the only durable record of authorship: ingest sees the
+     * Sent copy of everything, so a manual reply and an earlier automatic reply from ANY install
+     * both land as an own-authored message in the thread. `date >= candidate.date` scopes it to a
+     * reply TO this message. It covers what the ledger cannot: the ledger is per-install, so an
+     * install that took over mid-window has no row for a reply another install sent — but that
+     * reply is in the mailbox, and this sees it.
      */
     alreadyReplied: sql<boolean>`EXISTS (
       SELECT 1 FROM ${messages} AS m2
@@ -819,24 +664,15 @@ async function readCandidates(
   })
     .from(messages)
     .innerJoin(mailboxes, eq(mailboxes.id, messages.mailboxId))
-    /* ── AN INNER JOIN, AND THIS IS A SUPPRESSION-SET HOLE IF IT IS NOT ────────────────────
-     *
-     * It was a LEFT join, with `candidate.headers ?? {}` downstream. `{}` reads as "no markers" —
-     * which is the PERMISSIVE answer — so a message with no stored body cleared `List-Id`,
-     * `List-Unsubscribe`, `Feedback-ID`, `Precedence`, `Auto-Submitted`, `X-Auto-Response-Suppress`
-     * and the empty `Return-Path` in one go and fell straight through to "send".
-     *
-     * Body-less rows are not hypothetical: the desktop's Cloud mirror inserts `messages` without
-     * bodies and fetches them afterwards — there is a dedicated backfill keyed on exactly
-     * `isNull(messageBodies.messageId)` — and it writes `organizerRole ?? "organizer"`, so such a
-     * row satisfies the organizer JOIN above. The concrete failure is an auto-reply to a mailing
-     * list (delivered to every subscriber, and public) or to another responder (an unbounded loop
-     * between two mail systems) — the two outcomes `rules.ts` calls the loudest possible.
-     *
-     * So a message whose body has not arrived is NOT A CANDIDATE YET rather than a candidate with
-     * no markers. It costs a poll interval and it fails toward silence, which is the same ruling
-     * `away-eligibility.ts` makes about an absent folder placement: absent evidence may not select
-     * the branch that sends mail. */
+    /**
+     * An INNER join — a suppression-set hole if it is not. It was a LEFT join with `headers ??
+     * {}` downstream: `{}` reads as "no markers", the PERMISSIVE answer, so a message with no
+     * stored body cleared `List-Id`, `List-Unsubscribe`, `Feedback-ID`, `Precedence` and the rest
+     * in one go and fell through to "send". Body-less rows are real: the desktop's Cloud mirror
+     * inserts `messages` without bodies and backfills them. The concrete failure is an auto-reply
+     * to a mailing list, or to another responder — an unbounded loop. A message whose body has
+     * not arrived is NOT A CANDIDATE YET: it costs a poll interval and fails toward silence.
+     */
     .innerJoin(messageBodies, eq(messageBodies.messageId, messages.id))
     .leftJoin(folderState, eq(folderState.messageId, messages.id))
     .leftJoin(awayReplies, and(
@@ -886,24 +722,14 @@ async function readCandidates(
 }
 
 /**
- * ONE CANDIDATE: decide, reserve, send, finalize.
- *
- * ── THE ORDER IS THE WHOLE CORRECTNESS ARGUMENT ─────────────────────────────────────────────
- *
- *  1. ELIGIBILITY, which needs no network and no write. A suppression writes its ledger row and
- *     stops — the row is what takes this candidate out of the set for good.
- *  2. THE RESERVATION, one transaction, two statements, committed BEFORE anything dials:
- *       · `INSERT … ON CONFLICT (account_id, message_id) DO NOTHING RETURNING id` — 0 rows means
- *         another runner owns this message. Stop, write nothing, count nothing.
- *       · the sender upsert whose `WHERE` IS the throttle — 0 rows means "answered recently
- *         enough", and the ledger row is finalized `throttled` in the same transaction.
- *  3. THE SEND, outside the transaction. SMTP is not transactional and must never be inside one.
- *  4. THE FINALIZE, a compare-and-swap on `outcome='pending'`, so exactly one writer ever records
- *     a terminal state for this reservation.
- *
- * Reserving BEFORE the send makes a crash between them cost ONE UNSENT REPLY. Reserving after
- * would make it cost a duplicate reply to a stranger, again on every re-run — and at-most-once is
- * the requirement. The same argument, in the same words, as `unsubscribe_records`.
+ * One candidate: decide, reserve, send, finalize — the order is the correctness argument. (1)
+ * ELIGIBILITY, no network: a suppression writes its ledger row and stops. (2) THE RESERVATION,
+ * one transaction committed BEFORE anything dials: `INSERT … ON CONFLICT DO NOTHING RETURNING` (0
+ * rows = another runner owns it), and the sender upsert whose WHERE is the throttle (0 rows =
+ * answered recently, finalized `throttled`). (3) THE SEND, outside the transaction — SMTP is not
+ * transactional. (4) THE FINALIZE, a compare-and-swap on `outcome='pending'`. Reserving BEFORE
+ * the send makes a crash cost ONE UNSENT REPLY; after, a duplicate reply to a stranger on every
+ * re-run — and at-most-once is the requirement.
  */
 async function answerOne(
   db: Db, responder: LiveResponder, candidate: Candidate, ownAddresses: ReadonlySet<string>,
@@ -930,17 +756,12 @@ async function answerOne(
     return;
   }
 
-  // ── 2. THE TRANSPORT, RESOLVED BETWEEN THE VERDICT AND THE RESERVATION ───────────────────
-  //
-  // Deliberately AFTER eligibility and BEFORE the reservation, and both halves of that placement
-  // are load-bearing:
-  //
-  //   after eligibility — a mailbox that cannot dial still DECIDES the candidates a guard refuses,
-  //     so they leave the set for good instead of pinning the oldest page of every later run;
-  //   before the reservation — a candidate that would need a send but has no path must cost
-  //     NOTHING: no ledger row, no spent throttle, nobody recorded as answered. It is `deferred`
-  //     and the next run tries again, which is risk 5 in the ruling and the branch a standalone
-  //     install with no submission server actually takes.
+  // The transport, resolved BETWEEN the verdict and the reservation — both halves load-bearing:
+  // after eligibility, so a mailbox that cannot dial still DECIDES the candidates a guard refuses
+  // (they leave the set for good instead of pinning the oldest page); before the reservation, so
+  // a candidate that needs a send but has no path costs NOTHING — no ledger row, no spent
+  // throttle, nobody recorded as answered. It is `deferred` and the next run tries again, the
+  // branch a standalone install with no submission server actually takes.
   const adapter = await transport();
   if (!adapter) {
     result.deferredCandidates += 1;
@@ -1019,28 +840,14 @@ async function answerOne(
 }
 
 /**
- * THE RESERVATION TRANSACTION — the ledger INSERT and the throttle upsert, committed together.
- *
- * ── WHY THE UPSERT IS THE THROTTLE, AND NOT A READ ──────────────────────────────────────────
- *
- * "Has this person been answered in the last 24 hours" is answerable with a MAX over an index, and
- * that answer would be a READ — after which this pass would decide, and then write. Two runners
- * can both read "no" before either writes, and the correspondent gets two replies. Serialising it
- * needs a row to lock, and for a sender who has never been answered THERE IS NO ROW TO LOCK:
- * A row lock locks nothing and `INSERT … WHERE NOT EXISTS` is not serialised against a
- * concurrent INSERT of the same key. Both were considered and refused for exactly that case.
- *
- * `INSERT … ON CONFLICT (account_id, sender) DO UPDATE SET … WHERE <predicate>` has no gap. The
- * INSERT arm and the UPDATE arm are one statement; the primary key is what orders two runners; and
- * the `WHERE` on the DO UPDATE is the decision. Zero rows returned means the predicate said no —
- * a DECISION, not a race, and the difference is that it is reproducible.
- *
- * ── AND WHY IT IS IN THE SAME TRANSACTION AS THE LEDGER ROW ─────────────────────────────────
- *
- * Split, they can disagree in the direction that sends twice: a committed sender-state update with
- * no ledger row would leave the message a candidate again, and a committed ledger row with no
- * sender-state update would let the NEXT message from the same person through the throttle. One
- * transaction makes "this message is reserved" and "this person has been answered" a single fact.
+ * The reservation transaction — the ledger INSERT and the throttle upsert, committed together.
+ * The upsert IS the throttle: a read ("answered in 24 h?") lets two runners both pass before
+ * either writes, and for a never-answered sender there is no row to lock. `INSERT … ON CONFLICT
+ * (account_id, sender) DO UPDATE SET … WHERE <predicate>` has no gap: one statement, the primary
+ * key orders two runners, and zero rows returned is a DECISION, not a race. Same transaction as
+ * the ledger row because split they disagree in the direction that sends twice: sender-state
+ * without ledger leaves the message a candidate again; ledger without sender-state lets the next
+ * message through the throttle.
  */
 async function reserve(
   db: Db, responder: LiveResponder, candidate: Candidate, sender: string,
@@ -1067,18 +874,14 @@ async function reserve(
     if (claim.length === 0) return "owned_elsewhere";
 
     /**
-     * THE PREDICATE — one per throttle member, and each is watched red by its own mutation.
-     *
-     *   always       TRUE. Every message is answered.
-     *   per_message  the stored hash differs from what the responder says NOW. Keyed by the TEXT
-     *                and never by the row's `updated_at`: a save is not an edit, and keying on the
-     *                row is what made switching the responder off and on again re-answer everyone.
-     *   per_day      the last reply is at least 24 h old.
-     *   per_week     …at least 7 days old.
-     *
-     * `EXCLUDED` is the row this INSERT proposed, so the SET writes the NEW instant and the NEW
-     * hash whenever the predicate admits — which is what makes the next message's comparison run
-     * against this reply rather than against an older one.
+     * The predicate — one per throttle member, each watched red by its own mutation. `always`:
+     * TRUE, every message answered. `per_message`: the stored hash differs from what the
+     * responder says NOW — keyed by the TEXT, never the row's `updated_at`: a save is not an
+     * edit, and keying on the row is what made switching the responder off and on re-answer
+     * everyone. `per_day`: the last reply is at least 24 h old; `per_week`: at least 7 days.
+     * `EXCLUDED` is the row this INSERT proposed, so the SET writes the NEW instant and hash
+     * whenever the predicate admits — the next message compares against this reply rather than an
+     * older one.
      */
     const cutoff = new Date(
       at.getTime() - (responder.throttle === "per_week" ? WEEK_MS : DAY_MS),
@@ -1173,21 +976,14 @@ async function recordDecision(
 }
 
 /**
- * The `References` chain for the reply: the parent's own chain, then the parent's id LAST.
- *
- * ── TWO BUGS THIS HAD, BOTH IN THE HEADER IT ALREADY CARRIED ─────────────────────────────────
- *
- * It used to test only whether the parent was the chain's LAST element before appending it. A
- * parent that appeared MID-chain — `<a> <p> <b>` with parent `<p>`, which is what a client that
- * reorders or a forwarded thread produces — therefore appended a duplicate, the dedup kept the
- * FIRST occurrence, and the result was `<a> <p> <b>`: a chain whose last id is not the message
- * being replied to. RFC 5322 §3.6.4 is what strict clients use to place a reply, and the function's
- * own sentence ("the parent's own chain PLUS the parent") was the thing it did not do.
- *
- * And the trim took the LAST twenty (`slice(-20)`), which drops the thread ROOT — the one id RFC
- * 5322 §3.6.4 says to keep when a chain must be shortened, because it is what identifies the
- * conversation. Trimming now keeps the root and drops from the middle, which is the shape every
- * mail client that shortens a chain uses.
+ * The `References` chain for the reply: the parent's own chain, then the parent's id LAST. Two
+ * bugs it had, both against the header it carried: it tested only whether the parent was the
+ * chain's LAST element before appending — a parent appearing MID-chain (`<a> <p> <b>`, what a
+ * reordering client or a forwarded thread produces) appended a duplicate, the dedup kept the
+ * FIRST occurrence, and the chain's last id was not the message being replied to (RFC 5322 §3.6.4
+ * is what strict clients place a reply by). And the trim took the LAST twenty (`slice(-20)`),
+ * dropping the thread ROOT — the one id §3.6.4 says to keep when shortening. Trimming now keeps
+ * the root and drops from the middle, the shape every shortening mail client uses.
  */
 function referencesFor(parentChain: string | null, parentId: string): string {
   const seen = new Set<string>();

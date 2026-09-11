@@ -108,22 +108,14 @@ const DEFAULT_SHAPE: AwayResponderDTO = {
 };
 
 /**
- * WHEN THE RESPONDER'S CURRENT ENABLEMENT BEGAN — ONE implementation, used by {@link
- * AwayResponderService.put} and by `profile-import-service.ts`, because two writers of this column
- * disagreeing is the whole failure it was added to fix.
- *
- * It moves on the OFF → ON TRANSITION and at no other time:
- *
- *   not enabled          → null. Turning the responder off ends the window. Keeping the instant
- *                          would make a re-enable months later answer everything that arrived in
- *                          between, because the floor would still be the old one.
- *   enabled, was off     → now. A fresh window: the backlog before this instant is not answered,
- *                          which is the rule "enabling a responder never answers the backlog".
- *   enabled, was on      → unchanged. THIS IS THE POINT OF THE COLUMN. An edit mid-trip — a typo
- *                          fix, a date change, a new throttle — leaves the floor where it was, so
- *                          the correspondents who wrote before the edit are still answerable.
- *                          `updated_at` moved on every save, which is why they used to get no
- *                          reply at all — neither the old text nor the new one.
+ * When the responder's current enablement began — ONE implementation, used by {@link
+ * AwayResponderService.put} and `profile-import-service.ts`: two writers of this column
+ * disagreeing is the failure it fixes. It moves on the OFF → ON transition only: not enabled →
+ * null (keeping the instant would make a re-enable months later answer everything in between);
+ * enabled, was off → now (enabling never answers the backlog); enabled, was on → UNCHANGED — the
+ * point: an edit mid-trip leaves the floor where it was, so correspondents who wrote before the
+ * edit are still answerable. `updated_at` moved on every save, which is why they used to get no
+ * reply at all.
  */
 export function nextEnabledAt(prev: Date | null, enabled: boolean, now: Date): Date | null {
   if (!enabled) return null;
@@ -187,29 +179,23 @@ export class AwayResponderService {
     }
 
     /**
-     * THE ENABLEMENT INSTANT NEEDS THE PREVIOUS ROW, so it is read here rather than derived from
+     * The enablement instant needs the PREVIOUS row, so it is read here rather than derived in
      * the upsert. One extra indexed read on the one write in this feature that starts mail going
-     * out, and it buys the property `enabled_at` exists for: an edit while the responder is on must
-     * NOT move the floor.
-     *
-     * It is deliberately not folded into the `ON CONFLICT` SET as a CASE over the existing row —
-     * which would save the read — because `nextEnabledAt` is then written twice, once in TypeScript
-     * for the insert arm and once in SQL for the update arm, and the profile importer would need a
-     * third. Two encodings of "when did this window open" is exactly the drift this column replaced.
+     * out, buying the property `enabled_at` exists for: an edit while the responder is on must
+     * NOT move the floor. Deliberately not folded into the `ON CONFLICT` SET as a CASE — that
+     * writes `nextEnabledAt` twice, once in TypeScript and once in SQL, with the profile importer
+     * needing a third. Two encodings of "when did this window open" is exactly the drift this
+     * column replaced.
      */
-    /* ── THE RESPONDER TRAVELS, AND UNTIL NOW IT DID NOT ASK WHO WOULD SEND IT (mail 0094) ──
-     *
-     * This door had NO organizer gate of any kind, and that is ruling 6's Critical rather than an
-     * omission at the edge: the away responder is SENT by the install that organizes the mailbox,
-     * from the body in the published profile document. On a mailbox this install only reads, this
-     * write landed in the reader's own row, the organizer's pass never read it, and the pane showed
-     * the edit as done — so somebody set an out-of-office and no out-of-office was ever sent. Not
-     * "stopped at the organizer"; silently ineffective.
-     *
-     * ACCOUNT-scoped, so it FANS OUT: the local row for the mailboxes this install organizes, plus
-     * one request per install holding one of the others. Wrapped in a transaction it did not have
-     * before, because the plan, the local write and the request rows are now one decision — a
-     * failure between them would leave requests in flight for a row that was never written.
+    /**
+     * The responder TRAVELS, and this door did not ask who would send it (mail 0094). It had no
+     * organizer gate: the away responder is SENT by the install that organizes the mailbox, from
+     * the published profile document — on a mailbox this install only reads, the write landed in
+     * the reader's own row, the organizer's pass never read it, and the pane showed the edit as
+     * done. Somebody set an out-of-office and none was ever sent: silently ineffective, not
+     * "stopped at the organizer". ACCOUNT-scoped, so it fans out: the local row for the mailboxes
+     * this install organizes, plus one request per install holding the others. Wrapped in a
+     * transaction because the plan, the local write and the request rows are one decision.
      */
     return asTx(ctx).transaction(async (tx) => {
       const plan = await planAccountFanOut(tx as unknown as Tx, ctx.accountId, "profile.update");
@@ -275,24 +261,14 @@ export class AwayResponderService {
    * it is the same value the column's own DEFAULT writes.
    */
   /**
-   * The piles, or `['INBOX']` for an omitted list — the NARROW value, for `validAudience`'s reason
-   * and more sharply.
-   *
-   * `put` is a FULL REPLACE, so an omitted field is "this request did not ask for it". Defaulting
-   * to the stored value would make a client that predates this field silently PRESERVE a wider
-   * scope on every save; defaulting to every answerable pile would be a widening nobody requested.
-   * The Ohbox alone is the column's own DEFAULT and the only value safe to infer — and unlike the
-   * audience, getting this wrong in the wide direction is what sent the eight replies this field
-   * exists to stop.
-   *
-   * A CLIENT ONE RELEASE OLD therefore narrows the scope to the Ohbox whenever it saves anything,
-   * including a save that only changes the message text. That is the acceptable direction: mail
-   * that is not sent can be sent later, and a reply that reached somebody its owner did not mean
-   * cannot be recalled.
-   *
-   * DUPLICATES ARE COLLAPSED and order is not preserved — the value is a SET ("which piles"), and
-   * `['INBOX','INBOX']` would otherwise be a different stored row from `['INBOX']` with no
-   * difference in meaning, which is a diff nobody can read.
+   * The piles, or `['INBOX']` for an omitted list — the NARROW value. `put` is a FULL REPLACE, so
+   * an omitted field is "this request did not ask for it": defaulting to the stored value lets an
+   * old client silently PRESERVE a wider scope; defaulting to every pile is a widening nobody
+   * requested. The Ohbox alone is the column's DEFAULT and the only safe inference — wrong in the
+   * wide direction is what sent the eight replies this field exists to stop. An old client
+   * therefore narrows the scope on any save — the acceptable direction: unsent mail can be sent
+   * later, a reply to the wrong person cannot be recalled. Duplicates collapse: the value is a
+   * SET.
    */
   private validPiles(v: unknown): AwayPile[] {
     if (v === undefined || v === null) return [...AWAY_PILES_DEFAULT];
@@ -328,15 +304,13 @@ export class AwayResponderService {
 
   /**
    * The throttle, or `'per_day'` for an omitted one — the DEFAULT member, and unlike `audience`
-   * this is deliberately not the narrowest.
-   *
-   * `put` is a FULL REPLACE, so an omitted field is "this request did not ask for it", and the only
-   * safe thing to infer is a value that cannot surprise: `per_day` is the column's own DEFAULT,
-   * what every row migrated by 0087 carries, and what the settings copy calls "at most once a day".
-   * Inferring `always` from silence would multiply how often a stranger hears from this address by
-   * whatever their sending rate is; inferring `per_week` would silently throttle somebody who never
-   * asked for it. A client that predates the field sends none and keeps the migrated behaviour,
-   * which is the honest reading of a request that does not mention it.
+   * deliberately not the narrowest. `put` is a FULL REPLACE, so an omitted field is "this request
+   * did not ask for it", and the only safe inference is a value that cannot surprise: `per_day`
+   * is the column's own DEFAULT, what every migrated row carries, and what the settings copy
+   * calls "at most once a day". Inferring `always` from silence would multiply how often a
+   * stranger hears from this address; inferring `per_week` would silently throttle somebody who
+   * never asked. A client that predates the field keeps the migrated behaviour, the honest
+   * reading of a request that does not mention it.
    */
   private validThrottle(v: unknown): AwayThrottle {
     if (v === undefined || v === null) return "per_day";
