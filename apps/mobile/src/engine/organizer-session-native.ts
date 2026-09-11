@@ -31,11 +31,24 @@ export function startOrganizerSessionNative(engine: StandaloneEngine, address: s
     engine: {
       handBack: () => engine.handBack(),
       resume: () => engine.resume(),
+      /* THE PERSON'S TWO VERBS, the engine's own. The app may not compose a request here — the
+         privacy census admits a transport in six named files and this is not one — and the engine
+         is the only thing that knows which mailbox its door serves. */
+      stopOrganizing: () => engine.stopOrganizing(),
+      claimHere: () => engine.claimHere(),
       /* THE ROW'S ANSWER PER MAILBOX, in the shape the watch reads. A throw propagates: the
          background half treats an unreadable state as "cannot say" and leaves the notification
-         standing rather than ending somebody's organizing over a momentary failure. */
+         standing rather than ending somebody's organizing over a momentary failure.
+
+         `standDown` is the engine's stand-down REASON and not the negation of `organizing`: this
+         install organizes nothing both before anybody consented and after another machine took the
+         mailbox, and only the second is a state the claim watch may come back from. */
       organizing: () => Object.entries(engine.runtimes().organizer)
-        .map(([mailboxId, state]) => ({ mailboxId, organizing: state.organizing })),
+        .map(([mailboxId, state]) => ({
+          mailboxId,
+          organizing: state.organizing,
+          standDown: state.reason !== null,
+        })),
     },
     /* `null` on iOS, and that is the platform rather than a gap — see `background-native.ts`. */
     service: nativeBackgroundService(),

@@ -15,7 +15,9 @@ import { Copy } from "../src/copy";
 import { sayRefusal, type Refusal } from "../src/refusal";
 import { phoneEngineStart } from "../src/engine/engine-artifact";
 import { consoleEngineLogSink } from "../src/engine/engine-log";
-import { holdStandaloneDoor, sayOrganizerRestricted } from "../src/engine/organizer-session";
+import {
+  armConsentPress, holdStandaloneDoor, sayOrganizerRestricted,
+} from "../src/engine/organizer-session";
 import { PHONE_CLAIM_NAME, openStandaloneMailbox } from "../src/engine/standalone-door";
 import { useConnection } from "../src/net/connection";
 import { useTheme } from "../src/theme";
@@ -114,6 +116,14 @@ function Credentials() {
 
   const connect = useCallback(async () => {
     setPhase({ k: "opening" });
+    /* ══ THE FINGER THAT LICENSES THE CONSENT PRESS ═════════════════════════════════════════
+     *
+     * The connection layer records the consent for a standalone mailbox, and it used to do so on
+     * every arrival — which made a plain relaunch beside a laptop holding the claim a takeover
+     * (measured: stood down at +2 s, claimed at +19 s). It now spends an arm, and this press is
+     * one: a person typed a mailbox's password and pressed Connect. Armed BEFORE the engine is
+     * opened, because `openStandalone` below adopts the session and that is what spends it. */
+    armConsentPress();
     const outcome = await openStandaloneMailbox(fields, {
       startEngine: start,
       platform: async () => {

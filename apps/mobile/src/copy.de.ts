@@ -141,6 +141,9 @@ export const DE: Deck = {
     "Dieses Telefon sortiert dieses Postfach nicht mehr ein und liest es weiter. Deine Ordner und alles darin bleiben, wo sie sind. Danach kann jede Installation es übernehmen, auch diese.",
   settingsStopHereConfirm: "Postfach zurückgeben",
   settingsStopHereCancel: "Weiter organisieren",
+  settingsStartHere: "Hier organisieren",
+  settingsStartHereFailed:
+    "Dieses Telefon konnte dieses Postfach nicht zu organisieren beginnen. Nichts hat sich geändert. Versuche es in einem Moment noch einmal.",
 
   /* Die Absagen der eigenständigen Tür. Keine davon trägt je das Passwort. */
   standaloneNoEngine:

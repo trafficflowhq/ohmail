@@ -15,6 +15,17 @@ import type { EngineLogSink } from "./engine-log";
 import type { StandaloneFields } from "../ui/standalone-form";
 
 /**
+ * WHAT ASKING FOR THIS PHONE ANSWERED — three states, named, and no `null` among them.
+ *
+ * `held` and `refused` are separate because only one of them is worth a sentence. A live foreign
+ * holder is the ordinary state of a phone whose mailbox a laptop organizes: nothing is wrong and
+ * the panel already says which machine has it. `refused` is everything else the door said, and
+ * that one a person reads. Collapsed, the claim watch would write "we could not start organizing"
+ * under that chip once a minute for as long as the laptop kept the mailbox.
+ */
+export type ClaimHereOutcome = "claimed" | "held" | "refused";
+
+/**
  * The running engine, as this app uses it. Structural, because the bundle is not typed — every
  * member here is a claim about the artifact, and `test/engine-bundle-loads.test.ts` reads them
  * off a real booted one rather than off this declaration. The first three are the client's
@@ -41,6 +52,27 @@ export interface StandaloneEngine {
   handBack(): Promise<readonly { mailboxId: string; released: number | null }[]>;
   /** Force one gated cycle per mailbox, so the lease is re-read now. */
   resume(): Promise<void>;
+  /**
+   * ASK FOR THIS PHONE — the consent, recorded, and the gate asked now.
+   *
+   * A METHOD on the engine and not a request this app composes, and that is structural: the
+   * privacy census admits a transport and a URL in six named files, and the organizer session is
+   * not one of them. The app presses a verb; the engine's own door presses its own route.
+   *
+   * `held` is the refusal that matters and it is the ORDINARY answer for a phone whose mailbox
+   * another machine organizes — see {@link ClaimHereOutcome}.
+   */
+  claimHere(): Promise<ClaimHereOutcome>;
+  /**
+   * THE PERSON'S STOP, WHERE A RELAUNCH CAN STILL READ IT.
+   *
+   * NOT {@link handBack}, and the difference is the whole of rows 1 and 3 of the device run.
+   * `handBack` removes the claim and leaves the row saying organizer, because it serves an app
+   * leaving the foreground and the next resume must take the mailbox back with no press. A
+   * person's stop is the opposite instruction, so it goes through the release the ROW records —
+   * and a reader with no press never re-enters the gate, on this launch or any later one.
+   */
+  stopOrganizing(): Promise<boolean>;
   /**
    * What each mailbox reports — the row's answer, not the gate's optimism.
    *

@@ -247,6 +247,14 @@ const TABLE = {
     "This phone stops filing this mailbox and goes on reading it. Your folders and everything in them stay where they are. Any install can take it over afterwards, including this one.",
   settingsStopHereConfirm: "Hand the mailbox back",
   settingsStopHereCancel: "Keep organizing",
+  /**
+   * THE WAY BACK. Offered only where the mailbox is read and nothing holds it — after a stop on
+   * this phone, or after the machine that had it let go. One press and no confirm sheet: nothing
+   * is given up and nothing is overwritten, and the stop beside it is the reversal.
+   */
+  settingsStartHere: "Start organizing here",
+  settingsStartHereFailed:
+    "This phone could not start organizing that mailbox. Nothing changed. Try again in a moment.",
 
   /* The standalone door's own refusals. Each one names what is missing; none of them ever
      carries the password, which is not an argument any of these takes. */

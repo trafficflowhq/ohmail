@@ -9,7 +9,7 @@
  * no control when it does not — read from the device, never a build assumption.
  */
 import Constants from "expo-constants";
-import { useState } from "react";
+import { useCallback, useState, useSyncExternalStore } from "react";
 import { Platform, View } from "react-native";
 import { buildLabel } from "../src/build-info";
 import { Copy } from "../src/copy";
@@ -28,8 +28,8 @@ import { Button, Chip, Panel, Rule, Screen, Scroller, Section, TapRow, Txt } fro
 import { Sheet, SheetRow } from "../src/ui/Sheet";
 import { phoneEngineStart } from "../src/engine/engine-artifact";
 import {
-  handBackStandalone, organizeRefusal, organizerRestrictedSaid, standaloneHere,
-  stopOrganizerSession,
+  claimHereStandalone, onOrganizerState, organizeRefusal, organizerRestrictedSaid,
+  organizerStateVersion, standaloneHere, stopOrganizerSession, stopOrganizingStandalone,
 } from "../src/engine/organizer-session";
 import { PHONE_CLAIM_NAME, standaloneAvailable } from "../src/engine/standalone-door";
 import { releaseMailbox } from "../src/net/mailboxes";
@@ -40,6 +40,7 @@ import {
   claimHere,
   claimNoteLine,
   type PhoneClaim,
+  mayStartHere,
   mayStopHere,
 } from "../src/ui/standalone-form";
 import { useLocale, useLocaleControls } from "../src/i18n/LocaleProvider";
@@ -327,6 +328,28 @@ function ThisPhonePanel() {
      press is the newest word until the row carries the release; the desktop's `stopQueued` rule. */
   const [asked, setAsked] = useState<readonly string[]>([]);
   const [confirming, setConfirming] = useState<string | null>(null);
+  /* WHAT A FAILED START SAID. Its own state and not `organizeRefusal`, which is the LAUNCH press's
+     record: a person pressing Start is owed an answer about the press they just made. */
+  const [startFailed, setStartFailed] = useState(false);
+  /**
+   * ══ THE DOOR'S STATE, LIVE — this panel was correct only at MOUNT ═══════════════════════════
+   *
+   * Measured on a device: `Stopping` stood for two and a half minutes over a stop that had
+   * finished (claim gone, zero bytes on the wire), and `Organizing` for two minutes over a mailbox
+   * another machine held and the engine had already logged a stand-down for. Both settled the
+   * instant Settings was left and re-entered, which is the diagnosis: `standaloneHere()` is read in
+   * the render and nothing re-rendered.
+   *
+   * `useSyncExternalStore` over the organizer session's own version counter — the same mechanism
+   * `world.tsx` subscribes to the mirror engine with. No state is copied: a notify means "ask
+   * again", and the read below is the same `standaloneHere()` it always was, so there is still one
+   * answer to "does this phone organize this mailbox".
+   */
+  useSyncExternalStore(
+    useCallback((cb: () => void) => onOrganizerState(cb), []),
+    organizerStateVersion,
+    organizerStateVersion,
+  );
 
   if (!standaloneAvailable({ startEngine: phoneEngineStart() })) return null;
 
@@ -412,11 +435,39 @@ function ThisPhonePanel() {
                     {sayRefusal(consentRefusal)}
                   </Txt>
                 )}
+                {/* AND WHAT A FAILED START SAID, beside the press that made it. */}
+                {startFailed && row.key === HERE_CARD ? (
+                  <Txt variant="note" tone="ink2" accessibilityRole="alert">
+                    {Copy.settingsStartHereFailed}
+                  </Txt>
+                ) : null}
                 {mayStopHere(claim) ? (
                   <Button
                     label={Copy.settingsStopHere}
                     variant="quiet"
                     onPress={() => setConfirming(row.key)}
+                    style={{ alignSelf: "flex-start", marginTop: 4 }}
+                  />
+                ) : null}
+                {/* ══ THE WAY BACK, AND ONLY ON THE DOOR IN THIS PROCESS ══════════════════════
+                    A stop on this phone is REMEMBERED on the engine's own row, so nothing resumes
+                    it by itself — which is the whole point, and which leaves a person needing a
+                    verb. One press, no confirm sheet: nothing is given up and the stop above is
+                    the reversal. Withheld on a PAIRED row, where this app holds no engine to ask
+                    and the mailbox's organizer is another machine's business. */}
+                {mayStartHere(claim) && row.key === HERE_CARD ? (
+                  <Button
+                    label={Copy.settingsStartHere}
+                    variant="quiet"
+                    onPress={() => {
+                      setStartFailed(false);
+                      /* A FINGER, SO THE CONSENT PRESS IS LICENSED. `claimHereStandalone` records
+                         it through the engine's own door and the door refuses a live foreign claim,
+                         so this press can never produce a second organizer. */
+                      void claimHereStandalone().then((outcome) => {
+                        setStartFailed(outcome === "refused");
+                      });
+                    }}
                     style={{ alignSelf: "flex-start", marginTop: 4 }}
                   />
                 ) : null}
@@ -443,11 +494,14 @@ function ThisPhonePanel() {
                  moment the press lands rather than a poll later — and a refusal is not a reason
                  to claim the mailbox is still being filed by a phone that asked to stop. */
               setAsked((cur) => (cur.includes(id) ? cur : [...cur, id]));
-              /* THE DOOR RELEASES ITSELF WHERE THERE IS ONE. `POST /mailboxes/:id/release` needs
-                 a mailbox id, which on this door the app does not hold — `HERE_CARD` is a row key
-                 and must never reach a route. The engine's `handBack` needs none: it removes this
-                 install's claim from every mailbox it holds, which on a phone is the one. */
-              if (id === HERE_CARD) void handBackStandalone();
+              /* ══ THE STOP IS REMEMBERED, WHICH `handBack` WAS NOT ═══════════════════════
+                 This pressed the engine's `handBack`, which takes the claim out of the folder and
+                 deliberately leaves the ROW saying organizer — right for an app leaving the
+                 foreground, wrong for a person pressing stop. Measured: dismiss the notification,
+                 reopen the app, and the foreground resume wrote a claim nothing serviced.
+                 `stopOrganizingStandalone` goes through the release the row records, which is the
+                 same ceremony the paired arm's route takes. */
+              if (id === HERE_CARD) void stopOrganizingStandalone();
               else if (session !== null) void releaseMailbox(session, id);
               /* AND THE NOTIFICATION COMES DOWN WITH THE CLAIM. The claim has been given back, so
                  a foreground service left standing would say "Organizing <address>" over a phone

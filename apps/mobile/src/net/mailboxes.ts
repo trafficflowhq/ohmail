@@ -143,6 +143,16 @@ export type OrganizeOutcome =
   | { kind: "authorized" }
   /** This install already organizes it and consent is already recorded — a second press is not a second becoming. */
   | { kind: "already" }
+  /**
+   * ANOTHER INSTALL IS RENEWING ITS CLAIM, and the door refused. Nothing was written.
+   *
+   * Its own arm rather than a `refused` with a status in it, because it is the one refusal that is
+   * not a fault: the mailbox is being organized, the panel already names the machine doing it, and
+   * a sentence about a request that could not be made would be noise over a true state. `name` is
+   * `""` where the claim named nothing — "named nobody" and "nobody holds it" are different facts
+   * and the STATUS is what tells them apart, so an absent member here would collapse them.
+   */
+  | { kind: "held"; name: string; holderKind: string }
   /** Nothing was recorded, and the sentence says what the route answered. */
   | { kind: "refused"; reason: Refusal };
 
@@ -181,9 +191,33 @@ export async function organizeHere(
     if (body.outcome === "already_organizing") return { kind: "already" };
     return { kind: "refused", reason: refuse("organizeHereDisconnected") };
   }
-  /* EVERY OTHER STATUS IS A REFUSAL WITH ITS NUMBER IN IT. The route answers 409 where another
-     install holds the mailbox and 422 where the account cannot take it; neither is a state this
-     app can mend, and both are sentences a person can act on — which an Ohbox that never fills
-     is not. */
+  /* ══ 409 IS ANOTHER INSTALL'S LIVE CLAIM, AND THE CLAIM THIS COMMENT MADE IS NOW TRUE ══════
+   *
+   * This block said "the route answers 409 where another install holds the mailbox" and the route
+   * did not: `MailboxService.organizeHere` writes a stamp and leaves the decision to the gate,
+   * which is right for a desktop — there the press is a person's finger and the 0.14.1 election is
+   * meant to let them take a mailbox back from a machine they can no longer reach. Measured on a
+   * phone, the same 202 answered a LAUNCH and moved a live laptop's mailbox onto a phone that
+   * organizes only while it is open.
+   *
+   * The refusal is at the phone's own door now (`apps/sidecar/src/mobile.ts`), which is where it
+   * belongs: this build has no takeover verb, so a live foreign holder is a 409 with the holder
+   * named, whoever pressed. The holder rides the body because this door offers no other source
+   * for it, and a malformed body is still a `held` — the STATUS is the fact and the name is the
+   * detail. */
+  if (res.status === 409) {
+    const held = await res.json().then(
+      (b) => (b as { holder?: { name?: unknown; kind?: unknown } }).holder,
+      () => undefined,
+    );
+    return {
+      kind: "held",
+      name: typeof held?.name === "string" ? held.name : "",
+      holderKind: typeof held?.kind === "string" ? held.kind : "",
+    };
+  }
+  /* EVERY OTHER STATUS IS A REFUSAL WITH ITS NUMBER IN IT. 422 is an account that cannot take the
+     mailbox and 503 is a row this install could not read; neither is a state this app can mend,
+     and both are sentences a person can act on — which an Ohbox that never fills is not. */
   return { kind: "refused", reason: refuse("organizeHereRefused", res.status) };
 }

@@ -15,7 +15,7 @@ import { faultDetail, refuse, type Refusal, type RefusalArg } from "../refusal";
 import { LOCAL_ENGINE_ORIGIN, mirrorExists, mirrorOwnerKey } from "../engine/boot";
 import { nativeEngineDeps } from "../engine/native";
 import {
-  endStandaloneHere, holdStandaloneDoor, organizerDoor, sayOrganizeRefused,
+  endStandaloneHere, holdStandaloneDoor, organizerDoor, sayOrganizeRefused, takeConsentPress,
   sayOrganizerRestricted, standaloneHere,
 } from "../engine/organizer-session";
 import { consoleEngineLogSink } from "../engine/engine-log";
@@ -421,16 +421,36 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       }
       adopt(outcome.session);
       /**
-       * The consent the door already took is made into the request that records it. A mailbox
-       * nobody consented to organizing is read and nothing else — no claim in `ohmail/_meta`,
-       * an Ohbox that never fills. The standalone door's client is the one this arm just
-       * built, so the press belongs here (`net/mailboxes.ts#organizeHere` says why the
-       * limitations screen's confirm IS the consent). Here rather than on the door screen:
-       * launch, switch and door press all arrive through this one body. Idempotent by the
-       * route (`already_organizing` writes nothing); `void`, with a refusal landing in
-       * `syncError` — the one surface live on all three paths.
+       * ── AND THE CONSENT A PERSON GAVE IN THIS RUN IS MADE INTO THE REQUEST THAT RECORDS IT ──
+       *
+       * A mailbox nobody consented to organizing is READ and nothing else — no claim in
+       * `ohmail/_meta`, no `ohmail/*` tree, an Ohbox that never fills. Every other door records
+       * that consent from a client somewhere; the standalone door's client is the one this arm
+       * just built, so this is where the press belongs.
+       *
+       * ── AND IT IS SPENT AGAINST A FINGER, WHICH IS THE HALF THAT WAS MISSING ───────────────
+       *
+       * This ran on EVERY arrival through this body — launch, switch, door press — on the argument
+       * that a mailbox organized only on the launch somebody pressed through is worse than one
+       * never organized. Measured on a device, that argument cost the invariant: with a laptop
+       * holding the claim and heartbeating, a plain relaunch of the app stood down correctly at
+       * +2 s and then wrote a fresh `X-Ohmail-Authorized-At` 2.3 s later, holding the claim at
+       * +19 s. Two organizers of one mailbox, nobody asked, and no sentence on any screen.
+       *
+       * So the launch is not a consent. `takeConsentPress` spends an arm that only a person's
+       * press in this run of the app can set — the door screen's Connect, and the panel's start
+       * verb — and a relaunch presses nothing. What still resumes a mailbox this phone already
+       * organizes is the engine's own gate, on its own row, which is where own-role resumption has
+       * always lived; the device run measured that path unchanged at one claim across three reads.
+       *
+       * `void`, because an open mailbox must not wait on a stamp.
        */
-      if (organizesHere(outcome.session.profile)) void consentHere(outcome.session);
+      /* SPENT FIRST AND UNCONDITIONALLY, so every connect clears it: an arm set by the door
+         screen and then followed by a switch to a paired profile must not be left standing for
+         whatever connects next. A process restart clears it on its own — module state dies with
+         the process, which is what makes "in this run of the app" the real bound. */
+      const asked = takeConsentPress();
+      if (organizesHere(outcome.session.profile) && asked) void consentHere(outcome.session);
       return { ok: true };
     },
     [adopt, consentHere, env, refreshProfiles, teardown],

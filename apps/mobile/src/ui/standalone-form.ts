@@ -235,6 +235,18 @@ export function mayStopHere(claim: PhoneClaim): boolean {
 }
 
 /**
+ * Is the START verb offered? Only over a mailbox this phone has READ and nothing holds.
+ *
+ * `free` and nothing else, and each exclusion is a state the verb would lie in: `unknown` has not
+ * been read, `ours` is already organizing, and the two foreign arms would promise a takeover this
+ * build does not have — the door refuses a live foreign claim 409, so the press would do nothing
+ * and say it had.
+ */
+export function mayStartHere(claim: PhoneClaim): boolean {
+  return claim.k === "free";
+}
+
+/**
  * Is Send later offered at all — the composer's one predicate for the affordance. Two reasons
  * to withhold, held in one place because they are one question (may this message be given an
  * appointment?): a forward cannot wear one — a draft row stores no forward reference; and the
