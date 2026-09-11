@@ -49,36 +49,14 @@ function hostnameOf(url: string): string | null {
 }
 
 /**
- * Why `url` is unusable as the SERVERLESS RUNTIME connection, or `null` if it is fine.
- *
- * The SIBLING of {@link transactionPoolerReason}, deliberately not its inverse: the two share no
- * clause, because `pgbouncer=true` and port 6543 are *correct* here and disqualifying there. The
- * sets are not complements either — `localhost` is in neither.
- *
- * ── WHY THIS EXISTS: THE PROVIDER-SCOPED GUARD THAT STOPPED GUARDING ──────────────────────
- *
- * This logic lived at three call sites as `/\.neon\.tech\b/i.test(url) && !/-pooler\./i.test(url)`
- * — `assertPooledUrl` and `loadStaffDbConfig` in the serverless API host's database config, and
- * again in `next.config.mjs`'s build gate. Correct for a Neon-only world. **The day production moved to
- * Supabase all three became unconditionally true-negative**, and nothing failed. Across the six
- * URL families that can occur, the only shape still refused was the Neon direct endpoint,
- * which can no longer occur in production. Everything else — including the IPv6-only
- * `db.<ref>.supabase.co` that works on a laptop and fails on Vercel — was accepted.
- *
- * So the rule is expressed once, here, and each caller keeps its own verdict: `assertPooledUrl`
- * throws (product path), `loadStaffDbConfig` reports (a staff refusal must never 503 the
- * deployment).
- *
- * ── IT IS AN ALLOWLIST OF KNOWN-PROVIDER FOOTGUNS, AND IT FAILS OPEN ──────────────────────
- *
- * Not a validator. `localhost`, a docker Postgres on 5433, a Vercel preview, a self-hoster on a
- * provider neither we nor the reader has named: no clause matches, so the answer is `null` and the
- * URL passes. That property is load-bearing — `assertPooledUrl` THROWS, on the product path, so a
- * rule that refuses a legitimate URL takes ohmail down harder than the bug it prevents.
- *
- * Tested on the parsed HOSTNAME, never the whole URL. The predicate this replaces was a substring
- * test, so a PASSWORD containing `.neon.tech` or `-pooler.` flipped the verdict — on the throwing
- * path.
+ * Why `url` is unusable as the SERVERLESS RUNTIME connection, or `null` if fine. The SIBLING of
+ * {@link transactionPoolerReason}, not its inverse: they share no clause — `pgbouncer=true` and
+ * port 6543 are correct here and disqualifying there. The guard it replaces stopped guarding: it
+ * became unconditionally true-negative when production moved providers, and nothing failed — even
+ * the IPv6-only direct host was accepted. Each caller keeps its verdict: `assertPooledUrl`
+ * throws; `loadStaffDbConfig` reports. An ALLOWLIST of footguns that FAILS OPEN: an unknown host
+ * passes, because refusing a legitimate URL takes ohmail down harder than the bug it prevents.
+ * Tested on the parsed HOSTNAME: a substring test can be flipped by a PASSWORD.
  */
 export function runtimeUrlReason(url: string): string | null {
   const host = hostnameOf(url);
