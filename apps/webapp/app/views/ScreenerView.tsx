@@ -744,44 +744,32 @@ export function ScreenerView({
   }, [junkActive, activeId, full, narrow]);
 
   /**
-   * OPEN THE PREVIEW AT THE LATEST HELD MESSAGE — and STAY there while the bodies arrive.
-   *
-   * The held mail renders oldest→newest (`selectors.ts`: `held: [...newestFirst].reverse()`), so a
-   * fresh render sits at the top on the OLDEST one and the consent decision is taken on the least
-   * current thing the sender sent. The fix is the same one `MessagePane` applies to a conversation:
-   * anchor the LAST `.hmail` by direct `scrollTop` (instant — `.scn-read`, `.read-col` in
-   * `message.css`, declares no smooth scroll).
-   *
-   * ── WHY THE DEPENDENCY LIST GREW, AND IT IS A MEASURED BUG AND NOT A TIDY-UP ──────────────
-   *
-   * This used to be keyed on `[activeId, segment]` alone, with the comment *"so a body hydrating in
-   * does not re-anchor a scrolled reader"*. That trade is the wrong way round, because the anchor is
-   * a PIXEL and not an element reference:
-   *
-   *  · where a held row carries its body INLINE, `bodyOf` answers `full` on the first render
-   *    (`m.body !== undefined`), so every `.hmail` is already at its final height when this runs
-   *    and the anchor lands correctly. That is the demo world's shape;
-   *  · where it does not, the row is DERIVED: `bodyOf` finds no `message_body` record, answers
-   *    `snippet`, and the text arrives later through `hydrateBody`. The entries GROW after the pixel
-   *    was computed. Three snippets at ~100px anchor at 186px; the same three hydrated are ~600px
-   *    each, so 186px is inside the FIRST message.
-   *
-   * The second shape is every mailbox whose bodies are fetched on demand rather than shipped with
-   * the row — which is the ordinary one, and the reason this looked correct while being wrong
-   * wherever it mattered. Both shapes are exercised in `test/screener-latest-anchor.test.tsx`, which
-   * models the growth explicitly because jsdom reports no layout and any assertion about this
-   * arithmetic is otherwise green by construction.
-   *
-   * ── AND THE ORIGINAL CONCERN IS STILL HONOURED, WITHOUT A SCROLL LISTENER ─────────────────
-   *
-   * A reader who scrolls deliberately must not be dragged back. That is answered by remembering the
-   * position we last WROTE ({@link ANCHOR_TOLERANCE_PX}): if the scroller has moved away from it,
-   * the reader owns the column and this effect returns. No listener is needed to know that, and
-   * there is no window in which our own write is mistaken for theirs. The OBSERVED value is stored
-   * rather than the computed target, because a browser clamps `scrollTop` to the scrollable range
-   * and a target beyond it would never match on the next pass.
-   *
-   * `anchoredFor` distinguishes a FRESH selection (always anchor, and forget the remembered
+   * Open the preview at the LATEST held message — and stay there while the bodies arrive. Held
+   * mail renders oldest→newest (`selectors.ts`: `held: [...newestFirst].reverse()`), so a fresh
+   * render sat on the OLDEST one and the consent decision was taken on the least current thing
+   * the sender sent. Same fix as `MessagePane`'s conversation: anchor the last `.hmail` by
+   * direct `scrollTop` (instant — `.scn-read`/`.read-col` declare no smooth scroll).
+   */
+
+  /**
+   * The dependency list grew for a measured bug, not a tidy-up. Keyed on `[activeId, segment]` alone ("so a body
+   * hydrating in does not re-anchor a scrolled reader") the anchor is a PIXEL, not an element: where a held row
+   * carries its body inline (`bodyOf` answers `full` first render — the demo's shape) every `.hmail` is at final
+   * height and the anchor lands; where the row is derived, the text arrives later through `hydrateBody` and the
+   * entries GROW after the pixel was computed — three snippets at ~100px anchor at 186px, the same three hydrated are
+   * ~600px each, so 186px is inside the FIRST message. The derived shape is the ordinary one, which is why this
+   * looked correct while wrong wherever it mattered. Both shapes are in `test/screener-latest-anchor.test.tsx`, which
+   * models the growth explicitly because jsdom reports no layout.
+   */
+
+  /**
+   * The original concern is still honoured, without a scroll listener: a reader who scrolls
+   * deliberately must not be dragged back. Answered by remembering the position we last WROTE
+   * ({@link ANCHOR_TOLERANCE_PX}) — if the scroller has moved away from it, the reader owns the
+   * column and this effect returns; no window in which our own write is mistaken for theirs. The
+   * OBSERVED value is stored rather than the computed target, because a browser clamps
+   * `scrollTop` to the scrollable range and a target beyond it would never match on the next
+   * pass. `anchoredFor` distinguishes a FRESH selection (always anchor, forget the remembered
    * position) from a re-run caused by a body landing.
    */
   const anchorKey = `${segment}::${activeId ?? ""}`;
@@ -829,29 +817,19 @@ export function ScreenerView({
      and does not. */
 
   /**
-   * THE SELECTED SENDER'S HELD MAIL, IN FULL.
-   *
-   * `ScreenerSenderDTO.held` has claimed "every held message, in full" since it was written,
-   * and on a live account the claim was false: every row is derived, so every body was the
-   * snippet and the consent decision was being taken on one line of text. Hydrating the
-   * selected sender's held list is what makes the claim true — and it reduces the chance of
-   * deciding WRONGLY, which is the only reason this pile gets its bodies by default while
-   * Reads and Receipts stay collapsed.
-   *
-   * ── BOUNDED BY `held.length`, AND BY THE SELECTION ─────────────────────────────────────
-   *
-   * One sender at a time, never the queue. A waiting Screener holds one sender per stranger
-   * and typically one to three messages each; the whole segment could be hundreds. The
-   * `.join` in the dep list keys on the exact ids, so the effect re-runs when the selection
-   * moves and not when a body lands — the record write bumps the mirror version, and a
-   * dependency on that would re-enter this loop once per arriving body.
-   *
-   * ── AND IT IS THE ONLY THING SELECTION DOES ────────────────────────────────────────────
-   *
-   * Reading held mail stays SIDE-EFFECT-FREE: no `mark_seen`, no dwell timer, no waterline.
-   * `hydrateBody` is a GET and writes nothing but a client-local record. The ⇧-twins in the
-   * decision keys exist precisely because plain filing does not mark held mail read, and a
-   * preview that marked it read on sight would make that distinction meaningless.
+   * The selected sender's held mail, in full. `ScreenerSenderDTO.held` has claimed "every held message, in full"
+   * since it was written, and on a live account the claim was false: every row is derived, so every body was the
+   * snippet and the consent decision was taken on one line of text. Hydrating the selected sender's held list makes
+   * the claim true — and reduces the chance of deciding WRONGLY, the only reason this pile gets bodies by default
+   * while Reads and Receipts stay collapsed. Bounded by `held.length` and the selection: one sender at a time, never
+   * the queue (one to three messages against a segment of hundreds), and the `.join` in the dep list keys on exact
+   * ids, so the effect re-runs when the selection moves, not when a body lands — a mirror-version dependency would
+   * re-enter once per arriving body.
+   */
+
+  /**
+   * It is the only thing selection does: no `mark_seen`, no dwell timer, no waterline — `hydrateBody` is a GET
+   * writing a client-local record, and the ⇧-twins exist precisely because plain filing does not mark held mail read.
    */
   // `heldOfCurrent` is resolved once, up beside the anchor, so the two effects that read this
   // sender's held mail cannot disagree about which rows they mean.
@@ -1729,29 +1707,19 @@ export function HeldMail({
    * is not an acceptable dead end.
    */
   /**
-   * ── AND THE SPINNER MUST BE A CLAIM ABOUT A REAL REQUEST ────────────────────────────────
-   *
-   * This used to map everything that was not `full` or `failed` to `t("loading")`, on the
-   * argument written above it: selecting a sender hydrates its whole held list, so a `snippet`
-   * on screen is a body already on its way. That argument is sound for the common case and
-   * FALSE for two, and in both of them `hydrateBody` returns having asked for nothing — so the
-   * sentence promised a request nobody would ever make and there was no control to escape it.
-   * A protected held message and one whose row has left the mirror both sat under "Loading the
-   * full message…" for as long as the sender stayed selected.
-   *
-   * `bodyStall` is that fact, read from the same predicate `hydrateBody` decides on
-   * ({@link HeldBodyStall}). The four states are now distinguished by what is true of each:
-   *
-   *   protected  → the block, and no text at all, because a sensitive message's body must
-   *                never be rendered — exactly as `MessagePane` does
-   *                it — a spinner over a message whose body must not exist is the wrong
-   *                sentence twice over.
-   *   failed     → the failure, WITH Retry, unchanged.
-   *   loading    → the spinner, and only here: a request is genuinely in the air.
-   *   snippet
-   *     · stalled  → nothing. The snippet is all there will ever be, and the preview shows it
-   *                  rather than narrating a wait that has no end.
-   *     · in flight → the spinner, which is the original argument, kept for the case it holds.
+   * The spinner must be a claim about a real request. This used to map everything not `full` or `failed` to
+   * `t("loading")`, arguing that selecting a sender hydrates its held list, so a `snippet` on screen is a body on its
+   * way — sound for the common case, false for two, and in both `hydrateBody` returns having asked for nothing: a
+   * protected held message and one whose row has left the mirror both sat under "Loading the full message…" for as
+   * long as the sender stayed selected. `bodyStall` is that fact, read from the same predicate `hydrateBody` decides
+   * on ({@link HeldBodyStall}).
+   */
+
+  /**
+   * The states: protected → the block and no text (a sensitive body must never render — as `MessagePane` does it);
+   * failed → the failure with Retry; loading → the spinner, only here, where a request is genuinely in the air;
+   * snippet stalled → nothing (the snippet is all there will ever be); snippet in flight → the spinner, the original
+   * argument kept for the case it holds.
    */
   /**
    * AND EVEN A SPINNER OVER A REAL REQUEST HAS TO END: `bodyStall` bounds the two cases where `hydrateBody` asks for
@@ -2052,24 +2020,17 @@ function WaitingPreview({
   const barCopy = useDecisionBarCopy(ruleTarget);
   return (
     <>
-      {/* ── THE BAR IS WITHHELD ON A MAILBOX THIS INSTALL DOES NOT ORGANIZE ─────────────────
-          Not disabled — GONE, and the sentence takes its place. A greyed decision bar is still
-          five destinations, a scope control and a rule promise on screen; the thing to say here
-          is that this computer does not file, and who does.
-
-          `scn-reader`, styled as the pane's own note. The refusal is stated BEFORE the press,
-          which is the rule the first-run flow's elsewhere step already keeps for the same state:
-          the released build let the press happen, said "Ohbox — filed", and took it back
-          forty-five seconds later with no reason. The keys refuse too (`keys`, below), and the
-          state refuses under both (`screener-state.ts` → `role`) — three layers, because the
-          only one a person meets is this one and the only one that is structural is the last.
-
-          ── AND `pending` IS THE OPPOSITE CASE, WHICH IS WHY THIS IS NOT A BOOLEAN ───────────
-          A reader whose organizer accepts decisions KEEPS the bar. Withholding it there would be
-          the same defect with its sign flipped: a control taken away from somebody whose press
-          would in fact be carried out, on a pane that then explains a refusal that never
-          happened. What that state gets instead is a standing line saying where the decision
-          goes and how long it takes, above the bar rather than in place of it. */}
+      {/* The bar is withheld on a mailbox this install does not organize — not disabled, GONE,
+          with the sentence in its place: a greyed bar is still five destinations, a scope
+          control and a rule promise on screen, and the thing to say is that this computer does
+          not file, and who does. `scn-reader`, styled as the pane's own note. The refusal is
+          stated BEFORE the press (the released build let the press happen, said "Ohbox —
+          filed", and took it back forty-five seconds later with no reason). The keys refuse too
+          (`keys`, below), and the state refuses under both (`screener-state.ts` → `role`).
+          `pending` is the opposite case, which is why this is not a boolean: a reader whose
+          organizer accepts decisions KEEPS the bar — withholding it would be the same defect
+          with its sign flipped — and gets a standing line saying where the decision goes and
+          how long it takes, above the bar rather than in place of it. */}
       {role.mode === "blocked" ? (
         /* The bar's own chrome, minus its verbs — the sticky panel and the narrow-width Back,
            which is the only way out of a full-screen preview on a phone and has nothing to do
@@ -2113,25 +2074,15 @@ function WaitingPreview({
                 : t.rich("pendingDecidedUnknown", { b: (chunks) => <b>{chunks}</b> })}
           </div>
         ) : null}
-        {/**
-          * THE ABSENCE OF A SUGGESTION IS ITSELF SOMETHING TO SAY.
-          *
-          * This block used to render only in the `ai` branch, so on a live account — where
-          * `ai` is null for every derived row — the preview said nothing at all, and the
-          * reader was left looking for a suggestion the surface had never admitted it did
-          * not have. "Every mail says why" is published copy; silence does not satisfy it.
-          *
-          * The FACT is shared with `AiSection`'s `status` line ("no live model is connected
-          * yet") and both change together the day a classifier is wired into the server's
-          * dependencies — the same trigger `AiSection.tsx` already names.
-          *
-          * THE WORDING IS NO LONGER SHARED, and that is a deliberate correction. This
-          * used to end *"Pick a door."*, borrowed from the marketing page's AI-off row.
-          * There the metaphor is established one screen earlier — `hero.door` is the
-          * landing's own paragraph — and here nothing has ever been called a door: the
-          * capsules beside this sentence say Ohbox, Reads, Receipts, Screen out, Spam. A
-          * word the surface never defines is not shorthand, it is a second vocabulary. The
-          * marketing line keeps its own.
+        {/*
+            The absence of a suggestion is itself something to say. This used to render only in the `ai` branch, so on
+            a live account — where `ai` is null for every derived row — the preview said nothing, and the reader was
+            left looking for a suggestion the surface never admitted it did not have; "every mail says why" is
+            published copy, and silence does not satisfy it. The FACT is shared with `AiSection`'s `status` line and
+            both change together the day a classifier is wired in. The WORDING is no longer shared, deliberately: this
+            used to end "Pick a door.", borrowed from the marketing page where the metaphor is established one screen
+            earlier — here nothing has ever been called a door (the capsules say Ohbox, Reads, Receipts, Screen out,
+            Spam), and a word the surface never defines is a second vocabulary, not shorthand.
           */}
         {sender.ai ? (
           <div className="scn-why">
