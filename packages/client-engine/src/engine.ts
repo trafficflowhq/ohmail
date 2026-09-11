@@ -2769,54 +2769,29 @@ export class OhmailEngine {
    * not survive into the next one — see {@link OhmailEngine.claimSnapshotPrefix}.
    */
   /**
-   * CLAIM THIS SNAPSHOT'S SEQ, AND SWEEP AN EARLIER ATTEMPT'S ROWS BEFORE WRITING OVER THEM.
-   *
-   * ── THE DEFECT: A SNAPSHOT SAYS NOTHING ABOUT WHAT IT OMITS ──────────────────────────────
-   *
-   * A cold bootstrap that fails mid-stream is documented above as safe, and for its own rows it
-   * is: they carry `seq === asOfSeq`, the cursor stays "0", and a re-snapshot converges. The
-   * argument has one hole, and it is about the rows the SECOND snapshot does not mention.
-   *
-   *   1. attempt A reads at `asOfSeq` 100 and applies pages 1…3. Message M is in page 2, so the
-   *      mirror holds it at seq 100. Page 4 fails and is rethrown; the cursor is still "0".
-   *   2. the user deletes M — or the provider expunges it — and the log records that at seq 150.
-   *   3. attempt B reads at `asOfSeq` 200. A snapshot is a statement of LIVE state, so M is
-   *      simply absent from it; nothing in B refers to M at all. B completes and its last page
-   *      commits the cursor at 200.
-   *
-   * M is now in the mirror for ever: the row that carries it was never overwritten, and the
-   * `delete` change that would remove it sits at 150, below the cursor the client just adopted.
-   * `/sync` sends a delta once. **Deleted mail comes back and stays.** It is the same class as
-   * the persistence contract in `store.ts` — a cursor advancing on something that is not a
-   * fact — with the falsified fact being "the rows on disk belong to the snapshot the cursor
-   * names".
-   *
-   * ── THE FIX, AND WHY THE PREDICATE IS THE SEQ ────────────────────────────────────────────
-   *
-   * Every row a snapshot emits carries that snapshot's `asOfSeq`, so ONE seq value names ONE
-   * attempt's output exactly. The seq of the attempt whose prefix is on disk is written to
-   * {@link SNAPSHOT_PREFIX_SEQ_META} BEFORE the first row of that attempt is applied, and an
-   * attempt that finds a DIFFERENT seq there sweeps those records out first
-   * ({@link MirrorStore.pruneBySeq}) — a hard delete, so anything the new snapshot does still
-   * carry is simply re-materialized by the page that follows.
-   *
-   * The alternative — remembering the applied ids in a field — is the defect in a different
-   * shape: the whole failure is a process that stopped, and a list in that process's memory
-   * stops with it.
-   *
-   * **`pruneBySeq` refuses seq 0**, which is what protects the durable outbox and the hydrated
-   * bodies: they are client-local records and live there by construction. An account whose log is
-   * empty answers `asOfSeq: 0` and is a no-op on both halves, correctly — there is nothing to
-   * sweep and nothing to claim.
-   *
-   * ## THE MARKER IS NOT CLEARED WHEN THE SNAPSHOT COMPLETES, AND THAT IS DELIBERATE
-   *
-   * After the last page the mirror holds the WHOLE snapshot at that seq, so the key is a true
-   * statement, not a leftover. It is also unreadable from anywhere else: this method is the only
-   * reader, `runSnapshot` is the only caller, and the drain reaches it only at cursor "0" — a
-   * state a completed bootstrap can return to only through `resetForBootstrap`, which clears meta
-   * along with everything else. Clearing it would buy one extra flush on every cold boot and
-   * close no window.
+   * Claim this snapshot's seq, and sweep an earlier attempt's rows before writing over them. A
+   * snapshot says nothing about what it OMITS: attempt A (asOfSeq 100) applies pages 1–3 holding
+   * message M, page 4 fails, cursor stays "0"; M is deleted at seq 150; attempt B (asOfSeq 200)
+   * never mentions M — a snapshot states LIVE state — completes, and commits the cursor at 200. M
+   * is now in the mirror for ever: its delete sits at 150, below the adopted cursor, and `/sync`
+   * sends a delta once. Deleted mail comes back and stays — the store.ts persistence class, the
+   * falsified fact being "the rows on disk belong to the snapshot the cursor names".
+   */
+
+  /**
+   * The predicate is the seq: every row a snapshot emits carries that snapshot's `asOfSeq`, so one seq names one
+   * attempt's output exactly. The seq of the on-disk prefix is written to {@link SNAPSHOT_PREFIX_SEQ_META} BEFORE the
+   * first row is applied, and an attempt finding a DIFFERENT seq sweeps those records first ({@link
+   * MirrorStore.pruneBySeq}, a hard delete — anything the new snapshot still carries is re-materialized by its own
+   * pages). The alternative, remembering applied ids in a field, is the defect in another shape: the failure is a
+   * process that stopped, and a list in that process's memory stops with it. `pruneBySeq` refuses seq 0, which
+   * protects the durable outbox and hydrated bodies (client-local by construction); an empty log answers `asOfSeq: 0`
+   * and is a no-op on both halves.
+   */
+
+  /**
+   * The marker is NOT cleared on completion, deliberately: after the last page it is a true statement, its only
+   * reader is this method at cursor "0", and `resetForBootstrap` clears meta anyway.
    */
   private async claimSnapshotPrefix(asOfSeq: number): Promise<void> {
     const prior = this.store.getMeta<number>(SNAPSHOT_PREFIX_SEQ_META);
@@ -2871,41 +2846,23 @@ export class OhmailEngine {
   // ── the windowed store: keeping only part of the mailbox on disk ─────────
 
   /**
-   * EVICT THE MESSAGES THIS CLIENT HAS CHOSEN NOT TO KEEP. Returns whether anything went.
-   *
-   * The shape is {@link OhmailEngine.purgeProtectedBodies}'s: one pass over the mirror computing
-   * a victim list, then the store write. It runs after a drain rather than on a timer because a
-   * timer would evict rows in the middle of a bootstrap, and because "we are caught up" is the
-   * only moment at which the newest-N half of the window means what it says.
-   *
-   * ── THE RULE ────────────────────────────────────────────────────────────────────────────
-   *
-   * Keep the newest `minRows` messages whatever their age; of the rest, keep anything newer than
-   * `days`; evict what is left. `minRows` is not a nicety — it is what stops a mailbox that has
-   * been quiet for a month from evicting itself down to nothing and rendering an empty app.
-   *
-   * ── MINUS THE PIN SET, WHICH IS THE PART THAT MATTERS ───────────────────────────────────
-   *
-   * A message the product is still USING must never be evicted for being old, because the thing
-   * referencing it renders from the mirror and would render a hole. Five references pin, and the
-   * FIRST of them is not a row in the mirror at all:
-   *
-   *  · a surface currently RENDERING it — the message the reader has open. Nothing in the mirror
-   *    points at it (reading is not a mutation), so the four record clauses below could all be
-   *    satisfied while the prune deleted the mail on screen mid-read. See
-   *    {@link OhmailEngine.pinnedMessageIds} for why `hydrateBody` is the signal;
-   *
-   *  · a `draft` replying to it (`inReplyToMessageId`) — the compose view shows what is being
-   *    replied to, and a reply-later draft can easily outlive the window;
-   *  · a `message_state` that is not `none` — every triage pile IS a set of these, and
-   *    `bubbled_up` in particular is a TIMER on an old message: the whole point is that it is old
-   *    and comes back. Evicting it would delete the reminder;
-   *  · a `routing_decision` still `pending_approval`, and
-   *  · an `approval` still `pending` — both are questions the user has not answered yet, and the
-   *    question is unanswerable without the mail it is about.
-   *
-   * Anything already resolved (`approved`, `rejected`, `expired`, `auto_applied`) does NOT pin:
-   * it is history, and history is what the window is for.
+   * Evict the messages this client has chosen not to keep; returns whether anything went. The
+   * shape is {@link OhmailEngine.purgeProtectedBodies}'s: one pass computing a victim list, then
+   * the store write. It runs after a drain, not on a timer: a timer would evict mid-bootstrap, and
+   * "we are caught up" is the only moment the newest-N half of the window means what it says. The
+   * rule: keep the newest `minRows` whatever their age (what stops a quiet mailbox evicting itself
+   * down to an empty app); of the rest, keep anything newer than `days`; evict the remainder.
+   */
+
+  /**
+   * Minus the pin set, which is the part that matters: a message the product is still USING must never be evicted for
+   * being old — the thing referencing it renders from the mirror and would render a hole. Five references pin: a
+   * surface currently RENDERING it (nothing in the mirror points at an open message — see {@link
+   * OhmailEngine.pinnedMessageIds}); a `draft` replying to it (a reply-later draft outlives the window); a
+   * `message_state` that is not `none` (every triage pile IS a set of these, and `bubbled_up` is a TIMER on an old
+   * message — evicting it deletes the reminder); a `routing_decision` still `pending_approval`; and an `approval`
+   * still `pending` — both unanswered questions, unanswerable without the mail. Anything resolved does NOT pin: it is
+   * history, and history is what the window is for.
    */
   private async pruneToPolicy(): Promise<boolean> {
     const policy = this.storePolicy;
@@ -2953,26 +2910,14 @@ export class OhmailEngine {
     const pinned = new Set<string>();
 
     /**
-     * ── THE MESSAGE ON SCREEN, WHICH NOTHING IN THE MIRROR REFERENCES ───────────────────────
-     *
-     * Every other clause below reads a ROW that points at a message. An open message is pointed
-     * at by nothing: reading is not a mutation, the Screener's preview is deliberately
-     * side-effect-free, and a message the reader has merely opened has no draft, no triage
-     * state and no pending question. So the four record clauses could all be satisfied and the
-     * windowed prune would still hard-delete, with its `message_body` cascade, the mail
-     * currently under the reader's eyes — mid-read, on the drain that follows.
-     *
-     * WHY `hydrateBody` IS THE SIGNAL AND NOT A NEW REGISTRATION CALL. The engine holds no view
-     * state and should not start. But every reading surface ALREADY tells it which message it is
-     * rendering, from an effect keyed on the open id: the Ohbox selection and the reader sheet
-     * (`AppShell`), the Screener's selected sender, the Reads/Receipts/History cards. That call
-     * is the statement "I am rendering this message's body" — not a proxy for it — so honouring
-     * it needs no second seam that a surface could forget to call, and no shell knows about the
-     * prune at all.
-     *
-     * WHAT IT IS NOT: a promise that everything ever opened survives. The hold is capped
-     * ({@link RENDERED_PINS}) and lives only in this tab, so it is "what the surfaces are
-     * showing", not a second retention policy competing with the window.
+     * The message on screen, which nothing in the mirror references. Every other clause reads a ROW that points at a
+     * message; an open message is pointed at by nothing (reading is not a mutation), so the four record clauses could
+     * all be satisfied while the windowed prune hard-deleted, cascade included, the mail under the reader's eyes.
+     * `hydrateBody` is the signal and not a new registration call: every reading surface already tells the engine
+     * which message it renders, from an effect keyed on the open id — that call IS the statement "I am rendering this
+     * body", so honouring it needs no second seam a surface could forget. Not a promise that everything ever opened
+     * survives: the hold is capped ({@link RENDERED_PINS}) and lives only in this tab — what the surfaces are
+     * showing, not a second retention policy.
      */
     for (const id of this.renderedIds) pinned.add(id);
 
@@ -2995,76 +2940,39 @@ export class OhmailEngine {
   }
 
   /**
-   * A drain that is guaranteed to have STARTED AFTER the caller's write committed.
-   *
-   * ## THE DEFECT THIS EXISTS FOR
-   *
-   * `syncOnce()` coalesces: a second caller gets the drain already running. For a poll or a wake
-   * that is exactly right — they only ever want "catch up", and one drain does. For a mutation
-   * reconciling its own write it is WRONG, and wrong in the way that is hardest to see: a drain
-   * issued BEFORE the POST committed read the change log at a seq below the mutation's row, so it
-   * cannot carry it however long it takes to come back. `dispatch` awaited it anyway, concluded
-   * the write had landed, deleted the optimistic overlay — and the mail snapped back to the
-   * Screener until the next 8 s poll.
-   *
-   * Reported twice from real use, as "when I select one as ohbox, it does not seem to work" —
-   * and then it does. It depends on whether a poll happens to be in flight when the click lands, which
-   * is why it looked intermittent: unpredictable by construction, not by luck.
-   *
-   * ## WHY "STARTED AFTER THE POST RETURNED" IS SUFFICIENT — AND WHAT WOULD BREAK IT
-   *
-   * The server allocates each sequence number through an `UPDATE … RETURNING`
-   * on the account's `account_sync_state` row, inside the mutation's own transaction, and
-   * appends the `change_log` row in that same transaction. So the row lock makes
-   * seq order equal COMMIT order per account: seq N is durable before N+1 is ever handed out. A
-   * drain issued after our POST returned therefore reads a log in which our row is already
-   * visible, and no concurrent drain can move the cursor PAST our seq while our row is still
-   * invisible. That is the whole argument, and it rests entirely on that lock — a future
-   * `bigserial` seq (allocated outside the transaction, committed out of order) would leave every
-   * test here green while making this silently unsound.
-   *
-   * This is deliberately NOT a wait for `cursor >= outcome.seq`. That is unsound in a way this is
-   * not: `SyncService` sets the cursor to the max seq actually RETURNED, computed after the
-   * `types` filter, so with `EngineOptions.types` set a seq belonging to a filtered-out entity
-   * type is never reached and the wait never terminates. It also needs a fallback anyway —
-   * `rule_delete`'s 404 and any absent or non-finite `X-Sync-Seq` give `seq: null` — and a wait
-   * loop is unbounded requests — API cost with nobody behind it — where this is exactly one
-   * drain.
-   *
-   * ## WHAT IT COSTS, WHICH IS NOTHING IN THE COMMON CASE
-   *
-   * No drain in flight ⇒ `syncOnce()` starts one NOW, which is already "after". That is the same
-   * single drain the mutation paid for before this existed: no extra round trip, no doubled
-   * request rate.
-   *
-   * A drain in flight ⇒ ONE follow-up, chained behind it and shared by every mutation that lands
-   * in the same window. Three clicks during one poll are three overlays and one extra drain, not
-   * three.
-   *
-   * That bound comes from `syncOnce()` itself and needs no bookkeeping here, which is worth
-   * stating because the obvious "remember the queued drain" field is redundant and was removed
-   * after being written: every mutation waiting on the same in-flight drain has its callback on
-   * that ONE promise's reaction list, so the callbacks run as consecutive microtasks; the first
-   * calls `syncOnce()`, which assigns `this.syncing` SYNCHRONOUSLY before returning; every
-   * sibling therefore finds it set and coalesces. No macrotask can interleave between adjacent
-   * microtasks, and a drain cannot finish inside that window because its own first step is an
-   * `await`. Proven by experiment rather than argued: with the sharing field disabled the whole
-   * suite — including the three-clicks-in-one-window bound — stayed green.
-   *
-   * Drains therefore never overlap. NOT because of `getCursor()`, which is a plain synchronous
-   * field read that serializes nothing, but because the follow-up is created by calling
-   * `syncOnce()` from inside a `.then` on the drain it is waiting for, so the single-flight is
-   * never bypassed. Concurrency stays 1, which is the property
-   * `apps/webapp/app/shell/sync-scheduler.ts` states and `sync-liveness.test.ts` asserts.
-   *
-   * Two costs are accepted rather than engineered away. A mutation that lands during the ~37-page
-   * cold bootstrap now waits for the bootstrap AND a follow-up before it confirms — the overlay
-   * keeps the screen correct throughout, and the mutation was already hostage to that bootstrap
-   * through `syncOnce`'s coalescing. And a POST that returned before the current drain STARTED
-   * chains one drain it did not need: the client cannot tell that case from the broken one,
-   * because the only happens-before it owns is "the POST returned". The over-approximation is
-   * sound and bounded at one drain; distinguishing it would need a wall clock, and the only clock
-   * here is the injectable `now` seam that fixtures freeze.
+   * A drain guaranteed to have STARTED AFTER the caller's write committed. `syncOnce()` coalesces —
+   * right for a poll, wrong for a mutation reconciling its own write: a drain issued BEFORE the
+   * POST committed read the log below the mutation's row and cannot carry it, however long it
+   * takes; `dispatch` awaited it anyway, dropped the overlay, and the mail snapped back until the
+   * next 8 s poll. Reported twice as "when I select one as ohbox, it does not seem to work" — and
+   * then it does: it depends on whether a poll was in flight when the click landed, intermittent by
+   * construction.
+   */
+
+  /**
+   * "Started after the POST returned" is sufficient because the server allocates each seq through an `UPDATE …
+   * RETURNING` on the account's `account_sync_state` row inside the mutation's own transaction, so seq order equals
+   * COMMIT order per account: a drain issued after our POST returned reads a log in which our row is visible. The
+   * argument rests entirely on that row lock — a future `bigserial` seq would leave every test green and make this
+   * silently unsound. Deliberately NOT a wait for `cursor >= outcome.seq`: the cursor is the max seq RETURNED after
+   * the `types` filter, so with `EngineOptions.types` set the wait never terminates; it also needs a fallback anyway
+   * (`seq: null` on a stripped header), and a wait loop is unbounded requests with nobody behind them, where this is
+   * exactly one drain.
+   */
+
+  /**
+   * Cost: nothing in the common case — no drain in flight means `syncOnce()` starts one NOW, the same single drain
+   * the mutation always paid for. A drain in flight means ONE follow-up, shared by every mutation landing in the
+   * window (three clicks during one poll are three overlays and one extra drain). The bound comes from `syncOnce()`
+   * itself: the waiting callbacks run as consecutive microtasks, the first assigns `this.syncing` synchronously,
+   * every sibling coalesces — proven by experiment, the remembered-drain field removed with the suite green. Drains
+   * never overlap (concurrency 1, `sync-liveness.test.ts`).
+   */
+
+  /**
+   * Two accepted costs: a mutation landing during the cold bootstrap waits for it plus a follow-up (it already did,
+   * through coalescing), and a POST that returned before the current drain started chains one drain it did not need —
+   * sound, bounded at one, and distinguishing it would need a wall clock.
    */
   private syncFresh(): Promise<void> {
     const inFlight = this.syncing;
