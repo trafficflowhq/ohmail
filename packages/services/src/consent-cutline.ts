@@ -2,6 +2,7 @@ import { sql, type SQL } from "drizzle-orm";
 import { DEFAULT_DORMANCY_DAYS, type ScreeningScope } from "@trafficflow/core/mail";
 import type { ServiceContext } from "./context.js";
 import { dialect, type Dialect } from "@trafficflow/db/dialect";
+import { activeSenderExpr, anyOf, resolveCutline } from "@trafficflow/db";
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
    THE CUTLINE, SERVER-SIDE — how many senders are still owed a decision.
@@ -131,14 +132,20 @@ export interface CutlineOptions {
 export async function cutlineCounts(
   ctx: ServiceContext, opts: CutlineOptions = {},
 ): Promise<CutlineCounts> {
-  const days = opts.dormancyDays ?? DEFAULT_DORMANCY_DAYS;
-  // An unparseable stored baseline is treated as ABSENT rather than as epoch 0 — the client's rule
-  // verbatim (`cutlineFor`), and for its reason: a 1970 baseline puts every message after the
-  // cutoff and pins every undecided sender in the queue for ever.
-  const baselineMs = opts.baselineAt == null ? null : opts.baselineAt.getTime();
-  const baselined = baselineMs !== null && Number.isFinite(baselineMs);
-  const measuredFrom = baselined ? baselineMs! : ctx.now().getTime();
-  const cutoff = new Date(measuredFrom - days * 24 * 60 * 60 * 1000);
+  /* THE RESOLUTION AND THE ACTIVE TEST BOTH COME FROM `@trafficflow/db#screener-cutline`.
+   *
+   * They were spelled here, and only here, which is how `GET /screener` came to list every sender
+   * whose mail sits in the Screener folder while this function counted the ones still worth a
+   * decision — an order of magnitude apart on a mailbox with years of history. The rule now has
+   * one implementation and three readers: this count, the queue's page, the auto-suggest set. */
+  const resolved = resolveCutline({
+    baselineAt: opts.baselineAt ?? null,
+    dormancyDays: opts.dormancyDays ?? null,
+    scope: opts.scope ?? null,
+    now: ctx.now(),
+  });
+  const cutoff = resolved.cutoff;
+  const baselined = resolved.baselined;
   /**
    * ALL TIME ⇒ NO DORMANCY (mail 0083). See {@link CutlineOptions.scope}.
    *
@@ -148,23 +155,9 @@ export async function cutlineCounts(
    * read as dormant. Under this mode a sender with mail in an undecided residence is active
    * BECAUSE they have undecided mail, full stop, and nothing about a header decides it.
    */
-  const allTime = opts.scope === "all_time";
+  const allTime = resolved.allTime;
   const folders = sql`(${sql.join(PRESENTED_FOLDERS.map((f) => sql`${f}`), sql`, `)})`;
   const undecidedResidences = sql`(${sql.join(UNDECIDED_RESIDENCES.map((f) => sql`${f}`), sql`, `)})`;
-  /**
-   * THE UNREAD TERM, AND IT IS THE ONLY THING THE BASELINE CHANGES HERE.
-   *
-   * Baselined ⇒ unread mail counts only INSIDE the window (`any_unread_in_window`); absent ⇒ any
-   * unread mail at all outranks age (`any_unread`), which is the pre-0056 expression unchanged.
-   * The client's `senderActivity` picks between exactly these two, and the parity test runs both
-   * over one set of rows precisely because two implementations of one rule is two things that can
-   * drift apart silently.
-   *
-   * Chosen in TypeScript rather than as a SQL `CASE`, so the statement Postgres plans contains one
-   * predicate and not a branch over a constant — and so the choice sits next to the comment
-   * explaining it rather than three subqueries down.
-   */
-  const unreadTerm = baselined ? sql`i.any_unread_in_window` : sql`i.any_unread`;
 
   /**
    * FOUR CONSTRUCTS HERE SPELL DIFFERENTLY ON THE TWO STORES, and three of them were invisible to
@@ -178,7 +171,8 @@ export async function cutlineCounts(
    * store takes commas, and `strpos` puts its arguments in the opposite order.
    */
   const d = dialect(ctx.db);
-  const anyOf = (cond: SQL): SQL => sql`(max(case when ${cond} then 1 else 0 end) = 1)`;
+  // `anyOf` and the ACTIVE test come from `@trafficflow/db#screener-cutline`, which owns the rule
+  // for all three readers. It was a closure here while this was the only one.
   const rows = await d.exec(ctx.db, sql`
     with own as (
       select lower(address) a from mailboxes where account_id = ${d.castUuid(ctx.accountId)}
@@ -221,7 +215,11 @@ export async function cutlineCounts(
               or (${d.strpos(sql`i.addr`, sql`'@'`)} > 0
                   and exists (select 1 from decided_domain dd
                                where dd.m = ${d.substr(sql`i.addr`, sql`${d.strpos(sql`i.addr`, sql`'@'`)} + 1`)}))) as decided,
-             ${allTime ? sql`true` : sql`(${unreadTerm} or (i.newest is not null and i.newest >= ${d.ts(cutoff)}))`} as active
+             ${activeSenderExpr(d, resolved, {
+               anyUnread: sql`i.any_unread`,
+               anyUnreadInWindow: sql`i.any_unread_in_window`,
+               newest: sql`i.newest`,
+             })} as active
         from inbound i
     )
     select count(*) filter (where decided)                        as decided,

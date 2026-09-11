@@ -2,6 +2,7 @@ import { and, asc, desc, eq, isNull, sql, type SQL } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   accountSettings, folderState, messages,
+  resolveCutline, senderIsActiveSql, type ResolvedCutline,
   screenerAttemptKey, storeScreenerSuggestion,
   screenerSuggestedSenderExists, hasScreenerSuggestionForSender, AI_ACTION_WEIGHTS,
   type SpendPort, type Tx,
@@ -242,6 +243,11 @@ export interface ScreenerAutoSuggestDeps {
   log?: Logger;
   /** Test seam. Default {@link AUTO_SUGGEST_BATCH}. */
   batch?: number;
+  /**
+   * The clock, for the cutline. It is read ONLY when the account has no baseline — the sliding
+   * window is measured from now — so the hosted pass leaves it absent and takes the real clock.
+   */
+  now?: () => Date;
 }
 
 export interface ScreenerAutoSuggestResult {
@@ -305,12 +311,26 @@ export async function screenerAutoSuggestPass(
   //
   // Read EVERY cycle, never cached: turning the switch off is the brake, and a cached ON would
   // keep spending after somebody pulled it.
-  const [settings] = await db.select({ autoSuggestAt: accountSettings.autoSuggestAt })
+  const [settings] = await db.select({
+    autoSuggestAt: accountSettings.autoSuggestAt,
+    // The cutline's three answers, on the PK read the opt-in probe already makes. A sender the
+    // cutline has retired is not a question, so buying advice about them spends money on a row
+    // no surface shows.
+    screeningBaselineAt: accountSettings.screeningBaselineAt,
+    dormancyDays: accountSettings.dormancyDays,
+    screeningScope: accountSettings.screeningScope,
+  })
     .from(accountSettings).where(eq(accountSettings.accountId, accountId)).limit(1);
   const watermark = settings?.autoSuggestAt ?? null;
   if (!watermark) return EMPTY();
 
-  const candidates = await selectCandidates(db, { accountId, watermark, limit: batch });
+  const cutline = resolveCutline({
+    baselineAt: settings?.screeningBaselineAt ?? null,
+    dormancyDays: settings?.dormancyDays ?? null,
+    scope: settings?.screeningScope ?? null,
+    now: deps.now?.() ?? new Date(),
+  });
+  const candidates = await selectCandidates(db, { accountId, watermark, limit: batch, cutline });
   const result: ScreenerAutoSuggestResult = {
     ...EMPTY(), ran: true, examined: candidates.length, capped: candidates.length >= batch,
   };
@@ -558,7 +578,7 @@ export async function screenerAutoSuggestPass(
  * at right now", which is a different question from "what has been waiting longest".
  */
 async function selectCandidates(
-  db: Tx, opts: { accountId: string; watermark: Date; limit: number },
+  db: Tx, opts: { accountId: string; watermark: Date; limit: number; cutline?: ResolvedCutline },
 ): Promise<Candidate[]> {
   const d = dialect(db);
   const sortKey = d.truncMs(sql`coalesce(${messages.date}, to_timestamp(0))`) as SQL<Date>;
@@ -626,6 +646,13 @@ async function selectCandidates(
       // must take the stricter reading of both.
       eq(reps.noAi, false),
       isNull(reps.sensitivityCategory),
+      // (4) THE CUTLINE — the same expression `GET /consent` counts through and `GET /screener`
+      // now lists through. Without it this pass bought advice about senders no surface shows,
+      // which is money spent on a question nobody is being asked. Absent ⇒ inert, so a caller
+      // that reads no settings gets the query it always had.
+      opts.cutline
+        ? senderIsActiveSql(d, opts.accountId, sql`lower(${reps.fromAddress})`, opts.cutline)
+        : undefined,
     ))
     .orderBy(asc(reps.createdAt), asc(reps.messageId))
     .limit(opts.limit);

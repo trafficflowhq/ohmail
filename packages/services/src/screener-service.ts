@@ -12,6 +12,7 @@ import {
   AI_ACTION_WEIGHTS,
   // 0.14.1, 0.14.1 — the request path. See `screener-apply.ts` and `organizer-role.ts` in
   // `@trafficflow/db` for why the transactional core and the eligibility read live there.
+  resolveCutline, senderIsActiveSql, type ResolvedCutline,
   heldRowById, applyScreenerDecision, AccountErasedError, readAccountErasedAt, domainOf,
   readRequestEligibility, readOrganizerRole, insertOrganizerRequest, listOutstandingForAccount,
   OrganizedElsewhereError, MailboxNotFoundError, ringFilingDoorbell,
@@ -965,7 +966,22 @@ export class ScreenerReadService {
     const after = opts.cursor ? decodeScreenerCursor(opts.cursor) : null;
     // ONE bounded query: the representative per sender, the order, the keyset and the LIMIT are
     // all decided by Postgres. See {@link heldSenderPage} for why none of it is done here.
-    const windowed = await this.heldSenderPage(ctx, { after, limit: limit + 1 });
+    /* ── THE ACCOUNT'S POSTURE AND ITS CUTLINE, ON ONE READ, BEFORE THE QUEUE QUERY ──────────
+     *
+     * This read used to sit BELOW the queue query, because nothing in the query needed it. The
+     * cutline does: a sender the cutline has retired is not a row of this page. Read once here so
+     * the queue and `GET /consent`'s count cannot be measured from different fetches — the rule
+     * `screeningBaselineAt`'s own comment states about the two halves of the cutoff, applied to
+     * the two surfaces that show the same number.
+     */
+    const preference = await getScreeningPreference(ctx);
+    const cutline = resolveCutline({
+      baselineAt: preference.screeningBaselineAt,
+      dormancyDays: preference.dormancyDays,
+      scope: preference.screeningScope,
+      now: ctx.now(),
+    });
+    const windowed = await this.heldSenderPage(ctx, { after, limit: limit + 1, cutline });
     const unfiltered = windowed.slice(0, limit);
 
     // ── A SENDER THIS INSTALL HAS ALREADY DECIDED ON LEAVES THE QUEUE (0.14.1) ────
@@ -1004,8 +1020,7 @@ export class ScreenerReadService {
     // {@link resolveOhboxPolicy}'s lenient default. It changes only how a STORED verdict reads as
     // Yes/No ({@link screenedOut}), never what was bought: a sender the model filed under Reads is
     // "yes" while the posture is lenient and "no" once it is `people_only`, with no re-purchase.
-    const { ohboxPolicy } = await getScreeningPreference(ctx);
-    const posture = resolveOhboxPolicy(ohboxPolicy);
+    const posture = resolveOhboxPolicy(preference.ohboxPolicy);
 
     // ONE extra query for the whole page, not one per row, and none at all for an empty page.
     //
@@ -1623,7 +1638,16 @@ export class ScreenerReadService {
    */
   protected async heldSenderPage(
     ctx: ServiceContext,
-    opts: { after: { time: number; messageId: string } | null; limit: number },
+    opts: {
+      after: { time: number; messageId: string } | null;
+      limit: number;
+      /**
+       * THE CUTLINE, resolved once for the page. Absent ⇒ no cutline ⇒ byte-identical to the
+       * query before it existed, which is what every caller that reads no `account_settings`
+       * gets. See below for why it sits in the OUTER query.
+       */
+      cutline?: ResolvedCutline;
+    },
   ): Promise<ScreenerRow[]> {
     const d = dialect(ctx.db);
     const sortKey = d.truncMs(sql`coalesce(${messages.date}, to_timestamp(0))`) as SQL<Date>;
@@ -1658,9 +1682,23 @@ export class ScreenerReadService {
       ))
       .as("reps");
 
+    /* ── THE CUTLINE, WITH THE RANK AND BEFORE THE LIMIT ────────────────────────────────────
+     *
+     * A retired sender must not occupy a row of the page, so it is a WHERE and not a filter over
+     * the result. Out here beside the rank rather than inside the window: the test is about the
+     * SENDER, so it is invariant across their held rows and cannot change which message
+     * represents them, and the correlated read then runs once per representative rather than once
+     * per held message. `senderIsActiveSql` is the SAME expression `cutlineCounts` counts
+     * through — that is what makes this list and the count beside it one rule rather than two
+     * that happen to agree.
+     */
+    const active = opts.cutline
+      ? senderIsActiveSql(d, ctx.accountId, sql`lower(${reps.fromAddress})`, opts.cutline)
+      : undefined;
     const rows = await ctx.db.select().from(reps)
       .where(and(
         eq(reps.rank, 1),
+        active,
         opts.after
           // Row comparison, which is the `date desc, id desc` keyset written as one expression:
           // strictly "older" than the cursor tuple, with the id breaking a shared date. Bound

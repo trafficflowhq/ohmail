@@ -322,6 +322,19 @@ export {
 } from "./screener-suggestion.js";
 
 /**
+ * THE CUTLINE AS SQL — one implementation of "is this sender still worth a decision", shared by
+ * `GET /consent`'s counts, `GET /screener`'s list and the auto-suggest candidate set. Here rather
+ * than in `services` because the worker's pass is one of the three readers and cannot import it;
+ * it names `messages` and `folder_state`, which is this barrel's closure test. Every construct in
+ * it is store-neutral — the phone runs the same engine on the device store.
+ */
+export {
+  resolveCutline, senderIsActiveSql, activeSenderExpr, anyOf,
+  CUTLINE_PRESENTED_FOLDERS, CUTLINE_DEFAULT_DORMANCY_DAYS,
+  type CutlineFacts, type ResolvedCutline,
+} from "./screener-cutline.js";
+
+/**
  * The portable profile's import markers — the found-document record the organizer writes and
  * the user-answer record that releases its hold. Same barrel and the same closure rule as the
  * screener-suggestion block above, for the same straddle: the answer side is called from

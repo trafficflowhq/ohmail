@@ -2367,7 +2367,10 @@ export class MailboxService {
       .onConflictDoUpdate({
         target: accountSettings.accountId,
         set: {
-          screeningBaselineAt: sql`coalesce(${accountSettings.screeningBaselineAt}, ${ctx.now().toISOString()}::timestamptz)`,
+          // Through the seam, exactly as `writeScreeningAnswer`'s own upsert does: the phone runs
+          // this engine on a store with no `::timestamptz`, and a bare cast here would be a
+          // server-only construct in a file the device bundle loads.
+          screeningBaselineAt: sql`coalesce(${accountSettings.screeningBaselineAt}, ${dialect(ctx.db).ts(ctx.now())})`,
           updatedAt: ctx.now(),
         },
       });

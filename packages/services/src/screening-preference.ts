@@ -78,6 +78,12 @@ export interface ScreeningPreferenceUpdate {
 export interface ScreeningPreference {
   ohboxPolicy: OhboxPolicy | null;
   ohboxBar: string | null;
+  /** `account_settings.screening_baseline_at`, raw. Fed to `resolveCutline`, never read here. */
+  screeningBaselineAt: Date | null;
+  /** `account_settings.dormancy_days`, raw — NULL means the product default. */
+  dormancyDays: number | null;
+  /** `account_settings.screening_scope`, raw — anything but `'all_time'` is the window. */
+  screeningScope: string | null;
   /**
    * Whether SCREENER AUTO-APPLY is on — the resolved boolean, from `screener_auto_apply_at IS NOT
    * NULL`. An absent row, a NULL column and a failed read all resolve to `false`, so an account
@@ -110,6 +116,11 @@ export async function getScreeningPreference(ctx: ServiceContext): Promise<Scree
     ohboxPolicy: accountSettings.ohboxPolicy,
     ohboxBar: accountSettings.ohboxBar,
     screenerAutoApplyAt: accountSettings.screenerAutoApplyAt,
+    // The cutline's three stored answers, on the read the Screener page already makes. A second
+    // read would let the queue and the count beside it be measured from different fetches.
+    screeningBaselineAt: accountSettings.screeningBaselineAt,
+    dormancyDays: accountSettings.dormancyDays,
+    screeningScope: accountSettings.screeningScope,
   }).from(accountSettings).where(eq(accountSettings.accountId, ctx.accountId)).limit(1);
   return {
     // A value outside the enum (only reachable if the CHECK is somehow bypassed) reads as NULL here,
@@ -120,6 +131,11 @@ export async function getScreeningPreference(ctx: ServiceContext): Promise<Scree
     // `IS NOT NULL`, never the timestamp itself — the flag is a predicate, and an absent row reads
     // as OFF like every other unset field here.
     screenerAutoApply: row?.screenerAutoApplyAt != null,
+    // RAW, all three: `resolveCutline` owns every default and every rejection, and a value
+    // normalised here would be a second opinion about the same columns.
+    screeningBaselineAt: row?.screeningBaselineAt ?? null,
+    dormancyDays: row?.dormancyDays ?? null,
+    screeningScope: row?.screeningScope ?? null,
   };
 }
 
