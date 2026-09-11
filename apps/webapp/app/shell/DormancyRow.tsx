@@ -1,29 +1,14 @@
 "use client";
 
 /**
- * THE DORMANCY DIAL — how long a sender may go quiet before the Screener stops asking about them.
- *
- * A sender the account has never decided about, with no unread mail and nothing inside this window,
- * waits in History instead of the Screener queue. Moving the dial only changes what the Screener
- * SHOWS: it never moves a message, never hides unread mail (unread always wins), and never touches a
- * decided or placed sender. So there is nothing to undo and nothing to confirm — it is a plain
- * settings write, unlike {@link AutoSuggestRow}, which spends money.
- *
- * ── PRESETS, NOT A FREE FIELD ────────────────────────────────────────────────────────────────
- *
- * The window is bounded 1–365 by the column's CHECK, and a free integer field invites both ends of
- * that band — a 0 that empties the queue, a 2e8 that crashes the `GET /consent` read. Five presets
- * cover the choices anybody actually means (a month to a year) and cannot express an illegal one.
- * "60 days" is the product default; picking it stores NULL server-side, so the account tracks the
- * default rather than freezing at a snapshot of it — see `setDormancyDays`.
- *
- * ── IT WRITES THROUGH THE HOOK, AND SHOWS THE STORED VALUE ───────────────────────────────────
- *
- * `setDormancyDays` is `useConsentState().setDormancyDays`, not `consentApi` directly, for the
- * reason `AutoSuggestRow` names: the partition memo in `AppShell` is keyed on `consent.dormancyDays`,
- * so the hook setting it from the server echo re-partitions the same render. The control renders the
- * window the server last answered with — `days` is that echo — never the optimistic pick, so a
- * refused write leaves it where it was.
+ * The dormancy dial — how long a sender may go quiet before the Screener stops asking about them.
+ * Moving it only changes what the Screener SHOWS: it never moves a message, never hides unread
+ * mail, never touches a decided or placed sender — a plain settings write, unlike
+ * {@link AutoSuggestRow}, which spends money. Presets, not a free field: the window is bounded
+ * 1–365 by the column's CHECK, and a free integer invites a 0 that empties the queue and a 2e8
+ * that crashes the `GET /consent` read; "60 days" is the default and picking it stores NULL, so
+ * the account tracks the default (`setDormancyDays`). It writes through the hook (the partition
+ * memo is keyed on `consent.dormancyDays`) and shows the stored echo, never the optimistic pick.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -114,15 +99,13 @@ export function DormancyRow({
   };
 
   /**
-   * THE RUNGS ON SCREEN — the ladder, plus the stored window when it is not on it.
-   *
-   * The band is 1–365 and the ladder is three of those values, so an account can hold a window
-   * this control does not offer: the product default (60) is exactly such a value, and so is
-   * anything a longer-lived account chose under an older ladder. Rendering the ladder alone
-   * would leave the control with NOTHING selected over a real stored setting — a segmented
-   * control showing no selection reads as "unset", which is a lie about a value the server is
-   * counting with. So the stored window joins the ladder when it is not already on it, in order,
-   * and disappears again the moment the person moves off it.
+   * The rungs on screen — the ladder, plus the stored window when it is not on it. The band is
+   * 1–365 and the ladder is three of those values, so an account can hold a window this control
+   * does not offer: the product default (60) is exactly such a value. Rendering the ladder alone
+   * would leave the control with NOTHING selected over a real stored setting — a segmented control
+   * showing no selection reads as "unset", a lie about a value the server is counting with. So
+   * the stored window joins the ladder when not already on it, in order, and disappears the moment
+   * the person moves off it.
    */
   const rungs = PRESETS.includes(days as (typeof PRESETS)[number])
     ? [...PRESETS]

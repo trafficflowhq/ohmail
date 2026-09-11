@@ -1,37 +1,22 @@
 "use client";
 
 /**
- * "WE FOUND YOUR OHMAIL SETTINGS ON THIS MAILBOX" — the confirm half of the portable profile.
- *
- * A mailbox can arrive carrying its own ohmail configuration: screener decisions, rules,
- * notification choices, the away reply and tag names, saved as a small document in the mailbox
- * itself by whichever ohmail organized it before. The organizer that finds one NEVER applies it —
- * it records the fact and waits — and this card is where the person answers. It is the
- * restore-your-settings moment: one quiet floating card, the counts of what would come back in
- * plain words, and two honest buttons. Never a wall of JSON, never a "migration".
- *
- * ── WHAT THE SHELL ASKS, AND WHAT THAT COSTS ────────────────────────────────────────────────
- *
- * {@link useProfileImport} asks `GET /mailboxes/:id/profile-import` once per mailbox when the
- * shell mounts, again when a mailbox APPEARS in the account (the just-connected case — the
- * organizer needs a first pass over the new mailbox before there is anything to find, so the
- * answer arrives on a later beat), and then on a slow beat ({@link PROFILE_IMPORT_RECHECK_MS})
- * while the tab is visible. That cadence is affordable because the server's resting answer is
- * one indexed read of its own durable record — it dials the mailbox only when a found document
- * is actually waiting on an answer.
- *
- * A failed check stays silent and the card stays absent — no card is the resting surface, never
- * a prompt built on a guess. The direction matters the same way the away notice's does: this
- * card claims somebody's settings are waiting, and that claim may only come from the server.
- *
- * ── THE ANSWERS ARE DURABLE, AND EXACT ──────────────────────────────────────────────────────
- *
- * *Import settings* sends back the `fingerprint` of the exact content the person was shown; the
- * server re-reads the mailbox and refuses if the document changed in between, so nothing is ever
- * applied that nobody confirmed. *Not now* is recorded once, server-side, keyed to that same
- * content — the identical document never asks again, on any device, while a genuinely different
- * one legitimately may. A document written by a NEWER ohmail offers no import at all: this build
- * cannot read all of it, and a partial import would be a silent loss dressed as a restore.
+ * "We found your ohmail settings on this mailbox" — the confirm half of the portable profile. A
+ * mailbox can arrive carrying its own configuration, saved in the mailbox by whichever ohmail
+ * organized it before; the organizer that finds one NEVER applies it — it records the fact and
+ * waits, and this card is where the person answers: counts in plain words, two honest buttons,
+ * never a wall of JSON. {@link useProfileImport} asks once per mailbox at mount, again when a
+ * mailbox APPEARS, then on a slow visible-tab beat ({@link PROFILE_IMPORT_RECHECK_MS}). A failed
+ * check stays silent: no card is the resting surface, and the claim may only come from the server.
+ */
+
+/**
+ * The answers are durable and exact: Import sends back the `fingerprint` of the exact content
+ * shown, and the server re-reads the mailbox and refuses if the document changed — nothing is ever
+ * applied that nobody confirmed. "Not now" is recorded once, server-side, keyed to that content:
+ * the identical document never asks again on any device, while a genuinely different one may. A
+ * document written by a NEWER ohmail offers no import at all — this build cannot read all of it,
+ * and a partial import would be a silent loss dressed as a restore.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -75,15 +60,14 @@ export type ProfileImportPhase =
   | { kind: "done"; applied: ProfileImportAppliedWire };
 
 /**
- * The same seam the away notice takes ({@link AwayTransport}'s shape, this feature's verbs), and
- * for the same install: the desktop, whose window is forbidden the Cloud client but whose engine
- * serves these routes locally. Absent ⇒ the hosted client, which is what a browser tab has.
- *
- * THE REJECTION CONTRACT, which {@link failureSentence} relies on: an injected transport that
- * rejects with an `Error` is promising that error's `message` is the SERVER's own sentence, fit
- * to put on the card verbatim (`apps/desktop/src/local-profile-import.ts` keeps it by reading
- * the engine's error body, the same shape every desktop wire uses). A transport that cannot
- * say anything true should reject with an empty message and take the generic line.
+ * The same seam the away notice takes ({@link AwayTransport}'s shape, this feature's verbs), for
+ * the same install: the desktop, whose window is forbidden the Cloud client but whose engine
+ * serves these routes locally. Absent ⇒ the hosted client. The rejection contract, which
+ * {@link failureSentence} relies on: an injected transport that rejects with an `Error` is
+ * promising the error's `message` is the SERVER's own sentence, fit for the card verbatim
+ * (`apps/desktop/src/local-profile-import.ts` keeps it by reading the engine's error body). A
+ * transport that cannot say anything true should reject with an empty message and take the
+ * generic line.
  */
 export interface ProfileImportTransport {
   candidate(mailboxId: string): Promise<ProfileImportCandidateWire>;

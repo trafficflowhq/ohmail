@@ -1,38 +1,15 @@
 "use client";
 
 /**
- * The provider picker — the ONE control behind every "connect a mailbox" surface: the hosted
- * client's first-run mailbox step, its Settings → Mailboxes pane, and the desktop app's local
- * door. One component, deliberately: the two bare `<select>`s it replaced were written twice
- * and drifted twice, and a third surface is where that happens again.
- *
- * ── THE SHAPE ────────────────────────────────────────────────────────────────────────────
- *
- * Choosing the provider is the primary act of the screen this sits on, so the seven named
- * providers render as a radiogroup of shadow-lifted tiles — a choice between recognisable
- * things, not a form field. The generic "any IMAP" entry is a different kind of answer
- * ("none of these") and renders as its own recessed full-width row under the grid rather
- * than an eighth equal tile.
- *
- * NO BRAND LOGOS, deliberately. Hotlinked marks are forbidden outright — every surface this
- * renders on asserts zero off-origin loads — and self-drawn monochrome
- * imitations of trademarked marks are a liability with no upside: the provider NAME is what
- * people recognise, and the IMAP host under it is the factual line that says what will
- * actually be configured. Blanc: type, not badges.
- *
- * Selection reveals the provider's `note` — the sentence that stops someone typing their
- * ACCOUNT password into a third-party form — plus its help link. That panel is the point of
- * the control, not an afterthought: it renders accent-soft directly under the choice, and
- * the selected tile carries it via `aria-describedby` so a screen reader hears it with the
- * radio. Only the `manual` entry reveals host fields, and those stay with the callers (the
- * host values are caller state that must survive each caller's own submit/ceremony flow).
- *
- * ── KEYBOARD ─────────────────────────────────────────────────────────────────────────────
- *
- * A radiogroup with roving tabindex. Arrows move focus AND selection (selection is cheap
- * and reversible, so selection-follows-focus, per the APG radio pattern); Home/End jump to
- * the ends; Enter/Space select the focused tile via native button activation (`type=
- * "button"`, so Enter never submits the surrounding form).
+ * The provider picker — the ONE control behind every "connect a mailbox" surface (first-run,
+ * Settings → Mailboxes, the desktop's local door): the two bare `<select>`s it replaced drifted
+ * twice. The seven named providers render as a radiogroup of tiles; the generic "any IMAP" entry
+ * is a different kind of answer and renders as its own recessed row. NO brand logos: hotlinked
+ * marks are forbidden (zero off-origin loads) and self-drawn imitations of trademarks are
+ * liability with no upside. Selection reveals the provider's `note` — the sentence that stops
+ * someone typing their ACCOUNT password into a third-party form — carried via `aria-describedby`;
+ * only `manual` reveals host fields, which stay with the callers. A radiogroup with roving
+ * tabindex: arrows move focus AND selection (per the APG radio pattern), Enter/Space select.
  */
 
 import { useId, useRef } from "react";
@@ -74,19 +51,13 @@ export function ProviderPicker({ value, onChange, note, showHelp = true }: {
   const at = selected ? ORDER.findIndex((p) => p.id === selected.id) : -1;
 
   /**
-   * A CHOICE THAT DID NOT CHANGE IS NOT A CHOICE, and reporting it as one loses data.
-   *
-   * Every consumer answers `onChange` by writing the chosen preset's hosts into its form, and the
-   * generic entry's hosts are the empty string — so re-notifying the SAME id blanked the IMAP and
-   * SMTP hosts somebody had typed. It is an easy gesture to make by accident: the checked tile is
-   * this group's roving tab stop (Space/Enter re-activates it), and after a failed submit the
-   * error banner sits directly above the grid, which invites one confirming click on the provider
-   * already chosen. `hostsFor` in `providers.ts` makes that write harmless from the other side;
-   * this makes the event honest, which also spares the note its re-animation and the callers their
-   * incidental resets.
-   *
-   * Focus still moves unconditionally — the roving tabindex is about where you ARE, not about
-   * what changed — so arrow navigation is untouched.
+   * A choice that did not change is not a choice, and reporting it as one loses data. Every
+   * consumer answers `onChange` by writing the chosen preset's hosts into its form, and the generic
+   * entry's hosts are the empty string — so re-notifying the SAME id blanked the IMAP and SMTP
+   * hosts somebody had typed. An easy accidental gesture: the checked tile is the roving tab stop,
+   * and after a failed submit the error banner invites one confirming click on the provider already
+   * chosen. `hostsFor` makes that write harmless from the other side; this makes the event honest.
+   * Focus still moves unconditionally — the roving tabindex is about where you ARE.
    */
   const choose = (id: string): void => {
     if (id !== selected?.id) onChange(id);

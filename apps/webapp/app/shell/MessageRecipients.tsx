@@ -1,51 +1,21 @@
 "use client";
 
 /**
- * WHO ELSE GOT THIS MESSAGE — one block, worn by every surface that shows a message header.
- *
- * This is the Ohbox's recipients line, lifted OUT of `MessageHeader` unchanged so a second
- * surface can wear it rather than spell it again. Nothing about the reading pane's face moved
- * in the lift: `MessageCard` mounts it with no `max`, which is the every-chip form this block
- * has had since the viewer redesign, and `test/contact-chips.test.tsx` still holds it to "no
- * fold, no +N, no count standing in for a person" there.
- *
- * ── THE CHIPS ───────────────────────────────────────────────────────────────────────────────
- *
- * To and Cc in full, one CHIP per person. (`Bcc` does not render because the wire does not
- * carry it: an incoming message's blind copies are, by definition, not in its headers, and
- * `EngineMessage` has no such field — a row for it would be a control over data that cannot
- * exist.)
- *
- * The FACE is names-first and decoded (`displayAddress`); the VALUE under every chip is the
- * stored wire address, which is what the popover's verbs dispatch. A "me" chip wears the
- * ACCOUNT's identity — `chrome.ownNameOf` (from `GET /mailboxes`' `displayName`), never the
- * sender's spelling of the reader — and falls back to the bare address when the mailbox
- * carries no label, because inventing a name is worse than omitting one.
- *
- * ── `max` — THE COUNT FORM, AND WHY IT IS A PROP AND NOT A VARIANT ──────────────────────────
- *
- * A reading pane has the room to name everyone and is the surface a reader opened in order to
- * read; a card in a scrolling stream is a summary, and three lines of chips in a 620px card
- * has stopped being one. So the block takes a CAP rather than a second spelling: `max`
- * omitted draws every chip (the reading pane, byte-for-byte as before), and `max = N` draws
- * the first N across To then Cc and folds the rest into a count.
- *
- * THE COUNT IS THE SAME CONTROL AS `details`, not a second one. `.msg-rcpt-more` already
- * exists, already carries `aria-expanded`, and already reveals what the chips do not say —
- * the exact date and where the message physically sits. Folding puts the remainder behind
- * that same press, so the block has one disclosure however it is mounted, and a reader who
- * presses it gets everything that was held back at once. A second "+N" button beside a
- * "details" button would be two doors onto one room.
- *
- * ── THE POPOVER AND `content-visibility` ────────────────────────────────────────────────────
- *
- * `ContactPopover` is `position: fixed` and renders INSIDE this block, so wherever this block
- * is mounted inside a layout-contained element the card becomes its containing block and the
- * popover lands at the card's offset instead of the viewport's. Reads and Receipts carry
- * `content-visibility: auto` on their mounted cards for exactly that reason, and `app.css`
- * releases the OPEN card (`.scast.open { content-visibility: visible }`) — which is the fix,
- * and is why there is no portal here. A portal would fix this component and leave the cause
- * standing for the next fixed descendant; the release covers every one of them.
+ * Who else got this message — one block, worn by every surface that shows a message header; the
+ * Ohbox's recipients line lifted out of `MessageHeader` unchanged (`test/contact-chips.test.tsx`
+ * still holds the reading pane to "no fold, no +N"). To and Cc in full, one CHIP per person; Bcc
+ * does not render because the wire cannot carry it. The FACE is names-first and decoded
+ * (`displayAddress`); the VALUE under every chip is the stored wire address; a "me" chip wears
+ * the ACCOUNT's identity (`chrome.ownNameOf`), never the sender's spelling of the reader.
+ */
+
+/**
+ * `max` is a CAP, not a variant: omitted draws every chip (the reading pane), `max = N` draws the
+ * first N across To then Cc and folds the rest into a count — the SAME control as `details`
+ * (`.msg-rcpt-more`), one disclosure however mounted. `ContactPopover` is `position: fixed` and
+ * renders inside this block; `app.css` releases the OPEN card (`content-visibility: visible`),
+ * which is why there is no portal — a portal would fix this component and leave the cause standing
+ * for the next fixed descendant.
  */
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
@@ -111,18 +81,14 @@ export function MessageRecipients({
 
   const total = rows.to.length + rows.cc.length;
   /**
-   * THE CAP, NORMALISED AT THE BOUNDARY — because `slice` reads a negative as "from the end".
-   *
-   * `max` is a `number`, so a negative is type-valid, and `rows.to.slice(0, -1)` would then
-   * drop the LAST recipient and keep the rest — the exact inverse of "the first N", and it
-   * would render a plausible-looking block rather than fail. Review found this; nothing in the
-   * product passes a negative, which is precisely why it would have gone unnoticed.
-   *
-   * Clamped rather than thrown: this runs in render, and taking down a message header over a
-   * caller's bad constant is a worse failure than showing every recipient. `Math.trunc` folds
-   * a fractional cap onto the same rail, since `slice` would truncate it anyway and the fold
-   * arithmetic below must agree with what `slice` actually did. `0` is a legitimate cap — every
-   * name behind the count — and renders no chip rows rather than an empty one.
+   * The cap, normalised at the boundary — because `slice` reads a negative as "from the end".
+   * `max` is a `number`, so a negative is type-valid, and `rows.to.slice(0, -1)` would drop the
+   * LAST recipient and keep the rest — the exact inverse of "the first N", rendering a
+   * plausible-looking block rather than failing (review found this; nothing in the product passes
+   * a negative, which is precisely why it would go unnoticed). Clamped rather than thrown: this
+   * runs in render, and taking down a message header over a caller's bad constant is worse than
+   * showing every recipient. `Math.trunc` folds a fractional cap onto `slice`'s own rail. `0` is a
+   * legitimate cap — every name behind the count — and renders no chip rows rather than an empty one.
    */
   const cap = max === undefined ? undefined : Math.max(0, Math.trunc(max));
   /**

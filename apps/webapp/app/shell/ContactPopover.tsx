@@ -1,34 +1,14 @@
 "use client";
 
 /**
- * ONE PERSON OFF A MESSAGE HEADER — the popover a recipient chip opens (viewer redesign).
- *
- * Three verbs, and deliberately no more: **Copy address · Write · Screener settings.** The chip
- * names a person; this answers the three things a reader does with a person, and everything
- * heavier (destinations, scopes, rules) stays in the screening sheet the third verb opens.
- *
- * ── OMISSION, NEVER DEADNESS ────────────────────────────────────────────────────────────────
- *
- * Write and Screener settings appear exactly when the chrome wires them (`onWrite`/`onScreen`
- * present) — the INERT-CHROME RULE the header's ⋯ menu already follows. Copy is the one verb
- * with no machine behind it, so it is always offered; a popover with Copy alone is still a
- * popover, which is what keeps the chip honest as a disclosure on every surface.
- *
- * ── DISPLAY DECODES, THE VALUE DOES NOT ─────────────────────────────────────────────────────
- *
- * The head prints the readable address (`displayAddress` — an IDN domain decoded), while every
- * action acts on {@link ContactPopoverState.address} verbatim: Copy writes the STORED A-label
- * form to the clipboard, because what a person pastes into another client must be the wire
- * value. Same split, same reason, as everywhere `idn.ts` is consulted.
- *
- * ── POSITIONING AND DISMISS — the sender sheet's idiom, the menu's keyboard ─────────────────
- *
- * A fixed box placed from the pressed chip's rectangle (`placePicker`, exactly as
- * `SenderMenu`/`TagPicker` are placed) — the popover opens where the press was, in a scrolling
- * column. The items inside are the pill's own {@link MoreMenu}, which brings the whole keyboard
- * contract for free: focus lands on the first item, arrows rove, Escape and an outside
- * `mousedown` dismiss, and every claimed key is stopped before the shell's registry sees it.
- * The CALLER returns focus to the chip — it owns the button.
+ * One person off a message header — the popover a recipient chip opens. Three verbs, deliberately
+ * no more: Copy address · Write · Screener settings; everything heavier stays in the screening
+ * sheet the third verb opens. Omission, never deadness: Write and Screener settings appear exactly
+ * when the chrome wires them; Copy has no machine behind it and is always offered. Display
+ * decodes, the value does not: the head prints `displayAddress` (IDN decoded) while every action
+ * acts on {@link ContactPopoverState.address} verbatim — what a person pastes into another client
+ * must be the wire value (`idn.ts`). Placed like the sender sheet (`placePicker`); the items are
+ * the pill's own {@link MoreMenu} with its keyboard contract; the CALLER returns focus to the chip.
  */
 import { useRef } from "react";
 import { useTranslations } from "next-intl";
@@ -60,15 +40,13 @@ export function ContactPopover({
 }: {
   state: ContactPopoverState;
   /**
-   * THE CHIP THAT OPENED THIS, as an element rather than as two numbers.
-   *
-   * The edges below place the popover; this is for the menu inside it, whose dismissal listener
-   * asks whether a press landed outside itself. The chip is outside the MENU, so without this a
-   * press on the open chip ran both halves of one gesture — `mousedown` closed the popover, and
-   * the `click` that followed reopened it — and the control could not be dismissed by pressing the
-   * thing that opened it. `anchor={null}` was passed here deliberately and the reasoning was
-   * wrong: the menu being the popover's whole content says nothing about whether the CHIP is a
-   * trigger, and it is one.
+   * The chip that opened this, as an element rather than two numbers. The edges below place the
+   * popover; this is for the menu inside it, whose dismissal listener asks whether a press landed
+   * outside itself. The chip is outside the MENU, so without this a press on the open chip ran
+   * both halves of one gesture — `mousedown` closed the popover, the following `click` reopened it
+   * — and the control could not be dismissed by pressing the thing that opened it. `anchor={null}`
+   * was passed here deliberately and the reasoning was wrong: the menu being the popover's whole
+   * content says nothing about whether the CHIP is a trigger, and it is one.
    */
   anchor?: HTMLElement | null;
   /** Absent where the chrome wires no compose — the item is then OMITTED, never dead. */
