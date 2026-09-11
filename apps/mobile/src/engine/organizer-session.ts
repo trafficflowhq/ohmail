@@ -97,6 +97,52 @@ export function holdStandaloneDoor(opened: StandaloneEngine): boolean {
 /** The door, or `null` — "no engine is running in this process", which is not an error. */
 export const organizerDoor = (): StandaloneEngine | null => door;
 
+/**
+ * WHAT THE DOOR IN THIS PROCESS SAYS ABOUT THE MAILBOX IT SERVES — the address, and whether this
+ * install organizes it. `null` when no door is held.
+ *
+ * The engine's own word, with NO request. Settings' "This phone" panel used to derive this from a
+ * loopback `GET /mailboxes`, and that read has three outcomes — never asked, asked and refused,
+ * answered empty — which all reached the panel as one `known: false`. So a phone with an engine
+ * running behind it showed no panel at all and nothing anywhere said which of the three it was:
+ * measured on a device, three builds running.
+ *
+ * `organizing: null` is "the engine has not said yet" and is its own state: the map is empty until
+ * the first gated cycle, and reading that as "nothing organizes this mailbox" would put a false
+ * sentence on screen a second after the door opened.
+ */
+export function standaloneHere(): { address: string; organizing: boolean | null } | null {
+  const held = door;
+  if (held === null) return null;
+  let organizing: boolean | null = null;
+  try {
+    const states = Object.values(held.runtimes().organizer);
+    /* ONE MAILBOX ON THIS PHONE is the fourth door's own ruled line and the door carries one
+       address, so this asks "does this install organize the mailbox it opened" and any entry
+       saying so is that. */
+    if (states.length > 0) organizing = states.some((state) => state.organizing);
+  } catch {
+    /* An unreadable runtime is "has not said", never "does not organize" — the background half
+       takes the same reading, and for the same reason: a momentary failure must not end
+       somebody's organizing on screen. */
+  }
+  return { address: held.address, organizing };
+}
+
+/**
+ * THE PERSON'S HAND-BACK FROM SETTINGS, on this door — the engine's own release, and no route.
+ *
+ * A paired session releases through `POST /mailboxes/:id/release`, which needs a mailbox id the
+ * app only has from the roster read. The door needs none: `handBack` removes this install's claim
+ * from every mailbox it holds, which on a phone is the one. Never throws — the claim not going
+ * back ages out, and a notification that must come down is the caller's next line.
+ */
+export async function handBackStandalone(): Promise<void> {
+  const held = door;
+  if (held === null) return;
+  await held.handBack().catch(() => undefined);
+}
+
 /** The live session, or `null`. Module scope for the reason in the header. */
 let live: {
   readonly organizing: BackgroundOrganizing;

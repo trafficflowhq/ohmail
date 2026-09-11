@@ -31,13 +31,16 @@ import { useWorld } from "../src/state/world";
 import { Button, Chip, Panel, Rule, Screen, Scroller, Section, TapRow, Txt } from "../src/ui/base";
 import { Sheet, SheetRow } from "../src/ui/Sheet";
 import { phoneEngineStart } from "../src/engine/engine-artifact";
-import { organizerRestrictedSaid, stopOrganizerSession } from "../src/engine/organizer-session";
+import {
+  handBackStandalone, organizerRestrictedSaid, standaloneHere, stopOrganizerSession,
+} from "../src/engine/organizer-session";
 import { PHONE_CLAIM_NAME, standaloneAvailable } from "../src/engine/standalone-door";
 import { releaseMailbox } from "../src/net/mailboxes";
 import { useConnection } from "../src/net/connection";
 import {
   claimChipLabel,
   claimFrom,
+  type PhoneClaim,
   mayStopHere,
   platformRuleLine,
 } from "../src/ui/standalone-form";
@@ -332,6 +335,15 @@ function SettingsBody() {
  * The five chip states are the desktop's own keys, and the verb is plain: the consequence and the
  * danger-styled confirm are in the sheet, where a press is deliberate.
  */
+/**
+ * THE STANDALONE CARD'S ROW KEY — a constant, and deliberately NOT a mailbox id.
+ *
+ * The door answers for the one mailbox it serves and the app holds no id for it. This names the
+ * `asked` entry and React's row; the stop it selects takes the engine's own `handBack`, which
+ * needs no id. It must never reach a route, which is why it is not id-shaped.
+ */
+const HERE_CARD = "this-phone";
+
 function ThisPhonePanel() {
   const w = useWorld();
   const conn = useConnection();
@@ -342,25 +354,65 @@ function ThisPhonePanel() {
   const [confirming, setConfirming] = useState<string | null>(null);
 
   if (!standaloneAvailable({ startEngine: phoneEngineStart() })) return null;
-  if (!w.mailboxes.known || w.mailboxes.rows.length === 0) return null;
+
+  /**
+   * ── WHERE THE CARDS COME FROM, AND WHY THE DOOR ANSWERS FIRST ────────────────────────────
+   *
+   * This panel used to be derived from `world.mailboxes` alone — a loopback `GET /mailboxes`
+   * whose three outcomes (never asked, asked and refused, answered empty) all arrive as one
+   * `known: false`. So on a phone that had opened its own mailbox the panel rendered NOTHING,
+   * with an engine running behind it and no sentence anywhere: measured on a device across three
+   * release builds, and the roster read is not even needed there.
+   *
+   * `standaloneHere()` is the engine in this process answering for itself, with no request:
+   * the address it serves and whether this install organizes it. A PAIRED session has no such
+   * door and keeps the roster exactly as before — the arm beside the one that moved.
+   *
+   * The standalone card's key is a constant and NOT a mailbox id, because it is not one: it
+   * names the `asked` entry and React's row, and the standalone stop needs no id at all (the
+   * engine's `handBack` releases every mailbox it holds).
+   */
+  const here = standaloneHere();
+  const cards: readonly { key: string; address: string; claim: PhoneClaim }[] = here !== null
+    ? [{
+        key: HERE_CARD,
+        address: here.address,
+        claim: claimFrom(
+          {
+            /* `organizing: null` is "the engine has not said yet", which `claimFrom` renders as
+               `unknown`: no chip and no stop verb, rather than "nothing organizes this mailbox"
+               a second after the door opened. */
+            known: here.organizing !== null,
+            organizer: here.organizing === true ? { name: PHONE_CLAIM_NAME, stopped: false } : null,
+          },
+          PHONE_CLAIM_NAME,
+          asked.includes(HERE_CARD),
+        ),
+      }]
+    : w.mailboxes.rows.map((row) => ({
+        key: row.id,
+        address: row.address,
+        claim: claimFrom(
+          { known: w.mailboxes.known, organizer: holderFor(row) },
+          /* THE SAME CONSTANT THE CLAIM WAS WRITTEN WITH — never `Copy.phoneThisPhone`, which
+             changes with the language and would make this phone read its own claim as a
+             stranger's the first time somebody switches. The deck string is the section LABEL
+             above, which is the half a reader sees. */
+          PHONE_CLAIM_NAME,
+          asked.includes(row.id),
+        ),
+      }));
+  if (cards.length === 0) return null;
 
   return (
     <>
       <Panel style={{ paddingVertical: 18, marginBottom: 14 }}>
         <Section>{Copy.phoneThisPhone}</Section>
-        {w.mailboxes.rows.map((row, i) => {
-          const claim = claimFrom(
-            { known: w.mailboxes.known, organizer: holderFor(row) },
-            /* THE SAME CONSTANT THE CLAIM WAS WRITTEN WITH — never `Copy.phoneThisPhone`, which
-               changes with the language and would make this phone read its own claim as a
-               stranger's the first time somebody switches. The deck string is the section LABEL
-               above, which is the half a reader sees. */
-            PHONE_CLAIM_NAME,
-            asked.includes(row.id),
-          );
+        {cards.map((row, i) => {
+          const claim = row.claim;
           const chip = claimChipLabel(claim);
           return (
-            <View key={row.id}>
+            <View key={row.key}>
               {i > 0 ? <Rule inset={20} /> : null}
               <View style={{ paddingHorizontal: 20, paddingTop: 10, gap: 6 }}>
                 <Txt variant="settingsLabel">{row.address}</Txt>
@@ -384,7 +436,7 @@ function ThisPhonePanel() {
                   <Button
                     label={Copy.settingsStopHere}
                     variant="quiet"
-                    onPress={() => setConfirming(row.id)}
+                    onPress={() => setConfirming(row.key)}
                     style={{ alignSelf: "flex-start", marginTop: 4 }}
                   />
                 ) : null}
@@ -411,11 +463,15 @@ function ThisPhonePanel() {
                  moment the press lands rather than a poll later — and a refusal is not a reason
                  to claim the mailbox is still being filed by a phone that asked to stop. */
               setAsked((cur) => (cur.includes(id) ? cur : [...cur, id]));
-              if (session !== null) void releaseMailbox(session, id);
-              /* AND THE NOTIFICATION COMES DOWN WITH THE CLAIM. The release route has removed the
-                 claim and recorded this install as a reader, so a foreground service left standing
-                 would say "Organizing <address>" over a phone that reads — on the one surface a
-                 person cannot argue with. No hand-back here: the claim is already gone. */
+              /* THE DOOR RELEASES ITSELF WHERE THERE IS ONE. `POST /mailboxes/:id/release` needs
+                 a mailbox id, which on this door the app does not hold — `HERE_CARD` is a row key
+                 and must never reach a route. The engine's `handBack` needs none: it removes this
+                 install's claim from every mailbox it holds, which on a phone is the one. */
+              if (id === HERE_CARD) void handBackStandalone();
+              else if (session !== null) void releaseMailbox(session, id);
+              /* AND THE NOTIFICATION COMES DOWN WITH THE CLAIM. The claim has been given back, so
+                 a foreground service left standing would say "Organizing <address>" over a phone
+                 that reads — on the one surface a person cannot argue with. */
               void stopOrganizerSession();
             }}
           />
