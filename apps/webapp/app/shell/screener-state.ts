@@ -1239,20 +1239,20 @@ export function useScreenerState(
     );
 
   /**
-   * Releasing a sender the Screener already decided about. There is no un-screen endpoint:
-   * `decide` resolves `:id` only against mail whose DESIRED folder is still `ohmail/Screener`,
-   * so a screened-out or quarantined representative is a 404; per-message `move` releases the
-   * mail physically filed here. It still creates no rule — but it RETARGETS the rules holding
-   * the sender here (this used to say "it creates no rule" and stop, which made the release
-   * unperformable for a sender whose segment membership came from a rule — see
-   * {@link releaseHeld}; live, 2026-08-19). Retargeting is the reversal of the decision those
-   * rows record, and the only rewrite that moves ingest along with the presentation: a fresh
-   * allow rule beside a standing deny rule loses every tie (`compareRules`, deny before allow
-   * before kind), so future mail would have kept arriving in Quarantine.
-   *
-   * @param segment the pile the sender is released FROM — named by a refusal, and where they
-   * remain if refused. Passed rather than derived because `release` serves both `allowScreened`
-   * (Screened out) and `notSpamToOhbox` (Spam), identical from in here.
+   * Releasing a sender the Screener already decided about. There is no un-screen endpoint: `decide` resolves `:id`
+   * only against mail whose DESIRED folder is still `ohmail/Screener`, so a screened-out or quarantined
+   * representative is a 404; per-message `move` releases the mail physically filed here. It still creates no rule —
+   * but it RETARGETS the rules holding the sender here (this used to say "it creates no rule" and stop, which made
+   * the release unperformable for a sender whose segment membership came from a rule — see {@link releaseHeld}; live,
+   * 2026-08-19).
+   */
+
+  /**
+   * Retargeting is the reversal of the decision those rows record, and the only rewrite that moves ingest along with
+   * the presentation: a fresh allow rule beside a standing deny rule loses every tie (`compareRules`, deny before
+   * allow before kind), so future mail would have kept arriving in Quarantine. @param segment the pile the sender is
+   * released FROM — named by a refusal, and where they remain if refused. Passed rather than derived because
+   * `release` serves both `allowScreened` (Screened out) and `notSpamToOhbox` (Spam), identical from in here.
    */
   const release = (sender: ScreenerSenderDTO, dest: "ohbox" | "reads", segment: "screened" | "spam") => {
     // The RAW mirror, exactly as `commit` re-reads it: rules and physical folders are locations,
