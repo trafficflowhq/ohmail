@@ -43,79 +43,14 @@ import { internalRoutes } from "./internal.js";
 import { pairRoutes } from "./pair.js";
 
 /**
- * THE SELF-HOST ROUTE TABLE — what a standalone, operator-run server serves.
- *
- * A SEPARATE ARRAY rather than a filter over the hosted table, for the reason `routes/local.ts`
- * states: a filter would still `import` every route module to build the list it then discards,
- * so the artifact would carry the billing handler, the payment webhook and the cross-account
- * admin reads whether or not anything could route to them. Only a distinct import list actually
- * leaves them out of the module graph.
- *
- * ── WHAT IS ABSENT, AND WHY EACH ONE ──────────────────────────────────────────────────────
- *
- *  · `billing`, `waitlist` — there is nothing to buy and no funnel to join on a server you run
- *    yourself. Not refused: not built.
- *  · every `admin` group — the reads, the staff sign-in, the writes, the provider registration.
- *    Deliberate, and not an economy: account isolation on this server is absolute. The operator
- *    owns the disk and can read anything with `psql`, but the API never crosses accounts — an
- *    endpoint that projects every account is exactly the surface a multi-user family server must
- *    not have, and "the operator is trusted" is not a reason to build it. Operator observability
- *    is `/health` (liveness, schema, key identity) and `/internal/alerts` (shared-secret,
- *    content-free), both mounted here.
- *
- * ── WHAT IS PRESENT, OVER THE SINGLE-USER TABLE ───────────────────────────────────────────
- *
- * The whole of `localRoutes` (the mail product plus `/health` and `/hello`), and on top of it
- * everything a multi-user server with real sign-in needs: the full auth surface including the
- * device list, Microsoft 365 onboarding, attachment staging (this deployment owns object
- * storage), account erasure, consent, the per-account AI switch, the AI-proposal reads, the
- * alert driver, and the pairing ceremony (`/pair*` — both grants live only here, because only
- * this composition wires the invite bridge; the hosted table mounts the same routes device-pair
- * only, and the local table never carries them — see `pair.ts` for the mount map).
- * `GET /hello` answers `flavor: "selfhost"` from
- * the descriptor this server's composition root injects, and computes `needsSetup` from whether
- * any user exists yet.
- *
- * ── THE OBLIGATIONS THIS TABLE PUTS ON ITS COMPOSITION ROOT (apps/server) ─────────────────
- *
- *  1. **An explicit unmetered mailbox allowance.** The auth and erasure modules here import the
- *     full `@trafficflow/services` barrel, and loading that barrel registers the PAID mailbox
- *     allowance as the process-wide default (`packages/services/src/index.ts` — loading it is
- *     what makes a process a hosted one). A server mounting this table therefore MUST construct
- *     its mailbox service with an explicit unmetered `allowance:` argument, or `POST /mailboxes`
- *     refuses every mailbox with a subscription error on a server that has no subscriptions.
- *     The absence rule above is about ROUTE surfaces — nothing can route to billing here — and
- *     this note is the other half: a registry default is not a route, and only the composition
- *     root can override it.
- *
- *  2. **`deps.hello.features.pairing: true`.** The pairing routes are mounted, so the
- *     descriptor this server injects must announce them — a descriptor still saying `false`
- *     makes a client's server picker hide a ceremony that answers, which is the inverse of the
- *     honest-404 contract `/hello` exists to keep. The managed descriptor says `true` too since
- *     its own mount (`apps/api-vercel`); the local descriptor keeps `false`, truthfully — that
- *     table does not carry these routes.
- *
- *  3. **The first-account ceremony is a BOOT MINT into the pairing service, not open signup.**
- *     At boot with zero users, the composition root calls
- *     `mintPairingToken(bootCtx, { grant: "invite", label: "first-run setup" })` (with
- *     `bootCtx.userId === null` — the one legitimate ownerless mint) and prints the raw token
- *     ONCE to stdout; `/hello` reports `needsSetup: true` until the setup page redeems it and
- *     registers. No `TF_INVITE_CODES` bootstrap in this composition, ever.
- *
- *  4. **An explicit verified-address product policy: `requireVerifiedForProduct: false`.**
- *     Accounts on this server legitimately arrive UNVERIFIED — a family invite is a pairing
- *     token, its redeemer types their own address, nothing is mailed, so the derived invite
- *     confers no verification (only the first-boot ownerless token's does; see
- *     `redeemInviteGrant`). Left at the default the spend gate then locks every such account
- *     out of the entire product — mailbox add first — on a box that may have NO mailer to
- *     verify with, which is a bricked server presenting as a working gate. Composing `false`
- *     is honest here for the same reason requiring is honest on the hosted service: the
- *     mailbox add presents an IMAP credential, which proves more about mailbox ownership than
- *     a verification mail ever did, and the operator pays for their own box. The default is
- *     REQUIRE on purpose (an absent value must never relax a gate), so this root must SAY
- *     `false` — the same posture as the allowance in obligation 1. Verification itself stays
- *     available: with SMTP configured, the ordinary mailed flow still proves addresses for
- *     whoever wants the mark.
+ * The self-host route table — a standalone, operator-run server; a separate array (a filter keeps
+ * every module in the graph). Absent: `billing`/`waitlist`; every `admin` group — account
+ * isolation here is absolute, and "the operator is trusted" is not a reason to build the surface
+ * a family server must not have. Present: `localRoutes` plus the full auth surface, Microsoft 365
+ * onboarding, staging, erasure, consent, the AI switch, the proposal reads, the alert driver, the
+ * pairing ceremony. Obligations: an explicit unmetered mailbox `allowance:`;
+ * `hello.features.pairing: true`; the first account is a boot mint printed once to stdout — no
+ * `TF_INVITE_CODES` ever; `requireVerifiedForProduct: false`, said out loud.
  */
 export const selfHostRoutes: Route[] = [
   ...localRoutes,
