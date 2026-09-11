@@ -9,35 +9,14 @@
  */
 
 /**
- * Why `url` is a TRANSACTION pooler, or `null` if it is not one.
- *
- * DDL and the drizzle journal belong on a session-mode connection: a transaction pooler
- * multiplexes statements across backends. A pooled URL that slips past this is a migration run
- * whose failure mode is a partially-applied schema.
- *
- * ── THE HOST-SHAPE TEST STOPPED BITING, AND WOULD HAVE FAILED OPEN ON SUPABASE ───────
- *
- * This was `/-pooler\./` in two places — Neon's pooled endpoint
- * (`ep-x-pooler.eu-central-1.aws.neon.tech`). Correct for Neon and *silently useless* for
- * Supabase, whose Supavisor host is `aws-1-eu-central-2.pooler.supabase.com`: `.pooler.`, no
- * hyphen, so the pattern never matches.
- *
- * That is not merely a missed case. Supabase production URLs MUST be the
- * Supavisor pooler, because the direct endpoint is IPv6-only and Vercel is IPv4-only — so on
- * Supabase the legitimate session URL *is* a pooler host, and the two modes are told apart by
- * PORT: **5432 is session, 6543 is transaction**. A shape test on the hostname cannot answer
- * the question there at all; it would have waved the transaction pooler through on the very
- * cutover it exists to protect, while also being unable to accept the correct URL for the
- * right reason.
- *
- * So the rule is about the MODE, asked three ways:
- *
- *   · `pgbouncer=true`  — stated outright in the query string.
- *   · port 6543         — Supavisor transaction mode.
- *   · `-pooler.` host   — Neon's pooled endpoint, which has no distinguishing port.
- *
- * Returns a REASON rather than a boolean so the caller can say which test fired; a guard that
- * only says "no" teaches the operator nothing about the URL in their hand.
+ * Why `url` is a TRANSACTION pooler, or `null` if it is not. DDL and the journal belong on a
+ * session-mode connection: a transaction pooler multiplexes statements across backends, and a
+ * pooled URL that slips past is a migration whose failure mode is a partially-applied schema. The
+ * old host-shape test failed open: `/-pooler\./` matched Neon's pooled endpoint and never
+ * Supavisor's — and on Supabase the legitimate session URL IS a pooler host, the modes told apart
+ * by PORT: 5432 session, 6543 transaction. The rule is about the MODE, asked three ways:
+ * `pgbouncer=true`; port 6543; a `-pooler.` host. Returns a REASON, not a boolean: a guard that
+ * only says "no" teaches the operator nothing.
  */
 export function transactionPoolerReason(url: string): string | null {
   if (/pgbouncer=true/i.test(url)) return "the URL sets pgbouncer=true";

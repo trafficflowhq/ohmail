@@ -4,18 +4,14 @@ import { outboundSendFingerprints } from "./schema-mail.js";
 import type { Tx } from "./change-log.js";
 
 /**
- * HOW LONG A CONTENT CLAIM IS KEPT ON DISK — hygiene, and NOT the duplicate window.
- *
- * The window a duplicate send is refused inside is `SEND_DUPLICATE_WINDOW_MS`
- * (`@trafficflow/services`, one hour), and it is compared against the request clock in the send
- * path itself. This is a different number for a different job: how long a spent row is allowed to
- * sit in the table before a sweep removes it.
- *
- * Twenty-four hours, comfortably past the window, so a row this deletes can no longer refuse
- * anything and the sweep can never be the reason a send is admitted or refused. That separation is
- * the point rather than a nicety: a standalone install runs the same send path and has NO
- * maintenance pass at all, so anything the expiry actually depended on would be unbounded there —
- * identical re-sends refused for ever on every desktop, with the hosted suite green.
+ * How long a content claim is kept on disk — hygiene, NOT the duplicate window. The window a
+ * duplicate send is refused inside is `SEND_DUPLICATE_WINDOW_MS` (`@trafficflow/services`, one
+ * hour), compared against the request clock in the send path itself. This is a different number
+ * for a different job: how long a spent row may sit before a sweep removes it. Twenty-four hours,
+ * comfortably past the window, so a row this deletes can no longer refuse anything and the sweep
+ * can never be the reason a send is admitted or refused. That separation is the point: a
+ * standalone install runs the same send path and has NO maintenance pass, so anything the expiry
+ * depended on would be unbounded there — identical re-sends refused forever on every desktop.
  */
 export const SEND_FINGERPRINT_RETENTION_MS = 24 * 60 * 60 * 1000;
 

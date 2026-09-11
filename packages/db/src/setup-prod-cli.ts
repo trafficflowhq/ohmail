@@ -5,28 +5,14 @@ import {
 import { dataApiPolicyFromEnv } from "./supabase-lockdown-core.js";
 
 /**
- * THE `pnpm db:setup:prod` ENTRY POINT, kept in a module NOTHING re-exports.
- *
- * ── WHY THIS IS ITS OWN FILE ──────────────────────────────────────────────────────────────
- *
- * The guard at the bottom asks "was this module run directly?" by comparing `import.meta.url`
- * with `process.argv[1]`. That question has a correct answer in a module graph and NO correct
- * answer in a BUNDLE: a bundler concatenates every module into one file, so each of them reports
- * the bundle's own URL, the comparison is true, and the CLI runs — inside whatever program
- * happened to include it.
- *
- * That is not hypothetical. `setup-prod.ts` is re-exported through `@trafficflow/db/admin` for
- * `JOURNALS` and `adoptBaseline`, which the local mail engine needs to migrate its on-disk
- * database. Bundling the engine therefore put this guard in the artifact, where it fired on
- * every launch: the packaged engine tried to provision a PRODUCTION database at startup and
- * printed `[db:setup:prod] FAILED: DATABASE_URL_SESSION is required` before it had opened
- * anything. It also set `process.exitCode = 1`, so a launch that went on to work would still
- * have exited non-zero.
- *
- * Splitting the executable half from the library half is the fix, and it is the pattern this
- * repo already uses for exactly this hazard — `invite-cli.ts` and `sensitive-rescreen-cli.ts`
- * are both documented as "deliberately NOT exported: it opens a pool at import". Nothing may
- * re-export this file. `setup-prod.ts` beside it is now pure library: importing it runs nothing.
+ * The `pnpm db:setup:prod` entry point, kept in a module NOTHING re-exports. The guard at the
+ * bottom asks "was this module run directly?" by comparing `import.meta.url` with
+ * `process.argv[1]` — correct in a module graph, unanswerable in a BUNDLE: every module reports
+ * the bundle's own URL, the comparison is true, and the CLI runs inside whatever program included
+ * it. Not hypothetical: `setup-prod.ts` is re-exported through `/admin`, so bundling the engine
+ * put this guard in the artifact, where it fired on every launch — the packaged engine tried to
+ * provision a PRODUCTION database at startup. Splitting executable from library is the repo's
+ * existing pattern. Nothing may re-export this file; `setup-prod.ts` is now pure library.
  */
 
 /**

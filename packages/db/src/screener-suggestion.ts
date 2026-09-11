@@ -4,37 +4,14 @@ import type { Tx } from "./change-log.js";
 import type { Dialect } from "./dialect/index.js";
 
 /**
- * WHERE A BOUGHT SCREENER SUGGESTION IS STORED — the row shape, in ONE place, for the two
- * callers that write it.
- *
- * ── WHY THIS IS A LEAF IN `db` AND NOT A METHOD ON THE SCREENER SERVICE ────────────────────
- *
- * It was a private method on `ScreenerService` while there was one writer. There are now two: the
- * user-pressed purchase (`POST /screener/suggest`, in `@trafficflow/services`) and the always-on
- * pass that buys for INCOMING held senders on an opted-in account. That second writer runs in a
- * deployment whose dependency closure is `@trafficflow/core` and `@trafficflow/db` and nothing
- * else from this workspace — a boundary enforced by what its image installs, not by convention —
- * so "both call the service method" is not available to it, and the alternative to this file is
- * the same INSERT typed out twice.
- *
- * Typed out twice is not a style complaint here. The three fields below are what a suggestion IS,
- * and every one of them is read back by somebody else:
- *
- *  · {@link SCREENER_SUGGESTION_PROVENANCE} is the WHERE clause of the read path
- *    (`ScreenerReadService.storedSuggestions`) and of the delete below. A second writer that
- *    spelled it differently would produce rows nothing ever reads — bought, charged, invisible —
- *    and the surface would go on offering to buy the same sender for ever.
- *  · {@link SCREENER_SUGGESTION_STATUS} is what keeps these rows INERT. Nothing acts on a
- *    `routing_decisions` row except by `status`, and no reader acts on this one.
- *  · the delete-then-insert is scoped to this provenance so a pipeline routing decision about the
- *    same message is never touched.
- *
- * ── AND WHY IT IS `db` RATHER THAN `core` ──────────────────────────────────────────────────
- *
- * It names a table. That is the whole test, and it is the same one `recordChange` and
- * `claimIdempotencyKey` pass on this barrel. It reaches `schema-mail.js` only, so it stays inside
- * the closure rule the barrel's header states: no `schema.js`, no Cloud journal, nothing that
- * would put the hosted schema into the desktop engine's bundle.
+ * Where a bought Screener suggestion is stored — the row shape, in ONE place, for the two callers
+ * that write it. The always-on pass runs in a deployment whose closure is core + db only, so the
+ * alternative to this file is the same INSERT typed twice — and {@link
+ * SCREENER_SUGGESTION_PROVENANCE} is the WHERE clause of the read path and the delete: a second
+ * writer spelling it differently would produce rows nothing reads (bought, charged, invisible).
+ * {@link SCREENER_SUGGESTION_STATUS} keeps these rows INERT; the delete-then-insert is scoped to
+ * this provenance so a pipeline routing decision is never touched. In `db` because it names a
+ * table; it reaches `schema-mail.js` only.
  */
 
 /**
@@ -70,17 +47,13 @@ export interface ScreenerSuggestionRow {
 }
 
 /**
- * Persist ONE bought suggestion, in its OWN transaction.
- *
- * The transaction is per message and not per batch, and that is a property the callers depend on
- * rather than a detail: a run of N senders is N model round trips, and a host that dies at sender
- * 40 with one pending write would lose every result the account has already paid for. Per
+ * Persist ONE bought suggestion, in its OWN transaction — per message, not per batch, and the
+ * callers depend on that: a run of N senders is N model round trips, and a host that dies at
+ * sender 40 with one pending write would lose every result the account already paid for. Per
  * message, a death costs only the writes that had not happened yet — and the money already spent
- * buys those back for free, because the ledger source is the message.
- *
- * **No `recordChange`.** A suggestion is advice ABOUT mail, not a change TO it; emitting a
- * `change_log` row would put model output into `/sync` and make every client's delta stream carry
- * something nobody asked for.
+ * buys those back for free, because the ledger source is the message. No `recordChange`: a
+ * suggestion is advice ABOUT mail, not a change TO it; a `change_log` row would put model output
+ * into `/sync` and make every client's delta stream carry something nobody asked for.
  */
 export async function storeScreenerSuggestion(db: Tx, row: ScreenerSuggestionRow): Promise<void> {
   await db.transaction(async (tx) => {
@@ -140,18 +113,14 @@ export async function storeScreenerSuggestion(db: Tx, row: ScreenerSuggestionRow
    identifier because it writes nothing. */
 
 /**
- * DOES THIS ACCOUNT ALREADY HOLD SCREENER ADVICE ABOUT THIS SENDER? — as an `EXISTS` fragment, for
- * a candidate query that must answer it per row without a second round trip.
- *
- * `senderExpr` must be an ALREADY-LOWERED sql expression naming the sender of the row being tested
- * (`sql`lower(${reps.fromAddress})``). It is a parameter rather than a column because the callers
- * test a subquery's projection, not a table's.
- *
+ * Does this account already hold Screener advice about this sender? — as an `EXISTS` fragment,
+ * for a candidate query that must answer it per row without a second round trip. `senderExpr`
+ * must be an ALREADY-LOWERED sql expression naming the sender of the row being tested; a
+ * parameter rather than a column because the callers test a subquery's projection, not a table's.
  * The subquery walks from the SENDER to their messages to those messages' suggestions, in that
- * order, so it is served by `messages_account_from_addr_idx` and then
- * `routing_decisions_account_message_idx` — bounded by how much mail that one sender has sent, not
- * by how many routing decisions the account has accumulated. Written the other way round (all of
- * the account's suggestion rows, joined back to `messages`) it is a scan of the account.
+ * order, so it is served by `messages_account_from_addr_idx` and then the routing-decisions index
+ * — bounded by how much mail that one sender has sent, not by how many routing decisions the
+ * account has accumulated. Written the other way round it is a scan of the account.
  */
 export function screenerSuggestedSenderExists(
   d: Dialect, accountId: string, senderExpr: SQL,
@@ -182,14 +151,11 @@ export interface StoredSenderSuggestion {
 }
 
 /**
- * THE NEWEST STORED VERDICT PER SENDER, for a bounded set of senders.
- *
- * One query for the whole set and none for an empty one. `DISTINCT ON (lower(from_address))` with
- * `ORDER BY … rd.created_at DESC, rd.id DESC` is what makes "newest wins" a property of the
- * database rather than of a loop — and there genuinely can be several rows per sender: one per
- * message they have been advised about (see {@link SCREENER_SUGGESTION_PROVENANCE} for why two
- * concurrent buys of ONE message can also leave two).
- *
+ * The newest stored verdict per sender, for a bounded set of senders. One query for the whole set
+ * and none for an empty one. A ranked window with `ORDER BY … created_at DESC, id DESC` makes
+ * "newest wins" a property of the database rather than of a loop — and there genuinely can be
+ * several rows per sender: one per message they have been advised about (see {@link
+ * SCREENER_SUGGESTION_PROVENANCE} for why two concurrent buys of ONE message can also leave two).
  * `senders` must already be lower-cased; the map is keyed the same way.
  */
 export async function screenerSuggestionsBySender(
@@ -199,17 +165,13 @@ export async function screenerSuggestionsBySender(
   if (senders.length === 0) return out;
 
   const sender = sql<string>`lower(${messages.fromAddress})`;
-  /* ONE ROW PER SENDER, AS A WINDOW RATHER THAN AS `DISTINCT ON` ─────────────────────────────
-   *
-   * `distinct on (k) … order by k, o` and `row_number() over (partition by k order by o) = 1` pick
-   * the same row: the first in `o` within each `k`. The first spelling exists only on the server;
-   * the second is standard and both stores have it, so this is one statement rather than a branch,
-   * which is what a seam is for when the answer really is shared.
-   *
-   * The ordering moves INSIDE the window, where it belongs — under `distinct on` the leading `k`
-   * in the ORDER BY was there to satisfy the clause rather than to order the result, which is the
-   * detail that makes the two look different when they are not.
-   */
+  // One row per sender, as a WINDOW rather than `DISTINCT ON`: `distinct on (k) … order by k, o`
+  // and `row_number() over (partition by k order by o) = 1` pick the same row — the first in `o`
+  // within each `k`. The first spelling exists only on the server; the second is standard and
+  // both stores have it, so this is one statement rather than a branch, which is what a seam is
+  // for when the answer really is shared. The ordering moves INSIDE the window, where it belongs
+  // — under `distinct on` the leading `k` in the ORDER BY was there to satisfy the clause rather
+  // than to order the result, the detail that makes the two look different when they are not.
   const ranked = db.select({
     sender: sender.as("sender"),
     messageId: routingDecisions.messageId,

@@ -2,28 +2,14 @@ import { sql, type SQL } from "drizzle-orm";
 import type { Dialect } from "./dialect/index.js";
 
 /**
- * THE CUTLINE, AS SQL — one implementation of "is this sender still worth a decision", for every
- * server-side reader of the Screener.
- *
- * It lived only inside `services/src/consent-cutline.ts#cutlineCounts`, so `GET /consent` counted
- * WAITING senders through the cutline while `GET /screener` listed every sender whose mail sits in
- * the Screener folder. On a mailbox with years of history those are different questions by an
- * order of magnitude, and the queue answered the wrong one: it offered senders whose newest mail
- * was years old, beside a much smaller count of the senders still worth asking about.
- *
- * In `db` and not `services` because the always-on auto-suggest pass is one of the three readers
- * and its deployment closure is `@trafficflow/core` + `@trafficflow/db` and nothing else from this
- * workspace. In `db` rather than `core` because it names two tables, which is this barrel's test.
- *
- * ── EVERY CONSTRUCT HERE IS STORE-NEUTRAL, AND THAT IS NOT OPTIONAL ───────────────────────────
- *
- * The phone runs this engine on the device store. `cutlineCounts` was made neutral before this
- * module existed, so a Postgres-only spelling here would reintroduce at the CALL SITE exactly what
- * that change removed — and no cutline test would refuse it, because every one of them is a
- * Postgres twin. Casts and timestamps go through the {@link Dialect}; the boolean aggregate uses
- * {@link anyOf}, which is one spelling both stores accept. A `boolOr` MEMBER was written and
- * removed again: `cutlineCounts` argues in its own comment that a member for something already
- * expressible on both arms "would be a third dialect nobody tests", and that argument holds here.
+ * The cutline, as SQL — one implementation of "is this sender still worth a decision", for every
+ * server-side reader. It lived only inside `consent-cutline.ts#cutlineCounts`, so `GET /consent`
+ * counted WAITING senders through the cutline while `GET /screener` listed every sender with mail
+ * in the folder — the queue offered senders whose newest mail was years old. In `db`, not
+ * `services`: the auto-suggest pass is a reader and its closure is core + db; not `core`, because
+ * it names two tables. Every construct is STORE-NEUTRAL: the phone runs this engine on the device
+ * store, and no cutline test would refuse a Postgres-only spelling — every one is a Postgres
+ * twin. Casts and timestamps go through the {@link Dialect}.
  */
 
 /** Every folder the product presents. Activity is measured over all six. */

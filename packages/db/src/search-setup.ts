@@ -2,17 +2,14 @@ import { sql, type SQL } from "drizzle-orm";
 import { MIGRATION_LOCK_KEY, MIGRATION_LOCK_TIMEOUT_MS } from "./migrate.js";
 
 /**
- * Search EXTENSION setup, kept DELIBERATELY OUT of the shared
- * Drizzle migrator. `makeTestDb()` replays `packages/db/drizzle/*` into PGlite for
- * every unit test, and PGlite has no `pg_trgm`, so a `CREATE EXTENSION` there would
- * throw and take the whole suite red. This runs ONLY against a real Postgres
- * (Neon in prod; the docker `:5433` in `*.pg.test.ts`): the search `*.pg.test.ts`
- * calls it in `beforeAll`, and prod Neon setup calls it once after migrating.
- *
- * Idempotent: `IF NOT EXISTS` throughout — safe to re-run. The tsvector columns +
- * their GIN indexes are NOT here; they are core-Postgres generated columns that
- * live in migration 0008 (RC9) and replay fine into PGlite. This file adds ONLY
- * the pg_trgm extension + the fuzzy (trigram) GIN indexes on subject/from_address.
+ * Search EXTENSION setup, kept deliberately OUT of the shared migrator. `makeTestDb()` replays
+ * the journal into PGlite for every unit test, and PGlite has no `pg_trgm`, so a `CREATE
+ * EXTENSION` there would take the whole suite red. This runs ONLY against a real Postgres: the
+ * search pg tests call it in `beforeAll`, and production setup calls it once after migrating.
+ * Idempotent — `IF NOT EXISTS` throughout. The tsvector columns and their GIN indexes are NOT
+ * here: they are core-Postgres generated columns in migration 0008 and replay fine into PGlite.
+ * This file adds only the `pg_trgm` extension plus the fuzzy trigram GIN indexes on
+ * subject/from_address.
  */
 
 /** Minimal structural type so this file need not depend on the schema/Db types. */
@@ -69,17 +66,15 @@ export async function ensureWithheldProvenanceIndex(
      where table_schema = 'public' and table_name = 'message_bodies'
        and column_name = 'withheld_reason'`));
   if (col[0]?.present !== true) {
-    // DEFERRED TO THE JOURNAL, and the blocking build that implies is bounded by ARITHMETIC,
-    // not hope (a staged migrate-to-0062-then-prebuild dance was proposed here; the
-    // narrowing argument is this paragraph): mail 0062 predates 0071 by days on a product whose
-    // whole schema is months old, so no database can carry a LARGE `message_bodies` at 0071's
-    // replay position without having crossed 0062 while small — a pre-0062 install is beta-era
-    // by definition (the managed production table, the largest in existence, builds this index
-    // in seconds). The residual case — an install parked pre-0062 for long enough to grow big,
-    // then upgrading — runs 0071 inside its OWN setup ceremony, where the deploy order already
-    // has the worker down around the migration; a brief write lock during scheduled maintenance
-    // is ordinary, and slicing the migrator to avoid it would put a second journal-ordering
-    // authority beside the one 0066/0069 proved is hard enough to keep singular.
+    // Deferred to the journal, and the blocking build that implies is bounded by ARITHMETIC, not
+    // hope: mail 0062 predates 0071 by days on a product whose whole schema is months old, so no
+    // database can carry a LARGE `message_bodies` at 0071's replay position without having
+    // crossed 0062 while small — and the largest table in existence builds this index in seconds.
+    // The residual — an install parked pre-0062 long enough to grow big, then upgrading — runs
+    // 0071 inside its own setup ceremony, where the deploy order already has the worker down
+    // around the migration; a brief write lock during scheduled maintenance is ordinary, and
+    // slicing the migrator to avoid it would put a second journal-ordering authority beside the
+    // one that is already hard enough to keep singular.
     opts.log?.("withheld-provenance index: message_bodies.withheld_reason does not exist yet — deferred to the journal");
     return;
   }
