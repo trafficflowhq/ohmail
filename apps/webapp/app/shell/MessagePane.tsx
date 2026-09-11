@@ -1568,7 +1568,7 @@ export function MessagePane({
           `ready` record. `auto` is the product default (mail 0048): it admits PICTURES through
           the proxy, and the sanitizer still refuses the proxy to a beacon or a 1×1 in both
           modes. `onLoadRemote` is withheld in auto mode, which removes the button: "Show
-          images" over images already showing is a control whose press does nothing. */}
+          images" over images already showing does nothing. */}
       <MessageBody
         messageId={message.id}
         text={body.text}
