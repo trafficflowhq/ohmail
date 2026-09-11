@@ -182,6 +182,12 @@ you do.
   those names are people, and still get a reply.
 - A bounce for an away reply no longer lands in your Ohbox. It files to Receipts, and the responder
   stops writing to that address. Bounces for mail you sent yourself still reach you.
+- An away setting you saved on another computer is reported as applied only when what came back is
+  what you asked for. A change made somewhere else is named as that instead, with the values the
+  setting now holds.
+- Which piles your away replies answer travels between your computers, with the rest of your away
+  settings. A computer taking the mailbox over fell back to the Ohbox and lost your choice; one
+  running an older ohmail leaves your choice alone instead of resetting it.
 
 ### Sync now says what it did
 
