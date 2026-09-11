@@ -6,66 +6,24 @@ import {
 import { ServiceError } from "./errors.js";
 
 /**
- * PLAN-LIMIT ENFORCEMENT.
- *
- * ## The problem this exists to make impossible
- *
- * A mailbox limit was, until this module, enforced by nothing at all: no count, no quota, no
- * gate. And the obvious fix — "read the count in the handler, refuse if it is at the
- * limit" — is wrong in a way that only shows up in production. Two `POST /mailboxes` arriving
- * together at limit−1 both read `count = limit − 1`, both conclude there is room, and both
- * insert. Under READ COMMITTED neither transaction can see the other's uncommitted row, so
- * nothing about the check is at fault: **the check is correct and the outcome is still wrong.**
- * A quota that is only read is not a quota.
- *
- * So the serialization is in the DATABASE, and it is the account's OWN row:
- * {@link readMailboxAllowance} takes `SELECT … FROM accounts … FOR UPDATE` **before** it reads the
- * count. The second transaction blocks on that row lock until the first commits, and then counts a
- * world that already contains the winner's mailbox. Exactly one of the two proceeds; the other
- * gets a clean typed refusal rather than an over-provisioned account. The pg twin fires the race
- * across two independent pools, and removing the `FOR UPDATE` makes it fail.
- *
- * ## Why locking the ACCOUNT row, and not the mailboxes
- *
- * There is no row to lock on the thing being counted — the contended resource is the COUNT, and
- * a row that does not exist yet cannot be locked. `SELECT … FOR UPDATE` over the existing
- * mailboxes would lock N rows and still miss the concurrent INSERT (Postgres row locks do not
- * lock gaps).
- *
- * The lock used to be a row that defined the limit, and the limit now comes from the
- * entitlements port — so that row is no longer the natural mutex, and it carried a standing trap
- * the account row does not: `FOR UPDATE` matching ZERO rows takes no lock at all, so an account
- * with no such row serialized nothing. It was harmless only because such an account was refused
- * anyway. `accounts` is per-account, always present, and cannot be absent for the caller — the
- * session resolved through it.
- *
- * ## THE LIMIT IS NOT THIS SERVER'S TO KEEP, and the count is
- *
- * Two facts, two owners, and the split is the whole design. How many mailboxes an account may
- * have is a fact about whoever operates the service; how many it HAS is a fact about this
- * database, and it is the one a race can get wrong. So the limit arrives as a snapshot read
- * before the transaction opened (a network hop must never happen under a row lock) and the count
- * is read under the lock. The limit may therefore be microseconds staler than the count, which
- * is the right way round: a limit that changed in that window is re-read on the next request.
- *
- * An install with no entitlements program is UNMETERED — `mailboxes: null`, unbounded — and that
- * is a DECLARATION rather than the absence of one: {@link assertMayAddMailbox} refuses a `null`
- * verdict, because "nobody wired a reader" and "this host meters nothing" must not be the same
- * state.
+ * Plan-limit enforcement. "Read the count, refuse at limit" is wrong in production: two `POST
+ * /mailboxes` at limit−1 both read `limit − 1` and both insert — the check is correct and the
+ * outcome is still wrong. The serialization is the account's OWN row: {@link
+ * readMailboxAllowance} takes `FOR UPDATE` on `accounts` BEFORE the count, so the loser counts a
+ * world containing the winner's mailbox; the pg twin fires the race across two pools. The account
+ * row, not the mailboxes: the contended resource is the COUNT, and row locks do not lock gaps.
+ * The LIMIT is a snapshot read before the transaction (no network hop under a row lock); the
+ * count is read under the lock. Unmetered is a DECLARATION, refused when absent.
  */
 
 /**
- * Why a create was refused. Four answers, because the UI must be able to say something TRUE and
- * each has a different remedy — and every one of them is REACHABLE, which the previous set was
- * not once the reason came from the port:
- *
- *  · `payment_required` — the port refused for payment. Remedy: whoever operates the service.
- *  · `suspended`        — the port refused because the account is suspended. Remedy: ask us.
- *  · `not_permitted`    — the port ADMITS the account and still forbids another mailbox. This is
- *    the distinction `canAddMailbox` exists to carry: retention and creation are different
- *    rights, and an account can hold what it has without being allowed one more.
- *  · `at_limit`         — permitted, and every slot the limit allows is occupied. Remedy:
- *    raise the limit, or disconnect a mailbox.
+ * Why a create was refused. Four answers, because the UI must say something TRUE and each has a
+ * different remedy — and every one is REACHABLE, which the previous set was not once the reason
+ * came from the port. `payment_required` — refused for payment. `suspended` — the account is
+ * suspended. `not_permitted` — the port ADMITS the account and still forbids another mailbox:
+ * retention and creation are different rights, and an account can hold what it has without being
+ * allowed one more. `at_limit` — permitted, and every slot the limit allows is occupied: raise
+ * the limit, or disconnect a mailbox.
  */
 export type MailboxRefusal = "payment_required" | "suspended" | "not_permitted" | "at_limit";
 
@@ -159,16 +117,11 @@ export class MailboxAllowanceError extends ServiceError {
 
 /**
  * The DECISION, as a pure function of an already-read allowance: `null` when the create may
- * proceed, otherwise the reason it may not.
- *
- * Pure and total on purpose — it is the half of this gate that is table-testable without a
- * database. `suspended` is one of the port's two words; this pure function is where the
- * DECISION for a refused account is pinned by the unit table, independent of how the verdict
- * was read.
- *
- * Order matters: `canAddMailbox` is consulted BEFORE the count. An account the port refuses
- * while it is under the limit must be refused for the reason that is TRUE — its standing — not
- * told it is full, and an account whose limit is 0 must read the port's word rather than
+ * proceed, otherwise the reason. Pure and total on purpose — the half of this gate that is
+ * table-testable without a database; the unit table pins the decision independently of how the
+ * verdict was read. Order matters: `canAddMailbox` is consulted BEFORE the count. An account the
+ * port refuses while under the limit must be refused for the reason that is TRUE — its standing —
+ * not told it is full, and an account whose limit is 0 must read the port's word rather than
  * `at_limit`.
  */
 export function decideMailboxAllowance(a: MailboxAllowance): MailboxRefusal | null {
@@ -184,16 +137,14 @@ export function decideMailboxAllowance(a: MailboxAllowance): MailboxRefusal | nu
 /** What {@link readMailboxAllowance} needs beyond the transaction it runs in. */
 export interface MailboxAllowanceInput {
   /**
-   * THE ACCOUNT'S ACCESS VERDICT, READ BEFORE THIS TRANSACTION OPENED — REQUIRED.
-   *
-   * It is a parameter and not a read because answering it may be a network hop to whoever operates
-   * the service, and a remote call inside this transaction would hold the account's row lock across
-   * it. The caller reads it first and hands the snapshot down; `null` is not accepted, because an
-   * absent verdict and an unmetered one are different facts and only one of them means "no limit".
-   *
-   * The limit may therefore be microseconds staler than the count. That is the right way round: the
-   * count is the contended resource and is read under the lock, while a limit that changed in that
-   * window is re-read on the next request.
+   * The account's access verdict, read BEFORE this transaction opened — REQUIRED. A parameter and
+   * not a read because answering it may be a network hop to whoever operates the service, and a
+   * remote call inside this transaction would hold the account's row lock across it. The caller
+   * reads it first and hands the snapshot down; `null` is not accepted, because an absent verdict
+   * and an unmetered one are different facts and only one means "no limit". The limit may be
+   * microseconds staler than the count — the right way round: the count is the contended
+   * resource, read under the lock; a limit that changed in that window is re-read on the next
+   * request.
    */
   access: AccessVerdict;
   /**
@@ -204,18 +155,14 @@ export interface MailboxAllowanceInput {
 }
 
 /**
- * Read the account's allowance UNDER A ROW LOCK. The two statements are ordered, and the order
- * is the mechanism:
- *
- *   1. `SELECT … FROM accounts WHERE id = $1 FOR UPDATE`  ← the serializer
- *   2. `SELECT count(*) FROM mailboxes WHERE account_id = $1 AND status <> 'disabled'`
- *
- * A concurrent creator blocks at (1) and therefore reads (2) only after the winner's INSERT is
- * durable. Reversing them, or dropping the `FOR UPDATE`, restores the double-admit race.
- *
- * MUST be called with the ambient transaction handle: a lock taken on a top-level db handle is
- * released at the end of its own statement and serializes nothing. The `LedgerTx` type refuses a
- * `PgDatabase` at compile time and the runtime guard catches the `as any` and the JS caller.
+ * Read the account's allowance UNDER A ROW LOCK. The two statements are ordered, and the order is
+ * the mechanism: (1) `SELECT … FROM accounts WHERE id = $1 FOR UPDATE` — the serializer; (2)
+ * `SELECT count(*) FROM mailboxes WHERE account_id = $1 AND status <> 'disabled'`. A concurrent
+ * creator blocks at (1) and reads (2) only after the winner's INSERT is durable; reversing them,
+ * or dropping the `FOR UPDATE`, restores the double-admit race. MUST be called with the ambient
+ * transaction handle: a lock taken on a top-level db handle is released at the end of its own
+ * statement and serializes nothing — the `LedgerTx` type refuses a `PgDatabase` at compile time,
+ * and the runtime guard catches the `as any`.
  */
 export async function readMailboxAllowance(
   tx: LedgerTx,
