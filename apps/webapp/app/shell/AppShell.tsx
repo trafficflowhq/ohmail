@@ -4309,21 +4309,21 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
         }
         case "delete": {
           /**
-           * The delete verb — a move to the provider's native \Trash, NEVER an expunge
-           * (FOLDERS-SPEC.md §16.3; the third user-commanded write). Still the ONE dispatch
-           * site: the confirm strip the ⋯ menu opens (`MessagePane.ActionBar`) and the
-           * Backspace/Delete keys both arrive here — one ceremony, one sentence. It now carries
-           * an Undo, which it did not: "there is no un-delete on the wire" is still true, and
-           * what changed is that the press no longer dispatches — it opens a window.
-           * `delete-undo.ts` hides the row at once, the toast carries Undo for `UNDO_MS`, and
-           * the mutation goes out only when the window closes; an Undo inside it cancels a
-           * delete that never happened, the only undo this wire can honour, and the Screener's
-           * own answer to the identical fork. A reader is refused BEFORE any of that, in
-           * `refuseMove`'s exact words: a delete is a folder move against mail another install
-           * is arranging — nothing hidden, nothing on the wire (see `readerMoveRefusal`). The
-           * reader sheet is closed on the way, and only for THIS message: the mirror holds the
-           * row for the length of the window, so `readerMessage` would otherwise keep a sheet
-           * standing over mail every list has let go of.
+           * The delete verb — a move to the provider's native \Trash, NEVER an expunge (FOLDERS-SPEC.md §16.3; the
+           * third user-commanded write). Still the ONE dispatch site: the confirm strip the ⋯ menu opens
+           * (`MessagePane.ActionBar`) and the Backspace/Delete keys both arrive here — one ceremony, one sentence. It
+           * now carries an Undo, which it did not: "there is no un-delete on the wire" is still true, and what
+           * changed is that the press no longer dispatches — it opens a window.
+           */
+
+          /**
+           * `delete-undo.ts` hides the row at once, the toast carries Undo for `UNDO_MS`, and the mutation goes out
+           * only when the window closes; an Undo inside it cancels a delete that never happened, the only undo this
+           * wire can honour, and the Screener's own answer to the identical fork. A reader is refused BEFORE any of
+           * that, in `refuseMove`'s exact words: a delete is a folder move against mail another install is arranging
+           * — nothing hidden, nothing on the wire (see `readerMoveRefusal`). The reader sheet is closed on the way,
+           * and only for THIS message: the mirror holds the row for the length of the window, so `readerMessage`
+           * would otherwise keep a sheet standing over mail every list has let go of.
            */
           /* THE REFUSAL DECIDES FIRST, and the sheet closes only if the press acted. Reversed,
              a refused reader delete closed the reading sheet over the very message it had just
@@ -4336,21 +4336,22 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
         }
         case "restore": {
           /**
-           * Restore — the Trash pane's one primary verb, and `⇧⌫` there. Held exactly as the
-           * delete is: there is no un-restore on the wire (a second press would 409
-           * `not_in_trash`, true but not an undo), so the only undo this wire can honour is the
-           * delayed commit — the row leaves the Trash list at the press, the toast carries Undo
-           * for `UNDO_MS`, and `POST /messages/:id/restore` goes out when the window closes
-           * (the `restoring` window above owns all of that). The place is named by the SERVER,
-           * afterwards: the row's own `restoreTo` is what the LIST was rendered with, and the
-           * origin folder can be deleted between the page and the press — so the place sentence
-           * is raised by the window's DISPATCH, when the server has answered; raising it here
-           * would need a second `restoreFromTrash` call that issues immediately and cancels the
-           * undo window with every guard still green (see `restoreDispatch`). A press that
-           * never reaches the server raises no place sentence — the window's `failed` arm says
-           * the mail is still in Trash. The reader sheet closes only if the press ACTED, the
-           * delete arm's own ordering: reversed, a refused reader restore closed the sheet over
-           * the very message it had declined to touch.
+           * Restore — the Trash pane's one primary verb, and `⇧⌫` there. Held exactly as the delete is: there is no
+           * un-restore on the wire (a second press would 409 `not_in_trash`, true but not an undo), so the only undo
+           * this wire can honour is the delayed commit — the row leaves the Trash list at the press, the toast
+           * carries Undo for `UNDO_MS`, and `POST /messages/:id/restore` goes out when the window closes (the
+           * `restoring` window above owns all of that).
+           */
+
+          /**
+           * The place is named by the SERVER, afterwards: the row's own `restoreTo` is what the LIST was rendered
+           * with, and the origin folder can be deleted between the page and the press — so the place sentence is
+           * raised by the window's DISPATCH, when the server has answered; raising it here would need a second
+           * `restoreFromTrash` call that issues immediately and cancels the undo window with every guard still green
+           * (see `restoreDispatch`). A press that never reaches the server raises no place sentence — the window's
+           * `failed` arm says the mail is still in Trash. The reader sheet closes only if the press ACTED, the delete
+           * arm's own ordering: reversed, a refused reader restore closed the sheet over the very message it had
+           * declined to touch.
            */
           if (restoring.remove({ id: m.id, mailboxId: m.mailboxId }) && readerFor === m.id) {
             setReaderFor(null);
